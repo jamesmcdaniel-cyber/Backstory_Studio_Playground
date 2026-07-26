@@ -1,15 +1,20 @@
 import { z } from 'zod'
-import { McpClient } from '@/lib/mcp/mcp-client'
+import { mcpConfigFromConnection, type McpClientConfig } from '@/lib/mcp/mcp-client'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
+import { prisma } from '@/lib/prisma'
+import { mergeAuthConfig } from '@/lib/crypto/secrets'
+import { safeMcpVerificationError, verifyMcpConfig } from '@/lib/mcp/verify-connection'
 
-// Same schema as the main route (without id, without isActive)
+// A draft may provide plaintext credentials. An existing connection may instead
+// provide only connectionId; its encrypted credentials are resolved server-side.
 const testSchema = z.object({
+  connectionId: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
   description: z.string().optional(),
-  serverUrl: z.string().url(),
-  authType: z.enum(['none', 'api_key', 'oauth2']).default('none'),
+  serverUrl: z.string().url().optional(),
+  authType: z.enum(['none', 'api_key', 'oauth2']).optional(),
   // api_key fields
   apiKey: z.string().optional(),
   headerName: z.string().optional(),
@@ -18,6 +23,8 @@ const testSchema = z.object({
   clientSecret: z.string().optional(),
   tokenUrl: z.string().optional(),
   scopes: z.string().optional(),
+}).refine((data) => Boolean(data.connectionId || data.serverUrl), {
+  message: 'serverUrl or connectionId is required',
 })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -27,48 +34,77 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!limited.ok) throw new ApiError('Too many connection tests — slow down.', 429, 'RATE_LIMITED')
 
   const data = testSchema.parse(await request.json().catch(() => ({})))
+  const existing = data.connectionId
+    ? await prisma.mcpConnection.findFirst({
+        where: {
+          id: data.connectionId,
+          organizationId: auth.organizationId,
+          OR: [{ userId: null }, { userId: auth.dbUser.id }],
+        },
+      })
+    : null
+  if (data.connectionId && !existing) {
+    throw new ApiError('MCP connection not found', 404, 'NOT_FOUND')
+  }
+
+  const serverUrl = data.serverUrl ?? existing?.serverUrl
+  if (!serverUrl) throw new ApiError('Server URL is required', 400, 'INVALID_REQUEST')
+  const authType = data.authType ?? existing?.authType ?? 'none'
 
   // SSRF guard: reject internal/private/metadata targets before connecting.
   // Both serverUrl AND the oauth2 tokenUrl are fetched server-side, so guard both.
   try {
-    await assertPublicUrl(data.serverUrl)
+    await assertPublicUrl(serverUrl)
     if (data.tokenUrl) await assertPublicUrl(data.tokenUrl)
   } catch (error) {
     if (error instanceof SsrfError) return { ok: false, error: 'That server or token URL is not allowed.' }
     throw error
   }
 
-  // Build runtime config directly from plaintext input — do NOT persist
-  const client = new McpClient({
-    serverUrl: data.serverUrl,
-    authType: data.authType,
-    apiKey: data.apiKey,
-    headerName: data.headerName,
-    clientId: data.clientId,
-    clientSecret: data.clientSecret,
-    tokenUrl: data.tokenUrl,
-    scopes: data.scopes,
-  })
+  let config: McpClientConfig
+  if (existing) {
+    const stored =
+      existing.authConfig && typeof existing.authConfig === 'object' && !Array.isArray(existing.authConfig)
+        ? (existing.authConfig as Record<string, unknown>)
+        : {}
+    const merged = mergeAuthConfig(stored, {
+      authType: authType as 'none' | 'api_key' | 'oauth2',
+      apiKey: data.apiKey,
+      headerName: data.headerName,
+      clientId: data.clientId,
+      clientSecret: data.clientSecret,
+      tokenUrl: data.tokenUrl,
+      scopes: data.scopes,
+    })
+    config = mcpConfigFromConnection({ serverUrl, authType, authConfig: merged })
+  } else {
+    config = {
+      serverUrl,
+      authType: authType as 'none' | 'api_key' | 'oauth2',
+      apiKey: data.apiKey,
+      headerName: data.headerName,
+      clientId: data.clientId,
+      clientSecret: data.clientSecret,
+      tokenUrl: data.tokenUrl,
+      scopes: data.scopes,
+    }
+  }
 
   try {
-    const tools = await client.getServerTools(data.serverUrl)
-    const limited = tools.slice(0, 30)
+    const verification = await verifyMcpConfig(config)
+    if (existing) {
+      await prisma.mcpConnection.update({
+        where: { id: existing.id, organizationId: auth.organizationId },
+        data: { lastVerifiedAt: verification.verifiedAt },
+      })
+    }
     return {
       ok: true,
-      toolCount: tools.length,
-      toolNames: limited.map((t) => t.name),
+      verifiedAt: verification.verifiedAt,
+      toolCount: verification.toolCount,
+      toolNames: verification.toolNames,
     }
   } catch (error) {
-    // Never leak secrets or internal stack traces
-    const message =
-      error instanceof Error ? error.message : 'Connection failed'
-
-    // Scrub any potential credential leakage from the message
-    const safeMessage = message
-      .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
-      .replace(/api[_-]?key[=:]\s*\S+/gi, 'api_key=[redacted]')
-      .substring(0, 300)
-
-    return { ok: false, error: safeMessage }
+    return { ok: false, error: safeMcpVerificationError(error) }
   }
 })

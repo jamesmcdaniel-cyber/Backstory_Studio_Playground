@@ -9,6 +9,7 @@ import {
 } from '@/lib/crypto/secrets'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { cacheDelete } from '@/lib/cache'
+import { safeMcpVerificationError, verifyStoredMcpConnection } from '@/lib/mcp/verify-connection'
 
 // Mirror of execute-agent's toolDiscoveryCacheKey (org-scoped) — kept in sync
 // deliberately; busting it makes a connection edit take effect before the TTL.
@@ -108,6 +109,21 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     scopes: data.scopes,
   })
 
+  let verification
+  try {
+    verification = await verifyStoredMcpConnection({
+      serverUrl: data.serverUrl,
+      authType: data.authType,
+      authConfig,
+    })
+  } catch (error) {
+    throw new ApiError(
+      `Connection could not be verified: ${safeMcpVerificationError(error)}`,
+      422,
+      'CONNECTION_VERIFICATION_FAILED',
+    )
+  }
+
   const connection = await prisma.mcpConnection.create({
     data: {
       organizationId: auth.organizationId,
@@ -117,10 +133,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       authType: data.authType,
       authConfig: authConfig as Prisma.InputJsonValue,
       isActive: data.isActive ?? true,
+      lastVerifiedAt: verification.verifiedAt,
     },
   })
 
-  return { success: true, connection: serializeConnection(connection) }
+  return {
+    success: true,
+    connection: serializeConnection(connection),
+    verification: { toolCount: verification.toolCount, toolNames: verification.toolNames },
+  }
 })
 
 // ── PUT — update a connection ─────────────────────────────────────────────
@@ -161,6 +182,34 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     scopes: body.scopes,
   })
 
+  const connectionFieldsChanged =
+    body.serverUrl !== undefined ||
+    body.authType !== undefined ||
+    body.apiKey !== undefined ||
+    body.headerName !== undefined ||
+    body.clientId !== undefined ||
+    body.clientSecret !== undefined ||
+    body.tokenUrl !== undefined ||
+    body.scopes !== undefined ||
+    body.isActive === true
+  let verifiedAt: Date | undefined
+  if (connectionFieldsChanged) {
+    try {
+      const verification = await verifyStoredMcpConnection({
+        serverUrl: body.serverUrl ?? existing.serverUrl,
+        authType: newAuthType,
+        authConfig,
+      })
+      verifiedAt = verification.verifiedAt
+    } catch (error) {
+      throw new ApiError(
+        `Connection could not be verified: ${safeMcpVerificationError(error)}`,
+        422,
+        'CONNECTION_VERIFICATION_FAILED',
+      )
+    }
+  }
+
   const connection = await prisma.mcpConnection.update({
     where: { id: body.id, organizationId: auth.organizationId },
     data: {
@@ -170,6 +219,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
       authType: newAuthType,
       authConfig: authConfig as Prisma.InputJsonValue,
       ...(body.isActive !== undefined && { isActive: body.isActive }),
+      ...(verifiedAt && { lastVerifiedAt: verifiedAt }),
     },
   })
 

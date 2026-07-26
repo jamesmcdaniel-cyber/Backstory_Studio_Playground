@@ -154,7 +154,7 @@ export function McpConnectionDialog({
     }
   }
 
-  const canCreate = Boolean(draft.name.trim() && draft.description.trim() && draft.serverUrl.trim())
+  const canCreate = Boolean(draft.name.trim() && draft.serverUrl.trim())
   const canTest = Boolean(draft.serverUrl.trim())
   // SSO (authorization-code) flow only needs a name + server URL — the rest
   // (client registration, tokens) is handled server-side after Okta login.
@@ -179,6 +179,7 @@ export function McpConnectionDialog({
       const payload: Record<string, unknown> = {
         serverUrl: draft.serverUrl,
         authType: draft.authType,
+        ...(editingConnection ? { connectionId: editingConnection.id } : {}),
       }
       if (draft.authType === 'api_key') {
         if (draft.apiKey) payload.apiKey = draft.apiKey
@@ -258,6 +259,11 @@ export function McpConnectionDialog({
               Server URL <span className="text-destructive">*</span>
             </Label>
             <Input
+              type="url"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={draft.serverUrl}
               onChange={(e) => set({ serverUrl: e.target.value })}
               onBlur={probeForOAuth}
@@ -265,7 +271,7 @@ export function McpConnectionDialog({
             />
             <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
               {discovering ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-              Enter the complete server path to continue
+              Enter the complete HTTPS streamable MCP endpoint.
             </p>
           </div>
 
@@ -455,7 +461,7 @@ export function McpConnectionDialog({
               disabled={saving || !canCreate}
               onClick={submit}
             >
-              {saving ? 'Saving…' : editingConnection ? 'Save server' : 'Create'}
+              {saving ? 'Verifying…' : editingConnection ? 'Verify & save' : 'Verify & create'}
             </Button>
           </div>
         </div>

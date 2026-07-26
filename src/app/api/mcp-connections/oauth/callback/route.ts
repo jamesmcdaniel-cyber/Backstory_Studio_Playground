@@ -22,6 +22,7 @@ import { apiLogger } from '@/lib/logger'
 import { decryptSecret, encryptSecret } from '@/lib/crypto/secrets'
 import { OAUTH_COOKIE, exchangeCode, safeReturnToPath } from '@/lib/mcp/oauth-authcode'
 import { bustBackstoryReadyCache } from '@/lib/mcp/backstory-connection'
+import { verifyMcpConfig } from '@/lib/mcp/verify-connection'
 
 interface OAuthCookiePayload {
   state: string
@@ -84,6 +85,19 @@ export async function GET(request: NextRequest) {
         ? tokens.expires_in
         : 3600
 
+    const expiresAt = Date.now() + expiresInS * 1000
+    const verification = await verifyMcpConfig({
+      serverUrl: payload.serverUrl,
+      authType: 'oauth2',
+      flow: 'authcode',
+      clientId: payload.clientId,
+      clientSecret: payload.clientSecret,
+      tokenEndpoint: payload.tokenEndpoint,
+      refreshToken: tokens.refresh_token,
+      accessToken: tokens.access_token,
+      expiresAt,
+    })
+
     const authConfig = {
       flow: 'authcode' as const,
       clientId: payload.clientId,
@@ -91,7 +105,7 @@ export async function GET(request: NextRequest) {
       tokenEndpoint: payload.tokenEndpoint,
       refreshToken: encryptSecret(tokens.refresh_token || ''),
       accessToken: encryptSecret(tokens.access_token),
-      expiresAt: Date.now() + expiresInS * 1000,
+      expiresAt,
     }
 
     if (payload.connectionId) {
@@ -101,7 +115,7 @@ export async function GET(request: NextRequest) {
           authType: 'oauth2',
           authConfig: authConfig as Prisma.InputJsonValue,
           isActive: true,
-          lastVerifiedAt: new Date(),
+          lastVerifiedAt: verification.verifiedAt,
         },
       })
       if (updated.count !== 1) throw new Error('Connection to re-authorize was not found')
@@ -115,6 +129,7 @@ export async function GET(request: NextRequest) {
           authType: 'oauth2',
           authConfig: authConfig as Prisma.InputJsonValue,
           isActive: true,
+          lastVerifiedAt: verification.verifiedAt,
         },
       })
     }

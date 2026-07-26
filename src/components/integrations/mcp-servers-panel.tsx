@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertCircle, Plug, Plus, Server, Trash2 } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Loader2, Plug, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react'
 import { McpConnectionDialog, type McpConnectionDraft, type SerializedConnection } from '@/app/connections/mcp-connection-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingConnection, setEditingConnection] = useState<SerializedConnection | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [verifyingId, setVerifyingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const response = await fetch('/api/mcp-connections', { cache: 'no-store' })
@@ -124,6 +125,27 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
       }
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  const verifyConnection = async (conn: SerializedConnection) => {
+    setVerifyingId(conn.id)
+    try {
+      const response = await fetch('/api/mcp-connections/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId: conn.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || `Verification failed (HTTP ${response.status}).`)
+      }
+      toast.success(`${conn.name} verified — ${data.toolCount} tool${data.toolCount === 1 ? '' : 's'} available.`)
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Connection verification failed.')
+    } finally {
+      setVerifyingId(null)
     }
   }
 
@@ -227,6 +249,21 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                 <p className="truncate text-xs text-muted-foreground" title={conn.serverUrl}>
                   {conn.serverUrl}
                 </p>
+                <div className="flex items-center gap-1.5 text-xs">
+                  {conn.lastVerifiedAt ? (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      <span className="text-emerald-700">
+                        Verified {new Date(conn.lastVerifiedAt).toLocaleString()}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                      <span className="text-amber-700">Not verified yet</span>
+                    </>
+                  )}
+                </div>
 
                 <div className="flex items-center justify-between gap-2 border-t pt-3">
                   {conn.provider ? (
@@ -236,12 +273,24 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                       ) : (
                         <Badge variant="warn" className="text-xs">Needs authorization</Badge>
                       )}
-                      <a
-                        href={`/api/mcp-connections/oauth/start?connectionId=${conn.id}&returnTo=${encodeURIComponent(returnTo)}`}
-                        className="inline-flex h-7 items-center justify-center rounded-md border border-input bg-background px-2 text-xs font-medium shadow-1 transition-all duration-fast ease-out-quart hover:border-graphite-300 hover:bg-accent hover:text-accent-foreground"
-                      >
-                        Reauthorize
-                      </a>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          disabled={verifyingId === conn.id}
+                          onClick={() => verifyConnection(conn)}
+                        >
+                          {verifyingId === conn.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                          Verify
+                        </Button>
+                        <a
+                          href={`/api/mcp-connections/oauth/start?connectionId=${conn.id}&returnTo=${encodeURIComponent(returnTo)}`}
+                          className="inline-flex h-7 items-center justify-center rounded-md border border-input bg-background px-2 text-xs font-medium shadow-1 transition-all duration-fast ease-out-quart hover:border-graphite-300 hover:bg-accent hover:text-accent-foreground"
+                        >
+                          Reauthorize
+                        </a>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -258,6 +307,16 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                         )}
                       </div>
                       <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          disabled={verifyingId === conn.id || !conn.isActive}
+                          onClick={() => verifyConnection(conn)}
+                        >
+                          {verifyingId === conn.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                          Verify
+                        </Button>
                         <Button
                           size="sm"
                           variant="ghost"

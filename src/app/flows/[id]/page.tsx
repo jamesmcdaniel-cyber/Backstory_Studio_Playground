@@ -1647,40 +1647,40 @@ function FlowBuilder() {
             }}
           >
             <div className="mx-auto h-full w-full max-w-[1440px]" onMouseDown={(event) => event.stopPropagation()}>
-            <StepDrawer
-              layout="workspace"
-              node={selectedNode}
-              flowId={id}
-              issues={issuesByNode[selectedNode.id]?.items}
-              agents={agents}
-              members={members}
-              toolCatalog={toolCatalog}
-              dataFields={dataFields}
-              published={published}
-              labelCtx={labelCtx}
-              variableNames={upstreamVariables.map((variable) => variable.name)}
-              onChange={(node) => setGraph((g) => updateNode(g, node))}
-              onChangeType={(type) => commitGraph(changeNodeType(graph, selectedNode.id, type))}
-              onDuplicate={() => {
-                const { graph: next, nodeId } = duplicateNode(graph, selectedNode.id)
-                commitGraph(next)
-                setSelectedId(nodeId)
-              }}
-              onAddStep={
-                selectedNode.type === 'loop' || selectedNode.type === 'parallel'
-                  ? (type) => {
-                      const { graph: next, nodeId } = addContainerStep(graph, selectedNode.id, type, type === 'agent' ? agents[0]?.id ?? '' : undefined)
-                      commitGraph(next)
-                      setSelectedId(nodeId)
-                    }
-                  : undefined
-              }
-              onDelete={() => {
-                commitGraph(deleteNode(graph, selectedNode.id))
-                setSelectedId(null)
-              }}
-              onClose={() => setSelectedId(null)}
-            />
+              <StepDrawer
+                layout="workspace"
+                node={selectedNode}
+                flowId={id}
+                issues={issuesByNode[selectedNode.id]?.items}
+                agents={agents}
+                members={members}
+                toolCatalog={toolCatalog}
+                dataFields={dataFields}
+                published={published}
+                labelCtx={labelCtx}
+                variableNames={upstreamVariables.map((variable) => variable.name)}
+                onChange={(node) => setGraph((g) => updateNode(g, node))}
+                onChangeType={(type) => commitGraph(changeNodeType(graph, selectedNode.id, type))}
+                onDuplicate={() => {
+                  const { graph: next, nodeId } = duplicateNode(graph, selectedNode.id)
+                  commitGraph(next)
+                  setSelectedId(nodeId)
+                }}
+                onAddStep={
+                  selectedNode.type === 'loop' || selectedNode.type === 'parallel'
+                    ? (type) => {
+                        const { graph: next, nodeId } = addContainerStep(graph, selectedNode.id, type, type === 'agent' ? agents[0]?.id ?? '' : undefined)
+                        commitGraph(next)
+                        setSelectedId(nodeId)
+                      }
+                    : undefined
+                }
+                onDelete={() => {
+                  commitGraph(deleteNode(graph, selectedNode.id))
+                  setSelectedId(null)
+                }}
+                onClose={() => setSelectedId(null)}
+              />
             </div>
           </div>
         )}

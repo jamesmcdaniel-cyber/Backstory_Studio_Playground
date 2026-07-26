@@ -497,7 +497,7 @@ export function StepDrawer({
         <div className="flex min-w-0 items-center gap-3">
           {isWorkspace && (
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
-              <Settings2 className="h-4.5 w-4.5" />
+              <Settings2 className="h-5 w-5" />
             </span>
           )}
           <div className="min-w-0">
@@ -535,14 +535,14 @@ export function StepDrawer({
         )}
 
         <div className="flex min-h-0 min-w-0 flex-col">
-      <div
-        className={cn(
-          'flex-1 space-y-5 overflow-y-auto',
-          isWorkspace
-            ? 'mx-auto w-full max-w-4xl p-6 md:p-8 [&_[data-flow-data-tree]]:hidden'
-            : 'p-4',
-        )}
-      >
+          <div
+            className={cn(
+              'flex-1 space-y-5 overflow-y-auto',
+              isWorkspace
+                ? 'mx-auto w-full max-w-4xl p-6 md:p-8 md:[&_[data-flow-data-tree]]:hidden'
+                : 'p-4',
+            )}
+          >
         {issues && issues.length > 0 && (
           <div
             className={cn(
@@ -1289,20 +1289,20 @@ export function StepDrawer({
             A merge point with no settings. Point the ends of different branches at this step so the steps after it run once, on whichever path actually ran.
           </p>
         )}
-      </div>
+          </div>
 
-      {!isTrigger && (
-        <div className={cn('flex gap-2 border-t border-border', isWorkspace ? 'justify-end bg-slate-50/70 px-6 py-3' : 'p-4')}>
-          {onDuplicate && (
-            <Button variant="outline" className={isWorkspace ? '' : 'flex-1'} onClick={onDuplicate}>
-              <Copy className="mr-1.5 h-4 w-4" /> Duplicate
-            </Button>
+          {!isTrigger && (
+            <div className={cn('flex gap-2 border-t border-border', isWorkspace ? 'justify-end bg-slate-50/70 px-6 py-3' : 'p-4')}>
+              {onDuplicate && (
+                <Button variant="outline" className={isWorkspace ? '' : 'flex-1'} onClick={onDuplicate}>
+                  <Copy className="mr-1.5 h-4 w-4" /> Duplicate
+                </Button>
+              )}
+              <Button variant="outline" className={cn('text-red-600 hover:text-red-700', !isWorkspace && 'flex-1')} onClick={onDelete}>
+                <Trash2 className="mr-1.5 h-4 w-4" /> Delete
+              </Button>
+            </div>
           )}
-          <Button variant="outline" className={cn('text-red-600 hover:text-red-700', !isWorkspace && 'flex-1')} onClick={onDelete}>
-            <Trash2 className="mr-1.5 h-4 w-4" /> Delete
-          </Button>
-        </div>
-      )}
         </div>
       </div>
     </div>

@@ -1,14 +1,16 @@
-'use client'
-
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
-export default function AuthCodeErrorPage() {
-  const searchParams = useSearchParams()
-  const domainRejected = searchParams.get('reason') === 'domain'
+export default async function AuthCodeErrorPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ reason?: string | string[] }>
+}) {
+  const params = await searchParams
+  const reason = Array.isArray(params.reason) ? params.reason[0] : params.reason
+  const domainRejected = reason === 'domain'
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">

@@ -1,11 +1,15 @@
 'use client'
 
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function AuthCodeErrorPage() {
+  const searchParams = useSearchParams()
+  const domainRejected = searchParams.get('reason') === 'domain'
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <Card className="max-w-md w-full">
@@ -17,18 +21,28 @@ export default function AuthCodeErrorPage() {
             Authentication Error
           </CardTitle>
           <CardDescription className="text-gray-600">
-            There was a problem with the authentication process
+            {domainRejected
+              ? 'This workspace is limited to managed company accounts.'
+              : 'There was a problem with the authentication process.'}
           </CardDescription>
         </CardHeader>
         
         <CardContent className="space-y-4">
           <div className="text-sm text-gray-700">
-            <p className="mb-2">This could be due to:</p>
-            <ul className="list-disc list-inside space-y-1 text-gray-600">
-              <li>Redirect URI mismatch in Supabase configuration</li>
-              <li>Invalid or expired authentication code</li>
-              <li>Network connectivity issues</li>
-            </ul>
+            {domainRejected ? (
+              <p className="text-gray-600">
+                Sign in with a <strong>@people.ai</strong> or <strong>@backstory.ai</strong> Google account.
+              </p>
+            ) : (
+              <>
+                <p className="mb-2">This could be due to:</p>
+                <ul className="list-disc list-inside space-y-1 text-gray-600">
+                  <li>Redirect URI mismatch in Supabase configuration</li>
+                  <li>Invalid or expired authentication code</li>
+                  <li>Network connectivity issues</li>
+                </ul>
+              </>
+            )}
           </div>
           
           <div className="space-y-3">

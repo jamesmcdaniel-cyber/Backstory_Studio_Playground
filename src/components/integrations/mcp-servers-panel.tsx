@@ -105,7 +105,8 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
     if (response.ok) {
       await load()
     } else {
-      toast.error('Failed to update status.')
+      const data = await response.json().catch(() => ({}))
+      toast.error(data.error || 'Failed to update status.')
     }
   }
 

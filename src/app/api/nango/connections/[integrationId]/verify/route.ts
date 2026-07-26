@@ -21,8 +21,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const integrationId = decodeURIComponent(segments.at(-2) ?? '')
   if (!integrationId) throw new ApiError('Integration id is required', 400, 'INVALID_REQUEST')
 
-  const statuses = await syncOrgNangoConnections(auth.organizationId)
-  const connectionIds = statuses[integrationId]?.connectionIds ?? []
+  let connectionIds: string[] = []
+  // Nango's tag index can lag the Connect UI event briefly. Retry the live
+  // mirror lookup so "connected" is not immediately followed by a false 404.
+  for (let attempt = 0; attempt < 3 && connectionIds.length === 0; attempt++) {
+    const statuses = await syncOrgNangoConnections(auth.organizationId)
+    connectionIds = statuses[integrationId]?.connectionIds ?? []
+    if (!connectionIds.length && attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
+    }
+  }
   if (!connectionIds.length) {
     throw new ApiError(
       'The account was not found after connecting. Reopen the connection flow and try again.',

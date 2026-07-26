@@ -8,6 +8,7 @@ export type NangoConnectionStatus = {
   provider: string
   error?: string
   lastSync?: string
+  verifiedAt?: string
 }
 
 /**
@@ -35,12 +36,37 @@ export async function syncOrgNangoConnections(
 
   const connections: Record<string, NangoConnectionStatus> = {}
   const seen: string[] = []
+  const existingRows = await prisma.nangoConnection.findMany({
+    where: { organizationId },
+    select: { connectionId: true, metadata: true },
+  })
+  const existingByConnectionId = new Map(existingRows.map((row) => [row.connectionId, row.metadata]))
 
   for (const connection of response.connections ?? []) {
     seen.push(connection.connection_id)
     const errors = connection.errors ?? []
-    const connected = errors.length === 0
-    const error = connected ? undefined : `Connection needs attention (${errors[0].type})`
+    const existingMetadata = existingByConnectionId.get(connection.connection_id)
+    const existingRecord =
+      existingMetadata && typeof existingMetadata === 'object' && !Array.isArray(existingMetadata)
+        ? (existingMetadata as Record<string, unknown>)
+        : {}
+    const verification =
+      existingRecord.verification &&
+      typeof existingRecord.verification === 'object' &&
+      !Array.isArray(existingRecord.verification)
+        ? (existingRecord.verification as Record<string, unknown>)
+        : undefined
+    const verificationFailed = verification?.status === 'error'
+    const connected = errors.length === 0 && !verificationFailed
+    const error = verificationFailed
+      ? String(verification?.error || 'Provider credentials could not be verified.')
+      : connected
+        ? undefined
+        : `Connection needs attention (${errors[0].type})`
+    const verifiedAt =
+      verification?.status === 'verified' && typeof verification.verifiedAt === 'string'
+        ? verification.verifiedAt
+        : undefined
     const endUser = connection.end_user
     const key = connection.provider_config_key
 
@@ -51,9 +77,11 @@ export async function syncOrgNangoConnections(
       provider: connection.provider,
       error: existing?.error ?? error,
       lastSync: connection.created,
+      verifiedAt: existing?.verifiedAt ?? verifiedAt,
     }
 
     const metadata = {
+      ...existingRecord,
       nango: {
         connectionId: connection.connection_id,
         providerConfigKey: key,

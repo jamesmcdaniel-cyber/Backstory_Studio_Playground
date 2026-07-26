@@ -61,9 +61,9 @@ export function DataTree({
   title?: string
   emptyMessage?: string
 }) {
-  if (fields.length === 0) return <p className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">{emptyMessage}</p>
+  if (fields.length === 0) return <p data-flow-data-tree className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">{emptyMessage}</p>
   return (
-    <div className="rounded-lg border border-border bg-background">
+    <div data-flow-data-tree className="rounded-lg border border-border bg-background">
       <div className="border-b border-border px-3 py-2">
         <p className="text-xs font-semibold text-foreground">{title}</p>
         <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">Click a value to add it to the field you are editing.</p>

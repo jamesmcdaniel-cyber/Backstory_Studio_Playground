@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { X, Trash2, Plus, Copy } from 'lucide-react'
+import { X, Trash2, Plus, Copy, Database, Settings2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
@@ -402,6 +402,7 @@ export function StepDrawer({
   variableNames,
   issues,
   published,
+  layout = 'drawer',
   onChange,
   onChangeType,
   onAddStep,
@@ -419,6 +420,7 @@ export function StepDrawer({
   variableNames?: string[]
   issues?: { level: 'error' | 'warning'; message: string }[]
   published?: boolean
+  layout?: 'drawer' | 'workspace'
   onChange: (node: FlowNode) => void
   onChangeType: (type: EditableType) => void
   onAddStep?: (type: EditableType) => void
@@ -426,6 +428,7 @@ export function StepDrawer({
   onDelete: () => void
   onClose: () => void
 }) {
+  const isWorkspace = layout === 'workspace'
   const isTrigger = node.type === 'trigger'
   const trigger = ((node.type === 'trigger' ? node.data.trigger : undefined) as TriggerData | undefined) ?? { type: 'manual' }
   // Chip-editor handles keyed by field, so a datatree click inserts a token
@@ -459,6 +462,14 @@ export function StepDrawer({
   useEffect(() => {
     activeFieldRef.current = null
   }, [node.id])
+  useEffect(() => {
+    if (!isWorkspace) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isWorkspace, onClose])
 
   const setLabel = (label: string) => onChange({ ...node, data: { ...node.data, label } } as FlowNode)
 
@@ -475,15 +486,63 @@ export function StepDrawer({
   }
 
   return (
-    <div className="flex h-full w-full flex-col overflow-y-auto border-l border-border bg-card">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="text-sm font-semibold">{isTrigger ? 'Trigger' : 'Configure step'}</h2>
-        <button type="button" onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">
-          <X className="h-4 w-4" />
+    <div
+      className={cn(
+        'flex h-full w-full flex-col overflow-hidden bg-card',
+        isWorkspace ? 'rounded-2xl border border-border shadow-2xl' : 'border-l border-border',
+      )}
+      data-node-configuration={layout}
+    >
+      <div className={cn('flex items-center justify-between border-b border-border', isWorkspace ? 'px-6 py-4' : 'px-4 py-3')}>
+        <div className="flex min-w-0 items-center gap-3">
+          {isWorkspace && (
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
+              <Settings2 className="h-4.5 w-4.5" />
+            </span>
+          )}
+          <div className="min-w-0">
+            <h2 className={cn('font-semibold', isWorkspace ? 'text-base' : 'text-sm')}>
+              {isTrigger ? 'Configure trigger' : ((node.data as { label?: string }).label?.trim() || 'Configure step')}
+            </h2>
+            {isWorkspace && (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {isTrigger ? 'Trigger settings' : `${NODE_TYPES.find((entry) => entry.value === node.type)?.label ?? node.type} · Parameters`}
+              </p>
+            )}
+          </div>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground">
+          <X className={isWorkspace ? 'h-5 w-5' : 'h-4 w-4'} />
         </button>
       </div>
 
-      <div className="flex-1 space-y-5 p-4">
+      <div className={cn('min-h-0 flex-1', isWorkspace && 'grid md:grid-cols-[300px_minmax(0,1fr)]')}>
+        {isWorkspace && (
+          <aside className="hidden min-h-0 flex-col border-r border-border bg-slate-50/70 md:flex">
+            <div className="border-b border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-indigo-600" />
+                <p className="text-sm font-semibold">Input</p>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Choose data from the trigger or earlier nodes. It is inserted into the field you are editing.
+              </p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <DataTree fields={dataFields} onInsert={insertToken} title="Available input data" />
+            </div>
+          </aside>
+        )}
+
+        <div className="flex min-h-0 min-w-0 flex-col">
+      <div
+        className={cn(
+          'flex-1 space-y-5 overflow-y-auto',
+          isWorkspace
+            ? 'mx-auto w-full max-w-4xl p-6 md:p-8 [&_[data-flow-data-tree]]:hidden'
+            : 'p-4',
+        )}
+      >
         {issues && issues.length > 0 && (
           <div
             className={cn(
@@ -1233,17 +1292,19 @@ export function StepDrawer({
       </div>
 
       {!isTrigger && (
-        <div className="flex gap-2 border-t border-border p-4">
+        <div className={cn('flex gap-2 border-t border-border', isWorkspace ? 'justify-end bg-slate-50/70 px-6 py-3' : 'p-4')}>
           {onDuplicate && (
-            <Button variant="outline" className="flex-1" onClick={onDuplicate}>
+            <Button variant="outline" className={isWorkspace ? '' : 'flex-1'} onClick={onDuplicate}>
               <Copy className="mr-1.5 h-4 w-4" /> Duplicate
             </Button>
           )}
-          <Button variant="outline" className="flex-1 text-red-600 hover:text-red-700" onClick={onDelete}>
+          <Button variant="outline" className={cn('text-red-600 hover:text-red-700', !isWorkspace && 'flex-1')} onClick={onDelete}>
             <Trash2 className="mr-1.5 h-4 w-4" /> Delete
           </Button>
         </div>
       )}
+        </div>
+      </div>
     </div>
   )
 }

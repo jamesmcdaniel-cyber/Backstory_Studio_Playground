@@ -36,6 +36,11 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const returnToRaw = request.nextUrl.searchParams.get('returnTo')?.trim() || undefined
   // Same-origin paths only — never an absolute URL.
   const returnTo = safeReturnToPath(returnToRaw)
+  const errorRedirect = (code: string) => {
+    const path = returnTo ?? '/integrations?tab=servers'
+    const separator = path.includes('?') ? '&' : '?'
+    return NextResponse.redirect(new URL(`${path}${separator}error=${code}`, request.nextUrl.origin))
+  }
   const scope = request.nextUrl.searchParams.get('scope')?.trim() || 'claudeai'
 
   let effectiveServerUrl = serverUrl
@@ -47,25 +52,21 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     })
     // Personal rows may only be re-authorized by their owner.
     if (!row || (row.userId && row.userId !== auth.dbUser.id)) {
-      return NextResponse.redirect(new URL('/connections?error=oauth_params', request.nextUrl.origin))
+      return errorRedirect('oauth_params')
     }
     effectiveServerUrl = row.serverUrl
     effectiveName = row.name
   }
 
   if (!effectiveServerUrl || !effectiveName) {
-    return NextResponse.redirect(
-      new URL('/connections?error=oauth_params', request.nextUrl.origin),
-    )
+    return errorRedirect('oauth_params')
   }
 
   // Validate the URL up front so a bad value can't blow up discovery.
   try {
     void new URL(effectiveServerUrl)
   } catch {
-    return NextResponse.redirect(
-      new URL('/connections?error=oauth_params', request.nextUrl.origin),
-    )
+    return errorRedirect('oauth_params')
   }
 
   const redirectUri = `${request.nextUrl.origin}/api/mcp-connections/oauth/callback`
@@ -120,8 +121,6 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     return response
   } catch {
     // Do not leak discovery/registration details to the client.
-    return NextResponse.redirect(
-      new URL('/connections?error=oauth_start', request.nextUrl.origin),
-    )
+    return errorRedirect('oauth_start')
   }
 }, { skipBackstoryGate: true })

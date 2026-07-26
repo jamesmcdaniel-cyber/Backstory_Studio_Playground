@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Nango, { type ConnectUI } from '@nangohq/frontend'
-import { CheckCircle2, Loader2, RefreshCw, Sparkles, X } from 'lucide-react'
+import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,7 @@ type Connection = {
   provider: string
   error?: string
   lastSync?: string
+  verifiedAt?: string
 }
 
 export function OAuthIntegrationsGrid() {
@@ -48,6 +49,7 @@ export function OAuthIntegrationsGrid() {
   const connections = statusData?.connections ?? {}
   const loading = loadingIntegrations || loadingStatus
   const [busy, setBusy] = useState<string | null>(null)
+  const [verifying, setVerifying] = useState<string | null>(null)
   const connectUIRef = useRef<ConnectUI | null>(null)
 
   // Search + AI finder (mirrors the Templates library): the box filters by
@@ -114,6 +116,28 @@ export function OAuthIntegrationsGrid() {
 
   const { pageItems, pageCount, page: currentPage } = paginate(filtered, page, PAGE_SIZE)
 
+  const verify = async (integration: Integration) => {
+    setVerifying(integration.id)
+    try {
+      const response = await fetch(
+        `/api/nango/connections/${encodeURIComponent(integration.id)}/verify`,
+        { method: 'POST' },
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || `Verification failed (HTTP ${response.status}).`)
+      }
+      toast.success(`${integration.name} credentials verified`)
+      await refreshStatus()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Provider credentials could not be verified.')
+      await refreshStatus()
+    } finally {
+      setVerifying(null)
+      setBusy(null)
+    }
+  }
+
   const connect = async (integration: Integration) => {
     setBusy(integration.id)
     try {
@@ -123,15 +147,15 @@ export function OAuthIntegrationsGrid() {
         ...(connectBaseUrl ? { baseURL: connectBaseUrl } : {}),
         onEvent: (event) => {
           if (event.type === 'connect') {
-            toast.success(`${integration.name} connected`)
+            toast.message(`${integration.name} connected — verifying credentials…`)
             connectUIRef.current = null
-            setBusy(null)
-            void refreshStatus()
+            window.setTimeout(() => void verify(integration), 400)
           } else if (event.type === 'close') {
             connectUIRef.current = null
             setBusy(null)
           } else if (event.type === 'error') {
             toast.error(event.payload.errorMessage || 'Unable to connect account')
+            setBusy(null)
           }
         },
       })
@@ -231,7 +255,10 @@ export function OAuthIntegrationsGrid() {
                       </div>
                     </div>
                     {connection?.connected ? (
-                      <Badge variant="good"><CheckCircle2 className="mr-1 h-3 w-3" />Connected</Badge>
+                      <Badge variant={connection.verifiedAt ? 'good' : 'warn'}>
+                        {connection.verifiedAt ? <ShieldCheck className="mr-1 h-3 w-3" /> : <CheckCircle2 className="mr-1 h-3 w-3" />}
+                        {connection.verifiedAt ? 'Verified' : 'Verify'}
+                      </Badge>
                     ) : (
                       <Button size="sm" onClick={() => connect(item)} loading={busy === item.id}>Connect</Button>
                     )}
@@ -262,7 +289,10 @@ export function OAuthIntegrationsGrid() {
                     {integration.name}
                   </span>
                   {connection?.connected ? (
-                    <Badge variant="good"><CheckCircle2 className="mr-1 h-3 w-3" />Connected</Badge>
+                    <Badge variant={connection.verifiedAt ? 'good' : 'warn'}>
+                      {connection.verifiedAt ? <ShieldCheck className="mr-1 h-3 w-3" /> : <CheckCircle2 className="mr-1 h-3 w-3" />}
+                      {connection.verifiedAt ? 'Verified' : 'Unverified'}
+                    </Badge>
                   ) : (
                     <Badge variant="secondary">Not connected</Badge>
                   )}
@@ -277,7 +307,18 @@ export function OAuthIntegrationsGrid() {
                 </p>
                 {connection?.error && <p className="text-sm text-red-600">{connection.error}</p>}
                 {connection?.connected
-                  ? <Button className="w-full" variant="outline" onClick={() => disconnect(integration)} loading={busy === integration.id}>Disconnect</Button>
+                  ? <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        className="w-full"
+                        variant={connection.verifiedAt ? 'outline' : 'default'}
+                        onClick={() => verify(integration)}
+                        loading={verifying === integration.id}
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        {connection.verifiedAt ? 'Verify again' : 'Verify'}
+                      </Button>
+                      <Button className="w-full" variant="outline" onClick={() => disconnect(integration)} loading={busy === integration.id}>Disconnect</Button>
+                    </div>
                   : <Button className="w-full" onClick={() => connect(integration)} loading={busy === integration.id}>
                       Connect
                     </Button>}

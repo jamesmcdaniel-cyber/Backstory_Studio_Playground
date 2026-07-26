@@ -1640,8 +1640,15 @@ function FlowBuilder() {
         />
 
         {selectedNode && !viewingVersion && (
-          <ResizablePanel storageKey="flow.drawerWidth">
+          <div
+            className="fixed inset-0 z-50 bg-slate-950/40 p-3 backdrop-blur-sm md:p-6 lg:p-10"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setSelectedId(null)
+            }}
+          >
+            <div className="mx-auto h-full w-full max-w-[1440px]" onMouseDown={(event) => event.stopPropagation()}>
             <StepDrawer
+              layout="workspace"
               node={selectedNode}
               flowId={id}
               issues={issuesByNode[selectedNode.id]?.items}
@@ -1674,7 +1681,8 @@ function FlowBuilder() {
               }}
               onClose={() => setSelectedId(null)}
             />
-          </ResizablePanel>
+            </div>
+          </div>
         )}
 
         {showCopilot && !external && canEdit && (

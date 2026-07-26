@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import React from 'react'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { StepCard } from '@/components/flows/step-card'
+import { StepDrawer } from '@/components/flows/step-drawer'
 import type { FlowNode } from '@/lib/flows/graph'
 
 const toolCatalog = [
@@ -162,5 +163,36 @@ test('AI and subflow timeout controls use their runtime 20-minute limit', () => 
 
   const timeout = container.querySelector('input[type="number"][max="1200"]')
   assert.ok(timeout, 'AI timeout accepts the same 20-minute maximum as its graph/runtime contract')
+  cleanup()
+})
+
+test('workspace node configuration uses a wide input-and-parameters layout', () => {
+  let closed = false
+  const node = {
+    id: 'http-workspace',
+    type: 'http',
+    data: { method: 'POST', url: 'https://api.example.com', bodyMode: 'json' },
+  } as FlowNode
+  const { container } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace',
+      node,
+      flowId: 'flow1',
+      agents: [],
+      toolCatalog: [],
+      dataFields: [{ label: 'Run input', token: '{{trigger.input}}', type: 'string' }],
+      labelCtx: {} as never,
+      onChange: () => {},
+      onChangeType: () => {},
+      onDelete: () => {},
+      onClose: () => { closed = true },
+    }),
+  )
+
+  assert.ok(container.querySelector('[data-node-configuration="workspace"]'))
+  assert.match(container.textContent ?? '', /Available input data/)
+  assert.ok(container.querySelector('[aria-label="Request URL"]'))
+  fireEvent.keyDown(window, { key: 'Escape' })
+  assert.equal(closed, true)
   cleanup()
 })

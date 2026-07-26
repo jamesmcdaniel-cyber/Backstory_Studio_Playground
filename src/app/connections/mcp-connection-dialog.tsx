@@ -167,7 +167,9 @@ export function McpConnectionDialog({
     const params = new URLSearchParams({
       serverUrl: draft.serverUrl.trim(),
       name: draft.name.trim(),
+      returnTo: '/integrations?tab=servers',
     })
+    if (editingConnection) params.set('connectionId', editingConnection.id)
     window.location.href = `/api/mcp-connections/oauth/start?${params.toString()}`
   }
 

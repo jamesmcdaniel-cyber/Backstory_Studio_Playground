@@ -215,20 +215,16 @@ function defaultAgentInput(value?: string): boolean {
   return trimmed === 'Use this flow input:\n{{trigger.input}}' || trimmed === 'Process this item:\n{{item}}'
 }
 
-function firstClause(node: Extract<FlowNode, { type: 'condition' | 'filter' }>): ConditionClause {
-  if (node.data.clauses?.[0]) return node.data.clauses[0]
-  if (node.type === 'condition') {
-    return { left: node.data.left ?? '', op: node.data.op ?? 'contains', right: node.data.right ?? '' }
+function conditionClauses(node: Extract<FlowNode, { type: 'condition' | 'filter' }>): ConditionClause[] {
+  if (node.data.clauses?.length) return node.data.clauses
+  if (node.type === 'condition' && (node.data.left !== undefined || node.data.right !== undefined)) {
+    return [{ left: node.data.left ?? '', op: node.data.op ?? 'contains', right: node.data.right ?? '' }]
   }
-  return { left: '', op: 'contains', right: '' }
+  return [{ left: '', op: 'contains', right: '' }]
 }
 
 function transformFields(node: Extract<FlowNode, { type: 'transform' }>): { name: string; value: string }[] {
   return node.data.fields.length ? node.data.fields : [{ name: '', value: '' }]
-}
-
-function switchFirstCase(node: Extract<FlowNode, { type: 'switch' }>) {
-  return node.data.cases[0] ?? { id: 'case1', left: '', op: 'contains' as ConditionOp, right: '' }
 }
 
 function stopEvent(event: React.MouseEvent | React.FocusEvent) {
@@ -259,12 +255,15 @@ const NON_TOKEN_FOCUSED = 'non-token-focused'
 // step type's primary token field.
 const DEFAULT_EDITOR_KEYS: Partial<Record<FlowNode['type'], string>> = {
   agent: 'agent.input',
+  ai: 'ai.instructions',
   http: 'http.body',
+  knowledge: 'knowledge.query',
   loop: 'loop.over',
+  subflow: 'subflow.input',
   transform: 'xf.0',
-  condition: 'clause.left',
-  filter: 'clause.left',
-  switch: 'sw.left',
+  condition: 'clause.0.left',
+  filter: 'clause.0.left',
+  switch: 'sw.0.left',
   variable: 'var.value',
   data: 'data.input',
   humanReview: 'hr.message',
@@ -987,7 +986,7 @@ function KnowledgeBody({
   update: (node: FlowNode) => void
   tokenWiring: TokenEditorWiring
 }) {
-  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const { labelCtx, registerEditor, focusEditor } = tokenWiring
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
@@ -1037,7 +1036,7 @@ function SubflowBody({
   flowId?: string
   showErrors?: boolean
 }) {
-  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const { labelCtx, registerEditor, focusEditor } = tokenWiring
   const { flows, loading } = useWorkspaceFlows()
   const selectable = flows.filter((flow) => flow.id !== flowId)
   const selected = flows.find((flow) => flow.id === node.data.flowId)
@@ -1779,42 +1778,95 @@ function ConditionBody({
   tokenWiring: TokenEditorWiring
 }) {
   const { labelCtx, registerEditor, focusEditor } = tokenWiring
-  const clause = firstClause(node)
-  const setClause = (patch: Partial<ConditionClause>) => {
-    update({ ...node, data: { ...node.data, clauses: [{ ...clause, ...patch }], match: node.data.match ?? 'all' } } as FlowNode)
-  }
+  const clauses = conditionClauses(node)
+  const setClauses = (next: ConditionClause[]) =>
+    update({
+      ...node,
+      data: {
+        ...node.data,
+        clauses: next,
+        match: node.data.match ?? 'all',
+        ...(node.type === 'condition' ? { left: undefined, op: undefined, right: undefined } : {}),
+      },
+    } as FlowNode)
   return (
     <div className="space-y-3">
       <p className="text-sm text-slate-600">{node.type === 'condition' ? 'Route the flow based on a rule.' : 'Continue only when this rule is true.'}</p>
-      <div className="grid gap-2 sm:grid-cols-[1fr_150px_1fr]">
-        <TokenTextEditor
-          ref={registerEditor('clause.left')}
-          value={clause.left}
-          labelCtx={labelCtx}
-          onFocus={focusEditor('clause.left')}
-          onChange={(left) => setClause({ left })}
-          className={cn(tokenControlClass, 'min-w-0')}
-          placeholder="Field or value"
-          ariaLabel="Field or value"
-        />
-        <select value={clause.op} onChange={(event) => setClause({ op: event.target.value as ConditionOp })} className={controlClass}>
-          {CONDITION_OPS.map((op) => (
-            <option key={op} value={op}>
-              {CONDITION_OP_LABELS[op]}
-            </option>
-          ))}
+      <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center">
+        <label className={labelClass}>Match</label>
+        <select
+          value={node.data.match ?? 'all'}
+          onChange={(event) => {
+            const match = event.target.value as 'all' | 'any'
+            update({
+              ...node,
+              data: {
+                ...node.data,
+                match,
+                clauses,
+                ...(node.type === 'condition' ? { left: undefined, op: undefined, right: undefined } : {}),
+              },
+            } as FlowNode)
+          }}
+          className={controlClass}
+          aria-label="Condition matching mode"
+        >
+          <option value="all">All conditions (AND)</option>
+          <option value="any">Any condition (OR)</option>
         </select>
-        <TokenTextEditor
-          ref={registerEditor('clause.right')}
-          value={clause.right}
-          labelCtx={labelCtx}
-          onFocus={focusEditor('clause.right')}
-          onChange={(right) => setClause({ right })}
-          className={cn(tokenControlClass, 'min-w-0')}
-          placeholder="Compare to"
-          ariaLabel="Compare to"
-        />
       </div>
+      {clauses.map((clause, index) => (
+        <div key={index} className="grid gap-2 rounded-lg border border-slate-200 p-2 sm:grid-cols-[1fr_150px_1fr_36px]">
+          <TokenTextEditor
+            ref={registerEditor(`clause.${index}.left`)}
+            value={clause.left}
+            labelCtx={labelCtx}
+            onFocus={focusEditor(`clause.${index}.left`)}
+            onChange={(left) => setClauses(clauses.map((entry, entryIndex) => (entryIndex === index ? { ...entry, left } : entry)))}
+            className={cn(tokenControlClass, 'min-w-0')}
+            placeholder="Field or value"
+            ariaLabel={`${node.type === 'condition' ? 'Condition' : 'Filter'} ${index + 1} value`}
+          />
+          <select
+            value={clause.op}
+            onChange={(event) => setClauses(clauses.map((entry, entryIndex) => (entryIndex === index ? { ...entry, op: event.target.value as ConditionOp } : entry)))}
+            className={controlClass}
+            aria-label={`${node.type === 'condition' ? 'Condition' : 'Filter'} ${index + 1} operator`}
+          >
+            {CONDITION_OPS.map((op) => (
+              <option key={op} value={op}>
+                {CONDITION_OP_LABELS[op]}
+              </option>
+            ))}
+          </select>
+          <TokenTextEditor
+            ref={registerEditor(`clause.${index}.right`)}
+            value={clause.right}
+            labelCtx={labelCtx}
+            onFocus={focusEditor(`clause.${index}.right`)}
+            onChange={(right) => setClauses(clauses.map((entry, entryIndex) => (entryIndex === index ? { ...entry, right } : entry)))}
+            className={cn(tokenControlClass, 'min-w-0')}
+            placeholder="Compare to"
+            ariaLabel={`${node.type === 'condition' ? 'Condition' : 'Filter'} ${index + 1} comparison value`}
+          />
+          <button
+            type="button"
+            onClick={() => setClauses(clauses.filter((_, entryIndex) => entryIndex !== index))}
+            disabled={clauses.length === 1}
+            className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+            aria-label="Remove condition"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => setClauses([...clauses, { left: '', op: 'contains', right: '' }])}
+        className="text-sm font-semibold text-blue-700 hover:text-blue-900"
+      >
+        Add condition
+      </button>
     </div>
   )
 }
@@ -1923,41 +1975,89 @@ function SwitchBody({
   update: (node: FlowNode) => void
   tokenWiring: TokenEditorWiring
 }) {
-  const { labelCtx, registerEditor, focusEditor } = tokenWiring
-  const first = switchFirstCase(node)
-  const setFirst = (patch: Partial<typeof first>) => update({ ...node, data: { ...node.data, cases: [{ ...first, ...patch }] } })
+  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const cases = node.data.cases.length
+    ? node.data.cases
+    : [{ id: 'case1', left: '', op: 'contains' as ConditionOp, right: '' }]
+  const setCases = (next: typeof cases) => update({ ...node, data: { ...node.data, cases: next } })
   return (
     <div className="space-y-3">
       <p className="text-sm text-slate-600">Route to the first matching case, otherwise use the default path.</p>
-      <div className="grid gap-2 sm:grid-cols-[1fr_150px_1fr]">
-        <TokenTextEditor
-          ref={registerEditor('sw.left')}
-          value={first.left}
-          labelCtx={labelCtx}
-          onFocus={focusEditor('sw.left')}
-          onChange={(left) => setFirst({ left })}
-          className={cn(tokenControlClass, 'min-w-0')}
-          placeholder="Field or value"
-          ariaLabel="Field or value"
-        />
-        <select value={first.op} onChange={(event) => setFirst({ op: event.target.value as ConditionOp })} className={controlClass}>
-          {CONDITION_OPS.map((op) => (
-            <option key={op} value={op}>
-              {CONDITION_OP_LABELS[op]}
-            </option>
-          ))}
-        </select>
-        <TokenTextEditor
-          ref={registerEditor('sw.right')}
-          value={first.right}
-          labelCtx={labelCtx}
-          onFocus={focusEditor('sw.right')}
-          onChange={(right) => setFirst({ right })}
-          className={cn(tokenControlClass, 'min-w-0')}
-          placeholder="Compare to"
-          ariaLabel="Compare to"
-        />
-      </div>
+      {cases.map((entry, index) => (
+        <div key={entry.id} className="space-y-2 rounded-lg border border-slate-200 p-2">
+          <div className="flex gap-2">
+            <input
+              value={entry.label ?? ''}
+              onChange={(event) => setCases(cases.map((item, itemIndex) => (itemIndex === index ? { ...item, label: event.target.value } : item)))}
+              onFocus={blockActive}
+              onBlur={unblockActive}
+              className={cn(controlClass, 'min-w-0 flex-1')}
+              placeholder={`Case ${index + 1} label`}
+              aria-label={`Case ${index + 1} label`}
+            />
+            <button
+              type="button"
+              onClick={() => setCases(cases.filter((_, itemIndex) => itemIndex !== index))}
+              disabled={cases.length === 1}
+              className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+              aria-label="Remove case"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_150px_1fr]">
+            <TokenTextEditor
+              ref={registerEditor(`sw.${index}.left`)}
+              value={entry.left}
+              labelCtx={labelCtx}
+              onFocus={focusEditor(`sw.${index}.left`)}
+              onChange={(left) => setCases(cases.map((item, itemIndex) => (itemIndex === index ? { ...item, left } : item)))}
+              className={cn(tokenControlClass, 'min-w-0')}
+              placeholder="Field or value"
+              ariaLabel={`Case ${index + 1} value`}
+            />
+            <select
+              value={entry.op}
+              onChange={(event) => setCases(cases.map((item, itemIndex) => (itemIndex === index ? { ...item, op: event.target.value as ConditionOp } : item)))}
+              className={controlClass}
+              aria-label={`Case ${index + 1} operator`}
+            >
+              {CONDITION_OPS.map((op) => (
+                <option key={op} value={op}>
+                  {CONDITION_OP_LABELS[op]}
+                </option>
+              ))}
+            </select>
+            <TokenTextEditor
+              ref={registerEditor(`sw.${index}.right`)}
+              value={entry.right}
+              labelCtx={labelCtx}
+              onFocus={focusEditor(`sw.${index}.right`)}
+              onChange={(right) => setCases(cases.map((item, itemIndex) => (itemIndex === index ? { ...item, right } : item)))}
+              className={cn(tokenControlClass, 'min-w-0')}
+              placeholder="Compare to"
+              ariaLabel={`Case ${index + 1} comparison value`}
+            />
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() =>
+          setCases([
+            ...cases,
+            {
+              id: `case${cases.length + 1}-${Math.random().toString(36).slice(2, 6)}`,
+              left: '',
+              op: 'contains',
+              right: '',
+            },
+          ])
+        }
+        className="text-sm font-semibold text-blue-700 hover:text-blue-900"
+      >
+        Add case
+      </button>
     </div>
   )
 }

@@ -252,8 +252,10 @@ const NON_TOKEN_FOCUSED = 'non-token-focused'
 const DEFAULT_EDITOR_KEYS: Partial<Record<FlowNode['type'], string>> = {
   agent: 'agent.input',
   ai: 'ai.instructions',
+  knowledge: 'knowledge.query',
   loop: 'loop.over',
   http: 'http.body',
+  subflow: 'subflow.input',
   transform: 'xf.0',
   condition: 'cond.0.left',
   filter: 'filt.0.left',

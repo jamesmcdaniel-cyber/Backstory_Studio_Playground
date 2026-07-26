@@ -70,7 +70,9 @@ export function toolConnectionBrand(connection: PresentableConnection): ToolBran
   ]
   const match = known.find((entry) => entry.match.test(hint))
   const fallback = normalized(connection.name || ref) || 'integration'
-  const brand = match ?? { key: fallback, label: connection.name || ref, slug: fallback }
+  const brand = match
+    ? { key: match.key, label: match.label, slug: match.slug }
+    : { key: fallback, label: connection.name || ref, slug: fallback }
   return { ...brand, key: `${plane}:${brand.key}` }
 }
 

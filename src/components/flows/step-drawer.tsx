@@ -16,6 +16,8 @@ import type { TokenLabelContext } from '@/lib/flows/token-text'
 import { cn } from '@/lib/utils'
 import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { useWorkspaceFlows } from './use-workspace-flows'
+import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { groupToolConnections, selectedToolPresentation, toolActionChoices } from '@/lib/flows/tool-presentation'
 
 export type { TriggerData }
 
@@ -267,6 +269,124 @@ export type OrgMember = { id: string; name: string | null; email: string | null 
 
 export function orgMemberLabel(member: OrgMember): string {
   return member.name?.trim() || member.email?.trim() || 'Member'
+}
+
+function ToolConfigurationSection({
+  node,
+  toolCatalog,
+  dataFields,
+  labelCtx,
+  onChange,
+}: {
+  node: Extract<FlowNode, { type: 'tool' }>
+  toolCatalog: ToolCatalog
+  dataFields: DataField[]
+  labelCtx: TokenLabelContext
+  onChange: (node: FlowNode) => void
+}) {
+  const { connection, tool, brand, actionLabel } = selectedToolPresentation(
+    toolCatalog,
+    node.data.connectionId,
+    node.data.toolName,
+  )
+  const providerGroups = groupToolConnections(toolCatalog)
+  const actions = connection ? toolActionChoices(toolCatalog, connection) : []
+  const selectedAction = actions.find(
+    (choice) => choice.connectionId === node.data.connectionId && choice.tool.name === node.data.toolName,
+  )
+  return (
+    <div className="space-y-3">
+      {!connection ? (
+        <div>
+          <label className={labelClass}>Connector</label>
+          <select
+            className={fieldClass}
+            value=""
+            onChange={(event) => {
+              const group = providerGroups.find((entry) => entry.brand.key === event.target.value)
+              const first = group?.connections.find((entry) => entry.tools.length > 0)
+              onChange({
+                ...node,
+                data: {
+                  ...node.data,
+                  connectionId: first?.id ?? '',
+                  toolName: first?.tools[0]?.name ?? '',
+                  args: '{}',
+                },
+              })
+            }}
+          >
+            <option value="">Choose a connected app…</option>
+            {providerGroups.map((entry) => (
+              <option key={entry.brand.key} value={entry.brand.key}>
+                {entry.brand.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/50 p-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <IntegrationLogo slug={brand?.slug} name={brand?.label ?? connection.name} className="h-9 w-9 rounded-lg bg-white p-1 shadow-sm" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">{brand?.label ?? connection.name}</p>
+                <p className="truncate text-xs text-muted-foreground">{actionLabel || 'Choose an action'}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange({ ...node, data: { ...node.data, connectionId: '', toolName: '', args: '{}' } })}
+              className="shrink-0 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+            >
+              Change app
+            </button>
+          </div>
+          <div>
+            <label className={labelClass}>Action</label>
+            <select
+              className={fieldClass}
+              value={selectedAction?.key ?? ''}
+              onChange={(event) => {
+                const next = actions.find((choice) => choice.key === event.target.value)
+                if (!next) return
+                onChange({
+                  ...node,
+                  data: {
+                    ...node.data,
+                    connectionId: next.connectionId,
+                    toolName: next.tool.name,
+                    args: '{}',
+                  },
+                })
+              }}
+            >
+              <option value="">Choose an action…</option>
+              {actions.map((entry) => (
+                <option key={entry.key} value={entry.key}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {tool && (
+            <>
+              {tool.description && <p className="text-xs text-muted-foreground">{tool.description}</p>}
+              <ToolArgsEditor
+                inputSchema={tool.inputSchema}
+                args={node.data.args}
+                onChange={(args) => onChange({ ...node, data: { ...node.data, args } })}
+                dataFields={dataFields}
+                labelCtx={labelCtx}
+              />
+            </>
+          )}
+        </>
+      )}
+      <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
+      <p className="text-xs text-muted-foreground">Runs this exact connected action with the configured inputs.</p>
+    </div>
+  )
 }
 
 export function StepDrawer({
@@ -785,54 +905,13 @@ export function StepDrawer({
         )}
 
         {node.type === 'tool' && (
-          <div className="space-y-3">
-            <div>
-              <label className={labelClass}>Connection</label>
-              <select
-                className={fieldClass}
-                value={node.data.connectionId}
-                onChange={(e) => onChange({ ...node, data: { ...node.data, connectionId: e.target.value, toolName: '' } })}
-              >
-                <option value="">Select a connection…</option>
-                {toolCatalog.map((conn) => (
-                  <option key={conn.id} value={conn.id}>
-                    {conn.name}
-                  </option>
-                ))}
-              </select>
-              {toolCatalog.length === 0 && (
-                <p className="mt-1.5 text-xs text-amber-600">No MCP connections yet — add one on the MCP Servers page.</p>
-              )}
-            </div>
-            <div>
-              <label className={labelClass}>Tool</label>
-              <select
-                className={fieldClass}
-                value={node.data.toolName}
-                onChange={(e) => onChange({ ...node, data: { ...node.data, toolName: e.target.value } })}
-              >
-                <option value="">Select a tool…</option>
-                {(toolCatalog.find((c) => c.id === node.data.connectionId)?.tools ?? []).map((tool) => (
-                  <option key={tool.name} value={tool.name} title={tool.description}>
-                    {tool.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {node.data.toolName ? (
-              <ToolArgsEditor
-                inputSchema={toolCatalog.find((c) => c.id === node.data.connectionId)?.tools.find((t) => t.name === node.data.toolName)?.inputSchema}
-                args={node.data.args}
-                onChange={(nextArgs) => onChange({ ...node, data: { ...node.data, args: nextArgs } })}
-                dataFields={dataFields}
-                labelCtx={labelCtx}
-              />
-            ) : (
-              <p className="text-xs text-muted-foreground">Pick a tool to configure its inputs.</p>
-            )}
-            <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
-            <p className="text-xs text-muted-foreground">Runs this exact tool with these arguments — deterministic, retryable, and no agent in the loop.</p>
-          </div>
+          <ToolConfigurationSection
+            node={node}
+            toolCatalog={toolCatalog}
+            dataFields={dataFields}
+            labelCtx={labelCtx}
+            onChange={onChange}
+          />
         )}
 
         {node.type === 'http' && (
@@ -849,15 +928,19 @@ export function StepDrawer({
                   </option>
                 ))}
               </select>
-              <TokenTextEditor
-                ref={registerEditor('http.url')}
-                className="min-w-0 flex-1 px-2 py-1.5"
+              <input
+                type="url"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className={`${fieldClass} min-w-0 flex-1`}
                 value={node.data.url}
-                labelCtx={labelCtx}
                 placeholder="https://example.com/webhook"
-                onFocus={focusEditor('http.url')}
-                onChange={(url) => onChange({ ...node, data: { ...node.data, url } })}
-                ariaLabel="Request URL"
+                onFocus={blockActive}
+                onBlur={unblockActive}
+                onChange={(event) => onChange({ ...node, data: { ...node.data, url: event.target.value } })}
+                aria-label="Request URL"
               />
             </div>
             <KeyValueJsonEditor

@@ -49,6 +49,7 @@ import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
+import { groupToolConnections, selectedToolPresentation, toolActionChoices } from '@/lib/flows/tool-presentation'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
 import { orgMemberLabel, type OrgMember, type ToolCatalog } from './step-drawer'
@@ -56,6 +57,7 @@ import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { AdvancedParamsSection } from './advanced-params'
 import { DataTree } from './data-tree'
 import { TokenTextEditor, type TokenTextEditorHandle } from './token-text-editor'
+import { ToolArgsEditor } from './tool-args-editor'
 import type { DataField } from '@/lib/flows/datatree'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import {
@@ -229,12 +231,6 @@ function switchFirstCase(node: Extract<FlowNode, { type: 'switch' }>) {
   return node.data.cases[0] ?? { id: 'case1', left: '', op: 'contains' as ConditionOp, right: '' }
 }
 
-function selectedTool(connectionId: string, toolName: string, toolCatalog: ToolCatalog) {
-  const connection = toolCatalog.find((entry) => entry.id === connectionId)
-  const tool = connection?.tools.find((entry) => entry.name === toolName)
-  return { connection, tool }
-}
-
 function stopEvent(event: React.MouseEvent | React.FocusEvent) {
   event.stopPropagation()
 }
@@ -341,6 +337,10 @@ export function StepCard({
   onDragEndNode?: () => void
 }) {
   const Icon = NODE_ICON[node.type]
+  const toolPresentation =
+    node.type === 'tool'
+      ? selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName)
+      : null
   // Read-only surfaces never show raw {{token}} syntax: humanize any node data
   // echoed in the collapsed summary or tooltips. Storage keeps canonical tokens.
   const humanize = (value: string) => (labelCtx ? humanizeTokens(value, labelCtx) : value)
@@ -513,23 +513,43 @@ export function StepCard({
       )}
     >
       <div className="flex items-center gap-5 px-5 py-5">
-        <span
-          draggable={draggable}
-          onDragStart={(event) => {
-            event.dataTransfer.setData('text/flow-node-id', node.id)
-            event.dataTransfer.effectAllowed = 'move'
-            onDragStartNode?.(node.id)
-          }}
-          onDragEnd={() => onDragEndNode?.()}
-          title="Drag to reorder"
-          className={cn(
-            'flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-lg',
-            NODE_TONE[node.type],
-            draggable && 'cursor-grab active:cursor-grabbing',
-          )}
-        >
-          <Icon className="h-6 w-6" />
-        </span>
+        {toolPresentation?.brand ? (
+          <span
+            draggable={draggable}
+            onDragStart={(event) => {
+              event.dataTransfer.setData('text/flow-node-id', node.id)
+              event.dataTransfer.effectAllowed = 'move'
+              onDragStartNode?.(node.id)
+            }}
+            onDragEnd={() => onDragEndNode?.()}
+            title="Drag to reorder"
+            className={cn('shrink-0', draggable && 'cursor-grab active:cursor-grabbing')}
+          >
+            <IntegrationLogo
+              slug={toolPresentation.brand.slug}
+              name={toolPresentation.brand.label}
+              className="h-[52px] w-[52px] rounded-lg border border-slate-200 bg-white p-2 shadow-sm"
+            />
+          </span>
+        ) : (
+          <span
+            draggable={draggable}
+            onDragStart={(event) => {
+              event.dataTransfer.setData('text/flow-node-id', node.id)
+              event.dataTransfer.effectAllowed = 'move'
+              onDragStartNode?.(node.id)
+            }}
+            onDragEnd={() => onDragEndNode?.()}
+            title="Drag to reorder"
+            className={cn(
+              'flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-lg',
+              NODE_TONE[node.type],
+              draggable && 'cursor-grab active:cursor-grabbing',
+            )}
+          >
+            <Icon className="h-6 w-6" />
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {typeof index === 'number' && <span className="text-xs font-semibold text-slate-400">{index}</span>}
@@ -672,7 +692,7 @@ export function StepCard({
             className="overflow-hidden"
           >
             <div onClick={stopEvent} onFocus={stopEvent} className="border-t border-slate-200 px-5 py-4">
-              {renderNodeBody({ node, agents, members, toolCatalog, update, onRefreshAgents, tokenWiring, showErrors, variableNames, flowId, published })}
+              {renderNodeBody({ node, agents, members, toolCatalog, dataFields, update, onRefreshAgents, tokenWiring, showErrors, variableNames, flowId, published })}
             </div>
           </motion.div>
         ) : (
@@ -750,6 +770,7 @@ function renderNodeBody({
   agents,
   members,
   toolCatalog,
+  dataFields,
   update,
   onRefreshAgents,
   tokenWiring,
@@ -762,6 +783,7 @@ function renderNodeBody({
   agents: Agent[]
   members?: OrgMember[]
   toolCatalog: ToolCatalog
+  dataFields?: DataField[]
   update: (node: FlowNode) => void
   onRefreshAgents?: () => void
   tokenWiring: TokenEditorWiring
@@ -784,7 +806,7 @@ function renderNodeBody({
     case 'http':
       return <HttpBody node={node} toolCatalog={toolCatalog} update={update} tokenWiring={tokenWiring} showErrors={showErrors} />
     case 'tool':
-      return <ToolBody node={node} toolCatalog={toolCatalog} update={update} showErrors={showErrors} />
+      return <ToolBody node={node} toolCatalog={toolCatalog} dataFields={dataFields ?? []} update={update} showErrors={showErrors} tokenWiring={tokenWiring} />
     case 'condition':
       return <ConditionBody node={node} update={update} tokenWiring={tokenWiring} />
     case 'filter':
@@ -1015,7 +1037,7 @@ function SubflowBody({
   flowId?: string
   showErrors?: boolean
 }) {
-  const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
   const { flows, loading } = useWorkspaceFlows()
   const selectable = flows.filter((flow) => flow.id !== flowId)
   const selected = flows.find((flow) => flow.id === node.data.flowId)
@@ -1459,7 +1481,7 @@ function HttpBody({
   tokenWiring: TokenEditorWiring
   showErrors?: boolean
 }) {
-  const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
   const urlInvalid = Boolean(showErrors && !node.data.url)
   const authConnections = toolCatalog.filter((entry) => parseFlowToolConnectionId(entry.id).plane === 'mcp')
   return (
@@ -1467,16 +1489,20 @@ function HttpBody({
       <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
         <div className="grid gap-2">
           <label className={labelClass}>URI <span className="text-red-500">*</span></label>
-          <TokenTextEditor
-            ref={registerEditor('http.url')}
+          <input
+            type="url"
+            inputMode="url"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             value={node.data.url}
-            labelCtx={labelCtx}
-            onFocus={focusEditor('http.url')}
-            onChange={(url) => update({ ...node, data: { ...node.data, url } })}
-            invalid={urlInvalid}
-            className={cn(tokenControlBase, urlInvalid ? 'focus:border-red-500' : 'border-slate-300')}
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            onChange={(event) => update({ ...node, data: { ...node.data, url: event.target.value } })}
+            aria-invalid={urlInvalid || undefined}
+            className={cn(controlClass, urlInvalid && 'border-red-400 focus:border-red-500')}
             placeholder="https://api.example.com/endpoint"
-            ariaLabel="URI"
+            aria-label="URI"
           />
         </div>
         <div className="grid gap-2">
@@ -1627,61 +1653,116 @@ function InlineKeyValue({
 function ToolBody({
   node,
   toolCatalog,
+  dataFields,
   update,
   showErrors,
+  tokenWiring,
 }: {
   node: Extract<FlowNode, { type: 'tool' }>
   toolCatalog: ToolCatalog
+  dataFields: DataField[]
   update: (node: FlowNode) => void
   showErrors?: boolean
+  tokenWiring: TokenEditorWiring
 }) {
-  const { connection, tool } = selectedTool(node.data.connectionId, node.data.toolName, toolCatalog)
+  const { connection, tool, brand, actionLabel } = selectedToolPresentation(
+    toolCatalog,
+    node.data.connectionId,
+    node.data.toolName,
+  )
+  const providerGroups = groupToolConnections(toolCatalog)
+  const actions = connection ? toolActionChoices(toolCatalog, connection) : []
+  const selectedAction = actions.find(
+    (choice) => choice.connectionId === node.data.connectionId && choice.tool.name === node.data.toolName,
+  )
   return (
     <div className="space-y-4">
-      <div className="grid gap-2">
-        <label className={labelClass}>Connection <span className="text-red-500">*</span></label>
-        <select
-          value={node.data.connectionId}
-          onChange={(event) => {
-            const nextConnection = toolCatalog.find((entry) => entry.id === event.target.value)
-            update({ ...node, data: { ...node.data, connectionId: event.target.value, toolName: nextConnection?.tools[0]?.name ?? '' } })
-          }}
-          className={cn(controlClass, showErrors && !node.data.connectionId && 'border-red-400 focus:border-red-500')}
-        >
-          <option value="">Choose a connected tool</option>
-          {toolCatalog.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      {connection && (
+      {!connection ? (
         <div className="grid gap-2">
-          <label className={labelClass}>Action <span className="text-red-500">*</span></label>
+          <label className={labelClass}>Connector <span className="text-red-500">*</span></label>
           <select
-            value={node.data.toolName}
-            onChange={(event) => update({ ...node, data: { ...node.data, toolName: event.target.value } })}
-            className={cn(controlClass, showErrors && !node.data.toolName && 'border-red-400 focus:border-red-500')}
+            value=""
+            onChange={(event) => {
+              const group = providerGroups.find((entry) => entry.brand.key === event.target.value)
+              const first = group?.connections.find((entry) => entry.tools.length > 0)
+              update({
+                ...node,
+                data: {
+                  ...node.data,
+                  connectionId: first?.id ?? '',
+                  toolName: first?.tools[0]?.name ?? '',
+                  args: '{}',
+                },
+              })
+            }}
+            className={cn(controlClass, showErrors && 'border-red-400 focus:border-red-500')}
           >
-            <option value="">Choose an action</option>
-            {connection.tools.map((entry) => (
-              <option key={entry.name} value={entry.name}>
-                {entry.name}
+            <option value="">Choose a connected app</option>
+            {providerGroups.map((entry) => (
+              <option key={entry.brand.key} value={entry.brand.key}>
+                {entry.brand.label}
               </option>
             ))}
           </select>
         </div>
-      )}
-      {connection ? (
-        <div className="flex items-start gap-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
-          <IntegrationLogo slug={connection.id} name={connection.name} className="h-8 w-8 rounded-lg bg-white p-1" />
-          <p>
-            {tool ? tool.description || 'Configure action inputs in the settings panel.' : 'Choose the action this connection should run.'}
-          </p>
-        </div>
       ) : (
-        <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Connectors available on this workspace will show here.</p>
+        <>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <IntegrationLogo slug={brand?.slug} name={brand?.label ?? connection.name} className="h-9 w-9 rounded-lg bg-white p-1 shadow-sm" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">{brand?.label ?? connection.name}</p>
+                <p className="truncate text-xs text-slate-500">{actionLabel || 'Choose an action'}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => update({ ...node, data: { ...node.data, connectionId: '', toolName: '', args: '{}' } })}
+              className="shrink-0 text-xs font-semibold text-blue-700 hover:text-blue-900"
+            >
+              Change app
+            </button>
+          </div>
+          <div className="grid gap-2">
+            <label className={labelClass}>Action <span className="text-red-500">*</span></label>
+            <select
+              value={selectedAction?.key ?? ''}
+              onChange={(event) => {
+                const next = actions.find((choice) => choice.key === event.target.value)
+                if (!next) return
+                update({
+                  ...node,
+                  data: {
+                    ...node.data,
+                    connectionId: next.connectionId,
+                    toolName: next.tool.name,
+                    args: '{}',
+                  },
+                })
+              }}
+              className={cn(controlClass, showErrors && !node.data.toolName && 'border-red-400 focus:border-red-500')}
+            >
+              <option value="">Choose an action</option>
+              {actions.map((entry) => (
+                <option key={entry.key} value={entry.key}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {tool && (
+            <>
+              {tool.description && <p className="text-sm text-slate-600">{tool.description}</p>}
+              <ToolArgsEditor
+                inputSchema={tool.inputSchema}
+                args={node.data.args}
+                onChange={(args) => update({ ...node, data: { ...node.data, args } })}
+                dataFields={dataFields}
+                labelCtx={tokenWiring.labelCtx}
+              />
+            </>
+          )}
+        </>
       )}
       <AdvancedParamsSection node={node} onChange={update} />
     </div>

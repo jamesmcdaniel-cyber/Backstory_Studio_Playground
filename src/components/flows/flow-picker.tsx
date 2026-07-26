@@ -41,14 +41,15 @@ import {
   type PickerGroup,
   type PickerLeaf,
 } from '@/lib/flows/builtin-catalog'
-import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { humanizeToolName } from '@/lib/flows/humanize-tool-name'
+import { groupToolConnections, toolConnectionBrand } from '@/lib/flows/tool-presentation'
 import type { FlowInsertSeed } from './flow-canvas'
 import type { ToolCatalog } from './step-drawer'
 
 type Agent = { id: string; title: string }
 type Connection = ToolCatalog[number]
 type ConnectionTool = Connection['tools'][number]
+type ProviderGroup = ReturnType<typeof groupToolConnections>[number]
 
 const FAVORITES_KEY = 'flows.pickerFavorites.v1'
 
@@ -182,20 +183,15 @@ function includesQuery(text: string, query: string): boolean {
   return text.toLowerCase().includes(query)
 }
 
-// Logo slug for a catalog connection. MCP rows use their raw id (unchanged
-// behavior); plane-prefixed ids (native:slack, nango:gmail,
-// people_ai:backstory — see lib/flows/tool-connection-id) use the ref.
 function connectionLogoSlug(connection: Connection): string {
-  const { ref } = parseFlowToolConnectionId(connection.id)
-  return ref
+  return toolConnectionBrand(connection).slug
 }
 
 // Connector key for tool-label humanization: prefixed planes name their
 // connector in the ref (native:slack, nango:gmail, people_ai:backstory); MCP
 // rows are opaque ids, so their display name is the key instead.
 function connectionToolKey(connection: Connection): string {
-  const { plane, ref } = parseFlowToolConnectionId(connection.id)
-  return plane === 'mcp' ? connection.name : ref
+  return toolConnectionBrand(connection).slug
 }
 
 export function FlowPicker({
@@ -214,7 +210,7 @@ export function FlowPicker({
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
-  const [drill, setDrill] = useState<{ kind: 'group'; group: PickerGroup } | { kind: 'connector'; connection: Connection } | null>(null)
+  const [drill, setDrill] = useState<{ kind: 'group'; group: PickerGroup } | { kind: 'connector'; provider: ProviderGroup } | null>(null)
   const [connectorFilter, setConnectorFilter] = useState<'all' | 'builtin' | 'connected'>('all')
   const [favorites, setFavorites] = useState<Set<string>>(() => loadFavorites())
 
@@ -268,7 +264,7 @@ export function FlowPicker({
   })
 
   const connectionToolRow = (connection: Connection, tool: ConnectionTool): Row => {
-    const favoriteId = `tool:${connection.id}:${tool.name}`
+    const favoriteId = `tool:${encodeURIComponent(connection.id)}:${encodeURIComponent(tool.name)}`
     return {
       id: favoriteId,
       // Humanized DISPLAY label only — the raw tool.name stays the stored
@@ -294,18 +290,22 @@ export function FlowPicker({
     onSelect: () => setDrill({ kind: 'group', group }),
   })
 
-  const connectionRow = (connection: Connection): Row => ({
-    id: `connection:${connection.id}`,
-    label: connection.name,
-    description: connection.tools.length
-      ? `${connection.tools.length} available action${connection.tools.length === 1 ? '' : 's'}`
-      : connection.toolsError
-        ? connection.toolsError
+  const connectionRow = (provider: ProviderGroup): Row => {
+    const actionCount = provider.connections.reduce((count, connection) => count + connection.tools.length, 0)
+    const firstError = provider.connections.find((connection) => connection.toolsError)?.toolsError
+    return {
+      id: `connection:${provider.brand.key}`,
+      label: provider.brand.label,
+      description: actionCount
+        ? `${actionCount} available action${actionCount === 1 ? '' : 's'}`
+        : firstError
+          ? firstError
         : 'No actions available yet.',
-    logo: { slug: connectionLogoSlug(connection), name: connection.name },
-    chevron: true,
-    onSelect: () => setDrill({ kind: 'connector', connection }),
-  })
+      logo: { slug: provider.brand.slug, name: provider.brand.label },
+      chevron: true,
+      onSelect: () => setDrill({ kind: 'connector', provider }),
+    }
+  }
 
   const resolveFavorite = (id: string): Row | undefined => {
     if (id.startsWith('agent:')) {
@@ -318,8 +318,17 @@ export function FlowPicker({
       const rest = id.slice('tool:'.length)
       const sep = rest.indexOf(':')
       if (sep === -1) return undefined
-      const connectionId = rest.slice(0, sep)
-      const toolName = rest.slice(sep + 1)
+      let connectionId = decodeURIComponent(rest.slice(0, sep))
+      let toolName = decodeURIComponent(rest.slice(sep + 1))
+      // Backward compatibility for v1 favorite ids, whose raw connection id
+      // could itself contain ":" (for example nango:slack).
+      if (!toolCatalog.some((connection) => connection.id === connectionId)) {
+        const legacy = toolCatalog.find((connection) => rest.startsWith(`${connection.id}:`))
+        if (legacy) {
+          connectionId = legacy.id
+          toolName = rest.slice(legacy.id.length + 1)
+        }
+      }
       const connection = toolCatalog.find((c) => c.id === connectionId)
       const tool = connection?.tools.find((t) => t.name === toolName)
       return connection && tool ? connectionToolRow(connection, tool) : undefined
@@ -340,14 +349,14 @@ export function FlowPicker({
   }, [favorites, agents, toolCatalog, mode, searching, normalizedQuery])
 
   const baseTitle = mode === 'trigger' ? 'Add a trigger' : 'Add an action'
-  const drillLabel = drill?.kind === 'group' ? drill.group.label : drill?.kind === 'connector' ? drill.connection.name : null
+  const drillLabel = drill?.kind === 'group' ? drill.group.label : drill?.kind === 'connector' ? drill.provider.brand.label : null
   const drillSubtitle =
     drill?.kind === 'group'
       ? drill.group.description
       : drill?.kind === 'connector'
-        ? drill.connection.tools.length === 0 && drill.connection.toolsError
-          ? drill.connection.toolsError
-          : `Choose an action from ${drill.connection.name}.`
+        ? drill.provider.connections.every((connection) => connection.tools.length === 0)
+          ? drill.provider.connections.find((connection) => connection.toolsError)?.toolsError
+          : `Choose an action from ${drill.provider.brand.label}.`
         : undefined
 
   let body: React.ReactNode
@@ -356,7 +365,9 @@ export function FlowPicker({
     const rows =
       drill.kind === 'group'
         ? drill.group.children.map(leafRow)
-        : drill.connection.tools.map((tool) => connectionToolRow(drill.connection, tool))
+        : drill.provider.connections.flatMap((connection) =>
+            connection.tools.map((tool) => connectionToolRow(connection, tool)),
+          )
     body = (
       <>
         {rows.length ? (
@@ -406,7 +417,7 @@ export function FlowPicker({
               )
               .map((tool) => connectionToolRow(connection, tool)),
           )
-        : toolCatalog.map(connectionRow)
+        : groupToolConnections(toolCatalog).map(connectionRow)
       : []
     const connectorRows = [...connectorBuiltInRows, ...connectorRealRows]
 

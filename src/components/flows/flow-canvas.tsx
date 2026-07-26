@@ -8,6 +8,7 @@ import { AI_OP_LABELS, CONDITION_OP_LABELS, VARIABLE_OP_LABELS, VARIABLE_TYPE_LA
 import type { StepType } from '@/lib/flows/mutate'
 import type { DataField } from '@/lib/flows/datatree'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
+import { selectedToolPresentation } from '@/lib/flows/tool-presentation'
 import { StepCard, type StepStatus } from './step-card'
 import { FlowPicker } from './flow-picker'
 import type { OrgMember, ToolCatalog } from './step-drawer'
@@ -215,7 +216,11 @@ export function FlowCanvas({
       case 'stop':
         return node.data.label || 'Stop flow'
       case 'tool':
-        return node.data.label || node.data.toolName || 'Run a connected tool'
+        return (
+          node.data.label ||
+          selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName).actionLabel ||
+          'Run a connected tool'
+        )
       case 'http':
         return node.data.label || 'HTTP request'
       case 'transform':
@@ -272,7 +277,10 @@ export function FlowCanvas({
       case 'stop':
         return node.data.reason || undefined
       case 'tool':
-        return node.data.toolName || 'Choose connection and action'
+        return (
+          selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName).brand?.label ||
+          'Choose a connected app and action'
+        )
       case 'http':
         return node.data.url ? `${node.data.method} ${node.data.url}` : 'Configure an API request'
       case 'transform':

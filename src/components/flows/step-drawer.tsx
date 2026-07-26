@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { X, Trash2, Plus, Copy, Database, Settings2 } from 'lucide-react'
+import { X, Trash2, Plus, Copy, Database, Settings2, Braces, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
@@ -18,6 +18,13 @@ import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { groupToolConnections, selectedToolPresentation, toolActionChoices } from '@/lib/flows/tool-presentation'
+import { Switch } from '@/components/ui/switch'
+import {
+  HTTP_AUTH_OPTIONS,
+  HttpCredentialDialog,
+  type HttpAuthOption,
+  type HttpCredentialSummary,
+} from '@/components/flows/http-credential-dialog'
 
 export type { TriggerData }
 
@@ -402,6 +409,8 @@ export function StepDrawer({
   variableNames,
   issues,
   published,
+  rawInput,
+  rawOutput,
   layout = 'drawer',
   onChange,
   onChangeType,
@@ -420,6 +429,8 @@ export function StepDrawer({
   variableNames?: string[]
   issues?: { level: 'error' | 'warning'; message: string }[]
   published?: boolean
+  rawInput?: unknown
+  rawOutput?: unknown
   layout?: 'drawer' | 'workspace'
   onChange: (node: FlowNode) => void
   onChangeType: (type: EditableType) => void
@@ -429,6 +440,9 @@ export function StepDrawer({
   onClose: () => void
 }) {
   const isWorkspace = layout === 'workspace'
+  const [httpCredentials, setHttpCredentials] = useState<HttpCredentialSummary[]>([])
+  const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
+  const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
   const isTrigger = node.type === 'trigger'
   const trigger = ((node.type === 'trigger' ? node.data.trigger : undefined) as TriggerData | undefined) ?? { type: 'manual' }
   // Chip-editor handles keyed by field, so a datatree click inserts a token
@@ -470,6 +484,25 @@ export function StepDrawer({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [isWorkspace, onClose])
+  useEffect(() => {
+    if (node.type !== 'http') return
+    fetch('/api/http-credentials', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.success && Array.isArray(data.credentials)) setHttpCredentials(data.credentials)
+      })
+      .catch(() => undefined)
+  }, [node.type])
+
+  const rawJson = (value: unknown, empty: string) => {
+    if (value === undefined || value === null) return empty
+    if (typeof value === 'string') return value
+    try {
+      return JSON.stringify(value, null, 2)
+    } catch {
+      return String(value)
+    }
+  }
 
   const setLabel = (label: string) => onChange({ ...node, data: { ...node.data, label } } as FlowNode)
 
@@ -516,20 +549,24 @@ export function StepDrawer({
         </button>
       </div>
 
-      <div className={cn('min-h-0 flex-1', isWorkspace && 'grid md:grid-cols-[300px_minmax(0,1fr)]')}>
+      <div className={cn('min-h-0 flex-1', isWorkspace && 'grid lg:grid-cols-[minmax(250px,0.8fr)_minmax(480px,1.25fr)_minmax(250px,0.8fr)]')}>
         {isWorkspace && (
-          <aside className="hidden min-h-0 flex-col border-r border-border bg-slate-50/70 md:flex">
+          <aside className="hidden min-h-0 flex-col border-r border-border bg-slate-50/70 lg:flex">
             <div className="border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Database className="h-4 w-4 text-indigo-600" />
                 <p className="text-sm font-semibold">Input</p>
               </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Choose data from the trigger or earlier nodes. It is inserted into the field you are editing.
-              </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw data received from the trigger and previous nodes.</p>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              <DataTree fields={dataFields} onInsert={insertToken} title="Available input data" />
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+              <pre className="max-h-[45%] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
+                {rawJson(rawInput, 'No input data yet.\nRun the previous nodes to inspect their raw output here.')}
+              </pre>
+              <div>
+                <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Insert a value</p>
+                <DataTree fields={dataFields} onInsert={insertToken} title="Available input data" />
+              </div>
             </div>
           </aside>
         )}
@@ -1304,6 +1341,22 @@ export function StepDrawer({
             </div>
           )}
         </div>
+        {isWorkspace && (
+          <aside className="hidden min-h-0 flex-col border-l border-border bg-slate-50/70 lg:flex">
+            <div className="border-b border-border px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Braces className="h-4 w-4 text-indigo-600" />
+                <p className="text-sm font-semibold">Output</p>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw output from this node&apos;s latest run.</p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <pre className="min-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
+                {rawJson(rawOutput, 'No output data yet.\nRun the flow to inspect this node’s response here.')}
+              </pre>
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   )
@@ -1355,6 +1408,22 @@ function VariableEditor({
           ))}
         </select>
       </div>
+      {node.type === 'http' && (
+        <HttpCredentialDialog
+          open={credentialDialogOpen}
+          onOpenChange={setCredentialDialogOpen}
+          requestUrl={node.data.url}
+          requestMethod={node.data.method}
+          initialAuthType={newCredentialType}
+          onSaved={(credential) => {
+            setHttpCredentials((current) => [
+              credential,
+              ...current.filter((entry) => entry.id !== credential.id),
+            ])
+            onChange({ ...node, data: { ...node.data, credentialId: credential.id, connectionId: undefined } })
+          }}
+        />
+      )}
       <div>
         <label className={labelClass}>Name</label>
         {isInitialize || nameOptions.length === 0 ? (

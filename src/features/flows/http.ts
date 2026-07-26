@@ -1,11 +1,16 @@
 export type FlowHttpConfig = {
+  credentialId?: unknown
   connectionId?: unknown
   method?: unknown
   url?: unknown
   query?: unknown
   headers?: unknown
   body?: unknown
+  sendQuery?: unknown
+  sendHeaders?: unknown
+  sendBody?: unknown
   bodyMode?: unknown
+  contentType?: unknown
   responseType?: unknown
   failOnHttpError?: unknown
   retries?: unknown
@@ -33,7 +38,7 @@ export type FlowHttpOutput = {
 // can't persist an unbounded object on the run row.
 const PARSE_MAX_CHARS = 400_000
 
-const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH'])
+const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
 const JSON_RE = /^(?:\{|\[|true|false|null|-?\d|")/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,14 +90,19 @@ function queryUrl(url: string, query: unknown): string {
   return next.toString()
 }
 
-function explicitBodyMode(value: unknown): 'json' | 'text' | 'none' | undefined {
-  return value === 'json' || value === 'text' || value === 'none' ? value : undefined
+type BodyMode = 'json' | 'raw' | 'graphql' | 'form-urlencoded' | 'none'
+
+function explicitBodyMode(value: unknown): BodyMode | undefined {
+  if (value === 'text') return 'raw'
+  return value === 'json' || value === 'raw' || value === 'graphql' || value === 'form-urlencoded' || value === 'none'
+    ? value
+    : undefined
 }
 
-function inferBodyMode(body: unknown): 'json' | 'text' | 'none' {
+function inferBodyMode(body: unknown): BodyMode {
   if (body == null || body === '') return 'none'
   if (typeof body !== 'string') return 'json'
-  return JSON_RE.test(body.trim()) ? 'json' : 'text'
+  return JSON_RE.test(body.trim()) ? 'json' : 'raw'
 }
 
 function jsonBody(body: unknown): string | undefined {
@@ -114,10 +124,37 @@ function textBody(body: unknown): string | undefined {
   return typeof body === 'string' ? body : JSON.stringify(body)
 }
 
+function formBody(body: unknown): string | undefined {
+  const parsed = parseObjectInput(body, 'Form URL encoded body')
+  if (!Object.keys(parsed).length) return undefined
+  const form = new URLSearchParams()
+  for (const [key, value] of Object.entries(parsed)) {
+    if (Array.isArray(value)) {
+      for (const item of value) form.append(key, String(item))
+    } else if (value != null) {
+      form.set(key, String(value))
+    }
+  }
+  return form.toString()
+}
+
+function graphqlBody(body: unknown): string | undefined {
+  if (body == null || body === '') return undefined
+  if (typeof body !== 'string') return JSON.stringify(body)
+  const trimmed = body.trim()
+  if (!trimmed) return undefined
+  try {
+    const parsed = JSON.parse(trimmed)
+    return JSON.stringify(parsed)
+  } catch {
+    return JSON.stringify({ query: body })
+  }
+}
+
 export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init: RequestInit; timeoutMs: number; failOnHttpError: boolean; responseType: 'auto' | 'json' | 'text' } {
   const method = String(config.method || 'POST').toUpperCase()
-  const url = queryUrl(String(config.url || ''), config.query)
-  const headers = headersFrom(config.headers)
+  const url = queryUrl(String(config.url || ''), config.sendQuery === false ? undefined : config.query)
+  const headers = headersFrom(config.sendHeaders === false ? undefined : config.headers)
   // The Cookie field is a convenience for the common single-header case; an
   // explicit Cookie among `headers` always wins.
   if (typeof config.cookie === 'string' && config.cookie.trim() !== '' && !Object.keys(headers).some((key) => key.toLowerCase() === 'cookie')) {
@@ -126,10 +163,20 @@ export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init:
   const mode = explicitBodyMode(config.bodyMode) ?? inferBodyMode(config.body)
   const bodyAllowed = BODY_METHODS.has(method)
   let body: string | undefined
-  if (bodyAllowed && mode !== 'none') {
-    body = mode === 'json' ? jsonBody(config.body) : textBody(config.body)
-    if (mode === 'json' && body && !Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')) {
-      headers['content-type'] = 'application/json'
+  if (bodyAllowed && config.sendBody !== false && mode !== 'none') {
+    body =
+      mode === 'json'
+        ? jsonBody(config.body)
+        : mode === 'form-urlencoded'
+          ? formBody(config.body)
+          : mode === 'graphql'
+            ? graphqlBody(config.body)
+            : textBody(config.body)
+    const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')
+    if (body && !hasContentType) {
+      if (mode === 'json' || mode === 'graphql') headers['content-type'] = 'application/json'
+      else if (mode === 'form-urlencoded') headers['content-type'] = 'application/x-www-form-urlencoded'
+      else if (typeof config.contentType === 'string' && config.contentType.trim()) headers['content-type'] = config.contentType.trim()
     }
   }
   const timeoutMs = typeof config.timeoutMs === 'number' && Number.isFinite(config.timeoutMs)

@@ -32,6 +32,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'Signal', 'SignalSubscription', 'CustomSignal', 'AgentExecution', 'Notification',
   'PushSubscription', 'AuditEvent', 'ApprovalRequest', 'AgentTemplate', 'Integration',
   'PeopleAiConnection', 'McpConnection', 'NangoConnection', 'IntegrationSecret',
+  'HttpCredential',
   'Flow', 'FlowVersion', 'FlowRun', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
   'TemplateProposal', 'StoredFile',
 ])

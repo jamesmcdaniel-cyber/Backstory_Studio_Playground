@@ -23,7 +23,12 @@ import { stepLabelsOf } from '@/lib/flows/token-text'
 import { interpretFlow, FlowCancelledError, type RunAgentFn, type RunActionFn } from './interpret'
 import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout } from './action-reliability'
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization } from './http'
-import { resolveHttpConnectionToken } from './http-auth'
+import {
+  fetchWithHttpCredential,
+  resolveHttpConnectionToken,
+  resolveHttpCredential,
+  type ResolvedHttpCredential,
+} from './http-auth'
 import { shouldPersistInterpreterStep } from './run-step-persistence'
 import { prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
@@ -875,12 +880,17 @@ export async function runFlowExecution(
       }
       if (node.kind === 'http') {
         const request = prepareHttpRequest(node.config)
+        let httpCredential: ResolvedHttpCredential | null = null
+        const credentialId = typeof node.config.credentialId === 'string' ? node.config.credentialId.trim() : ''
+        if (credentialId) {
+          httpCredential = await resolveHttpCredential(credentialId, job.organizationId)
+        }
         // Optional connection auth: resolve a fresh token server-side and inject
         // it as the Authorization header — unless the user set their own, which
         // wins. The token lives only in the outbound request, never in the
         // persisted step input/output or logs.
         const httpConnectionId = typeof node.config.connectionId === 'string' ? node.config.connectionId.trim() : ''
-        if (httpConnectionId) {
+        if (!httpCredential && httpConnectionId) {
           const token = await resolveHttpConnectionToken({
             connectionId: httpConnectionId,
             organizationId: job.organizationId,
@@ -898,7 +908,7 @@ export async function runFlowExecution(
             controller.abort()
           }, request.timeoutMs)
           try {
-            const response = await fetch(request.url, { ...request.init, signal: controller.signal })
+            const response = await fetchWithHttpCredential(request, httpCredential, controller.signal)
             const nextOutput = await responseOutput(response, request.responseType, HTTP_MAX_RESPONSE_CHARS)
             if (request.failOnHttpError && !nextOutput.ok) throw new Error(`HTTP ${nextOutput.status}: ${nextOutput.bodyText.slice(0, 200)}`)
             return nextOutput

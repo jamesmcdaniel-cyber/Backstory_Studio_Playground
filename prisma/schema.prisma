@@ -43,6 +43,7 @@ model Organization {
   mcpConnections     McpConnection[]
   nangoConnections   NangoConnection[]
   integrationSecrets IntegrationSecret[]
+  httpCredentials    HttpCredential[]
   peopleAiConnections PeopleAiConnection[]
   signals             Signal[]
   signalSubscriptions SignalSubscription[]
@@ -650,6 +651,29 @@ model IntegrationSecret {
   @@unique([organizationId, provider])
   @@index([organizationId, isActive])
   @@map("integration_secrets")
+}
+
+// Reusable encrypted credentials for generic HTTP Request nodes. A flow stores
+// only this row's id; plaintext secrets never enter graph JSON or run logs.
+// `allowedHost` binds a credential to the API host it was verified against so
+// it cannot be silently replayed to an unrelated endpoint.
+model HttpCredential {
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
+  name           String
+  authType       String
+  allowedHost    String
+  secretConfig   String    @db.Text
+  status         String    @default("verified")
+  lastVerifiedAt DateTime?
+  lastError      String?   @db.Text
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, authType, allowedHost])
+  @@map("http_credentials")
 }
 
 /// A visual agent pipeline: a graph of steps, each running a workspace agent

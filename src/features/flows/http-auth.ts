@@ -1,40 +1,278 @@
-/**
- * HTTP step connection auth — resolve a fresh bearer token for an http node's
- * optional `connectionId` at fetch time.
- *
- * v1 supports McpConnection rows only (raw ids — the same rows the flow tool
- * catalog lists), because ensureFreshConnectionToken operates on McpConnection.
- * Prefixed plane ids (people_ai:/native:/nango:) are rejected with the
- * same plain-english error as a missing connection.
- *
- * SECRETS DISCIPLINE: the returned token is used to build the outbound request
- * header only. It must never be logged, persisted to FlowRunStep rows, or
- * included in any client payload.
- */
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
+import { decryptSecret } from '@/lib/crypto/secrets'
 import { ensureFreshConnectionToken } from '@/lib/mcp/connection-token'
 import { mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import { mcpConnectionScope } from '@/lib/flows/tool-catalog'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 
+export const HTTP_AUTH_TYPES = [
+  'basic',
+  'bearer',
+  'custom',
+  'digest',
+  'header',
+  'oauth1',
+  'oauth2',
+  'query',
+] as const
+
+export type HttpAuthType = (typeof HTTP_AUTH_TYPES)[number]
+export type HttpCredentialConfig = Record<string, string>
+
+export type ResolvedHttpCredential = {
+  id?: string
+  name?: string
+  authType: HttpAuthType
+  allowedHost: string
+  config: HttpCredentialConfig
+}
+
+const oauthTokenCache = new Map<string, { token: string; expiresAt: number }>()
+
+function headerRecord(headers: HeadersInit | undefined): Record<string, string> {
+  return Object.fromEntries(new Headers(headers).entries())
+}
+
+function encode(value: string) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+}
+
+function parseObject(value: string | undefined, label: string): Record<string, string> {
+  if (!value?.trim()) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error(`${label} must be valid JSON.`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object.`)
+  }
+  return Object.fromEntries(
+    Object.entries(parsed as Record<string, unknown>)
+      .filter(([key, item]) => key.trim() && item != null)
+      .map(([key, item]) => [key, typeof item === 'string' ? item : JSON.stringify(item)]),
+  )
+}
+
+function addQuery(urlValue: string, values: Record<string, string>) {
+  const url = new URL(urlValue)
+  for (const [key, value] of Object.entries(values)) url.searchParams.set(key, value)
+  return url.toString()
+}
+
+async function oauth2Token(credential: ResolvedHttpCredential): Promise<string> {
+  const cfg = credential.config
+  if (cfg.accessToken?.trim()) return cfg.accessToken.trim()
+  if (!cfg.tokenUrl || !cfg.clientId || !cfg.clientSecret) {
+    throw new Error('OAuth2 requires an access token or client credentials with a token URL.')
+  }
+  const cacheKey = credential.id || `${cfg.tokenUrl}:${cfg.clientId}:${cfg.scope || ''}`
+  const cached = oauthTokenCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now() + 15_000) return cached.token
+
+  const form = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: cfg.clientId,
+    client_secret: cfg.clientSecret,
+  })
+  if (cfg.scope) form.set('scope', cfg.scope)
+  if (cfg.audience) form.set('audience', cfg.audience)
+  const response = await fetch(cfg.tokenUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: form,
+    redirect: 'error',
+  })
+  const payload = await response.json().catch(() => ({})) as { access_token?: string; expires_in?: number; error_description?: string }
+  if (!response.ok || !payload.access_token) {
+    throw new Error(payload.error_description || `OAuth2 token endpoint returned HTTP ${response.status}.`)
+  }
+  oauthTokenCache.set(cacheKey, {
+    token: payload.access_token,
+    expiresAt: Date.now() + Math.max(30, Number(payload.expires_in) || 300) * 1000,
+  })
+  return payload.access_token
+}
+
+function oauth1Header(urlValue: string, method: string, cfg: HttpCredentialConfig) {
+  if (!cfg.consumerKey || !cfg.consumerSecret) throw new Error('OAuth1 requires a consumer key and consumer secret.')
+  const url = new URL(urlValue)
+  const oauth: Record<string, string> = {
+    oauth_consumer_key: cfg.consumerKey,
+    oauth_nonce: randomBytes(16).toString('hex'),
+    oauth_signature_method: 'HMAC-SHA1',
+    oauth_timestamp: String(Math.floor(Date.now() / 1000)),
+    oauth_version: '1.0',
+  }
+  if (cfg.token) oauth.oauth_token = cfg.token
+  const params = [
+    ...Array.from(url.searchParams.entries()),
+    ...Object.entries(oauth),
+  ].sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue))
+  const parameterString = params.map(([key, value]) => `${encode(key)}=${encode(value)}`).join('&')
+  const baseUrl = `${url.protocol}//${url.host}${url.pathname}`
+  const base = `${method.toUpperCase()}&${encode(baseUrl)}&${encode(parameterString)}`
+  const signingKey = `${encode(cfg.consumerSecret)}&${encode(cfg.tokenSecret || '')}`
+  oauth.oauth_signature = createHmac('sha1', signingKey).update(base).digest('base64')
+  return `OAuth ${Object.entries(oauth).map(([key, value]) => `${encode(key)}="${encode(value)}"`).join(', ')}`
+}
+
+/** Apply every non-Digest credential form before the request is sent. */
+export async function applyHttpCredential(
+  request: { url: string; init: RequestInit },
+  credential: ResolvedHttpCredential,
+): Promise<{ url: string; init: RequestInit }> {
+  const requestHost = new URL(request.url).hostname.toLowerCase()
+  if (requestHost !== credential.allowedHost.toLowerCase()) {
+    throw new Error(`Credential "${credential.name || 'HTTP credential'}" is restricted to ${credential.allowedHost}.`)
+  }
+
+  const cfg = credential.config
+  let url = request.url
+  const headers = headerRecord(request.init.headers)
+  switch (credential.authType) {
+    case 'basic':
+      headers.authorization = `Basic ${Buffer.from(`${cfg.username || ''}:${cfg.password || ''}`).toString('base64')}`
+      break
+    case 'bearer':
+      headers.authorization = `Bearer ${cfg.token || ''}`
+      break
+    case 'header':
+      if (!cfg.name) throw new Error('Header authentication requires a header name.')
+      headers[cfg.name] = cfg.value || ''
+      break
+    case 'query':
+      if (!cfg.name) throw new Error('Query authentication requires a parameter name.')
+      url = addQuery(url, { [cfg.name]: cfg.value || '' })
+      break
+    case 'custom':
+      Object.assign(headers, parseObject(cfg.headersJson, 'Custom authentication headers'))
+      url = addQuery(url, parseObject(cfg.queryJson, 'Custom authentication query parameters'))
+      break
+    case 'oauth1':
+      headers.authorization = oauth1Header(url, String(request.init.method || 'GET'), cfg)
+      break
+    case 'oauth2':
+      headers.authorization = `Bearer ${await oauth2Token(credential)}`
+      break
+    case 'digest':
+      // Digest needs the server's nonce from a 401 challenge and is applied by
+      // fetchWithHttpCredential below.
+      break
+  }
+  return { url, init: { ...request.init, headers } }
+}
+
+function digestParts(challenge: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  const source = challenge.replace(/^Digest\s+/i, '')
+  for (const match of source.matchAll(/(\w+)=(?:"([^"]*)"|([^,\s]+))/g)) {
+    result[match[1]] = match[2] ?? match[3] ?? ''
+  }
+  return result
+}
+
+function digestHeader(urlValue: string, method: string, cfg: HttpCredentialConfig, challenge: string) {
+  const parts = digestParts(challenge)
+  if (!parts.realm || !parts.nonce) throw new Error('The server returned an unsupported Digest challenge.')
+  const algorithm = (parts.algorithm || 'MD5').toUpperCase()
+  if (algorithm !== 'MD5' && algorithm !== 'MD5-SESS') throw new Error(`Digest algorithm ${algorithm} is not supported.`)
+  const hash = (value: string) => createHash('md5').update(value).digest('hex')
+  const uri = `${new URL(urlValue).pathname}${new URL(urlValue).search}`
+  const cnonce = randomBytes(12).toString('hex')
+  const nc = '00000001'
+  const qop = (parts.qop || '').split(',').map((value) => value.trim()).find((value) => value === 'auth')
+  const initialA1 = hash(`${cfg.username || ''}:${parts.realm}:${cfg.password || ''}`)
+  const a1 = algorithm === 'MD5-SESS' ? hash(`${initialA1}:${parts.nonce}:${cnonce}`) : initialA1
+  const a2 = hash(`${method.toUpperCase()}:${uri}`)
+  const response = qop
+    ? hash(`${a1}:${parts.nonce}:${nc}:${cnonce}:${qop}:${a2}`)
+    : hash(`${a1}:${parts.nonce}:${a2}`)
+  const values: Record<string, string> = {
+    username: cfg.username || '',
+    realm: parts.realm,
+    nonce: parts.nonce,
+    uri,
+    response,
+    algorithm,
+  }
+  if (parts.opaque) values.opaque = parts.opaque
+  if (qop) Object.assign(values, { qop, nc, cnonce })
+  return `Digest ${Object.entries(values).map(([key, value]) => `${key}="${value}"`).join(', ')}`
+}
+
+export async function fetchWithHttpCredential(
+  request: { url: string; init: RequestInit },
+  credential: ResolvedHttpCredential | null,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const applied = credential ? await applyHttpCredential(request, credential) : request
+  let response = await fetch(applied.url, { ...applied.init, signal })
+  if (credential?.authType !== 'digest' || response.status !== 401) return response
+  const challenge = response.headers.get('www-authenticate') || ''
+  if (!/^Digest\s/i.test(challenge)) return response
+  await response.body?.cancel().catch(() => undefined)
+  const headers = headerRecord(applied.init.headers)
+  headers.authorization = digestHeader(
+    applied.url,
+    String(applied.init.method || 'GET'),
+    credential.config,
+    challenge,
+  )
+  response = await fetch(applied.url, { ...applied.init, headers, signal })
+  return response
+}
+
+export async function resolveHttpCredential(
+  credentialId: string,
+  organizationId: string,
+): Promise<ResolvedHttpCredential> {
+  const row = await prisma.httpCredential.findFirst({
+    where: { id: credentialId, organizationId, status: 'verified' },
+  })
+  if (!row) throw new Error('The selected HTTP credential is unavailable. Choose or verify it again.')
+  let config: HttpCredentialConfig
+  try {
+    config = JSON.parse(decryptSecret(row.secretConfig)) as HttpCredentialConfig
+  } catch {
+    throw new Error('The selected HTTP credential could not be decrypted. Recreate it.')
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    authType: row.authType as HttpAuthType,
+    allowedHost: row.allowedHost,
+    config,
+  }
+}
+
+export function redactedCredential(row: {
+  id: string
+  name: string
+  authType: string
+  allowedHost: string
+  status: string
+  lastVerifiedAt: Date | null
+}) {
+  return {
+    id: row.id,
+    name: row.name,
+    authType: row.authType,
+    allowedHost: row.allowedHost,
+    status: row.status,
+    lastVerifiedAt: row.lastVerifiedAt?.toISOString() ?? null,
+  }
+}
+
+// Legacy MCP-connection bearer auth remains supported for existing flow
+// graphs. New HTTP nodes use credentialId and the generic store above.
 export const HTTP_CONNECTION_UNAVAILABLE =
   'The connection for this HTTP step is unavailable — reconnect it in Integrations.'
 
-
-/**
- * Pure token selection: given a decrypted connection config, return the
- * bearer token to inject, or undefined when the connection carries no usable
- * token.
- *
- * ensureFreshConnectionToken never throws — when a refresh fails it hands the
- * row back unchanged, stale access token included. Where expiry is tracked
- * (oauth2 authcode `expiresAt`, ms since epoch), a token at or past its expiry
- * is rejected here instead of being injected, so the caller surfaces reconnect
- * guidance rather than the remote's bare 401. No grace below `now`: the
- * refresher already retries anything under now+60s, so a token reaching this
- * point past expiry has a broken refresh — there is no valid token to protect.
- * api_key connections track no expiry and are unaffected.
- */
 export function usableConnectionToken(
   config: {
     authType?: string
@@ -46,9 +284,6 @@ export function usableConnectionToken(
   },
   now = Date.now(),
 ): string | undefined {
-  // OAuth authcode connections carry a (just-refreshed) access token; api_key
-  // connections qualify only when their key is presented as a Bearer
-  // Authorization header (no custom header name) — mirroring McpClient.
   if (config.authType === 'oauth2' && config.flow === 'authcode') {
     if (!config.accessToken) return undefined
     if (typeof config.expiresAt === 'number' && config.expiresAt <= now) return undefined
@@ -60,12 +295,6 @@ export function usableConnectionToken(
   return undefined
 }
 
-/**
- * Look up the org-scoped connection (org-shared rows plus the acting user's
- * own), refresh its OAuth token if needed, and return the bearer token value.
- * Throws HTTP_CONNECTION_UNAVAILABLE when the connection is missing, out of
- * scope, inactive, or carries no usable token.
- */
 export async function resolveHttpConnectionToken(params: {
   connectionId: string
   organizationId: string
@@ -74,14 +303,13 @@ export async function resolveHttpConnectionToken(params: {
   const { plane, ref } = parseFlowToolConnectionId(params.connectionId)
   if (plane !== 'mcp') throw new Error(HTTP_CONNECTION_UNAVAILABLE)
 
-  const conn = await prisma.mcpConnection.findFirst({
+  const connection = await prisma.mcpConnection.findFirst({
     where: { id: ref, ...mcpConnectionScope(params.organizationId, params.userId) },
   })
-  if (!conn) throw new Error(HTTP_CONNECTION_UNAVAILABLE)
+  if (!connection) throw new Error(HTTP_CONNECTION_UNAVAILABLE)
 
-  const fresh = await ensureFreshConnectionToken(conn)
-  const config = mcpConfigFromConnection(fresh)
-  const token = usableConnectionToken(config)
+  const fresh = await ensureFreshConnectionToken(connection)
+  const token = usableConnectionToken(mcpConfigFromConnection(fresh))
   if (!token) throw new Error(HTTP_CONNECTION_UNAVAILABLE)
   return token
 }

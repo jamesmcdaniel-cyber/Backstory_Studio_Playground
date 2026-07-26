@@ -626,13 +626,18 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               timeoutMs: node.data.timeoutMs,
             }
           : {
+              ...(node.data.credentialId ? { credentialId: node.data.credentialId } : {}),
               ...(node.data.connectionId ? { connectionId: node.data.connectionId } : {}),
               method: node.data.method,
               url: resolveTemplate(node.data.url, ctx, onMissingToken),
+              sendQuery: node.data.sendQuery,
               query: resolveConfigValue(node.data.query, ctx, onMissingToken),
+              sendHeaders: node.data.sendHeaders,
               headers: resolveConfigValue(node.data.headers, ctx, onMissingToken),
+              sendBody: node.data.sendBody,
               body: resolveConfigValue(node.data.body, ctx, onMissingToken),
               bodyMode: node.data.bodyMode,
+              contentType: node.data.contentType,
               responseType: node.data.responseType,
               failOnHttpError: node.data.failOnHttpError,
               retries: node.data.retries,

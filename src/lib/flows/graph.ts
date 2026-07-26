@@ -112,14 +112,21 @@ const httpNode = z.object({
   data: z.object({
     label: z.string().optional(),
     note: z.string().optional(),
+    // credentialId points at an encrypted reusable generic HTTP credential.
+    // connectionId is the legacy MCP bearer binding and remains readable.
+    credentialId: z.string().optional(),
     connectionId: z.string().optional(),
-    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).default('POST'),
+    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']).default('POST'),
     url: z.string(),
+    sendQuery: z.boolean().optional(),
     query: z.string().optional(),
+    sendHeaders: z.boolean().optional(),
     headers: z.string().optional(),
+    sendBody: z.boolean().optional(),
     body: z.string().optional(),
     cookie: z.string().optional(),
-    bodyMode: z.enum(['json', 'text', 'none']).optional(),
+    bodyMode: z.enum(['json', 'raw', 'graphql', 'form-urlencoded', 'text', 'none']).optional(),
+    contentType: z.string().optional(),
     responseType: z.enum(['auto', 'json', 'text']).optional(),
     failOnHttpError: z.boolean().optional(),
     retries: z.number().int().min(0).max(5).optional(),

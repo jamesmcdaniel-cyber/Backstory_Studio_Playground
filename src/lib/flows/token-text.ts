@@ -100,6 +100,7 @@ export function defaultStepLabel(node: FlowNode): string {
   if (node.type === 'ai') return AI_OP_LABELS[node.data.aiOp]
   if (node.type === 'subflow') return 'Run a flow'
   if (node.type === 'knowledge') return 'Search knowledge'
+  if (node.type === 'code') return node.data.language === 'python' ? 'Python' : 'JavaScript'
   if (node.type === 'humanReview') return 'Request information'
   return node.type.charAt(0).toUpperCase() + node.type.slice(1)
 }

@@ -39,6 +39,7 @@ import { subflowChildInput, subflowGuard } from '@/lib/flows/subflow'
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { recordTokenUsage } from '@/lib/usage/budget'
+import { runFlowCode } from './code-runner'
 
 export type FlowExecutionJob = {
   flowId: string
@@ -878,6 +879,22 @@ export async function runFlowExecution(
         await finish({ status: 'succeeded', output: hits })
         return { output: hits }
       }
+      if (node.kind === 'code') {
+        const language = node.config.language === 'python' ? 'python' : 'javascript'
+        const mode = node.config.mode === 'each' ? 'each' : 'all'
+        const output = await runFlowCode({
+          language,
+          mode,
+          code: typeof node.config.code === 'string' ? node.config.code : '',
+          input: node.config.input,
+          context: node.config.context && typeof node.config.context === 'object' && !Array.isArray(node.config.context)
+            ? node.config.context as Record<string, unknown>
+            : {},
+          timeoutMs: typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined,
+        })
+        await finish({ status: 'succeeded', output })
+        return { output }
+      }
       if (node.kind === 'http') {
         const request = prepareHttpRequest(node.config)
         let httpCredential: ResolvedHttpCredential | null = null
@@ -922,7 +939,7 @@ export async function runFlowExecution(
         await finish({ status: 'succeeded', output })
         return { output }
       }
-      // Exhaustive over RunActionFn's node.kind ('tool' | 'http' | 'ai' | 'subflow' | 'knowledge') — this
+      // Exhaustive over RunActionFn's node.kind — this
       // only fires if a future kind is added here without a matching branch
       // above, so it fails loudly instead of silently misrouting into http
       // (the bug this restructure closed for 'ai').

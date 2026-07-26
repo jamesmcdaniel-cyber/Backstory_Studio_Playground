@@ -23,6 +23,7 @@ export type FlowInsertSeed = {
   variableOp?: VariableOp
   dataOp?: DataOp
   aiOp?: AiOp
+  codeLanguage?: 'javascript' | 'python'
 }
 
 function InsertMenu({
@@ -247,6 +248,8 @@ export function FlowCanvas({
         return node.data.label || 'Run a flow'
       case 'knowledge':
         return node.data.label || 'Search knowledge'
+      case 'code':
+        return node.data.label || (node.data.language === 'python' ? 'Python' : 'JavaScript')
     }
   }
 
@@ -304,6 +307,8 @@ export function FlowCanvas({
       }
       case 'data':
         return node.data.note || node.data.input?.trim() || 'Choose the data to work with'
+      case 'code':
+        return node.data.note || `${node.data.mode === 'each' ? 'Once per item' : 'Once for all input'} · ${node.data.language === 'python' ? 'Python' : 'JavaScript'}`
       case 'humanReview':
         return node.data.note || node.data.message.trim() || 'Write the question to ask'
       case 'output': {

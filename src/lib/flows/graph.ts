@@ -262,6 +262,24 @@ const dataNode = z.object({
   }),
 })
 
+/** User-authored code, executed by the worker in a short-lived subprocess. */
+const codeNode = z.object({
+  id: z.string(),
+  type: z.literal('code'),
+  data: z.object({
+    label: z.string().optional(),
+    note: z.string().optional(),
+    language: z.enum(['javascript', 'python']).default('javascript'),
+    mode: z.enum(['all', 'each']).default('all'),
+    code: z.string().max(100_000),
+    // Exact data tokens preserve objects/arrays; ordinary text is templated.
+    input: z.string().optional(),
+    timeoutMs: z.number().int().min(1000).max(30_000).optional(),
+    onError: z.enum(['stop', 'continue', 'route']).optional(),
+    outputFields: z.array(outputFieldSchema).optional(),
+  }),
+})
+
 // MS-parity "Request information" (human review): a first-class pause with no
 // agent involved. The flow stops, asks `message` (templated) of a person, and
 // the reply becomes this step's output. `assigneeUserId` routes the
@@ -386,7 +404,7 @@ const nodePositionSchema = z.object({ x: z.number(), y: z.number() }).optional()
 
 export const flowNodeSchema = z
   .discriminatedUnion('type', [
-    triggerNode, agentNode, conditionNode, loopNode, parallelNode, stopNode, toolNode, httpNode, transformNode, filterNode, switchNode, variableNode, dataNode, humanReviewNode, outputNode, joinNode, aiNode, subflowNode, knowledgeNode,
+    triggerNode, agentNode, conditionNode, loopNode, parallelNode, stopNode, toolNode, httpNode, transformNode, filterNode, switchNode, variableNode, dataNode, codeNode, humanReviewNode, outputNode, joinNode, aiNode, subflowNode, knowledgeNode,
   ])
   .and(z.object({ position: nodePositionSchema }))
 export const flowEdgeSchema = z.object({

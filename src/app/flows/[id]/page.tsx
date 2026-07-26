@@ -122,6 +122,7 @@ function outputFieldsForNode(node: FlowNode | undefined, toolCatalog: ToolCatalo
     return undefined
   }
   if (node.type === 'http') return node.data.outputFields?.length ? node.data.outputFields : httpOutputFields()
+  if (node.type === 'code') return node.data.outputFields
   if (node.type !== 'tool') return undefined
   if (node.data.outputFields?.length) return node.data.outputFields
   const tool = toolCatalog
@@ -782,6 +783,33 @@ function FlowBuilder() {
     return buildDataTree({ upstream, insideLoop, lastOutputs, triggerInput, inputFields, variables: upstreamVariables })
   }, [selectedNode, upstreamIds, graph, selectedRun, insideLoop, agentsById, loopContext, testInput, inputFields, toolCatalog, upstreamVariables])
 
+  const selectedNodeRawInput = useMemo(() => {
+    if (!selectedNode) return undefined
+    const outputs = new Map(
+      (selectedRun?.steps ?? []).map((step) => [step.nodeId, parseFlowValue(step.output)]),
+    )
+    const directParents = graph.edges
+      .filter((edge) => edge.target === selectedNode.id)
+      .map((edge) => edge.source)
+    const parentValues = directParents
+      .map((nodeId) => ({ nodeId, value: outputs.get(nodeId) }))
+      .filter((entry) => entry.value !== undefined)
+    if (parentValues.length === 1) return parentValues[0].value
+    if (parentValues.length > 1) {
+      return Object.fromEntries(parentValues.map((entry) => [entry.nodeId, entry.value]))
+    }
+    const triggerInput = testInput.trim() ? parseFlowInput(testInput) : storedRunInput(selectedRun?.input)
+    return triggerInput === '' ? undefined : triggerInput
+  }, [graph.edges, selectedNode, selectedRun, testInput])
+
+  const selectedNodeRawOutput = useMemo(() => {
+    if (!selectedNode) return undefined
+    const step = [...(selectedRun?.steps ?? [])].reverse().find((entry) => entry.nodeId === selectedNode.id)
+    if (!step) return undefined
+    if (step.error && step.output == null) return { error: step.error, status: step.status }
+    return parseFlowValue(step.output)
+  }, [selectedNode, selectedRun])
+
   const validation = useMemo(
     () => validateFlowGraph(graph, { agents, toolCatalog, flowId: id }),
     [graph, agents, toolCatalog, id],
@@ -1288,6 +1316,18 @@ function FlowBuilder() {
         data: { ...node.data, aiOp: seed.aiOp, ...extras, ...(seed.label ? { label: seed.label } : {}) },
       })
     }
+    if (node.type === 'code' && seed.codeLanguage) {
+      const python = seed.codeLanguage === 'python'
+      return updateNode(next, {
+        ...node,
+        data: {
+          ...node.data,
+          language: seed.codeLanguage,
+          code: python ? 'return input' : 'return input;',
+          ...(seed.label ? { label: seed.label } : {}),
+        },
+      })
+    }
     // Every other step type only carries the label (picker leaves like
     // "HTTP Webhook" pre-name their node).
     if (seed.label && node.type !== 'trigger') {
@@ -1641,12 +1681,12 @@ function FlowBuilder() {
 
         {selectedNode && !viewingVersion && (
           <div
-            className="fixed inset-0 z-50 bg-slate-950/40 p-3 backdrop-blur-sm md:p-6 lg:p-10"
+            className="fixed inset-0 z-50 bg-slate-950/55 p-2 backdrop-blur-sm md:p-3"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) setSelectedId(null)
             }}
           >
-            <div className="mx-auto h-full w-full max-w-[1440px]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mx-auto h-full w-full max-w-[1800px]" onMouseDown={(event) => event.stopPropagation()}>
               <StepDrawer
                 layout="workspace"
                 node={selectedNode}
@@ -1659,6 +1699,8 @@ function FlowBuilder() {
                 published={published}
                 labelCtx={labelCtx}
                 variableNames={upstreamVariables.map((variable) => variable.name)}
+                rawInput={selectedNodeRawInput}
+                rawOutput={selectedNodeRawOutput}
                 onChange={(node) => setGraph((g) => updateNode(g, node))}
                 onChangeType={(type) => commitGraph(changeNodeType(graph, selectedNode.id, type))}
                 onDuplicate={() => {

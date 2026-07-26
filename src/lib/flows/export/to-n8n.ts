@@ -131,6 +131,16 @@ function mapNode(node: FlowNode, names: Map<string, string>, credentials?: Expor
     case 'transform':
     case 'data':
       return { type: 'n8n-nodes-base.set', typeVersion: 3, parameters: {}, notes: `Recreate the “${node.type}” logic as Set/Edit-Fields (or a Code node for complex transforms).` }
+    case 'code':
+      return {
+        type: 'n8n-nodes-base.code',
+        typeVersion: 2,
+        parameters: {
+          mode: node.data.mode === 'each' ? 'runOnceForEachItem' : 'runOnceForAllItems',
+          language: node.data.language === 'python' ? 'pythonNative' : 'javaScript',
+          ...(node.data.language === 'python' ? { pythonCode: node.data.code } : { jsCode: node.data.code }),
+        },
+      }
     case 'agent':
       return placeholder(`AI agent step. In n8n, add an “AI Agent” node with an LLM (e.g. OpenAI) and paste this objective as the system/user prompt:\n${'input' in node.data ? (node.data.input ?? '') : ''}`)
     case 'ai':

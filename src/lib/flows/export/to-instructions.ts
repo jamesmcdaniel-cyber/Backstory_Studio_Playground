@@ -63,6 +63,8 @@ function describeStep(node: FlowNode, labels: Record<string, string>): string {
       return `Reshape the data into new fields.`
     case 'data':
       return `Transform the data (${node.data.op}).`
+    case 'code':
+      return `Run this custom ${node.data.language === 'python' ? 'Python' : 'JavaScript'} code: ${clip(node.data.code)}`
     case 'variable':
       return `Set/update a working value named “${node.data.name || 'variable'}”.`
     case 'knowledge':

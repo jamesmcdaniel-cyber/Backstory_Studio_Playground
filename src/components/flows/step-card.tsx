@@ -96,6 +96,7 @@ const NODE_ICON: Record<FlowNode['type'], typeof Bot> = {
   ai: Sparkles,
   subflow: Workflow,
   knowledge: BookOpen,
+  code: Code2,
 }
 
 const NODE_TONE: Record<FlowNode['type'], string> = {
@@ -119,6 +120,7 @@ const NODE_TONE: Record<FlowNode['type'], string> = {
   ai: 'bg-indigo-500 text-white',
   subflow: 'bg-teal-500 text-white',
   knowledge: 'bg-rose-500 text-white',
+  code: 'bg-amber-600 text-white',
 }
 
 const STATUS_DOT: Record<StepStatus, string> = {
@@ -268,6 +270,7 @@ const DEFAULT_EDITOR_KEYS: Partial<Record<FlowNode['type'], string>> = {
   data: 'data.input',
   humanReview: 'hr.message',
   output: 'out.0.value',
+  code: 'code.input',
 }
 
 // Chip editors still render when the caller omitted labelCtx: chips fall back
@@ -802,8 +805,15 @@ function renderNodeBody({
       return <SubflowBody node={node} update={update} tokenWiring={tokenWiring} flowId={flowId} showErrors={showErrors} />
     case 'knowledge':
       return <KnowledgeBody node={node} update={update} tokenWiring={tokenWiring} />
+    case 'code':
+      return <CodeBody node={node} update={update} tokenWiring={tokenWiring} />
     case 'http':
-      return <HttpBody node={node} toolCatalog={toolCatalog} update={update} tokenWiring={tokenWiring} showErrors={showErrors} />
+      return (
+        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3">
+          <p className="text-sm font-semibold text-slate-800">{node.data.method} {node.data.url || 'Request URL not set'}</p>
+          <p className="mt-1 text-xs text-slate-500">Open this node to configure authentication, query parameters, headers, and body content.</p>
+        </div>
+      )
     case 'tool':
       return <ToolBody node={node} toolCatalog={toolCatalog} dataFields={dataFields ?? []} update={update} showErrors={showErrors} tokenWiring={tokenWiring} />
     case 'condition':
@@ -831,6 +841,52 @@ function renderNodeBody({
     case 'join':
       return <p className="text-sm text-slate-600">A merge point with no settings. Point the ends of different branches at this step so the steps after it run once, on whichever path actually ran.</p>
   }
+}
+
+function CodeBody({
+  node,
+  update,
+  tokenWiring,
+}: {
+  node: Extract<FlowNode, { type: 'code' }>
+  update: (node: FlowNode) => void
+  tokenWiring: TokenEditorWiring
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <select className={controlClass} value={node.data.mode} onChange={(e) => update({ ...node, data: { ...node.data, mode: e.target.value === 'each' ? 'each' : 'all' } })}>
+          <option value="all">Once for all input</option>
+          <option value="each">Once per item</option>
+        </select>
+        <select className={controlClass} value={node.data.language} onChange={(e) => update({ ...node, data: { ...node.data, language: e.target.value === 'python' ? 'python' : 'javascript' } })}>
+          <option value="javascript">JavaScript</option>
+          <option value="python">Python</option>
+        </select>
+      </div>
+      <TokenTextEditor
+        ref={tokenWiring.registerEditor('code.input')}
+        multiline
+        rows={2}
+        value={node.data.input ?? ''}
+        labelCtx={tokenWiring.labelCtx}
+        placeholder="Input data"
+        onFocus={tokenWiring.focusEditor('code.input')}
+        onChange={(input) => update({ ...node, data: { ...node.data, input } })}
+        ariaLabel="Code input"
+      />
+      <textarea
+        rows={7}
+        className="w-full resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none focus:border-amber-500"
+        value={node.data.code}
+        spellCheck={false}
+        onFocus={tokenWiring.blockActive}
+        onBlur={tokenWiring.unblockActive}
+        onChange={(e) => update({ ...node, data: { ...node.data, code: e.target.value } })}
+      />
+      <p className="text-xs text-slate-500">Return a JSON-compatible value. Available variables: input and context.</p>
+    </div>
+  )
 }
 
 function TriggerBody({

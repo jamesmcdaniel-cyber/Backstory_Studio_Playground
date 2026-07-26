@@ -5,6 +5,7 @@ import { ensureFreshConnectionToken } from '@/lib/mcp/connection-token'
 import { mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import { mcpConnectionScope } from '@/lib/flows/tool-catalog'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
+import { assertPublicUrl } from '@/lib/net/ssrf'
 
 export const HTTP_AUTH_TYPES = [
   'basic',
@@ -81,6 +82,7 @@ async function oauth2Token(credential: ResolvedHttpCredential): Promise<string> 
   })
   if (cfg.scope) form.set('scope', cfg.scope)
   if (cfg.audience) form.set('audience', cfg.audience)
+  await assertPublicUrl(cfg.tokenUrl)
   const response = await fetch(cfg.tokenUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },

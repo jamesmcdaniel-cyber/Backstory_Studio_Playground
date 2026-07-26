@@ -62,6 +62,8 @@ function nodeLabel(node: FlowNode | undefined) {
       return 'Run a flow'
     case 'knowledge':
       return 'Search knowledge'
+    case 'code':
+      return node.data.language === 'python' ? 'Python' : 'JavaScript'
     case 'humanReview':
       return 'Request information'
     case 'output':
@@ -383,12 +385,19 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       if (node.data.connectionId && context.toolCatalog && !connectionIds.has(node.data.connectionId)) {
         add(issues, 'warning', 'UNKNOWN_HTTP_CONNECTION', `${nodeLabel(node)} authenticates with a connection that is not available — pick another connection or reconnect it in Integrations.`, node.id)
       }
-      validateJsonObjectField(issues, node.data.headers, `${nodeLabel(node)} headers must be a JSON object.`, node.id)
-      validateJsonObjectField(issues, node.data.query, `${nodeLabel(node)} query params must be a JSON object.`, node.id)
+      if (node.data.sendHeaders !== false) {
+        validateJsonObjectField(issues, node.data.headers, `${nodeLabel(node)} headers must be a JSON object.`, node.id)
+      }
+      if (node.data.sendQuery !== false) {
+        validateJsonObjectField(issues, node.data.query, `${nodeLabel(node)} query params must be a JSON object.`, node.id)
+      }
       if ((node.data.bodyMode ?? 'json') === 'json') {
         validateTemplatedJsonField(issues, node.data.body, `${nodeLabel(node)} body must be valid JSON or a data value.`, node.id)
       }
-      if ((node.data.bodyMode ?? 'json') !== 'none' && ['GET', 'DELETE'].includes(node.data.method) && node.data.body?.trim()) {
+      if (node.data.bodyMode === 'form-urlencoded') {
+        validateJsonObjectField(issues, node.data.body, `${nodeLabel(node)} form body must be a JSON object.`, node.id)
+      }
+      if ((node.data.bodyMode ?? 'json') !== 'none' && ['GET', 'HEAD'].includes(node.data.method) && node.data.body?.trim()) {
         add(issues, 'warning', 'HTTP_BODY_IGNORED', `${nodeLabel(node)} will not send a body for ${node.data.method}.`, node.id)
       }
     }
@@ -396,7 +405,7 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     // Error Shield: a step set to route failures needs a labeled 'error' edge to
     // route them down. Without one the failure just continues on the normal path
     // (never a crash) — a nudge, not a blocker.
-    if ((node.type === 'agent' || node.type === 'tool' || node.type === 'http') && node.data.onError === 'route') {
+    if ((node.type === 'agent' || node.type === 'tool' || node.type === 'http' || node.type === 'code') && node.data.onError === 'route') {
       if (!graph.edges.some((edge) => edge.source === node.id && edge.branch === 'error')) {
         add(issues, 'warning', 'ROUTE_NO_ERROR_PATH', `${nodeLabel(node)} routes on error but has no error path — failures continue on the normal path.`, node.id)
       }
@@ -544,6 +553,10 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       if (!node.data.query?.trim()) {
         add(issues, 'warning', 'KNOWLEDGE_EMPTY_QUERY', `${nodeLabel(node)} has an empty search — it will return nothing.`, node.id)
       }
+    }
+
+    if (node.type === 'code' && !node.data.code.trim()) {
+      add(issues, 'error', 'EMPTY_CODE', `${nodeLabel(node)} needs code to run.`, node.id)
     }
 
     if (node.type === 'subflow') {

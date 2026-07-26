@@ -58,6 +58,14 @@ function defaultData(type: FlowNode['type'], extra?: { bodyId?: string; agentId?
       return { op: 'initialize', name: '', varType: 'string', value: '' }
     case 'data':
       return { op: 'compose', input: '' }
+    case 'code':
+      return {
+        language: 'javascript',
+        mode: 'all',
+        input: '{{trigger.input}}',
+        code: 'return input;',
+        timeoutMs: 5000,
+      }
     case 'ai':
       return { aiOp: 'ask', input: '', instructions: '' }
     case 'subflow':

@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
-import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { DataTree } from '@/components/flows/data-tree'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 import { type DataField } from '@/lib/flows/datatree'
@@ -28,12 +27,13 @@ import {
 
 export type { TriggerData }
 
-type EditableType = Extract<FlowNode['type'], 'agent' | 'ai' | 'subflow' | 'knowledge' | 'condition' | 'loop' | 'parallel' | 'stop' | 'tool' | 'http' | 'transform' | 'filter' | 'switch' | 'variable' | 'data' | 'humanReview' | 'output' | 'join'>
+type EditableType = Extract<FlowNode['type'], 'agent' | 'ai' | 'subflow' | 'knowledge' | 'code' | 'condition' | 'loop' | 'parallel' | 'stop' | 'tool' | 'http' | 'transform' | 'filter' | 'switch' | 'variable' | 'data' | 'humanReview' | 'output' | 'join'>
 const NODE_TYPES: { value: EditableType; label: string }[] = [
   { value: 'agent', label: 'Run agent' },
   { value: 'ai', label: 'AI operation' },
   { value: 'subflow', label: 'Run a flow' },
   { value: 'knowledge', label: 'Search knowledge' },
+  { value: 'code', label: 'Code' },
   { value: 'tool', label: 'Tool call' },
   { value: 'http', label: 'HTTP request' },
   { value: 'transform', label: 'Set fields' },
@@ -271,6 +271,7 @@ const DEFAULT_EDITOR_KEYS: Partial<Record<FlowNode['type'], string>> = {
   data: 'data.input',
   humanReview: 'hr.message',
   output: 'out.0.value',
+  code: 'code.input',
 }
 
 /** Workspace member as returned by GET /api/organizations/members. */
@@ -1013,118 +1014,258 @@ export function StepDrawer({
         )}
 
         {node.type === 'http' && (
-          <div className="space-y-3">
-            <div className="flex gap-1.5">
+          <div className="space-y-5">
+            <div>
+              <label className={labelClass}>Method</label>
               <select
-                className={smallField}
+                className={fieldClass}
                 value={node.data.method}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, method: e.target.value as typeof node.data.method } })}
               >
-                {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
+                {['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className={labelClass}>URL</label>
               <input
                 type="url"
                 inputMode="url"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
-                className={`${fieldClass} min-w-0 flex-1`}
+                className={fieldClass}
                 value={node.data.url}
-                placeholder="https://example.com/webhook"
+                placeholder="https://api.example.com/v1/resource"
                 onFocus={blockActive}
                 onBlur={unblockActive}
                 onChange={(event) => onChange({ ...node, data: { ...node.data, url: event.target.value } })}
                 aria-label="Request URL"
               />
             </div>
-            <KeyValueJsonEditor
-              label="Query params"
-              value={node.data.query}
-              keyPlaceholder="account_id"
-              valuePlaceholder="Click a value from Available data"
-              helper="Added to the URL after ?. Arrays send repeated params; booleans and numbers are preserved."
-              onChange={(query) => onChange({ ...node, data: { ...node.data, query } })}
-              labelCtx={labelCtx}
-              editorKey="http.query"
-              registerEditor={registerEditor}
-              focusEditor={focusEditor}
-              blockActive={blockActive}
-              unblockActive={unblockActive}
-            />
-            <KeyValueJsonEditor
-              label="Headers"
-              value={node.data.headers}
-              keyPlaceholder="authorization"
-              valuePlaceholder="Bearer token"
-              helper="Sent as request headers. Do not place secrets here unless this flow is allowed to use them."
-              onChange={(headers) => onChange({ ...node, data: { ...node.data, headers } })}
-              labelCtx={labelCtx}
-              editorKey="http.headers"
-              registerEditor={registerEditor}
-              focusEditor={focusEditor}
-              blockActive={blockActive}
-              unblockActive={unblockActive}
-            />
+
             <div>
-              <label className={labelClass}>Authenticate with (optional)</label>
+              <label className={labelClass}>Authentication</label>
               <select
                 className={fieldClass}
-                value={node.data.connectionId ?? ''}
-                onChange={(e) => onChange({ ...node, data: { ...node.data, connectionId: e.target.value || undefined } })}
+                value={
+                  node.data.credentialId
+                    ? (httpCredentials.find((credential) => credential.id === node.data.credentialId)?.authType ?? 'none')
+                    : 'none'
+                }
+                onChange={(event) => {
+                  const value = event.target.value
+                  if (value === 'none') {
+                    onChange({ ...node, data: { ...node.data, credentialId: undefined, connectionId: undefined } })
+                    return
+                  }
+                  setNewCredentialType(value as HttpAuthOption)
+                  setCredentialDialogOpen(true)
+                }}
               >
-                <option value="">No authentication</option>
-                {toolCatalog.filter((conn) => parseFlowToolConnectionId(conn.id).plane === 'mcp').map((conn) => (
-                  <option key={conn.id} value={conn.id}>
-                    {conn.name}
+                <option value="none">None</option>
+                {HTTP_AUTH_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Uses this connection&apos;s login to authorize the request — connections shared with your workspace, plus your own. Your own Authorization header always takes precedence.
-              </p>
             </div>
-            <div>
-              <label className={labelClass}>Body</label>
-              {(node.data.bodyMode ?? 'json') === 'none' ? (
-                <textarea rows={4} className={`${areaClass} font-mono text-xs`} value={node.data.body ?? ''} disabled />
-              ) : (
-                <TokenTextEditor
-                  ref={registerEditor('http.body')}
-                  multiline
-                  rows={4}
-                  className="font-mono text-xs"
-                  value={node.data.body ?? ''}
+
+            {(node.data.credentialId || httpCredentials.length > 0) && (
+              <div>
+                <label className={labelClass}>Credential</label>
+                <div className="flex gap-2">
+                  <select
+                    className={`${fieldClass} min-w-0 flex-1`}
+                    value={node.data.credentialId ?? ''}
+                    onChange={(event) => onChange({
+                      ...node,
+                      data: { ...node.data, credentialId: event.target.value || undefined, connectionId: undefined },
+                    })}
+                  >
+                    <option value="">Choose a verified credential…</option>
+                    {httpCredentials.map((credential) => (
+                      <option key={credential.id} value={credential.id}>
+                        {credential.name} · {credential.allowedHost}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setNewCredentialType(
+                        (httpCredentials.find((credential) => credential.id === node.data.credentialId)?.authType || 'basic') as HttpAuthOption,
+                      )
+                      setCredentialDialogOpen(true)
+                    }}
+                  >
+                    <KeyRound className="mr-1.5 h-4 w-4" /> Set up new
+                  </Button>
+                </div>
+                {node.data.credentialId && (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    Verified credential — secrets are encrypted and excluded from the flow.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-3 border-t pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Send query parameters</p>
+                  <p className="text-xs text-muted-foreground">Add JSON key/value parameters to the URL.</p>
+                </div>
+                <Switch
+                  checked={node.data.sendQuery ?? Boolean(node.data.query?.trim())}
+                  onCheckedChange={(sendQuery) => onChange({ ...node, data: { ...node.data, sendQuery } })}
+                  aria-label="Send query parameters"
+                />
+              </div>
+              {(node.data.sendQuery ?? Boolean(node.data.query?.trim())) && (
+                <KeyValueJsonEditor
+                  label="Query parameters"
+                  value={node.data.query}
+                  keyPlaceholder="account_id"
+                  valuePlaceholder="Value or input data"
+                  helper="Stored as a JSON object. Arrays become repeated query parameters."
+                  onChange={(query) => onChange({ ...node, data: { ...node.data, query } })}
                   labelCtx={labelCtx}
-                  placeholder={(node.data.bodyMode ?? 'json') === 'text' ? 'Plain text body' : '{"text": "Use a value from Available data"}'}
-                  onFocus={focusEditor('http.body')}
-                  onChange={(body) => onChange({ ...node, data: { ...node.data, body: body || undefined } })}
-                  ariaLabel="Request body"
+                  editorKey="http.query"
+                  registerEditor={registerEditor}
+                  focusEditor={focusEditor}
+                  blockActive={blockActive}
+                  unblockActive={unblockActive}
                 />
               )}
-              <div className="mt-2">
-                <DataTree fields={dataFields} onInsert={insertToken} />
-              </div>
             </div>
-            <div>
-              <label className={labelClass}>Cookie</label>
-              <TokenTextEditor
-                ref={registerEditor('http.cookie')}
-                className="min-w-0 flex-1 px-2 py-1.5"
-                value={node.data.cookie ?? ''}
-                labelCtx={labelCtx}
-                placeholder="name=value; other=value"
-                onFocus={focusEditor('http.cookie')}
-                onChange={(cookie) => onChange({ ...node, data: { ...node.data, cookie: cookie || undefined } })}
-                ariaLabel="Cookie"
-              />
-              <p className="mt-1 text-[11px] text-muted-foreground">Sent as the request&apos;s Cookie header. An explicit Cookie among Headers takes precedence.</p>
+
+            <div className="space-y-3 border-t pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Send headers</p>
+                  <p className="text-xs text-muted-foreground">Add non-secret request headers as JSON.</p>
+                </div>
+                <Switch
+                  checked={node.data.sendHeaders ?? Boolean(node.data.headers?.trim())}
+                  onCheckedChange={(sendHeaders) => onChange({ ...node, data: { ...node.data, sendHeaders } })}
+                  aria-label="Send headers"
+                />
+              </div>
+              {(node.data.sendHeaders ?? Boolean(node.data.headers?.trim())) && (
+                <KeyValueJsonEditor
+                  label="Headers"
+                  value={node.data.headers}
+                  keyPlaceholder="Content-Language"
+                  valuePlaceholder="en-US"
+                  helper="Stored as a JSON object. Put reusable secrets in Authentication, not here."
+                  onChange={(headers) => onChange({ ...node, data: { ...node.data, headers } })}
+                  labelCtx={labelCtx}
+                  editorKey="http.headers"
+                  registerEditor={registerEditor}
+                  focusEditor={focusEditor}
+                  blockActive={blockActive}
+                  unblockActive={unblockActive}
+                />
+              )}
+            </div>
+
+            <div className="space-y-3 border-t pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Send body</p>
+                  <p className="text-xs text-muted-foreground">Configure the request payload.</p>
+                </div>
+                <Switch
+                  checked={node.data.sendBody ?? Boolean(node.data.body?.trim())}
+                  disabled={node.data.method === 'GET' || node.data.method === 'HEAD'}
+                  onCheckedChange={(sendBody) => onChange({ ...node, data: { ...node.data, sendBody } })}
+                  aria-label="Send body"
+                />
+              </div>
+              {(node.data.method === 'GET' || node.data.method === 'HEAD') && (
+                <p className="text-xs text-amber-700">HTTP {node.data.method} requests do not send a body.</p>
+              )}
+              {(node.data.sendBody ?? Boolean(node.data.body?.trim())) && node.data.method !== 'GET' && node.data.method !== 'HEAD' && (
+                <>
+                  <div>
+                    <label className={labelClass}>Body content type</label>
+                    <select
+                      className={fieldClass}
+                      value={node.data.bodyMode === 'text' ? 'raw' : (node.data.bodyMode ?? 'json')}
+                      onChange={(event) => onChange({
+                        ...node,
+                        data: { ...node.data, bodyMode: event.target.value as Exclude<typeof node.data.bodyMode, 'text' | undefined> },
+                      })}
+                    >
+                      <option value="json">JSON</option>
+                      <option value="raw">Raw</option>
+                      <option value="graphql">GraphQL</option>
+                      <option value="form-urlencoded">Form URL Encoded</option>
+                    </select>
+                  </div>
+                  {(node.data.bodyMode ?? 'json') === 'form-urlencoded' ? (
+                    <KeyValueJsonEditor
+                      label="Body fields"
+                      value={node.data.body}
+                      keyPlaceholder="field"
+                      valuePlaceholder="Value or input data"
+                      helper="These JSON fields are encoded as application/x-www-form-urlencoded."
+                      onChange={(body) => onChange({ ...node, data: { ...node.data, body } })}
+                      labelCtx={labelCtx}
+                      editorKey="http.body"
+                      registerEditor={registerEditor}
+                      focusEditor={focusEditor}
+                      blockActive={blockActive}
+                      unblockActive={unblockActive}
+                    />
+                  ) : (
+                    <div>
+                      {(node.data.bodyMode === 'raw' || node.data.bodyMode === 'text') && (
+                        <div className="mb-3">
+                          <label className={labelClass}>Content type</label>
+                          <input
+                            className={fieldClass}
+                            value={node.data.contentType ?? ''}
+                            placeholder="text/plain"
+                            onChange={(event) => onChange({ ...node, data: { ...node.data, contentType: event.target.value || undefined } })}
+                          />
+                        </div>
+                      )}
+                      <label className={labelClass}>
+                        {node.data.bodyMode === 'graphql' ? 'GraphQL query or JSON request' : node.data.bodyMode === 'raw' || node.data.bodyMode === 'text' ? 'Raw body' : 'JSON body'}
+                      </label>
+                      <TokenTextEditor
+                        ref={registerEditor('http.body')}
+                        multiline
+                        rows={8}
+                        className="font-mono text-xs"
+                        value={node.data.body ?? ''}
+                        labelCtx={labelCtx}
+                        placeholder={
+                          node.data.bodyMode === 'graphql'
+                            ? 'query GetAccount { account { id name } }'
+                            : node.data.bodyMode === 'raw' || node.data.bodyMode === 'text'
+                              ? 'Raw request content'
+                              : '{\n  "name": "Use a value from Input"\n}'
+                        }
+                        onFocus={focusEditor('http.body')}
+                        onChange={(body) => onChange({ ...node, data: { ...node.data, body: body || undefined } })}
+                        ariaLabel="Request body"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
             </div>
             <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
-            <p className="text-xs text-muted-foreground">Calls a public HTTPS URL. Output includes status, headers, parsed body, and raw bodyText. Retries re-send the request.</p>
+            <p className="text-xs text-muted-foreground">Calls a public HTTPS endpoint. The raw status, response headers, parsed body, and response text appear in Output.</p>
           </div>
         )}
 
@@ -1321,6 +1462,65 @@ export function StepDrawer({
           />
         )}
 
+        {node.type === 'code' && (
+          <>
+            <div>
+              <label className={labelClass}>Mode</label>
+              <select className={fieldClass} value={node.data.mode} onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value === 'each' ? 'each' : 'all' } })}>
+                <option value="all">Run once for all input</option>
+                <option value="each">Run once for each item</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Language</label>
+              <select
+                className={fieldClass}
+                value={node.data.language}
+                onChange={(e) => {
+                  const language = e.target.value === 'python' ? 'python' : 'javascript'
+                  const wasDefault = node.data.code.trim() === 'return input;' || node.data.code.trim() === 'return input'
+                  onChange({ ...node, data: { ...node.data, language, code: wasDefault ? (language === 'python' ? 'return input' : 'return input;') : node.data.code } })
+                }}
+              >
+                <option value="javascript">JavaScript</option>
+                <option value="python">Python</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Input</label>
+              <TokenTextEditor
+                ref={registerEditor('code.input')}
+                multiline
+                rows={3}
+                value={node.data.input ?? ''}
+                labelCtx={labelCtx}
+                placeholder="Choose the data made available as input."
+                onFocus={focusEditor('code.input')}
+                onChange={(input) => onChange({ ...node, data: { ...node.data, input } })}
+                ariaLabel="Code input"
+              />
+              <div className="mt-2">
+                <DataTree fields={dataFields} onInsert={insertToken} />
+              </div>
+            </div>
+            <div>
+              <label className={labelClass}>{node.data.language === 'python' ? 'Python' : 'JavaScript'}</label>
+              <textarea
+                className={`${areaClass} min-h-[260px] bg-slate-950 font-mono text-[13px] leading-6 text-slate-100`}
+                value={node.data.code}
+                spellCheck={false}
+                onFocus={blockActive}
+                onBlur={unblockActive}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, code: e.target.value } })}
+              />
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                Return a JSON-compatible value. Use <code>input</code> for this step&apos;s data and <code>context</code> for trigger, steps, variables, time, and run metadata. Imports, files, network calls, and child processes are unavailable.
+              </p>
+            </div>
+            <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
+          </>
+        )}
+
         {node.type === 'join' && (
           <p className="text-xs text-muted-foreground">
             A merge point with no settings. Point the ends of different branches at this step so the steps after it run once, on whichever path actually ran.
@@ -1358,6 +1558,22 @@ export function StepDrawer({
           </aside>
         )}
       </div>
+      {node.type === 'http' && (
+        <HttpCredentialDialog
+          open={credentialDialogOpen}
+          onOpenChange={setCredentialDialogOpen}
+          requestUrl={node.data.url}
+          requestMethod={node.data.method}
+          initialAuthType={newCredentialType}
+          onSaved={(credential) => {
+            setHttpCredentials((current) => [
+              credential,
+              ...current.filter((entry) => entry.id !== credential.id),
+            ])
+            onChange({ ...node, data: { ...node.data, credentialId: credential.id, connectionId: undefined } })
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -1408,22 +1624,6 @@ function VariableEditor({
           ))}
         </select>
       </div>
-      {node.type === 'http' && (
-        <HttpCredentialDialog
-          open={credentialDialogOpen}
-          onOpenChange={setCredentialDialogOpen}
-          requestUrl={node.data.url}
-          requestMethod={node.data.method}
-          initialAuthType={newCredentialType}
-          onSaved={(credential) => {
-            setHttpCredentials((current) => [
-              credential,
-              ...current.filter((entry) => entry.id !== credential.id),
-            ])
-            onChange({ ...node, data: { ...node.data, credentialId: credential.id, connectionId: undefined } })
-          }}
-        />
-      )}
       <div>
         <label className={labelClass}>Name</label>
         {isInitialize || nameOptions.length === 0 ? (

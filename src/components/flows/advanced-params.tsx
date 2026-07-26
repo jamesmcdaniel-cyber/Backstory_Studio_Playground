@@ -33,9 +33,11 @@ export function AdvancedParamsSection({
   const setCount = advancedParamsSetCount(node)
   const patch = (values: Record<string, unknown>) => onChange({ ...node, data: { ...node.data, ...values } } as FlowNode)
   const clearAll = () => patch(Object.fromEntries(keys.map((key) => [key, undefined])))
-  const maxTimeoutSeconds = ['agent', 'ai', 'subflow'].includes(node.type)
-    ? AGENT_RUN_MAX_DURATION_SECONDS
-    : 120
+  const maxTimeoutSeconds = node.type === 'code'
+    ? 30
+    : ['agent', 'ai', 'subflow'].includes(node.type)
+      ? AGENT_RUN_MAX_DURATION_SECONDS
+      : 120
 
   const control = (key: AdvancedParamKey) => {
     if (key === 'onError') {

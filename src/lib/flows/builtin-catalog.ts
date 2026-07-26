@@ -8,7 +8,7 @@ export type PickerLeaf = {
   description: string
   mode: 'action' | 'trigger' | 'both'
   stepType?: StepType
-  seed?: { agentId?: string; connectionId?: string; toolName?: string; label?: string; variableOp?: VariableOp; dataOp?: DataOp; aiOp?: AiOp }
+  seed?: { agentId?: string; connectionId?: string; toolName?: string; label?: string; variableOp?: VariableOp; dataOp?: DataOp; aiOp?: AiOp; codeLanguage?: 'javascript' | 'python' }
   triggerType?: 'manual' | 'schedule' | 'webhook' | 'signal'
 }
 
@@ -75,6 +75,16 @@ export const BUILTIN_GROUPS: PickerGroup[] = [
       { id: 'data-flatten', label: 'Flatten list', description: 'Turn nested lists into one flat list.', mode: 'action', stepType: 'data', seed: { dataOp: 'flatten' } },
       { id: 'data-trim', label: 'Trim list', description: 'Remove items from the start or end of a list.', mode: 'action', stepType: 'data', seed: { dataOp: 'trim' } },
       { id: 'data-parse-csv', label: 'Parse CSV', description: 'Turn CSV text into a list of records for later steps.', mode: 'action', stepType: 'data', seed: { dataOp: 'parseCsv' } },
+    ],
+  },
+  {
+    id: 'code',
+    label: 'Code',
+    description: 'Run custom JavaScript or Python against flow data.',
+    mode: 'action',
+    children: [
+      { id: 'code-javascript', label: 'JavaScript', description: 'Transform data with custom JavaScript in an isolated process.', mode: 'action', stepType: 'code', seed: { label: 'JavaScript', codeLanguage: 'javascript' } },
+      { id: 'code-python', label: 'Python', description: 'Transform data with custom Python in an isolated process.', mode: 'action', stepType: 'code', seed: { label: 'Python', codeLanguage: 'python' } },
     ],
   },
   {

@@ -28,7 +28,7 @@ export type RunAgentFn = (node: { id: string; agentId: string; input: string; re
 // passes through unresolved, same as tool/http's retries/timeoutMs.
 // `resume` marks the node a paused run is re-entering (e.g. after an approval
 // decision) so the adapter can consume the decision instead of re-executing.
-export type RunActionFn = (node: { id: string; kind: 'tool' | 'http' | 'ai' | 'subflow' | 'knowledge'; config: Record<string, unknown>; resume?: boolean }) => Promise<RunAgentResult>
+export type RunActionFn = (node: { id: string; kind: 'tool' | 'http' | 'ai' | 'subflow' | 'knowledge' | 'code'; config: Record<string, unknown>; resume?: boolean }) => Promise<RunAgentResult>
 export type InterpretResult = {
   status: 'succeeded' | 'failed' | 'waiting'
   steps: StepOutcome[]
@@ -604,6 +604,40 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       }
       emit({ nodeId: node.id, status: 'skipped', output: false })
       return { kind: 'drop' }
+    }
+
+    if (node.type === 'code') {
+      const input = node.data.input?.trim()
+        ? resolveTemplateValue(node.data.input, ctx, onMissingToken)
+        : lastOutput
+      const config: Record<string, unknown> = {
+        language: node.data.language,
+        mode: node.data.mode,
+        code: node.data.code,
+        input,
+        timeoutMs: node.data.timeoutMs,
+        context: {
+          trigger: ctx.trigger,
+          steps: ctx.step,
+          variables: ctx.variables,
+          now: ctx.now,
+          run: ctx.run,
+        },
+      }
+      const broken = missingTokenFailure(config)
+      if (broken) return broken
+      const res: RunAgentResult = opts.runAction
+        ? await opts.runAction({ id: stepKey, kind: 'code', config })
+        : { error: 'Code steps are not supported in this runtime.' }
+      if (res.error) {
+        const mode = node.data.onError ?? 'stop'
+        emit({ nodeId: node.id, status: 'failed', error: res.error, ...(mode === 'route' || mode === 'continue' ? { output: { error: res.error, input } } : {}) })
+        return onFailure(mode, res.error, input)
+      }
+      const output = asStructured(res.output)
+      ctx.step[node.id] = { output }
+      emit({ nodeId: node.id, status: 'succeeded', output })
+      return { kind: 'ok', output }
     }
 
     if (node.type === 'tool' || node.type === 'http') {

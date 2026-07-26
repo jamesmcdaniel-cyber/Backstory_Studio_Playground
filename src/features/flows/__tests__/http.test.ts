@@ -77,6 +77,56 @@ test('prepareHttpRequest rejects invalid JSON bodies when JSON mode is explicit'
   )
 })
 
+test('prepareHttpRequest supports raw, GraphQL, and URL-encoded body modes', () => {
+  const raw = prepareHttpRequest({
+    method: 'POST',
+    url: 'https://api.example.com/raw',
+    sendBody: true,
+    bodyMode: 'raw',
+    contentType: 'text/html',
+    body: '<p>Hello</p>',
+  })
+  assert.equal(raw.init.body, '<p>Hello</p>')
+  assert.equal((raw.init.headers as Record<string, string>)['content-type'], 'text/html')
+
+  const graphql = prepareHttpRequest({
+    method: 'POST',
+    url: 'https://api.example.com/graphql',
+    sendBody: true,
+    bodyMode: 'graphql',
+    body: 'query Viewer { viewer { id } }',
+  })
+  assert.deepEqual(JSON.parse(String(graphql.init.body)), { query: 'query Viewer { viewer { id } }' })
+  assert.equal((graphql.init.headers as Record<string, string>)['content-type'], 'application/json')
+
+  const form = prepareHttpRequest({
+    method: 'POST',
+    url: 'https://api.example.com/token',
+    sendBody: true,
+    bodyMode: 'form-urlencoded',
+    body: '{"grant_type":"client_credentials","scope":"read write"}',
+  })
+  assert.equal(form.init.body, 'grant_type=client_credentials&scope=read+write')
+  assert.equal((form.init.headers as Record<string, string>)['content-type'], 'application/x-www-form-urlencoded')
+})
+
+test('HTTP send toggles preserve configuration while excluding disabled sections', () => {
+  const request = prepareHttpRequest({
+    method: 'POST',
+    url: 'https://api.example.com/items',
+    sendQuery: false,
+    query: '{"page":2}',
+    sendHeaders: false,
+    headers: '{"x-debug":"true"}',
+    sendBody: false,
+    bodyMode: 'json',
+    body: '{"ignored":true}',
+  })
+  assert.equal(request.url, 'https://api.example.com/items')
+  assert.deepEqual(request.init.headers, {})
+  assert.equal(request.init.body, undefined)
+})
+
 test('withBearerAuthorization injects a bearer token when no auth header is set', () => {
   const headers = { 'content-type': 'application/json' }
   const next = withBearerAuthorization(headers, 'tok-123')

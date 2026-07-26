@@ -131,7 +131,7 @@ test('editing one inline switch case preserves every other case', () => {
   cleanup()
 })
 
-test('HTTP body mode is represented consistently on the inline card', () => {
+test('HTTP card keeps request configuration in the full node workspace', () => {
   const node = {
     id: 'http1',
     type: 'http',
@@ -142,9 +142,10 @@ test('HTTP body mode is represented consistently on the inline card', () => {
       body: '{"stale":true}',
     },
   } as FlowNode
-  const { getByLabelText, queryByLabelText } = renderCard(node)
+  const { container, queryByLabelText } = renderCard(node)
 
-  assert.equal((getByLabelText('Body disabled') as HTMLTextAreaElement).disabled, true)
+  assert.match(container.textContent ?? '', /Open this node to configure authentication/)
+  assert.equal(queryByLabelText('URI'), null)
   assert.equal(queryByLabelText('Body'), null)
   cleanup()
 })
@@ -166,12 +167,19 @@ test('AI and subflow timeout controls use their runtime 20-minute limit', () => 
   cleanup()
 })
 
-test('workspace node configuration uses a wide input-and-parameters layout', () => {
+test('workspace node configuration uses the three-pane input, parameters, and output layout', () => {
   let closed = false
   const node = {
     id: 'http-workspace',
     type: 'http',
-    data: { method: 'POST', url: 'https://api.example.com', bodyMode: 'json' },
+    data: {
+      method: 'POST',
+      url: 'https://api.example.com',
+      sendQuery: true,
+      sendHeaders: true,
+      sendBody: true,
+      bodyMode: 'json',
+    },
   } as FlowNode
   const { container } = render(
     React.createElement(StepDrawer, {
@@ -186,11 +194,22 @@ test('workspace node configuration uses a wide input-and-parameters layout', () 
       onChangeType: () => {},
       onDelete: () => {},
       onClose: () => { closed = true },
+      rawInput: { customerId: 'cus_123', plan: 'enterprise' },
+      rawOutput: { status: 200, body: { ok: true } },
     }),
   )
 
   assert.ok(container.querySelector('[data-node-configuration="workspace"]'))
   assert.match(container.textContent ?? '', /Available input data/)
+  assert.match(container.textContent ?? '', /"customerId": "cus_123"/)
+  assert.match(container.textContent ?? '', /"status": 200/)
+  assert.match(container.textContent ?? '', /Authentication/)
+  assert.ok(container.querySelector('[aria-label="Send query parameters"]'))
+  assert.ok(container.querySelector('[aria-label="Send headers"]'))
+  assert.ok(container.querySelector('[aria-label="Send body"]'))
+  assert.ok(container.querySelector('[aria-label="Query parameters input mode"]'))
+  assert.ok(container.querySelector('[aria-label="Headers input mode"]'))
+  assert.ok(container.querySelector('[aria-label="Request body"]'))
   assert.ok(container.querySelector('[aria-label="Request URL"]'))
   fireEvent.keyDown(window, { key: 'Escape' })
   assert.equal(closed, true)

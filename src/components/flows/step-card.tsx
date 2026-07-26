@@ -48,7 +48,6 @@ import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIE
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
-import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { groupToolConnections, selectedToolPresentation, toolActionChoices } from '@/lib/flows/tool-presentation'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
@@ -71,7 +70,6 @@ import {
 export type StepStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'waiting' | 'skipped' | 'stopped' | 'resumed'
 
 type Agent = { id: string; title: string }
-type KeyValueRow = { key: string; value: string }
 type InputKind = 'text' | 'yesno' | 'file' | 'email' | 'number' | 'date'
 
 const NODE_ICON: Record<FlowNode['type'], typeof Bot> = {
@@ -187,29 +185,6 @@ function uniqueFieldName(base: string, fields: OutputField[]): string {
   let index = 2
   while (names.has(`${base}${index}`)) index += 1
   return `${base}${index}`
-}
-
-function parseKeyValueRows(value?: string): KeyValueRow[] {
-  if (!value?.trim()) return [{ key: '', value: '' }]
-  try {
-    const parsed = JSON.parse(value)
-    if (isRecord(parsed)) {
-      const rows = Object.entries(parsed).map(([key, raw]) => ({
-        key,
-        value: typeof raw === 'string' ? raw : JSON.stringify(raw),
-      }))
-      return rows.length ? rows : [{ key: '', value: '' }]
-    }
-  } catch {
-    return [{ key: '', value }]
-  }
-  return [{ key: '', value }]
-}
-
-function serializeKeyValueRows(rows: KeyValueRow[]): string {
-  const entries = rows.filter((row) => row.key.trim()).map((row) => [row.key.trim(), row.value] as const)
-  if (!entries.length) return ''
-  return JSON.stringify(Object.fromEntries(entries), null, 2)
 }
 
 function defaultAgentInput(value?: string): boolean {
@@ -1519,198 +1494,6 @@ function AgentBody({
         )}
       </div>
       <AdvancedParamsSection node={node} onChange={update} />
-    </div>
-  )
-}
-
-function HttpBody({
-  node,
-  toolCatalog,
-  update,
-  tokenWiring,
-  showErrors,
-}: {
-  node: Extract<FlowNode, { type: 'http' }>
-  toolCatalog: ToolCatalog
-  update: (node: FlowNode) => void
-  tokenWiring: TokenEditorWiring
-  showErrors?: boolean
-}) {
-  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
-  const urlInvalid = Boolean(showErrors && !node.data.url)
-  const authConnections = toolCatalog.filter((entry) => parseFlowToolConnectionId(entry.id).plane === 'mcp')
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
-        <div className="grid gap-2">
-          <label className={labelClass}>URI <span className="text-red-500">*</span></label>
-          <input
-            type="url"
-            inputMode="url"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            value={node.data.url}
-            onFocus={blockActive}
-            onBlur={unblockActive}
-            onChange={(event) => update({ ...node, data: { ...node.data, url: event.target.value } })}
-            aria-invalid={urlInvalid || undefined}
-            className={cn(controlClass, urlInvalid && 'border-red-400 focus:border-red-500')}
-            placeholder="https://api.example.com/endpoint"
-            aria-label="URI"
-          />
-        </div>
-        <div className="grid gap-2">
-          <label className={labelClass}>Method <span className="text-red-500">*</span></label>
-          <select
-            value={node.data.method}
-            onChange={(event) => update({ ...node, data: { ...node.data, method: event.target.value as typeof node.data.method } })}
-            className={controlClass}
-          >
-            {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => (
-              <option key={method} value={method}>
-                {method}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <InlineKeyValue
-        label="Headers"
-        editorKey="http.headers"
-        value={node.data.headers}
-        onChange={(headers) => update({ ...node, data: { ...node.data, headers } })}
-        tokenWiring={tokenWiring}
-      />
-      <div className="grid gap-2">
-        <label className={labelClass}>Authenticate with (optional)</label>
-        <select
-          value={node.data.connectionId ?? ''}
-          onChange={(event) => update({ ...node, data: { ...node.data, connectionId: event.target.value || undefined } })}
-          className={controlClass}
-        >
-          <option value="">No authentication</option>
-          {authConnections.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.name}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-slate-500">
-          Uses this connection&apos;s login to authorize the request — connections shared with your workspace, plus your own. Your own Authorization header always takes precedence.
-        </p>
-      </div>
-      <InlineKeyValue
-        label="Queries"
-        editorKey="http.query"
-        value={node.data.query}
-        onChange={(query) => update({ ...node, data: { ...node.data, query } })}
-        tokenWiring={tokenWiring}
-      />
-      <div className="grid gap-2">
-        <label className={labelClass}>Body</label>
-        {(node.data.bodyMode ?? 'json') === 'none' ? (
-          <textarea
-            rows={4}
-            value={node.data.body ?? ''}
-            disabled
-            className={cn(controlClass, 'min-h-[100px] resize-y bg-slate-50 font-mono text-xs text-slate-400')}
-            aria-label="Body disabled"
-          />
-        ) : (
-          <TokenTextEditor
-            ref={registerEditor('http.body')}
-            multiline
-            rows={4}
-            value={node.data.body ?? ''}
-            labelCtx={labelCtx}
-            onFocus={focusEditor('http.body')}
-            onChange={(body) => update({ ...node, data: { ...node.data, body } })}
-            className={tokenControlClass}
-            placeholder={(node.data.bodyMode ?? 'json') === 'text' ? 'Plain text body' : '{"text": "Use a value from Available data"}'}
-            ariaLabel="Body"
-          />
-        )}
-      </div>
-      <div className="grid gap-2">
-        <label className={labelClass}>Cookie</label>
-        <TokenTextEditor
-          ref={registerEditor('http.cookie')}
-          value={node.data.cookie ?? ''}
-          labelCtx={labelCtx}
-          onFocus={focusEditor('http.cookie')}
-          onChange={(cookie) => update({ ...node, data: { ...node.data, cookie: cookie || undefined } })}
-          className={tokenControlClass}
-          placeholder="name=value; other=value"
-          ariaLabel="Cookie"
-        />
-      </div>
-      <AdvancedParamsSection node={node} onChange={update} />
-    </div>
-  )
-}
-
-function InlineKeyValue({
-  label,
-  editorKey,
-  value,
-  onChange,
-  tokenWiring,
-}: {
-  label: string
-  editorKey: string
-  value?: string
-  onChange: (value: string) => void
-  tokenWiring: TokenEditorWiring
-}) {
-  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
-  const rows = parseKeyValueRows(value)
-  const updateRow = (index: number, patch: Partial<KeyValueRow>) => {
-    onChange(serializeKeyValueRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row))))
-  }
-  const addRow = () => onChange(serializeKeyValueRows([...rows, { key: '', value: '' }]))
-  const removeRow = (index: number) => onChange(serializeKeyValueRows(rows.filter((_, rowIndex) => rowIndex !== index)))
-
-  return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between">
-        <label className={labelClass}>{label}</label>
-        <button type="button" onClick={addRow} className="text-xs font-semibold text-blue-700 hover:text-blue-900">
-          Add row
-        </button>
-      </div>
-      <div className="space-y-2">
-        {rows.map((row, index) => (
-          <div key={`${label}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_1fr_36px]">
-            <input
-              value={row.key}
-              onChange={(event) => updateRow(index, { key: event.target.value })}
-              onFocus={blockActive}
-              onBlur={unblockActive}
-              className={controlClass}
-              placeholder="Key"
-            />
-            <TokenTextEditor
-              ref={registerEditor(`${editorKey}.${index}.value`)}
-              value={row.value}
-              labelCtx={labelCtx}
-              onFocus={focusEditor(`${editorKey}.${index}.value`)}
-              onChange={(next) => updateRow(index, { value: next })}
-              className={cn(tokenControlClass, 'min-w-0')}
-              placeholder="Value"
-              ariaLabel={`${label} value`}
-            />
-            <button
-              type="button"
-              onClick={() => removeRow(index)}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
-              aria-label={`Remove ${label.toLowerCase()} row`}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }

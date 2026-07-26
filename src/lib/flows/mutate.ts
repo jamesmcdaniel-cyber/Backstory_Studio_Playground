@@ -191,6 +191,8 @@ export function addContainerStep(graph: FlowGraph, containerId: string, type: St
   const bodyNode =
     node.type === 'agent' && isLoop
       ? ({ ...node, data: { ...node.data, input: 'Process this item:\n{{item}}' } } as FlowNode)
+      : node.type === 'code' && isLoop
+        ? ({ ...node, data: { ...node.data, input: '{{item}}' } } as FlowNode)
       : node
   const nodes = graph.nodes.map((node) => {
     if (node.id !== containerId) return node

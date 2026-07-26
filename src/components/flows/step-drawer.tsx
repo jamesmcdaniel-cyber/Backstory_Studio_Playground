@@ -133,21 +133,38 @@ function KeyValueJsonEditor({
   unblockActive: () => void
 }) {
   const parsed = parseKeyValueRows(value)
+  const [entryMode, setEntryMode] = useState<'fields' | 'json'>(parsed.invalid ? 'json' : 'fields')
 
-  if (parsed.invalid) {
+  if (entryMode === 'json' || parsed.invalid) {
     return (
-      <div>
-        <label className={labelClass}>{label}</label>
-        <textarea
-          rows={3}
-          className={`${areaClass} font-mono text-xs`}
+      <div className="space-y-2">
+        <div className="flex items-end justify-between gap-3">
+          <label className={labelClass}>{label}</label>
+          <select
+            className={`${smallField} w-auto min-w-40`}
+            value="json"
+            onChange={(event) => setEntryMode(event.target.value as 'fields' | 'json')}
+            aria-label={`${label} input mode`}
+          >
+            <option value="fields">Using fields below</option>
+            <option value="json">Using JSON</option>
+          </select>
+        </div>
+        <TokenTextEditor
+          ref={registerEditor(`${editorKey}.json`)}
+          multiline
+          rows={5}
+          className="font-mono text-xs"
           value={value ?? ''}
+          labelCtx={labelCtx}
           placeholder={'{"name": "value"}'}
-          onFocus={blockActive}
-          onBlur={unblockActive}
-          onChange={(e) => onChange(e.target.value || undefined)}
+          onFocus={focusEditor(`${editorKey}.json`)}
+          onChange={(next) => onChange(next || undefined)}
+          ariaLabel={`${label} JSON`}
         />
-        <p className="mt-1 text-[11px] text-amber-600">This saved value is not a JSON object. Fix it here, or clear it to return to key/value rows.</p>
+        <p className={`text-[11px] ${parsed.invalid ? 'text-amber-600' : 'text-muted-foreground'}`}>
+          {parsed.invalid ? 'Enter a valid JSON object before switching back to fields.' : helper}
+        </p>
       </div>
     )
   }
@@ -169,7 +186,18 @@ function KeyValueJsonEditor({
 
   return (
     <div>
-      <label className={labelClass}>{label}</label>
+      <div className="flex items-end justify-between gap-3">
+        <label className={labelClass}>{label}</label>
+        <select
+          className={`${smallField} w-auto min-w-40`}
+          value={entryMode}
+          onChange={(event) => setEntryMode(event.target.value as 'fields' | 'json')}
+          aria-label={`${label} input mode`}
+        >
+          <option value="fields">Using fields below</option>
+          <option value="json">Using JSON</option>
+        </select>
+      </div>
       <div className="space-y-2 rounded-xl border border-border bg-background/40 p-2">
         {displayRows.map((row, index) => {
           const saved = index < savedRows.length

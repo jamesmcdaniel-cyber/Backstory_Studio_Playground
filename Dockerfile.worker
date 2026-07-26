@@ -4,6 +4,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Python code nodes run in an isolated `python3 -I -S` subprocess. Keep the
+# runtime explicit in the worker image so local and queued execution match.
+RUN apk add --no-cache python3
+
 # Copy package files and prisma
 COPY package*.json ./
 COPY tsconfig.json ./

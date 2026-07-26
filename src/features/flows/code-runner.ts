@@ -13,6 +13,7 @@ type CodeRunOptions = {
 }
 
 const MAX_OUTPUT_BYTES = 1_000_000
+const MAX_ITEMS = 1_000
 const DEFAULT_TIMEOUT_MS = 5_000
 
 // The child owns the VM and is killed at the deadline. The permission model
@@ -26,18 +27,21 @@ process.stdin.on('data', chunk => raw += chunk);
 process.stdin.on('end', async () => {
   try {
     const request = JSON.parse(raw);
-    const logs = (...args) => process.stderr.write(args.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join(' ') + '\n');
     const sandbox = Object.create(null);
-    Object.assign(sandbox, {
-      input: request.input,
-      context: request.context || {},
-      console: Object.freeze({ log: logs, info: logs, warn: logs, error: logs }),
-    });
-    sandbox.globalThis = sandbox;
-    const source = '(async (input, context) => {\n' + request.code + '\n})(input, context)';
+    // Reconstruct data *inside* the VM realm. Passing host-created objects or
+    // functions into a context would expose their host Function constructor.
+    const inputJson = JSON.stringify(request.input === undefined ? null : request.input);
+    const contextJson = JSON.stringify(request.context || {});
+    const source =
+      '(async () => {' +
+      'const input = JSON.parse(' + JSON.stringify(inputJson) + ');' +
+      'const context = JSON.parse(' + JSON.stringify(contextJson) + ');' +
+      'const console = Object.freeze({log(){},info(){},warn(){},error(){}});' +
+      'return (async (input, context, console) => {\n' + request.code + '\n})(input, context, console);' +
+      '})()';
     const value = await new vm.Script(source, { filename: 'flow-code.js' }).runInNewContext(sandbox, {
       timeout: request.timeoutMs,
-      microtaskMode: 'afterEvaluate',
+      contextCodeGeneration: { strings: false, wasm: false },
     });
     process.stdout.write(JSON.stringify({ ok: true, value: value === undefined ? null : value }));
   } catch (error) {
@@ -174,6 +178,7 @@ export async function runFlowCode(options: CodeRunOptions): Promise<unknown> {
   if (!options.code.trim()) throw new Error('Code step is empty.')
   if (options.mode === 'all') return runOne(options)
   const items = itemsOf(options.input)
+  if (items.length > MAX_ITEMS) throw new Error(`Code step can process at most ${MAX_ITEMS} items at once.`)
   const output: unknown[] = []
   // Deliberately sequential: predictable ordering and one bounded child at a
   // time keeps a large input list from exhausting the worker.

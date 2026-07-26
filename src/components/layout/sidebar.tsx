@@ -334,47 +334,49 @@ export function Sidebar() {
       >
         {/* Org switcher */}
         <div className={cn('relative border-b p-3', desktopCollapsed && 'lg:px-2')}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={toggleDesktopSidebar}
-                aria-label={desktopCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-                aria-expanded={!desktopCollapsed}
-                className="absolute right-0 top-5 z-30 hidden h-6 w-6 translate-x-1/2 rounded-full bg-white shadow-sm lg:inline-flex"
-              >
-                {desktopCollapsed
-                  ? <PanelLeftOpen className="h-3.5 w-3.5" />
-                  : <PanelLeftClose className="h-3.5 w-3.5" />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {desktopCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-            </TooltipContent>
-          </Tooltip>
+          <div className={cn('flex items-center gap-1', desktopCollapsed && 'lg:flex-col')}>
+            <button
+              className={cn(
+                'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-gray-100',
+                desktopCollapsed && 'lg:w-full lg:flex-none lg:justify-center lg:px-0',
+              )}
+              onClick={() => setOrgMenuOpen((open) => !open)}
+              aria-label={`Workspace: ${activeOrg?.name || 'Workspace'}`}
+              title={desktopCollapsed ? activeOrg?.name || 'Workspace' : undefined}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={activeOrg?.logoUrl || DEFAULT_ORG_LOGO}
+                alt=""
+                className="h-8 w-8 rounded-lg object-cover"
+              />
+              <span className={cn('flex-1 truncate text-left text-sm font-semibold', desktopCollapsed && 'lg:hidden')}>
+                {activeOrg?.name || 'Workspace'}
+              </span>
+              <ChevronsUpDown className={cn('h-4 w-4 text-gray-400', desktopCollapsed && 'lg:hidden')} />
+            </button>
 
-          <button
-            className={cn(
-              'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-gray-100',
-              desktopCollapsed && 'lg:justify-center lg:px-0',
-            )}
-            onClick={() => setOrgMenuOpen((open) => !open)}
-            aria-label={`Workspace: ${activeOrg?.name || 'Workspace'}`}
-            title={desktopCollapsed ? activeOrg?.name || 'Workspace' : undefined}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={activeOrg?.logoUrl || DEFAULT_ORG_LOGO}
-              alt=""
-              className="h-8 w-8 rounded-lg object-cover"
-            />
-            <span className={cn('flex-1 truncate text-left text-sm font-semibold', desktopCollapsed && 'lg:hidden')}>
-              {activeOrg?.name || 'Workspace'}
-            </span>
-            <ChevronsUpDown className={cn('h-4 w-4 text-gray-400', desktopCollapsed && 'lg:hidden')} />
-          </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleDesktopSidebar}
+                  aria-label={desktopCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  aria-expanded={!desktopCollapsed}
+                  className="hidden h-8 w-8 shrink-0 rounded-lg text-graphite-500 hover:bg-graphite-100 hover:text-graphite-900 lg:inline-flex"
+                >
+                  {desktopCollapsed
+                    ? <PanelLeftOpen className="h-4 w-4" />
+                    : <PanelLeftClose className="h-4 w-4" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {desktopCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+              </TooltipContent>
+            </Tooltip>
+          </div>
           {orgMenuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setOrgMenuOpen(false)} />
@@ -476,7 +478,7 @@ export function Sidebar() {
                   {isActive && (
                     <motion.span
                       layoutId="sidebar-active-nav"
-                      className="absolute inset-0 rounded-lg border border-horizon-100 bg-horizon-50 shadow-[inset_3px_0_0_#447C93]"
+                      className="absolute inset-y-1 left-0 w-[3px] rounded-full bg-horizon-500"
                       transition={{ type: 'spring', stiffness: 500, damping: 38 }}
                       aria-hidden="true"
                     />

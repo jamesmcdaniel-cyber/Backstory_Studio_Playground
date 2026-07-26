@@ -810,6 +810,13 @@ function FlowBuilder() {
     return parseFlowValue(step.output)
   }, [selectedNode, selectedRun])
 
+  const selectedNodeRawLogs = useMemo(() => {
+    if (!selectedNode) return undefined
+    const step = [...(selectedRun?.steps ?? [])].reverse().find((entry) => entry.nodeId === selectedNode.id)
+    const logs = step?.logs
+    return Array.isArray(logs) ? logs.map((entry) => String(entry)) : undefined
+  }, [selectedNode, selectedRun])
+
   const validation = useMemo(
     () => validateFlowGraph(graph, { agents, toolCatalog, flowId: id }),
     [graph, agents, toolCatalog, id],
@@ -1701,6 +1708,7 @@ function FlowBuilder() {
                 variableNames={upstreamVariables.map((variable) => variable.name)}
                 rawInput={selectedNodeRawInput}
                 rawOutput={selectedNodeRawOutput}
+                rawLogs={selectedNodeRawLogs}
                 onChange={(node) => setGraph((g) => updateNode(g, node))}
                 onChangeType={(type) => commitGraph(changeNodeType(graph, selectedNode.id, type))}
                 onDuplicate={() => {

@@ -1580,10 +1580,18 @@ export function StepDrawer({
               </div>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw output from this node&apos;s latest run.</p>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
               <pre className="min-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
                 {rawJson(rawOutput, 'No output data yet.\nRun the flow to inspect this node’s response here.')}
               </pre>
+              {rawLogs && rawLogs.length > 0 && (
+                <div>
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Logs</p>
+                  <pre className="overflow-auto whitespace-pre-wrap break-words rounded-lg border border-amber-500/30 bg-amber-950/40 p-3 font-mono text-[11px] leading-5 text-amber-100">
+                    {rawLogs.join('\n')}
+                  </pre>
+                </div>
+              )}
             </div>
           </aside>
         )}

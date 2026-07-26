@@ -56,7 +56,7 @@ test('prefixes per-item logs in each mode', async () => {
     code: 'console.log("row", input); return input;',
     input: [10, 20],
   })
-  assert.deepEqual(logs, ['[item 0] log: 10', '[item 1] log: 20'])
+  assert.deepEqual(logs, ['[item 0] log: row 10', '[item 1] log: row 20'])
 })
 
 test('blocks privileged Python capabilities', async () => {

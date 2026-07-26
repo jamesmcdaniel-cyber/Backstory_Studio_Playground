@@ -17,6 +17,8 @@ export type RunStep = {
   error?: string | null
   input?: unknown
   output?: unknown
+  // console.log / print() output captured from a code step (display-only).
+  logs?: string[] | null
   startedAt?: string | null
   finishedAt?: string | null
   // Agent steps: the underlying agent execution, linked as soon as it starts,

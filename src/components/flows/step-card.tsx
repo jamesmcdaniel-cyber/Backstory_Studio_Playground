@@ -986,7 +986,7 @@ function KnowledgeBody({
   update: (node: FlowNode) => void
   tokenWiring: TokenEditorWiring
 }) {
-  const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
@@ -1553,18 +1553,28 @@ function HttpBody({
       />
       <div className="grid gap-2">
         <label className={labelClass}>Body</label>
-        <TokenTextEditor
-          ref={registerEditor('http.body')}
-          multiline
-          rows={4}
-          value={node.data.body ?? ''}
-          labelCtx={labelCtx}
-          onFocus={focusEditor('http.body')}
-          onChange={(body) => update({ ...node, data: { ...node.data, body } })}
-          className={tokenControlClass}
-          placeholder="Optional JSON or text body for POST, PUT, and PATCH requests."
-          ariaLabel="Body"
-        />
+        {(node.data.bodyMode ?? 'json') === 'none' ? (
+          <textarea
+            rows={4}
+            value={node.data.body ?? ''}
+            disabled
+            className={cn(controlClass, 'min-h-[100px] resize-y bg-slate-50 font-mono text-xs text-slate-400')}
+            aria-label="Body disabled"
+          />
+        ) : (
+          <TokenTextEditor
+            ref={registerEditor('http.body')}
+            multiline
+            rows={4}
+            value={node.data.body ?? ''}
+            labelCtx={labelCtx}
+            onFocus={focusEditor('http.body')}
+            onChange={(body) => update({ ...node, data: { ...node.data, body } })}
+            className={tokenControlClass}
+            placeholder={(node.data.bodyMode ?? 'json') === 'text' ? 'Plain text body' : '{"text": "Use a value from Available data"}'}
+            ariaLabel="Body"
+          />
+        )}
       </div>
       <div className="grid gap-2">
         <label className={labelClass}>Cookie</label>

@@ -19,6 +19,11 @@ const catalog = [
     tools: [{ name: 'slack_list_channels', description: 'List channels', inputSchema: { type: 'object', properties: {} } }],
   },
   {
+    id: 'native:slack',
+    name: 'Slack',
+    tools: [{ name: 'send_message', description: 'Send with the workspace bot', inputSchema: { type: 'object', properties: {} } }],
+  },
+  {
     id: 'backstory-mcp-id',
     name: 'Backstory MCP',
     tools: [{ name: 'search', description: 'Search Backstory' }],
@@ -32,7 +37,7 @@ const catalog = [
 
 test('synthetic Nango action connections resolve to their provider brand', () => {
   assert.deepEqual(toolConnectionBrand(catalog[0]), {
-    key: 'nango:slack',
+    key: 'slack',
     label: 'Slack',
     slug: 'slack',
   })
@@ -40,15 +45,16 @@ test('synthetic Nango action connections resolve to their provider brand', () =>
 
 test('provider grouping coalesces Slack actions without mixing other integrations', () => {
   const groups = groupToolConnections(catalog)
-  const slack = groups.find((group) => group.brand.key === 'nango:slack')
+  const slack = groups.find((group) => group.brand.key === 'slack')
   assert.ok(slack)
-  assert.equal(slack.connections.length, 2)
+  assert.equal(slack.connections.length, 3)
   assert.equal(groups.length, 3)
 
   const actions = toolActionChoices(catalog, catalog[0])
   assert.deepEqual(actions.map((action) => action.connectionId), [
     'nango:slack_user_post_message',
     'nango:slack_list_channels',
+    'native:slack',
   ])
   assert.equal(actions.some((action) => action.connectionId === 'backstory-mcp-id'), false)
   assert.equal(actions.some((action) => action.connectionId === 'native:granola'), false)

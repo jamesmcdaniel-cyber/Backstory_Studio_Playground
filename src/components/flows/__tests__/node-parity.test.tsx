@@ -129,3 +129,38 @@ test('editing one inline switch case preserves every other case', () => {
   assert.deepEqual(cases?.[1], { id: 'case2', label: 'SMB', left: 'account.tier', op: 'eq', right: 'smb' })
   cleanup()
 })
+
+test('HTTP body mode is represented consistently on the inline card', () => {
+  const node = {
+    id: 'http1',
+    type: 'http',
+    data: {
+      method: 'POST',
+      url: 'https://api.example.com',
+      bodyMode: 'none',
+      body: '{"stale":true}',
+    },
+  } as FlowNode
+  const { getByLabelText, queryByLabelText } = renderCard(node)
+
+  assert.equal((getByLabelText('Body disabled') as HTMLTextAreaElement).disabled, true)
+  assert.equal(queryByLabelText('Body'), null)
+  cleanup()
+})
+
+test('AI and subflow timeout controls use their runtime 20-minute limit', () => {
+  const node = {
+    id: 'ai1',
+    type: 'ai',
+    data: { aiOp: 'ask', input: '', instructions: '' },
+  } as FlowNode
+  const { container } = renderCard(node)
+
+  const showAll = Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes('Show all'))
+  assert.ok(showAll)
+  fireEvent.click(showAll)
+
+  const timeout = container.querySelector('input[type="number"][max="1200"]')
+  assert.ok(timeout, 'AI timeout accepts the same 20-minute maximum as its graph/runtime contract')
+  cleanup()
+})

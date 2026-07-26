@@ -43,7 +43,7 @@ export function toolConnectionBrand(connection: PresentableConnection): ToolBran
       slug: slug.includes('backstory') ? 'backstory' : slug,
     }
   }
-  if (plane === 'people_ai') return { key: 'people_ai:backstory', label: 'Backstory', slug: 'backstory' }
+  if (plane === 'people_ai') return { key: 'backstory', label: 'Backstory', slug: 'backstory' }
 
   const hint = `${connection.name} ${ref}`.toLowerCase()
   const known: { match: RegExp; key: string; label: string; slug: string }[] = [
@@ -73,7 +73,7 @@ export function toolConnectionBrand(connection: PresentableConnection): ToolBran
   const brand = match
     ? { key: match.key, label: match.label, slug: match.slug }
     : { key: fallback, label: connection.name || ref, slug: fallback }
-  return { ...brand, key: `${plane}:${brand.key}` }
+  return brand
 }
 
 export function toolConnectionsForBrand(

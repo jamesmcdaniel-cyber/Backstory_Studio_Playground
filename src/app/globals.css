@@ -65,6 +65,25 @@ body {
   font-family: var(--font-display), "Arimo", system-ui, sans-serif;
 }
 
+/* The access gateway uses a quiet technical grid instead of a marketing
+   illustration. It stays CSS-native, crisp at every resolution, and costs no
+   image payload. */
+.auth-grid {
+  background-image:
+    linear-gradient(rgba(153, 193, 209, 0.075) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(153, 193, 209, 0.075) 1px, transparent 1px);
+  background-size: 72px 72px;
+}
+
+/* App pages share one atmospheric canvas. White cards remain the focal layer,
+   while the low-contrast gradients keep large empty regions from feeling dead. */
+.app-canvas {
+  background-color: var(--graphite-50);
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(153, 193, 209, 0.22), transparent 28rem),
+    radial-gradient(circle at 92% 92%, rgba(219, 235, 242, 0.42), transparent 34rem);
+}
+
 /* Entrance stagger: put .stagger-children on a list/grid container and its
    direct children cascade in. Capped at 12; later children animate together.
    Keyframes declared here (not only in tailwind.config) so this rule works

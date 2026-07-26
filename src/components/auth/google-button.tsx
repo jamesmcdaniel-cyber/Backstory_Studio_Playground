@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { Button } from '@/components/ui/button'
+import { validatedReturnPath } from '@/lib/auth/return-path'
+import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
 /** Google's brand "G" mark. Rendered at the Button's forced 16px svg size. */
@@ -22,10 +24,16 @@ function GoogleMark() {
 function returnTo(): string | undefined {
   if (typeof window === 'undefined') return undefined
   const raw = new URLSearchParams(window.location.search).get('return_to')
-  return raw && /^\/(?!\/)/.test(raw) && !raw.includes('\\') ? raw : undefined
+  return validatedReturnPath(raw) || undefined
 }
 
-export function GoogleButton({ label = 'Continue with Google' }: { label?: string }) {
+export function GoogleButton({
+  label = 'Continue with Google',
+  className,
+}: {
+  label?: string
+  className?: string
+}) {
   const { signInWithGoogle } = useSupabase()
   const [loading, setLoading] = useState(false)
 
@@ -48,7 +56,7 @@ export function GoogleButton({ label = 'Continue with Google' }: { label?: strin
     <Button
       type="button"
       variant="outline"
-      className="w-full"
+      className={cn('w-full', className)}
       loading={loading}
       onClick={handleClick}
     >

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { motion } from 'motion/react'
 import {
   Bot,
   Brain,
@@ -326,7 +327,7 @@ export function Sidebar() {
 
       <div
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r bg-gray-50 transition-all duration-200 lg:relative lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-graphite-200/80 bg-white/95 shadow-2 backdrop-blur-xl transition-all duration-200 lg:relative lg:translate-x-0 lg:shadow-none',
           desktopCollapsed && 'lg:w-16',
           mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
         )}
@@ -467,13 +468,21 @@ export function Sidebar() {
                   title={desktopCollapsed ? item.name : undefined}
                   aria-label={desktopCollapsed ? item.name : undefined}
                   className={cn(
-                    'flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm font-medium transition-colors duration-fast',
+                    'group relative flex items-center gap-2.5 overflow-hidden rounded-lg px-2 py-2 text-sm font-medium transition-colors duration-fast',
                     desktopCollapsed && 'lg:justify-center lg:px-0 lg:py-2',
-                    isActive ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
+                    isActive ? 'text-horizon-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
                   )}
                 >
-                  <item.icon className={cn('h-4 w-4', desktopCollapsed && 'lg:h-5 lg:w-5', isActive ? 'text-indigo-600' : 'text-gray-400')} />
-                  <span className={cn(desktopCollapsed && 'lg:hidden')}>{item.name}</span>
+                  {isActive && (
+                    <motion.span
+                      layoutId="sidebar-active-nav"
+                      className="absolute inset-0 rounded-lg border border-horizon-100 bg-horizon-50 shadow-[inset_3px_0_0_#447C93]"
+                      transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                      aria-hidden="true"
+                    />
+                  )}
+                  <item.icon className={cn('relative z-10 h-4 w-4 transition-transform duration-base group-hover:scale-110', desktopCollapsed && 'lg:h-5 lg:w-5', isActive ? 'text-horizon-600' : 'text-gray-400')} />
+                  <span className={cn('relative z-10', desktopCollapsed && 'lg:hidden')}>{item.name}</span>
                 </Link>
               )
             })}

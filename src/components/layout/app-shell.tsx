@@ -2,6 +2,7 @@
 
 import { ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
+import { motion, useReducedMotion } from 'motion/react'
 import { Sidebar } from './sidebar'
 import { SetupGate } from './setup-gate'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
@@ -28,6 +29,7 @@ const FULLSCREEN_ROUTES = new Set(['/agents'])
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? ''
+  const reduceMotion = useReducedMotion()
   const isAppRoute = APP_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
 
   if (!isAppRoute) {
@@ -45,6 +47,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   // container, so only exactly one path segment past "/flows/" goes edge-to-edge.
   const flowSegments = pathname.startsWith('/flows/') ? pathname.slice('/flows/'.length).split('/').filter(Boolean) : []
   const fullscreen = FULLSCREEN_ROUTES.has(pathname) || flowSegments.length === 1
+  const routeMotion = reduceMotion
+    ? {}
+    : {
+        initial: { opacity: 0, y: 7 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.28, ease: [0.25, 1, 0.5, 1] as const },
+      }
+
   return (
     // OUTER boundary wraps the whole shell (incl. the Sidebar) so a sidebar
     // render throw no longer white-screens the entire authenticated app. It is
@@ -52,15 +62,21 @@ export function AppShell({ children }: { children: ReactNode }) {
     <ErrorBoundary>
       <div className="flex h-screen overflow-hidden bg-background">
         <Sidebar />
-        <main id="main-content" className="flex-1 overflow-y-auto">
+        <main id="main-content" className="app-canvas relative flex-1 overflow-y-auto">
           {fullscreen ? (
             // INNER boundary resets on navigation so a page error clears when the
             // user clicks away, instead of leaving them stuck on the fallback.
-            <ErrorBoundary resetKey={pathname}><SetupGate>{children}</SetupGate></ErrorBoundary>
-          ) : (
-            <div className="container mx-auto max-w-7xl animate-fade-in px-3 py-4 sm:px-6 sm:py-8">
+            <motion.div key={pathname} className="relative h-full" {...routeMotion}>
               <ErrorBoundary resetKey={pathname}><SetupGate>{children}</SetupGate></ErrorBoundary>
-            </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key={pathname}
+              className="container relative mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-8"
+              {...routeMotion}
+            >
+              <ErrorBoundary resetKey={pathname}><SetupGate>{children}</SetupGate></ErrorBoundary>
+            </motion.div>
           )}
         </main>
       </div>

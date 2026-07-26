@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { ArrowUp, Bot, FileText, History, Loader2, Paperclip, Sparkles, Workflow, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 type LibrarianResult = {
   type: 'agent' | 'flow' | 'template' | 'run'
@@ -87,7 +88,7 @@ export default function LibrarianHome() {
       </p>
 
       {/* Composer — matches the mockup: prompt, attach + BUILD, send, persona row */}
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm transition-colors focus-within:border-horizon-400 focus-within:ring-4 focus-within:ring-horizon-500/10">
+      <div className="rounded-2xl border border-gray-200 bg-white shadow-2 transition-[border-color,box-shadow,transform] duration-base focus-within:-translate-y-0.5 focus-within:border-horizon-400 focus-within:shadow-4 focus-within:ring-4 focus-within:ring-horizon-500/10">
         <div className="px-5 pt-5">
           <textarea
             ref={textareaRef}
@@ -137,21 +138,19 @@ export default function LibrarianHome() {
             <span className="font-mono text-[11px] uppercase tracking-wider text-gray-500">Tailor output for</span>
             {activeHint && <span className="text-sm text-gray-400">{activeHint}</span>}
           </div>
-          <div className="grid grid-cols-4 gap-1 rounded-lg bg-gray-50 p-1">
-            {PERSONAS.map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => setPersona(p.key)}
-                className={cn(
-                  'rounded-md py-2 text-center font-mono text-xs tracking-wider transition-colors',
-                  persona === p.key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600',
-                )}
-              >
-                {p.key}
-              </button>
-            ))}
-          </div>
+          <Tabs value={persona} onValueChange={(value) => setPersona(value as (typeof PERSONAS)[number]['key'])}>
+            <TabsList className="grid h-auto w-full grid-cols-4">
+              {PERSONAS.map((p) => (
+                <TabsTrigger
+                  key={p.key}
+                  value={p.key}
+                  className="py-2 font-mono text-xs tracking-wider"
+                >
+                  {p.key}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </div>
       </div>
 
@@ -163,7 +162,7 @@ export default function LibrarianHome() {
               key={s}
               type="button"
               onClick={() => void ask(s)}
-              className="rounded-full border border-gray-200 bg-white px-4 py-2.5 font-mono text-sm text-gray-600 transition-colors hover:border-gray-300 hover:bg-gray-50"
+              className="rounded-full border border-gray-200 bg-white px-4 py-2.5 font-mono text-sm text-gray-600 shadow-1 transition-[transform,border-color,box-shadow,color] duration-base hover:-translate-y-0.5 hover:border-horizon-200 hover:text-horizon-700 hover:shadow-2 active:translate-y-0"
             >
               {s}
             </button>
@@ -177,7 +176,7 @@ export default function LibrarianHome() {
           {thread.map((turn, i) => (
             <div key={i} className="space-y-3">
               <p className="text-right text-sm font-medium text-gray-900">{turn.question}</p>
-              <div className="rounded-2xl border bg-white p-4 shadow-sm">
+              <div className="rounded-2xl border bg-white p-4 shadow-2 animate-fade-in-up">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-horizon-600">
                   <Sparkles className="h-3.5 w-3.5" /> Librarian
                 </div>

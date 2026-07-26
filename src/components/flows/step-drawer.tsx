@@ -440,6 +440,7 @@ export function StepDrawer({
   published,
   rawInput,
   rawOutput,
+  rawLogs,
   layout = 'drawer',
   onChange,
   onChangeType,
@@ -460,6 +461,7 @@ export function StepDrawer({
   published?: boolean
   rawInput?: unknown
   rawOutput?: unknown
+  rawLogs?: string[]
   layout?: 'drawer' | 'workspace'
   onChange: (node: FlowNode) => void
   onChangeType: (type: EditableType) => void

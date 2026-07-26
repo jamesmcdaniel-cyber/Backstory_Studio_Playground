@@ -573,13 +573,14 @@ export async function runFlowExecution(
     })
     // Conditional on 'running' for the same reason as agent steps: the
     // end-of-run failure sweep is authoritative over any late adapter write.
-    const finish = async (patch: { status: string; output?: unknown; error?: string }) => {
+    const finish = async (patch: { status: string; output?: unknown; error?: string; logs?: string[] }) => {
       await prisma.flowRunStep.updateMany({
         where: { id: step.id, status: 'running' },
         data: {
           status: patch.status,
           output: patch.output !== undefined ? jsonValue(patch.output) : undefined,
           error: patch.error ? patch.error.slice(0, 300) : undefined,
+          logs: patch.logs && patch.logs.length ? jsonValue(patch.logs) : undefined,
           finishedAt: new Date(),
         },
       })
@@ -882,7 +883,7 @@ export async function runFlowExecution(
       if (node.kind === 'code') {
         const language = node.config.language === 'python' ? 'python' : 'javascript'
         const mode = node.config.mode === 'each' ? 'each' : 'all'
-        const output = await runFlowCode({
+        const { output, logs } = await runFlowCode({
           language,
           mode,
           code: typeof node.config.code === 'string' ? node.config.code : '',
@@ -892,7 +893,7 @@ export async function runFlowExecution(
             : {},
           timeoutMs: typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined,
         })
-        await finish({ status: 'succeeded', output })
+        await finish({ status: 'succeeded', output, logs })
         return { output }
       }
       if (node.kind === 'http') {

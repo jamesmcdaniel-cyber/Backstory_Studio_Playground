@@ -12,13 +12,33 @@ type CodeRunOptions = {
   timeoutMs?: number
 }
 
+/** The value the user code returned, plus any console.log / print output it
+ *  emitted. Logs are captured for display only — they never affect the data
+ *  that flows to downstream nodes. */
+export type CodeRunResult = {
+  output: unknown
+  logs: string[]
+}
+
 const MAX_OUTPUT_BYTES = 1_000_000
 const MAX_ITEMS = 1_000
 const DEFAULT_TIMEOUT_MS = 5_000
+const MAX_LOG_ENTRIES = 200
+
+// The Node Permission Model flag was renamed from --experimental-permission to
+// --permission when it stabilized in v23.5.0. Passing an unknown flag makes
+// Node exit before our code runs, so pick the right spelling for the running
+// binary instead of assuming one.
+function nodePermissionFlag(): string {
+  const [major, minor] = process.versions.node.split('.').map((part) => Number(part))
+  const stabilized = major > 23 || (major === 23 && minor >= 5)
+  return stabilized ? '--permission' : '--experimental-permission'
+}
 
 // The child owns the VM and is killed at the deadline. The permission model
 // denies filesystem/process/worker/native-addon access. User code only sees
-// JSON-cloned input/context plus a console whose output goes to stderr.
+// JSON-cloned input/context plus a console that collects output into a logs
+// array returned alongside the value (never into the host's stderr).
 const JAVASCRIPT_HOST = String.raw`
 const vm = require('node:vm');
 let raw = '';
@@ -36,14 +56,18 @@ process.stdin.on('end', async () => {
       '(async () => {' +
       'const input = JSON.parse(' + JSON.stringify(inputJson) + ');' +
       'const context = JSON.parse(' + JSON.stringify(contextJson) + ');' +
-      'const console = Object.freeze({log(){},info(){},warn(){},error(){}});' +
-      'return (async (input, context, console) => {\n' + request.code + '\n})(input, context, console);' +
+      'const __logs__ = [];' +
+      'const __fmt__ = (args) => args.map((a) => typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch (_) { return String(a); } })()).join(" ");' +
+      'const __push__ = (level, args) => { if (__logs__.length < ' + ${MAX_LOG_ENTRIES} + ') __logs__.push((level + ": " + __fmt__(args)).slice(0, 2000)); };' +
+      'const console = Object.freeze({ log: (...a) => __push__("log", a), info: (...a) => __push__("info", a), warn: (...a) => __push__("warn", a), error: (...a) => __push__("error", a), debug: (...a) => __push__("debug", a) });' +
+      'const value = await (async (input, context, console) => {\n' + request.code + '\n})(input, context, console);' +
+      'return { value: value === undefined ? null : value, logs: __logs__ };' +
       '})()';
-    const value = await new vm.Script(source, { filename: 'flow-code.js' }).runInNewContext(sandbox, {
+    const result = await new vm.Script(source, { filename: 'flow-code.js' }).runInNewContext(sandbox, {
       timeout: request.timeoutMs,
       contextCodeGeneration: { strings: false, wasm: false },
     });
-    process.stdout.write(JSON.stringify({ ok: true, value: value === undefined ? null : value }));
+    process.stdout.write(JSON.stringify({ ok: true, value: result.value, logs: result.logs }));
   } catch (error) {
     process.stdout.write(JSON.stringify({ ok: false, error: error && error.message ? error.message : String(error) }));
   }
@@ -52,12 +76,26 @@ process.stdin.on('end', async () => {
 
 // Python is launched isolated (-I), without site packages (-S), with a small
 // builtin allowlist. The AST gate blocks imports, filesystem/process primitives,
-// and dunder-based object traversal before the function is compiled.
+// and dunder-based object traversal before the function is compiled. print()
+// output is collected into a logs list returned with the value.
 const PYTHON_HOST = String.raw`
 import ast, json, sys
 
+# Cap address space so a runaway allocation can't exhaust the worker. Best
+# effort: RLIMIT_AS is unsupported/ignored on some platforms (e.g. macOS), and
+# the wall-clock SIGKILL remains the primary bound.
+try:
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    cap = 512 * 1024 * 1024
+    if soft == resource.RLIM_INFINITY or soft > cap:
+        resource.setrlimit(resource.RLIMIT_AS, (cap, hard))
+except Exception:
+    pass
+
 request = json.loads(sys.stdin.read())
 source = "def __flow_user__(input, context):\n" + "".join("    " + line + "\n" for line in request["code"].splitlines())
+logs = []
 try:
     tree = ast.parse(source, filename="flow-code.py", mode="exec")
     forbidden_nodes = (ast.Import, ast.ImportFrom, ast.Global, ast.Nonlocal, ast.ClassDef)
@@ -72,7 +110,9 @@ try:
                 raise ValueError("That Python capability is not available in flow code.")
 
     def flow_print(*values, **kwargs):
-        print(*values, file=sys.stderr)
+        if len(logs) < ${MAX_LOG_ENTRIES}:
+            sep = kwargs.get("sep", " ")
+            logs.append(sep.join(str(v) for v in values)[:2000])
 
     safe_builtins = {
         "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
@@ -85,9 +125,9 @@ try:
     scope = {"__builtins__": safe_builtins}
     exec(compile(tree, "flow-code.py", "exec"), scope, scope)
     value = scope["__flow_user__"](request.get("input"), request.get("context") or {})
-    sys.stdout.write(json.dumps({"ok": True, "value": value}, separators=(",", ":")))
+    sys.stdout.write(json.dumps({"ok": True, "value": value, "logs": logs}, separators=(",", ":")))
 except BaseException as error:
-    sys.stdout.write(json.dumps({"ok": False, "error": str(error)}, separators=(",", ":")))
+    sys.stdout.write(json.dumps({"ok": False, "error": str(error), "logs": logs}, separators=(",", ":")))
 `
 
 function itemsOf(input: unknown): unknown[] {
@@ -101,12 +141,12 @@ function itemsOf(input: unknown): unknown[] {
   return [input]
 }
 
-async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<unknown> {
+async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<CodeRunResult> {
   const timeoutMs = Math.max(1_000, Math.min(30_000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS))
   const isJavaScript = options.language === 'javascript'
   const command = isJavaScript ? process.execPath : (process.env.FLOW_PYTHON_BIN?.trim() || 'python3')
   const args = isJavaScript
-    ? ['--experimental-permission', '--max-old-space-size=128', '--disable-proto=throw', '-e', JAVASCRIPT_HOST]
+    ? [nodePermissionFlag(), '--max-old-space-size=128', '--disable-proto=throw', '-e', JAVASCRIPT_HOST]
     : ['-I', '-S', '-c', PYTHON_HOST]
   const payload = JSON.stringify({
     code: options.code,
@@ -128,7 +168,7 @@ async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<unknown> {
     let stderr = ''
     let bytes = 0
     let settled = false
-    const finish = (error?: Error, value?: unknown) => {
+    const finish = (error?: Error, value?: CodeRunResult) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -163,9 +203,10 @@ async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<unknown> {
         return
       }
       try {
-        const response = JSON.parse(stdout) as { ok: boolean; value?: unknown; error?: string }
+        const response = JSON.parse(stdout) as { ok: boolean; value?: unknown; error?: string; logs?: unknown }
+        const logs = Array.isArray(response.logs) ? response.logs.map((entry) => String(entry)) : []
         if (!response.ok) finish(new Error(response.error || 'Code step failed.'))
-        else finish(undefined, response.value)
+        else finish(undefined, { output: response.value ?? null, logs })
       } catch {
         finish(new Error('Code step returned an invalid result.'))
       }
@@ -174,20 +215,25 @@ async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<unknown> {
   })
 }
 
-export async function runFlowCode(options: CodeRunOptions): Promise<unknown> {
+export async function runFlowCode(options: CodeRunOptions): Promise<CodeRunResult> {
   if (!options.code.trim()) throw new Error('Code step is empty.')
   if (options.mode === 'all') return runOne(options)
   const items = itemsOf(options.input)
   if (items.length > MAX_ITEMS) throw new Error(`Code step can process at most ${MAX_ITEMS} items at once.`)
   const output: unknown[] = []
+  const logs: string[] = []
   // Deliberately sequential: predictable ordering and one bounded child at a
   // time keeps a large input list from exhausting the worker.
   for (let index = 0; index < items.length; index += 1) {
-    output.push(await runOne({
+    const result = await runOne({
       ...options,
       input: items[index],
       context: { ...(options.context ?? {}), index },
-    }))
+    })
+    output.push(result.output)
+    for (const entry of result.logs) {
+      if (logs.length < MAX_LOG_ENTRIES) logs.push(`[item ${index}] ${entry}`)
+    }
   }
-  return output
+  return { output, logs }
 }

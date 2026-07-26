@@ -42,7 +42,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         // there) but stripped from summary wire steps below to stay slim.
         select: summary
           ? { nodeId: true, status: true, order: true, error: true, output: true }
-          : { nodeId: true, status: true, order: true, error: true, input: true, output: true, startedAt: true, finishedAt: true, agentExecutionId: true },
+          : { nodeId: true, status: true, order: true, error: true, input: true, output: true, logs: true, startedAt: true, finishedAt: true, agentExecutionId: true },
       },
     },
   })

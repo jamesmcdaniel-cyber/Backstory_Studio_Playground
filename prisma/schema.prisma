@@ -793,6 +793,9 @@ model FlowRunStep {
   input            Json      @default("{}")
   output           Json?
   error            String?
+  // console.log / print() output captured from code steps, for display only —
+  // never consumed by downstream nodes. An array of strings.
+  logs             Json?
   startedAt        DateTime?
   finishedAt       DateTime?
 

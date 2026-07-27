@@ -4,12 +4,15 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus } from 'lucide-react'
+import { Workflow, Plus, ChevronDown, FileText } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/ui/page-header'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { STARTER_TEMPLATES } from '@/lib/flows/starter-templates'
+import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -77,13 +80,13 @@ export default function FlowsPage() {
     }
   }, [])
 
-  const createFlow = async () => {
+  const createFlow = async (template?: { name: string; graph: FlowGraph }) => {
     setCreating(true)
     try {
       const response = await fetch('/api/flows', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'Untitled flow' }),
+        body: JSON.stringify(template ? { name: template.name, graph: template.graph } : { name: 'Untitled flow' }),
       })
       const data = await response.json()
       if (response.ok && data.flow) router.push(`/flows/${data.flow.id}`)
@@ -92,6 +95,33 @@ export default function FlowsPage() {
       setCreating(false)
     }
   }
+  const newFlowButton = (
+    <div className="flex">
+      <Button onClick={() => createFlow()} loading={creating} className="rounded-r-none">
+        <Plus className="mr-1.5 h-4 w-4" /> New flow
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="default" className="rounded-l-none border-l border-white/20 px-2" aria-label="Start from a template" disabled={creating}>
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-72">
+          <DropdownMenuItem onSelect={() => createFlow()}>
+            <Plus className="h-4 w-4" /> Blank flow
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel>Start from a template</DropdownMenuLabel>
+          {STARTER_TEMPLATES.map((template) => (
+            <DropdownMenuItem key={template.id} onSelect={() => createFlow(template)} className="flex-col items-start gap-0.5">
+              <span className="flex items-center gap-1.5 font-medium"><FileText className="h-3.5 w-3.5" /> {template.name}</span>
+              <span className="pl-5 text-xs text-muted-foreground">{template.description}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
 
   const { pageItems, pageCount, page: current } = paginate(visibleFlows, page, PAGE_SIZE)
 
@@ -99,9 +129,7 @@ export default function FlowsPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-start justify-between gap-4">
         <PageHeader eyebrow="Pipelines" title="Flows" description="Wire your agents into deterministic multi-step pipelines." />
-        <Button onClick={createFlow} loading={creating}>
-          <Plus className="mr-1.5 h-4 w-4" /> New flow
-        </Button>
+        {newFlowButton}
       </div>
 
       {loading ? (
@@ -115,11 +143,7 @@ export default function FlowsPage() {
           icon={Workflow}
           title="No flows yet"
           description="Build your first agent pipeline — chain agents, branch on results, and fan out over accounts."
-          action={
-            <Button onClick={createFlow} loading={creating}>
-              <Plus className="mr-1.5 h-4 w-4" /> New flow
-            </Button>
-          }
+          action={newFlowButton}
         />
       ) : (
         <>

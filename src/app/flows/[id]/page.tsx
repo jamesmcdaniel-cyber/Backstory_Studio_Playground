@@ -8,6 +8,7 @@ import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
+import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
 import { electPersister, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
 import { toContentSpace } from '@/lib/flows/cursor-space'
 import { useFlowHuddle } from '@/lib/flows/use-flow-huddle'
@@ -995,6 +996,20 @@ function FlowBuilder() {
   useEffect(() => {
     pollRuns()
   }, [pollRuns])
+
+  // Realtime streaming: when a run is live, subscribe to its channel and refresh
+  // the instant a step changes (debounced to coalesce bursts) instead of waiting
+  // for the 2s poll. The poll stays as a fallback when Supabase is unavailable.
+  const streamRunId = selectedRun && !['succeeded', 'failed'].includes(selectedRun.status) ? selectedRun.id : null
+  const nudgeRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onStreamTick = useCallback(() => {
+    if (nudgeRef.current) return
+    nudgeRef.current = setTimeout(() => {
+      nudgeRef.current = null
+      pollRuns()
+    }, 400)
+  }, [pollRuns])
+  useFlowRunStream(streamRunId, onStreamTick)
 
   const updateSharing = useCallback(async (next: 'shared' | 'view' | 'private') => {
     const response = await fetch('/api/flows', {

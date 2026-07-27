@@ -25,6 +25,7 @@ import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfte
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
 import { getByPath, setQueryParam, pageItems, optimizeForAi } from '@/lib/flows/http-pagination'
 import { fileReference } from '@/lib/flows/file-ref'
+import { broadcastFlowRunTick } from '@/lib/flows/run-stream'
 import { saveStoredFile } from '@/lib/files/storage'
 import { extractTextAuto, isSupported } from '@/lib/knowledge/extract'
 import {
@@ -495,6 +496,9 @@ export async function runFlowExecution(
   // loop, or the bare id on the main chain).
   const pending: Promise<unknown>[] = []
   const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; output?: unknown; error?: string }) => {
+    // Realtime nudge: tell the builder a step changed so it refreshes at once
+    // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
+    broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status })
     if (!shouldPersistInterpreterStep(nodeTypeById.get(outcome.nodeId))) {
       // Adapter (agent/tool/http/ai/subflow) rows are written by the adapter,
       // which stores NULL output on failure. For an onError route/continue
@@ -1203,6 +1207,9 @@ export async function runFlowExecution(
     where: { id: run.id, organizationId: job.organizationId },
     data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt },
   })
+  // Final realtime nudge on the terminal/waiting status, so the builder settles
+  // immediately instead of on the next poll.
+  broadcastFlowRunTick(run.id, { status })
   // A humanReview ("Request information") pause has no adapter: its waiting
   // FlowRunStep row was persisted by the interpreter's onStep path (the
   // outcome carries `{ waiting: { kind: 'input', question } }`), so the only

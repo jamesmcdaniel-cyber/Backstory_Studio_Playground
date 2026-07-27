@@ -159,7 +159,7 @@ export function FlowCanvas({
   issuesByNode?: Record<string, { errors: number; warnings: number; items: { level: 'error' | 'warning'; message: string }[] }>
   highlightIds?: string[]
   selectedId: string | null
-  onSelect: (nodeId: string) => void
+  onSelect: (nodeId: string, shiftKey?: boolean) => void
   onChangeNode: (node: FlowNode) => void
   onInsertAfter: (afterId: string, type: StepType, seed?: FlowInsertSeed) => void
   onAppendBranch: (conditionId: string, branch: string, type: StepType, seed?: FlowInsertSeed) => void
@@ -380,7 +380,7 @@ export function FlowCanvas({
         flowId={flowId}
         published={published}
         onChange={onChangeNode}
-        onClick={() => onSelect(node.id)}
+        onClick={(shiftKey) => onSelect(node.id, shiftKey)}
         onRefreshAgents={onRefreshAgents}
         onDuplicate={node.type === 'trigger' ? undefined : onDuplicateNode ? () => onDuplicateNode(node.id) : undefined}
         onMakeSubflow={node.type === 'trigger' || contained.has(node.id) || !onMakeSubflow ? undefined : () => onMakeSubflow(node.id)}

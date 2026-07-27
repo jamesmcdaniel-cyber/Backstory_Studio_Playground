@@ -310,7 +310,7 @@ export function StepCard({
   flowId?: string
   published?: boolean
   onChange?: (node: FlowNode) => void
-  onClick?: () => void
+  onClick?: (shiftKey?: boolean) => void
   onRefreshAgents?: () => void
   onDuplicate?: () => void
   onMakeSubflow?: () => void
@@ -478,7 +478,7 @@ export function StepCard({
       tabIndex={0}
       onClick={(event) => {
         event.stopPropagation()
-        onClick?.()
+        onClick?.(event.shiftKey)
       }}
       onKeyDown={onRootKeyDown}
       className={cn(

@@ -21,7 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { emptyGraph, type FlowGraph, type FlowNode, type OutputField } from '@/lib/flows/graph'
-import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter } from '@/lib/flows/mutate'
+import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, deleteNodes, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter } from '@/lib/flows/mutate'
 import { writeFlowClipboard, readFlowClipboard } from '@/lib/flows/clipboard'
 import { applyCopilotOps, type CopilotOp } from '@/lib/flows/copilot-ops'
 import { buildDataTree } from '@/lib/flows/datatree'
@@ -249,6 +249,10 @@ function FlowBuilder() {
   const [showJam, setShowJam] = useState(false)
   const [viewingVersion, setViewingVersion] = useState<{ version: number; graph: FlowGraph } | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Multi-select: a contiguous range of spine steps (shift-click). Empty in the
+  // normal single-select flow; drives the bulk-actions bar + bulk delete.
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const selectAnchor = useRef<string | null>(null)
   const [statusByNode, setStatusByNode] = useState<Record<string, StepStatus>>({})
   // Nodes the copilot just touched — pulsed on the canvas, cleared after 2.5s.
   const [highlightIds, setHighlightIds] = useState<string[]>([])
@@ -609,6 +613,41 @@ function FlowBuilder() {
     broadcastGraph(graph)
   }, [graph, broadcastGraph, canEdit])
 
+  // Shift-click selects the spine range between the anchor (last single click)
+  // and the clicked step; a plain click resets to single-select and re-anchors.
+  const handleSelect = useCallback((nodeId: string, shiftKey?: boolean) => {
+    if (shiftKey && selectAnchor.current && selectAnchor.current !== nodeId) {
+      const ids = spineIds(graph)
+      const a = ids.indexOf(selectAnchor.current)
+      const b = ids.indexOf(nodeId)
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a]
+        setSelectedIds(ids.slice(lo, hi + 1).filter((id) => id !== 'trigger'))
+        setSelectedId(null) // close the drawer while a range is selected
+        return
+      }
+    }
+    selectAnchor.current = nodeId
+    setSelectedId(nodeId)
+    setSelectedIds([])
+  }, [graph])
+  const bulkDelete = useCallback(() => {
+    if (selectedIds.length === 0) return
+    commitGraph(deleteNodes(graph, selectedIds))
+    setSelectedIds([])
+    toast.success(`Deleted ${selectedIds.length} steps — ⌘Z to undo.`)
+  }, [graph, selectedIds, commitGraph])
+  const bulkDuplicate = useCallback(() => {
+    if (selectedIds.length === 0) return
+    // Duplicate in spine order so copies land in sequence after the originals.
+    const ordered = spineIds(graph).filter((id) => selectedIds.includes(id))
+    let next = graph
+    for (const id of ordered) next = duplicateNode(next, id).graph
+    commitGraph(next)
+    setSelectedIds([])
+    toast.success(`Duplicated ${ordered.length} steps.`)
+  }, [graph, selectedIds, commitGraph])
+
   const undo = useCallback(() => {
     const prev = undoStack.current.pop()
     if (!prev) return
@@ -704,7 +743,10 @@ function FlowBuilder() {
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (viewingVersion) return
-        if (selectedId && selectedId !== 'trigger') {
+        if (selectedIds.length > 1) {
+          e.preventDefault()
+          bulkDelete()
+        } else if (selectedId && selectedId !== 'trigger') {
           e.preventDefault()
           commitGraph(deleteNode(graph, selectedId))
           setSelectedId(null)
@@ -745,7 +787,7 @@ function FlowBuilder() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo, selectedId, selectedNode, graph, commitGraph, viewingVersion])
+  }, [undo, redo, selectedId, selectedNode, selectedIds, bulkDelete, graph, commitGraph, viewingVersion])
 
   const loopContext = useMemo(() => parentLoop(graph, selectedId), [graph, selectedId])
   const parallelContext = useMemo(() => parentParallelBranch(graph, selectedId), [graph, selectedId])
@@ -1740,10 +1782,10 @@ function FlowBuilder() {
               published={published}
               statusByNode={viewingVersion ? {} : statusByNode}
               issuesByNode={viewingVersion ? undefined : issuesByNode}
-              highlightIds={viewingVersion ? [] : highlightIds}
+              highlightIds={viewingVersion ? [] : selectedIds.length > 1 ? selectedIds : highlightIds}
               selectedId={selectedId}
               remoteSelections={viewingVersion ? undefined : remoteSelections}
-              onSelect={viewingVersion ? () => {} : setSelectedId}
+              onSelect={viewingVersion ? () => {} : handleSelect}
               onBackgroundClick={() => setSelectedId(null)}
               onMakeSubflow={viewingVersion ? undefined : (startId) => setSubflowDraft({ startId, endId: startId, name: '' })}
               onChangeNode={viewingVersion ? () => {} : commitFieldEdit}
@@ -1811,6 +1853,15 @@ function FlowBuilder() {
             />
           </div>
         </div>
+
+        {selectedIds.length > 1 && !viewingVersion && (
+          <div className="pointer-events-auto fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background/95 px-4 py-2 shadow-lg backdrop-blur">
+            <span className="text-sm font-medium">{selectedIds.length} steps selected</span>
+            <Button size="sm" variant="outline" onClick={bulkDuplicate}>Duplicate</Button>
+            <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={bulkDelete}>Delete</Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedIds([])}>Clear</Button>
+          </div>
+        )}
 
         <CanvasRail
           zoom={zoom}

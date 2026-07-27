@@ -302,6 +302,12 @@ export function deleteNode(graph: FlowGraph, id: string): FlowGraph {
   return { nodes, edges }
 }
 
+/** Delete several nodes at once (bulk selection), healing the chain per node.
+ *  Folds deleteNode so each removal reconnects its neighbors before the next. */
+export function deleteNodes(graph: FlowGraph, ids: string[]): FlowGraph {
+  return ids.filter((id) => id !== 'trigger').reduce((g, id) => deleteNode(g, id), graph)
+}
+
 /** Ids living inside a container node's own subtree (its body/branch steps). */
 function containedIdsOf(node: FlowNode): string[] {
   if (node.type === 'loop') return node.data.body

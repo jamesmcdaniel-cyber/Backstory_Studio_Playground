@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
+import { StructuredValueView } from '@/components/flows/structured-value-view'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { buildProcessTimeline, processFeedRows, type ProcessFeedRow } from '@/lib/agents/process-feed'
 import type { StepStatus } from './step-card'
@@ -109,7 +110,8 @@ function OutputView({ value }: { value: unknown }) {
       </div>
     )
   }
-  return <pre className="max-h-40 overflow-auto rounded bg-muted px-2 py-1.5 text-xs">{preview(value)}</pre>
+  // Structured output: table (for lists of records) / JSON, with in-panel search.
+  return <StructuredValueView value={value} maxHeight="max-h-56" />
 }
 
 /**

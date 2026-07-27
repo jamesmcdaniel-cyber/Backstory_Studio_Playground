@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { X, Trash2, Plus, Copy, Database, Settings2, Braces, KeyRound, TerminalSquare } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { X, Trash2, Plus, Copy, Database, Settings2, Braces, KeyRound, TerminalSquare, Play, Pin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
@@ -19,6 +19,7 @@ import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { groupToolConnections, selectedToolPresentation, toolActionChoices } from '@/lib/flows/tool-presentation'
+import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { Switch } from '@/components/ui/switch'
 import {
   HTTP_AUTH_OPTIONS,
@@ -444,6 +445,7 @@ export function StepDrawer({
   rawInput,
   rawOutput,
   rawLogs,
+  mockData,
   layout = 'drawer',
   onChange,
   onChangeType,
@@ -451,6 +453,9 @@ export function StepDrawer({
   onDuplicate,
   onDelete,
   onClose,
+  onExecuteStep,
+  onExecutePrevious,
+  onSetMockData,
 }: {
   node: FlowNode
   flowId: string
@@ -465,9 +470,13 @@ export function StepDrawer({
   rawInput?: unknown
   rawOutput?: unknown
   rawLogs?: string[]
+  mockData?: unknown
   layout?: 'drawer' | 'workspace'
   onChange: (node: FlowNode) => void
   onChangeType: (type: EditableType) => void
+  onExecuteStep?: () => void
+  onExecutePrevious?: () => void
+  onSetMockData?: (value: unknown | undefined) => void
   onAddStep?: (type: EditableType) => void
   onDuplicate?: () => void
   onDelete: () => void
@@ -479,6 +488,32 @@ export function StepDrawer({
   const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
   const [curlDialogOpen, setCurlDialogOpen] = useState(false)
   const [reverifyingCredential, setReverifyingCredential] = useState(false)
+  // Editable draft of the pinned mock JSON. Reset from the graph's pinData when
+  // the selected node changes; in-node edits are owned by the textarea/handlers.
+  const [mockDraft, setMockDraft] = useState('')
+  useEffect(() => {
+    setMockDraft(mockData === undefined ? '' : JSON.stringify(mockData, null, 2))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id])
+
+  // HTTP auth: n8n's three-way selector (None / Predefined / Generic). The mode
+  // is derived from what the node already binds, with a local override so a user
+  // can pick "Generic" and see the auth-type sub-select before a credential
+  // exists. Reset when the selected node changes.
+  const [httpAuthMode, setHttpAuthMode] = useState<'none' | 'predefined' | 'generic'>('none')
+  useEffect(() => {
+    if (node.type !== 'http') return
+    setHttpAuthMode(node.data.connectionId ? 'predefined' : node.data.credentialId ? 'generic' : 'none')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id])
+  // Predefined credentials reuse connected integrations. Only MCP-plane
+  // connections carry a token the HTTP executor can inject, so filter to those.
+  const predefinedConnections = useMemo(
+    () => groupToolConnections(toolCatalog)
+      .flatMap((group) => group.connections)
+      .filter((connection) => parseFlowToolConnectionId(connection.id).plane === 'mcp'),
+    [toolCatalog],
+  )
   const isTrigger = node.type === 'trigger'
   const trigger = ((node.type === 'trigger' ? node.data.trigger : undefined) as TriggerData | undefined) ?? { type: 'manual' }
   // Chip-editor handles keyed by field, so a datatree click inserts a token
@@ -580,9 +615,16 @@ export function StepDrawer({
             )}
           </div>
         </div>
-        <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground">
-          <X className={isWorkspace ? 'h-5 w-5' : 'h-4 w-4'} />
-        </button>
+        <div className="flex items-center gap-2">
+          {isWorkspace && !isTrigger && onExecuteStep && (
+            <Button type="button" size="sm" onClick={onExecuteStep}>
+              <Play className="mr-1.5 h-4 w-4" /> Execute step
+            </Button>
+          )}
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground">
+            <X className={isWorkspace ? 'h-5 w-5' : 'h-4 w-4'} />
+          </button>
+        </div>
       </div>
 
       <div className={cn('min-h-0 flex-1', isWorkspace && 'grid lg:grid-cols-[minmax(250px,0.8fr)_minmax(480px,1.25fr)_minmax(250px,0.8fr)]')}>
@@ -597,8 +639,13 @@ export function StepDrawer({
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
               <pre className="max-h-[45%] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
-                {rawJson(rawInput, 'No input data yet.\nRun the previous nodes to inspect their raw output here.')}
+                {rawJson(rawInput, 'No input data yet.\nExecute the previous nodes to inspect their raw output here.')}
               </pre>
+              {!isTrigger && onExecutePrevious && rawInput === undefined && (
+                <Button type="button" variant="outline" size="sm" className="w-full" onClick={onExecutePrevious}>
+                  <Play className="mr-1.5 h-4 w-4" /> Execute previous nodes
+                </Button>
+              )}
               <div>
                 <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Insert a value</p>
                 <DataTree fields={dataFields} onInsert={insertToken} title="Available input data" />
@@ -1091,31 +1138,70 @@ export function StepDrawer({
               <label className={labelClass}>Authentication</label>
               <select
                 className={fieldClass}
-                value={
-                  node.data.credentialId
-                    ? (httpCredentials.find((credential) => credential.id === node.data.credentialId)?.authType ?? 'none')
-                    : 'none'
-                }
+                value={httpAuthMode}
                 onChange={(event) => {
-                  const value = event.target.value
-                  if (value === 'none') {
-                    onChange({ ...node, data: { ...node.data, credentialId: undefined, connectionId: undefined } })
-                    return
-                  }
-                  setNewCredentialType(value as HttpAuthOption)
-                  setCredentialDialogOpen(true)
+                  const mode = event.target.value as 'none' | 'predefined' | 'generic'
+                  setHttpAuthMode(mode)
+                  if (mode !== 'predefined' && node.data.connectionId) onChange({ ...node, data: { ...node.data, connectionId: undefined } })
+                  if (mode !== 'generic' && node.data.credentialId) onChange({ ...node, data: { ...node.data, credentialId: undefined } })
                 }}
               >
                 <option value="none">None</option>
-                {HTTP_AUTH_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
+                <option value="predefined">Predefined Credential Type</option>
+                <option value="generic">Generic Credential Type</option>
               </select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {httpAuthMode === 'predefined'
+                  ? 'Reuse a connected integration for authentication.'
+                  : httpAuthMode === 'generic'
+                    ? 'Choose an auth method, then set up a reusable credential for this host.'
+                    : 'No authentication is sent with the request.'}
+              </p>
             </div>
 
-            {(node.data.credentialId || httpCredentials.length > 0) && (
+            {httpAuthMode === 'predefined' && (
+              <div>
+                <label className={labelClass}>Predefined credential</label>
+                {predefinedConnections.length === 0 ? (
+                  <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                    No connected integrations yet. Connect one under Integrations, then it appears here.
+                  </p>
+                ) : (
+                  <select
+                    className={fieldClass}
+                    value={node.data.connectionId ?? ''}
+                    onChange={(event) => onChange({ ...node, data: { ...node.data, connectionId: event.target.value || undefined, credentialId: undefined } })}
+                  >
+                    <option value="">Choose a connection…</option>
+                    {predefinedConnections.map((connection) => (
+                      <option key={connection.id} value={connection.id}>{connection.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+
+            {httpAuthMode === 'generic' && (
+              <div>
+                <label className={labelClass}>Generic Auth Type</label>
+                <select
+                  className={fieldClass}
+                  value={httpCredentials.find((credential) => credential.id === node.data.credentialId)?.authType ?? ''}
+                  onChange={(event) => {
+                    if (!event.target.value) return
+                    setNewCredentialType(event.target.value as HttpAuthOption)
+                    setCredentialDialogOpen(true)
+                  }}
+                >
+                  <option value="">Select…</option>
+                  {HTTP_AUTH_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {httpAuthMode === 'generic' && (node.data.credentialId || httpCredentials.length > 0) && (
               <div>
                 <label className={labelClass}>Credential</label>
                 <div className="flex gap-2">
@@ -1646,17 +1732,67 @@ export function StepDrawer({
         </div>
         {isWorkspace && (
           <aside className="hidden min-h-0 flex-col border-l border-border bg-slate-50/70 lg:flex">
-            <div className="border-b border-border px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Braces className="h-4 w-4 text-indigo-600" />
-                <p className="text-sm font-semibold">Output</p>
+            <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Braces className="h-4 w-4 text-indigo-600" />
+                  <p className="text-sm font-semibold">Output</p>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {mockData !== undefined ? 'Mock data is pinned — this node is not executed.' : 'Raw output from this node’s latest run.'}
+                </p>
               </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw output from this node&apos;s latest run.</p>
+              {!isTrigger && onSetMockData && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 px-2 text-xs"
+                  onClick={() => {
+                    if (mockData !== undefined) { onSetMockData(undefined); return }
+                    const seed = rawOutput !== undefined ? rawOutput : { example: 'value' }
+                    onSetMockData(seed)
+                    setMockDraft(JSON.stringify(seed, null, 2))
+                  }}
+                >
+                  <Pin className="mr-1 h-3.5 w-3.5" />
+                  {mockData !== undefined ? 'Clear mock' : 'Set mock data'}
+                </Button>
+              )}
             </div>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-              <pre className="min-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
-                {rawJson(rawOutput, 'No output data yet.\nRun the flow to inspect this node’s response here.')}
-              </pre>
+              {mockData !== undefined ? (
+                <div className="space-y-2">
+                  <textarea
+                    className="min-h-40 w-full resize-y rounded-lg border border-amber-500/40 bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100 outline-none"
+                    value={mockDraft}
+                    spellCheck={false}
+                    onFocus={blockActive}
+                    onBlur={() => {
+                      unblockActive()
+                      try {
+                        onSetMockData?.(JSON.parse(mockDraft))
+                      } catch {
+                        toast.error('Mock data must be valid JSON.')
+                      }
+                    }}
+                    onChange={(event) => setMockDraft(event.target.value)}
+                    aria-label="Mock output data"
+                  />
+                  <p className="text-[11px] leading-4 text-muted-foreground">Edit the pinned JSON, then click away to save. Downstream nodes use this value until you clear the mock.</p>
+                </div>
+              ) : (
+                <>
+                  <pre className="min-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
+                    {rawJson(rawOutput, 'No output data yet.\nExecute this step to inspect its response here.')}
+                  </pre>
+                  {!isTrigger && onExecuteStep && rawOutput === undefined && (
+                    <Button type="button" variant="outline" size="sm" className="w-full" onClick={onExecuteStep}>
+                      <Play className="mr-1.5 h-4 w-4" /> Execute step
+                    </Button>
+                  )}
+                </>
+              )}
               {rawLogs && rawLogs.length > 0 && (
                 <div>
                   <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Logs</p>

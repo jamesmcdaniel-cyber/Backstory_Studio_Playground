@@ -112,8 +112,11 @@ const httpNode = z.object({
   data: z.object({
     label: z.string().optional(),
     note: z.string().optional(),
-    // credentialId points at an encrypted reusable generic HTTP credential.
-    // connectionId is the legacy MCP bearer binding and remains readable.
+    // Two mutually exclusive auth bindings, surfaced as n8n's Authentication
+    // modes: credentialId is a "Generic Credential Type" (encrypted reusable
+    // HTTP credential, one of the 8 auth methods); connectionId is a
+    // "Predefined Credential Type" (an existing MCP-plane integration whose
+    // bearer token is injected server-side).
     credentialId: z.string().optional(),
     connectionId: z.string().optional(),
     method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']).default('POST'),

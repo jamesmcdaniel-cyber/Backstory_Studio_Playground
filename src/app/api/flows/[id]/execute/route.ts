@@ -44,8 +44,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       // execute from that step onward on the SAME pinned graph.
       fromRunId: z.string().optional(),
       fromNodeId: z.string().optional(),
+      // Partial execution from the node editor: run through a node ("Execute
+      // step") or up to but not including it ("Execute previous nodes").
+      stopAfterNodeId: z.string().optional(),
+      stopBeforeNodeId: z.string().optional(),
     })
     .parse(body)
+  if (parsed.stopAfterNodeId && parsed.stopBeforeNodeId) {
+    throw new ApiError('Pick one of stopAfterNodeId or stopBeforeNodeId.', 400, 'FLOW_PARTIAL_ARGS')
+  }
   // flowRunId only resumes a paused run when paired with the user's reply —
   // without a reply there is nothing to resume with, and silently starting a
   // fresh run instead would strand the caller's expectation of continuity.
@@ -108,6 +115,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     userId: auth.dbUser.id,
     input: parseFlowInput(parsed.input),
     replayFrom: parsed.fromRunId && parsed.fromNodeId ? { runId: parsed.fromRunId, nodeId: parsed.fromNodeId } : undefined,
+    ...(parsed.stopAfterNodeId ? { stopAfterNodeId: parsed.stopAfterNodeId } : {}),
+    ...(parsed.stopBeforeNodeId ? { stopBeforeNodeId: parsed.stopBeforeNodeId } : {}),
   })
   return { success: true, run }
 })

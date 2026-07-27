@@ -1003,6 +1003,39 @@ function FlowBuilder() {
     [id],
   )
 
+  // Node-editor step controls: run through a node ("Execute step") or up to but
+  // not including it ("Execute previous nodes"). Both start a partial run whose
+  // recorded step rows populate the drawer's INPUT/OUTPUT panes.
+  const runPartial = useCallback(
+    async (nodeId: string, mode: 'stopAfter' | 'stopBefore') => {
+      const response = await fetch(`/api/flows/${id}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mode === 'stopAfter' ? { stopAfterNodeId: nodeId } : { stopBeforeNodeId: nodeId }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        toast.error(data.error || 'Could not run this step.')
+        return
+      }
+      const runId = data?.run?.flowRunId
+      if (runId) void selectRun(runId)
+      pollRuns()
+    },
+    [id, pollRuns, selectRun],
+  )
+
+  // "Set mock data": pin a node's output on the graph so it isn't executed and
+  // downstream steps consume the pinned value. Clearing removes the pin.
+  const setNodeMockData = useCallback((nodeId: string, value: unknown | undefined) => {
+    setGraph((g) => {
+      const pinData = { ...(g.pinData ?? {}) }
+      if (value === undefined) delete pinData[nodeId]
+      else pinData[nodeId] = value
+      return { ...g, pinData: Object.keys(pinData).length ? pinData : undefined }
+    })
+  }, [])
+
   // Answer a paused run's agent question — the execute route resumes it.
   const replyToRun = useCallback(
     async (flowRunId: string, reply: string) => {
@@ -1709,6 +1742,10 @@ function FlowBuilder() {
                 rawInput={selectedNodeRawInput}
                 rawOutput={selectedNodeRawOutput}
                 rawLogs={selectedNodeRawLogs}
+                mockData={graph.pinData?.[selectedNode.id]}
+                onExecuteStep={() => void runPartial(selectedNode.id, 'stopAfter')}
+                onExecutePrevious={() => void runPartial(selectedNode.id, 'stopBefore')}
+                onSetMockData={(value) => setNodeMockData(selectedNode.id, value)}
                 onChange={(node) => setGraph((g) => updateNode(g, node))}
                 onChangeType={(type) => commitGraph(changeNodeType(graph, selectedNode.id, type))}
                 onDuplicate={() => {

@@ -454,6 +454,15 @@ export async function runFlowExecution(
     }
   }
 
+  // Pinned/mock outputs: seed them as pre-completed so those nodes are not run
+  // and downstream steps consume the pinned value (n8n pinData semantics). A
+  // pin wins over a replayed output — it is the user's explicit override.
+  if (graph.pinData) {
+    for (const [nodeId, value] of Object.entries(graph.pinData)) {
+      if (nodeById.has(nodeId)) completed[nodeId] = value ?? null
+    }
+  }
+
   // Container (condition/loop/parallel/stop) outcomes are reported via onStep;
   // persist them so runs are fully inspectable. Agent/tool/http steps are
   // persisted by their adapters because they need started/running rows. The
@@ -1030,8 +1039,10 @@ export async function runFlowExecution(
       // Display labels (agent titles included) so hand-typed friendly-label
       // tokens like {{Previous Agent.output}} resolve to the right step.
       stepLabels: stepLabelsOf(graph, orgAgents),
-      ...(resuming || replaySource ? { completed, completedRoutes } : {}),
+      ...(resuming || replaySource || Object.keys(completed).length ? { completed, completedRoutes } : {}),
       ...(resuming ? { resumeNodeId, resumeReply: job.reply } : {}),
+      ...(job.stopAfterNodeId ? { stopAfterNodeId: job.stopAfterNodeId } : {}),
+      ...(job.stopBeforeNodeId ? { stopBeforeNodeId: job.stopBeforeNodeId } : {}),
     })
   } catch (error) {
     if (error instanceof FlowCancelledError) {

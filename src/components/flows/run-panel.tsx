@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 import { StructuredValueView } from '@/components/flows/structured-value-view'
+import type { RealtimeChannel } from '@supabase/supabase-js'
+import { createClient } from '@/lib/supabase/client'
+import { agentExecChannel } from '@/lib/flows/run-stream'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { buildProcessTimeline, processFeedRows, type ProcessFeedRow } from '@/lib/agents/process-feed'
 import type { StepStatus } from './step-card'
@@ -142,9 +145,27 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
     // A waiting step's feed is static until the user replies — poll gently so
     // a panel left open on a long-waiting run doesn't hammer the API.
     const timer = window.setInterval(load, waiting ? 15000 : 2000)
+    // Live streaming: refetch the instant the agent emits an event (debounced),
+    // so thinking / tool-call rows appear near-live instead of on the 2s poll.
+    let debounce: ReturnType<typeof setTimeout> | null = null
+    const nudge = () => {
+      if (debounce) return
+      debounce = setTimeout(() => { debounce = null; load() }, 300)
+    }
+    let supabase: ReturnType<typeof createClient> | null = null
+    let channel: RealtimeChannel | null = null
+    try {
+      supabase = createClient()
+      channel = supabase.channel(agentExecChannel(executionId))
+      channel.on('broadcast', { event: 'tick' }, nudge).subscribe()
+    } catch {
+      // No Supabase — the poll fallback covers it.
+    }
     return () => {
       cancelled = true
       window.clearInterval(timer)
+      if (debounce) clearTimeout(debounce)
+      if (supabase && channel) void supabase.removeChannel(channel)
     }
   }, [executionId, active, waiting])
   return rows

@@ -1,6 +1,7 @@
 import type { Job } from 'bullmq'
 import { createHash } from 'node:crypto'
 import { prisma, systemPrisma } from '@/lib/prisma'
+import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { apiLogger } from '@/lib/logger'
@@ -318,6 +319,9 @@ async function recordEvent(executionId: string, stepId: string | null, kind: str
   await prisma.workflowEvent.create({
     data: { executionId, stepId, kind, payload: jsonValue(payload) },
   })
+  // Realtime nudge so a subscribed flow agent-step feed / agent console updates
+  // live as events land, instead of on its poll. Fire-and-forget; no-op locally.
+  broadcastAgentEventTick(executionId)
 }
 
 /** Condense the IR transcript into a short tool/step log for reflection. */

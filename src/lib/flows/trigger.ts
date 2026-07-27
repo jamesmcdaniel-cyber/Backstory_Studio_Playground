@@ -5,10 +5,21 @@ export type FlowTriggerType = (typeof FLOW_TRIGGER_TYPES)[number]
 export type FlowTrigger = { type: FlowTriggerType; [key: string]: unknown }
 
 // Signals a flow's trigger can listen for (a signal-type trigger fires when a
-// flow or agent completes elsewhere in the org). Client-safe — no prisma — so
-// the builder UI can import this list directly.
-export const KNOWN_SIGNALS = ['flow.completed', 'agent.completed'] as const
+// flow or agent completes — or fails — elsewhere in the org). Client-safe — no
+// prisma — so the builder UI can import this list directly. `flow.failed` lets
+// a flow act as an org-level error handler (n8n's "Error Workflow" without a
+// new concept): publish a flow that listens for flow.failed and it runs
+// whenever any other published flow in the org fails, with the failing flow's
+// id/name/error as its input.
+export const KNOWN_SIGNALS = ['flow.completed', 'flow.failed', 'agent.completed'] as const
 export type KnownSignal = (typeof KNOWN_SIGNALS)[number]
+
+/** Plain-english descriptions for the signal picker — no raw event names shown. */
+export const KNOWN_SIGNAL_LABELS: Record<KnownSignal, string> = {
+  'flow.completed': 'When any flow finishes successfully',
+  'flow.failed': 'When any flow fails (build an error handler)',
+  'agent.completed': 'When any agent finishes',
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))

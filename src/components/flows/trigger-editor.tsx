@@ -5,7 +5,7 @@ import { Link2, RefreshCw, Copy, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { CONDITION_OPS, CONDITION_OP_LABELS, type ConditionOp, type ConditionClause, type TriggerInputField } from '@/lib/flows/graph'
-import { KNOWN_SIGNALS } from '@/lib/flows/trigger'
+import { KNOWN_SIGNALS, KNOWN_SIGNAL_LABELS } from '@/lib/flows/trigger'
 import { nextOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
 import { DataTree } from '@/components/flows/data-tree'
 import { buildDataTree } from '@/lib/flows/datatree'
@@ -257,7 +257,7 @@ export function TriggerEditor({
             />
             <datalist id="known-signals">
               {KNOWN_SIGNALS.map((signal) => (
-                <option key={signal} value={signal} />
+                <option key={signal} value={signal} label={KNOWN_SIGNAL_LABELS[signal]} />
               ))}
             </datalist>
           </div>

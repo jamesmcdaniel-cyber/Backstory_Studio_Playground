@@ -1143,6 +1143,24 @@ export async function runFlowExecution(
       .catch(() => undefined)
   }
 
+  // Symmetric to flow.completed: a failed published run fires flow.failed so an
+  // org error-handler flow can react. sourceFlowId excludes the failing flow
+  // itself, and the signal depth cap bounds a failed handler re-firing —
+  // together they keep a flow.failed → flow.failed chain from looping.
+  if (status === 'failed' && job.usePublished) {
+    void import('./signals')
+      .then((signals) =>
+        signals.emitFlowSignal({
+          organizationId: job.organizationId,
+          signal: 'flow.failed',
+          payload: { flowId: flow.id, flowName: flow.name, error: runError, runId: run.id },
+          sourceFlowId: flow.id,
+          depth: signals.signalDepthOf(job.trigger) + 1,
+        }),
+      )
+      .catch(() => undefined)
+  }
+
   return { flowRunId: run.id, status, output: effectiveOutput }
 }
 

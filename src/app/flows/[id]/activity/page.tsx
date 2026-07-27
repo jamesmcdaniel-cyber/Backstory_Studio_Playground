@@ -149,6 +149,9 @@ export default function FlowActivityPage() {
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<StatusFilter>('all')
+  const [triggerFilter, setTriggerFilter] = useState<string>('all')
+  const [fromDate, setFromDate] = useState<string>('')
+  const [toDate, setToDate] = useState<string>('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -219,6 +222,16 @@ export default function FlowActivityPage() {
     setRefreshKey((k) => k + 1)
   }
 
+  // Trigger + date filters run client-side over the loaded runs (status is
+  // server-filtered above). Keeps the filter set rich without an API change.
+  const visibleRuns = runs.filter((run) => {
+    if (triggerFilter !== 'all' && (run.trigger?.type || 'manual') !== triggerFilter) return false
+    const started = new Date(run.startedAt).getTime()
+    if (fromDate && started < new Date(fromDate).getTime()) return false
+    if (toDate && started > new Date(toDate).getTime() + 86_400_000) return false // inclusive end-of-day
+    return true
+  })
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex items-start justify-between gap-4">
@@ -233,7 +246,7 @@ export default function FlowActivityPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {FILTERS.map((entry) => (
           <Button
             key={entry.key}
@@ -244,6 +257,28 @@ export default function FlowActivityPage() {
             {entry.label}
           </Button>
         ))}
+        <span className="mx-1 h-5 w-px bg-border" />
+        <select
+          value={triggerFilter}
+          onChange={(e) => setTriggerFilter(e.target.value)}
+          className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-indigo-400"
+          aria-label="Filter by trigger"
+        >
+          <option value="all">All triggers</option>
+          <option value="manual">Manual</option>
+          <option value="schedule">Schedule</option>
+          <option value="poll">Poll</option>
+          <option value="webhook">Webhook</option>
+          <option value="signal">Signal</option>
+        </select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-indigo-400" aria-label="From date" />
+        <span className="text-xs text-muted-foreground">to</span>
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-indigo-400" aria-label="To date" />
+        {(triggerFilter !== 'all' || fromDate || toDate) && (
+          <Button variant="ghost" size="sm" onClick={() => { setTriggerFilter('all'); setFromDate(''); setToDate('') }}>
+            Clear
+          </Button>
+        )}
       </div>
 
       {loading && runs.length === 0 ? (
@@ -252,11 +287,11 @@ export default function FlowActivityPage() {
             <Skeleton key={i} className="h-12 rounded-lg" />
           ))}
         </div>
-      ) : runs.length === 0 ? (
+      ) : visibleRuns.length === 0 ? (
         <EmptyState
           icon={ScrollText}
-          title="No runs yet"
-          description={filter === 'all' ? 'Run this flow to see its history here.' : `No ${filter} runs yet.`}
+          title="No matching runs"
+          description={filter === 'all' && triggerFilter === 'all' && !fromDate && !toDate ? 'Run this flow to see its history here.' : 'No runs match the current filters.'}
         />
       ) : (
         <Table>
@@ -273,7 +308,7 @@ export default function FlowActivityPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {runs.map((run) => {
+            {visibleRuns.map((run) => {
               const expanded = expandedId === run.id
               return (
                 <Fragment key={run.id}>

@@ -141,7 +141,10 @@ function formBody(body: unknown): string | undefined {
 
 // Multipart form-data of text fields. Returns a FormData so the fetch runtime
 // sets the multipart content-type + boundary itself — we must NOT set one by
-// hand. Binary/file parts are not supported.
+// hand. FILE fields (values that are file references) are handled in the HTTP
+// adapter (execute-flow), which reads the StoredFile bytes and rebuilds the
+// FormData with real Blobs — this pure path can't read from the DB, so it
+// stringifies a file reference; the adapter overrides that when files are present.
 function formDataBody(body: unknown): FormData | undefined {
   const parsed = parseObjectInput(body, 'Form-data body')
   const entries = Object.entries(parsed)

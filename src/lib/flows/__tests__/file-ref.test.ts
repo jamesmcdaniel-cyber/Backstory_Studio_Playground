@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fileReference, isFileReference } from '../file-ref'
+import { fileReference, isFileReference, bodyHasFileReference } from '../file-ref'
 
 test('fileReference builds a token-friendly reference with a download URL', () => {
   const ref = fileReference(
@@ -28,4 +28,12 @@ test('isFileReference recognizes a reference by its fileId', () => {
   assert.equal(isFileReference({ name: 'not a file' }), false)
   assert.equal(isFileReference('string'), false)
   assert.equal(isFileReference(null), false)
+})
+
+test('bodyHasFileReference detects a file field, top-level or in an array', () => {
+  const ref = { fileId: 'f', filename: 'x', mimeType: 'text/plain', size: 1, url: '/api/files/f' }
+  assert.equal(bodyHasFileReference({ name: 'a', doc: ref }), true)
+  assert.equal(bodyHasFileReference({ docs: [ref] }), true)
+  assert.equal(bodyHasFileReference({ name: 'a', count: 2 }), false)
+  assert.equal(bodyHasFileReference('string'), false)
 })

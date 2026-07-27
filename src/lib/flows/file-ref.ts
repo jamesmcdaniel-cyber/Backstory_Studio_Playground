@@ -34,3 +34,12 @@ export function fileReference(
 export function isFileReference(value: unknown): value is FlowFileReference {
   return Boolean(value && typeof value === 'object' && typeof (value as { fileId?: unknown }).fileId === 'string')
 }
+
+/** Whether a form-data body object has any file-reference field (top level or
+ *  in an array value) — the signal to build a real multipart upload. */
+export function bodyHasFileReference(body: unknown): boolean {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false
+  return Object.values(body as Record<string, unknown>).some(
+    (value) => isFileReference(value) || (Array.isArray(value) && value.some(isFileReference)),
+  )
+}

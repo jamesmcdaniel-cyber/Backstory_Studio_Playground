@@ -24,9 +24,9 @@ import { interpretFlow, FlowCancelledError, type RunAgentFn, type RunActionFn } 
 import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout } from './action-reliability'
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
 import { getByPath, setQueryParam, pageItems, optimizeForAi } from '@/lib/flows/http-pagination'
-import { fileReference } from '@/lib/flows/file-ref'
+import { fileReference, isFileReference, bodyHasFileReference } from '@/lib/flows/file-ref'
 import { broadcastFlowRunTick } from '@/lib/flows/run-stream'
-import { saveStoredFile } from '@/lib/files/storage'
+import { saveStoredFile, readStoredFile } from '@/lib/files/storage'
 import { extractTextAuto, isSupported } from '@/lib/knowledge/extract'
 import {
   fetchWithHttpCredential,
@@ -959,6 +959,30 @@ export async function runFlowExecution(
           })
           request.init.headers = withBearerAuthorization(request.init.headers as Record<string, string>, token)
         }
+
+        // File UPLOAD: a form-data field whose value is a file reference is sent
+        // as the actual file. prepareHttpRequest built a text-only FormData
+        // (pure, no DB); here we read each referenced StoredFile's bytes and
+        // rebuild the body with real Blobs, dropping the content-type so the
+        // runtime sets the multipart boundary itself.
+        if (node.config.bodyMode === 'form-data' && node.config.sendBody !== false && bodyHasFileReference(node.config.body)) {
+          const form = new FormData()
+          for (const [key, value] of Object.entries(node.config.body as Record<string, unknown>)) {
+            const values = Array.isArray(value) ? value : [value]
+            for (const entry of values) {
+              if (isFileReference(entry)) {
+                const file = await readStoredFile(entry.fileId, job.organizationId)
+                if (file) form.append(key, new Blob([new Uint8Array(file.buffer)], { type: file.mimeType }), file.filename)
+              } else if (entry != null) {
+                form.append(key, typeof entry === 'object' ? JSON.stringify(entry) : String(entry))
+              }
+            }
+          }
+          request.init.body = form
+          const headers = request.init.headers as Record<string, string>
+          for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-type') delete headers[key]
+        }
+
         const retries = flowActionRetries(node.config.retries)
 
         // responseType 'file': download the body to a StoredFile and output a

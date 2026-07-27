@@ -28,6 +28,33 @@ export type OutputField = z.infer<typeof outputFieldSchema>
 export const triggerInputFieldSchema = outputFieldSchema.extend({ required: z.boolean().optional(), default: z.string().optional(), format: z.enum(['file']).optional() })
 export type TriggerInputField = z.infer<typeof triggerInputFieldSchema>
 
+/**
+ * Per-item fan-out: run ONE step once per item of a list, collecting the
+ * per-item outputs into an array (the step's output). This is the list-aware
+ * step contract — n8n's item pipeline expressed as an opt-in modifier rather
+ * than a global array-of-items data shape, so single-value flows stay simple.
+ *
+ * - `over` templates the source list; an exact `{{step.x.output}}` token keeps
+ *   its structure. Inside the step, `{{item}}` (and `{{loop.index}}`) address
+ *   the current item, exactly as inside a `loop` body.
+ * - `itemError` decides what a FAILING item does (a failure = the step's own
+ *   `onError` produced a hard error, i.e. the default `onError: 'stop'`):
+ *     'fail'    (default) — the first failed item fails the whole step.
+ *     'skip'    — drop the failed item; keep the survivors; the step succeeds.
+ *     'collect' — keep a `{ error }` placeholder in the item's slot; succeed.
+ *   (A step whose own `onError` is 'continue'/'route' handles the failure
+ *   per-item BEFORE `itemError` sees it — the item contributes `undefined` /
+ *   the `{ error, input }` object respectively. Leave `onError` at its default
+ *   'stop' to let `itemError` govern, which is the common case.)
+ * - `concurrency` bounds how many items run at once (default 1), like a loop.
+ */
+export const perItemSchema = z.object({
+  over: z.string(),
+  itemError: z.enum(['fail', 'skip', 'collect']).optional(),
+  concurrency: z.number().int().min(1).max(20).optional(),
+})
+export type PerItemConfig = z.infer<typeof perItemSchema>
+
 const triggerNode = z.object({
   id: z.string(),
   type: z.literal('trigger'),
@@ -60,6 +87,8 @@ const agentNode = z.object({
     // true → always; false → never; undefined → auto (append only when the
     // input doesn't already reference step data).
     includeUpstreamContext: z.boolean().optional(),
+    // Run this agent once per item of a list, collecting the outputs (see perItemSchema).
+    perItem: perItemSchema.optional(),
   }),
 })
 /** One left/op/right comparison; a condition ANDs/ORs a list of these. */
@@ -100,6 +129,7 @@ const toolNode = z.object({
     timeoutMs: z.number().int().min(1000).max(120000).optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     outputFields: z.array(outputFieldSchema).optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 // Plain HTTP request (webhook-out) step. URL/headers/body may use {{tokens}}.
@@ -139,6 +169,7 @@ const httpNode = z.object({
     timeoutMs: z.number().int().min(1000).max(120000).optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     outputFields: z.array(outputFieldSchema).optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 const loopNode = z.object({
@@ -149,6 +180,12 @@ const loopNode = z.object({
     note: z.string().optional(),
     over: z.string(),
     concurrency: z.number().int().min(1).max(20).optional(),
+    // Per-iteration error tolerance (mirrors perItemSchema.itemError): 'fail'
+    // (default) fails the whole loop on the first failing iteration; 'skip'
+    // drops that iteration's result and keeps the rest; 'collect' keeps a
+    // { error } placeholder in its slot. Applies when a body step's own
+    // onError produced a hard failure (i.e. its default onError: 'stop').
+    itemError: z.enum(['fail', 'skip', 'collect']).optional(),
     body: z.array(z.string()),
   }),
 })
@@ -169,6 +206,7 @@ const transformNode = z.object({
     // `value` templates are resolved; JSON-looking results are parsed.
     fields: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
     outputFields: z.array(outputFieldSchema).optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 // Gate: continues only when the condition passes, else stops the flow (or, in a
@@ -265,6 +303,7 @@ const dataNode = z.object({
     /** trim: how many items to remove (default 1) and from which end. */
     count: z.string().optional(),
     fromEnd: z.boolean().optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 
@@ -283,6 +322,7 @@ const codeNode = z.object({
     timeoutMs: z.number().int().min(1000).max(30_000).optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     outputFields: z.array(outputFieldSchema).optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 
@@ -364,6 +404,7 @@ const aiNode = z.object({
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     retries: z.number().int().min(0).max(5).optional(),
     timeoutMs: z.number().int().min(1000).max(AGENT_RUN_TIMEOUT_MS).optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 
@@ -384,6 +425,7 @@ const subflowNode = z.object({
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     retries: z.number().int().min(0).max(5).optional(),
     timeoutMs: z.number().int().min(1000).max(AGENT_RUN_TIMEOUT_MS).optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 
@@ -399,6 +441,7 @@ const knowledgeNode = z.object({
     topK: z.number().int().min(1).max(20).optional(),
     label: z.string().optional(),
     note: z.string().optional(),
+    perItem: perItemSchema.optional(),
   }),
 })
 

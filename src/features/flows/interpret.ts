@@ -1,4 +1,4 @@
-import type { FlowGraph, FlowNode, FlowEdge, VariableType } from '@/lib/flows/graph'
+import type { FlowGraph, FlowNode, FlowEdge, VariableType, PerItemConfig } from '@/lib/flows/graph'
 import { resolveTemplate, resolveTemplateValue, asStructured, evalCondition, evalClause, normalizeStepAlias, buildUpstreamContextBlock, type FlowContext } from './context'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, type NodeRunState } from '@/lib/flows/dag-scheduler'
@@ -171,6 +171,11 @@ function loopItems(value: unknown): unknown[] {
   const commaParts = trimmed.split(',').map((part) => part.trim()).filter(Boolean)
   if (commaParts.length > 1) return commaParts
   return [trimmed]
+}
+
+/** The per-item fan-out config a node carries, if any (only action nodes do). */
+function nodePerItem(node: FlowNode): PerItemConfig | undefined {
+  return 'perItem' in node.data ? (node.data as { perItem?: PerItemConfig }).perItem : undefined
 }
 
 // ── Variable steps: a typed symbol table shared across the whole run ────────
@@ -389,7 +394,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
 
   // Execute one node against `ctx`. Never routes edges (the main-chain walker
   // and container bodies drive traversal); returns an output or control signal.
-  const execNode = async (node: FlowNode, ctx: FlowContext, indexKey = ''): Promise<NodeResult> => {
+  // `perItemChild` is set on the recursive per-item calls so they run the node's
+  // ordinary single-item path instead of re-entering the fan-out.
+  const execNode = async (node: FlowNode, ctx: FlowContext, indexKey = '', perItemChild = false): Promise<NodeResult> => {
     if (overBudget()) return { kind: 'fail', error: 'Flow exceeded the maximum number of steps.' }
 
     // Per-iteration keying: inside a loop `indexKey` is `#<index>` (nested loops
@@ -462,6 +469,45 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // here would silently divert the resumed run down the normal path.
       if (opts.completedRoutes?.has(stepKey)) return { kind: 'route', output }
       return { kind: 'ok', output }
+    }
+
+    // ── Per-item fan-out ─────────────────────────────────────────────────────
+    // A step marked `perItem` runs its ordinary action once per item of the
+    // `over` list (each child keyed `#<index>`, like a loop body), collecting the
+    // outputs into an array. `itemError` decides a failing item's fate; pause /
+    // stop signals propagate immediately (per-item approvals, human review).
+    const perItem = perItemChild ? undefined : nodePerItem(node)
+    if (perItem) {
+      const items = loopItems(resolveTemplate(perItem.over, ctx, onMissingToken)).slice(0, maxLoop)
+      const broken = missingTokenFailure({ over: perItem.over })
+      if (broken) return broken
+      const policy = perItem.itemError ?? 'fail'
+      const childResults = await mapLimit(items, perItem.concurrency ?? 1, (item, index) => {
+        const itemCtx: FlowContext = { ...ctx, item, step: { ...ctx.step }, loop: { index, count: items.length } }
+        return execNode(node, itemCtx, `${indexKey}#${index}`, true)
+      })
+      const outputs: unknown[] = []
+      let control: NodeResult | undefined
+      for (const res of childResults) {
+        if (res.kind === 'ok' || res.kind === 'route') { outputs.push(res.output); continue }
+        if (res.kind === 'skip' || res.kind === 'drop') continue
+        if (res.kind === 'fail') {
+          if (policy === 'skip') continue
+          if (policy === 'collect') { outputs.push({ error: res.error }); continue }
+          control = res
+          break
+        }
+        // pause / stop: surface immediately so the run pauses/ends on this item.
+        control = res
+        break
+      }
+      if (control) {
+        emit({ nodeId: node.id, status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped', ...(control.kind === 'fail' ? { error: control.error } : {}) })
+        return control
+      }
+      ctx.step[node.id] = { output: outputs }
+      emit({ nodeId: node.id, status: 'succeeded', output: outputs })
+      return { kind: 'ok', output: outputs }
     }
 
     if (node.type === 'stop') {
@@ -839,7 +885,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
 
     if (node.type === 'loop') {
       const items = loopItems(resolveTemplate(node.data.over, ctx)).slice(0, maxLoop)
-      const perItem = await mapLimit(items, node.data.concurrency ?? 1, async (item, index) => {
+      const iterations = await mapLimit(items, node.data.concurrency ?? 1, async (item, index) => {
         // `variables` is shared by reference: writes inside the body persist
         // past the loop (one flow-global symbol table, MS parity).
         const itemCtx: FlowContext = { trigger: ctx.trigger, step: { ...ctx.step }, item, loop: { index, count: items.length }, variables: ctx.variables, now: ctx.now, run: ctx.run, stepAliases: ctx.stepAliases, stepLabels: ctx.stepLabels }
@@ -848,14 +894,29 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         // iteration's side effects on resume.
         return execBody(node.data.body, itemCtx, `${indexKey}#${index}`)
       })
-      // Propagate the first hard control (stop / fail / pause); a 'drop' (filter)
-      // just removes that item from the collected output.
-      const control = perItem.map((r) => r.control).find((c): c is NodeResult => c !== undefined && c.kind !== 'drop')
+      // Per-iteration error tolerance: pause/stop always propagate; a 'drop'
+      // (filter) removes that item; a 'fail' is subject to `itemError` — 'fail'
+      // (default) propagates and fails the loop, 'skip'/'collect' don't.
+      const policy = node.data.itemError ?? 'fail'
+      let control: NodeResult | undefined
+      for (const r of iterations) {
+        const c = r.control
+        if (!c || c.kind === 'drop') continue
+        if (c.kind === 'fail') {
+          if (policy === 'fail') { control = c; break }
+          continue // skip / collect: don't propagate this iteration's failure
+        }
+        control = c
+        break
+      }
       if (control) {
-        emit({ nodeId: node.id, status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped' })
+        emit({ nodeId: node.id, status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped', ...(control.kind === 'fail' ? { error: control.error } : {}) })
         return control
       }
-      const output = perItem.filter((r) => r.control?.kind !== 'drop').map((r) => r.output)
+      const output = iterations
+        .filter((r) => r.control?.kind !== 'drop')
+        .filter((r) => !(policy === 'skip' && r.control?.kind === 'fail'))
+        .map((r) => (policy === 'collect' && r.control?.kind === 'fail' ? { error: r.control.error } : r.output))
       ctx.step[node.id] = { output }
       emit({ nodeId: node.id, status: 'succeeded', output })
       return { kind: 'ok', output }

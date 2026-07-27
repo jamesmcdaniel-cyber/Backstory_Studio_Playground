@@ -819,3 +819,39 @@ test('a multi-incoming (fan-in) graph is valid', () => {
   const result = validateFlowGraph(graph, { agents: [{ id: 'x', title: 'X' }] })
   assert.ok(result.ok, JSON.stringify(result.issues))
 })
+
+test('a perItem step with no list source is flagged', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a', type: 'ai', data: { aiOp: 'summarize', input: '{{item}}', perItem: { over: '' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'a' }],
+  }
+  const result = validateFlowGraph(graph)
+  assert.ok(result.errors.some((issue) => issue.code === 'MISSING_PERITEM_SOURCE'))
+})
+
+test('a perItem step with a list source is valid', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a', type: 'ai', data: { aiOp: 'summarize', input: '{{item}}', perItem: { over: '{{trigger.input}}' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'a' }],
+  }
+  const result = validateFlowGraph(graph)
+  assert.ok(result.ok, JSON.stringify(result.issues))
+})
+
+test('an approval-gated nango tool cannot fan out per item', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't', type: 'tool', data: { connectionId: 'nango:slack_post_message', toolName: 'slack_post_message', args: '{}', perItem: { over: '{{trigger.input}}' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 't' }],
+  }
+  const result = validateFlowGraph(graph)
+  assert.ok(result.errors.some((issue) => issue.code === 'APPROVAL_IN_PERITEM'))
+})

@@ -568,6 +568,21 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     }
   }
 
+  // Per-item fan-out (the list-aware step contract): a step marked perItem needs
+  // a list to run over. Approval-gated writes (the Nango delivery plane) can't
+  // fan out — the resume machinery pauses on one approval at a time, same reason
+  // they're blocked inside loops (APPROVAL_IN_CONTAINER).
+  for (const node of graph.nodes) {
+    const perItem = (node.data as { perItem?: { over?: string } }).perItem
+    if (!perItem) continue
+    if (!perItem.over?.trim()) {
+      add(issues, 'error', 'MISSING_PERITEM_SOURCE', `${nodeLabel(node)} runs once per item but has no list to process.`, node.id)
+    }
+    if (node.type === 'tool' && node.data.connectionId && parseFlowToolConnectionId(node.data.connectionId).plane === 'nango') {
+      add(issues, 'error', 'APPROVAL_IN_PERITEM', `${nodeLabel(node)} needs an approval to send — that isn't supported when running once per item. Send it once, or collect approvals first.`, node.id)
+    }
+  }
+
   validateVariableNodes(graph, issues)
 
   // Container bodies are flat ordered lists — they can't host branch edges, so

@@ -227,6 +227,144 @@ test('an error inside a loop item propagates and fails the flow', async () => {
   assert.equal(result.status, 'failed')
 })
 
+// ── Per-item fan-out (list-aware step contract) + per-item error policy ──────
+
+test('perItem fans a single tool step out over a list and collects outputs in order', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'enrich', args: '{"name":"{{item.name}}"}', perItem: { over: '{{trigger.input}}' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 't1' }],
+  }
+  const seen: unknown[] = []
+  const runAction: RunActionFn = async (node) => {
+    const args = node.config.args as { name: string }
+    seen.push(args)
+    return { output: `enriched:${args.name}` }
+  }
+  const result = await interpretFlow(graph, [{ name: 'Acme' }, { name: 'Globex' }], { runAgent: async () => ({ output: 'unused' }), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(seen, [{ name: 'Acme' }, { name: 'Globex' }]) // one call per item, item resolved
+  assert.deepEqual(result.output, ['enriched:Acme', 'enriched:Globex']) // outputs collected into a list
+})
+
+test('perItem itemError:skip drops failing items and keeps the survivors', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'enrich', args: '{"n":"{{item}}"}', perItem: { over: '{{trigger.input}}', itemError: 'skip' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 't1' }],
+  }
+  const runAction: RunActionFn = async (node) => {
+    const n = (node.config.args as { n: string }).n
+    return n === 'B' ? { error: 'bad B' } : { output: `ok:${n}` }
+  }
+  const result = await interpretFlow(graph, ['A', 'B', 'C'], { runAgent: async () => ({ output: '' }), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, ['ok:A', 'ok:C']) // B failed and was dropped
+})
+
+test('perItem itemError:collect keeps a {error} placeholder in the failed slot', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'enrich', args: '{"n":"{{item}}"}', perItem: { over: '{{trigger.input}}', itemError: 'collect' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 't1' }],
+  }
+  const runAction: RunActionFn = async (node) => {
+    const n = (node.config.args as { n: string }).n
+    return n === 'B' ? { error: 'bad B' } : { output: `ok:${n}` }
+  }
+  const result = await interpretFlow(graph, ['A', 'B', 'C'], { runAgent: async () => ({ output: '' }), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, ['ok:A', { error: 'bad B' }, 'ok:C'])
+})
+
+test('perItem itemError:fail (default) fails the whole step on the first failing item', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'enrich', args: '{"n":"{{item}}"}', perItem: { over: '{{trigger.input}}' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 't1' }],
+  }
+  const runAction: RunActionFn = async (node) => ((node.config.args as { n: string }).n === 'B' ? { error: 'bad B' } : { output: 'ok' })
+  const result = await interpretFlow(graph, ['A', 'B', 'C'], { runAgent: async () => ({ output: '' }), runAction })
+  assert.equal(result.status, 'failed')
+})
+
+test('perItem reports one step outcome per item plus a step summary', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a1', type: 'ai', data: { aiOp: 'summarize', input: '{{item}}', perItem: { over: '{{trigger.input}}' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'a1' }],
+  }
+  const runAction: RunActionFn = async (node) => ({ output: `sum:${node.config.input}` })
+  const outcomes: { nodeId: string; iterationKey?: string }[] = []
+  const result = await interpretFlow(graph, ['x', 'y'], {
+    runAgent: async () => ({ output: '' }),
+    runAction,
+    onStep: (o) => outcomes.push({ nodeId: o.nodeId, iterationKey: o.iterationKey }),
+  })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, ['sum:x', 'sum:y'])
+  // Two per-item rows keyed a1#0 / a1#1, plus the bare-a1 summary row.
+  assert.deepEqual(outcomes.filter((o) => o.iterationKey === 'a1#0').length, 1)
+  assert.deepEqual(outcomes.filter((o) => o.iterationKey === 'a1#1').length, 1)
+  assert.deepEqual(outcomes.filter((o) => o.iterationKey === 'a1').length, 1)
+})
+
+test('perItem over an empty list succeeds with an empty output list', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'x', args: '{}', perItem: { over: '{{trigger.input}}' } } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 't1' }],
+  }
+  let calls = 0
+  const runAction: RunActionFn = async () => { calls += 1; return { output: 'ok' } }
+  const result = await interpretFlow(graph, [], { runAgent: async () => ({ output: '' }), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.equal(calls, 0)
+  assert.deepEqual(result.output, [])
+})
+
+test('loop itemError:skip drops failing iterations and keeps the rest', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'loop', type: 'loop', data: { over: '{{trigger.input}}', itemError: 'skip', body: ['a'] } },
+      { id: 'a', type: 'agent', data: { agentId: 'x', input: '{{item}}' } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'loop' }],
+  }
+  const runAgent: RunAgentFn = async (n) => (n.input === 'B' ? { error: 'bad' } : { output: n.input })
+  const result = await interpretFlow(graph, ['A', 'B', 'C'], { runAgent })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, ['A', 'C'])
+})
+
+test('loop itemError:collect keeps {error} placeholders for failing iterations', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'loop', type: 'loop', data: { over: '{{trigger.input}}', itemError: 'collect', body: ['a'] } },
+      { id: 'a', type: 'agent', data: { agentId: 'x', input: '{{item}}' } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'loop' }],
+  }
+  const runAgent: RunAgentFn = async (n) => (n.input === 'B' ? { error: 'bad' } : { output: n.input })
+  const result = await interpretFlow(graph, ['A', 'B', 'C'], { runAgent })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, ['A', { error: 'bad' }, 'C'])
+})
+
 test('multi-criteria condition (AND) routes correctly', async () => {
   const graph: FlowGraph = {
     nodes: [

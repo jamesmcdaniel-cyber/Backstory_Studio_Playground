@@ -64,6 +64,95 @@ const smallField =
   'rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300'
 const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground'
 
+/** Node types that support the per-item fan-out modifier (see perItemSchema). */
+const PER_ITEM_TYPES: ReadonlySet<FlowNode['type']> = new Set(['agent', 'tool', 'http', 'ai', 'code', 'subflow', 'data', 'transform', 'knowledge'])
+
+type PerItemConfigLike = { over: string; itemError?: 'fail' | 'skip' | 'collect'; concurrency?: number }
+
+/**
+ * "Run once per item" control — the list-aware step contract surfaced in the
+ * drawer. When on, the step fans out over `over` (a list picked from the data
+ * menu), exposing {{item}} in this step's own fields, and collects the per-item
+ * outputs into a list. Rendered once for every per-item-capable node type.
+ */
+function PerItemSection({
+  node,
+  onChange,
+  dataFields,
+  labelCtx,
+  registerEditor,
+  focusEditor,
+  insertToken,
+}: {
+  node: FlowNode
+  onChange: (node: FlowNode) => void
+  dataFields: DataField[]
+  labelCtx: TokenLabelContext
+  registerEditor: (key: string) => (handle: TokenTextEditorHandle | null) => void
+  focusEditor: (key: string) => () => void
+  insertToken: (token: string) => void
+}) {
+  const perItem = (node.data as { perItem?: PerItemConfigLike }).perItem
+  const enabled = Boolean(perItem)
+  const patch = (next: PerItemConfigLike | undefined) => onChange({ ...node, data: { ...node.data, perItem: next } } as FlowNode)
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 p-3">
+      <label className={labelClass}>Run this step</label>
+      <select
+        className={fieldClass}
+        value={enabled ? 'each' : 'once'}
+        onChange={(e) => patch(e.target.value === 'each' ? { over: perItem?.over ?? '', itemError: perItem?.itemError, concurrency: perItem?.concurrency } : undefined)}
+      >
+        <option value="once">Once</option>
+        <option value="each">Once for each item in a list</option>
+      </select>
+      {enabled && perItem && (
+        <div className="mt-3 space-y-3">
+          <div>
+            <label className={labelClass}>For each item in</label>
+            <TokenTextEditor
+              ref={registerEditor('perItem.over')}
+              value={perItem.over}
+              labelCtx={labelCtx}
+              placeholder="Choose a list from the available data below"
+              onFocus={focusEditor('perItem.over')}
+              onChange={(over) => patch({ ...perItem, over })}
+              ariaLabel="For each item in"
+            />
+            <div className="mt-2">
+              <DataTree fields={dataFields} onInsert={insertToken} />
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">This step runs once per item; use {'{{item}}'} in its fields. Outputs are collected into a list.</p>
+          </div>
+          <div>
+            <label className={labelClass}>If an item fails</label>
+            <select
+              className={fieldClass}
+              value={perItem.itemError ?? 'fail'}
+              onChange={(e) => patch({ ...perItem, itemError: e.target.value === 'fail' ? undefined : (e.target.value as 'skip' | 'collect') })}
+            >
+              <option value="fail">Stop the whole step</option>
+              <option value="skip">Skip that item, keep the rest</option>
+              <option value="collect">Keep going, record the error in its place</option>
+            </select>
+          </div>
+          <div>
+            <label className={labelClass}>At a time</label>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              className={fieldClass}
+              value={perItem.concurrency ?? 1}
+              onChange={(e) => patch({ ...perItem, concurrency: Math.max(1, Math.min(20, Number(e.target.value) || 1)) })}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function clausesOf(data: { clauses?: ConditionClause[]; left?: string; op?: ConditionOp; right?: string }): ConditionClause[] {
   if (data.clauses && data.clauses.length) return data.clauses
   if (data.left !== undefined || data.right !== undefined)
@@ -719,6 +808,17 @@ export function StepDrawer({
                 </div>
               </>
             )}
+            {PER_ITEM_TYPES.has(node.type) && (
+              <PerItemSection
+                node={node}
+                onChange={onChange}
+                dataFields={dataFields}
+                labelCtx={labelCtx}
+                registerEditor={registerEditor}
+                focusEditor={focusEditor}
+                insertToken={insertToken}
+              />
+            )}
           </>
         )}
 
@@ -1063,6 +1163,18 @@ export function StepDrawer({
                 onBlur={unblockActive}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, concurrency: Math.max(1, Math.min(20, Number(e.target.value) || 1)) } })}
               />
+            </div>
+            <div>
+              <label className={labelClass}>If an item fails</label>
+              <select
+                className={fieldClass}
+                value={node.data.itemError ?? 'fail'}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, itemError: e.target.value === 'fail' ? undefined : (e.target.value as 'skip' | 'collect') } })}
+              >
+                <option value="fail">Stop the whole loop</option>
+                <option value="skip">Skip that item, keep the rest</option>
+                <option value="collect">Keep going, record the error in its place</option>
+              </select>
             </div>
             {onAddStep && (
               <AddNestedStepMenu label="Add step to loop" onPick={onAddStep} />

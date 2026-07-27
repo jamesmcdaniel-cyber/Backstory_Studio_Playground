@@ -720,7 +720,13 @@ function FlowBuilder() {
 
   const loopContext = useMemo(() => parentLoop(graph, selectedId), [graph, selectedId])
   const parallelContext = useMemo(() => parentParallelBranch(graph, selectedId), [graph, selectedId])
-  const insideLoop = Boolean(loopContext)
+  // A step that runs once per item ({{perItem.over}}) exposes {{item}} in its own
+  // editors, just like a loop body does.
+  const selectedPerItemOver = useMemo(() => {
+    const pi = selectedNode && 'perItem' in selectedNode.data ? (selectedNode.data as { perItem?: { over?: string } }).perItem : undefined
+    return pi?.over?.trim() ? pi.over : undefined
+  }, [selectedNode])
+  const insideLoop = Boolean(loopContext) || Boolean(selectedPerItemOver)
   const upstreamIds = useMemo(() => {
     const ids = spineIds(graph)
     if (loopContext) {
@@ -761,9 +767,12 @@ function FlowBuilder() {
     const lastOutputs: Record<string, unknown> = {}
     for (const step of selectedRun?.steps ?? []) lastOutputs[step.nodeId] = parseFlowValue(step.output)
     const triggerInput = testInput.trim() ? parseFlowInput(testInput) : storedRunInput(selectedRun?.input)
+    const sampleInput = typeof triggerInput === 'string' ? triggerInput : triggerInput == null ? '' : JSON.stringify(triggerInput)
     if (loopContext) {
-      const sampleInput = typeof triggerInput === 'string' ? triggerInput : triggerInput == null ? '' : JSON.stringify(triggerInput)
       lastOutputs.__item = sampleLoopItem(loopContext.loop, lastOutputs, sampleInput)
+    } else if (selectedPerItemOver) {
+      // A step that runs once per item exposes {{item}} against its own list.
+      lastOutputs.__item = sampleLoopItem({ data: { over: selectedPerItemOver } } as Extract<FlowNode, { type: 'loop' }>, lastOutputs, sampleInput)
     }
     const upstream = upstreamIds.map((uid) => {
       const n = graph.nodes.find((x) => x.id === uid)
@@ -781,7 +790,7 @@ function FlowBuilder() {
       return { id: uid, label, outputFields }
     })
     return buildDataTree({ upstream, insideLoop, lastOutputs, triggerInput, inputFields, variables: upstreamVariables })
-  }, [selectedNode, upstreamIds, graph, selectedRun, insideLoop, agentsById, loopContext, testInput, inputFields, toolCatalog, upstreamVariables])
+  }, [selectedNode, upstreamIds, graph, selectedRun, insideLoop, agentsById, loopContext, selectedPerItemOver, testInput, inputFields, toolCatalog, upstreamVariables])
 
   const selectedNodeRawInput = useMemo(() => {
     if (!selectedNode) return undefined

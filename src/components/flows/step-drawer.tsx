@@ -12,6 +12,7 @@ import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 import { type DataField } from '@/lib/flows/datatree'
 import { AdvancedParamsSection } from '@/components/flows/advanced-params'
 import { CodeEditor } from '@/components/flows/code-editor'
+import { CodeAssist } from '@/components/flows/code-assist'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 import type { FlowContext } from '@/features/flows/context'
@@ -1858,6 +1859,12 @@ export function StepDrawer({
                 <DataTree fields={dataFields} onInsert={insertToken} />
               </div>
             </div>
+            <CodeAssist
+              language={node.data.language === 'python' ? 'python' : 'javascript'}
+              mode={node.data.mode === 'each' ? 'each' : 'all'}
+              inputSample={rawInput !== undefined ? JSON.stringify(rawInput, null, 2).slice(0, 4000) : undefined}
+              onGenerated={(code) => onChange({ ...node, data: { ...node.data, code } })}
+            />
             <div>
               <label className={labelClass}>{node.data.language === 'python' ? 'Python' : 'JavaScript'}</label>
               <CodeEditor

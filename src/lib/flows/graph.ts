@@ -359,15 +359,23 @@ const outputNode = z.object({
   }),
 })
 
-// Branch merge point (Gumloop "Join Paths"): condition/switch/error branches
-// all point their edges at ONE join node so downstream steps aren't duplicated
-// per branch. Pure passthrough — no config. The interpreter forwards the value
-// from whichever branch reached it (only one ever does — the linear walk
-// follows a single edge) and continues down the join's one outgoing edge.
+// Branch merge point (Gumloop "Join Paths" + n8n Merge). Multiple upstream
+// branches point their edges at ONE join node so downstream steps aren't
+// duplicated per branch. `mode` decides how the incoming branch outputs combine:
+//   passthrough (default) — forward the value from whichever branch reached it
+//     (only one does when merging condition/switch/error branches — the classic
+//     Join Paths). Back-compat: a join with no mode behaves exactly this way.
+//   append — concatenate every active branch's items into one list.
+//   combineByKey — full outer join of the branches' record lists on `key`.
 const joinNode = z.object({
   id: z.string(),
   type: z.literal('join'),
-  data: z.object({ label: z.string().optional(), note: z.string().optional() }),
+  data: z.object({
+    label: z.string().optional(),
+    note: z.string().optional(),
+    mode: z.enum(['passthrough', 'append', 'combineByKey']).optional(),
+    key: z.string().optional(),
+  }),
 })
 
 /** Operations a first-class `ai` step can perform against the org's model. */

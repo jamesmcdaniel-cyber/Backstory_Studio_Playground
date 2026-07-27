@@ -5,6 +5,7 @@ import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, ty
 import { shouldRetryAfterTimeout } from './action-reliability'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { runDataOp } from '@/lib/flows/data-ops'
+import { mergeAppend, mergeByKey } from '@/lib/flows/merge'
 
 export type StepOutcome = {
   nodeId: string
@@ -338,6 +339,14 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
   const maxSteps = opts.maxSteps ?? 100
   const maxLoop = opts.maxLoopIterations ?? 500
   const byId = new Map(graph.nodes.map((node) => [node.id, node]))
+  // Source node ids feeding each node, in edge order — used by a merge-mode join
+  // to gather every active incoming branch's output.
+  const incomingSources = new Map<string, string[]>()
+  for (const edge of graph.edges) {
+    const list = incomingSources.get(edge.target) ?? []
+    list.push(edge.source)
+    incomingSources.set(edge.target, list)
+  }
   // Declared variable types: each name's initialize node (anywhere in the
   // graph, container bodies included) governs how later set/increment values
   // are coerced.
@@ -573,17 +582,25 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     }
 
     if (node.type === 'join') {
-      // Branch merge point (Gumloop "Join Paths"): condition/switch/error
-      // branches all target this node, so downstream steps aren't duplicated per
-      // branch. Pure passthrough — it forwards the value from whichever branch
-      // reached it (the current `lastOutput`) as its own output and the walk
-      // continues down its single outgoing edge. Only-one-active semantics fall
-      // out of the linear walk: condition/switch/error already follow exactly
-      // one edge, so only one path ever arrives here. `{{step.<id>.output}}`
-      // reads "the value from whichever path ran".
-      ctx.step[node.id] = { output: lastOutput }
-      emit({ nodeId: node.id, status: 'succeeded', output: lastOutput })
-      return { kind: 'ok', output: lastOutput }
+      // Branch merge point. `passthrough` (default) forwards whichever single
+      // branch reached it (condition/switch/error follow exactly one edge) — the
+      // classic Join Paths, byte-identical to before. `append`/`combineByKey`
+      // gather EVERY active incoming branch's output (an active edge means its
+      // source ran, so ctx.step holds it) and combine them: append flattens into
+      // one list, combineByKey full-outer-joins the record lists on `key`.
+      const mode = node.data.mode ?? 'passthrough'
+      if (mode === 'passthrough') {
+        ctx.step[node.id] = { output: lastOutput }
+        emit({ nodeId: node.id, status: 'succeeded', output: lastOutput })
+        return { kind: 'ok', output: lastOutput }
+      }
+      const branchOutputs = (incomingSources.get(node.id) ?? [])
+        .map((sourceId) => ctx.step[sourceId]?.output)
+        .filter((value) => value !== undefined)
+      const output = mode === 'append' ? mergeAppend(branchOutputs) : mergeByKey(branchOutputs, node.data.key)
+      ctx.step[node.id] = { output }
+      emit({ nodeId: node.id, status: 'succeeded', output })
+      return { kind: 'ok', output }
     }
 
     if (node.type === 'transform') {

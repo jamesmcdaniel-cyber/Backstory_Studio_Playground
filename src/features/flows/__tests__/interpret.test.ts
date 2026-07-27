@@ -939,6 +939,59 @@ test('a matched switch case merges into a join', async () => {
   assert.equal(result.output, 'ran:saw MID')
 })
 
+test('join mode:append concatenates two independent branch outputs into one list', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a', type: 'agent', data: { agentId: 'a', input: 'x' } },
+      { id: 'b', type: 'agent', data: { agentId: 'b', input: 'y' } },
+      { id: 'j', type: 'join', data: { mode: 'append' } },
+    ],
+    edges: [
+      { id: 'e0', source: 'trigger', target: 'a' },
+      { id: 'e1', source: 'trigger', target: 'b' },
+      { id: 'e2', source: 'a', target: 'j' },
+      { id: 'e3', source: 'b', target: 'j' },
+    ],
+  }
+  const result = await interpretFlow(graph, '', { runAgent: stub({ a: '["a1","a2"]', b: '["b1"]' }) })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.steps.find((s) => s.nodeId === 'j')?.output, ['a1', 'a2', 'b1'])
+})
+
+test('join mode:combineByKey full-outer-joins record lists from two branches', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'sf', type: 'agent', data: { agentId: 'sf', input: 'x' } },
+      { id: 'hs', type: 'agent', data: { agentId: 'hs', input: 'y' } },
+      { id: 'j', type: 'join', data: { mode: 'combineByKey', key: 'email' } },
+    ],
+    edges: [
+      { id: 'e0', source: 'trigger', target: 'sf' },
+      { id: 'e1', source: 'trigger', target: 'hs' },
+      { id: 'e2', source: 'sf', target: 'j' },
+      { id: 'e3', source: 'hs', target: 'j' },
+    ],
+  }
+  const result = await interpretFlow(graph, '', {
+    runAgent: stub({
+      sf: '[{"email":"x@a.com","name":"X"}]',
+      hs: '[{"email":"x@a.com","phone":"111"},{"email":"z@a.com","phone":"999"}]',
+    }),
+  })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.steps.find((s) => s.nodeId === 'j')?.output, [
+    { email: 'x@a.com', name: 'X', phone: '111' },
+    { email: 'z@a.com', phone: '999' },
+  ])
+})
+
+test('join with no mode still passes through the single active branch (back-compat)', async () => {
+  const result = await interpretFlow(conditionJoinGraph, 'Acme', { runAgent: stub({ score: '{"score":91}', high: 'HIGH', low: 'LOW' }) })
+  assert.equal(result.steps.find((s) => s.nodeId === 'j')?.output, 'HIGH')
+})
+
 test('onStep reports every node including containers', async () => {
   const graph: FlowGraph = {
     nodes: [

@@ -52,7 +52,7 @@ export const BUILTIN_GROUPS: PickerGroup[] = [
     mode: 'action',
     children: [
       { id: 'flow-output', label: 'Output', description: 'Return one or more named results to whatever called this flow.', mode: 'action', stepType: 'output' },
-      { id: 'flow-join', label: 'Join paths', description: 'Merge branches back into a single path so later steps run once.', mode: 'action', stepType: 'join' },
+      { id: 'flow-join', label: 'Join / merge branches', description: 'Merge branches back into one path, combine their items into a list, or join records by a matching field.', mode: 'action', stepType: 'join' },
       { id: 'flow-subflow', label: 'Run a flow', description: 'Run another flow as one step and use its result.', mode: 'action', stepType: 'subflow' },
     ],
   },

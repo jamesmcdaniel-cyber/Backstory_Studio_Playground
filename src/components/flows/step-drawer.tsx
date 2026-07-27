@@ -1818,9 +1818,37 @@ export function StepDrawer({
         )}
 
         {node.type === 'join' && (
-          <p className="text-xs text-muted-foreground">
-            A merge point with no settings. Point the ends of different branches at this step so the steps after it run once, on whichever path actually ran.
-          </p>
+          <div className="space-y-3">
+            <div>
+              <label className={labelClass}>How to merge branches</label>
+              <select
+                className={fieldClass}
+                value={node.data.mode ?? 'passthrough'}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value === 'passthrough' ? undefined : (e.target.value as 'append' | 'combineByKey') } })}
+              >
+                <option value="passthrough">Continue on whichever branch ran (merge paths)</option>
+                <option value="append">Combine every branch&apos;s items into one list</option>
+                <option value="combineByKey">Combine records from every branch by a matching field</option>
+              </select>
+            </div>
+            {node.data.mode === 'combineByKey' && (
+              <div>
+                <label className={labelClass}>Matching field</label>
+                <input
+                  className={fieldClass}
+                  value={node.data.key ?? ''}
+                  placeholder="e.g. email"
+                  onFocus={blockActive}
+                  onBlur={unblockActive}
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, key: e.target.value || undefined } })}
+                />
+                <p className="mt-1.5 text-xs text-muted-foreground">Records from each branch that share this field are merged into one.</p>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Point the ends of different branches at this step so the steps after it run once. In &quot;merge paths&quot; mode only the branch that ran continues; the combine modes gather every branch that produced data.
+            </p>
+          </div>
         )}
           </div>
 

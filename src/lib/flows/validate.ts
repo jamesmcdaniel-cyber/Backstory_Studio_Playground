@@ -502,6 +502,11 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       if (!graph.edges.some((edge) => edge.target === node.id)) {
         add(issues, 'warning', 'JOIN_NO_INCOMING', `${nodeLabel(node)} isn't reached by any branch.`, node.id)
       }
+      // combineByKey needs a field to match records on, or it silently falls
+      // back to append at run time.
+      if (node.data.mode === 'combineByKey' && !node.data.key?.trim()) {
+        add(issues, 'error', 'MERGE_NO_KEY', `${nodeLabel(node)} combines by a matching field but no field is set.`, node.id)
+      }
     }
 
     if (node.type === 'data') {

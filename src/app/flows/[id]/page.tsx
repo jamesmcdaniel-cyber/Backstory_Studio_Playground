@@ -785,9 +785,26 @@ function FlowBuilder() {
 
   const selectedNodeRawInput = useMemo(() => {
     if (!selectedNode) return undefined
-    const outputs = new Map(
-      (selectedRun?.steps ?? []).map((step) => [step.nodeId, parseFlowValue(step.output)]),
-    )
+    const steps = selectedRun?.steps ?? []
+    const isEmpty = (value: unknown) =>
+      value === undefined ||
+      value === null ||
+      (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0)
+
+    // 1. Ground truth for debugging — the exact payload this node RECEIVED on
+    //    the selected run, as the executor recorded it (a tool/http/agent step
+    //    stores its resolved config/args/prompt; tokens are already
+    //    substituted). This is what actually went into the node. Loop bodies
+    //    record per-iteration rows (`${id}#${index}`); take the latest.
+    const ownStep = [...steps]
+      .reverse()
+      .find((entry) => entry.nodeId === selectedNode.id || entry.nodeId.startsWith(`${selectedNode.id}#`))
+    if (ownStep && !isEmpty(ownStep.input)) return parseFlowValue(ownStep.input)
+
+    // 2. The node hasn't recorded a real input (e.g. it never ran, or it's a
+    //    pure interpreter node whose input isn't persisted): show the upstream
+    //    data that feeds it — the parent nodes' outputs on this run.
+    const outputs = new Map(steps.map((step) => [step.nodeId, parseFlowValue(step.output)]))
     const directParents = graph.edges
       .filter((edge) => edge.target === selectedNode.id)
       .map((edge) => edge.source)
@@ -798,13 +815,17 @@ function FlowBuilder() {
     if (parentValues.length > 1) {
       return Object.fromEntries(parentValues.map((entry) => [entry.nodeId, entry.value]))
     }
+
+    // 3. First node after the trigger: the run's input payload.
     const triggerInput = testInput.trim() ? parseFlowInput(testInput) : storedRunInput(selectedRun?.input)
     return triggerInput === '' ? undefined : triggerInput
   }, [graph.edges, selectedNode, selectedRun, testInput])
 
   const selectedNodeRawOutput = useMemo(() => {
     if (!selectedNode) return undefined
-    const step = [...(selectedRun?.steps ?? [])].reverse().find((entry) => entry.nodeId === selectedNode.id)
+    const step = [...(selectedRun?.steps ?? [])]
+      .reverse()
+      .find((entry) => entry.nodeId === selectedNode.id || entry.nodeId.startsWith(`${selectedNode.id}#`))
     if (!step) return undefined
     if (step.error && step.output == null) return { error: step.error, status: step.status }
     return parseFlowValue(step.output)
@@ -812,7 +833,9 @@ function FlowBuilder() {
 
   const selectedNodeRawLogs = useMemo(() => {
     if (!selectedNode) return undefined
-    const step = [...(selectedRun?.steps ?? [])].reverse().find((entry) => entry.nodeId === selectedNode.id)
+    const step = [...(selectedRun?.steps ?? [])]
+      .reverse()
+      .find((entry) => entry.nodeId === selectedNode.id || entry.nodeId.startsWith(`${selectedNode.id}#`))
     const logs = step?.logs
     return Array.isArray(logs) ? logs.map((entry) => String(entry)) : undefined
   }, [selectedNode, selectedRun])

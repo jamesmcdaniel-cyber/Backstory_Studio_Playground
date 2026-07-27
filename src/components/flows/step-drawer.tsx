@@ -634,7 +634,7 @@ export function StepDrawer({
                 <Database className="h-4 w-4 text-indigo-600" />
                 <p className="text-sm font-semibold">Input</p>
               </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw data received from the trigger and previous nodes.</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw JSON this step received on the selected run — its resolved input, or the upstream data feeding it.</p>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
               <pre className="max-h-[45%] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">

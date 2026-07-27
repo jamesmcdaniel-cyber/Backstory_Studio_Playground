@@ -12,6 +12,7 @@ export type FlowHttpConfig = {
   bodyMode?: unknown
   contentType?: unknown
   responseType?: unknown
+  followRedirects?: unknown
   failOnHttpError?: unknown
   retries?: unknown
   timeoutMs?: unknown
@@ -90,11 +91,11 @@ function queryUrl(url: string, query: unknown): string {
   return next.toString()
 }
 
-type BodyMode = 'json' | 'raw' | 'graphql' | 'form-urlencoded' | 'none'
+type BodyMode = 'json' | 'raw' | 'graphql' | 'form-urlencoded' | 'form-data' | 'none'
 
 function explicitBodyMode(value: unknown): BodyMode | undefined {
   if (value === 'text') return 'raw'
-  return value === 'json' || value === 'raw' || value === 'graphql' || value === 'form-urlencoded' || value === 'none'
+  return value === 'json' || value === 'raw' || value === 'graphql' || value === 'form-urlencoded' || value === 'form-data' || value === 'none'
     ? value
     : undefined
 }
@@ -138,6 +139,24 @@ function formBody(body: unknown): string | undefined {
   return form.toString()
 }
 
+// Multipart form-data of text fields. Returns a FormData so the fetch runtime
+// sets the multipart content-type + boundary itself — we must NOT set one by
+// hand. Binary/file parts are not supported.
+function formDataBody(body: unknown): FormData | undefined {
+  const parsed = parseObjectInput(body, 'Form-data body')
+  const entries = Object.entries(parsed)
+  if (!entries.length) return undefined
+  const form = new FormData()
+  for (const [key, value] of entries) {
+    if (Array.isArray(value)) {
+      for (const item of value) if (item != null) form.append(key, String(item))
+    } else if (value != null) {
+      form.append(key, String(value))
+    }
+  }
+  return form
+}
+
 function graphqlBody(body: unknown): string | undefined {
   if (body == null || body === '') return undefined
   if (typeof body !== 'string') return JSON.stringify(body)
@@ -151,7 +170,7 @@ function graphqlBody(body: unknown): string | undefined {
   }
 }
 
-export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init: RequestInit; timeoutMs: number; failOnHttpError: boolean; responseType: 'auto' | 'json' | 'text' } {
+export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init: RequestInit; timeoutMs: number; failOnHttpError: boolean; responseType: 'auto' | 'json' | 'text'; followRedirects: boolean } {
   const method = String(config.method || 'POST').toUpperCase()
   const url = queryUrl(String(config.url || ''), config.sendQuery === false ? undefined : config.query)
   const headers = headersFrom(config.sendHeaders === false ? undefined : config.headers)
@@ -162,18 +181,22 @@ export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init:
   }
   const mode = explicitBodyMode(config.bodyMode) ?? inferBodyMode(config.body)
   const bodyAllowed = BODY_METHODS.has(method)
-  let body: string | undefined
+  let body: string | FormData | undefined
   if (bodyAllowed && config.sendBody !== false && mode !== 'none') {
     body =
       mode === 'json'
         ? jsonBody(config.body)
         : mode === 'form-urlencoded'
           ? formBody(config.body)
-          : mode === 'graphql'
-            ? graphqlBody(config.body)
-            : textBody(config.body)
+          : mode === 'form-data'
+            ? formDataBody(config.body)
+            : mode === 'graphql'
+              ? graphqlBody(config.body)
+              : textBody(config.body)
+    // form-data must leave content-type unset so the runtime can add the
+    // multipart boundary; only string bodies get an explicit content-type.
     const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')
-    if (body && !hasContentType) {
+    if (body && typeof body === 'string' && !hasContentType) {
       if (mode === 'json' || mode === 'graphql') headers['content-type'] = 'application/json'
       else if (mode === 'form-urlencoded') headers['content-type'] = 'application/x-www-form-urlencoded'
       else if (typeof config.contentType === 'string' && config.contentType.trim()) headers['content-type'] = config.contentType.trim()
@@ -183,12 +206,16 @@ export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init:
     ? Math.max(1000, Math.min(120000, Math.round(config.timeoutMs)))
     : 30_000
   const responseType = config.responseType === 'json' || config.responseType === 'text' ? config.responseType : 'auto'
+  const followRedirects = config.followRedirects === true
   return {
     url,
-    init: { method, headers, ...(body !== undefined ? { body } : {}), redirect: 'error' },
+    // 'manual' lets fetchWithHttpCredential inspect each hop and re-run the SSRF
+    // guard before following; 'error' refuses redirects outright otherwise.
+    init: { method, headers, ...(body !== undefined ? { body } : {}), redirect: followRedirects ? 'manual' : 'error' },
     timeoutMs,
     failOnHttpError: config.failOnHttpError !== false,
     responseType,
+    followRedirects,
   }
 }
 

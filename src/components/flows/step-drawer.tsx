@@ -10,6 +10,7 @@ import { DataTree } from '@/components/flows/data-tree'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 import { type DataField } from '@/lib/flows/datatree'
 import { AdvancedParamsSection } from '@/components/flows/advanced-params'
+import { CodeEditor } from '@/components/flows/code-editor'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 import { cn } from '@/lib/utils'
@@ -1535,13 +1536,13 @@ export function StepDrawer({
             </div>
             <div>
               <label className={labelClass}>{node.data.language === 'python' ? 'Python' : 'JavaScript'}</label>
-              <textarea
-                className={`${areaClass} min-h-[260px] bg-slate-950 font-mono text-[13px] leading-6 text-slate-100`}
+              <CodeEditor
                 value={node.data.code}
-                spellCheck={false}
+                language={node.data.language === 'python' ? 'python' : 'javascript'}
+                ariaLabel={node.data.language === 'python' ? 'Python code' : 'JavaScript code'}
                 onFocus={blockActive}
                 onBlur={unblockActive}
-                onChange={(e) => onChange({ ...node, data: { ...node.data, code: e.target.value } })}
+                onChange={(code) => onChange({ ...node, data: { ...node.data, code } })}
               />
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
                 Return a JSON-compatible value. Use <code>input</code> for this step&apos;s data and <code>context</code> for trigger, steps, variables, time, and run metadata. Imports, files, network calls, and child processes are unavailable.

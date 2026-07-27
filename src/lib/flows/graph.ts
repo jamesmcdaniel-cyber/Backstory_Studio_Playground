@@ -125,9 +125,12 @@ const httpNode = z.object({
     sendBody: z.boolean().optional(),
     body: z.string().optional(),
     cookie: z.string().optional(),
-    bodyMode: z.enum(['json', 'raw', 'graphql', 'form-urlencoded', 'text', 'none']).optional(),
+    bodyMode: z.enum(['json', 'raw', 'graphql', 'form-urlencoded', 'form-data', 'text', 'none']).optional(),
     contentType: z.string().optional(),
     responseType: z.enum(['auto', 'json', 'text']).optional(),
+    // Off by default: following redirects is opt-in, and each hop is
+    // re-checked against the SSRF guard before it is requested.
+    followRedirects: z.boolean().optional(),
     failOnHttpError: z.boolean().optional(),
     retries: z.number().int().min(0).max(5).optional(),
     timeoutMs: z.number().int().min(1000).max(120000).optional(),

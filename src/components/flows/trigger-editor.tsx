@@ -348,6 +348,9 @@ export function TriggerEditor({
           <p className="text-xs text-muted-foreground">
             Fires when this signal is emitted anywhere in your workspace. The signal payload arrives as the Run input. Runs the published version.
           </p>
+          <p className="text-xs text-muted-foreground">
+            Tip: use <code className="rounded bg-muted px-1">provider.&lt;app&gt;</code> (e.g. <code className="rounded bg-muted px-1">provider.github</code>) to fire when a connected app forwards new items through Nango.
+          </p>
         </div>
       )}
 

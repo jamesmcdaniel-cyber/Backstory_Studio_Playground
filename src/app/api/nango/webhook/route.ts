@@ -4,6 +4,8 @@ import { syncOrgNangoConnections } from '@/lib/nango/mirror'
 import { MIN_INTEGRATIONS_FOR_TEMPLATES } from '@/lib/integrations/integration-count'
 import { maybeGenerateOnGateClear } from '@/lib/templates/generation-queue'
 import { apiLogger } from '@/lib/logger'
+import { systemPrisma } from '@/lib/prisma'
+import { emitFlowSignal } from '@/features/flows/signals'
 
 export const runtime = 'nodejs'
 
@@ -58,8 +60,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, skipped: 'unparseable' })
   }
 
-  // Only auth (connection lifecycle) events touch the mirror. sync/forward/
-  // async_action events are ignored.
+  // Provider events (sync = new/updated records from a Nango sync; forward = a
+  // provider webhook Nango forwards) become a flow signal `provider.<app>`, so a
+  // flow with a signal trigger listening for that name runs with the event as
+  // its input — "when a new record appears in <app>" as a push trigger. The org
+  // isn't on these payloads, so it's resolved from the connection mirror row.
+  if (body.type === 'sync' || body.type === 'forward') {
+    const connectionId = typeof body.connectionId === 'string' ? body.connectionId : undefined
+    const providerConfigKey = typeof body.providerConfigKey === 'string' ? body.providerConfigKey : undefined
+    if (connectionId && providerConfigKey) {
+      try {
+        // systemPrisma: org-less webhook — resolve the owning org from the mirror.
+        const conn = await systemPrisma.nangoConnection.findFirst({ where: { connectionId }, select: { organizationId: true } })
+        if (conn) {
+          const payload = {
+            provider: providerConfigKey,
+            connectionId,
+            event: body.type,
+            model: typeof body.model === 'string' ? body.model : undefined,
+            records: body.records ?? body.data ?? body.payload ?? null,
+          }
+          await emitFlowSignal({ organizationId: conn.organizationId, signal: `provider.${providerConfigKey}`, payload })
+        }
+      } catch (error) {
+        apiLogger.error('nango provider-event signal failed', {
+          connectionId,
+          providerConfigKey,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return NextResponse.json({ ok: true })
+  }
+
+  // Only auth (connection lifecycle) events touch the mirror.
   if (body.type === 'auth') {
     const endUser = (body.endUser ?? null) as { organizationId?: string } | null
     const tags = (body.tags ?? null) as Record<string, string> | null

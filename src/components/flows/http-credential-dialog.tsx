@@ -36,6 +36,7 @@ export type HttpCredentialSummary = {
   allowedHost: string
   status: string
   lastVerifiedAt: string | null
+  lastError: string | null
 }
 
 const inputClass = 'h-10'
@@ -221,6 +222,16 @@ export function HttpCredentialDialog({
                 </div>
                 <div className="sm:col-span-2">
                   <SecretField id="oauth2-token-url" label="Token URL" value={config.tokenUrl || ''} onChange={set('tokenUrl')} placeholder="https://identity.example.com/oauth/token" />
+                </div>
+                <div className="sm:col-span-2">
+                  <SecretField
+                    id="oauth2-refresh-token"
+                    label="Refresh token (optional)"
+                    value={config.refreshToken || ''}
+                    onChange={set('refreshToken')}
+                    placeholder="Exchanged for a fresh access token on every run"
+                    secret
+                  />
                 </div>
                 <SecretField id="oauth2-client-id" label="Client ID" value={config.clientId || ''} onChange={set('clientId')} />
                 <SecretField id="oauth2-client-secret" label="Client secret" value={config.clientSecret || ''} onChange={set('clientSecret')} secret />

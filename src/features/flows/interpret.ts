@@ -85,6 +85,12 @@ type Opts = {
   // right step. Defaults to labels derivable from the graph alone; callers
   // that know agent titles (execute-flow) pass richer labels.
   stepLabels?: Record<string, string>
+  // Partial execution for the node editor's step controls:
+  //   stopAfterNodeId  — run through this node, then end the run ("Execute step").
+  //   stopBeforeNodeId — run everything up to this node but not the node itself,
+  //                      so its input is produced ("Execute previous nodes").
+  stopAfterNodeId?: string
+  stopBeforeNodeId?: string
 }
 
 // Result of executing a single node — an output, or a control signal that
@@ -1025,11 +1031,19 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     if (res.kind === 'route' || (res.kind === 'ok' && res.output !== undefined)) lastOutput = res.output
     nodeState.set(node.id, 'done')
     resolveEdges(node.id, res.kind === 'branch' ? { branch: res.branch } : res.kind === 'route' ? 'route' : res.kind === 'skip' ? 'skip' : 'ok')
+    // Partial execution: stop the walk the moment the requested node finishes,
+    // surfacing its output as the run result. In-flight siblings settle below.
+    if (opts.stopAfterNodeId && node.id === opts.stopAfterNodeId) {
+      terminal = done({ status: 'succeeded', steps, output: ctx.step[node.id]?.output ?? lastOutput })
+    }
   }
 
   const running = new Set<Promise<void>>()
   const readyNodes = () =>
     dagNodeIds.filter((id) =>
+      // "Execute previous nodes": never schedule the target itself, so the walk
+      // reaches quiescence once everything feeding it has run.
+      id !== opts.stopBeforeNodeId &&
       nodeState.get(id) === 'pending' && (id === entryId || (incomingResolved(id) && hasActiveIncoming(id))),
     )
 

@@ -314,8 +314,11 @@ export async function resolveHttpCredential(
   credentialId: string,
   organizationId: string,
 ): Promise<ResolvedHttpCredential> {
+  // 'error' rows are still resolved (a run may recover, matching how a flagged
+  // credential keeps being tried) — the picker surfaces the last error so it
+  // isn't a silent failure. Only a missing/foreign row is unavailable.
   const row = await prisma.httpCredential.findFirst({
-    where: { id: credentialId, organizationId, status: 'verified' },
+    where: { id: credentialId, organizationId, status: { in: ['verified', 'error'] } },
   })
   if (!row) throw new Error('The selected HTTP credential is unavailable. Choose or verify it again.')
   let config: HttpCredentialConfig
@@ -340,6 +343,7 @@ export function redactedCredential(row: {
   allowedHost: string
   status: string
   lastVerifiedAt: Date | null
+  lastError?: string | null
 }) {
   return {
     id: row.id,
@@ -348,6 +352,31 @@ export function redactedCredential(row: {
     allowedHost: row.allowedHost,
     status: row.status,
     lastVerifiedAt: row.lastVerifiedAt?.toISOString() ?? null,
+    lastError: row.lastError ?? null,
+  }
+}
+
+/**
+ * Record the outcome of using a credential at run time so the picker can show
+ * whether it still works. Best-effort: a write failure here must never break
+ * the run. An auth rejection (401/403) flips the row to 'error'; any success
+ * clears a prior error back to 'verified'.
+ */
+export async function markCredentialResult(credentialId: string, ok: boolean, error?: string): Promise<void> {
+  try {
+    if (ok) {
+      await prisma.httpCredential.updateMany({
+        where: { id: credentialId, status: 'error' },
+        data: { status: 'verified', lastError: null, lastVerifiedAt: new Date() },
+      })
+    } else {
+      await prisma.httpCredential.updateMany({
+        where: { id: credentialId },
+        data: { status: 'error', lastError: (error || 'Authentication was rejected.').slice(0, 500) },
+      })
+    }
+  } catch {
+    /* visibility only — never fail the run on a status write */
   }
 }
 

@@ -173,7 +173,7 @@ async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<CodeRunRes
       settled = true
       clearTimeout(timer)
       if (error) reject(error)
-      else resolve(value)
+      else resolve(value as CodeRunResult)
     }
     const timer = setTimeout(() => {
       child.kill('SIGKILL')

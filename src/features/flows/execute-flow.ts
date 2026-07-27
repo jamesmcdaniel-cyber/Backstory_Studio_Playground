@@ -25,6 +25,7 @@ import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfte
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization } from './http'
 import {
   fetchWithHttpCredential,
+  markCredentialResult,
   resolveHttpConnectionToken,
   resolveHttpCredential,
   type ResolvedHttpCredential,
@@ -61,6 +62,11 @@ export type FlowExecutionJob = {
   // ran BEFORE `nodeId` (on that run's pinned graph), then execute from
   // `nodeId` onward as a NEW run. Route-failed steps re-take their error edge.
   replayFrom?: { runId: string; nodeId: string }
+  // Partial execution for the node editor step controls. stopAfterNodeId runs
+  // through that node and stops ("Execute step"); stopBeforeNodeId runs
+  // everything feeding a node but not the node ("Execute previous nodes").
+  stopAfterNodeId?: string
+  stopBeforeNodeId?: string
   // Set by startFlowExecution: the FlowRun row was already created (validated
   // input + pinned graph persisted on it) before dispatch, so execution must
   // adopt that row instead of creating a new one. This is what lets the
@@ -928,6 +934,13 @@ export async function runFlowExecution(
           try {
             const response = await fetchWithHttpCredential(request, httpCredential, controller.signal)
             const nextOutput = await responseOutput(response, request.responseType, HTTP_MAX_RESPONSE_CHARS)
+            // Record credential health so the picker can flag a revoked token
+            // instead of failing silently. Auth rejection flips it to 'error';
+            // any non-auth response clears a prior error.
+            if (httpCredential?.id) {
+              const authRejected = nextOutput.status === 401 || nextOutput.status === 403
+              await markCredentialResult(httpCredential.id, !authRejected, `HTTP ${nextOutput.status}`)
+            }
             if (request.failOnHttpError && !nextOutput.ok) throw new Error(`HTTP ${nextOutput.status}: ${nextOutput.bodyText.slice(0, 200)}`)
             return nextOutput
           } catch (error) {

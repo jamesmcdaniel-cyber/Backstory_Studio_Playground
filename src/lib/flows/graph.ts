@@ -426,6 +426,10 @@ export const MAX_GRAPH_EDGES = 2000
 export const flowGraphSchema = z.object({
   nodes: z.array(flowNodeSchema).max(MAX_GRAPH_NODES, `A flow can have at most ${MAX_GRAPH_NODES} steps.`),
   edges: z.array(flowEdgeSchema).max(MAX_GRAPH_EDGES, `A flow can have at most ${MAX_GRAPH_EDGES} connections.`),
+  // Pinned / mock output per node id: when present, the executor uses this
+  // value instead of running the node, so downstream steps can be built and
+  // tested without live calls. Mirrors n8n's workflow-level pinData.
+  pinData: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type FlowNode = z.infer<typeof flowNodeSchema>

@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { X, Trash2, Plus, Copy, Database, Settings2, Braces, KeyRound } from 'lucide-react'
+import { X, Trash2, Plus, Copy, Database, Settings2, Braces, KeyRound, TerminalSquare } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
@@ -25,6 +26,7 @@ import {
   type HttpAuthOption,
   type HttpCredentialSummary,
 } from '@/components/flows/http-credential-dialog'
+import { ImportCurlDialog } from '@/components/flows/import-curl-dialog'
 
 export type { TriggerData }
 
@@ -475,6 +477,8 @@ export function StepDrawer({
   const [httpCredentials, setHttpCredentials] = useState<HttpCredentialSummary[]>([])
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
   const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
+  const [curlDialogOpen, setCurlDialogOpen] = useState(false)
+  const [reverifyingCredential, setReverifyingCredential] = useState(false)
   const isTrigger = node.type === 'trigger'
   const trigger = ((node.type === 'trigger' ? node.data.trigger : undefined) as TriggerData | undefined) ?? { type: 'manual' }
   // Chip-editor handles keyed by field, so a datatree click inserts a token
@@ -1046,6 +1050,11 @@ export function StepDrawer({
 
         {node.type === 'http' && (
           <div className="space-y-5">
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" size="sm" onClick={() => setCurlDialogOpen(true)}>
+                <TerminalSquare className="mr-1.5 h-4 w-4" /> Import cURL
+              </Button>
+            </div>
             <div>
               <label className={labelClass}>Method</label>
               <select
@@ -1138,12 +1147,57 @@ export function StepDrawer({
                     <KeyRound className="mr-1.5 h-4 w-4" /> Set up new
                   </Button>
                 </div>
-                {node.data.credentialId && (
-                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-700">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    Verified credential — secrets are encrypted and excluded from the flow.
-                  </p>
-                )}
+                {node.data.credentialId && (() => {
+                  const selected = httpCredentials.find((entry) => entry.id === node.data.credentialId)
+                  const flagged = selected?.status === 'error'
+                  return (
+                    <div className="mt-1.5 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={cn('flex items-center gap-1.5 text-xs', flagged ? 'text-amber-700' : 'text-emerald-700')}>
+                          <span className={cn('h-1.5 w-1.5 rounded-full', flagged ? 'bg-amber-500' : 'bg-emerald-500')} />
+                          {flagged
+                            ? 'This credential was rejected on a recent run.'
+                            : 'Verified credential — secrets are encrypted and excluded from the flow.'}
+                        </p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          disabled={reverifyingCredential}
+                          onClick={async () => {
+                            if (!node.data.credentialId) return
+                            setReverifyingCredential(true)
+                            try {
+                              const response = await fetch('/api/http-credentials', {
+                                method: 'PATCH',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({ id: node.data.credentialId, url: node.data.url, method: node.data.method }),
+                              })
+                              const data = await response.json().catch(() => ({}))
+                              if (!response.ok) {
+                                toast.error(data.error || 'The credential could not be verified.')
+                                if (data.credential) setHttpCredentials((current) => current.map((entry) => entry.id === data.credential.id ? data.credential : entry))
+                                return
+                              }
+                              toast.success('Credential re-verified.')
+                              setHttpCredentials((current) => current.map((entry) => entry.id === data.credential.id ? data.credential : entry))
+                            } catch {
+                              toast.error('The credential could not be verified.')
+                            } finally {
+                              setReverifyingCredential(false)
+                            }
+                          }}
+                        >
+                          {reverifyingCredential ? 'Verifying…' : 'Re-verify'}
+                        </Button>
+                      </div>
+                      {flagged && selected?.lastError && (
+                        <p className="text-xs text-amber-700/80">{selected.lastError}</p>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )}
 
@@ -1239,15 +1293,18 @@ export function StepDrawer({
                       <option value="raw">Raw</option>
                       <option value="graphql">GraphQL</option>
                       <option value="form-urlencoded">Form URL Encoded</option>
+                      <option value="form-data">Form-Data (Multipart)</option>
                     </select>
                   </div>
-                  {(node.data.bodyMode ?? 'json') === 'form-urlencoded' ? (
+                  {node.data.bodyMode === 'form-urlencoded' || node.data.bodyMode === 'form-data' ? (
                     <KeyValueJsonEditor
                       label="Body fields"
                       value={node.data.body}
                       keyPlaceholder="field"
                       valuePlaceholder="Value or input data"
-                      helper="These JSON fields are encoded as application/x-www-form-urlencoded."
+                      helper={node.data.bodyMode === 'form-data'
+                        ? 'These JSON fields are sent as multipart/form-data. File uploads are not yet supported.'
+                        : 'These JSON fields are encoded as application/x-www-form-urlencoded.'}
                       onChange={(body) => onChange({ ...node, data: { ...node.data, body } })}
                       labelCtx={labelCtx}
                       editorKey="http.body"
@@ -1295,6 +1352,21 @@ export function StepDrawer({
                 </>
               )}
             </div>
+
+            <div className="space-y-3 border-t pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Follow redirects</p>
+                  <p className="text-xs text-muted-foreground">Each hop is re-checked against the SSRF guard; credentials are dropped on cross-origin hops.</p>
+                </div>
+                <Switch
+                  checked={node.data.followRedirects ?? false}
+                  onCheckedChange={(followRedirects) => onChange({ ...node, data: { ...node.data, followRedirects } })}
+                  aria-label="Follow redirects"
+                />
+              </div>
+            </div>
+
             <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
             <p className="text-xs text-muted-foreground">Calls a public HTTPS endpoint. The raw status, response headers, parsed body, and response text appear in Output.</p>
           </div>
@@ -1611,6 +1683,24 @@ export function StepDrawer({
             ])
             onChange({ ...node, data: { ...node.data, credentialId: credential.id, connectionId: undefined } })
           }}
+        />
+      )}
+      {node.type === 'http' && (
+        <ImportCurlDialog
+          open={curlDialogOpen}
+          onOpenChange={setCurlDialogOpen}
+          onImport={(parsed) => onChange({
+            ...node,
+            data: {
+              ...node.data,
+              ...(parsed.method ? { method: parsed.method } : {}),
+              ...(parsed.url ? { url: parsed.url } : {}),
+              ...(parsed.headers ? { headers: parsed.headers, sendHeaders: true } : {}),
+              ...(parsed.body !== undefined ? { body: parsed.body, sendBody: true } : {}),
+              ...(parsed.bodyMode ? { bodyMode: parsed.bodyMode } : {}),
+              ...(parsed.followRedirects ? { followRedirects: true } : {}),
+            },
+          })}
         />
       )}
     </div>

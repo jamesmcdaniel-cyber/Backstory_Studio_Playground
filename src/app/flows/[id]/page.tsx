@@ -694,6 +694,16 @@ function FlowBuilder() {
         }
         return
       }
+      // 'd' toggles disable on the selected step (n8n parity) — not for the
+      // trigger or multi-output branch nodes, which can't passthrough.
+      if (e.key.toLowerCase() === 'd' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (viewingVersion) return
+        if (selectedNode && selectedNode.type !== 'trigger' && selectedNode.type !== 'condition' && selectedNode.type !== 'switch') {
+          e.preventDefault()
+          commitGraph(updateNode(graph, { ...selectedNode, disabled: selectedNode.disabled ? undefined : true }))
+        }
+        return
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
         if (selectedNode && selectedNode.type !== 'trigger') {
           e.preventDefault()

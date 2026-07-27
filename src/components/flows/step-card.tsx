@@ -481,6 +481,7 @@ export function StepCard({
       className={cn(
         'w-full rounded-[18px] border bg-white text-left shadow-[0_2px_10px_rgba(15,23,42,0.08)] outline-none transition-all duration-fast',
         'hover:border-slate-300 hover:shadow-[0_8px_24px_rgba(15,23,42,0.12)] focus-visible:ring-2 focus-visible:ring-blue-200',
+        node.disabled && 'opacity-55 grayscale',
         selected
           ? 'border-blue-500 ring-2 ring-blue-100'
           : highlighted
@@ -639,6 +640,12 @@ export function StepCard({
             {!isTrigger && (
               <DropdownMenuItem onSelect={() => setRenaming(true)}>
                 <Pencil className="h-4 w-4" /> Rename
+              </DropdownMenuItem>
+            )}
+            {!isTrigger && node.type !== 'condition' && node.type !== 'switch' && (
+              <DropdownMenuItem onSelect={() => update({ ...node, disabled: node.disabled ? undefined : true })}>
+                <ToggleLeft className="h-4 w-4" /> {node.disabled ? 'Enable step' : 'Disable step'}
+                <span className="ml-auto pl-4 text-xs text-slate-400">D</span>
               </DropdownMenuItem>
             )}
             {!isTrigger && onDuplicate && (

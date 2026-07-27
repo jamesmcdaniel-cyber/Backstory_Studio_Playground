@@ -456,6 +456,15 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
 
     if (node.type === 'trigger') return { kind: 'skip' }
 
+    // Disabled step: skip it as a passthrough so the prior value flows on and the
+    // normal edge still activates. Not honored for condition/switch — a
+    // multi-output node can't passthrough to a single edge (the editor hides the
+    // toggle for them), so a hand-authored disabled branch node runs normally.
+    if (node.disabled && node.type !== 'condition' && node.type !== 'switch') {
+      emit({ nodeId: node.id, status: 'skipped' })
+      return { kind: 'ok', output: undefined }
+    }
+
     // Resume: a node finished on the prior run is reused, not re-executed.
     // Variable state was already reconstructed by the pre-walk replay (which
     // covers container bodies the walk never enters), so a replayed variable

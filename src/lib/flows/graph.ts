@@ -512,7 +512,9 @@ export const flowNodeSchema = z
   .discriminatedUnion('type', [
     triggerNode, agentNode, conditionNode, loopNode, parallelNode, stopNode, toolNode, httpNode, transformNode, filterNode, switchNode, variableNode, dataNode, codeNode, humanReviewNode, outputNode, joinNode, aiNode, subflowNode, knowledgeNode, waitNode,
   ])
-  .and(z.object({ position: nodePositionSchema }))
+  // Node-level flags shared by every type. `disabled` skips the step at run time
+  // (passthrough — the prior value flows on), for muting a step while debugging.
+  .and(z.object({ position: nodePositionSchema, disabled: z.boolean().optional() }))
 export const flowEdgeSchema = z.object({
   id: z.string(),
   source: z.string(),

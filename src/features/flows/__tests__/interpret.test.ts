@@ -227,6 +227,30 @@ test('an error inside a loop item propagates and fails the flow', async () => {
   assert.equal(result.status, 'failed')
 })
 
+test('a disabled step is skipped and the prior value passes through', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'n1', type: 'agent', data: { agentId: 'a1', input: '{{trigger.input}}' } },
+      { id: 'n2', type: 'agent', data: { agentId: 'a2', input: 'should not run' }, disabled: true },
+      { id: 'n3', type: 'agent', data: { agentId: 'a3', input: 'saw {{step.n1.output}}' } },
+    ],
+    edges: [
+      { id: 'e0', source: 'trigger', target: 'n1' },
+      { id: 'e1', source: 'n1', target: 'n2' },
+      { id: 'e2', source: 'n2', target: 'n3' },
+    ],
+  }
+  const ran: string[] = []
+  const runAgent: RunAgentFn = async (n) => { ran.push(n.agentId); return { output: n.input } }
+  const result = await interpretFlow(graph, 'X', { runAgent: async (n) => { ran.push(n.agentId); return { output: n.agentId === 'a1' ? 'ONE' : n.input } } })
+  void runAgent
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(ran, ['a1', 'a3']) // a2 (disabled) never ran
+  assert.equal(result.output, 'saw ONE') // n3 still saw n1's output past the disabled step
+  assert.equal(result.steps.find((s) => s.nodeId === 'n2')?.status, 'skipped')
+})
+
 // ── Per-item fan-out (list-aware step contract) + per-item error policy ──────
 
 test('perItem fans a single tool step out over a list and collects outputs in order', async () => {

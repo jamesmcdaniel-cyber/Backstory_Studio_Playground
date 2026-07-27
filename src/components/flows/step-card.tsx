@@ -32,6 +32,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Split,
+  StickyNote,
   Timer,
   ToggleLeft,
   Workflow,
@@ -97,6 +98,7 @@ const NODE_ICON: Record<FlowNode['type'], typeof Bot> = {
   knowledge: BookOpen,
   code: Code2,
   wait: Timer,
+  note: StickyNote,
 }
 
 const NODE_TONE: Record<FlowNode['type'], string> = {
@@ -122,6 +124,7 @@ const NODE_TONE: Record<FlowNode['type'], string> = {
   knowledge: 'bg-rose-500 text-white',
   code: 'bg-amber-600 text-white',
   wait: 'bg-slate-500 text-white',
+  note: 'bg-yellow-400 text-yellow-950',
 }
 
 const STATUS_DOT: Record<StepStatus, string> = {

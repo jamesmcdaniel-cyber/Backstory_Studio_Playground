@@ -427,6 +427,17 @@ const waitNode = z.object({
   }),
 })
 
+// A canvas annotation (n8n Sticky Note): freeform text that documents the flow
+// in place. Never executes — the interpreter passes straight through it.
+const noteNode = z.object({
+  id: z.string(),
+  type: z.literal('note'),
+  data: z.object({
+    text: z.string().max(5000).default(''),
+    color: z.enum(['yellow', 'blue', 'green', 'pink']).optional(),
+  }),
+})
+
 /** Operations a first-class `ai` step can perform against the org's model. */
 export const AI_OPS = ['ask', 'extract', 'categorize', 'summarize', 'score'] as const
 export type AiOp = (typeof AI_OPS)[number]
@@ -510,7 +521,7 @@ const nodePositionSchema = z.object({ x: z.number(), y: z.number() }).optional()
 
 export const flowNodeSchema = z
   .discriminatedUnion('type', [
-    triggerNode, agentNode, conditionNode, loopNode, parallelNode, stopNode, toolNode, httpNode, transformNode, filterNode, switchNode, variableNode, dataNode, codeNode, humanReviewNode, outputNode, joinNode, aiNode, subflowNode, knowledgeNode, waitNode,
+    triggerNode, agentNode, conditionNode, loopNode, parallelNode, stopNode, toolNode, httpNode, transformNode, filterNode, switchNode, variableNode, dataNode, codeNode, humanReviewNode, outputNode, joinNode, aiNode, subflowNode, knowledgeNode, waitNode, noteNode,
   ])
   // Node-level flags shared by every type. `disabled` skips the step at run time
   // (passthrough — the prior value flows on), for muting a step while debugging.

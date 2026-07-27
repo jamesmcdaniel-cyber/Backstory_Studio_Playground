@@ -117,7 +117,8 @@ export function stepLabelsOf(graph: FlowGraph, agents?: { id: string, title: str
     if (node.type === 'agent') {
       labels[node.id] = node.data.label || agents?.find((a) => a.id === node.data.agentId)?.title || 'Agent step'
     } else {
-      labels[node.id] = node.data.label || defaultStepLabel(node)
+      const label = 'label' in node.data ? node.data.label : undefined
+      labels[node.id] = label || defaultStepLabel(node)
     }
   }
   return labels

@@ -456,6 +456,10 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
 
     if (node.type === 'trigger') return { kind: 'skip' }
 
+    // A note is a pure annotation — never executes; the walk passes through it
+    // (no step row emitted) so downstream steps still run.
+    if (node.type === 'note') return { kind: 'ok', output: undefined }
+
     // Disabled step: skip it as a passthrough so the prior value flows on and the
     // normal edge still activates. Not honored for condition/switch — a
     // multi-output node can't passthrough to a single edge (the editor hides the

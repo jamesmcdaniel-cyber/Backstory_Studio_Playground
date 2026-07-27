@@ -1868,6 +1868,33 @@ export function StepDrawer({
           </>
         )}
 
+        {node.type === 'note' && (
+          <div className="space-y-3">
+            <div>
+              <label className={labelClass}>Note</label>
+              <textarea
+                rows={6}
+                className={areaClass}
+                value={node.data.text}
+                placeholder="Document this part of the flow — what it does, gotchas, links…"
+                onFocus={blockActive}
+                onBlur={unblockActive}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, text: e.target.value } })}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Color</label>
+              <select className={fieldClass} value={node.data.color ?? 'yellow'} onChange={(e) => onChange({ ...node, data: { ...node.data, color: e.target.value as 'yellow' | 'blue' | 'green' | 'pink' } })}>
+                <option value="yellow">Yellow</option>
+                <option value="blue">Blue</option>
+                <option value="green">Green</option>
+                <option value="pink">Pink</option>
+              </select>
+            </div>
+            <p className="text-xs text-muted-foreground">A note never runs — it just documents the flow in place.</p>
+          </div>
+        )}
+
         {node.type === 'wait' && (
           <div className="space-y-3">
             <div>

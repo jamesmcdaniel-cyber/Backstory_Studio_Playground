@@ -76,6 +76,8 @@ function defaultData(type: FlowNode['type'], extra?: { bodyId?: string; agentId?
       return { message: '' }
     case 'wait':
       return { mode: 'duration', amount: '1', unit: 'hours' }
+    case 'note':
+      return { text: '', color: 'yellow' }
     case 'output':
       return { outputs: [{ name: 'output', value: '', type: 'any' }] }
     case 'join':

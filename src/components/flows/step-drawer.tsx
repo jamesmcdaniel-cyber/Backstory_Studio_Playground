@@ -784,6 +784,7 @@ export function StepDrawer({
             trigger={trigger}
             onChange={(nextTrigger) => onChange({ ...node, data: { trigger: nextTrigger } })}
             published={published}
+            toolCatalog={toolCatalog}
           >
             <InputFieldsEditor
               fields={trigger.inputFields ?? []}

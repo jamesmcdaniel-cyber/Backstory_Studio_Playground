@@ -58,7 +58,7 @@ export type FlowExecutionJob = {
   // executes the working draft so you can test before publishing.
   usePublished?: boolean
   // How this run was started — persisted on the FlowRun for provenance.
-  trigger?: { type: 'manual' | 'schedule' | 'webhook' | 'signal' | 'subflow'; [key: string]: unknown }
+  trigger?: { type: 'manual' | 'schedule' | 'webhook' | 'signal' | 'subflow' | 'poll'; [key: string]: unknown }
   // How many subflow hops deep this run already is (0/omitted = top-level).
   // Each subflow step dispatch passes depth + 1; the guard caps nesting.
   subflowDepth?: number

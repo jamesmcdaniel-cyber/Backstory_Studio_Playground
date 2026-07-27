@@ -1726,7 +1726,13 @@ function FlowBuilder() {
                       const triggerNode = graph.nodes.find((n) => n.type === 'trigger')
                       if (!triggerNode || triggerNode.type !== 'trigger') return
                       const current = isRecordLike(triggerNode.data.trigger) ? triggerNode.data.trigger : {}
-                      commitGraph(updateNode(graph, { ...triggerNode, data: { trigger: { ...current, type } } }))
+                      // Schedule + poll both need a schedule to be due — seed a
+                      // sensible default so the trigger is valid on first pick.
+                      const seed =
+                        (type === 'schedule' || type === 'poll') && !isRecordLike((current as { schedule?: unknown }).schedule)
+                          ? { schedule: { type: type === 'poll' ? 'hourly' : 'daily', time: '09:00', timezone: 'UTC', isActive: true } }
+                          : {}
+                      commitGraph(updateNode(graph, { ...triggerNode, data: { trigger: { ...current, ...seed, type } } }))
                       setSelectedId(triggerNode.id)
                     }
               }

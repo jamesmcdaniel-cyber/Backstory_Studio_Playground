@@ -190,6 +190,18 @@ function validateTriggerConfig(issues: FlowValidationIssue[], trigger: unknown) 
       })
     }
   }
+  if (type === 'poll') {
+    if (!String(trigger.connectionId ?? '').trim()) {
+      add(issues, 'error', 'MISSING_POLL_CONNECTION', 'A polling trigger needs an app connection to check.', 'trigger')
+    }
+    if (!String(trigger.toolName ?? '').trim()) {
+      add(issues, 'error', 'MISSING_POLL_TOOL', 'A polling trigger needs a read action to check for new items.', 'trigger')
+    }
+    if (!isRecord(trigger.schedule)) {
+      add(issues, 'error', 'MISSING_POLL_SCHEDULE', 'A polling trigger needs a check frequency.', 'trigger')
+    }
+    return
+  }
   if (type !== 'schedule') return
   const schedule = trigger.schedule
   if (!isRecord(schedule)) {

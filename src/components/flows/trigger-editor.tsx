@@ -13,13 +13,23 @@ import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 
 export type TriggerData = {
-  type?: 'manual' | 'schedule' | 'webhook' | 'signal'
+  type?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll'
   schedule?: { type?: string; time?: string; cron?: string; timezone?: string; runAt?: string; isActive?: boolean }
   input?: string
   inputFields?: TriggerInputField[]
   signal?: string
   condition?: { match?: 'all' | 'any'; clauses?: ConditionClause[] }
+  // Poll trigger: which read-tool to call and how to detect new items.
+  connectionId?: string
+  toolName?: string
+  args?: string
+  itemsPath?: string
+  dedupeKey?: string
+  emit?: 'perItem' | 'batch'
 }
+
+/** Minimal tool catalog shape the poll picker needs (no step-drawer dependency). */
+export type TriggerToolCatalog = { id: string; name?: string; tools?: { name: string }[] }[]
 
 export type TriggerEditorClasses = { field: string; label: string; smallField: string }
 
@@ -60,6 +70,7 @@ export function TriggerEditor({
   published,
   classes,
   children,
+  toolCatalog = [],
 }: {
   flowId: string
   trigger: TriggerData
@@ -67,6 +78,7 @@ export function TriggerEditor({
   published?: boolean
   classes?: Partial<TriggerEditorClasses>
   children?: ReactNode
+  toolCatalog?: TriggerToolCatalog
 }) {
   const { field, label, smallField } = { field: fieldClass, label: labelClass, smallField: smallFieldDefault, ...classes }
   const typeSelectId = useId()
@@ -186,12 +198,13 @@ export function TriggerEditor({
           className={field}
           value={type}
           onChange={(e) => {
-            const next = e.target.value as 'manual' | 'schedule' | 'webhook' | 'signal'
-            onChange(next === 'schedule' ? { ...trigger, type: next, schedule: { ...schedule, isActive: true } } : { ...trigger, type: next })
+            const next = e.target.value as 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll'
+            onChange(next === 'schedule' || next === 'poll' ? { ...trigger, type: next, schedule: { ...schedule, isActive: true } } : { ...trigger, type: next })
           }}
         >
           <option value="manual">Manual / on run</option>
           <option value="schedule">Schedule</option>
+          <option value="poll">When new items appear in an app (check on a schedule)</option>
           <option value="webhook">When an HTTP request is received</option>
           <option value="signal">Signal (in-platform event)</option>
         </select>
@@ -241,6 +254,77 @@ export function TriggerEditor({
             {schedule.type === 'cron' ? `Next run: per cron "${schedule.cron ?? ''}"` : `Next run: ${nextRunLabel}`}
           </p>
           <p className="text-xs text-muted-foreground">Scheduled runs execute the <strong>published</strong> version — publish the flow to arm the schedule.</p>
+        </div>
+      )}
+
+      {type === 'poll' && (
+        <div className="space-y-3">
+          <div>
+            <label className={label}>Check this app</label>
+            <select
+              className={field}
+              value={trigger.connectionId ?? ''}
+              onChange={(e) => onChange({ ...trigger, connectionId: e.target.value || undefined, toolName: undefined })}
+            >
+              <option value="">Select a connection…</option>
+              {toolCatalog.map((conn) => (
+                <option key={conn.id} value={conn.id}>{conn.name || conn.id}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={label}>For new items from</label>
+            <select
+              className={field}
+              value={trigger.toolName ?? ''}
+              onChange={(e) => onChange({ ...trigger, toolName: e.target.value || undefined })}
+              disabled={!trigger.connectionId}
+            >
+              <option value="">Select a read action…</option>
+              {(toolCatalog.find((c) => c.id === trigger.connectionId)?.tools ?? []).map((t) => (
+                <option key={t.name} value={t.name}>{t.name}</option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-muted-foreground">Pick a read action (e.g. list records). It runs on the schedule below; only items you haven&apos;t seen before start the flow.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className={label}>New-item id field</label>
+              <input className={field} value={trigger.dedupeKey ?? ''} placeholder="id" onChange={(e) => onChange({ ...trigger, dedupeKey: e.target.value || undefined })} />
+            </div>
+            <div>
+              <label className={label}>List field (optional)</label>
+              <input className={field} value={trigger.itemsPath ?? ''} placeholder="data" onChange={(e) => onChange({ ...trigger, itemsPath: e.target.value || undefined })} />
+            </div>
+          </div>
+          <div>
+            <label className={label}>Start the flow</label>
+            <select className={field} value={trigger.emit ?? 'perItem'} onChange={(e) => onChange({ ...trigger, emit: e.target.value as 'perItem' | 'batch' })}>
+              <option value="perItem">Once per new item</option>
+              <option value="batch">Once with all new items</option>
+            </select>
+          </div>
+          <div>
+            <label className={label}>Check every</label>
+            <select className={field} value={schedule.type ?? 'hourly'} onChange={(e) => setSchedule({ type: e.target.value })}>
+              {FREQUENCIES.filter((f) => f.value !== 'once').map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+          </div>
+          {['daily', 'weekly'].includes(schedule.type ?? 'hourly') && (
+            <div>
+              <label className={label}>Time (HH:MM)</label>
+              <input className={field} value={schedule.time ?? '09:00'} placeholder="09:00" onChange={(e) => setSchedule({ time: e.target.value })} />
+            </div>
+          )}
+          {schedule.type === 'cron' && (
+            <div>
+              <label className={label}>Cron expression</label>
+              <input className={`${field} font-mono`} value={schedule.cron ?? ''} placeholder="*/15 * * * *" onChange={(e) => setSchedule({ cron: e.target.value })} />
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">Polls the <strong>published</strong> version. The first check just learns what already exists; new items after that start the flow.</p>
         </div>
       )}
 

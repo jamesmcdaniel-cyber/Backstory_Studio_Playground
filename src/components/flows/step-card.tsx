@@ -774,7 +774,7 @@ function renderNodeBody({
 }) {
   switch (node.type) {
     case 'trigger':
-      return <TriggerBody node={node} update={update} flowId={flowId} published={published} />
+      return <TriggerBody node={node} update={update} flowId={flowId} published={published} toolCatalog={toolCatalog} />
     case 'agent':
       return <AgentBody node={node} agents={agents} update={update} onRefreshAgents={onRefreshAgents} tokenWiring={tokenWiring} showErrors={showErrors} />
     case 'ai':
@@ -872,11 +872,13 @@ function TriggerBody({
   update,
   flowId,
   published,
+  toolCatalog,
 }: {
   node: Extract<FlowNode, { type: 'trigger' }>
   update: (node: FlowNode) => void
   flowId?: string
   published?: boolean
+  toolCatalog: ToolCatalog
 }) {
   const [choosingInput, setChoosingInput] = useState(false)
   const trigger = triggerData(node)
@@ -916,6 +918,7 @@ function TriggerBody({
         onChange={setTrigger}
         published={published}
         classes={{ field: controlClass, label: labelClass }}
+        toolCatalog={toolCatalog}
       />
       {fields.length > 0 && (
         <div className="space-y-3">

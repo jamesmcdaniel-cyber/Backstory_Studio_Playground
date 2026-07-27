@@ -9,7 +9,7 @@ export type PickerLeaf = {
   mode: 'action' | 'trigger' | 'both'
   stepType?: StepType
   seed?: { agentId?: string; connectionId?: string; toolName?: string; label?: string; variableOp?: VariableOp; dataOp?: DataOp; aiOp?: AiOp; codeLanguage?: 'javascript' | 'python' }
-  triggerType?: 'manual' | 'schedule' | 'webhook' | 'signal'
+  triggerType?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll'
 }
 
 export type PickerGroup = {
@@ -129,6 +129,7 @@ export const AI_CAPABILITY_LEAVES: PickerLeaf[] = [
 export const TRIGGER_LEAVES: PickerLeaf[] = [
   { id: 'trigger-manual', label: 'Manually trigger a flow', description: 'Start it from the builder or with typed inputs.', mode: 'trigger', triggerType: 'manual' },
   { id: 'trigger-schedule', label: 'Schedule', description: 'Run on a recurrence you define.', mode: 'trigger', triggerType: 'schedule' },
+  { id: 'trigger-poll', label: 'When new items appear in an app', description: 'Check a connected app on a schedule and start for each new item.', mode: 'trigger', triggerType: 'poll' },
   { id: 'trigger-webhook', label: 'When an HTTP request is received', description: 'Start when an external system posts to a secret URL.', mode: 'trigger', triggerType: 'webhook' },
   { id: 'trigger-signal', label: 'When a signal fires', description: 'Start from an in-platform event, like another flow completing.', mode: 'trigger', triggerType: 'signal' },
 ]

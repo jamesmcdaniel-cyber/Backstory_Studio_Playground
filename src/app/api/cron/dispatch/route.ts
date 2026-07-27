@@ -18,6 +18,7 @@ import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { runAgentExecution } from '@/features/agents/execute-agent'
 import { dispatchFlowExecution, dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
+import { runFlowPoll, lastPolledAt } from '@/features/flows/poll-dispatch'
 import { parseFlowInput } from '@/lib/flows/input'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
 import { isDue, type AgentSchedule } from '@/lib/scheduling/due'
@@ -34,7 +35,11 @@ export const maxDuration = 800
 export const dynamic = 'force-dynamic'
 
 const MAX_AGENTS_PER_TICK = 25
-const MAX_FLOWS_PER_TICK = 10
+// Per-tick flow-dispatch cap. Configurable because 10/tick is a silent scale
+// cliff once an org has more due schedules than that (they'd starve, oldest
+// first, with no signal). Raised default + env override + a saturation warning
+// (below) so hitting the cap is visible instead of silent truncation.
+const MAX_FLOWS_PER_TICK = Math.max(1, Number(process.env.FLOW_DISPATCH_PER_TICK) || 50)
 const STUCK_RUN_TIMEOUT_MS = AGENT_RUN_TIMEOUT_MS
 const MAX_ERROR_LENGTH = 300
 
@@ -248,10 +253,28 @@ export async function GET(request: Request) {
       try {
         const trigger = flow.trigger as { type?: string; schedule?: AgentSchedule; input?: string } | null
         const schedule = trigger?.schedule
-        if (!trigger || trigger.type !== 'schedule' || !schedule || typeof schedule !== 'object') continue
+        const isPoll = trigger?.type === 'poll'
+        if (!trigger || (trigger.type !== 'schedule' && !isPoll) || !schedule || typeof schedule !== 'object') continue
         // Only PUBLISHED flows run on a schedule — a draft-only flow does not fire.
         if (flow.publishedGraph == null) continue
-        if (!isDue(schedule, flow.runs[0]?.startedAt ?? null, now)) continue
+        // A poll's cadence is tracked by its own lastPolledAt (a poll that finds
+        // nothing new creates no run, so the last-run clock would never advance
+        // and it'd poll every tick). Schedules use the last run's start.
+        const lastExecuted = isPoll ? lastPolledAt(flow.pollCursor) : (flow.runs[0]?.startedAt ?? null)
+        if (!isDue(schedule, lastExecuted, now)) continue
+        if (isPoll) {
+          if (ranFlowIds.length >= MAX_FLOWS_PER_TICK) {
+            apiLogger.warn('cron/dispatch: flow dispatch cap reached — some due flows deferred to the next tick', { cap: MAX_FLOWS_PER_TICK })
+            break
+          }
+          const pollOwner = flow.userId
+            ? await prisma.user.findFirst({ where: { id: flow.userId, organizationId: flow.organizationId, isActive: true } })
+            : await prisma.user.findFirst({ where: { organizationId: flow.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } })
+          if (!pollOwner) continue
+          const { dispatched } = await runFlowPoll(flow, pollOwner.id, now)
+          if (dispatched > 0) ranFlowIds.push(flow.id)
+          continue
+        }
         // Overlap guard: a still-active previous run means skip this tick —
         // a slow flow must never stack concurrent scheduled executions. A
         // `waiting` run older than 24h stops blocking (blocksSchedule): it
@@ -262,7 +285,15 @@ export async function GET(request: Request) {
           apiLogger.warn('cron/dispatch: flow run still active, skipping tick', { flowId: flow.id })
           continue
         }
-        if (ranFlowIds.length >= MAX_FLOWS_PER_TICK) break
+        if (ranFlowIds.length >= MAX_FLOWS_PER_TICK) {
+          // Saturation: more flows were due this tick than the cap. Make it
+          // visible so the cliff can be raised (FLOW_DISPATCH_PER_TICK) rather
+          // than silently starving the overflow.
+          apiLogger.warn('cron/dispatch: flow dispatch cap reached — some due flows deferred to the next tick', {
+            cap: MAX_FLOWS_PER_TICK,
+          })
+          break
+        }
         // Trigger-level filter: a scheduled trigger's "input" is its stored
         // default — gate on that same value before creating a run.
         if (!triggerConditionPasses(trigger, parseFlowInput(trigger.input ?? ''))) continue

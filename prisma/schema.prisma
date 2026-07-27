@@ -692,6 +692,9 @@ model Flow {
   shareToken     String?  @unique // rotatable cross-workspace share-link token
   shareRole      String   @default("view") // role a share-link grants: 'view' | 'edit'
   folder         String   @default("") // workbook-style grouping ('' = ungrouped)
+  // Polling-trigger dedupe state ({ seen: string[] }) — the keys of items already
+  // emitted, so a poll only starts the flow for genuinely new records.
+  pollCursor     Json?
   organizationId String   @db.Uuid
   userId         String?
   createdAt      DateTime @default(now())

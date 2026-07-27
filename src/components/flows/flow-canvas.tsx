@@ -168,7 +168,7 @@ export function FlowCanvas({
   onMakeSubflow?: (startId: string) => void
   onDeleteNode?: (id: string) => void
   onBackgroundClick?: () => void
-  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'signal') => void
+  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll') => void
   onMoveAfter?: (nodeId: string, afterId: string) => void
   onReorderContainer?: (containerId: string, from: number, to: number, branchIndex?: number) => void
   /** nodeId → remote collaborators with that node selected (editing ring + name chip). */
@@ -199,6 +199,7 @@ export function FlowCanvas({
       case 'trigger': {
         const type = (node.data.trigger as { type?: string } | undefined)?.type ?? 'manual'
         if (type === 'schedule') return 'Schedule trigger'
+        if (type === 'poll') return 'When new items appear'
         if (type === 'webhook') return 'When an HTTP request is received'
         if (type === 'signal') return 'Signal trigger'
         return 'Manually trigger a flow'
@@ -259,7 +260,7 @@ export function FlowCanvas({
     switch (node.type) {
       case 'trigger': {
         const trigger = (node.data.trigger as
-          | { type?: string; schedule?: { type?: string; time?: string; timezone?: string }; signal?: string; inputFields?: unknown[] }
+          | { type?: string; schedule?: { type?: string; time?: string; timezone?: string }; signal?: string; inputFields?: unknown[]; toolName?: string }
           | undefined) ?? {}
         const type = trigger.type ?? 'manual'
         const inputCount = (trigger.inputFields ?? []).length
@@ -268,6 +269,7 @@ export function FlowCanvas({
           const schedule = trigger.schedule ?? {}
           return `Runs ${schedule.type ?? 'daily'}${schedule.time ? ` at ${schedule.time}` : ''} (${schedule.timezone || 'UTC'})`
         }
+        if (type === 'poll') return trigger.toolName ? `Checks ${trigger.toolName} ${trigger.schedule?.type ?? 'hourly'}` : 'Pick an app and read action to poll'
         if (type === 'signal') return `Listens for "${trigger.signal || 'unnamed signal'}"`
         if (type === 'webhook') return published === false ? `${inputLine} · publish to arm` : inputLine
         // manual keeps the original input-count line.

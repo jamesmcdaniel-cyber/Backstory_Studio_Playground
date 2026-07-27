@@ -160,7 +160,9 @@ const httpNode = z.object({
     cookie: z.string().optional(),
     bodyMode: z.enum(['json', 'raw', 'graphql', 'form-urlencoded', 'form-data', 'text', 'none']).optional(),
     contentType: z.string().optional(),
-    responseType: z.enum(['auto', 'json', 'text']).optional(),
+    // 'file' downloads the response body to a stored file and outputs a file
+    // reference ({ fileId, filename, url, content? }) instead of the parsed body.
+    responseType: z.enum(['auto', 'json', 'text', 'file']).optional(),
     // Off by default: following redirects is opt-in, and each hop is
     // re-checked against the SSRF guard before it is requested.
     followRedirects: z.boolean().optional(),

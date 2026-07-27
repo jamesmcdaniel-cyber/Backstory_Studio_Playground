@@ -24,6 +24,9 @@ import { interpretFlow, FlowCancelledError, type RunAgentFn, type RunActionFn } 
 import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout } from './action-reliability'
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
 import { getByPath, setQueryParam, pageItems, optimizeForAi } from '@/lib/flows/http-pagination'
+import { fileReference } from '@/lib/flows/file-ref'
+import { saveStoredFile } from '@/lib/files/storage'
+import { extractTextAuto, isSupported } from '@/lib/knowledge/extract'
 import {
   fetchWithHttpCredential,
   markCredentialResult,
@@ -78,6 +81,26 @@ export type FlowExecutionJob = {
 
 // Bound HTTP responses so downstream prompts/logs stay manageable.
 const HTTP_MAX_RESPONSE_CHARS = 50_000
+
+/** Best-effort download filename: Content-Disposition, else the URL's last path
+ *  segment, else a generic name. */
+function httpDownloadFilename(contentDisposition: string | null, url: string): string {
+  const match = contentDisposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)
+  if (match?.[1]) {
+    try {
+      return decodeURIComponent(match[1]).replace(/[\r\n/\\]/g, ' ').trim().slice(0, 200) || 'download'
+    } catch {
+      return match[1].replace(/[\r\n/\\]/g, ' ').trim().slice(0, 200) || 'download'
+    }
+  }
+  try {
+    const segment = new URL(url).pathname.split('/').filter(Boolean).at(-1)
+    if (segment) return decodeURIComponent(segment).slice(0, 200)
+  } catch {
+    /* fall through */
+  }
+  return 'download'
+}
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
@@ -933,6 +956,46 @@ export async function runFlowExecution(
           request.init.headers = withBearerAuthorization(request.init.headers as Record<string, string>, token)
         }
         const retries = flowActionRetries(node.config.retries)
+
+        // responseType 'file': download the body to a StoredFile and output a
+        // file reference (with extracted text when the type supports it), rather
+        // than parsing the body. Files flow onward as references, not bytes.
+        if (node.config.responseType === 'file') {
+          const output = await runWithRetries(async () => {
+            await assertPublicUrl(request.url)
+            const controller = new AbortController()
+            let timedOut = false
+            const timer = setTimeout(() => {
+              timedOut = true
+              controller.abort()
+            }, request.timeoutMs)
+            try {
+              const response = await fetchWithHttpCredential(request, httpCredential, controller.signal)
+              if (httpCredential?.id) {
+                const authRejected = response.status === 401 || response.status === 403
+                await markCredentialResult(httpCredential.id, !authRejected, `HTTP ${response.status}`)
+              }
+              if (request.failOnHttpError && !response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+              const buffer = Buffer.from(await response.arrayBuffer())
+              const mimeType = (response.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim()
+              const filename = httpDownloadFilename(response.headers.get('content-disposition'), request.url)
+              const saved = await saveStoredFile({ organizationId: job.organizationId, userId: job.userId, filename, mimeType, buffer })
+              let content: string | undefined
+              if (isSupported(mimeType, filename)) {
+                content = (await extractTextAuto(buffer, mimeType, filename)).slice(0, 200_000)
+              }
+              return fileReference(saved, { content }) as unknown as Record<string, unknown>
+            } catch (error) {
+              if (timedOut) throw new Error(`HTTP request timed out after ${request.timeoutMs}ms`)
+              throw error
+            } finally {
+              clearTimeout(timer)
+            }
+          }, { retries })
+          await finish({ status: 'succeeded', output })
+          return { output }
+        }
+
         // Fetch ONE page (URL overridable for pagination), retried per page. The
         // SSRF guard re-runs before every attempt AND every page.
         const fetchPage = (pageUrl: string): Promise<FlowHttpOutput> =>

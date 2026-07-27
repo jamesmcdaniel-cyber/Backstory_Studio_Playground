@@ -97,6 +97,7 @@ export function AdvancedParamsSection({
           <option value="auto">Parse response automatically</option>
           <option value="json">Parse response as JSON</option>
           <option value="text">Parse response as text</option>
+          <option value="file">Download as a file</option>
         </select>
       )
     }

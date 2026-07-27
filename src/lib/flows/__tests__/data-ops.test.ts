@@ -260,3 +260,15 @@ test('parseCsv rejects headerless input', () => {
   const res = runDataOp('parseCsv', { input: '   \n' })
   assert.ok('error' in res)
 })
+
+// ── file references: text ops read a file's extracted content ────────────────
+
+test('parseCsv reads a file reference by its extracted content', () => {
+  const fileRef = { fileId: 'f1', filename: 'r.csv', mimeType: 'text/csv', size: 9, url: '/api/files/f1', content: 'a,b\n1,2' }
+  assert.deepEqual(ok(runDataOp('parseCsv', { input: fileRef })), [{ a: '1', b: '2' }])
+})
+
+test('parseJson reads a file reference by its extracted content', () => {
+  const fileRef = { fileId: 'f2', filename: 'r.json', mimeType: 'application/json', size: 9, url: '/api/files/f2', content: '{"x":1}' }
+  assert.deepEqual(ok(runDataOp('parseJson', { input: fileRef })), { x: 1 })
+})

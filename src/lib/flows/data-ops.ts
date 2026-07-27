@@ -1,5 +1,10 @@
 import type { ConditionClause, DataOp } from '@/lib/flows/graph'
 import { asStructured, evalClause, readPath, resolveTemplate, type FlowContext } from '@/features/flows/context'
+import { isFileReference } from '@/lib/flows/file-ref'
+
+/** Ops that read a value as TEXT — for these, a file reference resolves to its
+ *  extracted content so "download a file → parse it" works with no extra step. */
+const TEXT_INPUT_OPS = new Set<DataOp>(['parseJson', 'parseCsv', 'split', 'replace'])
 
 /**
  * Pure data-operation transforms for the `data` node family (MS Data Operation
@@ -155,6 +160,11 @@ const cellText = (row: Record<string, unknown>, header: string): string => itemT
 /** Run one pure data operation over an already-resolved config. */
 export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
   const label = DATA_OP_LABELS[op]
+  // A file reference fed to a text-reading op unwraps to its extracted content,
+  // so a downloaded/uploaded file parses without a separate "read file" step.
+  if (TEXT_INPUT_OPS.has(op) && isFileReference(config.input) && typeof config.input.content === 'string') {
+    config = { ...config, input: config.input.content }
+  }
   if (isBlank(config.input)) return { error: `${label} needs data to work with — the input came back empty.` }
 
   if (op === 'compose') {

@@ -427,6 +427,23 @@ function FlowBuilder() {
     },
     [graph],
   )
+  // Field-level undo: a burst of per-keystroke field edits (drawer/canvas node
+  // changes) is checkpointed ONCE at the start of the burst, so ⌘Z rolls back
+  // the whole edit rather than nothing. The timer marks the burst; the pre-burst
+  // graph (graphRef, updated each render) is what's pushed.
+  const fieldEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const commitFieldEdit = useCallback((node: FlowNode) => {
+    if (!fieldEditTimer.current) {
+      undoStack.current.push(graph)
+      if (undoStack.current.length > 50) undoStack.current.shift()
+      redoStack.current = []
+    }
+    if (fieldEditTimer.current) clearTimeout(fieldEditTimer.current)
+    fieldEditTimer.current = setTimeout(() => {
+      fieldEditTimer.current = null
+    }, 600)
+    setGraph((g) => updateNode(g, node))
+  }, [graph])
 
   // ── Live collaboration (Jam) ────────────────────────────────────────────────
   // Presence (who's here) + live graph broadcast/receive via Supabase Realtime.
@@ -1705,7 +1722,7 @@ function FlowBuilder() {
               onSelect={viewingVersion ? () => {} : setSelectedId}
               onBackgroundClick={() => setSelectedId(null)}
               onMakeSubflow={viewingVersion ? undefined : (startId) => setSubflowDraft({ startId, endId: startId, name: '' })}
-              onChangeNode={viewingVersion ? () => {} : (node) => setGraph((g) => updateNode(g, node))}
+              onChangeNode={viewingVersion ? () => {} : commitFieldEdit}
               onInsertAfter={
                 viewingVersion
                   ? () => {}
@@ -1809,7 +1826,7 @@ function FlowBuilder() {
                 onExecuteStep={() => void runPartial(selectedNode.id, 'stopAfter')}
                 onExecutePrevious={() => void runPartial(selectedNode.id, 'stopBefore')}
                 onSetMockData={(value) => setNodeMockData(selectedNode.id, value)}
-                onChange={(node) => setGraph((g) => updateNode(g, node))}
+                onChange={commitFieldEdit}
                 onChangeType={(type) => commitGraph(changeNodeType(graph, selectedNode.id, type))}
                 onDuplicate={() => {
                   const { graph: next, nodeId } = duplicateNode(graph, selectedNode.id)

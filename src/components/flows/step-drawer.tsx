@@ -517,6 +517,8 @@ function ToolConfigurationSection({
                 onChange={(args) => onChange({ ...node, data: { ...node.data, args } })}
                 dataFields={dataFields}
                 labelCtx={labelCtx}
+                connectionId={node.data.connectionId}
+                pickerTools={Array.from(new Set(actions.map((entry) => entry.tool.name)))}
               />
             </>
           )}

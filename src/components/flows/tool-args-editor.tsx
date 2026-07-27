@@ -1,11 +1,81 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { Code2, ListTree } from 'lucide-react'
+import { Code2, ListTree, List } from 'lucide-react'
 import { DataTree } from '@/components/flows/data-tree'
 import type { DataField } from '@/lib/flows/datatree'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
+
+/** "Pick from a list" (loadOptions parity): run a READ action on the connection
+ *  and click a value to drop it into the active argument. No per-field wiring —
+ *  any read tool's results are browsable; the API refuses write tools. */
+function ResourcePicker({ connectionId, tools, onPick }: { connectionId: string; tools: string[]; onPick: (value: string) => void }) {
+  const [tool, setTool] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [rows, setRows] = useState<Record<string, unknown>[] | null>(null)
+  const load = async () => {
+    if (!tool) return
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/flows/tool-options', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ connectionId, toolName: tool }),
+      }).then((r) => r.json())
+      if (!res?.success) {
+        setError(res?.error || 'Could not load the list.')
+        setRows([])
+      } else {
+        setRows((res.items as unknown[]).map((it) => (it && typeof it === 'object' && !Array.isArray(it) ? (it as Record<string, unknown>) : { value: it })))
+      }
+    } catch {
+      setError('Could not load the list.')
+      setRows([])
+    } finally {
+      setLoading(false)
+    }
+  }
+  const headers = rows && rows.length ? Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).slice(0, 6) : []
+  const cell = (v: unknown) => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
+  return (
+    <details className="rounded-lg border border-border/70 p-2">
+      <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted-foreground"><List className="h-3.5 w-3.5" /> Pick from a list</summary>
+      <div className="mt-2 space-y-2">
+        <div className="flex gap-2">
+          <select className={`${fieldClass} text-xs`} value={tool} onChange={(e) => setTool(e.target.value)}>
+            <option value="">Choose a read action…</option>
+            {tools.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <button type="button" onClick={load} disabled={!tool || loading} className="whitespace-nowrap rounded-md border border-border px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50">
+            {loading ? 'Loading…' : 'Load'}
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-600">{error}</p>}
+        {rows && rows.length > 0 && (
+          <div className="max-h-48 overflow-auto rounded border border-border/60">
+            <table className="w-full text-[11px]">
+              <thead className="sticky top-0 bg-muted/80"><tr>{headers.map((h) => <th key={h} className="px-2 py-1 text-left font-semibold">{h}</th>)}</tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="odd:bg-muted/30">
+                    {headers.map((h) => (
+                      <td key={h} className="cursor-pointer px-2 py-1 hover:bg-indigo-50 dark:hover:bg-indigo-500/10" title="Click to use this value" onClick={() => onPick(cell(r[h]))}>{cell(r[h])}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {rows && rows.length === 0 && !error && <p className="text-xs text-muted-foreground">No items returned.</p>}
+        <p className="text-[11px] text-muted-foreground">Click a value to drop it into the highlighted argument.</p>
+      </div>
+    </details>
+  )
+}
 
 type JsonSchema = {
   type?: string
@@ -106,12 +176,17 @@ export function ToolArgsEditor({
   onChange,
   dataFields,
   labelCtx,
+  connectionId,
+  pickerTools,
 }: {
   inputSchema: unknown
   args: string | undefined
   onChange: (nextArgs: string) => void
   dataFields: DataField[]
   labelCtx: TokenLabelContext
+  /** For the "pick from a list" resource picker: the connection + its read tools. */
+  connectionId?: string
+  pickerTools?: string[]
 }) {
   const fields = schemaFields(inputSchema)
   const [raw, setRaw] = useState(fields.length === 0)
@@ -258,6 +333,16 @@ export function ToolArgsEditor({
           <div>
             <DataTree fields={dataFields} onInsert={insert} />
           </div>
+          {connectionId && pickerTools && pickerTools.length > 0 && (
+            <ResourcePicker
+              connectionId={connectionId}
+              tools={pickerTools}
+              onPick={(value) => {
+                const target = activeArgRef.current ?? fields.find(isFreeText)?.name
+                if (target) setValue(target, value)
+              }}
+            />
+          )}
         </div>
       )}
     </div>

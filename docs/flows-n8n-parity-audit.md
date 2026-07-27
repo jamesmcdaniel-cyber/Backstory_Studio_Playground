@@ -1,14 +1,24 @@
 # Flows ↔ n8n Parity Audit
 
-> **Status update (2026-07-27): all Tier 1 (§2) engine gaps closed.** Shipped in this branch —
-> §2.1 list-aware per-item step contract, §2.5a per-item error policy (skip/collect/fail on steps + loops),
-> §2.5b `flow.failed` org error-handler signal, §2.3 merge modes (append + combineByKey),
-> §2.2 Wait node (delay/until/webhook-resume), §2.6 HTTP pagination + optimize-for-AI,
-> §2.4 files-through-flows (HTTP `responseType: file` → file references + parse ops),
-> §2.7 polling trigger + cron scale audit, §2.8 realtime run streaming. Each with engine + validation +
-> editor UI + tests; full CI gate (migrate/drift/typecheck/lint/DB-tests/build) reproduced green.
-> Deliberately deferred (noted in commits): §2.6 batching (subsumed by per-item concurrency),
-> §2.4 file *upload* via multipart, §2.7a Nango event-forwarding, §2.8 agent-token streaming.
+> **Status update (2026-07-27): all Tier 1 (§2) AND all Tier 2 (§3) gaps closed.**
+>
+> **Tier 1 (engine, §2):** §2.1 list-aware per-item step contract · §2.5a per-item error policy
+> (skip/collect/fail on steps + loops) · §2.5b `flow.failed` org error-handler signal · §2.3 merge
+> modes (append + combineByKey) · §2.2 Wait node (delay/until/webhook-resume) · §2.6 HTTP pagination
+> + optimize-for-AI · §2.4 files-through-flows (download via `responseType: file` AND upload via
+> multipart) · §2.7 polling trigger + Nango provider-event triggers + cron scale audit · §2.8 realtime
+> run streaming + live agent-process streaming.
+>
+> **Tier 2 (UX, §3):** table+search output views · node disable toggle · resource picker (loadOptions
+> parity) + curated actions · chip live-preview · run-history filters + load-run-into-editor · field-level
+> undo · sticky notes · templates at the create path · multi-select + bulk ops · AI build assist
+> (conversational CopilotPanel already shipped + new Ask-AI in the Code node).
+>
+> Each with engine/API + validation + editor UI + tests; full CI gate (migrate/drift/typecheck/lint/
+> DB-backed tests/build) reproduced green before push. The only items NOT built are the audit's explicit
+> "don't build" list (§4/§5): free-form canvas, 300-node library, raw `{{ }}` exposure, LangChain
+> sub-node wiring, SQL/cartesian merge — deliberately off-mission. Raw per-token LLM streaming (vs the
+> shipped event-level agent streaming) is the one remaining deeper follow-on.
 
 **Date:** 2026-07-27
 **Benchmark:** n8n master (`~/Downloads/n8n-master`) — engine (`packages/core`, `packages/workflow`), editor (`packages/frontend/editor-ui`), node ecosystem (`packages/nodes-base`, `@n8n/nodes-langchain`).

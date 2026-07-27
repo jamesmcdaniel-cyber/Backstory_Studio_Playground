@@ -53,6 +53,7 @@ if (TEST_DB) {
     { name: 'GET /api/audit/export', run: async () => (await import('../audit/export/route')).GET(req('/api/audit/export')) },
     { name: 'GET /api/auth/context', run: async () => (await import('../auth/context/route')).GET(req('/api/auth/context')) },
     { name: 'GET /api/flows/tool-catalog', run: async () => (await import('../flows/tool-catalog/route')).GET(req('/api/flows/tool-catalog')) },
+    { name: 'GET /api/http-credentials', run: async () => (await import('../http-credentials/route')).GET(req('/api/http-credentials')) },
     { name: 'GET /api/flows/huddle-ice', run: async () => (await import('../flows/huddle-ice/route')).GET(req('/api/flows/huddle-ice')) },
     { name: 'GET /api/granola/notes', run: async () => (await import('../granola/notes/route')).GET(req('/api/granola/notes')) },
     { name: 'GET /api/integrations/available', run: async () => (await import('../integrations/available/route')).GET(req('/api/integrations/available')) },
@@ -168,6 +169,7 @@ if (TEST_DB) {
       'cron/dispatch',       // CRON_SECRET, fail-closed
       'cron/retention',      // CRON_SECRET, fail-closed
       'signals/people-ai',   // People.ai HMAC signature
+      'flows/[id]/runs/[runId]/resume', // wait-node webhook callback: unguessable run id + must be waiting on a webhook wait (capability URL, like flows/[id]/trigger)
     ])
     const METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
     const offenders: string[] = []

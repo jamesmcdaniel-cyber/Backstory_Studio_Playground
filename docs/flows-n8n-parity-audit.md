@@ -1,5 +1,15 @@
 # Flows ↔ n8n Parity Audit
 
+> **Status update (2026-07-27): all Tier 1 (§2) engine gaps closed.** Shipped in this branch —
+> §2.1 list-aware per-item step contract, §2.5a per-item error policy (skip/collect/fail on steps + loops),
+> §2.5b `flow.failed` org error-handler signal, §2.3 merge modes (append + combineByKey),
+> §2.2 Wait node (delay/until/webhook-resume), §2.6 HTTP pagination + optimize-for-AI,
+> §2.4 files-through-flows (HTTP `responseType: file` → file references + parse ops),
+> §2.7 polling trigger + cron scale audit, §2.8 realtime run streaming. Each with engine + validation +
+> editor UI + tests; full CI gate (migrate/drift/typecheck/lint/DB-tests/build) reproduced green.
+> Deliberately deferred (noted in commits): §2.6 batching (subsumed by per-item concurrency),
+> §2.4 file *upload* via multipart, §2.7a Nango event-forwarding, §2.8 agent-token streaming.
+
 **Date:** 2026-07-27
 **Benchmark:** n8n master (`~/Downloads/n8n-master`) — engine (`packages/core`, `packages/workflow`), editor (`packages/frontend/editor-ui`), node ecosystem (`packages/nodes-base`, `@n8n/nodes-langchain`).
 **Subject:** Backstory Studio flows — engine (`src/features/flows/`), graph/schema (`src/lib/flows/`), editor (`src/components/flows/`, `src/app/flows/`), integrations (`src/lib/nango/`, `src/lib/connectors/`, `src/features/agents/tool-planes.ts`).

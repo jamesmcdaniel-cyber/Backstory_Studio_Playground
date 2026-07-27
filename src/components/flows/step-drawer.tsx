@@ -448,7 +448,6 @@ export function StepDrawer({
   mockData,
   layout = 'drawer',
   onChange,
-  onChangeType,
   onAddStep,
   onDuplicate,
   onDelete,
@@ -473,7 +472,7 @@ export function StepDrawer({
   mockData?: unknown
   layout?: 'drawer' | 'workspace'
   onChange: (node: FlowNode) => void
-  onChangeType: (type: EditableType) => void
+  onChangeType?: (type: EditableType) => void
   onExecuteStep?: () => void
   onExecutePrevious?: () => void
   onSetMockData?: (value: unknown | undefined) => void
@@ -697,32 +696,29 @@ export function StepDrawer({
           </TriggerEditor>
         ) : (
           <>
-            <div>
-              <label className={labelClass}>Step type</label>
-              <select className={fieldClass} value={node.type} onChange={(e) => onChangeType(e.target.value as EditableType)}>
-                {NODE_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className={labelClass}>Label (optional)</label>
-              <input className={fieldClass} value={(node.data as { label?: string }).label ?? ''} placeholder="A short name for this step" onFocus={blockActive} onBlur={unblockActive} onChange={(e) => setLabel(e.target.value)} />
-            </div>
-            <div>
-              <label className={labelClass}>Notes (optional)</label>
-              <textarea
-                rows={2}
-                className={fieldClass}
-                value={(node.data as { note?: string }).note ?? ''}
-                placeholder="Why this step exists, gotchas, links…"
-                onFocus={blockActive}
-                onBlur={unblockActive}
-                onChange={(e) => onChange({ ...node, data: { ...node.data, note: e.target.value || undefined } } as FlowNode)}
-              />
-            </div>
+            {/* Step type selector removed — a node's type is fixed once added. */}
+            {/* Label/Notes are hidden for HTTP so its Parameters view stays lean
+                like n8n; other node types keep them. */}
+            {node.type !== 'http' && (
+              <>
+                <div>
+                  <label className={labelClass}>Label (optional)</label>
+                  <input className={fieldClass} value={(node.data as { label?: string }).label ?? ''} placeholder="A short name for this step" onFocus={blockActive} onBlur={unblockActive} onChange={(e) => setLabel(e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Notes (optional)</label>
+                  <textarea
+                    rows={2}
+                    className={fieldClass}
+                    value={(node.data as { note?: string }).note ?? ''}
+                    placeholder="Why this step exists, gotchas, links…"
+                    onFocus={blockActive}
+                    onBlur={unblockActive}
+                    onChange={(e) => onChange({ ...node, data: { ...node.data, note: e.target.value || undefined } } as FlowNode)}
+                  />
+                </div>
+              </>
+            )}
           </>
         )}
 
@@ -1453,7 +1449,6 @@ export function StepDrawer({
               </div>
             </div>
 
-            <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
             <p className="text-xs text-muted-foreground">Calls a public HTTPS endpoint. The raw status, response headers, parsed body, and response text appear in Output.</p>
           </div>
         )}

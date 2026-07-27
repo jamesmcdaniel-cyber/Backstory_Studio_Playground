@@ -14,6 +14,7 @@ import { AdvancedParamsSection } from '@/components/flows/advanced-params'
 import { CodeEditor } from '@/components/flows/code-editor'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
+import type { FlowContext } from '@/features/flows/context'
 import { cn } from '@/lib/utils'
 import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { useWorkspaceFlows } from './use-workspace-flows'
@@ -535,6 +536,7 @@ export function StepDrawer({
   toolCatalog,
   dataFields,
   labelCtx,
+  previewCtx,
   variableNames,
   issues,
   published,
@@ -559,6 +561,7 @@ export function StepDrawer({
   toolCatalog: ToolCatalog
   dataFields: DataField[]
   labelCtx: TokenLabelContext
+  previewCtx?: FlowContext
   variableNames?: string[]
   issues?: { level: 'error' | 'warning'; message: string }[]
   published?: boolean
@@ -848,6 +851,7 @@ export function StepDrawer({
               <label className={labelClass}>Message to agent</label>
               <TokenTextEditor
                 ref={registerEditor('agent.input')}
+                previewCtx={previewCtx}
                 multiline
                 rows={6}
                 value={node.data.input ?? ''}
@@ -941,6 +945,7 @@ export function StepDrawer({
               <label className={labelClass}>Input</label>
               <TokenTextEditor
                 ref={registerEditor('ai.input')}
+                previewCtx={previewCtx}
                 multiline
                 rows={3}
                 value={node.data.input ?? ''}
@@ -1533,6 +1538,7 @@ export function StepDrawer({
                       </label>
                       <TokenTextEditor
                         ref={registerEditor('http.body')}
+                previewCtx={previewCtx}
                         multiline
                         rows={8}
                         className="font-mono text-xs"

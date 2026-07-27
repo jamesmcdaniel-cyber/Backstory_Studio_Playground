@@ -25,6 +25,7 @@ import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode,
 import { writeFlowClipboard, readFlowClipboard } from '@/lib/flows/clipboard'
 import { applyCopilotOps, type CopilotOp } from '@/lib/flows/copilot-ops'
 import { buildDataTree } from '@/lib/flows/datatree'
+import { normalizeStepAlias, type FlowContext } from '@/features/flows/context'
 import { parseFlowInput } from '@/lib/flows/input'
 import { httpOutputFields, outputFieldsFromJsonSchema } from '@/lib/flows/schema-fields'
 import { validateFlowGraph } from '@/lib/flows/validate'
@@ -819,6 +820,29 @@ function FlowBuilder() {
     })
     return buildDataTree({ upstream, insideLoop, lastOutputs, triggerInput, inputFields, variables: upstreamVariables })
   }, [selectedNode, upstreamIds, graph, selectedRun, insideLoop, agentsById, loopContext, selectedPerItemOver, testInput, inputFields, toolCatalog, upstreamVariables])
+
+  // Live chip preview: resolve a field's {{tokens}} against the selected run's
+  // recorded outputs + trigger input, so the editor can show what a chip
+  // evaluates to before running the flow. Same shape the interpreter builds.
+  const previewCtx = useMemo<FlowContext>(() => {
+    const step: Record<string, { output: unknown }> = {}
+    const variables: Record<string, unknown> = {}
+    for (const s of selectedRun?.steps ?? []) {
+      const baseId = s.nodeId.split('#')[0]
+      const output = parseFlowValue(s.output)
+      step[baseId] = { output }
+      const node = graph.nodes.find((n) => n.id === baseId)
+      if (node?.type === 'variable' && node.data.name.trim()) variables[node.data.name.trim()] = output
+    }
+    const triggerInput = testInput.trim() ? parseFlowInput(testInput) : storedRunInput(selectedRun?.input)
+    const stepLabels = stepLabelsOf(graph, agents)
+    const stepAliases: Record<string, string> = {}
+    for (const [id, label] of Object.entries(stepLabels)) {
+      const alias = normalizeStepAlias(label)
+      if (alias && stepAliases[alias] === undefined) stepAliases[alias] = id
+    }
+    return { trigger: { input: triggerInput }, step, variables, stepAliases, stepLabels }
+  }, [selectedRun, testInput, graph, agents])
 
   const selectedNodeRawInput = useMemo(() => {
     if (!selectedNode) return undefined
@@ -1818,6 +1842,7 @@ function FlowBuilder() {
                 dataFields={dataFields}
                 published={published}
                 labelCtx={labelCtx}
+                previewCtx={previewCtx}
                 variableNames={upstreamVariables.map((variable) => variable.name)}
                 rawInput={selectedNodeRawInput}
                 rawOutput={selectedNodeRawOutput}

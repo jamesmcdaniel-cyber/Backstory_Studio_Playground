@@ -1,10 +1,11 @@
 'use client'
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react'
 import { cn } from '@/lib/utils'
 import { friendlyTokenLabel, parseTokenSegments } from '@/lib/flows/token-text'
 import type { TokenLabelContext, TokenSegment } from '@/lib/flows/token-text'
+import { resolveTemplateValue, type FlowContext } from '@/features/flows/context'
 
 export type TokenTextEditorHandle = { insertToken: (token: string) => void, focus: () => void }
 
@@ -19,6 +20,10 @@ export type TokenTextEditorProps = {
   invalid?: boolean
   onFocus?: () => void
   ariaLabel?: string
+  // When provided, resolve the field's {{tokens}} against last-run data and show
+  // the result inline (live preview) — so you see what a chip evaluates to
+  // without running the flow.
+  previewCtx?: FlowContext
 }
 
 const chipClass =
@@ -110,7 +115,7 @@ function editRange(editor: HTMLElement): Range {
  * emitting the unchanged canonical template string through `onChange`.
  */
 export const TokenTextEditor = forwardRef<TokenTextEditorHandle, TokenTextEditorProps>(function TokenTextEditor(
-  { value, onChange, labelCtx, multiline = false, rows = 3, placeholder, className, invalid, onFocus, ariaLabel },
+  { value, onChange, labelCtx, multiline = false, rows = 3, placeholder, className, invalid, onFocus, ariaLabel, previewCtx },
   ref
 ) {
   const editorRef = useRef<HTMLDivElement>(null)
@@ -268,30 +273,49 @@ export const TokenTextEditor = forwardRef<TokenTextEditorHandle, TokenTextEditor
     handleInput()
   }
 
+  const preview = useMemo(() => {
+    if (!previewCtx || !value.includes('{{')) return null
+    try {
+      const resolved = resolveTemplateValue(value, previewCtx)
+      if (resolved === undefined || resolved === '') return null
+      const text = typeof resolved === 'string' ? resolved : JSON.stringify(resolved)
+      return text.length > 240 ? `${text.slice(0, 240)}…` : text
+    } catch {
+      return null
+    }
+  }, [previewCtx, value])
+
   return (
-    <div
-      ref={editorRef}
-      contentEditable
-      role="textbox"
-      aria-multiline={multiline}
-      aria-label={ariaLabel}
-      aria-invalid={invalid || undefined}
-      data-placeholder={placeholder}
-      onInput={handleInput}
-      onKeyDown={handleKeyDown}
-      onPaste={handlePaste}
-      onDrop={handleDrop}
-      onDragStart={handleDragStart}
-      onCopy={(event) => handleCopyCut(event, false)}
-      onCut={(event) => handleCopyCut(event, true)}
-      onFocus={onFocus}
-      style={multiline ? { minHeight: rows * 20 + 18 } : undefined}
-      className={cn(
-        baseClass,
-        invalid ? 'border-red-400' : 'border-border',
-        multiline ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto whitespace-nowrap',
-        className
+    <>
+      <div
+        ref={editorRef}
+        contentEditable
+        role="textbox"
+        aria-multiline={multiline}
+        aria-label={ariaLabel}
+        aria-invalid={invalid || undefined}
+        data-placeholder={placeholder}
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        onDrop={handleDrop}
+        onDragStart={handleDragStart}
+        onCopy={(event) => handleCopyCut(event, false)}
+        onCut={(event) => handleCopyCut(event, true)}
+        onFocus={onFocus}
+        style={multiline ? { minHeight: rows * 20 + 18 } : undefined}
+        className={cn(
+          baseClass,
+          invalid ? 'border-red-400' : 'border-border',
+          multiline ? 'whitespace-pre-wrap break-words' : 'overflow-x-auto whitespace-nowrap',
+          className
+        )}
+      />
+      {preview !== null && (
+        <div className="mt-1 truncate rounded bg-muted/50 px-2 py-1 text-[11px] text-muted-foreground" title={preview}>
+          → {preview}
+        </div>
       )}
-    />
+    </>
   )
 })

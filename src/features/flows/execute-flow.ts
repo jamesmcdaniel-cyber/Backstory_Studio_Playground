@@ -22,7 +22,8 @@ import { shouldReuseInput, storedRunInput } from '@/lib/flows/reuse-input'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { interpretFlow, FlowCancelledError, type RunAgentFn, type RunActionFn } from './interpret'
 import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout } from './action-reliability'
-import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization } from './http'
+import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
+import { getByPath, setQueryParam, pageItems, optimizeForAi } from '@/lib/flows/http-pagination'
 import {
   fetchWithHttpCredential,
   markCredentialResult,
@@ -932,33 +933,85 @@ export async function runFlowExecution(
           request.init.headers = withBearerAuthorization(request.init.headers as Record<string, string>, token)
         }
         const retries = flowActionRetries(node.config.retries)
-        const output = await runWithRetries(async () => {
-          await assertPublicUrl(request.url) // SSRF guard: re-check before every attempt
-          const controller = new AbortController()
-          let timedOut = false
-          const timer = setTimeout(() => {
-            timedOut = true
-            controller.abort()
-          }, request.timeoutMs)
-          try {
-            const response = await fetchWithHttpCredential(request, httpCredential, controller.signal)
-            const nextOutput = await responseOutput(response, request.responseType, HTTP_MAX_RESPONSE_CHARS)
-            // Record credential health so the picker can flag a revoked token
-            // instead of failing silently. Auth rejection flips it to 'error';
-            // any non-auth response clears a prior error.
-            if (httpCredential?.id) {
-              const authRejected = nextOutput.status === 401 || nextOutput.status === 403
-              await markCredentialResult(httpCredential.id, !authRejected, `HTTP ${nextOutput.status}`)
+        // Fetch ONE page (URL overridable for pagination), retried per page. The
+        // SSRF guard re-runs before every attempt AND every page.
+        const fetchPage = (pageUrl: string): Promise<FlowHttpOutput> =>
+          runWithRetries(async () => {
+            await assertPublicUrl(pageUrl)
+            const controller = new AbortController()
+            let timedOut = false
+            const timer = setTimeout(() => {
+              timedOut = true
+              controller.abort()
+            }, request.timeoutMs)
+            try {
+              const response = await fetchWithHttpCredential({ ...request, url: pageUrl }, httpCredential, controller.signal)
+              const nextOutput = await responseOutput(response, request.responseType, HTTP_MAX_RESPONSE_CHARS)
+              // Record credential health so the picker can flag a revoked token
+              // instead of failing silently. Auth rejection flips it to 'error';
+              // any non-auth response clears a prior error.
+              if (httpCredential?.id) {
+                const authRejected = nextOutput.status === 401 || nextOutput.status === 403
+                await markCredentialResult(httpCredential.id, !authRejected, `HTTP ${nextOutput.status}`)
+              }
+              if (request.failOnHttpError && !nextOutput.ok) throw new Error(`HTTP ${nextOutput.status}: ${nextOutput.bodyText.slice(0, 200)}`)
+              return nextOutput
+            } catch (error) {
+              if (timedOut) throw new Error(`HTTP request timed out after ${request.timeoutMs}ms`)
+              throw error
+            } finally {
+              clearTimeout(timer)
             }
-            if (request.failOnHttpError && !nextOutput.ok) throw new Error(`HTTP ${nextOutput.status}: ${nextOutput.bodyText.slice(0, 200)}`)
-            return nextOutput
-          } catch (error) {
-            if (timedOut) throw new Error(`HTTP request timed out after ${request.timeoutMs}ms`)
-            throw error
-          } finally {
-            clearTimeout(timer)
+          }, { retries })
+
+        const pagination = node.config.pagination && typeof node.config.pagination === 'object' ? (node.config.pagination as Record<string, unknown>) : undefined
+        let output: FlowHttpOutput
+        if (pagination) {
+          const maxPages = Math.max(1, Math.min(50, typeof pagination.maxPages === 'number' ? pagination.maxPages : 5))
+          const intervalMs = Math.max(0, Math.min(10_000, typeof pagination.intervalMs === 'number' ? pagination.intervalMs : 0))
+          const itemsPath = typeof pagination.itemsPath === 'string' ? pagination.itemsPath : undefined
+          const collected: unknown[] = []
+          let last: FlowHttpOutput | undefined
+          let pageUrl = request.url
+          let pages = 0
+          for (let i = 0; i < maxPages; i++) {
+            if (pagination.mode === 'updateParam' && typeof pagination.param === 'string' && pagination.param) {
+              const start = typeof pagination.start === 'number' ? pagination.start : 1
+              const step = typeof pagination.step === 'number' ? pagination.step : 1
+              pageUrl = setQueryParam(request.url, pagination.param, start + i * step)
+            }
+            last = await fetchPage(pageUrl)
+            pages += 1
+            const items = pageItems(last.body, itemsPath)
+            collected.push(...items)
+            if (pagination.mode === 'nextUrl') {
+              const next = getByPath(last.body, typeof pagination.nextUrlPath === 'string' ? pagination.nextUrlPath : undefined)
+              if (typeof next !== 'string' || !next) break
+              pageUrl = next
+            } else if (items.length === 0) {
+              break // updateParam: an empty page means we're past the end
+            }
+            if (intervalMs && i < maxPages - 1) await new Promise((r) => setTimeout(r, intervalMs))
           }
-        }, { retries })
+          // The envelope of the last page, but body is every page's items combined.
+          output = { ...(last as FlowHttpOutput), body: collected }
+          ;(output as unknown as Record<string, unknown>).pages = pages
+        } else {
+          output = await fetchPage(request.url)
+        }
+
+        // "Optimize response for AI": trim the (possibly combined) body.
+        const optimize = node.config.optimizeForAi && typeof node.config.optimizeForAi === 'object' ? (node.config.optimizeForAi as Record<string, unknown>) : undefined
+        if (optimize) {
+          output = {
+            ...output,
+            body: optimizeForAi(output.body, {
+              dataPath: typeof optimize.dataPath === 'string' ? optimize.dataPath : undefined,
+              fields: Array.isArray(optimize.fields) ? optimize.fields.filter((f): f is string => typeof f === 'string') : undefined,
+              maxItems: typeof optimize.maxItems === 'number' ? optimize.maxItems : undefined,
+            }),
+          }
+        }
         await finish({ status: 'succeeded', output })
         return { output }
       }

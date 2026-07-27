@@ -787,6 +787,10 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               failOnHttpError: node.data.failOnHttpError,
               retries: node.data.retries,
               timeoutMs: node.data.timeoutMs,
+              // Statics passed through unresolved — the adapter runs the
+              // pagination loop and AI-optimize post-process.
+              ...(node.data.pagination ? { pagination: node.data.pagination } : {}),
+              ...(node.data.optimizeForAi ? { optimizeForAi: node.data.optimizeForAi } : {}),
             }
       const broken = missingTokenFailure(config)
       if (broken) return broken

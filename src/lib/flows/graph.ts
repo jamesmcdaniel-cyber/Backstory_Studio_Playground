@@ -170,6 +170,32 @@ const httpNode = z.object({
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     outputFields: z.array(outputFieldSchema).optional(),
     perItem: perItemSchema.optional(),
+    // Auto-follow paginated APIs (n8n HTTP pagination parity). `updateParam`
+    // increments a query param (page/offset) each request; `nextUrl` follows a
+    // next-page URL in the response body. Items from every page are concatenated
+    // into the step's output list. Bounded by maxPages; the SSRF guard re-runs
+    // per page. Absent → a single request, exactly as before.
+    pagination: z
+      .object({
+        mode: z.enum(['updateParam', 'nextUrl']),
+        param: z.string().optional(),
+        start: z.number().optional(),
+        step: z.number().optional(),
+        nextUrlPath: z.string().optional(),
+        itemsPath: z.string().optional(),
+        maxPages: z.number().int().min(1).max(50).optional(),
+        intervalMs: z.number().int().min(0).max(10_000).optional(),
+      })
+      .optional(),
+    // "Optimize response for AI": trim the response before it feeds an agent —
+    // drill into a data path, keep only chosen fields, cap the item count.
+    optimizeForAi: z
+      .object({
+        dataPath: z.string().optional(),
+        fields: z.array(z.string()).optional(),
+        maxItems: z.number().int().min(1).optional(),
+      })
+      .optional(),
   }),
 })
 const loopNode = z.object({

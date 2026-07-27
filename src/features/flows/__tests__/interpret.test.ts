@@ -496,6 +496,34 @@ test('http steps preserve structured query, headers, and body values', async () 
   })
 })
 
+test('http pagination and optimize-for-AI statics pass through to the adapter', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      {
+        id: 'h1',
+        type: 'http',
+        data: {
+          method: 'GET',
+          url: 'https://example.com/api',
+          pagination: { mode: 'updateParam', param: 'page', start: 1, maxPages: 3, itemsPath: 'data' },
+          optimizeForAi: { dataPath: 'data', fields: ['id', 'name'], maxItems: 50 },
+        },
+      },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'h1' }],
+  }
+  const calls: Record<string, unknown>[] = []
+  const runAction: RunActionFn = async (node) => {
+    calls.push(node.config)
+    return { output: { ok: true } }
+  }
+  const result = await interpretFlow(graph, '', { runAgent: async () => ({ output: '' }), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(calls[0].pagination, { mode: 'updateParam', param: 'page', start: 1, maxPages: 3, itemsPath: 'data' })
+  assert.deepEqual(calls[0].optimizeForAi, { dataPath: 'data', fields: ['id', 'name'], maxItems: 50 })
+})
+
 test('tool args preserve object values from loop items', async () => {
   const graph: FlowGraph = {
     nodes: [

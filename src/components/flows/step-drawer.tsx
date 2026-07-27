@@ -64,6 +64,13 @@ const smallField =
   'rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300'
 const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground'
 
+/** Drop an empty AI-optimize config to undefined so a cleared form persists nothing. */
+function cleanOptimize(next: { dataPath?: string; fields?: string[]; maxItems?: number }): { dataPath?: string; fields?: string[]; maxItems?: number } | undefined {
+  const fields = (next.fields ?? []).filter((f) => f.trim())
+  const cleaned = { ...next, fields: fields.length ? fields : undefined }
+  return cleaned.dataPath || cleaned.fields || cleaned.maxItems ? cleaned : undefined
+}
+
 /** Node types that support the per-item fan-out modifier (see perItemSchema). */
 const PER_ITEM_TYPES: ReadonlySet<FlowNode['type']> = new Set(['agent', 'tool', 'http', 'ai', 'code', 'subflow', 'data', 'transform', 'knowledge'])
 
@@ -1560,6 +1567,49 @@ export function StepDrawer({
                 />
               </div>
             </div>
+
+            <details className="rounded-lg border border-border/70 p-2">
+              <summary className="cursor-pointer text-sm font-medium">Pagination — fetch every page</summary>
+              <div className="mt-3 space-y-3">
+                <select
+                  className={fieldClass}
+                  value={node.data.pagination?.mode ?? 'off'}
+                  onChange={(e) => {
+                    const mode = e.target.value
+                    onChange({ ...node, data: { ...node.data, pagination: mode === 'off' ? undefined : { ...(node.data.pagination ?? {}), mode: mode as 'updateParam' | 'nextUrl' } } })
+                  }}
+                >
+                  <option value="off">Off — one request</option>
+                  <option value="updateParam">Increment a page/offset parameter</option>
+                  <option value="nextUrl">Follow a next-page URL in the response</option>
+                </select>
+                {node.data.pagination && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {node.data.pagination.mode === 'updateParam' && (
+                      <>
+                        <label className="text-xs">Parameter<input className={fieldClass} placeholder="page" value={node.data.pagination.param ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, param: e.target.value || undefined } } })} /></label>
+                        <label className="text-xs">Start at<input type="number" className={fieldClass} placeholder="1" value={node.data.pagination.start ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, start: e.target.value === '' ? undefined : Number(e.target.value) } } })} /></label>
+                      </>
+                    )}
+                    {node.data.pagination.mode === 'nextUrl' && (
+                      <label className="col-span-2 text-xs">Next-URL field (path in response)<input className={fieldClass} placeholder="links.next" value={node.data.pagination.nextUrlPath ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, nextUrlPath: e.target.value || undefined } } })} /></label>
+                    )}
+                    <label className="text-xs">List field (path)<input className={fieldClass} placeholder="data" value={node.data.pagination.itemsPath ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, itemsPath: e.target.value || undefined } } })} /></label>
+                    <label className="text-xs">Max pages<input type="number" min={1} max={50} className={fieldClass} placeholder="5" value={node.data.pagination.maxPages ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, maxPages: e.target.value === '' ? undefined : Math.max(1, Math.min(50, Number(e.target.value))) } } })} /></label>
+                  </div>
+                )}
+                {node.data.pagination && <p className="text-xs text-muted-foreground">Items from every page are combined into one list in the output.</p>}
+              </div>
+            </details>
+
+            <details className="rounded-lg border border-border/70 p-2">
+              <summary className="cursor-pointer text-sm font-medium">Optimize response for AI</summary>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <label className="col-span-2 text-xs">Keep only this part (path)<input className={fieldClass} placeholder="data" value={node.data.optimizeForAi?.dataPath ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, optimizeForAi: cleanOptimize({ ...node.data.optimizeForAi, dataPath: e.target.value || undefined }) } })} /></label>
+                <label className="col-span-2 text-xs">Keep only these fields (comma-separated)<input className={fieldClass} placeholder="id, name, email" value={(node.data.optimizeForAi?.fields ?? []).join(', ')} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, optimizeForAi: cleanOptimize({ ...node.data.optimizeForAi, fields: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) }) } })} /></label>
+                <label className="text-xs">Max items<input type="number" min={1} className={fieldClass} placeholder="No limit" value={node.data.optimizeForAi?.maxItems ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, optimizeForAi: cleanOptimize({ ...node.data.optimizeForAi, maxItems: e.target.value === '' ? undefined : Math.max(1, Number(e.target.value)) }) } })} /></label>
+              </div>
+            </details>
 
             <p className="text-xs text-muted-foreground">Calls a public HTTPS endpoint. The raw status, response headers, parsed body, and response text appear in Output.</p>
           </div>

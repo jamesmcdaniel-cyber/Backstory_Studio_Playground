@@ -32,6 +32,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Split,
+  Timer,
   ToggleLeft,
   Workflow,
   Trash2,
@@ -95,6 +96,7 @@ const NODE_ICON: Record<FlowNode['type'], typeof Bot> = {
   subflow: Workflow,
   knowledge: BookOpen,
   code: Code2,
+  wait: Timer,
 }
 
 const NODE_TONE: Record<FlowNode['type'], string> = {
@@ -119,6 +121,7 @@ const NODE_TONE: Record<FlowNode['type'], string> = {
   subflow: 'bg-teal-500 text-white',
   knowledge: 'bg-rose-500 text-white',
   code: 'bg-amber-600 text-white',
+  wait: 'bg-slate-500 text-white',
 }
 
 const STATUS_DOT: Record<StepStatus, string> = {

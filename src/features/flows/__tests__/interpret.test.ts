@@ -939,6 +939,77 @@ test('a matched switch case merges into a join', async () => {
   assert.equal(result.output, 'ran:saw MID')
 })
 
+// ── Wait node ────────────────────────────────────────────────────────────────
+
+const RUN_NOW = { iso: '2026-07-27T12:00:00.000Z', date: '2026-07-27', time: '12:00', unix: Math.floor(Date.parse('2026-07-27T12:00:00.000Z') / 1000) }
+
+test('a duration wait pauses the run and reports when to resume', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'w', type: 'wait', data: { mode: 'duration', amount: '3', unit: 'days' } },
+      { id: 'after', type: 'agent', data: { agentId: 'a', input: 'x' } },
+    ],
+    edges: [
+      { id: 'e0', source: 'trigger', target: 'w' },
+      { id: 'e1', source: 'w', target: 'after' },
+    ],
+  }
+  const result = await interpretFlow(graph, '', { runAgent: stub({}), now: RUN_NOW })
+  assert.equal(result.status, 'waiting')
+  assert.equal(result.waiting?.nodeId, 'w')
+  assert.equal(result.waiting?.waitKind, 'timer')
+  assert.equal(result.waiting?.resumeAt, '2026-07-30T12:00:00.000Z') // now + 3 days
+})
+
+test('a webhook wait pauses waiting for a callback', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'w', type: 'wait', data: { mode: 'webhook' } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'w' }],
+  }
+  const result = await interpretFlow(graph, '', { runAgent: stub({}), now: RUN_NOW })
+  assert.equal(result.status, 'waiting')
+  assert.equal(result.waiting?.waitKind, 'webhook')
+  assert.equal(result.waiting?.resumeAt, undefined) // no safety timeout set
+})
+
+test('resuming a wait node threads the callback body and continues', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'w', type: 'wait', data: { mode: 'webhook' } },
+      { id: 'after', type: 'agent', data: { agentId: 'a', input: 'signed by {{step.w.output.signer}}' } },
+    ],
+    edges: [
+      { id: 'e0', source: 'trigger', target: 'w' },
+      { id: 'e1', source: 'w', target: 'after' },
+    ],
+  }
+  const result = await interpretFlow(graph, '', {
+    runAgent: async (n) => ({ output: n.input }),
+    completed: {},
+    resumeNodeId: 'w',
+    resumeReply: '{"signer":"Dana"}',
+  })
+  assert.equal(result.status, 'succeeded')
+  assert.equal(result.output, 'signed by Dana')
+})
+
+test('a duration wait with a broken amount fails clearly', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'w', type: 'wait', data: { mode: 'duration', amount: '{{trigger.input.days}}', unit: 'days' } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'w' }],
+  }
+  const result = await interpretFlow(graph, { days: 'lots' }, { runAgent: stub({}), now: RUN_NOW })
+  assert.equal(result.status, 'failed')
+})
+
 test('join mode:append concatenates two independent branch outputs into one list', async () => {
   const graph: FlowGraph = {
     nodes: [

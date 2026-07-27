@@ -66,6 +66,8 @@ function nodeLabel(node: FlowNode | undefined) {
       return node.data.language === 'python' ? 'Python' : 'JavaScript'
     case 'humanReview':
       return 'Request information'
+    case 'wait':
+      return 'Wait'
     case 'output':
       return 'Output'
     case 'join':
@@ -469,6 +471,15 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     if (node.type === 'humanReview') {
       if (!node.data.message.trim()) {
         add(issues, 'error', 'MISSING_REVIEW_MESSAGE', `${nodeLabel(node)} needs a message for the reviewer.`, node.id)
+      }
+    }
+
+    if (node.type === 'wait') {
+      if (node.data.mode === 'until' && !node.data.until?.trim()) {
+        add(issues, 'error', 'MISSING_WAIT_UNTIL', `${nodeLabel(node)} needs a date/time to wait until.`, node.id)
+      }
+      if ((node.data.mode ?? 'duration') === 'duration' && !node.data.amount?.trim()) {
+        add(issues, 'error', 'MISSING_WAIT_AMOUNT', `${nodeLabel(node)} needs how long to wait.`, node.id)
       }
     }
 

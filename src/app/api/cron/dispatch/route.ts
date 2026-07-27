@@ -17,7 +17,7 @@ import { timingSafeEqual } from 'crypto'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { runAgentExecution } from '@/features/agents/execute-agent'
-import { dispatchFlowExecution } from '@/features/flows/execute-flow'
+import { dispatchFlowExecution, dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
 import { parseFlowInput } from '@/lib/flows/input'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
 import { isDue, type AgentSchedule } from '@/lib/scheduling/due'
@@ -292,6 +292,46 @@ export async function GET(request: Request) {
       }
     }
 
+    // Wait node: resume runs whose timer is due. resumeAt is set ONLY for timer
+    // waits (duration/until) and webhook safety-timeouts — a human/approval pause
+    // has resumeAt null and is never woken here. runFlowExecution's atomic
+    // waiting→running claim dedups against a concurrent/last-tick pick, so no
+    // pre-clear is needed; a resumed run that then crashes is swept by the
+    // reaper. Isolated + capped per tick like schedule dispatch.
+    const resumedWaitIds: string[] = []
+    try {
+      // systemPrisma: global due-wait scan across all orgs by design (CRON_SECRET-gated).
+      const dueWaits = await systemPrisma.flowRun.findMany({
+        where: { status: 'waiting', resumeAt: { not: null, lte: now } },
+        orderBy: { resumeAt: 'asc' },
+        take: MAX_FLOWS_PER_TICK,
+        select: { id: true, flowId: true, organizationId: true, userId: true },
+      })
+      for (const run of dueWaits) {
+        try {
+          const userId =
+            run.userId ??
+            (await prisma.user.findFirst({ where: { organizationId: run.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } }))?.id
+          if (!userId) continue
+          // reply '' is the timer signal — the wait step resumes with { resumed: true }.
+          await dispatchDetachedFlowExecution({
+            flowId: run.flowId,
+            organizationId: run.organizationId,
+            userId,
+            input: {},
+            flowRunId: run.id,
+            reply: '',
+          })
+          resumedWaitIds.push(run.id)
+        } catch (error) {
+          apiLogger.error('cron/dispatch: wait resume failed, skipping', { flowRunId: run.id, error: capError(error) })
+        }
+      }
+    } catch (error) {
+      apiLogger.error('cron/dispatch: due-wait scan failed', { error: capError(error) })
+      captureError(error, { source: 'cron.dispatch.dueWaits' })
+    }
+
     // Auto-template generation: a daily, debounced, per-org sweep. Each org that
     // meets the 3-integration gate, has no open proposals, and hasn't generated
     // within GENERATION_DEBOUNCE_MS gets ONE generation dispatch (capped per
@@ -304,7 +344,7 @@ export async function GET(request: Request) {
       captureError(error, { source: 'cron.dispatch.templateGeneration' })
     }
 
-    return Response.json({ success: true, due: dueCount, ran: ranIds, ranFlows: ranFlowIds, generatedOrgs })
+    return Response.json({ success: true, due: dueCount, ran: ranIds, ranFlows: ranFlowIds, resumedWaits: resumedWaitIds, generatedOrgs })
   } catch (error) {
     apiLogger.error('cron/dispatch: unhandled error', {
       error: error instanceof Error ? error.message : String(error),

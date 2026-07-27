@@ -1006,6 +1006,11 @@ export async function runFlowExecution(
   const runMeta = {
     id: run.id,
     url: `/flows/${run.flowId}?run=${run.id}`,
+    // Absolute public callback URL for a `webhook` wait: a pre-wait step sends
+    // this to the external system, which POSTs back to resume the run. The run
+    // id (an unguessable cuid) is the capability. Empty base URL degrades to a
+    // relative path (dev) — harmless, since webhook waits need a real deployment.
+    resumeUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/api/flows/${run.flowId}/runs/${run.id}/resume`,
     trigger: (run.trigger as unknown as { type?: string } | null)?.type ?? 'manual',
     startedAt: run.startedAt.toISOString(),
     flowId: run.flowId,
@@ -1074,9 +1079,13 @@ export async function runFlowExecution(
   // A failed run persists WHY it failed (e.g. the step-timeout message) — the
   // runs API surfaces FlowRun.error, so it must never stay null on failure.
   const runError = status === 'failed' ? (result.error ?? 'The flow failed.').slice(0, 300) : null
+  // A `wait` step that paused on a timer records when the run should resume, so
+  // the cron scan can wake it. Any other waiting state (human reply, approval,
+  // open-ended webhook callback) and every terminal state clear resumeAt.
+  const resumeAt = status === 'waiting' && result.waiting?.resumeAt ? new Date(result.waiting.resumeAt) : null
   await prisma.flowRun.update({
     where: { id: run.id, organizationId: job.organizationId },
-    data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date() },
+    data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt },
   })
   // A humanReview ("Request information") pause has no adapter: its waiting
   // FlowRunStep row was persisted by the interpreter's onStep path (the

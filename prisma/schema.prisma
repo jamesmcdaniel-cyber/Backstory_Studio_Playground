@@ -773,6 +773,10 @@ model FlowRun {
   graphSnapshot  Json? // the graph definition this run executed against
   startedAt      DateTime  @default(now())
   finishedAt     DateTime?
+  // When a `wait` step pauses the run on a timer, the wall-clock time it should
+  // resume. The cron scan wakes waiting runs whose resumeAt is due. Null for
+  // runs waiting on a human reply / approval / open-ended webhook callback.
+  resumeAt       DateTime?
   organizationId String    @db.Uuid
   userId         String?
 
@@ -780,6 +784,7 @@ model FlowRun {
   steps FlowRunStep[]
 
   @@index([flowId, startedAt])
+  @@index([status, resumeAt])
   @@map("flow_runs")
 }
 

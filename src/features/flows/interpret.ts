@@ -6,6 +6,7 @@ import { shouldRetryAfterTimeout } from './action-reliability'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { runDataOp } from '@/lib/flows/data-ops'
 import { mergeAppend, mergeByKey } from '@/lib/flows/merge'
+import { computeResumeAt } from '@/lib/flows/wait'
 
 export type StepOutcome = {
   nodeId: string
@@ -34,7 +35,11 @@ export type InterpretResult = {
   status: 'succeeded' | 'failed' | 'waiting'
   steps: StepOutcome[]
   output: unknown
-  waiting?: { nodeId: string; question?: string }
+  // `resumeAt` (ISO) marks a wait node's timer pause — the run should resume at
+  // that wall-clock time (a cron scan wakes it). `waitKind` distinguishes a
+  // timer pause from a webhook-callback pause. Absent for agent/approval/review
+  // pauses, which resume on a human reply.
+  waiting?: { nodeId: string; question?: string; resumeAt?: string; waitKind?: 'timer' | 'webhook' }
   // Why a failed run failed — the failing node's error (e.g. the timeout
   // message) so callers can persist it on the run record.
   error?: string
@@ -80,7 +85,7 @@ type Opts = {
   // (`{{run.*}}`/`{{flow.*}}`), injected by execute-flow and threaded into the
   // ctx (and every loop/parallel sub-context) so they resolve everywhere.
   now?: { iso: string; date: string; time: string; unix: number }
-  run?: { id: string; url: string; trigger: string; startedAt: string; flowId: string; flowName: string }
+  run?: { id: string; url: string; resumeUrl?: string; trigger: string; startedAt: string; flowId: string; flowName: string }
   // Node-id → display-label map (as the builder shows them). Used to resolve
   // hand-typed friendly-label tokens like `{{Previous Agent.output}}` to the
   // right step. Defaults to labels derivable from the graph alone; callers
@@ -101,7 +106,7 @@ type NodeResult =
   | { kind: 'skip' }
   | { kind: 'stop' }
   | { kind: 'fail'; error: string }
-  | { kind: 'pause'; nodeId: string; question?: string }
+  | { kind: 'pause'; nodeId: string; question?: string; resumeAt?: string; waitKind?: 'timer' | 'webhook' }
   // A filter that didn't pass: drops the current loop item, or ends the main chain.
   | { kind: 'drop' }
   // A step with onError:'route' that FAILED — its output is the `{ error, input }`
@@ -557,6 +562,43 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const question = resolveTemplate(node.data.message, ctx)
       emit({ nodeId: node.id, status: 'waiting', output: { waiting: { kind: 'input', question } } })
       return { kind: 'pause', nodeId: stepKey, question }
+    }
+
+    if (node.type === 'wait') {
+      // A first-class pause with no adapter (like humanReview). Resuming this
+      // exact node? The reply — a webhook callback body, or empty for a timer —
+      // becomes the step's output and the walk proceeds.
+      if (opts.resumeNodeId === stepKey) {
+        const reply = opts.resumeReply
+        const output = reply !== undefined && reply !== '' ? asStructured(reply) : { resumed: true }
+        ctx.step[node.id] = { output }
+        emit({ nodeId: node.id, status: 'succeeded', output })
+        return { kind: 'ok', output }
+      }
+      // First visit: compute the resume condition and pause the run.
+      const nowMs = opts.now ? opts.now.unix * 1000 : Date.parse(new Date().toISOString())
+      if (node.data.mode === 'webhook') {
+        const timeoutAt = node.data.timeoutMinutes ? new Date(nowMs + node.data.timeoutMinutes * 60_000).toISOString() : undefined
+        emit({ nodeId: node.id, status: 'waiting', output: { waiting: { kind: 'webhook', ...(timeoutAt ? { timeoutAt } : {}) } } })
+        // A webhook wait with a safety timeout still records a resumeAt so the
+        // cron scan can give up on a callback that never arrives.
+        return { kind: 'pause', nodeId: stepKey, waitKind: 'webhook', ...(timeoutAt ? { resumeAt: timeoutAt } : {}) }
+      }
+      const timing = computeResumeAt(nowMs, {
+        mode: node.data.mode,
+        amount: node.data.amount !== undefined ? resolveTemplate(node.data.amount, ctx, onMissingToken) : undefined,
+        unit: node.data.unit,
+        until: node.data.until !== undefined ? resolveTemplate(node.data.until, ctx, onMissingToken) : undefined,
+      })
+      const broken = missingTokenFailure({ amount: node.data.amount, until: node.data.until })
+      if (broken) return broken
+      if ('error' in timing) {
+        emit({ nodeId: node.id, status: 'failed', error: timing.error })
+        return { kind: 'fail', error: timing.error }
+      }
+      const resumeAt = new Date(timing.resumeAtMs).toISOString()
+      emit({ nodeId: node.id, status: 'waiting', output: { waiting: { kind: 'timer', resumeAt } } })
+      return { kind: 'pause', nodeId: stepKey, waitKind: 'timer', resumeAt }
     }
 
     if (node.type === 'output') {
@@ -1100,7 +1142,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     const res = await execNode(node, ctx)
     if (terminal) return // a sibling already ended the run; ignore late results
     if (res.kind === 'fail') { terminal = done({ status: 'failed', steps, output: lastOutput, error: res.error }); return }
-    if (res.kind === 'pause') { terminal = done({ status: 'waiting', steps, output: lastOutput, waiting: { nodeId: res.nodeId, question: res.question } }); return }
+    if (res.kind === 'pause') { terminal = done({ status: 'waiting', steps, output: lastOutput, waiting: { nodeId: res.nodeId, question: res.question, ...(res.resumeAt ? { resumeAt: res.resumeAt } : {}), ...(res.waitKind ? { waitKind: res.waitKind } : {}) } }); return }
     if (res.kind === 'stop') { nodeState.set(node.id, 'done'); terminal = done({ status: 'succeeded', steps, output: lastOutput }); return }
     if (res.kind === 'drop') { nodeState.set(node.id, 'skipped'); resolveEdges(node.id, 'drop'); return }
     // Only surface a chained value when there is one: a route always carries its

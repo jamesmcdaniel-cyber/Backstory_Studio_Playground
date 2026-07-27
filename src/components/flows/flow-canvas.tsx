@@ -250,6 +250,8 @@ export function FlowCanvas({
         return node.data.label || 'Search knowledge'
       case 'code':
         return node.data.label || (node.data.language === 'python' ? 'Python' : 'JavaScript')
+      case 'wait':
+        return node.data.label || 'Wait'
     }
   }
 
@@ -328,6 +330,11 @@ export function FlowCanvas({
         return node.data.note || (node.data.flowId ? 'Runs another flow and passes back its result' : 'Choose the flow to run')
       case 'knowledge':
         return node.data.note || (node.data.query?.trim() ? undefined : 'Write what to look for')
+      case 'wait':
+        if (node.data.note) return node.data.note
+        if (node.data.mode === 'webhook') return 'Wait for a callback'
+        if (node.data.mode === 'until') return node.data.until?.trim() ? `Until ${node.data.until}` : 'Wait until a date/time'
+        return node.data.amount?.trim() ? `Wait ${node.data.amount} ${node.data.unit ?? 'minutes'}` : 'Wait for a delay'
       default:
         return (node.data as { note?: string }).note || undefined
     }

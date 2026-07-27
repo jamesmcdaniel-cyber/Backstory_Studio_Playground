@@ -1817,6 +1817,92 @@ export function StepDrawer({
           </>
         )}
 
+        {node.type === 'wait' && (
+          <div className="space-y-3">
+            <div>
+              <label className={labelClass}>Wait for</label>
+              <select
+                className={fieldClass}
+                value={node.data.mode ?? 'duration'}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value as 'duration' | 'until' | 'webhook' } })}
+              >
+                <option value="duration">A set amount of time</option>
+                <option value="until">Until a specific date/time</option>
+                <option value="webhook">An external system to call back</option>
+              </select>
+            </div>
+            {(node.data.mode ?? 'duration') === 'duration' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className={labelClass}>Amount</label>
+                  <TokenTextEditor
+                    ref={registerEditor('wait.amount')}
+                    value={node.data.amount ?? ''}
+                    labelCtx={labelCtx}
+                    placeholder="e.g. 3"
+                    onFocus={focusEditor('wait.amount')}
+                    onChange={(amount) => onChange({ ...node, data: { ...node.data, amount } })}
+                    ariaLabel="Amount to wait"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Unit</label>
+                  <select
+                    className={fieldClass}
+                    value={node.data.unit ?? 'minutes'}
+                    onChange={(e) => onChange({ ...node, data: { ...node.data, unit: e.target.value as 'seconds' | 'minutes' | 'hours' | 'days' } })}
+                  >
+                    <option value="seconds">Seconds</option>
+                    <option value="minutes">Minutes</option>
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </div>
+              </div>
+            )}
+            {node.data.mode === 'until' && (
+              <div>
+                <label className={labelClass}>Wait until</label>
+                <TokenTextEditor
+                  ref={registerEditor('wait.until')}
+                  value={node.data.until ?? ''}
+                  labelCtx={labelCtx}
+                  placeholder="e.g. 2026-08-01T09:00:00Z or pick a date value below"
+                  onFocus={focusEditor('wait.until')}
+                  onChange={(until) => onChange({ ...node, data: { ...node.data, until } })}
+                  ariaLabel="Wait until"
+                />
+                <div className="mt-2">
+                  <DataTree fields={dataFields} onInsert={insertToken} />
+                </div>
+              </div>
+            )}
+            {node.data.mode === 'webhook' && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  The run pauses until an external system POSTs to its resume URL. Use the <span className="font-medium">Run resume link</span> value (from the data menu) in a step before this one to hand the URL to that system. The callback body becomes this step&apos;s output.
+                </p>
+                <div>
+                  <label className={labelClass}>Give up after (minutes, optional)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    className={fieldClass}
+                    placeholder="Wait indefinitely"
+                    value={node.data.timeoutMinutes ?? ''}
+                    onFocus={blockActive}
+                    onBlur={unblockActive}
+                    onChange={(e) => {
+                      const n = Number(e.target.value)
+                      onChange({ ...node, data: { ...node.data, timeoutMinutes: n > 0 ? Math.floor(n) : undefined } })
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {node.type === 'join' && (
           <div className="space-y-3">
             <div>

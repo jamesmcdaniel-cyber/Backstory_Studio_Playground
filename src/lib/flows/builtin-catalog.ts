@@ -42,6 +42,7 @@ export const BUILTIN_GROUPS: PickerGroup[] = [
       { id: 'control-switch', label: 'Switch', description: 'Route to one of several cases, with a default path.', mode: 'action', stepType: 'switch' },
       { id: 'control-loop', label: 'For each', description: 'Run steps once for every item in a list.', mode: 'action', stepType: 'loop' },
       { id: 'control-parallel', label: 'Parallel branches', description: 'Run independent branches at the same time.', mode: 'action', stepType: 'parallel' },
+      { id: 'control-wait', label: 'Wait', description: 'Pause for a delay, until a time, or until an external system calls back.', mode: 'action', stepType: 'wait' },
       { id: 'control-stop', label: 'Stop flow', description: 'End the flow early with an optional message.', mode: 'action', stepType: 'stop' },
     ],
   },

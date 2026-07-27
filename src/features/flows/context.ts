@@ -20,7 +20,7 @@ export type FlowContext = {
   now?: { iso: string; date: string; time: string; unix: number }
   // Run/flow metadata: `{{run.id}}`/`{{run.url}}`/`{{run.trigger}}`/
   // `{{run.startedAt}}` and the `{{flow.id}}`/`{{flow.name}}` aliases.
-  run?: { id: string; url: string; trigger: string; startedAt: string; flowId: string; flowName: string }
+  run?: { id: string; url: string; resumeUrl?: string; trigger: string; startedAt: string; flowId: string; flowName: string }
   // Friendly-name fallback: normalized step LABEL → node id. The chip picker
   // stores canonical `{{step.<id>...}}` tokens, but users reading those chips
   // reasonably hand-type the plain-English labels they see (e.g.
@@ -217,6 +217,7 @@ export function resolveContextPath(ctx: FlowContext, path: string): { found: boo
     if (!run) return { found: true, value: undefined }
     if (parts[1] === 'id') return { found: true, value: run.id }
     if (parts[1] === 'url') return { found: true, value: run.url }
+    if (parts[1] === 'resumeUrl') return { found: true, value: run.resumeUrl }
     if (parts[1] === 'trigger') return { found: true, value: run.trigger }
     if (parts[1] === 'startedAt') return { found: true, value: run.startedAt }
     return { found: true, value: undefined }

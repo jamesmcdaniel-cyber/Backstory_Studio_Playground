@@ -90,6 +90,7 @@ function contextRoots(): DataField[] {
         { label: 'Trigger', token: '{{run.trigger}}', type: 'string', description: 'How this run was started.' },
         { label: 'Started at', token: '{{run.startedAt}}', type: 'string', description: 'When this run began.' },
         { label: 'Run link', token: '{{run.url}}', type: 'string', description: 'A link to this run in the builder.' },
+        { label: 'Run resume link', token: '{{run.resumeUrl}}', type: 'string', description: 'The callback URL for a "wait for a callback" step.' },
       ],
     },
   ]

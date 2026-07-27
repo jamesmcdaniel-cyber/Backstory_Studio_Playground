@@ -378,6 +378,27 @@ const joinNode = z.object({
   }),
 })
 
+// Pause the run and resume later (n8n Wait parity). Like humanReview, a
+// first-class pause with no adapter: the interpreter records the resume
+// condition and the run goes `waiting`. `duration`/`until` set a resume time
+// (FlowRun.resumeAt) that the cron scan wakes; `webhook` mints a one-time
+// resume URL that an external system POSTs to (its body becomes this step's
+// output). `amount`/`until` are templated; `timeoutMinutes` optionally caps a
+// webhook wait so a callback that never arrives can't hang the run forever.
+const waitNode = z.object({
+  id: z.string(),
+  type: z.literal('wait'),
+  data: z.object({
+    label: z.string().optional(),
+    note: z.string().optional(),
+    mode: z.enum(['duration', 'until', 'webhook']).default('duration'),
+    amount: z.string().optional(),
+    unit: z.enum(['seconds', 'minutes', 'hours', 'days']).optional(),
+    until: z.string().optional(),
+    timeoutMinutes: z.number().int().min(1).optional(),
+  }),
+})
+
 /** Operations a first-class `ai` step can perform against the org's model. */
 export const AI_OPS = ['ask', 'extract', 'categorize', 'summarize', 'score'] as const
 export type AiOp = (typeof AI_OPS)[number]
@@ -461,7 +482,7 @@ const nodePositionSchema = z.object({ x: z.number(), y: z.number() }).optional()
 
 export const flowNodeSchema = z
   .discriminatedUnion('type', [
-    triggerNode, agentNode, conditionNode, loopNode, parallelNode, stopNode, toolNode, httpNode, transformNode, filterNode, switchNode, variableNode, dataNode, codeNode, humanReviewNode, outputNode, joinNode, aiNode, subflowNode, knowledgeNode,
+    triggerNode, agentNode, conditionNode, loopNode, parallelNode, stopNode, toolNode, httpNode, transformNode, filterNode, switchNode, variableNode, dataNode, codeNode, humanReviewNode, outputNode, joinNode, aiNode, subflowNode, knowledgeNode, waitNode,
   ])
   .and(z.object({ position: nodePositionSchema }))
 export const flowEdgeSchema = z.object({

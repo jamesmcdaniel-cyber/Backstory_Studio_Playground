@@ -9,7 +9,7 @@ test('built-in groups cover the drill-in taxonomy', () => {
   const ids = BUILTIN_GROUPS.map((g) => g.id)
   assert.deepEqual(ids, ['http', 'control', 'flow-basics', 'data-operation', 'code', 'variable', 'human-review'])
   const control = BUILTIN_GROUPS.find((g) => g.id === 'control')!
-  assert.deepEqual(control.children.map((c) => c.stepType), ['condition', 'switch', 'loop', 'parallel', 'stop'])
+  assert.deepEqual(control.children.map((c) => c.stepType), ['condition', 'switch', 'loop', 'parallel', 'wait', 'stop'])
   const flowBasics = BUILTIN_GROUPS.find((g) => g.id === 'flow-basics')!
   assert.deepEqual(flowBasics.children.map((c) => c.stepType), ['output', 'join', 'subflow'])
   const http = BUILTIN_GROUPS.find((g) => g.id === 'http')!

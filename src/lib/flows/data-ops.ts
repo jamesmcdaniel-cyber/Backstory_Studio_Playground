@@ -38,9 +38,15 @@ export type DataOpConfig = {
   replaceWith?: string
   /** getItem: 0-based position; negatives count from the end. Default 0. */
   index?: string
-  /** trim: items to remove (default 1) and which end to remove from. */
+  /** trim: items to remove (default 1); limit: items to keep (default 10). */
   count?: string
   fromEnd?: boolean
+  /** sort/removeDuplicates: the field to key on; summarize: the group-by field. */
+  by?: string
+  /** sort: descending instead of ascending. */
+  descending?: boolean
+  /** summarize: what to compute per group. */
+  aggregations?: { field: string; op: 'sum' | 'avg' | 'count' | 'min' | 'max'; name?: string }[]
 }
 
 export type DataOpResult = { output: unknown } | { error: string }
@@ -60,6 +66,11 @@ export const DATA_OP_LABELS: Record<DataOp, string> = {
   flatten: 'Flatten list',
   trim: 'Trim list',
   parseCsv: 'Parse CSV',
+  sort: 'Sort',
+  limit: 'Limit',
+  removeDuplicates: 'Remove duplicates',
+  aggregate: 'Aggregate',
+  summarize: 'Summarize',
 }
 
 /** RFC 4180 CSV: quoted fields may hold commas, newlines, and doubled quotes. */
@@ -168,8 +179,22 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
   if (isBlank(config.input)) return { error: `${label} needs data to work with — the input came back empty.` }
 
   if (op === 'compose') {
-    // Passthrough: a JSON-looking string is exposed structured, like step outputs.
-    return { output: asStructured(config.input) }
+    // Two modes, matching n8n's Set/Edit Fields:
+    //   • fields declared → build an object from them (the "hold these values
+    //     for later" step: a token, a bearer, a reshaped record).
+    //   • no fields → passthrough, exposing a JSON-looking string structured,
+    //     which is what Compose did before object mode existed.
+    const composed = (config.fields ?? []).filter((field) => field.name.trim())
+    if (!composed.length) return { output: asStructured(config.input) }
+    const ctx = itemContext(config.input, config.ctx)
+    const record: Record<string, unknown> = {}
+    for (const field of composed) {
+      const exact = field.value.trim().match(/^\{\{\s*([^{}]+?)\s*\}\}$/)
+      // An exact token keeps the source value's structure (an object stays an
+      // object); mixed text resolves to a string. Same rule as `select`.
+      record[field.name.trim()] = exact ? readPath(ctx, exact[1]) ?? null : resolveTemplate(field.value, ctx)
+    }
+    return { output: record }
   }
 
   if (op === 'parseJson') {
@@ -276,6 +301,71 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
     return { output: config.fromEnd ? list.slice(0, Math.max(0, list.length - count)) : list.slice(count) }
   }
 
+  // ---- Item-shaping ops (n8n ships each of these as its own core node) ----
+
+  if (op === 'sort' || op === 'limit' || op === 'removeDuplicates' || op === 'aggregate' || op === 'summarize') {
+    const list = asList(config.input)
+    if (!list) return { error: `${label} needs a list to work on — the input wasn't a list.` }
+    const key = (config.by ?? '').trim()
+    const valueOf = (item: unknown) => (key ? readPath(itemContext(item, config.ctx), `item.${key}`) : item)
+
+    if (op === 'sort') {
+      // Stable by construction: decorate with the original index and fall back
+      // to it, so equal keys keep input order across engines.
+      const decorated = list.map((item, index) => ({ item, index, key: valueOf(item) }))
+      decorated.sort((a, b) => compareValues(a.key, b.key) || a.index - b.index)
+      if (config.descending) decorated.reverse()
+      return { output: decorated.map((entry) => entry.item) }
+    }
+
+    if (op === 'limit') {
+      const raw = (config.count ?? '10').trim()
+      const count = Number(raw)
+      if (!Number.isInteger(count) || count < 0) return { error: `${label} needs a whole number of items to keep — got "${raw}".` }
+      return { output: config.fromEnd ? list.slice(Math.max(0, list.length - count)) : list.slice(0, count) }
+    }
+
+    if (op === 'removeDuplicates') {
+      const seen = new Set<string>()
+      const output = list.filter((item) => {
+        // Key on a field when given, else on the whole item's JSON — so
+        // structurally identical records collapse without naming a field.
+        const identity = key ? JSON.stringify(valueOf(item) ?? null) : JSON.stringify(item ?? null)
+        if (seen.has(identity)) return false
+        seen.add(identity)
+        return true
+      })
+      return { output }
+    }
+
+    if (op === 'aggregate') {
+      // Collapse the list into ONE value: the named field's values when a field
+      // is given, else the list itself as a single item.
+      return { output: key ? list.map(valueOf) : list }
+    }
+
+    // summarize — group by a field (or the whole list as one group) and compute
+    // the requested aggregations per group.
+    const aggregations = (config.aggregations ?? []).filter((entry) => entry.op)
+    if (!aggregations.length) return { error: `${label} needs at least one thing to calculate.` }
+    const groups = new Map<string, unknown[]>()
+    for (const item of list) {
+      const groupKey = key ? String(valueOf(item) ?? '') : ''
+      const bucket = groups.get(groupKey)
+      if (bucket) bucket.push(item)
+      else groups.set(groupKey, [item])
+    }
+    const output = [...groups.entries()].map(([groupKey, items]) => {
+      const row: Record<string, unknown> = key ? { [key]: groupKey } : {}
+      for (const entry of aggregations) {
+        const name = (entry.name ?? `${entry.op}_${entry.field || 'items'}`).trim()
+        row[name] = summarizeValues(entry.op, items, entry.field, config.ctx)
+      }
+      return row
+    })
+    return { output }
+  }
+
   // select
   const fields = (config.fields ?? []).filter((field) => field.name.trim())
   if (!fields.length) return { error: `${label} needs at least one field to map.` }
@@ -293,4 +383,30 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
     return record
   })
   return { output }
+}
+
+/** Order two resolved values: numbers numerically, everything else as text. */
+function compareValues(a: unknown, b: unknown): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b
+  const an = Number(a)
+  const bn = Number(b)
+  if (!Number.isNaN(an) && !Number.isNaN(bn) && String(a).trim() !== '' && String(b).trim() !== '') return an - bn
+  return String(a ?? '').localeCompare(String(b ?? ''))
+}
+
+/** One aggregation over a group's items. */
+function summarizeValues(
+  op: 'sum' | 'avg' | 'count' | 'min' | 'max',
+  items: unknown[],
+  field: string,
+  ctx: FlowContext | undefined,
+): number {
+  if (op === 'count') return items.length
+  const numbers = items
+    .map((item) => Number(field ? readPath(itemContext(item, ctx), `item.${field}`) : item))
+    .filter((value) => !Number.isNaN(value))
+  if (!numbers.length) return 0
+  if (op === 'sum') return numbers.reduce((total, value) => total + value, 0)
+  if (op === 'avg') return numbers.reduce((total, value) => total + value, 0) / numbers.length
+  return op === 'min' ? Math.min(...numbers) : Math.max(...numbers)
 }

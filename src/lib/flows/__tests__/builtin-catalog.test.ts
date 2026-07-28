@@ -18,7 +18,7 @@ test('built-in groups cover the drill-in taxonomy', () => {
   assert.deepEqual(code.children.map((c) => c.seed?.codeLanguage), ['javascript', 'python'])
 })
 
-test('the Data operations group offers all seven data ops with their display labels', () => {
+test('the Data operations group offers every data op with its display label', () => {
   const dataOp = BUILTIN_GROUPS.find((g) => g.id === 'data-operation')!
   assert.ok(dataOp.children.every((c) => c.stepType === 'data'))
   assert.deepEqual(dataOp.children.map((c) => c.seed?.dataOp), [...DATA_OPS])

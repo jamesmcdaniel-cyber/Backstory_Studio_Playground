@@ -2,7 +2,23 @@ import { z } from 'zod'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 
 /** Comparison operators available to a condition node. */
-export const CONDITION_OPS = ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'contains', 'matches'] as const
+/**
+ * Comparison operators for `condition`, `filter`, `switch`, and the
+ * `filterArray` data op.
+ *
+ * n8n splits these into type-specific sets (String/Number/Boolean/Array/Object/
+ * DateTime) surfaced through a typed picker. We keep ONE flat list because a
+ * flow's values are untyped until they resolve — the operator carries the
+ * intent instead, and the evaluator coerces per operator. Same expressive
+ * power, one fewer thing for the builder to get right.
+ */
+export const CONDITION_OPS = [
+  'eq', 'neq', 'gt', 'gte', 'lt', 'lte',
+  'contains', 'notContains', 'startsWith', 'endsWith', 'matches',
+  'isEmpty', 'isNotEmpty', 'exists', 'notExists',
+  'isTrue', 'isFalse',
+  'before', 'after',
+] as const
 export type ConditionOp = (typeof CONDITION_OPS)[number]
 
 /** Plain-english operator labels — the ONLY strings the UI may show for ops. */
@@ -14,8 +30,24 @@ export const CONDITION_OP_LABELS: Record<ConditionOp, string> = {
   lt: 'is less than',
   lte: 'is at most',
   contains: 'contains',
+  notContains: 'does not contain',
+  startsWith: 'starts with',
+  endsWith: 'ends with',
   matches: 'matches pattern',
+  isEmpty: 'is empty',
+  isNotEmpty: 'is not empty',
+  exists: 'exists',
+  notExists: 'does not exist',
+  isTrue: 'is true',
+  isFalse: 'is false',
+  before: 'is before',
+  after: 'is after',
 }
+
+/** Operators that compare against nothing — the UI hides their value box. */
+export const UNARY_CONDITION_OPS: ReadonlySet<ConditionOp> = new Set([
+  'isEmpty', 'isNotEmpty', 'exists', 'notExists', 'isTrue', 'isFalse',
+])
 
 /** Field types a step's output schema can declare (for the datatree picker). */
 export const FIELD_TYPES = ['string', 'number', 'boolean', 'object', 'array', 'any'] as const
@@ -52,6 +84,12 @@ export const perItemSchema = z.object({
   over: z.string(),
   itemError: z.enum(['fail', 'skip', 'collect']).optional(),
   concurrency: z.number().int().min(1).max(20).optional(),
+  /**
+   * Pause between batches (n8n's HTTP "Batching → Batch Interval"). With
+   * `concurrency` as the batch size, this paces a fan-out against a
+   * rate-limited API instead of firing every item as fast as the pool allows.
+   */
+  batchIntervalMs: z.number().int().min(0).max(60_000).optional(),
 })
 export type PerItemConfig = z.infer<typeof perItemSchema>
 
@@ -72,6 +110,13 @@ const agentNode = z.object({
     // Per-step reliability: retry the agent up to `retries` times with backoff,
     // and abort a single attempt after `timeoutMs`.
     retries: z.number().int().min(0).max(5).optional(),
+    /** Pause between retry attempts (n8n's "Wait Between Tries"). */
+    retryDelayMs: z.number().int().min(0).max(60_000).optional(),
+    /**
+     * Emit an empty result instead of nothing when the step produces no output
+     * (n8n's "Always Output Data"), so a downstream branch still runs.
+     */
+    alwaysOutputData: z.boolean().optional(),
     timeoutMs: z.number().int().min(1000).max(AGENT_RUN_TIMEOUT_MS).optional(),
     // Declared output schema — fields this step is expected to produce. Powers
     // the datatree field picker for downstream mapping.
@@ -92,7 +137,13 @@ const agentNode = z.object({
   }),
 })
 /** One left/op/right comparison; a condition ANDs/ORs a list of these. */
-export const conditionClauseSchema = z.object({ left: z.string(), op: z.enum(CONDITION_OPS), right: z.string() })
+export const conditionClauseSchema = z.object({
+  left: z.string(),
+  op: z.enum(CONDITION_OPS),
+  right: z.string(),
+  /** Fold both sides before comparing (n8n's "Ignore Case"). Text operators only. */
+  ignoreCase: z.boolean().optional(),
+})
 const conditionNode = z.object({
   id: z.string(),
   type: z.literal('condition'),
@@ -126,6 +177,13 @@ const toolNode = z.object({
     toolName: z.string(),
     args: z.string().optional(),
     retries: z.number().int().min(0).max(5).optional(),
+    /** Pause between retry attempts (n8n's "Wait Between Tries"). */
+    retryDelayMs: z.number().int().min(0).max(60_000).optional(),
+    /**
+     * Emit an empty result instead of nothing when the step produces no output
+     * (n8n's "Always Output Data"), so a downstream branch still runs.
+     */
+    alwaysOutputData: z.boolean().optional(),
     timeoutMs: z.number().int().min(1000).max(120000).optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     outputFields: z.array(outputFieldSchema).optional(),
@@ -168,6 +226,13 @@ const httpNode = z.object({
     followRedirects: z.boolean().optional(),
     failOnHttpError: z.boolean().optional(),
     retries: z.number().int().min(0).max(5).optional(),
+    /** Pause between retry attempts (n8n's "Wait Between Tries"). */
+    retryDelayMs: z.number().int().min(0).max(60_000).optional(),
+    /**
+     * Emit an empty result instead of nothing when the step produces no output
+     * (n8n's "Always Output Data"), so a downstream branch still runs.
+     */
+    alwaysOutputData: z.boolean().optional(),
     timeoutMs: z.number().int().min(1000).max(120000).optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     outputFields: z.array(outputFieldSchema).optional(),
@@ -187,8 +252,24 @@ const httpNode = z.object({
         itemsPath: z.string().optional(),
         maxPages: z.number().int().min(1).max(50).optional(),
         intervalMs: z.number().int().min(0).max(10_000).optional(),
+        // When to stop, beyond maxPages (n8n's "Pagination Complete When").
+        // 'emptyPage' is the default and the only prior behaviour: stop once a
+        // page yields no items. 'statusCode' stops on a listed status — the
+        // common "404/204 past the end" API. 'pathMissing' stops when a path in
+        // the response body goes absent or falsy (has_more, next_cursor).
+        completeWhen: z.enum(['emptyPage', 'statusCode', 'pathMissing']).optional(),
+        /** Comma-separated statuses for completeWhen: 'statusCode', e.g. "404, 204". */
+        completeStatusCodes: z.string().optional(),
+        /** Body path for completeWhen: 'pathMissing', e.g. "has_more". */
+        completePath: z.string().optional(),
       })
       .optional(),
+    /**
+     * Cap on redirect hops when followRedirects is on. Each hop is re-checked
+     * against the SSRF guard; this bounds how many times that can happen, so a
+     * redirect cycle ends as a clear error rather than as a long stall.
+     */
+    maxRedirects: z.number().int().min(0).max(20).optional(),
     // "Optimize response for AI": trim the response before it feeds an agent —
     // drill into a data path, keep only chosen fields, cap the item count.
     optimizeForAi: z
@@ -302,7 +383,12 @@ const variableNode = z.object({
 })
 
 /** Pure transforms a data operation step can perform (MS Data Operation parity). */
-export const DATA_OPS = ['compose', 'parseJson', 'join', 'csvTable', 'htmlTable', 'filterArray', 'select', 'split', 'replace', 'getItem', 'flatten', 'trim', 'parseCsv'] as const
+export const DATA_OPS = [
+  'compose', 'parseJson', 'join', 'csvTable', 'htmlTable', 'filterArray', 'select',
+  'split', 'replace', 'getItem', 'flatten', 'trim', 'parseCsv',
+  // Item-shaping ops that n8n ships as dedicated core nodes.
+  'sort', 'limit', 'removeDuplicates', 'aggregate', 'summarize',
+] as const
 export type DataOp = (typeof DATA_OPS)[number]
 // Deterministic data-shaping step between other steps: no LLM, no I/O. `input`
 // is templated (usually an exact {{step.x.output}} token so structure survives);
@@ -328,9 +414,17 @@ const dataNode = z.object({
     replaceWith: z.string().optional(),
     /** getItem: which item to take — 0-based; negatives count from the end. */
     index: z.string().optional(),
-    /** trim: how many items to remove (default 1) and from which end. */
+    /** trim/limit: how many items (default 1 for trim, 10 for limit). */
     count: z.string().optional(),
     fromEnd: z.boolean().optional(),
+    /** sort / removeDuplicates / summarize: the field(s) they key on. */
+    by: z.string().optional(),
+    /** sort: descending instead of ascending. */
+    descending: z.boolean().optional(),
+    /** summarize: what to compute per group. */
+    aggregations: z
+      .array(z.object({ field: z.string(), op: z.enum(['sum', 'avg', 'count', 'min', 'max']), name: z.string().optional() }))
+      .optional(),
     perItem: perItemSchema.optional(),
   }),
 })
@@ -471,6 +565,13 @@ const aiNode = z.object({
     note: z.string().optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     retries: z.number().int().min(0).max(5).optional(),
+    /** Pause between retry attempts (n8n's "Wait Between Tries"). */
+    retryDelayMs: z.number().int().min(0).max(60_000).optional(),
+    /**
+     * Emit an empty result instead of nothing when the step produces no output
+     * (n8n's "Always Output Data"), so a downstream branch still runs.
+     */
+    alwaysOutputData: z.boolean().optional(),
     timeoutMs: z.number().int().min(1000).max(AGENT_RUN_TIMEOUT_MS).optional(),
     perItem: perItemSchema.optional(),
   }),
@@ -492,6 +593,13 @@ const subflowNode = z.object({
     note: z.string().optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),
     retries: z.number().int().min(0).max(5).optional(),
+    /** Pause between retry attempts (n8n's "Wait Between Tries"). */
+    retryDelayMs: z.number().int().min(0).max(60_000).optional(),
+    /**
+     * Emit an empty result instead of nothing when the step produces no output
+     * (n8n's "Always Output Data"), so a downstream branch still runs.
+     */
+    alwaysOutputData: z.boolean().optional(),
     timeoutMs: z.number().int().min(1000).max(AGENT_RUN_TIMEOUT_MS).optional(),
     perItem: perItemSchema.optional(),
   }),

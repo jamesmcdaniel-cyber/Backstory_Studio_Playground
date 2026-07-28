@@ -313,21 +313,81 @@ function trimOperand<T>(value: T): T {
   return typeof value === 'string' ? (value.trim() as T) : value
 }
 
+const TRUTHY_TEXT = new Set(['true', 'yes', '1'])
+const FALSY_TEXT = new Set(['false', 'no', '0'])
+
+/**
+ * Whether a resolved operand should count as "not there" for exists/notExists.
+ * An unresolved path renders as empty or as the text of the absent value, and a
+ * builder asking "does this exist" means the field, not the word.
+ */
+function isAbsent(value: string): boolean {
+  return value === '' || value === 'undefined' || value === 'null'
+}
+
+/** Milliseconds for a date-ish operand, or null when it isn't one. */
+function asTime(value: string): number | null {
+  if (!value) return null
+  const ms = Date.parse(value)
+  return Number.isNaN(ms) ? null : ms
+}
+
 /** Evaluate a structured condition against the context. Never runs arbitrary code. */
 /** Evaluate a single comparison. Both sides are templated (RHS may be dynamic). */
-export function evalClause(clause: { left: string; op: ConditionOp; right: string }, ctx: FlowContext): boolean {
-  const leftRaw = trimOperand(resolveTemplate(clause.left, ctx))
-  const rightRaw = trimOperand(resolveTemplate(clause.right, ctx))
+export function evalClause(
+  clause: { left: string; op: ConditionOp; right: string; ignoreCase?: boolean },
+  ctx: FlowContext,
+): boolean {
+  const leftResolved = trimOperand(resolveTemplate(clause.left, ctx))
+  const rightResolved = trimOperand(resolveTemplate(clause.right, ctx))
+  // Case-insensitive matching is a per-clause toggle (n8n parity). It folds the
+  // operands for the text operators only — numeric and date comparisons below
+  // are unaffected by case, and folding them would be a no-op anyway.
+  const fold = (value: string) => (clause.ignoreCase ? value.toLowerCase() : value)
+  const leftRaw = fold(leftResolved)
+  const rightRaw = fold(rightResolved)
   const cond = clause
   switch (cond.op) {
     case 'contains':
       return leftRaw.includes(rightRaw)
+    case 'notContains':
+      return !leftRaw.includes(rightRaw)
+    case 'startsWith':
+      return leftRaw.startsWith(rightRaw)
+    case 'endsWith':
+      return leftRaw.endsWith(rightRaw)
     case 'matches':
       try {
-        return new RegExp(rightRaw).test(leftRaw)
+        return new RegExp(rightRaw, clause.ignoreCase ? 'i' : undefined).test(leftResolved)
       } catch {
         return false
       }
+    // Unary operators ignore the right-hand side entirely. "Empty" means no
+    // characters after trimming; "exists" additionally treats the literal
+    // strings an unresolved value renders as ("undefined"/"null") as absent, so
+    // a missing field reads as missing rather than as the text of its absence.
+    case 'isEmpty':
+      return leftResolved === ''
+    case 'isNotEmpty':
+      return leftResolved !== ''
+    case 'exists':
+      return !isAbsent(leftResolved)
+    case 'notExists':
+      return isAbsent(leftResolved)
+    case 'isTrue':
+      return TRUTHY_TEXT.has(leftRaw.toLowerCase())
+    case 'isFalse':
+      return FALSY_TEXT.has(leftRaw.toLowerCase())
+    // Date comparison falls back to string/number ordering when either side
+    // isn't a parseable date, so a version string or a timestamp still orders
+    // sensibly instead of silently returning false.
+    case 'before':
+    case 'after': {
+      const l = asTime(leftResolved)
+      const r = asTime(rightResolved)
+      if (l === null || r === null) return cond.op === 'before' ? leftRaw < rightRaw : leftRaw > rightRaw
+      return cond.op === 'before' ? l < r : l > r
+    }
     default: {
       const l = coerce(leftRaw)
       const r = coerce(rightRaw)

@@ -1,5 +1,6 @@
 import type { Job } from 'bullmq'
 import { prisma } from '@/lib/prisma'
+import { keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { flowJobOptions } from '@/lib/flows/queue-options'
@@ -23,7 +24,7 @@ import { stepLabelsOf } from '@/lib/flows/token-text'
 import { interpretFlow, FlowCancelledError, type RunAgentFn, type RunActionFn } from './interpret'
 import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout } from './action-reliability'
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
-import { getByPath, setQueryParam, pageItems, optimizeForAi } from '@/lib/flows/http-pagination'
+import { getByPath, setQueryParam, pageItems, optimizeForAi, paginationComplete } from '@/lib/flows/http-pagination'
 import { fileReference, isFileReference, bodyHasFileReference } from '@/lib/flows/file-ref'
 import { broadcastFlowRunTick } from '@/lib/flows/run-stream'
 import { saveStoredFile, readStoredFile } from '@/lib/files/storage'
@@ -706,6 +707,7 @@ export async function runFlowExecution(
         }
 
         const retries = flowActionRetries(node.config.retries)
+        const retryDelayMs = typeof node.config.retryDelayMs === 'number' ? node.config.retryDelayMs : undefined
         const timeoutMs = flowActionTimeoutMs(node.config.timeoutMs)
         // retryOnTimeout=false: a timed-out tool call is only abandoned, not
         // cancelled — the write may still land, so retrying could execute the
@@ -715,6 +717,7 @@ export async function runFlowExecution(
           async () => flowToolOutput(await executor.execute(toolName, args)),
           {
             retries,
+            retryDelayMs,
             timeoutMs,
             retryOnTimeout: shouldRetryAfterTimeout('tool'),
             timeoutMessage: timeoutMs
@@ -756,6 +759,7 @@ export async function runFlowExecution(
           : prompt.user
 
         const retries = flowActionRetries(node.config.retries)
+        const retryDelayMs = typeof node.config.retryDelayMs === 'number' ? node.config.retryDelayMs : undefined
         const timeoutMs = flowActionTimeoutMs(node.config.timeoutMs)
         // retryOnTimeout=false: same reasoning as the tool path above — a
         // timed-out model call is only abandoned, not cancelled, so retrying
@@ -765,6 +769,7 @@ export async function runFlowExecution(
           async () => runner.next(runner.start(user), prompt.system, []),
           {
             retries,
+            retryDelayMs,
             timeoutMs,
             retryOnTimeout: shouldRetryAfterTimeout('ai'),
             timeoutMessage: timeoutMs
@@ -864,6 +869,7 @@ export async function runFlowExecution(
           typeof node.config.input === 'string' ? node.config.input : undefined,
         )
         const retries = flowActionRetries(node.config.retries)
+        const retryDelayMs = typeof node.config.retryDelayMs === 'number' ? node.config.retryDelayMs : undefined
         // Child flows legitimately run long — clamp to the platform run cap,
         // not the 120s tool/http window; unset means "no extra bound" (the
         // child is already bounded by its own execution limits).
@@ -884,6 +890,7 @@ export async function runFlowExecution(
             }),
           {
             retries,
+            retryDelayMs,
             timeoutMs,
             retryOnTimeout: shouldRetryAfterTimeout('subflow'),
             timeoutMessage: timeoutMs
@@ -984,6 +991,7 @@ export async function runFlowExecution(
         }
 
         const retries = flowActionRetries(node.config.retries)
+        const retryDelayMs = typeof node.config.retryDelayMs === 'number' ? node.config.retryDelayMs : undefined
 
         // responseType 'file': download the body to a StoredFile and output a
         // file reference (with extracted text when the type supports it), rather
@@ -1019,7 +1027,7 @@ export async function runFlowExecution(
             } finally {
               clearTimeout(timer)
             }
-          }, { retries })
+          }, { retries, retryDelayMs })
           await finish({ status: 'succeeded', output })
           return { output }
         }
@@ -1053,7 +1061,7 @@ export async function runFlowExecution(
             } finally {
               clearTimeout(timer)
             }
-          }, { retries })
+          }, { retries, retryDelayMs })
 
         const pagination = node.config.pagination && typeof node.config.pagination === 'object' ? (node.config.pagination as Record<string, unknown>) : undefined
         let output: FlowHttpOutput
@@ -1061,6 +1069,7 @@ export async function runFlowExecution(
           const maxPages = Math.max(1, Math.min(50, typeof pagination.maxPages === 'number' ? pagination.maxPages : 5))
           const intervalMs = Math.max(0, Math.min(10_000, typeof pagination.intervalMs === 'number' ? pagination.intervalMs : 0))
           const itemsPath = typeof pagination.itemsPath === 'string' ? pagination.itemsPath : undefined
+          const completeWhen = typeof pagination.completeWhen === 'string' ? pagination.completeWhen : 'emptyPage'
           const collected: unknown[] = []
           let last: FlowHttpOutput | undefined
           let pageUrl = request.url
@@ -1073,13 +1082,19 @@ export async function runFlowExecution(
             }
             last = await fetchPage(pageUrl)
             pages += 1
+            // Stop-condition FIRST, so a terminal page (a 404 past the end, a
+            // has_more that flipped false) neither contributes items nor costs
+            // another request. Without it the only stops were maxPages and an
+            // empty page, which walks past the end of any API that signals
+            // completion some other way.
+            if (paginationComplete(pagination, last)) break
             const items = pageItems(last.body, itemsPath)
             collected.push(...items)
             if (pagination.mode === 'nextUrl') {
               const next = getByPath(last.body, typeof pagination.nextUrlPath === 'string' ? pagination.nextUrlPath : undefined)
               if (typeof next !== 'string' || !next) break
               pageUrl = next
-            } else if (items.length === 0) {
+            } else if (items.length === 0 && completeWhen === 'emptyPage') {
               break // updateParam: an empty page means we're past the end
             }
             if (intervalMs && i < maxPages - 1) await new Promise((r) => setTimeout(r, intervalMs))
@@ -1374,6 +1389,9 @@ export async function dispatchDetachedFlowExecution(job: FlowExecutionJob): Prom
     })
     .finally(() => detachedFlowRuns.delete(detached))
   detachedFlowRuns.add(detached)
+  // Without this the promise above is killed the instant the response is sent
+  // on a serverless host, and the run does nothing at all. See keep-alive.ts.
+  keepDetachedWorkAlive(detached)
 }
 
 /**

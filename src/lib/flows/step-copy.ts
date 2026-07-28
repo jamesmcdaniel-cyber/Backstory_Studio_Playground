@@ -21,11 +21,16 @@ export const DATA_OP_INPUT_PLACEHOLDER: Record<DataOp, string> = {
   flatten: 'The nested list to flatten',
   trim: 'The list to trim items from',
   parseCsv: 'The CSV text to parse',
+  sort: 'The list to sort',
+  limit: 'The list to take items from',
+  removeDuplicates: 'The list to de-duplicate',
+  aggregate: 'The list to collapse into one value',
+  summarize: 'The list of records to summarize',
 }
 
 /** One-line helper under each data operation's fields. */
 export const DATA_OP_HELPER: Record<DataOp, string> = {
-  compose: 'Passes the value through so later steps can reuse it under this step’s name.',
+  compose: 'Holds values for later steps to reuse under this step’s name. Add fields to build an object, or leave them empty to pass the input straight through.',
   parseJson: 'Turns JSON text into structured data so later steps can map its fields.',
   join: 'Combines the list into one text value, with the separator between items.',
   csvTable: 'Builds a CSV table from the list — columns come from the record fields.',
@@ -38,6 +43,11 @@ export const DATA_OP_HELPER: Record<DataOp, string> = {
   flatten: 'Unnests lists inside lists into one flat list.',
   trim: 'Removes a number of items from the start (or end) of the list.',
   parseCsv: 'Turns CSV text into a list of records — the first row names the fields.',
+  sort: 'Orders the list by a field — numbers numerically, everything else alphabetically. Equal values keep their original order.',
+  limit: 'Keeps the first (or last) few items and drops the rest.',
+  removeDuplicates: 'Drops repeated items, keeping the first of each. Match on one field, or on the whole record.',
+  aggregate: 'Collapses the list into a single value — one field’s values, or the whole list as one item.',
+  summarize: 'Groups the records by a field and calculates totals, averages, counts, or extremes for each group.',
 }
 
 /** Placeholder for a variable step's value field, per operation. */

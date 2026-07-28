@@ -249,11 +249,12 @@ function digestHeader(urlValue: string, method: string, cfg: HttpCredentialConfi
   return `Digest ${Object.entries(values).map(([key, value]) => `${key}="${value}"`).join(', ')}`
 }
 
+/** Hop cap when the node does not set its own `maxRedirects`. */
 const MAX_REDIRECTS = 5
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 export async function fetchWithHttpCredential(
-  request: { url: string; init: RequestInit; followRedirects?: boolean },
+  request: { url: string; init: RequestInit; followRedirects?: boolean; maxRedirects?: number },
   credential: ResolvedHttpCredential | null,
   signal?: AbortSignal,
 ): Promise<Response> {
@@ -279,8 +280,14 @@ export async function fetchWithHttpCredential(
   // Manual redirect following: every hop is re-checked against the SSRF guard
   // before it is requested, and credentials/cookies are dropped on a
   // cross-origin hop so they can't leak to another host.
+  // 0 is a meaningful setting ("follow none"), so only an absent/invalid value
+  // falls back to the default cap.
+  const hopLimit =
+    typeof request.maxRedirects === 'number' && Number.isInteger(request.maxRedirects) && request.maxRedirects >= 0
+      ? Math.min(request.maxRedirects, 20)
+      : MAX_REDIRECTS
   let hops = 0
-  while (REDIRECT_STATUSES.has(response.status) && hops < MAX_REDIRECTS) {
+  while (REDIRECT_STATUSES.has(response.status) && hops < hopLimit) {
     const location = response.headers.get('location')
     if (!location) break
     const nextUrl = new URL(location, currentUrl).toString()

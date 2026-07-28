@@ -51,6 +51,47 @@ export function pageItems(body: unknown, itemsPath: string | undefined): unknown
   return []
 }
 
+/** The slice of a page response a stop-condition looks at. */
+export type PageResult = { status: number; body: unknown }
+
+/** Parse "404, 204" into the statuses that end pagination. */
+export function completeStatusCodes(raw: string | undefined): number[] {
+  if (!raw) return []
+  return raw
+    .split(',')
+    .map((part) => Number.parseInt(part.trim(), 10))
+    .filter((code) => Number.isInteger(code) && code >= 100 && code <= 599)
+}
+
+/**
+ * Whether this page ends the walk, per the node's "complete when" setting
+ * (n8n's Pagination Complete When).
+ *
+ * `emptyPage` is handled by the caller — it needs the extracted item list, and
+ * it is the default so that a config without a stop-condition behaves exactly
+ * as it did before this existed.
+ */
+export function paginationComplete(
+  config: { completeWhen?: unknown; completeStatusCodes?: unknown; completePath?: unknown },
+  page: PageResult,
+): boolean {
+  const mode = typeof config.completeWhen === 'string' ? config.completeWhen : 'emptyPage'
+  if (mode === 'statusCode') {
+    const codes = completeStatusCodes(typeof config.completeStatusCodes === 'string' ? config.completeStatusCodes : undefined)
+    return codes.includes(page.status)
+  }
+  if (mode === 'pathMissing') {
+    const path = typeof config.completePath === 'string' ? config.completePath.trim() : ''
+    if (!path) return false
+    const value = getByPath(page.body, path)
+    // Absent, false, 0, "" and [] all read as "no more pages" — every API
+    // spells the end differently (has_more:false, next_cursor:null, count:0).
+    if (value === undefined || value === null || value === false || value === 0 || value === '') return true
+    return Array.isArray(value) && value.length === 0
+  }
+  return false
+}
+
 export type OptimizeForAiOptions = {
   /** Drill into this dot-path first (e.g. the list within an envelope). */
   dataPath?: string

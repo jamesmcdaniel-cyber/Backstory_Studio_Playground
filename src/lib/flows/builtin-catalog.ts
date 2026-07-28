@@ -77,6 +77,11 @@ export const BUILTIN_GROUPS: PickerGroup[] = [
       { id: 'data-flatten', label: 'Flatten list', description: 'Turn nested lists into one flat list.', mode: 'action', stepType: 'data', seed: { dataOp: 'flatten' } },
       { id: 'data-trim', label: 'Trim list', description: 'Remove items from the start or end of a list.', mode: 'action', stepType: 'data', seed: { dataOp: 'trim' } },
       { id: 'data-parse-csv', label: 'Parse CSV', description: 'Turn CSV text into a list of records for later steps.', mode: 'action', stepType: 'data', seed: { dataOp: 'parseCsv' } },
+      { id: 'data-sort', label: 'Sort', description: 'Order a list by one of its fields.', mode: 'action', stepType: 'data', seed: { dataOp: 'sort' } },
+      { id: 'data-limit', label: 'Limit', description: 'Keep only the first or last few items of a list.', mode: 'action', stepType: 'data', seed: { dataOp: 'limit' } },
+      { id: 'data-remove-duplicates', label: 'Remove duplicates', description: 'Drop repeated items, keeping the first of each.', mode: 'action', stepType: 'data', seed: { dataOp: 'removeDuplicates' } },
+      { id: 'data-aggregate', label: 'Aggregate', description: 'Collapse a list into a single value.', mode: 'action', stepType: 'data', seed: { dataOp: 'aggregate' } },
+      { id: 'data-summarize', label: 'Summarize', description: 'Group records by a field and total, average, or count them.', mode: 'action', stepType: 'data', seed: { dataOp: 'summarize' } },
     ],
   },
   {

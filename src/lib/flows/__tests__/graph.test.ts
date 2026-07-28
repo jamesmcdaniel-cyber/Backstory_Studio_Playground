@@ -48,9 +48,11 @@ test('flowGraphSchema rejects an unknown node type', () => {
 })
 
 test('flowGraphSchema rejects a condition with a bad op', () => {
+  // 'startsWith' used to be the example of an unknown op; it is a real operator
+  // now, so this pins an op that genuinely is not in CONDITION_OPS.
   assert.throws(() =>
     flowGraphSchema.parse({
-      nodes: [{ id: 'c', type: 'condition', data: { left: 'a', op: 'startsWith', right: 'b' } }],
+      nodes: [{ id: 'c', type: 'condition', data: { left: 'a', op: 'soundsLike', right: 'b' } }],
       edges: [],
     }),
   )

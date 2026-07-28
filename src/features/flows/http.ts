@@ -13,6 +13,7 @@ export type FlowHttpConfig = {
   contentType?: unknown
   responseType?: unknown
   followRedirects?: unknown
+  maxRedirects?: unknown
   failOnHttpError?: unknown
   retries?: unknown
   timeoutMs?: unknown
@@ -173,7 +174,7 @@ function graphqlBody(body: unknown): string | undefined {
   }
 }
 
-export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init: RequestInit; timeoutMs: number; failOnHttpError: boolean; responseType: 'auto' | 'json' | 'text'; followRedirects: boolean } {
+export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init: RequestInit; timeoutMs: number; failOnHttpError: boolean; responseType: 'auto' | 'json' | 'text'; followRedirects: boolean; maxRedirects?: number } {
   const method = String(config.method || 'POST').toUpperCase()
   const url = queryUrl(String(config.url || ''), config.sendQuery === false ? undefined : config.query)
   const headers = headersFrom(config.sendHeaders === false ? undefined : config.headers)
@@ -219,6 +220,9 @@ export function prepareHttpRequest(config: FlowHttpConfig): { url: string; init:
     failOnHttpError: config.failOnHttpError !== false,
     responseType,
     followRedirects,
+    ...(typeof config.maxRedirects === 'number' && Number.isInteger(config.maxRedirects) && config.maxRedirects >= 0
+      ? { maxRedirects: config.maxRedirects }
+      : {}),
   }
 }
 

@@ -156,3 +156,103 @@ Aligned with the existing green-lit workstreams (AI steps → subflows → knowl
 **Backstory:** engine `src/features/flows/execute-flow.ts`, `interpret.ts` (DAG scheduler, MAX_CONCURRENT_NODES=8, maxSteps=100), `context.ts` (token resolution, alias map, missing-token failures), `code-runner.ts`, `http-auth.ts`; schema `src/lib/flows/graph.ts` (20 node types, pinData), `dag-scheduler.ts`, `trigger.ts`; editor `src/app/flows/[id]/page.tsx`, `src/components/flows/{flow-canvas,step-drawer,step-card,run-panel,token-text-editor,data-tree,flow-picker,trigger-editor}.tsx`, catalog `src/lib/flows/builtin-catalog.ts`; integrations `src/lib/nango/provider-tools.ts` (16 providers, ~55 tools), `src/features/agents/tool-planes.ts`, `src/lib/connectors/registry.ts`; data model `prisma/schema.prisma:682-806`.
 
 **n8n:** engine `packages/core/src/execution-engine/workflow-execute.ts` (items, paired items, continueErrorOutput, retryOnFail, partial-execution-utils), `packages/workflow/src/interfaces.ts` (INodeExecutionData, INodeTypeDescription), binary `packages/core/src/binary-data/`; wait/resume `packages/cli/src/wait-tracker.ts`, `webhooks/waiting-webhooks.ts`, `nodes-base/nodes/Wait/`; HTTP `nodes-base/nodes/HttpRequest/V3/Description.ts` (pagination/batching), `shared/optimizeResponse.ts`; merge `nodes-base/nodes/Merge/v3/actions/mode/`; editor `editor-ui/src/features/ndv/` (RunData table/json/schema/binary/html views, drag-to-map), `features/shared/nodeCreator/` (actions synthesis), `app/composables/useCanvasOperations.ts`; AI `packages/@n8n/nodes-langchain/`.
+
+---
+
+# Addendum — Node-configuration parity (2026-07-28)
+
+The original audit compared **engine semantics** (§2, closed) and **editor UX** (§3).
+This pass compares the **configuration surface of each node** — the fields a
+builder can actually set — which is where the remaining distance now sits.
+
+Method: every `data` object in `src/lib/flows/graph.ts` enumerated field by
+field, against the equivalent n8n node's parameter + settings panel.
+
+## 6. Universal node settings
+
+n8n gives every node the same Settings tab. Ours, per node:
+
+| n8n setting | Ours | Verdict |
+|---|---|---|
+| Notes | `note` on every node | Parity (ours always renders; n8n has a "display in flow" toggle) |
+| Disable node | `disabled` node-level flag | Parity |
+| On Error: stop / continue (regular output) / continue (error output) | `onError: 'stop' \| 'continue' \| 'route'` | Parity |
+| Retry On Fail + Max Tries | `retries` (0–5) | Parity |
+| **Wait Between Tries (ms)** | fixed `DEFAULT_RETRY_DELAY_MS`; `retryDelayMs` exists in `action-reliability.ts` but is not on the node schema | **Gap — trivial**: surface the existing knob |
+| **Always Output Data** | absent | **Gap**: a node returning nothing halts the branch; n8n can emit an empty item so downstream still runs |
+| **Execute Once** | implicit — fan-out is opt-in via `perItem` | Parity by inversion, no work needed |
+
+## 7. The biggest gap: condition operators
+
+`CONDITION_OPS` is 8 untyped operators — `eq, neq, gt, gte, lt, lte, contains,
+matches` — shared by `condition`, `filter`, `switch`, and `data.filterArray`.
+
+n8n's v2 conditions are **type-aware operator sets**: String (exists, is empty,
+contains, does not contain, starts with, ends with, matches regex), Number (is
+even/odd, …), Boolean (is true/false), Array (contains, length equals/gt/lt, is
+empty), Object (is empty, has key), DateTime (is after/before/equals) — plus
+**Ignore Case** and **strict vs loose type validation** toggles.
+
+This is the single most-used configuration surface in either product, and ours
+is the thinnest part of the schema. Concretely missing and commonly needed:
+`isEmpty` / `isNotEmpty`, `exists` / `notExists`, `startsWith` / `endsWith`,
+`notContains`, `isTrue` / `isFalse`, date comparison, and the case-insensitivity
+toggle. **Recommend closing this first** — it is additive to `CONDITION_OPS`
+plus the evaluator, needs no engine change, and unblocks four node types at once.
+
+## 8. Per-node configuration gaps
+
+| Node | Ours | Missing vs n8n | Weight |
+|---|---|---|---|
+| `data` op `compose` | passthrough only — returns its input structured | n8n's Set/Edit Fields **JSON mode**: build an object from named fields. The `fields` array already exists on the schema (used by `select`) and is not wired to `compose` | **High** — blocks the "hold a token for later" pattern |
+| `transform` (Set) | `fields: {name, value}[]` | per-field **type** (string/number/boolean/array/object), **Include Other Input Fields** (all / selected / all-except), dot-notation toggle, ignore-conversion-errors | **High** |
+| `join` (Merge) | `passthrough \| append \| combineByKey` + `key` | combine **by position**, **all combinations**, **include unpaired items**, more than 2 inputs, SQL mode | Medium |
+| `loop` | `over`, `concurrency`, `itemError` | **batch size** (N items per iteration, not just concurrency), explicit "done" branch | Medium |
+| `http` | method/url/query/headers/body/cookie/contentType/responseType/redirects/failOnHttpError/retries/timeout/pagination/optimizeForAi/credentialId | **pagination stop-condition** (n8n's "complete when": status code / expression / empty response — ours stops on `maxPages` or an empty page only), **request batching** (items per batch + interval) for rate-limited APIs, **include response headers/status**, **split response into items**, max-redirect count | Medium |
+| `switch` | `cases[]`, implicit default | **send to all matching outputs** toggle, explicit configurable fallback output | Low |
+| `subflow` | flowId/inputs/onError/retries/timeout/perItem | **wait for completion** toggle (fire-and-forget) | Low |
+| `code` | language, mode (all/each), timeout | parity | — |
+| `wait` | duration / until / **webhook** | parity (resume-by-URL shipped since the original audit) | — |
+
+## 9. Item-shaping nodes we have no equivalent for
+
+n8n ships these as first-class core nodes; our `DATA_OPS` covers neither:
+
+- **Sort** — by field(s), asc/desc, or custom comparator.
+- **Limit** — keep first/last N items.
+- **Remove Duplicates** — by all fields / selected fields / compared against previous runs.
+- **Aggregate** — collapse items into one (field-wise or whole-item list).
+- **Summarize** — group by + sum/avg/count/min/max. The pivot-table node; no analog here and it is the one most often reached for in reporting flows.
+
+`Split Out` is covered by `flatten` / `getItem`, and `Item Lists` by
+`filterArray` / `select` / `trim`. Adding **sort**, **limit**, and **summarize**
+as three new `DATA_OPS` would close most of the practical distance.
+
+## 10. Triggers
+
+`FLOW_TRIGGER_TYPES = manual | schedule | webhook | signal | poll`.
+
+Gaps are in the **webhook trigger's configuration**, not the trigger set:
+n8n exposes **response mode** (respond immediately / when last node finishes /
+via a Respond-to-Webhook node), **webhook authentication** (basic / header /
+none), raw-body passthrough, and a per-webhook path. Worth checking ours against
+that list before calling triggers done.
+
+## 11. Deliberate non-goals
+
+Not gaps — do not close:
+
+- **Ignore SSL issues** on HTTP. n8n has it; we shouldn't. The SSRF guard and
+  host-bound credentials are a deliberate security posture (§4).
+- **Proxy configuration** on HTTP — same reasoning, and no managed-SaaS demand.
+- **Execute Once** — our fan-out is opt-in, so the default already is "once".
+
+## 12. Recommended order
+
+1. **Condition operators** (§7) — widest reach, additive, no engine change.
+2. **`compose` object mode + `transform` field types** (§8) — the two that
+   currently block real flows being built.
+3. **`sort` / `limit` / `summarize` data ops** (§9).
+4. **Retry wait + Always Output Data** (§6) — small, and both show up the moment
+   someone builds against a flaky API.
+5. Merge modes, loop batch size, HTTP pagination stop-condition (§8).

@@ -93,17 +93,18 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main
           id="main-content"
           className={`app-canvas relative min-h-0 min-w-0 flex-1 ${
-            fullscreen ? 'overflow-y-auto lg:overflow-hidden' : 'overflow-y-auto'
+            fullscreen ? 'overflow-hidden' : 'overflow-y-auto'
           }`}
         >
           {fullscreen ? (
             // INNER boundary resets on navigation so a page error clears when the
             // user clicks away, instead of leaving them stuck on the fallback.
-            // On desktop the route fills the shell and its own panes own scrolling.
-            // Mobile remains a natural-height stack scrolled by <main>.
+            // Pin fullscreen routes to the shell's actual content box. Using an
+            // absolute inset here avoids a descendant's content height ever
+            // enlarging <main> and creating a second, page-level scrollbar.
             <motion.div
               key={pathname}
-              className="relative min-h-full w-full lg:h-full lg:min-h-0 lg:overflow-hidden"
+              className="absolute inset-0 min-h-0 w-full overflow-hidden"
               {...routeMotion}
             >
               <ErrorBoundary resetKey={pathname}><SetupGate>{children}</SetupGate></ErrorBoundary>

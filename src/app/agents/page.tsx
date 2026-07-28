@@ -411,7 +411,7 @@ function AgentHQ() {
     // page already sits inside a viewport-tall <main>, so a second 100vh claim
     // made the shell taller than the window — a page-level scrollbar, the
     // sidebar's footer clipped, and dead canvas showing at the edges.
-    <div className="flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto lg:overflow-hidden">
       {/* Agents / Templates toggle — folds the former Templates page into Home. */}
       <div className="flex shrink-0 items-center justify-center border-b bg-white/80 px-4 py-2.5 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
         <ViewToggle view={view} onChange={setView} templateCount={templateCount} />

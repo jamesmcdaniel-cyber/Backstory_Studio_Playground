@@ -100,13 +100,24 @@ export default function AssistantHome() {
 
   const activeHint = PERSONAS.find((p) => p.key === persona)?.hint
 
+  // Before the first question this is a landing surface, so the composer sits in
+  // the middle of the screen rather than pinned under the header with the rest
+  // of the viewport empty. Once a conversation exists the content has to grow
+  // downward, so it goes back to top-aligned.
+  const started = thread.length > 0 || busy
+
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 pb-24 pt-10 sm:pt-14">
+    <div
+      className={cn(
+        'mx-auto flex w-full max-w-6xl flex-col px-4 pb-24',
+        started ? 'pt-10 sm:pt-14' : 'min-h-[68vh] justify-center pt-6',
+      )}
+    >
       <div className="mb-8 flex items-center justify-between gap-4">
         <p className="font-mono text-xs tracking-[0.2em] text-gray-500">
           <span className="text-horizon-500">{'///'}</span> {hello}
         </p>
-        {(thread.length > 0 || busy) && (
+        {started && (
           <button
             type="button"
             onClick={startNewChat}
@@ -185,15 +196,16 @@ export default function AssistantHome() {
         </div>
       </div>
 
-      {/* Suggestion chips (empty state only) */}
-      {thread.length === 0 && !busy && (
-        <div className="mt-5 flex flex-wrap gap-3">
+      {/* Suggestion chips (empty state only). One row on a wide screen, spread
+          edge to edge under the composer; they wrap only when it gets narrow. */}
+      {!started && (
+        <div className="mt-5 flex flex-wrap gap-3 lg:flex-nowrap lg:justify-between">
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => void ask(s)}
-              className="rounded-full border border-gray-200 bg-white px-4 py-2.5 font-mono text-sm text-gray-600 shadow-1 transition-[transform,border-color,box-shadow,color] duration-base hover:-translate-y-0.5 hover:border-horizon-200 hover:text-horizon-700 hover:shadow-2 active:translate-y-0"
+              className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-4 py-2.5 font-mono text-sm text-gray-600 shadow-1 transition-[transform,border-color,box-shadow,color] duration-base hover:-translate-y-0.5 hover:border-horizon-200 hover:text-horizon-700 hover:shadow-2 active:translate-y-0"
             >
               {s}
             </button>
@@ -202,7 +214,7 @@ export default function AssistantHome() {
       )}
 
       {/* Conversation */}
-      {(thread.length > 0 || busy) && (
+      {started && (
         <div className="mt-8 space-y-8">
           {thread.map((turn, i) => (
             <div key={i} className="space-y-3">

@@ -8,6 +8,7 @@ import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/vis
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
+import { searchBuiltinCatalogue } from '@/lib/librarian/catalogue'
 import { retrieveHelpDocs } from '@/lib/help-center/docs'
 
 // The Assistant: a holistic workspace assistant (the /dashboard home). It
@@ -30,7 +31,9 @@ Different questions want different answers, so pick the one that fits:
 
 You may be given HELP CENTRE excerpts: official Backstory product documentation. It is the authoritative source on how Backstory itself works — features, setup, integrations, MCP, permissions. When an excerpt covers the question, answer from it and say what it says, rather than from your own general knowledge; when the excerpts contradict what you assumed, the excerpts win. If they only partly cover it, use what they do cover and be plain about the rest.
 
-You may also be given CANDIDATE items from the user's own workspace. That list is a keyword match, NOT a recommendation — it is often irrelevant, and most answers should cite nothing from it. Refer to an item only when it genuinely answers the question or is the obvious next step, and never pad an answer with a generic "explore the Agents section" or "check your existing agents". Never invent items that are not listed.
+You may also be given CANDIDATE items. These are two different things: entries labelled "agent template" or "flow template" are the READY-MADE library Backstory Studio ships — anyone can open one and deploy it — while the rest are the user's own agents, flows, and past runs. That list is a keyword match, NOT a recommendation: it is often irrelevant, and most answers should cite nothing from it. Refer to an item only when it genuinely answers the question or is the obvious next step, and never pad an answer with a generic "explore the Agents section" or "check your existing agents". Never invent items that are not listed.
+
+When someone asks whether something exists or which template does a job, a matching template in that list IS the answer — name it and say it is ready to deploy. Only say the library has nothing for it when no candidate fits; never tell the user to go and look for themselves through a list you were given.
 
 End your reply with one final line, exactly this shape and nothing after it:
 RELEVANT: 1, 3
@@ -98,6 +101,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   const workspaceItems = dedupeResults([
+    // The catalogue the platform ships (code, not rows) — without this the
+    // Assistant cannot see its own gallery and denies that a template exists.
+    ...searchBuiltinCatalogue(words),
     ...flows.map((f): LibrarianResult => ({ type: 'flow', id: f.id, title: f.name || 'Untitled flow', subtitle: `Flow · ${f.status.toLowerCase()}`, href: `/flows/${f.id}` })),
     ...agents.map((a): LibrarianResult => ({ type: 'agent', id: a.id, title: titleOf(a.metadata, a.description.split('\n')[0] || 'Untitled agent'), subtitle: a.folder ? `Agent · ${a.folder}` : 'Agent', href: `/agents?agent=${a.id}` })),
     ...templates.map((t): LibrarianResult => ({ type: 'template', id: t.id, title: t.name, subtitle: 'Template', href: `/templates/${t.id}` })),

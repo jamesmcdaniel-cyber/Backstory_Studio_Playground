@@ -1,4 +1,4 @@
-import { flowNodeSchema, type FlowGraph, type FlowNode } from '@/lib/flows/graph'
+import { flowNodeSchema, type FlowEdge, type FlowGraph, type FlowNode } from '@/lib/flows/graph'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
 import type { NodePosition } from '@/lib/flows/layout'
 
@@ -461,6 +461,146 @@ export function setNodePositions(graph: FlowGraph, positions: Map<string, NodePo
       return pos ? ({ ...node, position: pos } as FlowNode) : node
     }),
   }
+}
+
+/**
+ * Whether `addEdge` would accept this connection — the predicate the canvas
+ * uses to refuse an illegal drag before it is dropped, rather than drawing an
+ * edge that validation later rejects. Same rules, one implementation.
+ */
+export function canConnect(graph: FlowGraph, source: string, target: string, branch?: string): boolean {
+  return addEdge(graph, source, target, branch).added
+}
+
+/** Create a step at an explicit canvas position, wired to nothing. Used when a
+ *  handle drag is released on empty canvas: the caller adds the edge. */
+export function insertNodeAt(
+  graph: FlowGraph,
+  type: StepType,
+  position: NodePosition,
+  agentId?: string,
+): { graph: FlowGraph; nodeId: string } {
+  const { node, extraNodes } = makeNode(graph, type, agentId)
+  const placed = { ...node, position } as FlowNode
+  return { graph: { ...graph, nodes: [...graph.nodes, placed, ...extraNodes] }, nodeId: node.id }
+}
+
+/**
+ * Create a step at `position` and connect it downstream of `sourceId`'s
+ * `branch` handle. The source's existing edge on that handle is left alone, so
+ * dragging a second edge off one handle FANS OUT rather than replacing —
+ * exactly what the scheduler's `ok` result already executes concurrently.
+ */
+export function insertNodeFromHandle(
+  graph: FlowGraph,
+  sourceId: string,
+  branch: string | undefined,
+  type: StepType,
+  position: NodePosition,
+  agentId?: string,
+): { graph: FlowGraph; nodeId: string } {
+  const { graph: withNode, nodeId } = insertNodeAt(graph, type, position, agentId)
+  const { graph: connected } = addEdge(withNode, sourceId, nodeId, branch)
+  return { graph: connected, nodeId }
+}
+
+/**
+ * Splice a new step into an existing edge: source → new → target, preserving
+ * the original edge's branch tag on the upstream half so a condition branch
+ * stays a condition branch.
+ */
+export function insertNodeOnEdge(
+  graph: FlowGraph,
+  edgeIdToSplit: string,
+  type: StepType,
+  position: NodePosition,
+  agentId?: string,
+): { graph: FlowGraph; nodeId: string } {
+  const edge = graph.edges.find((candidate) => candidate.id === edgeIdToSplit)
+  if (!edge) return { graph, nodeId: '' }
+  const { graph: withNode, nodeId } = insertNodeAt(graph, type, position, agentId)
+  const edges = withNode.edges.filter((candidate) => candidate.id !== edgeIdToSplit)
+  edges.push({
+    id: edgeId(edge.source, nodeId, edge.branch),
+    source: edge.source,
+    target: nodeId,
+    ...(edge.branch ? { branch: edge.branch } : {}),
+  })
+  edges.push({ id: edgeId(nodeId, edge.target), source: nodeId, target: edge.target })
+  return { graph: { ...withNode, edges }, nodeId }
+}
+
+/** A copied selection: the steps plus only the edges internal to them. */
+export type CopiedSelection = { nodes: FlowNode[]; edges: FlowEdge[] }
+
+/**
+ * Extract `ids` and the edges BETWEEN them from a graph. Edges crossing the
+ * selection boundary are dropped — pasting them would silently rewire steps the
+ * user did not copy. The trigger is never copyable, and container bodies come
+ * along with their container rather than as standalone steps.
+ */
+export function copySelection(graph: FlowGraph, ids: string[]): CopiedSelection {
+  const contained = containerMemberIds(graph)
+  const selected = new Set(ids.filter((id) => id !== 'trigger' && !contained.has(id)))
+  const nodes = graph.nodes.filter((node) => selected.has(node.id))
+  const edges = graph.edges.filter((edge) => selected.has(edge.source) && selected.has(edge.target))
+  return { nodes, edges }
+}
+
+/**
+ * Paste a copied selection with fresh ids, anchored so the selection's
+ * top-left corner lands at `position` and the internal arrangement is kept.
+ * Internal edges are remapped onto the new ids; nothing connects to the
+ * existing graph, so a paste can never disturb what is already wired.
+ */
+export function pasteSelectionAt(
+  graph: FlowGraph,
+  selection: CopiedSelection,
+  position: NodePosition,
+): { graph: FlowGraph; nodeIds: string[] } {
+  if (!selection.nodes.length) return { graph, nodeIds: [] }
+  const anchorX = Math.min(...selection.nodes.map((node) => node.position?.x ?? 0))
+  const anchorY = Math.min(...selection.nodes.map((node) => node.position?.y ?? 0))
+
+  const idMap = new Map<string, string>()
+  let working = graph
+  const pasted: FlowNode[] = []
+  for (const node of selection.nodes) {
+    // newNodeId reads the graph, so grow `working` as we go or every copy
+    // would claim the same id.
+    const freshId = newNodeId({ ...working, nodes: [...working.nodes, ...pasted] })
+    idMap.set(node.id, freshId)
+    // Containers paste with an EMPTY body: their body ids belong to the
+    // original and must never be shared between two containers.
+    const data = JSON.parse(JSON.stringify(node.data))
+    if (node.type === 'loop') data.body = []
+    if (node.type === 'parallel') data.branches = []
+    pasted.push({
+      id: freshId,
+      type: node.type,
+      data,
+      position: {
+        x: position.x + ((node.position?.x ?? 0) - anchorX),
+        y: position.y + ((node.position?.y ?? 0) - anchorY),
+      },
+      ...(node.disabled ? { disabled: true } : {}),
+    } as FlowNode)
+  }
+  working = { ...working, nodes: [...working.nodes, ...pasted] }
+
+  const edges = [...working.edges]
+  for (const edge of selection.edges) {
+    const source = idMap.get(edge.source)
+    const target = idMap.get(edge.target)
+    if (!source || !target) continue
+    edges.push({
+      id: edgeId(source, target, edge.branch),
+      source,
+      target,
+      ...(edge.branch ? { branch: edge.branch } : {}),
+    })
+  }
+  return { graph: { ...working, edges }, nodeIds: [...idMap.values()] }
 }
 
 /** Validate clipboard content into a paste-safe step (never a trigger; containers emptied). */

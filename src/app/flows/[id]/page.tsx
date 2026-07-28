@@ -21,8 +21,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { emptyGraph, type FlowGraph, type FlowNode, type OutputField } from '@/lib/flows/graph'
-import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, deleteNodes, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter } from '@/lib/flows/mutate'
-import { writeFlowClipboard, readFlowClipboard } from '@/lib/flows/clipboard'
+import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, deleteNodes, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter, addEdge, removeEdge, setNodePositions, insertNodeFromHandle, insertNodeOnEdge, copySelection, pasteSelectionAt, type StepType } from '@/lib/flows/mutate'
+import { layoutGraph, type NodePosition } from '@/lib/flows/layout'
+import { writeFlowClipboard, readFlowClipboard, writeFlowSelection, readFlowSelection } from '@/lib/flows/clipboard'
 import { applyCopilotOps, type CopilotOp } from '@/lib/flows/copilot-ops'
 import { buildDataTree } from '@/lib/flows/datatree'
 import { normalizeStepAlias, type FlowContext } from '@/features/flows/context'
@@ -36,6 +37,7 @@ import { missingRequiredInputFields } from '@/lib/flows/input-validation'
 import { storedRunInput, prefillTextFromRunInput } from '@/lib/flows/reuse-input'
 import { FlowCanvas, type FlowInsertSeed } from '@/components/flows/flow-canvas'
 import { CanvasRail } from '@/components/flows/canvas-rail'
+import { GraphCanvas } from '@/components/flows/canvas/graph-canvas'
 import { StepDrawer, type OrgMember, type ToolCatalog } from '@/components/flows/step-drawer'
 import { CopilotPanel } from '@/components/flows/copilot-panel'
 import { RunPanel, type FlowRunDetail } from '@/components/flows/run-panel'
@@ -45,7 +47,7 @@ import { ResizablePanel } from '@/components/flows/resizable-panel'
 import { useCanvasPan } from '@/components/flows/use-canvas-pan'
 import { TestPanel } from '@/components/flows/test-panel'
 import { VersionsPanel } from '@/components/flows/versions-panel'
-import type { StepStatus } from '@/components/flows/step-card'
+import type { StepStatus } from '@/lib/flows/node-presentation'
 
 type Agent = { id: string; title: string }
 
@@ -179,6 +181,10 @@ function clampZoom(value: number): number {
   return Math.min(1.5, Math.max(0.5, value))
 }
 
+/** Which builder surface is showing. */
+type BuilderView = 'inline' | 'canvas'
+const VIEW_STORAGE_KEY = 'flows.builderView'
+
 function filenameSlug(value: string): string {
   return (value || 'flow')
     .toLowerCase()
@@ -250,7 +256,26 @@ function FlowBuilder() {
   const [showVersions, setShowVersions] = useState(false)
   const [showJam, setShowJam] = useState(false)
   const [viewingVersion, setViewingVersion] = useState<{ version: number; graph: FlowGraph } | null>(null)
+  // Which builder the user is in. Inline is the original vertical chain;
+  // Canvas is the free-form DAG editor. Persisted per browser so a user who
+  // works on canvas lands there next time.
+  const [view, setView] = useState<BuilderView>('inline')
+  useEffect(() => {
+    const saved = window.localStorage.getItem(VIEW_STORAGE_KEY)
+    if (saved === 'canvas' || saved === 'inline') setView(saved)
+  }, [])
+  const changeView = useCallback((next: BuilderView) => {
+    setView(next)
+    try { window.localStorage.setItem(VIEW_STORAGE_KEY, next) } catch { /* storage unavailable */ }
+  }, [])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // The step whose drawer is OPEN. Inline opens on select; Canvas opens on
+  // double-click only, so a single click can select a chip without the drawer
+  // covering the graph you are wiring.
+  const [openNodeId, setOpenNodeId] = useState<string | null>(null)
+  // Canvas focus request — bumping the nonce re-centers the viewport even when
+  // the same node is jumped to twice.
+  const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null)
   // Multi-select: a contiguous range of spine steps (shift-click). Empty in the
   // normal single-select flow; drives the bulk-actions bar + bulk delete.
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -593,10 +618,13 @@ function FlowBuilder() {
     const rect = canvasContentRef.current?.getBoundingClientRect()
     if (!rect) return
     const point = toContentSpace(event.clientX, event.clientY, rect, zoom)
-    sendCursor(point.x, point.y)
+    sendCursor(point.x, point.y, 'inline')
   }, [canvasPan.handlers, zoom, sendCursor])
   // Who's-editing ring: publish our selected node; render everyone else's.
   useEffect(() => { setSelection(selectedId) }, [selectedId, setSelection])
+  // Inline lays out in document pixels, Canvas in DAG coordinates — the same
+  // (x, y) means two different places, so only same-view cursors are drawn.
+  const viewCursors = useMemo(() => cursors.filter((cursor) => cursor.space === view), [cursors, view])
   const remoteSelections = useMemo(() => {
     const map: Record<string, { name: string; color: string }[]> = {}
     for (const p of others) if (p.selection) (map[p.selection] ??= []).push({ name: p.name, color: p.color })
@@ -649,6 +677,160 @@ function FlowBuilder() {
     setSelectedIds([])
     toast.success(`Duplicated ${ordered.length} steps.`)
   }, [graph, selectedIds, commitGraph])
+
+  const applyInsertSeed = useCallback((next: FlowGraph, nodeId: string, seed?: FlowInsertSeed): FlowGraph => {
+    if (!seed) return next
+    const node = next.nodes.find((entry) => entry.id === nodeId)
+    if (!node) return next
+    if (node.type === 'agent') {
+      return updateNode(next, {
+        ...node,
+        data: {
+          ...node.data,
+          agentId: seed.agentId ?? node.data.agentId,
+          ...(seed.label ? { label: seed.label } : {}),
+        },
+      })
+    }
+    if (node.type === 'tool') {
+      return updateNode(next, {
+        ...node,
+        data: {
+          ...node.data,
+          connectionId: seed.connectionId ?? node.data.connectionId,
+          toolName: seed.toolName ?? node.data.toolName,
+          ...(seed.label ? { label: seed.label } : {}),
+        },
+      })
+    }
+    if (node.type === 'variable' && seed.variableOp) {
+      // Non-initialize ops mutate a variable declared elsewhere — the default
+      // varType only belongs on the declaration site.
+      const varType = seed.variableOp === 'initialize' ? node.data.varType : undefined
+      return updateNode(next, {
+        ...node,
+        data: { ...node.data, op: seed.variableOp, varType, ...(seed.label ? { label: seed.label } : {}) },
+      })
+    }
+    if (node.type === 'data' && seed.dataOp) {
+      // Ops with required list config start with one empty row so the editor
+      // opens ready to fill in (mirrors condition/transform defaults).
+      const extras =
+        seed.dataOp === 'filterArray'
+          ? { clauses: [{ left: '', op: 'contains' as const, right: '' }] }
+          : seed.dataOp === 'select'
+            ? { fields: [{ name: '', value: '' }] }
+            : {}
+      return updateNode(next, {
+        ...node,
+        data: { ...node.data, op: seed.dataOp, ...extras, ...(seed.label ? { label: seed.label } : {}) },
+      })
+    }
+    if (node.type === 'ai' && seed.aiOp) {
+      // Ops with required config open ready to fill in (mirrors data-op seeding):
+      // extract needs a field row, categorize two category rows, score its bounds.
+      const extras =
+        seed.aiOp === 'extract'
+          ? { outputFields: [{ name: '', type: 'string' as const }] }
+          : seed.aiOp === 'categorize'
+            ? { categories: ['', ''] }
+            : seed.aiOp === 'score'
+              ? { scoreMin: 1, scoreMax: 10 }
+              : {}
+      return updateNode(next, {
+        ...node,
+        data: { ...node.data, aiOp: seed.aiOp, ...extras, ...(seed.label ? { label: seed.label } : {}) },
+      })
+    }
+    if (node.type === 'code' && seed.codeLanguage) {
+      const python = seed.codeLanguage === 'python'
+      return updateNode(next, {
+        ...node,
+        data: {
+          ...node.data,
+          language: seed.codeLanguage,
+          code: python ? 'return input' : 'return input;',
+          ...(seed.label ? { label: seed.label } : {}),
+        },
+      })
+    }
+    // Every other step type only carries the label (picker leaves like
+    // "HTTP Webhook" pre-name their node).
+    if (seed.label && node.type !== 'trigger') {
+      return updateNode(next, { ...node, data: { ...node.data, label: seed.label } } as FlowNode)
+    }
+    return next
+  }, [])
+  // ── Canvas actions ──────────────────────────────────────────────────────────
+  // Every one routes through commitGraph, so undo/redo and the jam broadcast
+  // work on canvas edits exactly as they do on inline ones.
+  const canvasSelectionChange = useCallback((ids: string[]) => {
+    setSelectedIds(ids.length > 1 ? ids : [])
+    setSelectedId(ids.length === 1 ? ids[0] : null)
+    // Changing the selection closes the drawer; re-open with a double-click.
+    setOpenNodeId(null)
+  }, [])
+  const canvasOpenNode = useCallback((nodeId: string) => {
+    setSelectedId(nodeId)
+    setSelectedIds([])
+    setOpenNodeId(nodeId)
+  }, [])
+  const canvasMoveNodes = useCallback((positions: Map<string, NodePosition>) => {
+    commitGraph(setNodePositions(graph, positions))
+  }, [graph, commitGraph])
+  const canvasConnect = useCallback((source: string, target: string, branch?: string) => {
+    const { graph: next, added } = addEdge(graph, source, target, branch)
+    if (!added) {
+      toast.error('That connection would loop the flow back on itself.')
+      return
+    }
+    commitGraph(next)
+  }, [graph, commitGraph])
+  const canvasDeleteEdge = useCallback((edgeId: string) => {
+    commitGraph(removeEdge(graph, edgeId))
+  }, [graph, commitGraph])
+  const canvasInsertFromHandle = useCallback(
+    (sourceId: string, branch: string | undefined, position: NodePosition, type: StepType, seed?: FlowInsertSeed) => {
+      const agentId = type === 'agent' ? seed?.agentId ?? agents[0]?.id ?? '' : undefined
+      const { graph: inserted, nodeId } = insertNodeFromHandle(graph, sourceId, branch, type, position, agentId)
+      commitGraph(applyInsertSeed(inserted, nodeId, seed))
+      setSelectedId(nodeId)
+      setOpenNodeId(nodeId)
+    },
+    [graph, agents, commitGraph, applyInsertSeed],
+  )
+  const canvasInsertOnEdge = useCallback(
+    (edgeId: string, position: NodePosition, type: StepType, seed?: FlowInsertSeed) => {
+      const agentId = type === 'agent' ? seed?.agentId ?? agents[0]?.id ?? '' : undefined
+      const { graph: inserted, nodeId } = insertNodeOnEdge(graph, edgeId, type, position, agentId)
+      if (!nodeId) return
+      commitGraph(applyInsertSeed(inserted, nodeId, seed))
+      setSelectedId(nodeId)
+      setOpenNodeId(nodeId)
+    },
+    [graph, agents, commitGraph, applyInsertSeed],
+  )
+  const canvasTidyUp = useCallback(() => {
+    commitGraph(setNodePositions(graph, layoutGraph(graph, { force: true })))
+    toast.success('Steps re-arranged — ⌘Z to undo.')
+  }, [graph, commitGraph])
+  const canvasCopy = useCallback(() => {
+    const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
+    const selection = copySelection(graph, ids)
+    if (!selection.nodes.length) return
+    writeFlowSelection(selection)
+    toast.success(`Copied ${selection.nodes.length} step${selection.nodes.length === 1 ? '' : 's'}.`)
+  }, [graph, selectedIds, selectedId])
+  const canvasPaste = useCallback((position: NodePosition) => {
+    const selection = readFlowSelection()
+    if (!selection) return
+    const { graph: next, nodeIds } = pasteSelectionAt(graph, selection, position)
+    if (!nodeIds.length) return
+    commitGraph(next)
+    setSelectedIds(nodeIds.length > 1 ? nodeIds : [])
+    setSelectedId(nodeIds.length === 1 ? nodeIds[0] : null)
+    toast.success(`Pasted ${nodeIds.length} step${nodeIds.length === 1 ? '' : 's'}.`)
+  }, [graph, commitGraph])
 
   const undo = useCallback(() => {
     const prev = undoStack.current.pop()
@@ -726,10 +908,23 @@ function FlowBuilder() {
   const jumpToNode = useCallback((nodeId: string) => {
     if (viewingVersion) return
     setSelectedId(nodeId)
+    if (view === 'canvas') {
+      // Bump the nonce so jumping to the same node twice still re-centers.
+      setFocusRequest((prev) => ({ id: nodeId, nonce: (prev?.nonce ?? 0) + 1 }))
+      return
+    }
     document.querySelector(`[data-node-id="${nodeId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [viewingVersion])
+  }, [viewingVersion, view])
   const inputFields = useMemo(() => triggerInputFields(graph), [graph])
   const selectedNode = graph.nodes.find((n) => n.id === selectedId) ?? null
+  // Inline opens the drawer whenever a step is selected. Canvas needs an
+  // explicit double-click, and any change of selection closes it again — so the
+  // drawer always shows the step that is actually selected, never a stale one.
+  const drawerNode = view === 'canvas' ? (openNodeId && openNodeId === selectedId ? selectedNode : null) : selectedNode
+  const closeDrawer = useCallback(() => {
+    setOpenNodeId(null)
+    setSelectedId(null)
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -766,6 +961,8 @@ function FlowBuilder() {
         }
         return
       }
+      // Canvas handles copy/paste itself so a paste lands at the pointer.
+      if (view === 'canvas') return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c') {
         if (selectedNode && selectedNode.type !== 'trigger') {
           e.preventDefault()
@@ -789,7 +986,7 @@ function FlowBuilder() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo, selectedId, selectedNode, selectedIds, bulkDelete, graph, commitGraph, viewingVersion])
+  }, [undo, redo, selectedId, selectedNode, selectedIds, bulkDelete, graph, commitGraph, viewingVersion, view])
 
   const loopContext = useMemo(() => parentLoop(graph, selectedId), [graph, selectedId])
   const parallelContext = useMemo(() => parentParallelBranch(graph, selectedId), [graph, selectedId])
@@ -1462,90 +1659,6 @@ function FlowBuilder() {
     if (data?.success) setAgents(data.agents.map((a: Agent) => ({ id: a.id, title: a.title })))
   }, [])
 
-  const applyInsertSeed = useCallback((next: FlowGraph, nodeId: string, seed?: FlowInsertSeed): FlowGraph => {
-    if (!seed) return next
-    const node = next.nodes.find((entry) => entry.id === nodeId)
-    if (!node) return next
-    if (node.type === 'agent') {
-      return updateNode(next, {
-        ...node,
-        data: {
-          ...node.data,
-          agentId: seed.agentId ?? node.data.agentId,
-          ...(seed.label ? { label: seed.label } : {}),
-        },
-      })
-    }
-    if (node.type === 'tool') {
-      return updateNode(next, {
-        ...node,
-        data: {
-          ...node.data,
-          connectionId: seed.connectionId ?? node.data.connectionId,
-          toolName: seed.toolName ?? node.data.toolName,
-          ...(seed.label ? { label: seed.label } : {}),
-        },
-      })
-    }
-    if (node.type === 'variable' && seed.variableOp) {
-      // Non-initialize ops mutate a variable declared elsewhere — the default
-      // varType only belongs on the declaration site.
-      const varType = seed.variableOp === 'initialize' ? node.data.varType : undefined
-      return updateNode(next, {
-        ...node,
-        data: { ...node.data, op: seed.variableOp, varType, ...(seed.label ? { label: seed.label } : {}) },
-      })
-    }
-    if (node.type === 'data' && seed.dataOp) {
-      // Ops with required list config start with one empty row so the editor
-      // opens ready to fill in (mirrors condition/transform defaults).
-      const extras =
-        seed.dataOp === 'filterArray'
-          ? { clauses: [{ left: '', op: 'contains' as const, right: '' }] }
-          : seed.dataOp === 'select'
-            ? { fields: [{ name: '', value: '' }] }
-            : {}
-      return updateNode(next, {
-        ...node,
-        data: { ...node.data, op: seed.dataOp, ...extras, ...(seed.label ? { label: seed.label } : {}) },
-      })
-    }
-    if (node.type === 'ai' && seed.aiOp) {
-      // Ops with required config open ready to fill in (mirrors data-op seeding):
-      // extract needs a field row, categorize two category rows, score its bounds.
-      const extras =
-        seed.aiOp === 'extract'
-          ? { outputFields: [{ name: '', type: 'string' as const }] }
-          : seed.aiOp === 'categorize'
-            ? { categories: ['', ''] }
-            : seed.aiOp === 'score'
-              ? { scoreMin: 1, scoreMax: 10 }
-              : {}
-      return updateNode(next, {
-        ...node,
-        data: { ...node.data, aiOp: seed.aiOp, ...extras, ...(seed.label ? { label: seed.label } : {}) },
-      })
-    }
-    if (node.type === 'code' && seed.codeLanguage) {
-      const python = seed.codeLanguage === 'python'
-      return updateNode(next, {
-        ...node,
-        data: {
-          ...node.data,
-          language: seed.codeLanguage,
-          code: python ? 'return input' : 'return input;',
-          ...(seed.label ? { label: seed.label } : {}),
-        },
-      })
-    }
-    // Every other step type only carries the label (picker leaves like
-    // "HTTP Webhook" pre-name their node).
-    if (seed.label && node.type !== 'trigger') {
-      return updateNode(next, { ...node, data: { ...node.data, label: seed.label } } as FlowNode)
-    }
-    return next
-  }, [])
-
   if (loading) {
     return (
       <div className="flex h-full flex-col">
@@ -1654,6 +1767,23 @@ function FlowBuilder() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        {/* Builder view: the inline chain, or the free-form DAG canvas. */}
+        <div className="flex items-center rounded-lg border border-border p-0.5" role="tablist" aria-label="Builder view">
+          {(['inline', 'canvas'] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="tab"
+              aria-selected={view === option}
+              onClick={() => changeView(option)}
+              className={`rounded-md px-2.5 py-1 text-xs font-semibold capitalize transition-colors ${
+                view === option ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
         {!external && (
           <>
             <Button variant="outline" size="sm" onClick={() => setShowTest((v) => !v)}>
@@ -1785,9 +1915,42 @@ function FlowBuilder() {
           onLeave={huddle.leave}
           onToggleMute={huddle.toggleMute}
         />
+        {view === 'canvas' && (
+          <div className="min-w-0 flex-1 bg-white">
+            <GraphCanvas
+              graph={canvasGraph}
+              agentName={(agentId) => agentsById.get(agentId) ?? ''}
+              agents={agents}
+              toolCatalog={toolCatalog}
+              labelCtx={labelCtx}
+              published={published}
+              statusByNode={viewingVersion ? {} : statusByNode}
+              issuesByNode={viewingVersion ? undefined : issuesByNode}
+              highlightIds={viewingVersion ? [] : selectedIds.length > 1 ? selectedIds : highlightIds}
+              selectedId={selectedId}
+              selectedIds={selectedIds}
+              remoteSelections={viewingVersion ? undefined : remoteSelections}
+              cursors={viewCursors}
+              focusRequest={focusRequest}
+              readOnly={Boolean(viewingVersion) || !canEdit}
+              onSelectionChange={canvasSelectionChange}
+              onOpenNode={canvasOpenNode}
+              onMoveNodes={canvasMoveNodes}
+              onConnectNodes={canvasConnect}
+              onDeleteEdge={canvasDeleteEdge}
+              onInsertFromHandle={canvasInsertFromHandle}
+              onInsertOnEdge={canvasInsertOnEdge}
+              onTidyUp={canvasTidyUp}
+              onCopySelection={canvasCopy}
+              onPasteAt={canvasPaste}
+              onCursorMove={(position) => sendCursor(position.x, position.y, 'canvas')}
+            />
+          </div>
+        )}
+
         <div
           ref={canvasScrollRef}
-          className={`min-w-0 flex-1 overflow-auto bg-white p-8 ${canvasPan.panning ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
+          className={`min-w-0 flex-1 overflow-auto bg-white p-8 ${view === 'canvas' ? 'hidden' : ''} ${canvasPan.panning ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
           onClick={() => { if (!canvasPan.consumeMoved()) setSelectedId(null) }}
           {...canvasPan.handlers}
           onPointerMove={onCanvasPointerMove}
@@ -1801,7 +1964,7 @@ function FlowBuilder() {
             className="relative"
             style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', width: `${100 / zoom}%`, marginLeft: `${(1 - 1 / zoom) * 50}%` }}
           >
-            <CursorLayer cursors={cursors} />
+            <CursorLayer cursors={viewCursors} />
             <FlowCanvas
               graph={canvasGraph}
               agentName={(agentId) => agentsById.get(agentId) ?? ''}
@@ -1896,6 +2059,7 @@ function FlowBuilder() {
           </div>
         )}
 
+        {view === 'inline' && (
         <CanvasRail
           zoom={zoom}
           onZoom={setZoom}
@@ -1906,8 +2070,9 @@ function FlowBuilder() {
           nodes={canvasGraph.nodes.filter((n) => n.type !== 'trigger').map((n) => ({ id: n.id, title: labelForNode(n.id) }))}
           onJump={jumpToNode}
         />
+        )}
 
-        {selectedNode && !viewingVersion && (
+        {drawerNode && !viewingVersion && (
           <div
             className="fixed inset-0 z-50 bg-slate-950/55 p-2 backdrop-blur-sm md:p-3"
             onMouseDown={(event) => {
@@ -1917,9 +2082,9 @@ function FlowBuilder() {
             <div className="mx-auto h-full w-full max-w-[1800px]" onMouseDown={(event) => event.stopPropagation()}>
               <StepDrawer
                 layout="workspace"
-                node={selectedNode}
+                node={drawerNode}
                 flowId={id}
-                issues={issuesByNode[selectedNode.id]?.items}
+                issues={issuesByNode[drawerNode.id]?.items}
                 agents={agents}
                 members={members}
                 toolCatalog={toolCatalog}
@@ -1931,32 +2096,32 @@ function FlowBuilder() {
                 rawInput={selectedNodeRawInput}
                 rawOutput={selectedNodeRawOutput}
                 rawLogs={selectedNodeRawLogs}
-                mockData={graph.pinData?.[selectedNode.id]}
-                onExecuteStep={() => void runPartial(selectedNode.id, 'stopAfter')}
-                onExecuteOnly={selectedRun?.id ? () => void runPartial(selectedNode.id, 'only') : undefined}
-                onExecutePrevious={() => void runPartial(selectedNode.id, 'stopBefore')}
-                onSetMockData={(value) => setNodeMockData(selectedNode.id, value)}
+                mockData={graph.pinData?.[drawerNode.id]}
+                onExecuteStep={() => void runPartial(drawerNode.id, 'stopAfter')}
+                onExecuteOnly={selectedRun?.id ? () => void runPartial(drawerNode.id, 'only') : undefined}
+                onExecutePrevious={() => void runPartial(drawerNode.id, 'stopBefore')}
+                onSetMockData={(value) => setNodeMockData(drawerNode.id, value)}
                 onChange={commitFieldEdit}
-                onChangeType={(type) => commitGraph(changeNodeType(graph, selectedNode.id, type))}
+                onChangeType={(type) => commitGraph(changeNodeType(graph, drawerNode.id, type))}
                 onDuplicate={() => {
-                  const { graph: next, nodeId } = duplicateNode(graph, selectedNode.id)
+                  const { graph: next, nodeId } = duplicateNode(graph, drawerNode.id)
                   commitGraph(next)
                   setSelectedId(nodeId)
                 }}
                 onAddStep={
-                  selectedNode.type === 'loop' || selectedNode.type === 'parallel'
+                  drawerNode.type === 'loop' || drawerNode.type === 'parallel'
                     ? (type) => {
-                        const { graph: next, nodeId } = addContainerStep(graph, selectedNode.id, type, type === 'agent' ? agents[0]?.id ?? '' : undefined)
+                        const { graph: next, nodeId } = addContainerStep(graph, drawerNode.id, type, type === 'agent' ? agents[0]?.id ?? '' : undefined)
                         commitGraph(next)
                         setSelectedId(nodeId)
                       }
                     : undefined
                 }
                 onDelete={() => {
-                  commitGraph(deleteNode(graph, selectedNode.id))
-                  setSelectedId(null)
+                  commitGraph(deleteNode(graph, drawerNode.id))
+                  closeDrawer()
                 }}
-                onClose={() => setSelectedId(null)}
+                onClose={closeDrawer}
               />
             </div>
           </div>

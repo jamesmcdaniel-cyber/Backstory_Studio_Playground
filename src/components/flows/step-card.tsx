@@ -4,47 +4,30 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import {
-  Bot,
-  Braces,
   CalendarDays,
   Check,
-  CircleStop,
   ClipboardCopy,
   Code2,
-  BookOpen,
   Copy,
   FileText,
-  Filter,
-  GitBranch,
-  GitMerge,
-  Globe,
   Hash,
-  FileOutput,
   Mail,
   MoreHorizontal,
   PanelRight,
   Pencil,
   Plus,
   RefreshCw,
-  Repeat,
-  Rows3,
   Settings2,
-  SlidersHorizontal,
-  Sparkles,
-  Split,
-  StickyNote,
-  Timer,
   ToggleLeft,
   Workflow,
   Trash2,
   Type,
-  UserCheck,
-  Variable,
-  Wrench,
-  Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { NODE_ICON, NODE_TONE, STATUS_DOT, type StepStatus } from '@/lib/flows/node-presentation'
+
+export type { StepStatus }
 import { cn } from '@/lib/utils'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type ConditionClause, type ConditionOp, type DataOp, type FlowNode, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
@@ -69,74 +52,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-export type StepStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'waiting' | 'skipped' | 'stopped' | 'resumed'
 
 type Agent = { id: string; title: string }
 type InputKind = 'text' | 'yesno' | 'file' | 'email' | 'number' | 'date'
-
-const NODE_ICON: Record<FlowNode['type'], typeof Bot> = {
-  trigger: Zap,
-  agent: Bot,
-  condition: GitBranch,
-  loop: Repeat,
-  parallel: Rows3,
-  stop: CircleStop,
-  tool: Wrench,
-  http: Globe,
-  transform: SlidersHorizontal,
-  filter: Filter,
-  switch: Split,
-  variable: Variable,
-  data: Braces,
-  humanReview: UserCheck,
-  // NEUTRAL placeholder for Task 6 (builder UX) — icon/tone finalized with the editor.
-  output: FileOutput,
-  // NEUTRAL placeholder for Task 6 (builder UX) — icon/tone finalized with the join editor.
-  join: GitMerge,
-  ai: Sparkles,
-  subflow: Workflow,
-  knowledge: BookOpen,
-  code: Code2,
-  wait: Timer,
-  note: StickyNote,
-}
-
-const NODE_TONE: Record<FlowNode['type'], string> = {
-  trigger: 'bg-blue-600 text-white',
-  agent: 'bg-slate-900 text-white',
-  http: 'bg-emerald-600 text-white',
-  tool: 'bg-orange-500 text-white',
-  condition: 'bg-amber-500 text-white',
-  loop: 'bg-sky-500 text-white',
-  parallel: 'bg-cyan-600 text-white',
-  stop: 'bg-red-500 text-white',
-  transform: 'bg-violet-500 text-white',
-  filter: 'bg-lime-600 text-white',
-  switch: 'bg-fuchsia-600 text-white',
-  variable: 'bg-purple-600 text-white',
-  data: 'bg-violet-600 text-white',
-  humanReview: 'bg-blue-600 text-white',
-  output: 'bg-teal-600 text-white',
-  // NEUTRAL placeholder for Task 6 (builder UX) — finalized with the join editor.
-  join: 'bg-indigo-600 text-white',
-  ai: 'bg-indigo-500 text-white',
-  subflow: 'bg-teal-500 text-white',
-  knowledge: 'bg-rose-500 text-white',
-  code: 'bg-amber-600 text-white',
-  wait: 'bg-slate-500 text-white',
-  note: 'bg-yellow-400 text-yellow-950',
-}
-
-const STATUS_DOT: Record<StepStatus, string> = {
-  queued: 'bg-gray-300',
-  running: 'bg-amber-400 animate-pulse',
-  succeeded: 'bg-emerald-500',
-  failed: 'bg-red-500',
-  waiting: 'bg-blue-500 animate-pulse',
-  skipped: 'bg-gray-300',
-  stopped: 'bg-slate-500',
-  resumed: 'bg-gray-300',
-}
 
 const INPUT_TYPES: {
   id: InputKind

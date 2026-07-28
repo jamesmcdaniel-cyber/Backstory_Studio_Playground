@@ -21,8 +21,12 @@ const NODE_SEP = 28
  * Pure and side-effect-free: returns id → {x,y} (top-left origin). Nodes that
  * already carry a persisted `position` are honored (dagre is only used to place
  * the ones that don't), so a user's manual arrangement survives re-layout.
+ *
+ * `force` discards persisted positions and lays every node out from scratch —
+ * this is the canvas "Tidy up" action, the one case where overwriting a manual
+ * arrangement is what the user asked for.
  */
-export function layoutGraph(graph: FlowGraph): Map<string, NodePosition> {
+export function layoutGraph(graph: FlowGraph, options?: { force?: boolean }): Map<string, NodePosition> {
   const contained = new Set(
     graph.nodes.flatMap((node) =>
       node.type === 'loop' ? node.data.body : node.type === 'parallel' ? node.data.branches.flat() : [],
@@ -48,7 +52,7 @@ export function layoutGraph(graph: FlowGraph): Map<string, NodePosition> {
   const positions = new Map<string, NodePosition>()
   for (const node of outerNodes) {
     // A persisted position wins — manual arrangement is preserved across re-layout.
-    if (node.position) {
+    if (node.position && !options?.force) {
       positions.set(node.id, { x: node.position.x, y: node.position.y })
       continue
     }

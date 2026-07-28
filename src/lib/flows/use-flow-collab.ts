@@ -5,10 +5,10 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { diffGraph, applyGraphOps, isEmptyOps } from '@/lib/flows/graph-ops'
-import { upsertCursor, pruneCursors, type RemoteCursor } from '@/lib/flows/cursor-store'
+import { upsertCursor, pruneCursors, type CursorSpace, type RemoteCursor } from '@/lib/flows/cursor-store'
 import { shouldAnswerBootstrap } from '@/lib/flows/collab-roles'
 
-export type { RemoteCursor }
+export type { RemoteCursor, CursorSpace }
 
 export type CollabParticipant = {
   clientId: string
@@ -96,7 +96,7 @@ export function useFlowCollab(
   roster: CollabParticipant[]
   cursors: RemoteCursor[]
   broadcastGraph: (graph: unknown) => void
-  sendCursor: (x: number, y: number) => void
+  sendCursor: (x: number, y: number, space?: CursorSpace) => void
   setSelection: (nodeId: string | null) => void
   setInHuddle: (inHuddle: boolean) => void
   bus: CollabBus
@@ -214,7 +214,7 @@ export function useFlowCollab(
         }
       })
       .on('broadcast', { event: 'cursor' }, ({ payload }) => {
-        const p = payload as { clientId?: string; x?: number; y?: number; name?: string; color?: string } | undefined
+        const p = payload as { clientId?: string; x?: number; y?: number; name?: string; color?: string; space?: string } | undefined
         if (!p || p.clientId === clientId || typeof p.x !== 'number' || typeof p.y !== 'number') return
         setCursors((prev) =>
           upsertCursor(prev, {
@@ -223,6 +223,8 @@ export function useFlowCollab(
             y: p.y!,
             name: p.name ?? 'Teammate',
             color: p.color ?? '#6366f1',
+            // Packets from a client that predates the canvas carry no space.
+            space: p.space === 'canvas' ? 'canvas' : 'inline',
             ts: Date.now(),
           }),
         )
@@ -300,7 +302,7 @@ export function useFlowCollab(
 
   // Cursor stream: leading-edge throttle; the next move refreshes the tail.
   const lastCursorAt = useRef(0)
-  const sendCursor = useCallback((x: number, y: number) => {
+  const sendCursor = useCallback((x: number, y: number, space: CursorSpace = 'inline') => {
     const now = Date.now()
     if (now - lastCursorAt.current < CURSOR_INTERVAL_MS) return
     lastCursorAt.current = now
@@ -309,7 +311,7 @@ export function useFlowCollab(
     channelRef.current?.send({
       type: 'broadcast',
       event: 'cursor',
-      payload: { clientId, x, y, name: me.name, color: me.color },
+      payload: { clientId, x, y, name: me.name, color: me.color, space },
     })
   }, [clientId])
 

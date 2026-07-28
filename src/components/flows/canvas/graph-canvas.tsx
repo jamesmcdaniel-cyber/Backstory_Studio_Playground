@@ -1,0 +1,531 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Background,
+  BackgroundVariant,
+  MiniMap,
+  Panel,
+  ReactFlow,
+  ReactFlowProvider,
+  SelectionMode,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  useViewport,
+  ViewportPortal,
+  type Connection,
+  type FinalConnectionState,
+  type OnSelectionChangeParams,
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
+import { LayoutGrid, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import type { FlowGraph, FlowNode } from '@/lib/flows/graph'
+import type { StepType } from '@/lib/flows/mutate'
+import { canConnect } from '@/lib/flows/mutate'
+import { layoutGraph, type NodePosition } from '@/lib/flows/layout'
+import {
+  edgeRunStates,
+  hasTargetHandle,
+  outerEdges,
+  outerNodes,
+  placeDownstreamOf,
+  sourceHandleOf,
+  sourceHandlesFor,
+} from '@/lib/flows/canvas-model'
+import { subtitleFor, titleFor, type StepStatus } from '@/lib/flows/node-presentation'
+import { selectedToolPresentation } from '@/lib/flows/tool-presentation'
+import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
+import type { RemoteCursor } from '@/lib/flows/cursor-store'
+import { CursorLayer } from '@/components/flows/cursor-layer'
+import { FlowPicker } from '@/components/flows/flow-picker'
+import type { FlowInsertSeed } from '@/components/flows/flow-canvas'
+import type { ToolCatalog } from '@/components/flows/step-drawer'
+import { CanvasActionsContext, StepNode, type StepFlowNode } from './step-node'
+import { StepEdge, type StepFlowEdge } from './step-edge'
+
+/**
+ * The n8n-style graph editor. Steps are compact chips positioned freely;
+ * connections are drawn between handles, so one step can fan out to several
+ * downstream paths — which the scheduler already executes concurrently.
+ *
+ * This component owns viewport, selection and the insert picker. It owns NO
+ * graph mutations: every structural change is reported upward so the page
+ * applies it through its single `commitGraph` entry point, keeping undo/redo
+ * and the jam broadcast working unchanged.
+ */
+
+type Agent = { id: string; title: string }
+
+export type GraphCanvasProps = {
+  graph: FlowGraph
+  agentName: (agentId: string) => string
+  agents: Agent[]
+  toolCatalog: ToolCatalog
+  labelCtx?: TokenLabelContext
+  published?: boolean
+  statusByNode: Record<string, StepStatus>
+  issuesByNode?: Record<string, { errors: number; warnings: number }>
+  highlightIds?: string[]
+  selectedId: string | null
+  selectedIds: string[]
+  remoteSelections?: Record<string, { name: string; color: string }[]>
+  cursors?: RemoteCursor[]
+  /** Center the viewport on a step (search, copilot jump). The nonce makes a
+   *  repeat jump to the same step re-center rather than no-op. */
+  focusRequest?: { id: string; nonce: number } | null
+  readOnly?: boolean
+  onSelectionChange: (ids: string[]) => void
+  onOpenNode: (nodeId: string) => void
+  onMoveNodes: (positions: Map<string, NodePosition>) => void
+  onConnectNodes: (source: string, target: string, branch?: string) => void
+  onDeleteEdge: (edgeId: string) => void
+  onInsertFromHandle: (
+    sourceId: string,
+    branch: string | undefined,
+    position: NodePosition,
+    type: StepType,
+    seed?: FlowInsertSeed,
+  ) => void
+  onInsertOnEdge: (edgeId: string, position: NodePosition, type: StepType, seed?: FlowInsertSeed) => void
+  onTidyUp: () => void
+  onCopySelection: () => void
+  onPasteAt: (position: NodePosition) => void
+  onCursorMove?: (position: NodePosition) => void
+}
+
+const nodeTypes = { step: StepNode }
+const edgeTypes = { step: StepEdge }
+
+/** Where an insert picker is open, and what it will do on pick. */
+type PickerState = {
+  screen: { x: number; y: number }
+  position: NodePosition
+  target: { kind: 'handle'; sourceId: string; branch?: string } | { kind: 'edge'; edgeId: string }
+}
+
+const MINIMAP_COLOR: Record<string, string> = {
+  running: '#fbbf24',
+  succeeded: '#10b981',
+  failed: '#ef4444',
+  waiting: '#3b82f6',
+  skipped: '#cbd5e1',
+  stopped: '#64748b',
+}
+
+function GraphCanvasInner(props: GraphCanvasProps) {
+  const {
+    graph,
+    agentName,
+    agents,
+    toolCatalog,
+    labelCtx,
+    published,
+    statusByNode,
+    issuesByNode,
+    highlightIds,
+    selectedId,
+    selectedIds,
+    remoteSelections,
+    cursors,
+    focusRequest,
+    readOnly,
+    onSelectionChange,
+    onOpenNode,
+    onMoveNodes,
+    onConnectNodes,
+    onDeleteEdge,
+    onInsertFromHandle,
+    onInsertOnEdge,
+    onTidyUp,
+    onCopySelection,
+    onPasteAt,
+    onCursorMove,
+  } = props
+
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const { screenToFlowPosition, flowToScreenPosition, fitView, zoomIn, zoomOut } = useReactFlow()
+  const { zoom } = useViewport()
+  const [picker, setPicker] = useState<PickerState | null>(null)
+  const [rfNodes, setRfNodes, onNodesChange] = useNodesState<StepFlowNode>([])
+  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<StepFlowEdge>([])
+  /** Last pointer position in flow coordinates — where a paste lands. */
+  const pointerRef = useRef<NodePosition>({ x: 0, y: 0 })
+  const selectedEdgeIdsRef = useRef<string[]>([])
+
+  // Positions: persisted where the user arranged them, dagre-computed for the
+  // rest. Never committed on open — merely viewing a flow must not dirty it.
+  const positions = useMemo(() => layoutGraph(graph), [graph])
+
+  const humanize = useCallback(
+    (value?: string) => (value && labelCtx ? humanizeTokens(value, labelCtx) : value),
+    [labelCtx],
+  )
+
+  const presentation = useMemo(
+    () => ({ agentName, toolCatalog, published }),
+    [agentName, toolCatalog, published],
+  )
+
+  const buildNodes = useCallback((): StepFlowNode[] => {
+    const selection = new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])
+    const connectedHandles = new Map<string, Set<string>>()
+    for (const edge of outerEdges(graph)) {
+      const handles = connectedHandles.get(edge.source) ?? new Set<string>()
+      handles.add(sourceHandleOf(edge))
+      connectedHandles.set(edge.source, handles)
+    }
+    return outerNodes(graph).map((node: FlowNode) => {
+      const brand =
+        node.type === 'tool'
+          ? selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName).brand
+          : undefined
+      return {
+        id: node.id,
+        type: 'step' as const,
+        position: positions.get(node.id) ?? { x: 0, y: 0 },
+        selected: selection.has(node.id),
+        deletable: node.type !== 'trigger',
+        data: {
+          node,
+          title: humanize(titleFor(node, presentation)) ?? '',
+          subtitle: humanize(subtitleFor(node, presentation)),
+          status: statusByNode[node.id],
+          issues: issuesByNode?.[node.id],
+          handles: sourceHandlesFor(node),
+          hasTarget: hasTargetHandle(node),
+          connected: [...(connectedHandles.get(node.id) ?? [])],
+          bodyCount:
+            node.type === 'loop'
+              ? node.data.body.length
+              : node.type === 'parallel'
+                ? node.data.branches.flat().length
+                : undefined,
+          editors: remoteSelections?.[node.id],
+          brand: brand ? { slug: brand.slug, label: brand.label } : undefined,
+          highlighted: highlightIds?.includes(node.id),
+        },
+      }
+    })
+  }, [
+    graph,
+    positions,
+    presentation,
+    humanize,
+    statusByNode,
+    issuesByNode,
+    highlightIds,
+    selectedId,
+    selectedIds,
+    remoteSelections,
+    toolCatalog,
+  ])
+
+  const buildEdges = useCallback((): StepFlowEdge[] => {
+    const states = edgeRunStates(graph, statusByNode)
+    return outerEdges(graph).map((edge) => ({
+      id: edge.id,
+      type: 'step' as const,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: sourceHandleOf(edge),
+      targetHandle: 'in',
+      data: { isError: edge.branch === 'error', state: states.get(edge.id) ?? 'idle' },
+    }))
+  }, [graph, statusByNode])
+
+  useEffect(() => {
+    setRfNodes(buildNodes())
+  }, [buildNodes, setRfNodes])
+
+  useEffect(() => {
+    setRfEdges(buildEdges())
+  }, [buildEdges, setRfEdges])
+
+  useEffect(() => {
+    if (!focusRequest) return
+    void fitView({ nodes: [{ id: focusRequest.id }], maxZoom: 1.2, duration: 300 })
+  }, [focusRequest, fitView])
+
+  // ── Insert picker ───────────────────────────────────────────────────────────
+
+  const openPicker = useCallback(
+    (position: NodePosition, target: PickerState['target']) => {
+      if (readOnly) return
+      const wrapper = wrapperRef.current?.getBoundingClientRect()
+      const screen = flowToScreenPosition(position)
+      setPicker({
+        position,
+        target,
+        screen: { x: screen.x - (wrapper?.left ?? 0), y: screen.y - (wrapper?.top ?? 0) },
+      })
+    },
+    [flowToScreenPosition, readOnly],
+  )
+
+  const handleAddFrom = useCallback(
+    (sourceId: string, branch: string | undefined) => {
+      openPicker(placeDownstreamOf(sourceId, positions), { kind: 'handle', sourceId, branch })
+    },
+    [openPicker, positions],
+  )
+
+  const handleInsertOnEdge = useCallback(
+    (edgeId: string) => {
+      const edge = graph.edges.find((candidate) => candidate.id === edgeId)
+      if (!edge) return
+      const source = positions.get(edge.source)
+      const target = positions.get(edge.target)
+      const midpoint =
+        source && target
+          ? { x: (source.x + target.x) / 2, y: (source.y + target.y) / 2 }
+          : placeDownstreamOf(edge.source, positions)
+      openPicker(midpoint, { kind: 'edge', edgeId })
+    },
+    [graph.edges, positions, openPicker],
+  )
+
+  const pick = useCallback(
+    (type: StepType, seed?: FlowInsertSeed) => {
+      if (!picker) return
+      if (picker.target.kind === 'handle') {
+        onInsertFromHandle(picker.target.sourceId, picker.target.branch, picker.position, type, seed)
+      } else {
+        onInsertOnEdge(picker.target.edgeId, picker.position, type, seed)
+      }
+      setPicker(null)
+    },
+    [picker, onInsertFromHandle, onInsertOnEdge],
+  )
+
+  const actions = useMemo(
+    () => ({ onAddFrom: handleAddFrom, onInsertOnEdge: handleInsertOnEdge, onDeleteEdge, readOnly }),
+    [handleAddFrom, handleInsertOnEdge, onDeleteEdge, readOnly],
+  )
+
+  // ── React Flow handlers ─────────────────────────────────────────────────────
+
+  const isValidConnection = useCallback(
+    (connection: Connection | { source: string; target: string; sourceHandle?: string | null }) => {
+      if (!connection.source || !connection.target) return false
+      const branch = connection.sourceHandle && connection.sourceHandle !== 'out' ? connection.sourceHandle : undefined
+      return canConnect(graph, connection.source, connection.target, branch)
+    },
+    [graph],
+  )
+
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return
+      const branch = connection.sourceHandle && connection.sourceHandle !== 'out' ? connection.sourceHandle : undefined
+      onConnectNodes(connection.source, connection.target, branch)
+    },
+    [onConnectNodes],
+  )
+
+  /** Released on empty canvas: offer to create the step right there. */
+  const handleConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+      if (readOnly || state.toNode || !state.fromNode) return
+      const point = 'changedTouches' in event ? event.changedTouches[0] : event
+      const position = screenToFlowPosition({ x: point.clientX, y: point.clientY })
+      const handleId = state.fromHandle?.id
+      openPicker(position, {
+        kind: 'handle',
+        sourceId: state.fromNode.id,
+        branch: handleId && handleId !== 'out' ? handleId : undefined,
+      })
+    },
+    [openPicker, readOnly, screenToFlowPosition],
+  )
+
+  const handleSelectionChange = useCallback(
+    ({ nodes, edges }: OnSelectionChangeParams) => {
+      selectedEdgeIdsRef.current = edges.map((edge) => edge.id)
+      const ids = nodes.map((node) => node.id)
+      const current = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
+      const same = ids.length === current.length && ids.every((id) => current.includes(id))
+      if (!same) onSelectionChange(ids)
+    },
+    [onSelectionChange, selectedId, selectedIds],
+  )
+
+  const handleNodeDragStop = useCallback(() => {
+    const moved = new Map<string, NodePosition>()
+    for (const node of rfNodes) moved.set(node.id, { x: Math.round(node.position.x), y: Math.round(node.position.y) })
+    onMoveNodes(moved)
+  }, [rfNodes, onMoveNodes])
+
+  const handlePointerMove = useCallback(
+    (event: React.PointerEvent) => {
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      pointerRef.current = position
+      onCursorMove?.(position)
+    },
+    [screenToFlowPosition, onCursorMove],
+  )
+
+  // Canvas-owned keyboard: edge delete (the page's handler owns node delete, so
+  // deletions keep going through `deleteNode`'s chain healing) and
+  // position-aware copy/paste.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const el = event.target as HTMLElement | null
+      if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) return
+      if (readOnly) return
+      if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) {
+        const edgeIds = selectedEdgeIdsRef.current
+        if (edgeIds.length) {
+          event.preventDefault()
+          for (const edgeId of edgeIds) onDeleteEdge(edgeId)
+        }
+        return
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c') {
+        event.preventDefault()
+        onCopySelection()
+        return
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') {
+        event.preventDefault()
+        onPasteAt(pointerRef.current)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onDeleteEdge, onCopySelection, onPasteAt, readOnly])
+
+  return (
+    <div ref={wrapperRef} className="relative h-full w-full" onPointerMove={handlePointerMove}>
+      <CanvasActionsContext.Provider value={actions}>
+        <ReactFlow<StepFlowNode, StepFlowEdge>
+          nodes={rfNodes}
+          edges={rfEdges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeDragStop={handleNodeDragStop}
+          onNodeDoubleClick={(_, node) => onOpenNode(node.id)}
+          onConnect={handleConnect}
+          onConnectEnd={handleConnectEnd}
+          isValidConnection={isValidConnection}
+          onSelectionChange={handleSelectionChange}
+          onPaneClick={() => setPicker(null)}
+          onContextMenu={(event) => event.preventDefault()}
+          nodesDraggable={!readOnly}
+          nodesConnectable={!readOnly}
+          edgesReconnectable={!readOnly}
+          // Node deletion routes through the page so the chain heals; React
+          // Flow's own delete key would drop edges without reconnecting.
+          deleteKeyCode={null}
+          // n8n feel: left-drag marquee-selects, middle/right-drag pans.
+          selectionOnDrag
+          selectionMode={SelectionMode.Partial}
+          panOnDrag={[1, 2]}
+          panOnScroll
+          zoomOnDoubleClick={false}
+          minZoom={0.15}
+          maxZoom={2}
+          fitView
+          fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={28} size={1.4} color="rgba(15,23,42,0.22)" />
+          <MiniMap
+            pannable
+            zoomable
+            className="!bottom-6 !right-4 !h-24 !w-40 rounded-lg border border-slate-200 !bg-white/90"
+            nodeColor={(node) => MINIMAP_COLOR[String((node.data as { status?: string }).status ?? '')] ?? '#cbd5e1'}
+          />
+
+          <Panel position="bottom-left" className="!bottom-6 !left-4 !m-0">
+            <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.12)]">
+              <button
+                type="button"
+                onClick={() => void zoomIn()}
+                aria-label="Zoom in"
+                title="Zoom in"
+                className="flex h-9 w-9 items-center justify-center text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
+              >
+                <ZoomIn className="h-4 w-4" />
+              </button>
+              <div className="w-full border-t border-slate-200 py-1 text-center text-[10px] font-semibold text-slate-500">
+                {Math.round(zoom * 100)}%
+              </div>
+              <button
+                type="button"
+                onClick={() => void zoomOut()}
+                aria-label="Zoom out"
+                title="Zoom out"
+                className="flex h-9 w-9 items-center justify-center border-t border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
+              >
+                <ZoomOut className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void fitView({ padding: 0.25, maxZoom: 1 })}
+                aria-label="Fit view"
+                title="Fit view"
+                className="flex h-9 w-9 items-center justify-center border-t border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={onTidyUp}
+                  aria-label="Tidy up"
+                  title="Tidy up — re-layout every step"
+                  className="flex h-9 w-9 items-center justify-center border-t border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </Panel>
+
+          {cursors && cursors.length > 0 && (
+            <ViewportPortal>
+              {/* Cursor coordinates ARE flow coordinates, so a teammate's pointer
+                  lands on the same step for every viewer regardless of pan/zoom. */}
+              <CursorLayer cursors={cursors} anchor="origin" />
+            </ViewportPortal>
+          )}
+        </ReactFlow>
+      </CanvasActionsContext.Provider>
+
+      {picker && (
+        <>
+          <div className="absolute inset-0 z-30" onClick={() => setPicker(null)} />
+          <div
+            className={cn(
+              'absolute z-40 max-h-[72vh] w-[min(620px,calc(100%-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
+            )}
+            style={{
+              left: Math.max(8, Math.min(picker.screen.x, (wrapperRef.current?.clientWidth ?? 800) - 640)),
+              top: Math.max(8, Math.min(picker.screen.y, (wrapperRef.current?.clientHeight ?? 600) - 120)),
+            }}
+          >
+            <FlowPicker
+              mode="action"
+              agents={agents}
+              toolCatalog={toolCatalog}
+              onPick={pick}
+              onClose={() => setPicker(null)}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+export function GraphCanvas(props: GraphCanvasProps) {
+  return (
+    <ReactFlowProvider>
+      <GraphCanvasInner {...props} />
+    </ReactFlowProvider>
+  )
+}

@@ -3,13 +3,14 @@
 import { Fragment, useState } from 'react'
 import { Plus, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
-import { AI_OP_LABELS, CONDITION_OP_LABELS, VARIABLE_OP_LABELS, VARIABLE_TYPE_LABELS, type AiOp, type DataOp, type FlowGraph, type FlowNode, type VariableOp } from '@/lib/flows/graph'
+import { CONDITION_OP_LABELS, type AiOp, type DataOp, type FlowGraph, type FlowNode, type VariableOp } from '@/lib/flows/graph'
 import type { StepType } from '@/lib/flows/mutate'
 import type { DataField } from '@/lib/flows/datatree'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
-import { selectedToolPresentation } from '@/lib/flows/tool-presentation'
-import { StepCard, type StepStatus } from './step-card'
+import { titleFor as titleForNode, subtitleFor as subtitleForNode } from '@/lib/flows/node-presentation'
+import { unreachableInlineIds } from '@/lib/flows/canvas-model'
+import { StepCard } from './step-card'
+import type { StepStatus } from '@/lib/flows/node-presentation'
 import { FlowPicker } from './flow-picker'
 import type { OrgMember, ToolCatalog } from './step-drawer'
 
@@ -194,157 +195,11 @@ export function FlowCanvas({
     ),
   )
 
-  const titleFor = (node: FlowNode): string => {
-    switch (node.type) {
-      case 'trigger': {
-        const type = (node.data.trigger as { type?: string } | undefined)?.type ?? 'manual'
-        if (type === 'schedule') return 'Schedule trigger'
-        if (type === 'poll') return 'When new items appear'
-        if (type === 'webhook') return 'When an HTTP request is received'
-        if (type === 'signal') return 'Signal trigger'
-        return 'Manually trigger a flow'
-      }
-      case 'agent':
-        return node.data.label || agentName(node.data.agentId) || 'Run an agent'
-      case 'condition': {
-        const clause = node.data.clauses?.[0] ?? (node.data.left !== undefined ? { left: node.data.left, op: node.data.op, right: node.data.right } : null)
-        const extra = (node.data.clauses?.length ?? 1) > 1 ? ` +${node.data.clauses!.length - 1}` : ''
-        return node.data.label || (clause?.left ? `If ${clause.left} ${CONDITION_OP_LABELS[clause.op ?? 'eq']} ${clause.right}${extra}` : 'If / else')
-      }
-      case 'loop':
-        return node.data.label || 'For each'
-      case 'parallel':
-        return node.data.label || 'Parallel branches'
-      case 'stop':
-        return node.data.label || 'Stop flow'
-      case 'tool':
-        return (
-          node.data.label ||
-          selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName).actionLabel ||
-          'Run a connected tool'
-        )
-      case 'http':
-        return node.data.label || 'HTTP request'
-      case 'transform':
-        return node.data.label || 'Set fields'
-      case 'filter':
-        return node.data.label || 'Filter'
-      case 'switch':
-        return node.data.label || 'Switch'
-      case 'variable': {
-        const name = node.data.name.trim()
-        return node.data.label || `${VARIABLE_OP_LABELS[node.data.op]}${name ? ` ${name}` : ''}`
-      }
-      case 'data':
-        return node.data.label || DATA_OP_LABELS[node.data.op]
-      case 'humanReview':
-        return node.data.label || 'Request information'
-      case 'output':
-        return node.data.label || 'Output'
-      case 'join':
-        return node.data.label || 'Join paths'
-      case 'ai':
-        return node.data.label || AI_OP_LABELS[node.data.aiOp]
-      case 'subflow':
-        return node.data.label || 'Run a flow'
-      case 'knowledge':
-        return node.data.label || 'Search knowledge'
-      case 'code':
-        return node.data.label || (node.data.language === 'python' ? 'Python' : 'JavaScript')
-      case 'wait':
-        return node.data.label || 'Wait'
-      case 'note':
-        return node.data.text.trim().split('\n')[0] || 'Note'
-    }
-  }
-
-  const subtitleFor = (node: FlowNode): string | undefined => {
-    switch (node.type) {
-      case 'trigger': {
-        const trigger = (node.data.trigger as
-          | { type?: string; schedule?: { type?: string; time?: string; timezone?: string }; signal?: string; inputFields?: unknown[]; toolName?: string }
-          | undefined) ?? {}
-        const type = trigger.type ?? 'manual'
-        const inputCount = (trigger.inputFields ?? []).length
-        const inputLine = inputCount ? `${inputCount} input${inputCount === 1 ? '' : 's'}` : 'Add fields users fill in before the flow runs.'
-        if (type === 'schedule') {
-          const schedule = trigger.schedule ?? {}
-          return `Runs ${schedule.type ?? 'daily'}${schedule.time ? ` at ${schedule.time}` : ''} (${schedule.timezone || 'UTC'})`
-        }
-        if (type === 'poll') return trigger.toolName ? `Checks ${trigger.toolName} ${trigger.schedule?.type ?? 'hourly'}` : 'Pick an app and read action to poll'
-        if (type === 'signal') return `Listens for "${trigger.signal || 'unnamed signal'}"`
-        if (type === 'webhook') return published === false ? `${inputLine} · publish to arm` : inputLine
-        // manual keeps the original input-count line.
-        return inputLine
-      }
-      case 'agent':
-        return agentName(node.data.agentId) || 'Choose an agent'
-      case 'loop':
-        return node.data.over === '{{trigger.input}}' ? 'Loop over trigger input' : `Loop over ${node.data.over}`
-      case 'parallel':
-        return `${node.data.branches.length} branch${node.data.branches.length === 1 ? '' : 'es'}`
-      case 'stop':
-        return node.data.reason || undefined
-      case 'tool':
-        return (
-          selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName).brand?.label ||
-          'Choose a connected app and action'
-        )
-      case 'http':
-        return node.data.url ? `${node.data.method} ${node.data.url}` : 'Configure an API request'
-      case 'transform':
-        return `${node.data.fields.length} field${node.data.fields.length === 1 ? '' : 's'}`
-      case 'filter':
-        return node.data.note || 'Continue only if a rule matches'
-      case 'switch':
-        return node.data.note || `${node.data.cases.length} case${node.data.cases.length === 1 ? '' : 's'}`
-      // Subtitles run through StepCard's humanize, so {{tokens}} below read as
-      // plain-English chips, never raw braces.
-      case 'variable': {
-        if (node.data.note) return node.data.note
-        if (node.data.op === 'initialize') {
-          const typeLabel = VARIABLE_TYPE_LABELS[node.data.varType ?? 'string']
-          return node.data.value?.trim() ? `${typeLabel} — starts as ${node.data.value}` : `${typeLabel} variable`
-        }
-        if (node.data.op === 'increment' || node.data.op === 'decrement') {
-          return node.data.value?.trim() ? `By ${node.data.value}` : 'By 1'
-        }
-        return node.data.value?.trim() || 'Choose the value to store'
-      }
-      case 'data':
-        return node.data.note || node.data.input?.trim() || 'Choose the data to work with'
-      case 'code':
-        return node.data.note || `${node.data.mode === 'each' ? 'Once per item' : 'Once for all input'} · ${node.data.language === 'python' ? 'Python' : 'JavaScript'}`
-      case 'humanReview':
-        return node.data.note || node.data.message.trim() || 'Write the question to ask'
-      case 'output': {
-        if (node.data.note) return node.data.note
-        const names = node.data.outputs.map((o) => o.name.trim()).filter(Boolean)
-        if (!names.length) return 'Name the results this flow returns'
-        return names.length === 1 ? `Returns ${names[0]}` : `Returns ${names[0]} +${names.length - 1}`
-      }
-      case 'join':
-        return node.data.note || 'Merge branches back into one path'
-      case 'ai': {
-        if (node.data.note) return node.data.note
-        const gist = (node.data.instructions ?? '').trim().split('\n')[0] || (node.data.input ?? '').trim().split('\n')[0]
-        return gist || 'Tell AI what to do with the input'
-      }
-      case 'subflow':
-        return node.data.note || (node.data.flowId ? 'Runs another flow and passes back its result' : 'Choose the flow to run')
-      case 'knowledge':
-        return node.data.note || (node.data.query?.trim() ? undefined : 'Write what to look for')
-      case 'note':
-        return 'Sticky note'
-      case 'wait':
-        if (node.data.note) return node.data.note
-        if (node.data.mode === 'webhook') return 'Wait for a callback'
-        if (node.data.mode === 'until') return node.data.until?.trim() ? `Until ${node.data.until}` : 'Wait until a date/time'
-        return node.data.amount?.trim() ? `Wait ${node.data.amount} ${node.data.unit ?? 'minutes'}` : 'Wait for a delay'
-      default:
-        return (node.data as { note?: string }).note || undefined
-    }
-  }
+  // Labels come from the shared presentation module so the Inline chain and the
+  // Canvas chip can never name the same step differently.
+  const presentation = { agentName, toolCatalog, published }
+  const titleFor = (node: FlowNode): string => titleForNode(node, presentation)
+  const subtitleFor = (node: FlowNode): string | undefined => subtitleForNode(node, presentation)
 
   const card = (node: FlowNode, index?: number) => {
     const editors = remoteSelections?.[node.id]
@@ -541,6 +396,11 @@ export function FlowCanvas({
   const trigger = byId.get('trigger') ?? graph.nodes[0]
   const first = trigger ? nextOf(trigger.id) : undefined
   const seen = new Set<string>(trigger ? [trigger.id] : [])
+  // The chain walk follows ONE plain successor per step, so a fan-out leaves
+  // whole paths unrendered. Rather than hide them, say so and list them —
+  // nothing in the flow is ever invisible or uneditable here.
+  const strandedIds = unreachableInlineIds(graph)
+  const stranded = strandedIds.map((strandedId) => byId.get(strandedId)).filter((node): node is FlowNode => Boolean(node))
 
   return (
     <div className="mx-auto flex w-full max-w-[760px] flex-col items-center py-8" onClick={() => onBackgroundClick?.()}>
@@ -548,6 +408,11 @@ export function FlowCanvas({
         <Sparkles className="h-3.5 w-3.5" />
         Designer
       </div>
+      {stranded.length > 0 && (
+        <div className="mb-6 w-full rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          This flow has parallel paths the inline builder can&apos;t draw — switch to Canvas to see how they connect.
+        </div>
+      )}
       <div className="flex w-full flex-col items-center">
         {trigger && card(trigger)}
         {trigger && !first && (
@@ -584,6 +449,12 @@ export function FlowCanvas({
         )}
         {renderChain(first, seen)}
       </div>
+      {stranded.length > 0 && (
+        <div className="mt-8 w-full">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Also in this flow</p>
+          <div className="space-y-3">{stranded.map((node) => card(node))}</div>
+        </div>
+      )}
     </div>
   )
 }

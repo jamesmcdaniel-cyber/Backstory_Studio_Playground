@@ -1,9 +1,18 @@
+/**
+ * Which builder view a cursor's coordinates belong to. Inline lays steps out in
+ * document-flow pixels and Canvas in DAG positions — the same (x, y) means two
+ * different places, so a cursor is only drawn for viewers on the same view.
+ */
+export type CursorSpace = 'inline' | 'canvas'
+
 export type RemoteCursor = {
   clientId: string
   x: number
   y: number
   name: string
   color: string
+  /** Coordinate system these x/y belong to. Packets without one are inline. */
+  space: CursorSpace
   /** Local receipt time (ms) — idle cursors fade out via pruneCursors. */
   ts: number
 }

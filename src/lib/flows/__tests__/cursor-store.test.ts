@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { upsertCursor, pruneCursors, type RemoteCursor } from '../cursor-store'
 
-const cursor = (clientId: string, ts: number): RemoteCursor => ({ clientId, x: 1, y: 2, name: 'A', color: '#111', ts })
+const cursor = (clientId: string, ts: number): RemoteCursor => ({ clientId, x: 1, y: 2, name: 'A', color: '#111', space: 'inline', ts })
 
 test('upsertCursor replaces an existing client and appends a new one', () => {
   const a1 = cursor('a', 100)

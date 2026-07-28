@@ -3,17 +3,24 @@
 import type { RemoteCursor } from '@/lib/flows/cursor-store'
 
 /**
- * Remote collaborators' pointers. Rendered INSIDE the zoom-transformed canvas
- * content layer, so content-space coordinates inherit the same pan/zoom the
- * nodes get — a cursor parked on a node shows on that node for every viewer.
- * Positions animate via a short transform transition (the stream is throttled
- * to ~25/s, so CSS interpolates between packets). Idle cursors are pruned by
- * the collab hook; pointer events pass through.
+ * Remote collaborators' pointers. Rendered INSIDE the transformed content layer
+ * of whichever builder view is active, so the shared coordinates inherit the
+ * same pan/zoom the nodes get — a cursor parked on a step shows on that step
+ * for every viewer. Positions animate via a short transform transition (the
+ * stream is throttled to ~25/s, so CSS interpolates between packets). Idle
+ * cursors are pruned by the collab hook; pointer events pass through.
+ *
+ * `anchor` picks how the layer is placed: `fill` stretches over the Inline
+ * canvas's content element, `origin` pins a zero-size layer at the flow origin
+ * for React Flow's ViewportPortal, where stretching would distort the frame.
  */
-export function CursorLayer({ cursors }: { cursors: RemoteCursor[] }) {
+export function CursorLayer({ cursors, anchor = 'fill' }: { cursors: RemoteCursor[]; anchor?: 'fill' | 'origin' }) {
   if (cursors.length === 0) return null
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 z-20">
+    <div
+      aria-hidden
+      className={anchor === 'origin' ? 'pointer-events-none absolute left-0 top-0 z-20' : 'pointer-events-none absolute inset-0 z-20'}
+    >
       {cursors.map((c) => (
         <div
           key={c.clientId}

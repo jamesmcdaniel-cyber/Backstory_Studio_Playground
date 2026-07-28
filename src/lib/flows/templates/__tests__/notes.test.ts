@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import type { FlowGraph } from '@/lib/flows/graph'
+import type { FlowGraph, FlowNode } from '@/lib/flows/graph'
 import { flowTemplateNotesIssues, containsRawToken, type FlowTemplateNotes } from '@/lib/flows/templates/types'
 import { repairDraftedNotes, inferBindings, describeGraphForNotes } from '@/lib/flows/templates/draft-notes'
 
@@ -46,7 +46,7 @@ test('a note for a step that is not in the graph is an issue', () => {
 test('a step missing its on-canvas note is an issue', () => {
   const noNote: FlowGraph = {
     ...graph,
-    nodes: graph.nodes.map((node) => (node.id === 'ask' ? { ...node, data: { ...node.data, note: '' } } : node)),
+    nodes: graph.nodes.map((node) => (node.id === 'ask' ? ({ ...node, data: { ...node.data, note: '' } } as FlowNode) : node)),
   }
   assert.ok(flowTemplateNotesIssues(noNote, notes).some((issue) => issue.includes('on-canvas note')))
 })

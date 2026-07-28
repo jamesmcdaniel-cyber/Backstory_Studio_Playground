@@ -1,4 +1,5 @@
 import { cached } from '@/lib/cache'
+import { cap, decodeEntities, getText, questionTerms, TTL_MS, toText } from '@/lib/help-center/fetching'
 
 /**
  * Retrieval over the public Backstory help centre (help.backstory.ai, an
@@ -11,13 +12,14 @@ import { cached } from '@/lib/cache'
  * the help centre being slow or down must degrade the answer, never break it —
  * and read-through cached, so a warm instance answers repeat questions without
  * any outbound request.
+ *
+ * This is one of three public sources; see `retrieve.ts` for the other two and
+ * for how they are merged into a single ranked citation list.
  */
 
 const ORIGIN = 'https://help.backstory.ai'
 const SEARCH_TIMEOUT_MS = 4_000
 const ARTICLE_TIMEOUT_MS = 5_000
-/** Docs change rarely; an hour keeps them fresh without re-fetching per question. */
-const TTL_MS = 60 * 60 * 1000
 /** Per-article budget fed to the model — enough for a full how-to, bounded for tokens. */
 const MAX_ARTICLE_CHARS = 3_000
 /**
@@ -31,6 +33,8 @@ const MAX_ARTICLE_CHARS = 3_000
  */
 const MIN_HIT_SCORE = 0.5
 
+export { decodeEntities, questionTerms }
+
 export type HelpArticle = {
   title: string
   url: string
@@ -41,33 +45,6 @@ export type HelpArticle = {
 export type HelpDoc = HelpArticle & {
   /** Extracted article body, capped at MAX_ARTICLE_CHARS. */
   text: string
-}
-
-const ENTITIES: Record<string, string> = {
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', mdash: '—', ndash: '–', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”',
-}
-
-/** Decode the entity subset Intercom emits (no DOM available server-side). */
-export function decodeEntities(value: string): string {
-  return value
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
-    .replace(/&([a-z]+);/gi, (match, name: string) => ENTITIES[name.toLowerCase()] ?? match)
-}
-
-/** Strip tags to readable text, keeping block boundaries as line breaks. */
-function toText(html: string): string {
-  const text = html
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<li\b[^>]*>/gi, '\n• ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-  return decodeEntities(text)
-    .replace(/[ \t ]+/g, ' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
 }
 
 /**
@@ -121,32 +98,7 @@ export function extractArticleText(html: string): string {
     .replace(/^\s*Table of contents\s*$/gim, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-  return text.length > MAX_ARTICLE_CHARS ? `${text.slice(0, MAX_ARTICLE_CHARS).trimEnd()}…` : text
-}
-
-async function getText(url: string, timeoutMs: number): Promise<string | null> {
-  try {
-    const response = await fetch(url, {
-      headers: { accept: 'text/html', 'user-agent': 'BackstoryStudio/1.0 (help-center reader)' },
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    return response.ok ? await response.text() : null
-  } catch {
-    return null // offline, timed out, blocked — the caller degrades to no docs
-  }
-}
-
-const STOP_WORDS = new Set([
-  'the', 'and', 'for', 'with', 'how', 'can', 'what', 'you', 'your', 'are', 'this', 'that', 'from', 'about',
-  'into', 'does', 'should', 'could', 'would', 'when', 'where', 'which', 'our', 'get', 'use', 'using', 'need',
-  'want', 'there', 'have', 'has', 'was', 'were', 'why', 'who', 'any', 'all', 'not', 'but', 'its',
-])
-
-/** The words in a question worth matching a doc against. */
-export function questionTerms(question: string): string[] {
-  return [...new Set(
-    question.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w)),
-  )]
+  return cap(text, MAX_ARTICLE_CHARS)
 }
 
 /**
@@ -155,6 +107,7 @@ export function questionTerms(question: string): string[] {
  * Intercom's search is fuzzy enough to return a couple of articles for almost
  * any string — including nonsense — so a hit that shares no vocabulary with the
  * question is dropped before it costs an article fetch and a slice of prompt.
+ * Exact containment on purpose: the 0.5 floor below is calibrated against it.
  */
 export function hitScore(terms: string[], hit: HelpArticle): number {
   if (!terms.length) return 0

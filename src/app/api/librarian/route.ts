@@ -7,38 +7,36 @@ import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
-import { dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
+import { citedItems, citedSources, dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
 import { searchBuiltinCatalogue } from '@/lib/librarian/catalogue'
-import { retrieveHelpDocs } from '@/lib/help-center/docs'
+import { retrieveKnowledge, SOURCE_LABEL, type KnowledgeDoc } from '@/lib/help-center/retrieve'
+import { buildPrompt, SYSTEM_PROMPT } from '@/lib/librarian/prompt'
 
 // The Assistant: a holistic workspace assistant (the /dashboard home). It
-// answers general questions about Backstory and, WHEN THEY ARE ACTUALLY
-// RELEVANT, links the user's own library — templates, flows, agents, recent
-// runs. The keyword search below only assembles candidates; the model marks
-// which ones it stood behind and the rest never reach the UI.
+// answers general questions about Backstory from the three public sites that
+// document it (help centre, developer docs, automation library) and, WHEN THEY
+// ARE ACTUALLY RELEVANT, links the user's own library — templates, flows,
+// agents, recent runs. The keyword search below only assembles candidates; the
+// model marks which ones it stood behind and the rest never reach the UI.
+//
+// Every URL the user sees is one this route retrieved, never one the model
+// wrote: the model cites by number and the numbers are resolved back to the
+// fetched sources here, so a citation cannot point at a page that does not
+// exist.
 
 export type { LibrarianResult } from '@/lib/librarian/relevance'
 
-// Named "the Assistant" to match what the UI calls it (src/app/dashboard/page.tsx).
-const SYSTEM_PROMPT = `You are the Assistant, a concise workspace assistant inside Backstory Studio — a platform where sales teams build AI agents and automated flows over their connected tools (Slack, Gmail, Salesforce, Jira, Granola, and a Backstory MCP for account/deal data).
+/** External sources shown under an answer, capped so the citation list stays readable. */
+const MAX_SOURCES = 4
+/** Workspace items shown as cards under an answer. */
+const MAX_RESULTS = 4
 
-Answer the question directly, in 2–5 sentences of plain English. No preamble, no restating the question. Markdown is fine for emphasis and short lists.
-
-Different questions want different answers, so pick the one that fits:
-- A plain factual or conceptual question ("what is X", "can Backstory do Y") wants a plain answer and nothing else.
-- A "how do I" question wants concrete guidance — the steps, or where in the product to go.
-- A question about the user's own workspace wants their actual items named.
-
-You may be given HELP CENTRE excerpts: official Backstory product documentation. It is the authoritative source on how Backstory itself works — features, setup, integrations, MCP, permissions. When an excerpt covers the question, answer from it and say what it says, rather than from your own general knowledge; when the excerpts contradict what you assumed, the excerpts win. If they only partly cover it, use what they do cover and be plain about the rest.
-
-You may also be given CANDIDATE items. These are two different things: entries labelled "agent template" or "flow template" are the READY-MADE library Backstory Studio ships — anyone can open one and deploy it — while the rest are the user's own agents, flows, and past runs. That list is a keyword match, NOT a recommendation: it is often irrelevant, and most answers should cite nothing from it. Refer to an item only when it genuinely answers the question or is the obvious next step, and never pad an answer with a generic "explore the Agents section" or "check your existing agents". Never invent items that are not listed.
-
-When someone asks whether something exists or which template does a job, a matching template in that list IS the answer — name it and say it is ready to deploy. Only say the library has nothing for it when no candidate fits; never tell the user to go and look for themselves through a list you were given.
-
-End your reply with one final line, exactly this shape and nothing after it:
-RELEVANT: 1, 3
-listing the numbers of the candidates you actually referred to or are recommending — or "RELEVANT: none" when the answer stands on its own. This line is stripped before the user sees it; only the items you list are shown to them.`
-
+export type LibrarianSource = {
+  title: string
+  url: string
+  /** Which site it came from, in the words the UI shows. */
+  label: string
+}
 
 /** Meaningful search terms from the question (drop short/stop words). */
 function terms(question: string): string[] {
@@ -65,10 +63,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // of matching on nothing.
   const hasWords = words.length > 0
 
-  // The help centre is fetched alongside the workspace queries, not after them,
-  // so the docs cost concurrency rather than latency.
+  // The public sources are fetched alongside the workspace queries, not after
+  // them, so the docs cost concurrency rather than latency.
   const [docs, agents, flows, templates, runs] = await Promise.all([
-    retrieveHelpDocs(question),
+    retrieveKnowledge(question),
     prisma.agentTask.findMany({
       where: { organizationId: org, ...agentVisibilityScope(uid), ...(hasWords ? { OR: orContains(words, ['description', 'objective']) } : {}) },
       orderBy: { updatedAt: 'desc' },
@@ -110,25 +108,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     ...runs.map((r): LibrarianResult => ({ type: 'run', id: r.id, title: titleOf(r.metadata, r.agentType), subtitle: `Run · ${r.status.toLowerCase()}`, href: `/agents?run=${r.id}` })),
   ])
 
-  // Help-centre articles join the same numbered list, so the model can cite a
-  // doc the way it cites a workspace item and the UI links it identically.
-  const candidates = [
-    ...workspaceItems,
-    ...docs.map((d): LibrarianResult => ({ type: 'doc', id: d.url, title: d.title, subtitle: 'Help centre', href: d.url })),
-  ]
-  // One numbering space across both blocks — the RELEVANT line the model
-  // returns indexes into `candidates`, so items and docs must share it.
-  const itemBlock = workspaceItems.length
-    ? `CANDIDATE items from this workspace (keyword match — judge relevance yourself):\n${workspaceItems
-        .map((r, i) => `${i + 1}. [${r.type}] ${r.title} — ${r.subtitle}`)
-        .join('\n')}`
-    : 'This workspace has no items matching the question.'
-  const docBlock = docs.length
-    ? `\n\nHELP CENTRE excerpts (official Backstory documentation — authoritative), numbered in the same list:\n\n${docs
-        .map((d, i) => `${workspaceItems.length + i + 1}. [doc] ${d.title} — ${d.url}\n${d.text}`)
-        .join('\n\n')}`
-    : ''
-  const prompt = `${itemBlock}${docBlock}\n\nUser question: ${question}`
+  // Retrieved passages are numbered straight on from the workspace items, so
+  // the model cites a source the way it cites an item and one RELEVANT line
+  // covers both. `citedItems`/`citedSources` split that numbering back apart.
+  const candidateCount = workspaceItems.length + docs.length
+  const prompt = buildPrompt(question, workspaceItems, docs)
 
   const useClaude = Boolean(process.env.ANTHROPIC_API_KEY)
   const client = useClaude ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : qwenClient()
@@ -138,7 +122,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const response = await client.messages.create({
     model,
-    max_tokens: 700,
+    // Headroom for a fully-worked capability answer plus the RELEVANT line; a
+    // 700-token ceiling truncated them mid-list.
+    max_tokens: 1_400,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: prompt }],
   })
@@ -152,8 +138,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   // Only the items the model actually stood behind are returned — the rest of
   // the keyword match stays out of the UI.
-  const { answer, picked } = parseRelevance(raw, candidates.length)
-  const results = picked.slice(0, 4).map((n) => candidates[n - 1])
+  const { answer, picked } = parseRelevance(raw, candidateCount)
+  const results = citedItems(picked, workspaceItems).slice(0, MAX_RESULTS)
 
-  return { success: true, answer: answer || 'I couldn’t generate an answer just now — try rephrasing.', results }
+  // Every URL shown is one this route fetched, resolved back from the number
+  // the model gave — so a citation cannot point at a page that does not exist.
+  const sources: LibrarianSource[] = citedSources<KnowledgeDoc>(picked, workspaceItems.length, docs)
+    .slice(0, MAX_SOURCES)
+    .map((d) => ({ title: d.title, url: d.url, label: SOURCE_LABEL[d.source] }))
+
+  return { success: true, answer: answer || 'I couldn’t generate an answer just now — try rephrasing.', results, sources }
 })

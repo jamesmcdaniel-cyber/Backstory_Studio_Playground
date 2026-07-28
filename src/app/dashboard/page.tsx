@@ -17,7 +17,9 @@ type LibrarianResult = {
   subtitle: string
   href: string
 }
-type Turn = { question: string; answer: string; results: LibrarianResult[] }
+/** An external page the answer was written from — always a real, retrieved URL. */
+type LibrarianSource = { title: string; url: string; label: string }
+type Turn = { question: string; answer: string; results: LibrarianResult[]; sources: LibrarianSource[] }
 
 // Visual-only for now: the persona tunes the hint copy (behavior wiring is a
 // deliberate follow-up).
@@ -81,7 +83,7 @@ export default function AssistantHome() {
       const data = await res.json().catch(() => ({}))
       if (seq !== threadSeq.current) return // the user started a new chat meanwhile
       if (!res.ok) { toast.error(data.error || 'The Assistant couldn’t answer that.'); return }
-      setThread((prev) => [...prev, { question: q, answer: data.answer ?? '', results: data.results ?? [] }])
+      setThread((prev) => [...prev, { question: q, answer: data.answer ?? '', results: data.results ?? [], sources: data.sources ?? [] }])
     } catch {
       if (seq === threadSeq.current) toast.error('Could not reach the Assistant.')
     } finally {
@@ -251,6 +253,40 @@ export default function AssistantHome() {
                         </Link>
                       )
                     })}
+                  </div>
+                )}
+                {/* Where the answer came from. Every URL here was fetched while
+                    answering, so it is safe to show in full — the point is that
+                    the reader can go and check it. */}
+                {turn.sources.length > 0 && (
+                  <div className="mt-4 border-t border-gray-100 pt-3">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-gray-400">Sources</p>
+                    <ol className="mt-2 space-y-2">
+                      {turn.sources.map((s, n) => (
+                        <li key={`${s.url}-${n}`} className="flex gap-2">
+                          <span className="mt-0.5 shrink-0 font-mono text-[11px] text-gray-300">{n + 1}</span>
+                          <span className="min-w-0">
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs font-medium text-gray-700 underline decoration-gray-300 underline-offset-2 transition-colors hover:text-horizon-700 hover:decoration-horizon-400"
+                            >
+                              {s.title}
+                            </a>
+                            <span className="ml-1.5 text-[11px] text-gray-400">{s.label}</span>
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block truncate font-mono text-[11px] text-gray-400 transition-colors hover:text-horizon-600"
+                            >
+                              {s.url}
+                            </a>
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
                   </div>
                 )}
               </div>

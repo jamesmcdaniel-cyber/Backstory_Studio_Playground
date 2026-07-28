@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
+import { citedItems, citedSources, dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
 
 const item = (type: LibrarianResult['type'], title: string, subtitle = ''): LibrarianResult => ({
   type,
@@ -62,5 +62,53 @@ describe('dedupeResults', () => {
       item('agent', 'Silence & Contract Monitor', 'Agent'),
     ])
     assert.equal(deduped.length, 3)
+  })
+})
+
+// The two lists the model is shown share one numbering space: items 1..n, then
+// the retrieved sources.
+const ITEMS = [item('template', 'Meeting Brief'), item('flow', 'Renewal Prep')]
+const SOURCES = [
+  { title: 'Backstory MCP', url: 'https://help.backstory.ai/en/articles/1' },
+  // Two library entries deliberately share one URL, as the live catalogue does.
+  { title: 'Sales Digest', url: 'https://backstory-workflows.vercel.app/' },
+  { title: 'Meeting Brief workflow', url: 'https://backstory-workflows.vercel.app/' },
+]
+
+describe('citedItems', () => {
+  it('returns the workspace items the model numbered, in the order it gave', () => {
+    assert.deepEqual(citedItems([2, 1], ITEMS).map((r) => r.title), ['Renewal Prep', 'Meeting Brief'])
+  })
+
+  it('ignores numbers past the items — those are sources, not items', () => {
+    assert.deepEqual(citedItems([3, 4, 5], ITEMS), [])
+  })
+
+  it('returns nothing when the model stood behind nothing', () => {
+    assert.deepEqual(citedItems([], ITEMS), [])
+  })
+})
+
+describe('citedSources', () => {
+  it('resolves a source number back past the items that precede it', () => {
+    assert.deepEqual(citedSources([1, 3], ITEMS.length, SOURCES).map((s) => s.title), ['Backstory MCP'])
+  })
+
+  it('cites only the entry that was named, not every entry sharing its URL', () => {
+    const cited = citedSources([4], ITEMS.length, SOURCES)
+    assert.deepEqual(cited.map((s) => s.title), ['Sales Digest'])
+  })
+
+  it('falls back to everything retrieved when the model numbered no source', () => {
+    assert.deepEqual(citedSources([1, 2], ITEMS.length, SOURCES).length, SOURCES.length)
+    assert.deepEqual(citedSources([], ITEMS.length, SOURCES).length, SOURCES.length)
+  })
+
+  it('shows nothing when nothing was retrieved', () => {
+    assert.deepEqual(citedSources([1, 2, 3], ITEMS.length, []), [])
+  })
+
+  it('drops a number past the end of both lists', () => {
+    assert.deepEqual(citedSources([99], ITEMS.length, SOURCES).length, SOURCES.length)
   })
 })

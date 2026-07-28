@@ -7,6 +7,7 @@ import { structuredResponseInstruction, parseStructuredAgentOutput } from './age
 import { runDataOp, chunkItems, coerceFieldType } from '@/lib/flows/data-ops'
 import { mergeAppend, mergeAllCombinations, mergeByKey, mergeByPosition } from '@/lib/flows/merge'
 import { computeResumeAt } from '@/lib/flows/wait'
+import { foreignReferences, unresolvedAuthHeaders, foreignReferenceMessage, unresolvedAuthMessage } from '@/lib/flows/foreign-reference'
 
 export type StepOutcome = {
   nodeId: string
@@ -445,13 +446,39 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // call, or agent prompt. Collected per adapter-step resolution below.
     const missingTokens = new Set<string>()
     const onMissingToken = (path: string) => missingTokens.add(path)
-    const missingTokenFailure = (resolvedInput: unknown): NodeResult | null => {
-      if (!missingTokens.size) return null
-      const list = [...missingTokens].map((p) => `{{${p}}}`).join(', ')
-      const error = `Unknown data reference ${list} — this flow has no step or input with that name. Open the step's settings and pick the value from the data menu instead of typing it.`
+    const failStep = (error: string, resolvedInput: unknown): NodeResult => {
       const mode = 'onError' in node.data ? ((node.data as { onError?: 'stop' | 'continue' | 'route' }).onError ?? 'stop') : 'stop'
       emit({ nodeId: node.id, status: 'failed', error, ...(mode === 'route' || mode === 'continue' ? { output: { error, input: resolvedInput } } : {}) })
       return onFailure(mode, error, resolvedInput)
+    }
+    const missingTokenFailure = (resolvedInput: unknown): NodeResult | null => {
+      if (!missingTokens.size) return null
+      const list = [...missingTokens].map((p) => `{{${p}}}`).join(', ')
+      return failStep(
+        `Unknown data reference ${list} — this flow has no step or input with that name. Open the step's settings and pick the value from the data menu instead of typing it.`,
+        resolvedInput,
+      )
+    }
+
+    /**
+     * The counterpart to missingTokenFailure: a reference this engine never
+     * even recognized as a token. `{{path}}` is the only syntax resolveTemplate
+     * substitutes, so another tool's placeholder (`{Output}`,
+     * `body('Step')?['field']`) survives resolution as literal text and would
+     * be sent to the live API verbatim — posting that string as a credential
+     * and coming back 401 while every step reported success. Fail here with the
+     * offending text named instead.
+     */
+    const unresolvedReferenceFailure = (config: Record<string, unknown>): NodeResult | null => {
+      const authHeaders = unresolvedAuthHeaders(config.headers)
+      if (authHeaders.length) return failStep(unresolvedAuthMessage(authHeaders), config)
+      // `body` is exempt: it is payload bound for another system, which may
+      // legitimately contain that system's own expression syntax (posting a
+      // Logic Apps definition, say). Addressing and auth never legitimately do.
+      const addressing = Object.fromEntries(Object.entries(config).filter(([key]) => key !== 'body'))
+      const foreign = foreignReferences(addressing)
+      if (foreign.length) return failStep(foreignReferenceMessage(foreign), config)
+      return null
     }
 
     if (node.type === 'trigger') return { kind: 'skip' }
@@ -722,6 +749,12 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // filterArray clauses / select values resolve per item inside runDataOp,
       // with this ctx riding along so step/trigger/var tokens keep working.
       const input = node.data.input?.trim() ? resolveTemplateValue(node.data.input, ctx) : undefined
+      // A compose with no declared fields is a passthrough, so another tool's
+      // expression left in `input` would flow downstream as literal text and
+      // land in whatever consumes it — typically an auth header. Stop it here,
+      // where the step that owns the bad reference is the one that fails.
+      const unresolved = unresolvedReferenceFailure({ input })
+      if (unresolved) return unresolved
       const res = runDataOp(node.data.op, {
         input,
         separator: node.data.separator === undefined ? undefined : resolveTemplate(node.data.separator, ctx),
@@ -831,7 +864,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               ...(node.data.pagination ? { pagination: node.data.pagination } : {}),
               ...(node.data.optimizeForAi ? { optimizeForAi: node.data.optimizeForAi } : {}),
             }
-      const broken = missingTokenFailure(config)
+      const broken = missingTokenFailure(config) ?? unresolvedReferenceFailure(config)
       if (broken) return broken
       const res: RunAgentResult = opts.runAction
         ? await opts.runAction({ id: stepKey, kind: node.type, config, resume: opts.resumeNodeId === stepKey })

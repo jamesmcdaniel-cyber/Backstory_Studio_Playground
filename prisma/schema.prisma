@@ -38,6 +38,7 @@ model Organization {
   agents             AgentTask[]
   executions         AgentExecution[]
   templates          AgentTemplate[]
+  flowTemplates      FlowTemplate[]
   integrations       Integration[]
   notifications      Notification[]
   mcpConnections     McpConnection[]
@@ -111,6 +112,7 @@ model User {
   organization Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   executions   AgentExecution[]
   templates    AgentTemplate[]
+  flowTemplates FlowTemplate[]
   integrations Integration[]
   ownedAgents  AgentTask[]
   peopleAiConnections PeopleAiConnection[]
@@ -707,6 +709,44 @@ model Flow {
 
   @@index([organizationId, updatedAt])
   @@map("flows")
+}
+
+/// A reusable, WIRED flow: a validated graph plus the notes that explain it.
+/// Unlike an AgentTemplate (one prose blob the model reads at run time), the
+/// executable artifact here IS the graph — `notes` is the human-facing
+/// explanation anchored to it, and `bindings` says how to fill the graph's
+/// empty agent/connection slots in whatever workspace instantiates it.
+model FlowTemplate {
+  id            String  @id @default(cuid())
+  name          String
+  description   String? @db.Text
+  category      String  @default("Custom")
+  graph         Json
+  trigger       Json    @default("{}")
+  /// FlowTemplateNotes — objective, per-step explanations, setup checklist.
+  notes         Json?
+  /// FlowTemplateBinding[] — how to resolve the graph's agent/connection slots.
+  bindings      Json    @default("[]")
+  /// integrations, tags, icon, exampleOutput, authorName
+  configuration Json?
+  isActive      Boolean @default(true)
+  /// 'user' (hand-authored / saved from a flow) or 'ai_generated'.
+  source        String  @default("user")
+  /// 'org' = this workspace only (default); 'global' = published to the shared
+  /// community library, readable cross-org. Mirrors AgentTemplate.
+  visibility    String  @default("org")
+
+  userId         String
+  organizationId String   @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isActive])
+  @@index([organizationId, visibility])
+  @@map("flow_templates")
 }
 
 // Cross-workspace jam grants: a user outside the flow's org who accepted a

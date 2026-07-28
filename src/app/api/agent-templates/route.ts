@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { serializeTemplate, listStoredCatalogue } from '@/lib/templates/catalogue'
-import { EXAMPLE_REPORTS } from '@/lib/templates/example-reports'
+import { EXAMPLE_REPORTS, withOutputContract } from '@/lib/templates/example-reports'
 import { createTemplate } from '@/lib/templates/create-template'
 import { enhanceAutomationInstructions } from '@/lib/templates/automation-assets'
 
@@ -24,7 +24,9 @@ const templateSchema = z.object({
 // Every example output is a full house-format HTML report (see
 // src/features/agents/report-format.ts and src/lib/templates/example-reports)
 // — the gallery renders it via HtmlPreview, so the advertised example IS the
-// exact format live runs produce.
+// exact format live runs produce. The GET handler below appends the matching
+// per-template output contract (generated from the same spec) to these
+// instructions, so a run is held to that example section by section.
 const builtInTemplates = [
   {
     "id": "39-salesai-upsell-engine",
@@ -727,9 +729,13 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const stored = await listStoredCatalogue(auth.organizationId)
   const templates = [
     ...stored,
+    // The instructions served here are what the detail page shows AND what
+    // "Create agent" copies into the agent's objective — so the output contract
+    // derived from the template's advertised example is appended here, next to
+    // the domain instructions it constrains.
     ...builtInTemplates.map((t) => ({
       ...t,
-      instructions: enhanceAutomationInstructions(t.instructions),
+      instructions: enhanceAutomationInstructions(withOutputContract(t.id, t.instructions)),
       custom: false,
       mine: false,
     })),

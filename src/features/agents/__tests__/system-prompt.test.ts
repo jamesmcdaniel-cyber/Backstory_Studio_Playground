@@ -54,6 +54,14 @@ describe('buildAgentSystemPrompt', () => {
     assert.ok(/Otherwise, format the final response as clean Markdown/.test(prompt), 'Markdown stays the non-report default')
   })
 
+  it('makes the report document the whole final response, even when it was also delivered elsewhere', () => {
+    const prompt = buildAgentSystemPrompt('Do the work.', [])
+    assert.ok(/never inside a code fence/i.test(prompt), 'expected the no-code-fence rule')
+    assert.ok(/never followed by a Markdown recap/i.test(prompt), 'expected the no-Markdown-recap rule')
+    assert.ok(/not an excuse to answer in Markdown/i.test(prompt), 'emailing the report must not downgrade the response')
+    assert.ok(/required output shape for this run/i.test(prompt), 'a template contract must override the generic shape')
+  })
+
   it('softens the anti-hedging line to distinguish present from absent information', () => {
     const prompt = buildAgentSystemPrompt('Do the work.', [])
     // The old absolute "Never claim you lack access ..." must be gone.

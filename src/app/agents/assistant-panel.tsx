@@ -6,7 +6,7 @@ import { Check, Clock, Loader2, MessageSquare, Plus, Send } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
+import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { Markdown } from '@/components/ui/markdown'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { cn } from '@/lib/utils'
@@ -88,6 +88,15 @@ function proposalRows(proposal: AssistantProposal): Array<{ label: string; value
   if (proposal.skills) rows.push({ label: 'Skills', value: proposal.skills.join(', ') || 'none' })
   if (proposal.schedule) rows.push({ label: 'Schedule', value: scheduleLabel(proposal.schedule) })
   return rows
+}
+
+/**
+ * Agent text as the user should see it: a house-format HTML report renders as
+ * the report (even if the model fenced it), anything else renders as Markdown.
+ */
+function AgentOutput({ text }: { text: string }) {
+  const content = unwrapHtmlFence(text)
+  return looksLikeHtml(content) ? <HtmlPreview html={content} /> : <Markdown>{content}</Markdown>
 }
 
 function ProposalCard({
@@ -444,11 +453,7 @@ export function AssistantPanel({
                   <span className="shrink-0 text-xs text-gray-400">{new Date(runOutput.at).toLocaleString()}</span>
                 </div>
                 <div className={cn('text-sm', runOutput.status === 'failed' && 'whitespace-pre-wrap text-red-700')}>
-                  {runOutput.status === 'failed'
-                    ? runOutput.text
-                    : looksLikeHtml(runOutput.text)
-                      ? <HtmlPreview html={runOutput.text} />
-                      : <Markdown>{runOutput.text}</Markdown>}
+                  {runOutput.status === 'failed' ? runOutput.text : <AgentOutput text={runOutput.text} />}
                 </div>
               </div>
             )}
@@ -462,9 +467,7 @@ export function AssistantPanel({
               >
                 {message.role === 'user'
                   ? <p className="whitespace-pre-wrap">{message.content}</p>
-                  : looksLikeHtml(message.content)
-                    ? <HtmlPreview html={message.content} />
-                    : <Markdown>{message.content}</Markdown>}
+                  : <AgentOutput text={message.content} />}
                 {message.role !== 'user' && message.proposal && (
                   <ProposalCard
                     message={message}

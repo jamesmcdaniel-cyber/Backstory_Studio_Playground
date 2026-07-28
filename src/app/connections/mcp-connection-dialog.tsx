@@ -76,11 +76,14 @@ export function McpConnectionDialog({
   onOpenChange,
   onSave,
   editingConnection,
+  initialName,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSave: (draft: McpConnectionDraft) => Promise<void>
   editingConnection?: SerializedConnection | null
+  /** Pre-fills the name when adding — used when a template asks for a server by name. */
+  initialName?: string
 }) {
   const [draft, setDraft] = useState<McpConnectionDraft>(emptyDraft)
   const [saving, setSaving] = useState(false)
@@ -109,11 +112,11 @@ export function McpConnectionDialog({
         scopes: editingConnection.auth.scopes ?? '',
       })
     } else {
-      setDraft(emptyDraft)
+      setDraft({ ...emptyDraft, name: initialName ?? '' })
     }
     setTestResult({ status: 'idle' })
     setOauthDetected(false)
-  }, [editingConnection, open])
+  }, [editingConnection, initialName, open])
 
   const set = (patch: Partial<McpConnectionDraft>) =>
     setDraft((prev) => ({ ...prev, ...patch }))

@@ -1,8 +1,9 @@
-import { actionPlan, dim, high, med, num, report } from './report-builder'
+import { actionPlan, dim, high, med, num } from './report-builder'
+import type { ReportSpec } from './report-builder'
 
 /** Strategic intelligence, on-demand briefs, and orchestration templates (29–38). */
-export const STRATEGIC_REPORTS: Record<string, string> = {
-  '29-digital-chief-of-staff': report({
+export const STRATEGIC_SPECS: Record<string, ReportSpec> = {
+  '29-digital-chief-of-staff': {
     eyebrow: 'Executive daily brief',
     title: 'Digital Chief of Staff — brief for James',
     sub: 'Combined account-channel updates, calendar prep, inbox triage, and pipeline state into one brief.',
@@ -58,9 +59,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Slack', 'Account-channel updates and brief delivery.', '06:00 MT'],
     ],
     banner: '🎉 Brief delivered 06:00 · 3 moves ranked · 3 meetings prepped · 2 risks flagged',
-  }),
+  },
 
-  '30-market-research-brief': report({
+  '30-market-research-brief': {
     eyebrow: 'Market intelligence brief',
     title: 'Target accounts — market signals this week',
     sub: 'Combined external company signals with Backstory relationship and opportunity context.',
@@ -110,9 +111,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Slack + email', 'Brief delivered to the account team.', 'Weekly · Monday'],
     ],
     banner: '🎉 3 signals matched to live accounts · 3 message shifts recommended',
-  }),
+  },
 
-  '31-deal-inspection': report({
+  '31-deal-inspection': {
     eyebrow: 'Deal inspection',
     title: '/dealcheck ManpowerGroup — New Business',
     sub: 'Resolved the account and opportunity, pulled deal context, and returned risk with next actions.',
@@ -164,9 +165,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Slack', 'Answered in-channel from the slash command.', '< 10s'],
     ],
     banner: '🎉 Deal inspected on demand · Risk LOW · 2 next actions returned',
-  }),
+  },
 
-  '32-revenue-orchestration': report({
+  '32-revenue-orchestration': {
     eyebrow: 'Approval-gated action',
     title: 'Proposed CRM update — ManpowerGroup',
     sub: 'Built a proposed CRM update and owner message from an external signal; paused for approval.',
@@ -221,9 +222,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Slack', 'Approval prompt posted to the owner.', 'Awaiting response'],
     ],
     banner: '⏸️ Awaiting approval · 3 changes staged · 0 writes executed',
-  }),
+  },
 
-  '33-prospecting-brief': report({
+  '33-prospecting-brief': {
     eyebrow: 'Prospecting brief',
     title: 'ABBYY — outreach angles and next steps',
     sub: 'Combined account status, recent activity, and situation context into tailored outreach angles.',
@@ -278,9 +279,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Slack', 'Brief delivered on request with contacts and draft.', 'On demand'],
     ],
     banner: '🎉 Brief delivered · 3 signals evidenced · 2 angles and a draft prepared',
-  }),
+  },
 
-  '34-manager-coaching-brief': report({
+  '34-manager-coaching-brief': {
     eyebrow: 'Manager coaching brief',
     title: 'Rep C — coaching brief for this week',
     sub: 'Combined opportunity status, scorecard signal, and situation context into coaching points.',
@@ -331,9 +332,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Slack', 'Brief delivered to the rep and manager.', 'On demand'],
     ],
     banner: '🎉 Coaching brief delivered · 3 points with talk tracks · 3 actions assigned',
-  }),
+  },
 
-  '35-grounded-follow-up': report({
+  '35-grounded-follow-up': {
     eyebrow: 'Grounded content draft',
     title: 'Follow-up draft — ManpowerGroup',
     sub: 'Drafted a follow-up grounded in the last call, deal-risk context, and cited evidence.',
@@ -377,9 +378,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Support', 'Ticket #482 resolution.', 'Jul 11'],
     ],
     banner: '🎉 Draft generated · 4 claims cited · 0 unsupported statements',
-  }),
+  },
 
-  '36-pipeline-forecast-digest': report({
+  '36-pipeline-forecast-digest': {
     eyebrow: 'Pipeline intelligence report',
     title: 'Pipeline & forecast digest',
     sub: 'Pulled top records, expanded every at-risk opportunity, and ranked the forecast issues.',
@@ -428,9 +429,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Slack', 'Digest posted with at-risk deals expanded.', 'Delivered'],
     ],
     banner: '🎉 39 opportunities reviewed · 2 risks expanded · 3 push candidates flagged',
-  }),
+  },
 
-  '37-deal-risk-next-actions': report({
+  '37-deal-risk-next-actions': {
     eyebrow: 'Deal risk brief',
     title: 'Twitch Interactive — renewal at risk',
     sub: 'Merged opportunity status, recent activity, engaged-person context, and situation evidence.',
@@ -474,9 +475,9 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Meeting record', 'Competitor mention on the last recorded call.', 'Jun 28'],
     ],
     banner: '🚨 Risk HIGH · 3 drivers evidenced · Executive escalation opened',
-  }),
+  },
 
-  '38-account-planning-strategy': report({
+  '38-account-planning-strategy': {
     eyebrow: 'Account plan',
     title: 'ManpowerGroup — account strategy',
     sub: 'Combined account status, activity, stakeholder engagement, and situation context into priorities.',
@@ -539,5 +540,5 @@ export const STRATEGIC_REPORTS: Record<string, string> = {
       ['Product usage', 'Seat and feature adoption by team.', 'Jul 13'],
     ],
     banner: '🎉 Account plan delivered · $200K whitespace quantified · 3 plays sequenced',
-  }),
+  },
 }

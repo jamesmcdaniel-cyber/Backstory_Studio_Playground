@@ -1,9 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Nango, { type ConnectUI } from '@nangohq/frontend'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
-import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { useCachedJson } from '@/lib/client/use-cached-json'
+import { useNangoConnect } from '@/lib/client/use-nango-connect'
 
 /** Integration cards per page — mirrors the Templates library grid. */
 const PAGE_SIZE = 9
@@ -48,9 +47,14 @@ export function OAuthIntegrationsGrid() {
   const integrations = useMemo(() => integrationsData?.integrations ?? [], [integrationsData])
   const connections = statusData?.connections ?? {}
   const loading = loadingIntegrations || loadingStatus
-  const [busy, setBusy] = useState<string | null>(null)
-  const [verifying, setVerifying] = useState<string | null>(null)
-  const connectUIRef = useRef<ConnectUI | null>(null)
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshIntegrations(), refreshStatus()])
+  }, [refreshIntegrations, refreshStatus])
+
+  // The connect/verify/disconnect round-trip is shared with the in-context
+  // connect dialog templates open (see use-nango-connect).
+  const { busy, verifying, connect, verify, disconnect } = useNangoConnect(refreshAll)
 
   // Search + AI finder (mirrors the Templates library): the box filters by
   // name; Enter / "Ask AI" asks the model which integrations fit a stated goal.
@@ -102,96 +106,7 @@ export function OAuthIntegrationsGrid() {
     setAiLoading(false)
   }
 
-  const refreshAll = useCallback(() => {
-    void refreshIntegrations()
-    void refreshStatus()
-  }, [refreshIntegrations, refreshStatus])
-
-  useEffect(() => {
-    return () => {
-      connectUIRef.current?.close()
-      connectUIRef.current = null
-    }
-  }, [])
-
   const { pageItems, pageCount, page: currentPage } = paginate(filtered, page, PAGE_SIZE)
-
-  const verify = async (integration: Integration) => {
-    setVerifying(integration.id)
-    try {
-      const response = await fetch(
-        `/api/nango/connections/${encodeURIComponent(integration.id)}/verify`,
-        { method: 'POST' },
-      )
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        throw new Error(data.error || `Verification failed (HTTP ${response.status}).`)
-      }
-      toast.success(`${integration.name} credentials verified`)
-      await refreshStatus()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Provider credentials could not be verified.')
-      await refreshStatus()
-    } finally {
-      setVerifying(null)
-      setBusy(null)
-    }
-  }
-
-  const connect = async (integration: Integration) => {
-    setBusy(integration.id)
-    try {
-      const nango = new Nango()
-      const connectBaseUrl = process.env.NEXT_PUBLIC_NANGO_CONNECT_URL
-      const connectUI = nango.openConnectUI({
-        ...(connectBaseUrl ? { baseURL: connectBaseUrl } : {}),
-        onEvent: (event) => {
-          if (event.type === 'connect') {
-            toast.message(`${integration.name} connected — verifying credentials…`)
-            connectUIRef.current = null
-            window.setTimeout(() => void verify(integration), 400)
-          } else if (event.type === 'close') {
-            connectUIRef.current = null
-            setBusy(null)
-          } else if (event.type === 'error') {
-            toast.error(event.payload.errorMessage || 'Unable to connect account')
-            setBusy(null)
-          }
-        },
-      })
-      connectUIRef.current = connectUI
-
-      const response = await fetch('/api/nango/session-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ integrationId: integration.id }),
-      })
-      const data = await response.json()
-      if (!response.ok || !data.sessionToken) {
-        connectUI.close()
-        connectUIRef.current = null
-        throw new Error(data.error || 'Unable to start the connection flow')
-      }
-      connectUI.setSessionToken(data.sessionToken)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to connect account')
-      setBusy(null)
-    }
-  }
-
-  const disconnect = async (integration: Integration) => {
-    if (!window.confirm(`Disconnect ${integration.name}?`)) return
-    setBusy(integration.id)
-    try {
-      const response = await fetch(`/api/nango/connections/${encodeURIComponent(integration.id)}`, { method: 'DELETE' })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Unable to disconnect account')
-      await refreshStatus()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to disconnect account')
-      setBusy(null)
-    }
-  }
 
   return (
     <div className="space-y-4">
@@ -215,7 +130,7 @@ export function OAuthIntegrationsGrid() {
             {aiLoading ? 'Asking…' : 'Ask AI'}
           </button>
         </div>
-        <Button variant="outline" size="icon" onClick={refreshAll} disabled={loading}>
+        <Button variant="outline" size="icon" onClick={() => void refreshAll()} disabled={loading}>
           <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
         </Button>
       </div>

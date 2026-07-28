@@ -1,8 +1,9 @@
-import { actionPlan, dim, high, med, num, report } from './report-builder'
+import { actionPlan, dim, high, med, num } from './report-builder'
+import type { ReportSpec } from './report-builder'
 
 /** Platform enablement templates: adapters, contracts, migrations, rollout (19–28). */
-export const PLATFORM_REPORTS: Record<string, string> = {
-  '19-customer-stack-blueprint': report({
+export const PLATFORM_SPECS: Record<string, ReportSpec> = {
+  '19-customer-stack-blueprint': {
     eyebrow: 'Implementation blueprint',
     title: 'Daily digest to Slack — Acme stack blueprint',
     sub: 'Matched the customer request and tool-stack intake to the closest validated asset and required adapters.',
@@ -53,9 +54,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Backstory MCP', 'Canonical model definitions and field contracts.', 'Schema v2'],
     ],
     banner: '🎉 Blueprint delivered · 3 patterns reused · 1 adapter scoped',
-  }),
+  },
 
-  '20-crm-signal-normalizer': report({
+  '20-crm-signal-normalizer': {
     eyebrow: 'Normalization run report',
     title: 'CRM Signal Normalizer — Salesforce → canonical',
     sub: 'Mapped account, contact, opportunity, and activity records onto the canonical schema.',
@@ -104,9 +105,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Validation log', 'Per-record validation results.', 'This run'],
     ],
     banner: '🎉 128 records normalized · 12 flagged · Downstream steps unblocked',
-  }),
+  },
 
-  '21-meeting-intelligence-normalizer': report({
+  '21-meeting-intelligence-normalizer': {
     eyebrow: 'Normalization run report',
     title: 'Meeting Intelligence Normalizer — Gong + Zoom',
     sub: 'Unified meetings, transcripts, attendees, and action items into one meeting-intelligence payload.',
@@ -154,9 +155,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Identity layer', 'Attendee-to-CRM-contact resolution.', 'This run'],
     ],
     banner: '🎉 9 meetings normalized · 23 of 25 attendees resolved · Payload released downstream',
-  }),
+  },
 
-  '22-multi-channel-delivery-router': report({
+  '22-multi-channel-delivery-router': {
     eyebrow: 'Delivery routing report',
     title: 'Routed insight payload → Slack #sales-james',
     sub: 'Resolved the delivery surface from owner identity, adapted the format, and confirmed receipt.',
@@ -202,9 +203,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Routing config', 'Surface preferences and fallback order.', 'Jul 14'],
     ],
     banner: '🎉 Payload delivered on the primary route · Receipt confirmed · 0 fallbacks used',
-  }),
+  },
 
-  '23-identity-resolution-hub': report({
+  '23-identity-resolution-hub': {
     eyebrow: 'Identity resolution report',
     title: 'Identity Resolution Hub — 42 identities resolved',
     sub: 'Unified people, accounts, owners, and channels across CRM, messaging, and meeting systems.',
@@ -251,9 +252,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Meeting systems', 'Attendee lists and email aliases.', 'Updated 2h ago'],
     ],
     banner: '🎉 40 of 42 identities resolved · 3 duplicates merged · Identity map updated',
-  }),
+  },
 
-  '24-workflow-contract-validator': report({
+  '24-workflow-contract-validator': {
     eyebrow: 'Contract validation report',
     title: 'Contract validation — digest pipeline',
     sub: 'Validated every canonical payload handoff between workflow steps against the declared schema.',
@@ -291,9 +292,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Validation log', 'Per-record diff against the contract.', 'This run'],
     ],
     banner: '🚩 1 blocking issue found · Rollout held · Fix assigned to platform',
-  }),
+  },
 
-  '25-implementation-gap-audit': report({
+  '25-implementation-gap-audit': {
     eyebrow: 'Implementation gap audit',
     title: 'Dynamics 365 → Teams digest — coverage audit',
     sub: 'Audited the customer request against the current library: validated, recipe-only, or needs build.',
@@ -332,9 +333,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Identity layer', 'Supported id namespaces.', 'Current'],
     ],
     banner: '🚩 2 gaps identified · Effort scoped · Recommend build before commit',
-  }),
+  },
 
-  '26-orchestrator-migration-planner': report({
+  '26-orchestrator-migration-planner': {
     eyebrow: 'Migration plan',
     title: 'Salesforce digest → target orchestrator',
     sub: 'Translated a validated workflow pattern into an ordered migration plan with contracts preserved.',
@@ -383,9 +384,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Golden payloads', 'Regression fixtures for the validation gate.', '40 fixtures'],
     ],
     banner: '🎉 Migration plan delivered · 4 steps sequenced · 1 gate defined',
-  }),
+  },
 
-  '27-adapter-regression-monitor': report({
+  '27-adapter-regression-monitor': {
     eyebrow: 'Regression monitor report',
     title: 'Adapter regression — nightly replay',
     sub: 'Replayed golden payloads through the CRM, meeting, identity, and delivery adapters.',
@@ -436,9 +437,9 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['Alerting', 'Owner paged with failure details attached.', 'Real time'],
     ],
     banner: '🚨 2 regressions caught before customer impact · Owner paged · Patch in progress',
-  }),
+  },
 
-  '28-rollout-readiness-scorecard': report({
+  '28-rollout-readiness-scorecard': {
     eyebrow: 'Rollout readiness scorecard',
     title: 'Acme stack — go-live readiness',
     sub: 'Scored connector access, identity coverage, delivery routes, ownership, security, and QA gates.',
@@ -485,5 +486,5 @@ export const PLATFORM_REPORTS: Record<string, string> = {
       ['QA log', 'Which adapters have been exercised on this stack.', 'Jul 15'],
     ],
     banner: '🚩 Score 78 (AMBER) · 2 blockers identified · Go-live held pending fixes',
-  }),
+  },
 }

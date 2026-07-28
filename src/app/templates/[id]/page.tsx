@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Bot, Info, Workflow } from 'lucide-react'
+import { ArrowLeft, Bot, Info, Plug, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
+import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 
 type Template = {
@@ -34,6 +35,7 @@ export default function TemplateDetails() {
   const [loadError, setLoadError] = useState(false)
   const [creating, setCreating] = useState(false)
   const [deploying, setDeploying] = useState(false)
+  const [connectOpen, setConnectOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -148,15 +150,28 @@ export default function TemplateDetails() {
             </div>
 
             {template.integrations.length > 0 && (
-              <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
-                <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                <p>
-                  This template uses {template.integrations.join(', ')}. Make sure they&apos;re connected before every
-                  step can run.{' '}
-                  <Link href="/integrations" className="font-semibold underline underline-offset-2 hover:opacity-80">
-                    Open integrations
-                  </Link>
-                </p>
+              <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                  <Info className="h-4 w-4 shrink-0" />
+                  <span>This template uses</span>
+                  {template.integrations.map((integration) => (
+                    <IntegrationChip
+                      key={integration}
+                      name={integration}
+                      onClick={() => setConnectOpen(true)}
+                      className="border-amber-300/70 bg-amber-100/70 text-amber-900 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100 dark:hover:bg-amber-400/20"
+                    />
+                  ))}
+                  <span>— connect them so every step can run.</span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setConnectOpen(true)}
+                  className="shrink-0 self-start border-amber-300 bg-white/70 text-amber-900 hover:bg-white dark:border-amber-400/30 dark:bg-transparent dark:text-amber-100 sm:self-auto"
+                >
+                  <Plug className="mr-1.5 h-3.5 w-3.5" /> Connect
+                </Button>
               </div>
             )}
 
@@ -203,13 +218,22 @@ export default function TemplateDetails() {
                 <p className="eyebrow mb-2">Requires</p>
                 {template.integrations.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
-                    {template.integrations.map((integration) => <IntegrationChip key={integration} name={integration} />)}
+                    {template.integrations.map((integration) => (
+                      <IntegrationChip key={integration} name={integration} onClick={() => setConnectOpen(true)} />
+                    ))}
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">No integrations required.</p>
                 )}
               </div>
             </div>
+
+            <IntegrationConnectDialog
+              open={connectOpen}
+              onOpenChange={setConnectOpen}
+              names={template.integrations}
+              description={`${template.name} needs these connected before every step can run.`}
+            />
           </>
         )}
       </div>

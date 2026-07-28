@@ -1,63 +1,69 @@
+'use client'
+
+import { Check, Globe, Server } from 'lucide-react'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { classifyRequirement, integrationLabel, integrationSlug } from '@/components/integrations/integration-match'
+import { cn } from '@/lib/utils'
 
 /**
- * A labelled pill with the integration's brand logo. Maps a free-text
- * integration name ("Slack", "Backstory MCP", "Email") to a logo slug so
- * template/skill cards and their detail pages render real marks. Anything
- * unmapped falls through to IntegrationLogo's initial-tile fallback.
+ * A labelled pill with the integration's brand logo. Names arrive as free text
+ * from templates ("nango:salesforce", "Backstory MCP", "HTTP API"); the label
+ * and mark both come from integration-match so a chip never leaks an internal
+ * plane prefix and never renders a blank square.
+ *
+ * Pass `onClick` to make the chip actionable — the template pages use that to
+ * open the connect dialog on the integration the user pointed at.
  */
 
-export function integrationSlug(name: string): string | null {
-  const n = name.toLowerCase()
-  if (n.includes('backstory')) return 'backstory'
-  if (n.includes('slack')) return 'slack'
-  if (n.includes('salesforce')) return 'salesforce'
-  if (n.includes('snowflake')) return 'snowflake'
-  if (n.includes('intercom')) return 'intercom'
-  if (n.includes('hubspot')) return 'hubspot'
-  if (n.includes('gmail') || n.includes('email') || n.includes('mail')) return 'gmail'
-  if (n.includes('notion')) return 'notion'
-  if (n.includes('jira')) return 'jira'
-  if (n.includes('linear')) return 'linear'
-  if (n.includes('github')) return 'github'
-  if (n.includes('asana')) return 'asana'
-  if (n.includes('zendesk')) return 'zendesk'
-  if (n.includes('airtable')) return 'airtable'
-  if (n.includes('monday')) return 'monday'
-  if (n.includes('teams')) return 'microsoftteams'
-  if (n.includes('zoom')) return 'zoom'
-  if (n.includes('calendar')) return 'googlecalendar'
-  if (n.includes('sheet')) return 'googlesheets'
-  if (n.includes('drive')) return 'googledrive'
-  if (n.includes('confluence')) return 'confluence'
-  if (n.includes('clickup')) return 'clickup'
-  if (n.includes('trello')) return 'trello'
-  return null
+// Re-exported: these used to live here, and both names are part of the module's
+// public surface (chips, banners and tests import them from either path).
+export { integrationLabel, integrationSlug }
+
+/** The mark for a requirement: brand logo, globe for HTTP, server for MCP. */
+export function IntegrationMark({ name, className }: { name: string; className?: string }) {
+  const { label, kind } = classifyRequirement(name)
+  const box = cn('h-4 w-4 shrink-0', className)
+  if (kind === 'builtin') return <Globe className={cn(box, 'text-muted-foreground')} aria-hidden />
+  const slug = integrationSlug(label) ?? integrationSlug(name)
+  if (kind === 'mcp' && !slug) return <Server className={cn(box, 'text-muted-foreground')} aria-hidden />
+  return <IntegrationLogo name={label} slug={slug} className={box} />
 }
 
-/**
- * Display label for a requirement chip. Strips internal plane prefixes
- * (nango:, native:, people_ai:) that leak into stored connector keys — users
- * see "Snowflake", not "nango:snowflake". A bare provider slug is title-cased;
- * branded/multi-word names (Backstory MCP, HTTP API, Email) are left untouched.
- */
-export function integrationLabel(name: string): string {
-  const stripped = name.replace(/^(?:nango|native|people_ai):/i, '')
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(stripped)) return stripped
-  return stripped.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-}
-
-export function IntegrationChip({ name }: { name: string }) {
+export function IntegrationChip({
+  name,
+  onClick,
+  connected,
+  className,
+}: {
+  name: string
+  /** Makes the chip a button — e.g. "connect this one" from a template page. */
+  onClick?: () => void
+  /** Shows a subtle connected tick when known. Omit when status isn't loaded. */
+  connected?: boolean
+  className?: string
+}) {
   const label = integrationLabel(name)
-  const isHttp = label.toLowerCase().includes('http')
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 py-1 pl-1 pr-2.5 text-xs font-medium text-foreground/80">
-      {isHttp ? (
-        <span className="flex h-4 w-4 items-center justify-center text-sm leading-none" aria-hidden>🌐</span>
-      ) : (
-        <IntegrationLogo name={label} slug={integrationSlug(label) ?? integrationSlug(name)} className="h-4 w-4" />
-      )}
+  const body = (
+    <>
+      <IntegrationMark name={name} />
       {label}
-    </span>
+      {connected && <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" aria-label="Connected" />}
+    </>
+  )
+  const shell = cn(
+    'inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 py-1 pl-1 pr-2.5 text-xs font-medium text-foreground/80',
+    className,
+  )
+
+  if (!onClick) return <span className={shell}>{body}</span>
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(shell, 'transition-colors hover:border-border hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1')}
+      title={connected ? `${label} is connected` : `Connect ${label}`}
+    >
+      {body}
+    </button>
   )
 }

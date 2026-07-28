@@ -1,8 +1,9 @@
-import { actionPlan, dim, high, med, num, report } from './report-builder'
+import { actionPlan, dim, high, med, num } from './report-builder'
+import type { ReportSpec } from './report-builder'
 
 /** Coaching, enablement, competitive, and account-channel templates (10–18). */
-export const COACHING_REPORTS: Record<string, string> = {
-  '10-activity-gap-detector': report({
+export const COACHING_SPECS: Record<string, ReportSpec> = {
+  '10-activity-gap-detector': {
     eyebrow: 'Coaching intelligence report',
     title: 'Activity gaps — week of Jul 13',
     sub: 'Compared each rep’s weekly activity against team benchmarks and the top-performer profile.',
@@ -41,9 +42,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Nudges delivered to frontline managers.', 'Weekly · Monday'],
     ],
     banner: '🎉 7 reps benchmarked · 1 coaching plan issued · 3 actions assigned',
-  }),
+  },
 
-  '11-deal-hygiene-audit': report({
+  '11-deal-hygiene-audit': {
     eyebrow: 'Pipeline hygiene audit',
     title: 'Deal hygiene — 42 open opportunities scanned',
     sub: 'Checked every open deal for stale close dates, missing next steps, thin threading, and blank fields.',
@@ -95,9 +96,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Per-rep lists delivered to reps and managers.', 'Monday 07:00'],
     ],
     banner: '🎉 42 deals scanned · 9 flagged · Cleanup assigned before Friday',
-  }),
+  },
 
-  '12-win-loss-debrief': report({
+  '12-win-loss-debrief': {
     eyebrow: 'Win/loss debrief',
     title: 'ManpowerGroup — WON, $494.5K',
     sub: 'Reconstructed the full engagement timeline from first touch to close and analysed what moved the deal.',
@@ -148,9 +149,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Debrief delivered to rep, manager, and #enablement.', 'Delivered'],
     ],
     banner: '🎉 Debrief generated on close · 2 replicable plays captured · 1 process fix logged',
-  }),
+  },
 
-  '13-competitive-displacement-alert': report({
+  '13-competitive-displacement-alert': {
     eyebrow: 'Competitive intelligence alert',
     title: '🚨 Displacement signal — Keyslogic',
     sub: 'Correlated an engagement drop with competitor mentions across email, meetings, and CRM notes.',
@@ -195,9 +196,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Alert sent immediately to owner and manager.', 'Real time'],
     ],
     banner: '🚨 High-risk signal · Exec escalation opened · Reliability proof points assigned',
-  }),
+  },
 
-  '14-territory-heat-map': report({
+  '14-territory-heat-map': {
     eyebrow: 'Territory intelligence',
     title: 'Territory heat map — James, week of Jul 13',
     sub: 'Scored week-over-week momentum for every account in the territory and grouped by trend.',
@@ -238,9 +239,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Heat map delivered Monday morning.', 'Weekly'],
     ],
     banner: '🎉 24 accounts scored · 3 hot · 2 whitespace conversions targeted',
-  }),
+  },
 
-  '15-qbr-auto-prep': report({
+  '15-qbr-auto-prep': {
     eyebrow: 'Quarterly business review pack',
     title: 'ManpowerGroup — Q3 QBR prep',
     sub: 'Compiled the full quarter of engagement, relationship changes, and deal progression 48 hours ahead.',
@@ -293,9 +294,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['CRM', 'ARR, deal progression, and renewal timing.', 'Updated 4h ago'],
     ],
     banner: '🎉 QBR pack delivered 48h early · 2 wins documented · 3 asks prepared',
-  }),
+  },
 
-  '16-executive-sponsor-tracker': report({
+  '16-executive-sponsor-tracker': {
     eyebrow: 'Executive coverage report',
     title: 'Executive sponsor tracker — strategic deals',
     sub: 'Checked VP+ engagement on every open deal above the strategic value threshold.',
@@ -339,9 +340,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Alerts sent to deal owners and sales leadership.', 'Delivered'],
     ],
     banner: '🎉 3 strategic deals checked · 1 escalation raised · 1 sponsor-mapping task assigned',
-  }),
+  },
 
-  '17-marketing-sales-handoff-scorer': report({
+  '17-marketing-sales-handoff-scorer': {
     eyebrow: 'Lead handoff report',
     title: 'MQL handoff — 5 leads scored',
     sub: 'Checked each new MQL against existing relationship history before routing it to a seller.',
@@ -381,9 +382,9 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Context brief delivered instantly to the receiving seller.', 'Real time'],
     ],
     banner: '🎉 5 leads scored · 2 hot routed to AEs · 0 warm leads worked as cold',
-  }),
+  },
 
-  '18-channel-pulse': report({
+  '18-channel-pulse': {
     eyebrow: 'Account channel update',
     title: '#account-manpowergroup — 60-second update',
     sub: 'Summarised the last 7 days of account activity for the extended team and executives.',
@@ -430,5 +431,5 @@ export const COACHING_REPORTS: Record<string, string> = {
       ['Slack', 'Posted to the account channel.', 'Weekly'],
     ],
     banner: '🎉 7-day update posted · 2 wins · 1 watch item · No action required',
-  }),
+  },
 }

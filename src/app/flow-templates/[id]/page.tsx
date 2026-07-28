@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
+import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
 import { cn } from '@/lib/utils'
 
 type StepNote = { nodeId: string; title: string; what: string; why?: string }
@@ -54,6 +55,7 @@ export default function FlowTemplateDetails() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [using, setUsing] = useState(false)
+  const [connectOpen, setConnectOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -202,9 +204,21 @@ export default function FlowTemplateDetails() {
               )
             })}
           </ul>
-          <p className="mt-3 text-xs text-amber-800/90 dark:text-amber-200/80">
-            You don&apos;t have to do this first — the flow is created as a draft either way, with each of these flagged on the step it belongs to.
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-amber-800/90 dark:text-amber-200/80">
+              You don&apos;t have to do this first — the flow is created as a draft either way, with each of these flagged on the step it belongs to.
+            </p>
+            {template.integrations.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setConnectOpen(true)}
+                className="shrink-0 border-amber-300 bg-white/70 text-amber-900 hover:bg-white dark:border-amber-400/30 dark:bg-transparent dark:text-amber-100"
+              >
+                <Plug className="mr-1.5 h-3.5 w-3.5" /> Connect integrations
+              </Button>
+            )}
+          </div>
         </section>
       )}
 
@@ -263,12 +277,30 @@ export default function FlowTemplateDetails() {
 
       {template.integrations.length > 0 && (
         <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-1">
-          <p className="eyebrow mb-2">Requires</p>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="eyebrow">Requires</p>
+            <button
+              type="button"
+              onClick={() => setConnectOpen(true)}
+              className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Connect
+            </button>
+          </div>
           <div className="flex flex-wrap gap-1.5">
-            {template.integrations.map((integration) => <IntegrationChip key={integration} name={integration} />)}
+            {template.integrations.map((integration) => (
+              <IntegrationChip key={integration} name={integration} onClick={() => setConnectOpen(true)} />
+            ))}
           </div>
         </section>
       )}
+
+      <IntegrationConnectDialog
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+        names={template.integrations}
+        description={`${template.name} needs these connected before the flow can run end to end.`}
+      />
     </div>
   )
 }

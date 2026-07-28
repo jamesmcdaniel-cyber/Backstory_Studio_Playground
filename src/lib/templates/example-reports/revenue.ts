@@ -1,8 +1,9 @@
-import { actionPlan, dim, high, med, num, report } from './report-builder'
+import { actionPlan, dim, high, med, num } from './report-builder'
+import type { ReportSpec } from './report-builder'
 
 /** Upsell, digest, pipeline, and account-monitoring templates (39, 40, 01–09). */
-export const REVENUE_REPORTS: Record<string, string> = {
-  '39-salesai-upsell-engine': report({
+export const REVENUE_SPECS: Record<string, ReportSpec> = {
+  '39-salesai-upsell-engine': {
     eyebrow: 'Upsell intelligence report',
     title: 'SalesAI Upsell Engine — Weekly Sweep',
     sub: 'Scored the in-segment account universe across readiness, competitive risk, use-case fit, and sales motion.',
@@ -64,9 +65,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
     ],
     banner:
       '🎉 18 accounts scored · Priority matrix delivered · Executive digest emailed · Slack summary posted',
-  }),
+  },
 
-  '40-upsell-account-scorer': report({
+  '40-upsell-account-scorer': {
     eyebrow: 'Account readiness scorecard',
     title: 'ManpowerGroup — SalesAI upsell readiness',
     sub: 'Scored one account across data quality, feature maturity, AI use-case fit, and account health.',
@@ -119,9 +120,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Salesforce', 'ARR, stage, and owner assignment.', 'Updated 2h ago'],
     ],
     banner: '🎉 Readiness 91/100 · Whitespace identified · Exec value review recommended',
-  }),
+  },
 
-  '01-sales-digest': report({
+  '01-sales-digest': {
     eyebrow: 'Daily sales digest',
     title: 'Good morning, James — 3 accounts need attention',
     sub: 'Scanned your enrolled accounts, opportunities, and engagement activity from the last 24 hours.',
@@ -165,9 +166,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Slack', 'Delivered to #sales-james at 06:00 MT.', 'Receipt confirmed'],
     ],
     banner: '🎉 20 accounts scanned · 3 flagged · Digest delivered to #sales-james',
-  }),
+  },
 
-  '02-meeting-brief': report({
+  '02-meeting-brief': {
     eyebrow: 'Meeting brief',
     title: 'ManpowerGroup — today, 2:00 PM MT',
     sub: 'Assembled attendee context, deal state, and what changed since the last meeting.',
@@ -225,9 +226,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Salesforce', 'Stage, amount, close date, and activity log.', 'Updated 1h ago'],
     ],
     banner: '🎉 Brief delivered to the meeting owner · 3 agenda items · 1 open risk flagged',
-  }),
+  },
 
-  '03-silence-contract-monitor': report({
+  '03-silence-contract-monitor': {
     eyebrow: 'Engagement risk alert',
     title: 'Silence & Contract Monitor — 2 accounts went quiet',
     sub: 'Checked 20 monitored accounts for engagement gaps against deal stage and contract dates.',
@@ -269,9 +270,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Slack', 'Alert routed to owning reps and CSMs.', 'Delivered 06:30 MT'],
     ],
     banner: '🎉 20 accounts checked · 2 flagged · Save play opened on Slice',
-  }),
+  },
 
-  '04-opportunity-discovery': report({
+  '04-opportunity-discovery': {
     eyebrow: 'Whitespace intelligence',
     title: 'Opportunity Discovery — 3 hidden opportunities this week',
     sub: 'Cross-referenced engagement activity against the open pipeline to find accounts buying without a deal.',
@@ -309,9 +310,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Slack + email', 'Curated list delivered to the rep and manager.', 'Weekly · Monday'],
     ],
     banner: '🎉 34 accounts cross-referenced · 3 opportunities surfaced · 1 assigned for discovery',
-  }),
+  },
 
-  '05-forecast-coach': report({
+  '05-forecast-coach': {
     eyebrow: 'Forecast coaching report',
     title: 'Team West — weekly pipeline coaching',
     sub: 'Assessed every open deal on engagement recency, stakeholder coverage, stage velocity, and risk.',
@@ -357,9 +358,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Email', 'Per-leader coaching report delivered Monday 07:00.', 'Weekly'],
     ],
     banner: '🎉 14 deals assessed · 2 risks surfaced · 3 push candidates identified',
-  }),
+  },
 
-  '06-executive-inbox': report({
+  '06-executive-inbox': {
     eyebrow: 'Inbox triage report',
     title: 'Executive Inbox — 14 unread, 3 need you',
     sub: 'Read unread messages, matched senders to CRM accounts, and classified each by urgency and category.',
@@ -403,9 +404,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Slack', 'Escalations routed to #sales-james and the SE channel.', 'Delivered'],
     ],
     banner: '🎉 14 messages triaged · 3 escalated · 11 archived with summaries',
-  }),
+  },
 
-  '07-churn-risk-scorecard': report({
+  '07-churn-risk-scorecard': {
     eyebrow: 'Customer success scorecard',
     title: 'Weekly churn risk — CS team',
     sub: 'Scored every customer account on engagement trend, support volume, champion activity, and usage.',
@@ -446,9 +447,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Slack', 'Scorecard delivered to CS managers, ranked by severity.', 'Weekly · Monday'],
     ],
     banner: '🎉 37 accounts scored · 2 red · Save play opened on the biggest mover',
-  }),
+  },
 
-  '08-renewal-prep-brief': report({
+  '08-renewal-prep-brief': {
     eyebrow: 'Renewal prep brief',
     title: 'ManpowerGroup — renewal in 30 days',
     sub: 'Assembled contract terms, engagement trend, usage, and risk ahead of the Feb 20 renewal.',
@@ -500,9 +501,9 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Support', 'Ticket history and escalation record.', 'Jul 11'],
     ],
     banner: '🎉 Brief delivered to the CSM and AE · 3 plays scheduled · 2 risks flagged',
-  }),
+  },
 
-  '09-onboarding-pulse': report({
+  '09-onboarding-pulse': {
     eyebrow: 'Onboarding health pulse',
     title: 'First 90 days — day 45 checkpoint',
     sub: 'Checked post-sale engagement on recently closed-won accounts against onboarding milestones.',
@@ -544,5 +545,5 @@ export const REVENUE_REPORTS: Record<string, string> = {
       ['Slack', 'Alerts sent to the CSM and sales handoff team.', 'Delivered'],
     ],
     banner: '🎉 2 accounts checked · 1 nudge issued · 0 accounts at 90-day risk',
-  }),
+  },
 }

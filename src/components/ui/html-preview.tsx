@@ -36,6 +36,22 @@ export function looksLikeHtml(value: string): boolean {
   })
 }
 
+/** A response that is nothing but one fenced block, e.g. ```html … ``` */
+const LONE_FENCE_PATTERN = /^```[a-z]*\s*\n([\s\S]*?)\n?```$/i
+
+/**
+ * Unwraps a response that is a single fenced code block around HTML. Models
+ * asked for a raw HTML report sometimes fence it out of habit; without this the
+ * report still renders but carries stray ``` markers. Anything else — prose
+ * around a fence, a fence holding non-HTML — is returned untouched, so real
+ * code blocks keep rendering as code.
+ */
+export function unwrapHtmlFence(value: string): string {
+  const match = LONE_FENCE_PATTERN.exec(value.trim())
+  const inner = match?.[1]?.trim()
+  return inner && looksLikeHtml(inner) ? inner : value
+}
+
 /** Wraps a raw HTML fragment in a minimal document skeleton so it renders
  *  with sane defaults (font, color, wrapping) inside the sandboxed iframe.
  *  Skipped when the content already declares its own `<html>` root. */

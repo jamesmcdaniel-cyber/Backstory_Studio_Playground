@@ -47,6 +47,9 @@ if (TEST_DB) {
     { name: 'GET /api/snapshot', run: async () => (await import('../snapshot/route')).GET(req('/api/snapshot')) },
     { name: 'GET /api/template-proposals', run: async () => (await import('../template-proposals/route')).GET(req('/api/template-proposals')) },
     { name: 'GET /api/flows', run: async () => (await import('../flows/route')).GET(req('/api/flows')) },
+    { name: 'GET /api/flow-templates', run: async () => (await import('../flow-templates/route')).GET(req('/api/flow-templates')) },
+    // A built-in id: resolvable in any org with no seeded row behind it.
+    { name: 'GET /api/flow-templates/[id]', run: async () => (await import('../flow-templates/[id]/route')).GET(req('/api/flow-templates/summarize-extract')) },
     { name: 'GET /api/agents', run: async () => (await import('../agents/route')).GET(req('/api/agents')) },
     { name: 'GET /api/agents/activity', run: async () => (await import('../agents/activity/route')).GET(req('/api/agents/activity')) },
     { name: 'GET /api/approvals', run: async () => (await import('../approvals/route')).GET(req('/api/approvals')) },

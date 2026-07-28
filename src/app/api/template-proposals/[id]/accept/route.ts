@@ -1,5 +1,4 @@
 import { withAuthenticatedApi, ApiError } from '@/lib/server/api-handler'
-import { prisma } from '@/lib/prisma'
 import { getProposal, markAccepted, stampCreatedTemplate, reopenUnfulfilled } from '@/lib/templates/proposals'
 import { createTemplate } from '@/lib/templates/create-template'
 import {
@@ -8,7 +7,10 @@ import {
 } from '@/lib/templates/accept-proposal'
 import { provisionAgentFromConfig, missingIntegrations } from '@/lib/templates/instantiate'
 import { generateFlowGraph } from '@/lib/flows/generate-flow-graph'
-import { triggerFromGraph } from '@/lib/flows/trigger'
+import { createFlowTemplate } from '@/lib/flows/templates/create'
+import { serializeFlowTemplate } from '@/lib/flows/templates/catalogue'
+import { instantiateFlowTemplate, loadBindingContext } from '@/lib/flows/templates/instantiate'
+import { draftFlowTemplateNotes, inferBindings } from '@/lib/flows/templates/draft-notes'
 import { recordEstimatedUsage } from '@/lib/usage/ai-guard'
 
 export const runtime = 'nodejs'
@@ -19,8 +21,6 @@ export const maxDuration = 120
 const asObj = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
 const asStr = (v: unknown): string => (typeof v === 'string' ? v : '')
-/** Deep-clone to plain JSON so Prisma's InputJsonValue accepts the graph/trigger. */
-const jsonValue = (v: unknown) => JSON.parse(JSON.stringify(v ?? null))
 
 // POST /api/template-proposals/[id]/accept — promote an open proposal.
 //   agent_template | flow_template → create a real org-scoped, AI-generated
@@ -110,33 +110,55 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     }
   }
 
-  // flow_template: provision a fully WIRED flow. Generate the graph from the
-  // proposal's instructions via the shared copilot pipeline (grounds on the
-  // org's real agents/tools/integrations so nodes reference ids that exist),
-  // then create a DRAFT flow the user lands on ready to run. Best-effort: if
-  // generation fails the catalogue template still stands (client falls back).
+  // flow_template: generate the wired graph from the proposal's instructions via
+  // the shared copilot pipeline (grounded on the org's real agents/tools, so
+  // nodes reference ids that exist), then write it into the FLOW-TEMPLATE
+  // catalogue and instantiate THAT through the same path every other template
+  // takes. The recommendation stays reusable instead of being consumed once, and
+  // there is one instantiate path regardless of where a template came from.
+  // Best-effort: if generation fails the agent-template row still stands.
   if (proposal.kind === 'flow_template') {
     try {
       const config = asObj(proposal.configuration)
       const description = asStr(config.instructions) || proposal.title
       const { graph, rawParts } = await generateFlowGraph(auth.organizationId, auth.dbUser.id, description)
       recordEstimatedUsage(auth.organizationId, ...rawParts)
-      const flow = await prisma.flow.create({
-        data: {
-          name: template.name,
-          description: asStr(config.description) || proposal.rationale,
-          status: 'DRAFT',
-          visibility: 'shared',
-          folder: '',
-          trigger: jsonValue(triggerFromGraph(graph)),
-          graph: jsonValue(graph),
-          organizationId: auth.organizationId,
-          userId: auth.dbUser.id,
-        },
-      })
+
       const referenced = Array.isArray(config.integrations) ? config.integrations.filter((i): i is string => typeof i === 'string') : []
+      const summary = asStr(config.description) || proposal.rationale
+      const agentRoster = (await loadBindingContext(auth.organizationId, auth.dbUser.id)).agents
+      const { notes, bindings } = await draftFlowTemplateNotes(graph, { name: template.name, description: summary, agents: agentRoster })
+        // A notes-drafting failure must not cost the user their flow: fall back
+        // to the rationale as the objective and infer bindings from the graph.
+        .catch(() => ({
+          notes: { objective: summary || proposal.title, inputs: [], steps: [], setup: [], customize: [] },
+          bindings: inferBindings(graph, agentRoster),
+        }))
+
+      const flowTemplate = await createFlowTemplate({
+        organizationId: auth.organizationId,
+        userId: auth.dbUser.id,
+        name: template.name,
+        description: summary,
+        category: proposal.kind === 'flow_template' ? 'Suggested' : 'Custom',
+        graph,
+        notes,
+        bindings,
+        integrations: referenced,
+        source: 'ai_generated',
+        visibility: 'org',
+      })
+      const { flow, setup } = await instantiateFlowTemplate(auth.organizationId, auth.dbUser.id, serializeFlowTemplate(flowTemplate, auth.organizationId))
       const missing = await missingIntegrations(auth.organizationId, auth.dbUser.id, referenced)
-      return { status: 'accepted', kind: 'flow', templateId: template.id, flowId: flow.id, missingIntegrations: missing }
+      return {
+        status: 'accepted',
+        kind: 'flow',
+        templateId: template.id,
+        flowTemplateId: flowTemplate.id,
+        flowId: flow.id,
+        setup,
+        missingIntegrations: missing,
+      }
     } catch {
       return { status: 'accepted', kind: 'flow', templateId: template.id }
     }

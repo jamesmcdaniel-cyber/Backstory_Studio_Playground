@@ -19,9 +19,10 @@ import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
+import { FlowTemplateCard, type FlowTemplateItem } from '@/components/templates/flow-template-card'
 import { cn } from '@/lib/utils'
 
-/** Cards per page on the Templates and Skills grids. */
+/** Cards per page on the Templates, Flows, and Skills grids. */
 const PAGE_SIZE = 9
 
 interface TemplateItem {
@@ -121,9 +122,10 @@ function categoryIcon(category: string) {
  * drops into any container.
  */
 export function TemplatesView({ embedded = false, onCount }: { embedded?: boolean; onCount?: (count: number) => void }) {
-  const [activeTab, setActiveTab] = useState<'templates' | 'skills'>('templates')
+  const [activeTab, setActiveTab] = useState<'templates' | 'flows' | 'skills'>('templates')
 
   const [templates, setTemplates] = useState<TemplateItem[]>([])
+  const [flowTemplates, setFlowTemplates] = useState<FlowTemplateItem[]>([])
   const [skills, setSkills] = useState<SkillItem[]>([])
   const [agents, setAgents] = useState<AgentItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -137,6 +139,7 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   const [aiError, setAiError] = useState<string | null>(null)
   // Card grids cap at 9 per page; each tab pages independently.
   const [templatesPage, setTemplatesPage] = useState(1)
+  const [flowsPage, setFlowsPage] = useState(1)
   const [skillsPage, setSkillsPage] = useState(1)
   // Category filter chips (per tab). 'All' shows everything.
   const [category, setCategory] = useState('All')
@@ -217,7 +220,22 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   const handleTabChange = (value: string) => {
     // Categories differ per tab, so a filter from one tab shouldn't linger.
     setCategory('All')
-    setActiveTab(value === 'skills' ? 'skills' : 'templates')
+    setActiveTab(value === 'skills' ? 'skills' : value === 'flows' ? 'flows' : 'templates')
+  }
+
+  const deleteFlowTemplate = async (template: FlowTemplateItem) => {
+    if (!confirm(`Remove "${template.name}" from the flow library?`)) return
+    const res = await fetch('/api/flow-templates', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: template.id }),
+    })
+    if (!res.ok) {
+      toast.error('Could not remove')
+      return
+    }
+    setFlowTemplates((prev) => prev.filter((entry) => entry.id !== template.id))
+    toast.success('Removed')
   }
 
   // Report the template count up (for the dashboard toggle badge) whenever it
@@ -228,19 +246,39 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
     let cancelled = false
     const load = async () => {
       try {
-        const [templatesRes, skillsRes, agentsRes] = await Promise.all([
+        const [templatesRes, flowsRes, skillsRes, agentsRes] = await Promise.all([
           fetch('/api/agent-templates', { cache: 'no-store' }),
+          fetch('/api/flow-templates', { cache: 'no-store' }),
           fetch('/api/skills', { cache: 'no-store' }),
           fetch('/api/agents', { cache: 'no-store' }),
         ])
         if (!templatesRes.ok) throw new Error(`Templates fetch failed: status ${templatesRes.status}`)
-        const [templatesData, skillsData, agentsData] = await Promise.all([
+        const [templatesData, flowsData, skillsData, agentsData] = await Promise.all([
           templatesRes.json(),
+          flowsRes.ok ? flowsRes.json() : { success: false, templates: [] },
           skillsRes.ok ? skillsRes.json() : { success: false, skills: [] },
           agentsRes.ok ? agentsRes.json() : { success: false, agents: [] },
         ])
         if (cancelled) return
         setTemplates(templatesData.templates || [])
+        // Flatten to the card shape here: the wire payload carries the whole
+        // graph and notes, which the grid has no use for.
+        setFlowTemplates(
+          (flowsData.templates || []).map((entry: Record<string, any>): FlowTemplateItem => ({
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            category: entry.category,
+            icon: entry.icon,
+            integrations: entry.integrations,
+            tags: entry.tags,
+            stepCount: entry.stepCount ?? 0,
+            setupCount: (entry.bindings?.length ?? 0) + (entry.notes?.setup?.length ?? 0),
+            custom: entry.custom,
+            mine: entry.mine,
+            source: entry.source,
+          })),
+        )
         setSkills(skillsData.success ? skillsData.skills : [])
         setAgents(agentsData.success ? agentsData.agents : [])
       } catch (e: any) {
@@ -274,19 +312,22 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   // deduped) — so they always reflect what's actually in the library.
   const categoriesFor = (items: { category: string }[]) =>
     ['All', ...Array.from(new Set(items.map((i) => i.category).filter(Boolean))).sort()]
-  const activeCategories = categoriesFor(activeTab === 'skills' ? skills : templates)
+  const activeCategories = categoriesFor(activeTab === 'skills' ? skills : activeTab === 'flows' ? flowTemplates : templates)
   const filteredTemplates = templates.filter(matches).filter(inCategory)
+  const filteredFlowTemplates = flowTemplates.filter(matches).filter(inCategory)
   const filteredSkills = skills.filter(matches).filter(inCategory)
 
   const onSearch = (value: string) => {
     setSearch(value)
     setTemplatesPage(1)
+    setFlowsPage(1)
     setSkillsPage(1)
   }
 
   const onCategory = (value: string) => {
     setCategory(value)
     setTemplatesPage(1)
+    setFlowsPage(1)
     setSkillsPage(1)
   }
 
@@ -497,6 +538,7 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList>
             <TabsTrigger value="templates">Templates</TabsTrigger>
+            <TabsTrigger value="flows">Flows</TabsTrigger>
             <TabsTrigger value="skills">Skills</TabsTrigger>
           </TabsList>
 
@@ -603,6 +645,45 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
               page={paginate(filteredTemplates, templatesPage, PAGE_SIZE).page}
               pageCount={paginate(filteredTemplates, templatesPage, PAGE_SIZE).pageCount}
               onPageChange={setTemplatesPage}
+            />
+          </TabsContent>
+
+          {/* ── Flows tab ─────────────────────────────────────────────────── */}
+          <TabsContent value="flows" className="mt-6">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">Flow templates</h2>
+                <p className="text-sm text-muted-foreground">
+                  Complete pipelines, wired and explained step by step. Use one and it lands as a draft you can read before it runs.
+                </p>
+              </div>
+              <Button asChild size="sm" variant="outline">
+                <Link href="/flows">Open Flows</Link>
+              </Button>
+            </div>
+
+            {filteredFlowTemplates.length === 0 ? (
+              <EmptyState
+                icon={Sparkles}
+                title="No flow templates match"
+                description="Clear the search or category filter, or save one of your own flows as a template from its builder."
+              />
+            ) : (
+              <div className="stagger-children grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                {paginate(filteredFlowTemplates, flowsPage, PAGE_SIZE).pageItems.map((template) => (
+                  <FlowTemplateCard
+                    key={template.id}
+                    template={template}
+                    accent={accentFor(template.category)}
+                    onDelete={deleteFlowTemplate}
+                  />
+                ))}
+              </div>
+            )}
+            <Pagination
+              page={paginate(filteredFlowTemplates, flowsPage, PAGE_SIZE).page}
+              pageCount={paginate(filteredFlowTemplates, flowsPage, PAGE_SIZE).pageCount}
+              onPageChange={setFlowsPage}
             />
           </TabsContent>
 

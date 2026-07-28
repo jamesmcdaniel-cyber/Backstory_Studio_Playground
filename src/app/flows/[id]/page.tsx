@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Trash2, FlaskConical, History, ScrollText, Users, FileText } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Trash2, FlaskConical, History, ScrollText, Users, FileText, BookmarkPlus } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
@@ -40,6 +40,7 @@ import { StepDrawer, type OrgMember, type ToolCatalog } from '@/components/flows
 import { CopilotPanel } from '@/components/flows/copilot-panel'
 import { RunPanel, type FlowRunDetail } from '@/components/flows/run-panel'
 import { CheckerPanel } from '@/components/flows/checker-panel'
+import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
 import { useCanvasPan } from '@/components/flows/use-canvas-pan'
 import { TestPanel } from '@/components/flows/test-panel'
@@ -207,6 +208,7 @@ function FlowBuilder() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [graph, setGraph] = useState<FlowGraph>(emptyGraph())
+  const [savingTemplate, setSavingTemplate] = useState(false)
   // Lifecycle status is owned by publish/unpublish (server-side); the client
   // only mirrors it for exports — there is no manual status control.
   const [status, setStatus] = useState('draft')
@@ -1581,6 +1583,9 @@ function FlowBuilder() {
             <DropdownMenuItem onSelect={duplicateFlow}>
               <Copy className="h-4 w-4" /> Duplicate
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setSavingTemplate(true)}>
+              <BookmarkPlus className="h-4 w-4" /> Save as template…
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Export</DropdownMenuLabel>
             <DropdownMenuItem onSelect={downloadFlow}>
@@ -2022,6 +2027,15 @@ function FlowBuilder() {
         shareToken={shareToken}
         shareRole={shareRole}
         onShareChanged={(token, role) => { setShareToken(token); setShareRole(role) }}
+      />
+
+      <SaveAsTemplateDialog
+        open={savingTemplate}
+        onOpenChange={setSavingTemplate}
+        flowId={id}
+        flowName={name}
+        flowDescription={description}
+        graph={graph}
       />
 
       {subflowDraft && (() => {

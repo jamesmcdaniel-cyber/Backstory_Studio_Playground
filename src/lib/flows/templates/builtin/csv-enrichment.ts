@@ -146,7 +146,6 @@ export const CSV_ENRICHMENT: FlowTemplateDef = {
       'Take a CSV in, add columns from an API lookup, and get a CSV out where every original row is still present — enriched or explicitly marked as failed. It worked if the row count going in matches the row count coming out.',
     inputs: [
       { name: 'file', description: 'A CSV with a header row, uploaded on the run form.', example: 'accounts.csv with columns name, domain, owner' },
-      { name: 'keyColumn', description: 'Which column to look each row up by.', example: 'domain' },
     ],
     steps: [
       { nodeId: 'api-base', title: 'Set the lookup API address', what: 'Holds the enrichment API address in one place.' },
@@ -173,7 +172,7 @@ export const CSV_ENRICHMENT: FlowTemplateDef = {
       'Each lookup retries once, then its failure is collected in place rather than failing the step. The merge is positional, so it depends on per-item results coming back in input order. Row count in always equals row count out.',
     setup: [
       { label: 'Set your enrichment API address on the Set the lookup API address step', kind: 'value', ref: 'api-base' },
-      { label: 'Check the query the lookup sends matches what your API expects', kind: 'value', ref: 'lookup' },
+      { label: 'Point the lookup at your key column — it reads a column named domain out of the box', kind: 'value', ref: 'lookup' },
     ],
     customize: [
       'Add authentication to Look each row up if your API needs it.',

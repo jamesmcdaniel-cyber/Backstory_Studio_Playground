@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/ui/page-header'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { STARTER_TEMPLATES } from '@/lib/flows/starter-templates'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -19,6 +18,17 @@ import { cn } from '@/lib/utils'
 
 /** Cards per page on the Flows grid. */
 const PAGE_SIZE = 9
+
+/** Templates offered inline in the New-flow menu; the rest live in the gallery. */
+const MENU_TEMPLATE_LIMIT = 6
+
+type FlowTemplateOption = {
+  id: string
+  name: string
+  description: string
+  stepCount: number
+  setupCount: number
+}
 
 type FlowItem = {
   id: string
@@ -39,6 +49,7 @@ const STATUS_STYLE: Record<string, string> = {
 export default function FlowsPage() {
   const router = useRouter()
   const [flows, setFlows] = useState<FlowItem[]>([])
+  const [flowTemplates, setFlowTemplates] = useState<FlowTemplateOption[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [creating, setCreating] = useState(false)
@@ -75,6 +86,23 @@ export default function FlowsPage() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
+    // The template menu reads the live catalogue, so a template the workspace
+    // saved or was recommended shows up here too — not just the built-ins.
+    fetch(`/api/flow-templates?limit=${MENU_TEMPLATE_LIMIT}`, { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((data) => {
+        if (cancelled || !data.success) return
+        setFlowTemplates(
+          (data.templates || []).map((entry: Record<string, any>): FlowTemplateOption => ({
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            stepCount: entry.stepCount ?? 0,
+            setupCount: (entry.bindings?.length ?? 0) + (entry.notes?.setup?.length ?? 0),
+          })),
+        )
+      })
+      .catch(() => undefined)
     return () => {
       cancelled = true
     }
@@ -91,6 +119,30 @@ export default function FlowsPage() {
       const data = await response.json()
       if (response.ok && data.flow) router.push(`/flows/${data.flow.id}`)
       else toast.error(data.error || 'Could not create the flow.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  // Templates go through the instantiate endpoint rather than a plain POST, so
+  // bindings resolve against this workspace and the unfilled ones come back as
+  // a setup list instead of silently landing as empty steps.
+  const createFromTemplate = async (template: FlowTemplateOption) => {
+    setCreating(true)
+    try {
+      const response = await fetch(`/api/flow-templates/${template.id}/use`, { method: 'POST' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.flow) {
+        toast.error(data.error || 'Could not create the flow.')
+        return
+      }
+      const outstanding = Array.isArray(data.setup) ? data.setup.length : 0
+      toast.success(
+        outstanding > 0
+          ? `Created as a draft — ${outstanding} thing${outstanding === 1 ? '' : 's'} left to set up.`
+          : 'Created as a draft, ready to run.',
+      )
+      router.push(`/flows/${data.flow.id}`)
     } finally {
       setCreating(false)
     }
@@ -112,12 +164,19 @@ export default function FlowsPage() {
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Start from a template</DropdownMenuLabel>
-          {STARTER_TEMPLATES.map((template) => (
-            <DropdownMenuItem key={template.id} onSelect={() => createFlow(template)} className="flex-col items-start gap-0.5">
+          {flowTemplates.map((template) => (
+            <DropdownMenuItem key={template.id} onSelect={() => createFromTemplate(template)} className="flex-col items-start gap-0.5">
               <span className="flex items-center gap-1.5 font-medium"><FileText className="h-3.5 w-3.5" /> {template.name}</span>
               <span className="pl-5 text-xs text-muted-foreground">{template.description}</span>
+              <span className="pl-5 text-[11px] text-muted-foreground/80">
+                {template.stepCount} steps · {template.setupCount === 0 ? 'ready to run' : `${template.setupCount} to set up`}
+              </span>
             </DropdownMenuItem>
           ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem asChild>
+            <Link href="/agents?view=templates">Browse all flow templates…</Link>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

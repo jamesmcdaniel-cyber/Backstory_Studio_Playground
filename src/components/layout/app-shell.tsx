@@ -1,6 +1,6 @@
 'use client'
 
-import { ReactNode } from 'react'
+import { ReactNode, useLayoutEffect, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import { motion, useReducedMotion } from 'motion/react'
 import { Sidebar } from './sidebar'
@@ -50,7 +50,20 @@ export function AppShell({ children }: { children: ReactNode }) {
   const rawPathname = usePathname() ?? ''
   const pathname = normalizePath(rawPathname)
   const reduceMotion = useReducedMotion()
+  const mainRef = useRef<HTMLElement>(null)
   const isAppRoute = APP_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+
+  // <main> deliberately persists across client navigation so the sidebar and
+  // shell do not remount. Browsers also preserve that element's scrollTop,
+  // including after it changes to overflow:hidden for a fullscreen route.
+  // Reset before paint so /agents is always anchored to the canvas's top edge
+  // rather than inheriting a scroll offset from Home, Flows, or Integrations.
+  useLayoutEffect(() => {
+    const main = mainRef.current
+    if (!main) return
+    main.scrollTop = 0
+    main.scrollLeft = 0
+  }, [pathname])
 
   if (!isAppRoute) {
     // Public routes (incl. /connect onboarding) still get a boundary so a render
@@ -94,6 +107,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex h-dvh overflow-hidden bg-background">
         <Sidebar />
         <main
+          ref={mainRef}
           id="main-content"
           className={`app-canvas relative min-h-0 min-w-0 flex-1 ${
             fullscreen ? 'overflow-hidden' : 'overflow-y-auto'

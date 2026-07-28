@@ -168,8 +168,24 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     [agentName, toolCatalog, published],
   )
 
+  // The selection the page wants, kept in a ref rather than read as a dep.
+  //
+  // Selection has three writers — React Flow's own store (click/marquee), the
+  // `selected` flag written when nodes are rebuilt, and the page state that
+  // `onSelectionChange` feeds. When the rebuild re-asserted selection, React
+  // Flow echoed the write back through `onSelectionChange`, the page adopted
+  // the echo as user intent, and that rewrote the nodes again: opening a node
+  // ping-ponged selected → [] → selected until React threw "Maximum update
+  // depth exceeded" and the builder fell into its error boundary.
+  //
+  // Reading through a ref keeps selection OUT of the rebuild's dependencies, so
+  // React Flow stays the single owner of what's selected; the effect below only
+  // reconciles when the page and the canvas genuinely disagree.
+  const selectionRef = useRef<Set<string>>(new Set())
+  selectionRef.current = new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])
+
   const buildNodes = useCallback((): StepFlowNode[] => {
-    const selection = new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])
+    const selection = selectionRef.current
     const connectedHandles = new Map<string, Set<string>>()
     for (const edge of outerEdges(graph)) {
       const handles = connectedHandles.get(edge.source) ?? new Set<string>()
@@ -216,8 +232,6 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     statusByNode,
     issuesByNode,
     highlightIds,
-    selectedId,
-    selectedIds,
     remoteSelections,
     toolCatalog,
   ])
@@ -242,6 +256,23 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   useEffect(() => {
     setRfEdges(buildEdges())
   }, [buildEdges, setRfEdges])
+
+  // Push the page's selection onto the canvas only where the two disagree, and
+  // return the SAME array when they don't. An unconditional rebuild here would
+  // re-enter the feedback loop described above; bailing out means a selection
+  // that originated in React Flow round-trips to no-op instead of echoing.
+  useEffect(() => {
+    setRfNodes((nodes) => {
+      let changed = false
+      const next = nodes.map((node) => {
+        const selected = selectionRef.current.has(node.id)
+        if (node.selected === selected) return node
+        changed = true
+        return { ...node, selected }
+      })
+      return changed ? next : nodes
+    })
+  }, [selectedId, selectedIds, setRfNodes])
 
   useEffect(() => {
     if (!focusRequest) return
@@ -344,11 +375,14 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     ({ nodes, edges }: OnSelectionChangeParams) => {
       selectedEdgeIdsRef.current = edges.map((edge) => edge.id)
       const ids = nodes.map((node) => node.id)
-      const current = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
-      const same = ids.length === current.length && ids.every((id) => current.includes(id))
+      // Compared against the ref, not the props captured when this callback was
+      // memoized: a stale copy reports "changed" for a selection the page has
+      // already applied, which is the echo that drove the render loop.
+      const current = selectionRef.current
+      const same = ids.length === current.size && ids.every((id) => current.has(id))
       if (!same) onSelectionChange(ids)
     },
-    [onSelectionChange, selectedId, selectedIds],
+    [onSelectionChange],
   )
 
   const handleNodeDragStop = useCallback(() => {

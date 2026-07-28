@@ -1,5 +1,6 @@
 import '@/test-support/jsdom-env'
 import { test } from 'node:test'
+import assert from 'node:assert/strict'
 import React from 'react'
 import { render, cleanup } from '@testing-library/react'
 import { act } from 'react'
@@ -55,25 +56,30 @@ const graph = {
   edges: [{ id: 'e1', source: 'trigger', target: 'n2' }],
 } as unknown as FlowGraph
 
-test('EVIDENCE: realistic parent — settle or spin?', async () => {
-  const { GraphCanvas } = (await import('@/components/flows/canvas/graph-canvas')) as unknown as {
-    GraphCanvas: (props: Record<string, unknown>) => React.ReactElement
-  }
-
+/**
+ * Opening a node used to spin forever: selection lives in three places at once
+ * (React Flow's own store, the `selected` flag the node rebuild writes from
+ * props, and the page state `onSelectionChange` feeds) and each write provoked
+ * an echo the page adopted as if it were user intent —
+ * selected → [] → selected → [] until React threw "Maximum update depth
+ * exceeded" and the page hit its error boundary.
+ *
+ * The parent here mirrors the real page: same selection logic, same inline
+ * literal props (so nothing is accidentally stabilized that isn't in prod).
+ */
+function harness() {
   let parentRenders = 0
-  let selectionCalls = 0
+  const selections: string[][] = []
 
-  // Mirrors the page: selection state + the real canvasSelectionChange logic,
-  // and the same inline-literal props the page passes.
   function Page({ status }: { status: Record<string, string> }) {
     parentRenders += 1
-    if (parentRenders > 200) throw new Error(`RUNAWAY: parent rendered ${parentRenders} times`)
+    if (parentRenders > 100) throw new Error(`RUNAWAY: parent rendered ${parentRenders} times`)
     const [selectedId, setSelectedId] = React.useState<string | null>(null)
     const [selectedIds, setSelectedIds] = React.useState<string[]>([])
     const [focusRequest, setFocusRequest] = React.useState<{ id: string; nonce: number } | null>(null)
 
     const onSelectionChange = React.useCallback((ids: string[]) => {
-      selectionCalls += 1
+      selections.push(ids)
       setSelectedIds(ids.length > 1 ? ids : [])
       setSelectedId(ids.length === 1 ? ids[0] : null)
     }, [])
@@ -84,7 +90,7 @@ test('EVIDENCE: realistic parent — settle or spin?', async () => {
     }, [])
 
     return (
-      <GraphCanvas
+      <GraphCanvasRef.current
         graph={graph}
         agentName={(id: string) => id}
         agents={[]}
@@ -115,26 +121,94 @@ test('EVIDENCE: realistic parent — settle or spin?', async () => {
     )
   }
 
+  return { Page, renders: () => parentRenders, selections }
+}
+
+const GraphCanvasRef = { current: (() => null) as unknown as (props: Record<string, unknown>) => React.ReactElement }
+
+test('opening a node settles instead of spinning the selection feedback loop', async () => {
+  const mod = (await import('@/components/flows/canvas/graph-canvas')) as unknown as {
+    GraphCanvas: (props: Record<string, unknown>) => React.ReactElement
+  }
+  GraphCanvasRef.current = mod.GraphCanvas
+
+  const { Page, renders, selections } = harness()
   const view = render(<Page status={{}} />)
   await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
-  console.log('parentRenders after mount:', parentRenders, 'selectionCalls:', selectionCalls)
-
-  for (const s of ['running', 'succeeded']) {
-    await act(async () => {
-      view.rerender(<Page status={{ n2: s }} />)
-      await new Promise((r) => setTimeout(r, 200))
-    })
-    console.log(`parentRenders after status=${s}:`, parentRenders, 'selectionCalls:', selectionCalls)
-  }
 
   const nodeEl = view.container.querySelector('.react-flow__node')
-  console.log('node rendered:', Boolean(nodeEl))
-  if (nodeEl) {
+  assert.ok(nodeEl, 'expected a node to render')
+
+  const before = renders()
+  await act(async () => {
+    nodeEl.dispatchEvent(new (win.MouseEvent as unknown as typeof MouseEvent)('dblclick', { bubbles: true }))
+    // Longer than the 300ms fitView animation, so any viewport-driven
+    // re-render storm has time to show up rather than being missed.
+    await new Promise((r) => setTimeout(r, 600))
+  })
+
+  const after = renders()
+  assert.ok(
+    after - before <= 6,
+    `opening a node should settle in a few renders, took ${after - before}. Selection echoes: ${JSON.stringify(selections)}`,
+  )
+
+  cleanup()
+})
+
+// The reported repro: a step is open while a test run streams statuses in, so
+// the rebuild (driven by status) and the selection writer are both active.
+test('statuses streaming in while a node is open neither spin nor drop the selection', async () => {
+  const mod = (await import('@/components/flows/canvas/graph-canvas')) as unknown as {
+    GraphCanvas: (props: Record<string, unknown>) => React.ReactElement
+  }
+  GraphCanvasRef.current = mod.GraphCanvas
+
+  const { Page, renders } = harness()
+  const view = render(<Page status={{}} />)
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+
+  const nodeEl = view.container.querySelector('.react-flow__node')
+  await act(async () => {
+    nodeEl!.dispatchEvent(new (win.MouseEvent as unknown as typeof MouseEvent)('dblclick', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 400))
+  })
+
+  for (const status of ['running', 'succeeded']) {
+    const before = renders()
     await act(async () => {
-      nodeEl.dispatchEvent(new (win.MouseEvent as unknown as typeof MouseEvent)('dblclick', { bubbles: true }))
-      await new Promise((r) => setTimeout(r, 400))
+      view.rerender(<Page status={{ n2: status }} />)
+      await new Promise((r) => setTimeout(r, 200))
     })
-    console.log('parentRenders after open-node:', parentRenders, 'selectionCalls:', selectionCalls)
+    assert.ok(renders() - before <= 4, `status=${status} with a node open should settle, took ${renders() - before}`)
+  }
+
+  // The rebuild that status changes trigger must carry selection through it.
+  assert.ok(
+    view.container.querySelector('.react-flow__node.selected'),
+    'the open node should still be selected after statuses stream in',
+  )
+
+  cleanup()
+})
+
+test('run status updates settle without re-rendering the page in a loop', async () => {
+  const mod = (await import('@/components/flows/canvas/graph-canvas')) as unknown as {
+    GraphCanvas: (props: Record<string, unknown>) => React.ReactElement
+  }
+  GraphCanvasRef.current = mod.GraphCanvas
+
+  const { Page, renders } = harness()
+  const view = render(<Page status={{}} />)
+  await act(async () => { await new Promise((r) => setTimeout(r, 200)) })
+
+  for (const status of ['running', 'succeeded']) {
+    const before = renders()
+    await act(async () => {
+      view.rerender(<Page status={{ n2: status }} />)
+      await new Promise((r) => setTimeout(r, 200))
+    })
+    assert.ok(renders() - before <= 3, `status=${status} should settle, took ${renders() - before} renders`)
   }
 
   cleanup()

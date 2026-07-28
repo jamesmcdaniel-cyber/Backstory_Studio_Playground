@@ -4,8 +4,8 @@ import { stepLabelsOf } from '@/lib/flows/token-text'
 import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, type NodeRunState } from '@/lib/flows/dag-scheduler'
 import { shouldRetryAfterTimeout } from './action-reliability'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
-import { runDataOp } from '@/lib/flows/data-ops'
-import { mergeAppend, mergeByKey } from '@/lib/flows/merge'
+import { runDataOp, chunkItems, coerceFieldType } from '@/lib/flows/data-ops'
+import { mergeAppend, mergeAllCombinations, mergeByKey, mergeByPosition } from '@/lib/flows/merge'
 import { computeResumeAt } from '@/lib/flows/wait'
 
 export type StepOutcome = {
@@ -116,7 +116,7 @@ type NodeResult =
   | { kind: 'route'; output: unknown }
   // A condition/switch decision — the scheduler activates the matching branch
   // edge and deads the rest. `output` mirrors the recorded outcome value.
-  | { kind: 'branch'; branch: string; output: unknown }
+  | { kind: 'branch'; branch: string | string[]; output: unknown }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
@@ -552,11 +552,17 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     }
 
     if (node.type === 'switch') {
-      // First matching case wins; otherwise the 'default' edge.
-      const hit = node.data.cases.find((c) => evalClause({ left: c.left, op: c.op, right: c.right }, ctx))
-      const branch = hit ? hit.id : 'default'
-      emit({ nodeId: node.id, status: 'succeeded', output: branch })
-      return { kind: 'branch', branch, output: branch }
+      // First matching case wins, then the 'default' edge — unless the step
+      // asks for every match, in which case each matching case's edge fires.
+      const matches = node.data.cases.filter((c) =>
+        evalClause({ left: c.left, op: c.op, right: c.right, ...(c.ignoreCase === undefined ? {} : { ignoreCase: c.ignoreCase }) }, ctx),
+      )
+      const branch: string | string[] = node.data.allMatches
+        ? (matches.length ? matches.map((c) => c.id) : 'default')
+        : (matches[0]?.id ?? 'default')
+      const shown = Array.isArray(branch) ? branch.join(', ') : branch
+      emit({ nodeId: node.id, status: 'succeeded', output: shown })
+      return { kind: 'branch', branch, output: shown }
     }
 
     if (node.type === 'humanReview') {
@@ -652,7 +658,18 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const branchOutputs = (incomingSources.get(node.id) ?? [])
         .map((sourceId) => ctx.step[sourceId]?.output)
         .filter((value) => value !== undefined)
-      const output = mode === 'append' ? mergeAppend(branchOutputs) : mergeByKey(branchOutputs, node.data.key)
+      // The two combine modes disagree on the sensible default, so each keeps
+      // its own: combineByKey has always kept unmatched records (opt OUT), while
+      // combine-by-position drops the overhang unless asked (opt IN), matching
+      // n8n and the fact that a positional overhang is usually a mistake.
+      const output =
+        mode === 'append'
+          ? mergeAppend(branchOutputs)
+          : mode === 'combineByPosition'
+            ? mergeByPosition(branchOutputs, node.data.includeUnpaired === true)
+            : mode === 'allCombinations'
+              ? mergeAllCombinations(branchOutputs)
+              : mergeByKey(branchOutputs, node.data.key, node.data.includeUnpaired !== false)
       ctx.step[node.id] = { output }
       emit({ nodeId: node.id, status: 'succeeded', output })
       return { kind: 'ok', output }
@@ -662,7 +679,13 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // Build an object from templated field assignments (deterministic "Set").
       // A value that parses as JSON (number/bool/object/array) is typed; anything
       // else stays a string.
-      const output: Record<string, unknown> = {}
+      // "Include Other Input Fields": start from the incoming record so the
+      // mapped fields ADD to it rather than replace it. Only a record can be
+      // spread; anything else is ignored so the step still yields an object.
+      const carried = node.data.includeOtherFields === true && lastOutput && typeof lastOutput === 'object' && !Array.isArray(lastOutput)
+        ? { ...(lastOutput as Record<string, unknown>) }
+        : {}
+      const output: Record<string, unknown> = carried
       for (const field of node.data.fields) {
         if (!field.name) continue
         const resolved = resolveTemplate(field.value, ctx)
@@ -672,7 +695,10 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         } catch {
           /* not JSON — keep the string */
         }
-        output[field.name] = value
+        // A declared type is a request, not a guess: coerce to it when the
+        // value can be, and leave the value untouched when it cannot, so a
+        // mistyped field is visible in the output rather than silently null.
+        output[field.name] = field.type ? coerceFieldType(value, field.type) : value
       }
       ctx.step[node.id] = { output }
       emit({ nodeId: node.id, status: 'succeeded', output })
@@ -960,7 +986,13 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     }
 
     if (node.type === 'loop') {
-      const items = loopItems(resolveTemplate(node.data.over, ctx)).slice(0, maxLoop)
+      const rawItems = loopItems(resolveTemplate(node.data.over, ctx)).slice(0, maxLoop)
+      // Batch size groups the list so each iteration receives an ARRAY of up to
+      // N items as `{{item}}` — "post 50 records per call" instead of one call
+      // per record. A size of 1 (the default) keeps the classic behaviour, item
+      // by item, so existing loops are untouched.
+      const batchSize = Math.max(1, node.data.batchSize ?? 1)
+      const items: unknown[] = batchSize > 1 ? chunkItems(rawItems, batchSize) : rawItems
       const iterations = await mapLimit(items, node.data.concurrency ?? 1, async (item, index) => {
         // `variables` is shared by reference: writes inside the body persist
         // past the loop (one flow-global symbol table, MS parity).

@@ -256,3 +256,33 @@ Not gaps — do not close:
 4. **Retry wait + Always Output Data** (§6) — small, and both show up the moment
    someone builds against a flaky API.
 5. Merge modes, loop batch size, HTTP pagination stop-condition (§8).
+
+## 13. Status after the closing pass (2026-07-28)
+
+Everything in §6–§10 is now implemented. Reference for what each landed as:
+
+| Gap | Landed as |
+|---|---|
+| Condition operators (§7) | `CONDITION_OPS` 8 → 19, plus per-clause `ignoreCase`; unary ops hide their value box via `UNARY_CONDITION_OPS` |
+| Compose object mode (§8) | `data.compose` builds an object from `fields`; passthrough when none declared |
+| Set field types (§8) | `transform.fields[].type` + `includeOtherFields`, coerced by `coerceFieldType` |
+| Merge modes (§8) | `combineByPosition`, `allCombinations`, `includeUnpaired` (opt-out for by-key, opt-in for by-position) |
+| Loop batch size (§8) | `loop.batchSize` — the body sees an array of up to N items as the current item |
+| HTTP pagination stop (§8) | `pagination.completeWhen` = `emptyPage` / `statusCode` / `pathMissing` |
+| HTTP redirects (§8) | `maxRedirects`, threaded to the SSRF-checked hop loop |
+| HTTP batching (§8) | `perItem.batchIntervalMs` — paces a fan-out against a rate-limited API |
+| Switch all-matching (§8) | `switch.allMatches`; `EdgeResult.branch` accepts `string[]` |
+| Subflow fire-and-forget (§8) | `subflow.waitForCompletion: false` dispatches and returns `{ started: true }` |
+| Item-shaping nodes (§9) | `sort`, `limit`, `removeDuplicates`, `aggregate`, `summarize` data ops, in the step palette |
+| Retry wait (§6) | `retryDelayMs` on every retryable node, threaded to all four retry sites |
+| Always Output Data (§6) | `alwaysOutputData`, applied by a wrapper around the action executor |
+| Webhook response mode (§10) | `trigger.responseMode: 'immediately'` returns 202 and runs in the background |
+| Webhook auth (§10) | Already parity — `webhookSecretHash` is the header/secret check |
+| HTTP response headers (§8) | Was never a gap — `FlowHttpOutput` always carried `headers`/`status`/`statusText`/`url` |
+
+Every one is reachable from the editor: the operator/mode dropdowns render from
+the shared enums, the new data ops have their own field editors, and the
+node-level settings (retry wait, always-output-data, max redirects, batch size,
+wait-for-subflow) live in the shared **Advanced parameters** panel.
+
+Still deliberately absent, per §11: ignore-SSL and proxy on HTTP.

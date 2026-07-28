@@ -410,3 +410,41 @@ function summarizeValues(
   if (op === 'avg') return numbers.reduce((total, value) => total + value, 0) / numbers.length
   return op === 'min' ? Math.min(...numbers) : Math.max(...numbers)
 }
+
+/** Split a list into consecutive groups of at most `size` (loop batch size). */
+export function chunkItems(items: unknown[], size: number): unknown[][] {
+  const step = Math.max(1, Math.trunc(size))
+  const chunks: unknown[][] = []
+  for (let i = 0; i < items.length; i += step) chunks.push(items.slice(i, i + step))
+  return chunks
+}
+
+/**
+ * Coerce a resolved value to a field's declared type (n8n's per-field type
+ * dropdown). A value that cannot honestly become the requested type is returned
+ * UNCHANGED rather than nulled, so a mistyped field shows up in the output
+ * instead of vanishing.
+ */
+export function coerceFieldType(value: unknown, type: string): unknown {
+  if (value === null || value === undefined) return value
+  switch (type) {
+    case 'string':
+      return typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)
+    case 'number': {
+      const n = typeof value === 'number' ? value : Number(String(value).trim())
+      return Number.isNaN(n) ? value : n
+    }
+    case 'boolean': {
+      const text = String(value).trim().toLowerCase()
+      if (['true', 'yes', '1'].includes(text)) return true
+      if (['false', 'no', '0'].includes(text)) return false
+      return value
+    }
+    case 'array':
+      return Array.isArray(value) ? value : [value]
+    case 'object':
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : value
+    default:
+      return value
+  }
+}

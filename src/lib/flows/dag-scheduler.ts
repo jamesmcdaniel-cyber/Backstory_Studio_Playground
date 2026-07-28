@@ -4,7 +4,11 @@ export type EdgeState = 'unresolved' | 'active' | 'dead'
 export type NodeRunState = 'pending' | 'running' | 'done' | 'skipped' | 'failed'
 
 /** The node-completion shapes the scheduler resolves edges for. */
-export type EdgeResult = 'ok' | 'route' | 'drop' | 'skip' | { branch: string }
+/**
+ * `branch` may name SEVERAL branches: a switch with "send to all matching
+ * outputs" activates every case it matched, not just the first.
+ */
+export type EdgeResult = 'ok' | 'route' | 'drop' | 'skip' | { branch: string | string[] }
 
 /**
  * Build incoming/outgoing edge indexes over the OUTER DAG — nodes inside a
@@ -41,7 +45,8 @@ export function buildAdjacency(
 export function edgeActivationsFor(result: EdgeResult, outEdges: FlowEdge[]): Map<FlowEdge, 'active' | 'dead'> {
   const acts = new Map<FlowEdge, 'active' | 'dead'>()
   if (typeof result === 'object') {
-    for (const edge of outEdges) acts.set(edge, edge.branch === result.branch ? 'active' : 'dead')
+    const taken = new Set(Array.isArray(result.branch) ? result.branch : [result.branch])
+    for (const edge of outEdges) acts.set(edge, edge.branch && taken.has(edge.branch) ? 'active' : 'dead')
     return acts
   }
   if (result === 'drop') {

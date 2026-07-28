@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { X, Trash2, Plus, Copy, Database, Settings2, Braces, KeyRound, TerminalSquare, Play, Pin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
+import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { DataTree } from '@/components/flows/data-tree'
@@ -1606,6 +1606,18 @@ export function StepDrawer({
                     )}
                     <label className="text-xs">List field (path)<input className={fieldClass} placeholder="data" value={node.data.pagination.itemsPath ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, itemsPath: e.target.value || undefined } } })} /></label>
                     <label className="text-xs">Max pages<input type="number" min={1} max={50} className={fieldClass} placeholder="5" value={node.data.pagination.maxPages ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, maxPages: e.target.value === '' ? undefined : Math.max(1, Math.min(50, Number(e.target.value))) } } })} /></label>
+                    <label className="text-xs">Stop when<select className={fieldClass} value={node.data.pagination.completeWhen ?? 'emptyPage'} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, completeWhen: e.target.value as 'emptyPage' | 'statusCode' | 'pathMissing' } } })}>
+                      <option value="emptyPage">A page comes back empty</option>
+                      <option value="statusCode">The response has a certain status</option>
+                      <option value="pathMissing">A field in the response says there is no more</option>
+                    </select></label>
+                    {node.data.pagination.completeWhen === 'statusCode' && (
+                      <label className="text-xs">Stop on these statuses<input className={fieldClass} placeholder="404, 204" value={node.data.pagination.completeStatusCodes ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, completeStatusCodes: e.target.value || undefined } } })} /></label>
+                    )}
+                    {node.data.pagination.completeWhen === 'pathMissing' && (
+                      <label className="text-xs">Field that says &ldquo;more pages&rdquo;<input className={fieldClass} placeholder="has_more" value={node.data.pagination.completePath ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, completePath: e.target.value || undefined } } })} /></label>
+                    )}
+                    <label className="text-xs">Pause between pages (ms)<input type="number" min={0} max={10000} className={fieldClass} placeholder="0" value={node.data.pagination.intervalMs ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, pagination: { ...node.data.pagination!, intervalMs: e.target.value === '' ? undefined : Math.max(0, Math.min(10000, Number(e.target.value))) } } })} /></label>
                   </div>
                 )}
                 {node.data.pagination && <p className="text-xs text-muted-foreground">Items from every page are combined into one list in the output.</p>}
@@ -1639,6 +1651,16 @@ export function StepDrawer({
                     onBlur={unblockActive}
                     onChange={(e) => onChange({ ...node, data: { ...node.data, fields: node.data.fields.map((f, j) => (j === i ? { ...f, name: e.target.value } : f)) } })}
                   />
+                  <select
+                    className={`${smallField} w-24`}
+                    value={field.type ?? 'any'}
+                    aria-label={`Type for field ${field.name || i + 1}`}
+                    onChange={(e) => onChange({ ...node, data: { ...node.data, fields: node.data.fields.map((f, j) => (j === i ? { ...f, type: e.target.value === 'any' ? undefined : (e.target.value as FieldType) } : f)) } })}
+                  >
+                    {FIELD_TYPES.map((t) => (
+                      <option key={t} value={t}>{t === 'any' ? 'As-is' : t}</option>
+                    ))}
+                  </select>
                   <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, fields: node.data.fields.filter((_, j) => j !== i) } })} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove field">
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -1658,6 +1680,14 @@ export function StepDrawer({
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, fields: [...node.data.fields, { name: '', value: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
               <Plus className="h-3.5 w-3.5" /> Add field
             </button>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={node.data.includeOtherFields === true}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, includeOtherFields: e.target.checked || undefined } })}
+              />
+              Also keep the fields that came in
+            </label>
             <div>
               <DataTree fields={dataFields} onInsert={insertToken} />
             </div>
@@ -1681,11 +1711,17 @@ export function StepDrawer({
                     <select className={smallField} value={clause.op} onChange={(e) => update(clauses.map((c, j) => (j === i ? { ...c, op: e.target.value as ConditionOp } : c)))}>
                       {CONDITION_OPS.map((op) => <option key={op} value={op}>{CONDITION_OP_LABELS[op]}</option>)}
                     </select>
-                    <TokenTextEditor ref={registerEditor(`filt.${i}.right`)} className="min-w-0 flex-1 px-2 py-1.5" value={clause.right} labelCtx={labelCtx} placeholder="80" onFocus={focusEditor(`filt.${i}.right`)} onChange={(right) => update(clauses.map((c, j) => (j === i ? { ...c, right } : c)))} ariaLabel={`Filter ${i + 1} comparison value`} />
+                    {!UNARY_CONDITION_OPS.has(clause.op) && (
+                      <TokenTextEditor ref={registerEditor(`filt.${i}.right`)} className="min-w-0 flex-1 px-2 py-1.5" value={clause.right} labelCtx={labelCtx} placeholder="80" onFocus={focusEditor(`filt.${i}.right`)} onChange={(right) => update(clauses.map((c, j) => (j === i ? { ...c, right } : c)))} ariaLabel={`Filter ${i + 1} comparison value`} />
+                    )}
                     {clauses.length > 1 && (
                       <button type="button" onClick={() => update(clauses.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove condition"><Trash2 className="h-4 w-4" /></button>
                     )}
                   </div>
+                  <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <input type="checkbox" checked={clause.ignoreCase === true} onChange={(e) => update(clauses.map((c, j) => (j === i ? { ...c, ignoreCase: e.target.checked || undefined } : c)))} />
+                    Ignore upper/lower case
+                  </label>
                 </div>
               )
             })}
@@ -1719,6 +1755,14 @@ export function StepDrawer({
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, cases: [...node.data.cases, { id: `case${node.data.cases.length + 1}-${Math.random().toString(36).slice(2, 6)}`, left: '', op: 'contains', right: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
               <Plus className="h-3.5 w-3.5" /> Add case
             </button>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={node.data.allMatches === true}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, allMatches: e.target.checked || undefined } })}
+              />
+              Follow every case that matches, not just the first
+            </label>
             <div><DataTree fields={dataFields} onInsert={insertToken} /></div>
           </div>
         )}
@@ -2003,13 +2047,25 @@ export function StepDrawer({
               <select
                 className={fieldClass}
                 value={node.data.mode ?? 'passthrough'}
-                onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value === 'passthrough' ? undefined : (e.target.value as 'append' | 'combineByKey') } })}
+                onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value === 'passthrough' ? undefined : (e.target.value as 'append' | 'combineByKey' | 'combineByPosition' | 'allCombinations') } })}
               >
                 <option value="passthrough">Continue on whichever branch ran (merge paths)</option>
                 <option value="append">Combine every branch&apos;s items into one list</option>
                 <option value="combineByKey">Combine records from every branch by a matching field</option>
+                <option value="combineByPosition">Pair up branches item by item, in order</option>
+                <option value="allCombinations">Every combination of one item from each branch</option>
               </select>
             </div>
+            {(node.data.mode === 'combineByKey' || node.data.mode === 'combineByPosition') && (
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={node.data.mode === 'combineByPosition' ? node.data.includeUnpaired === true : node.data.includeUnpaired !== false}
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, includeUnpaired: e.target.checked } })}
+                />
+                Keep items that found no match
+              </label>
+            )}
             {node.data.mode === 'combineByKey' && (
               <div>
                 <label className={labelClass}>Matching field</label>

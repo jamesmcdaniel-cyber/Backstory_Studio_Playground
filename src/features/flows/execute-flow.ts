@@ -602,7 +602,7 @@ export async function runFlowExecution(
 
   // Deterministic steps: MCP tool calls and HTTP requests. Same FlowRunStep
   // bookkeeping as agent steps so the run panel shows their input/output.
-  const runAction: RunActionFn = async (node) => {
+  const runActionStep: RunActionFn = async (node) => {
     const step = await prisma.flowRunStep.create({
       data: {
         flowRunId: run.id,
@@ -877,6 +877,24 @@ export async function runFlowExecution(
           typeof node.config.timeoutMs === 'number' && Number.isFinite(node.config.timeoutMs)
             ? Math.max(1000, Math.min(AGENT_RUN_TIMEOUT_MS, Math.round(node.config.timeoutMs)))
             : undefined
+        // Fire-and-forget: start the child and move on (n8n's "Wait For
+        // Sub-Workflow Completion", off). The child gets its own run row and
+        // its own keep-alive, so it survives this step returning; the parent
+        // records that it was started rather than pretending to have a result.
+        if (node.config.waitForCompletion === false) {
+          await dispatchDetachedFlowExecution({
+            flowId: child.id,
+            organizationId: job.organizationId,
+            userId: job.userId,
+            input: childInput,
+            usePublished: true,
+            trigger: { type: 'subflow', parentRunId: run.id, parentFlowId: job.flowId },
+            subflowDepth: (job.subflowDepth ?? 0) + 1,
+          })
+          const output = { started: true, flowId: child.id, flowName: child.name }
+          await finish({ status: 'succeeded', output })
+          return { output }
+        }
         const result = await runWithRetries(
           async () =>
             runFlowExecution({
@@ -1131,6 +1149,19 @@ export async function runFlowExecution(
       await finish({ status: 'failed', error: message })
       return { error: message }
     }
+  }
+
+  /**
+   * "Always Output Data" (n8n parity): a step that succeeded but produced
+   * nothing still emits an empty object, so the branch below it runs instead of
+   * stalling on a value that never arrives. Off by default — a genuinely empty
+   * result staying empty is the safer default for everything else.
+   */
+  const runAction: RunActionFn = async (node) => {
+    const result = await runActionStep(node)
+    const wantsData = (node.config as { alwaysOutputData?: unknown }).alwaysOutputData === true
+    if (!wantsData || !('output' in result)) return result
+    return result.output === undefined || result.output === null ? { ...result, output: {} } : result
   }
 
   // Deploy-boundary safety: a run left `waiting` INSIDE a loop/parallel BEFORE

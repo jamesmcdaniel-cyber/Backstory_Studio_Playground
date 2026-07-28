@@ -13,15 +13,20 @@ export type AdvancedParamKey =
   | 'responseType'
   | 'failOnHttpError'
   | 'concurrency'
+  | 'retryDelayMs'
+  | 'alwaysOutputData'
+  | 'maxRedirects'
+  | 'batchSize'
+  | 'waitForCompletion'
 
 const BY_TYPE: Partial<Record<FlowNode['type'], AdvancedParamKey[]>> = {
-  agent: ['onError', 'retries', 'timeoutMs'],
-  ai: ['onError', 'retries', 'timeoutMs'],
-  subflow: ['onError', 'retries', 'timeoutMs'],
-  tool: ['onError', 'retries', 'timeoutMs'],
-  http: ['responseType', 'failOnHttpError', 'onError', 'retries', 'timeoutMs'],
-  code: ['onError', 'timeoutMs'],
-  loop: ['concurrency'],
+  agent: ['onError', 'retries', 'retryDelayMs', 'timeoutMs', 'alwaysOutputData'],
+  ai: ['onError', 'retries', 'retryDelayMs', 'timeoutMs', 'alwaysOutputData'],
+  subflow: ['onError', 'retries', 'retryDelayMs', 'timeoutMs', 'waitForCompletion', 'alwaysOutputData'],
+  tool: ['onError', 'retries', 'retryDelayMs', 'timeoutMs', 'alwaysOutputData'],
+  http: ['responseType', 'failOnHttpError', 'onError', 'retries', 'retryDelayMs', 'timeoutMs', 'maxRedirects', 'alwaysOutputData'],
+  code: ['onError', 'timeoutMs', 'alwaysOutputData'],
+  loop: ['concurrency', 'batchSize'],
 }
 
 export function advancedParamKeys(type: FlowNode['type']): AdvancedParamKey[] {

@@ -289,6 +289,13 @@ const loopNode = z.object({
     note: z.string().optional(),
     over: z.string(),
     concurrency: z.number().int().min(1).max(20).optional(),
+    /**
+     * Items handed to each iteration (n8n's Loop Over Items batch size).
+     * Absent or 1 → one item per iteration, exactly as before. Above 1 → the
+     * body sees an ARRAY of up to this many items as `{{item}}`, which is what
+     * makes "post 50 records per API call" expressible.
+     */
+    batchSize: z.number().int().min(1).max(1000).optional(),
     // Per-iteration error tolerance (mirrors perItemSchema.itemError): 'fail'
     // (default) fails the whole loop on the first failing iteration; 'skip'
     // drops that iteration's result and keeps the rest; 'collect' keeps a
@@ -313,7 +320,15 @@ const transformNode = z.object({
     label: z.string().optional(),
     note: z.string().optional(),
     // `value` templates are resolved; JSON-looking results are parsed.
-    fields: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
+    // `type` coerces the resolved value (n8n's per-field type dropdown);
+    // absent means "leave it as whatever it resolved to".
+    fields: z.array(z.object({ name: z.string(), value: z.string(), type: z.enum(FIELD_TYPES).optional() })).default([]),
+    /**
+     * Carry the input's other fields through alongside the mapped ones
+     * (n8n's "Include Other Input Fields"). Default off: a Set step that
+     * quietly passed everything through would hide what it actually produced.
+     */
+    includeOtherFields: z.boolean().optional(),
     outputFields: z.array(outputFieldSchema).optional(),
     perItem: perItemSchema.optional(),
   }),
@@ -338,7 +353,13 @@ const switchNode = z.object({
   data: z.object({
     label: z.string().optional(),
     note: z.string().optional(),
-    cases: z.array(z.object({ id: z.string(), label: z.string().optional(), left: z.string(), op: z.enum(CONDITION_OPS), right: z.string() })).default([]),
+    cases: z.array(z.object({ id: z.string(), label: z.string().optional(), left: z.string(), op: z.enum(CONDITION_OPS), right: z.string(), ignoreCase: z.boolean().optional() })).default([]),
+    /**
+     * Send the value down EVERY matching branch instead of only the first
+     * (n8n's "Send data to all matching outputs"). Default stays first-match,
+     * which is what a switch normally means.
+     */
+    allMatches: z.boolean().optional(),
   }),
 })
 
@@ -495,8 +516,14 @@ const joinNode = z.object({
   data: z.object({
     label: z.string().optional(),
     note: z.string().optional(),
-    mode: z.enum(['passthrough', 'append', 'combineByKey']).optional(),
+    mode: z.enum(['passthrough', 'append', 'combineByKey', 'combineByPosition', 'allCombinations']).optional(),
     key: z.string().optional(),
+    /**
+     * combineByKey / combineByPosition: keep items that found no partner
+     * (n8n's "Include Any Unpaired Items"). Off by default — a join that
+     * silently kept unmatched rows would surprise more often than it helps.
+     */
+    includeUnpaired: z.boolean().optional(),
   }),
 })
 
@@ -589,6 +616,12 @@ const subflowNode = z.object({
     flowId: z.string(),
     inputs: z.record(z.string(), z.string()).optional(),
     input: z.string().optional(),
+    /**
+     * Wait for the child flow to finish before continuing (default true).
+     * False starts it and moves on — n8n's "Wait For Sub-Workflow Completion"
+     * toggle, for fan-out where the parent has no use for the result.
+     */
+    waitForCompletion: z.boolean().optional(),
     label: z.string().optional(),
     note: z.string().optional(),
     onError: z.enum(['stop', 'continue', 'route']).optional(),

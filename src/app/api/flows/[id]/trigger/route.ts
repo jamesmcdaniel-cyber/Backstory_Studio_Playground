@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
-import { runFlowExecution } from '@/features/flows/execute-flow'
+import { runFlowExecution, startFlowExecution } from '@/features/flows/execute-flow'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { rateLimit } from '@/lib/ratelimit'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
@@ -54,14 +54,23 @@ export async function POST(request: NextRequest) {
     if (!triggerConditionPasses(trigger, input)) {
       return NextResponse.json({ success: true, filtered: true, message: 'Trigger condition not met — run skipped.' })
     }
-    const run = await runFlowExecution({
+    const job = {
       flowId: flow.id,
       organizationId: flow.organizationId,
       userId: owner.id,
       input,
       usePublished: true,
-      trigger: { type: 'webhook' },
-    })
+      trigger: { type: 'webhook' as const },
+    }
+    // Response mode (n8n parity). The default holds the request open until the
+    // run finishes and answers with its result, which is what callers that read
+    // the response expect. 'immediately' acknowledges and lets the run continue
+    // in the background — for senders that time out, or fire-and-forget hooks.
+    if (trigger.responseMode === 'immediately') {
+      const started = await startFlowExecution(job)
+      return NextResponse.json({ success: true, accepted: true, run: started }, { status: 202 })
+    }
+    const run = await runFlowExecution(job)
     return NextResponse.json({ success: true, run })
   } catch (error) {
     if (error instanceof ApiError) {

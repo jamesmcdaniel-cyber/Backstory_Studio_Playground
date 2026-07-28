@@ -65,6 +65,72 @@ export function AdvancedParamsSection({
         />
       )
     }
+    if (key === 'retryDelayMs') {
+      return (
+        <input
+          type="number"
+          min={0}
+          max={60}
+          className={controlClass}
+          placeholder="Default"
+          value={(data.retryDelayMs as number | undefined) !== undefined ? Math.round((data.retryDelayMs as number) / 1000) : ''}
+          onChange={(event) => {
+            const secs = Number(event.target.value)
+            patch({ retryDelayMs: event.target.value === '' ? undefined : Math.max(0, Math.min(60, secs)) * 1000 })
+          }}
+        />
+      )
+    }
+    if (key === 'maxRedirects') {
+      return (
+        <input
+          type="number"
+          min={0}
+          max={20}
+          className={controlClass}
+          placeholder="5"
+          value={(data.maxRedirects as number | undefined) ?? ''}
+          onChange={(event) => patch({ maxRedirects: event.target.value === '' ? undefined : Math.max(0, Math.min(20, Number(event.target.value) || 0)) })}
+        />
+      )
+    }
+    if (key === 'batchSize') {
+      return (
+        <input
+          type="number"
+          min={1}
+          max={1000}
+          className={controlClass}
+          placeholder="1"
+          value={(data.batchSize as number | undefined) ?? ''}
+          onChange={(event) => patch({ batchSize: event.target.value === '' ? undefined : Math.max(1, Math.min(1000, Number(event.target.value) || 1)) })}
+        />
+      )
+    }
+    if (key === 'alwaysOutputData') {
+      return (
+        <select
+          className={controlClass}
+          value={data.alwaysOutputData === true ? 'yes' : 'no'}
+          onChange={(event) => patch({ alwaysOutputData: event.target.value === 'yes' ? true : undefined })}
+        >
+          <option value="no">Stop the branch when there is nothing</option>
+          <option value="yes">Carry on with an empty result</option>
+        </select>
+      )
+    }
+    if (key === 'waitForCompletion') {
+      return (
+        <select
+          className={controlClass}
+          value={data.waitForCompletion === false ? 'no' : 'yes'}
+          onChange={(event) => patch({ waitForCompletion: event.target.value === 'no' ? false : undefined })}
+        >
+          <option value="yes">Wait for the other flow to finish</option>
+          <option value="no">Start it and carry on</option>
+        </select>
+      )
+    }
     if (key === 'timeoutMs') {
       const timeoutMs = data.timeoutMs as number | undefined
       return (
@@ -134,6 +200,11 @@ export function AdvancedParamsSection({
     responseType: 'Parse response as',
     failOnHttpError: 'HTTP errors',
     concurrency: 'At a time',
+    retryDelayMs: 'Wait between tries (seconds)',
+    alwaysOutputData: 'When there is no result',
+    maxRedirects: 'Max redirects to follow',
+    batchSize: 'Items per round',
+    waitForCompletion: 'Other flow',
   }
 
   return (

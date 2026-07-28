@@ -847,6 +847,10 @@ function FlowBuilder() {
     setSelectedId(null)
   }, [graph])
   const agentsById = useMemo(() => new Map(agents.map((a) => [a.id, a.title])), [agents])
+  // Stable identity: the canvas memoizes its whole node array on this, so an
+  // inline arrow here would rebuild every chip on every unrelated re-render
+  // (a live jam cursor stream is ~25 of those a second).
+  const agentNameOf = useCallback((agentId: string) => agentsById.get(agentId) ?? '', [agentsById])
   // Friendly labels for {{token}} chips in the drawer's editors and for the
   // humanized read-only summaries on canvas step cards. Version view labels
   // from the viewed snapshot so deleted/renamed steps read as they did then.
@@ -1919,7 +1923,7 @@ function FlowBuilder() {
           <div className="min-w-0 flex-1 bg-white">
             <GraphCanvas
               graph={canvasGraph}
-              agentName={(agentId) => agentsById.get(agentId) ?? ''}
+              agentName={agentNameOf}
               agents={agents}
               toolCatalog={toolCatalog}
               labelCtx={labelCtx}
@@ -1967,7 +1971,7 @@ function FlowBuilder() {
             <CursorLayer cursors={viewCursors} />
             <FlowCanvas
               graph={canvasGraph}
-              agentName={(agentId) => agentsById.get(agentId) ?? ''}
+              agentName={agentNameOf}
               agents={agents}
               members={members}
               toolCatalog={toolCatalog}

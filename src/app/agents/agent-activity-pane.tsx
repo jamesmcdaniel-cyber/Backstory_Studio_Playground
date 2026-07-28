@@ -698,20 +698,24 @@ export function AgentActivityPane({
   onSelectRun?: (activity: Activity | null) => void
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [suggestionCount, setSuggestionCount] = useState(0)
   const [expandedGroups, setExpandedGroups] = useState<Set<ActivityGroup>>(() => new Set())
 
-  // Collapse when switching agents; expand the focused run when one arrives.
+  // A notification/deep link selects the run for the fixed output pane without
+  // expanding its potentially long process log after hydration. Expanding the
+  // inline log remains an explicit click on the row.
   useEffect(() => {
-    setExpandedId(focusRunId ?? null)
+    setExpandedId(null)
+    setSelectedId(focusRunId ?? null)
     setExpandedGroups(new Set())
   }, [focusRunId, agent.id])
 
-  // Surface the expanded run (kept fresh as activities poll) to the parent so
-  // the assistant pane can render its output.
+  // Surface the selected run (kept fresh as activities poll) to the parent so
+  // the assistant pane can render its output independently of inline expansion.
   useEffect(() => {
-    onSelectRun?.(activities.find((activity) => activity.id === expandedId) ?? null)
-  }, [expandedId, activities, onSelectRun])
+    onSelectRun?.(activities.find((activity) => activity.id === selectedId) ?? null)
+  }, [selectedId, activities, onSelectRun])
 
   // Open-suggestion count for the lightbulb badge: refetched whenever the
   // selected agent changes, and again after a suggestion is dismissed below.
@@ -779,7 +783,11 @@ export function AgentActivityPane({
                 activity={activity}
                 agentId={agent.id}
                 expanded={expandedId === activity.id}
-                onToggle={() => setExpandedId((current) => (current === activity.id ? null : activity.id))}
+                onToggle={() => {
+                  const closing = expandedId === activity.id
+                  setExpandedId(closing ? null : activity.id)
+                  setSelectedId(closing ? null : activity.id)
+                }}
                 onChanged={onChanged}
                 onSuggestionsChanged={refreshSuggestionCount}
               />

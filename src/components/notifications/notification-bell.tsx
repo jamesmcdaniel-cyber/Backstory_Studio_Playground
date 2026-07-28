@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { AlertCircle, Bell, CheckCircle2, HelpCircle, Info, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getSnapshot } from '@/lib/client/snapshot'
@@ -179,9 +180,10 @@ export function NotificationBell() {
               )}
               {items.length === 0 && proposals.length === 0 && <p className="px-3 py-6 text-center text-sm text-gray-400">No notifications yet.</p>}
               {items.map((n) => (
-                <a
+                <Link
                   key={n.id}
                   href={notificationHref(n)}
+                  onClick={() => setOpen(false)}
                   className={cn('flex gap-2 border-b px-3 py-2.5 hover:bg-gray-50', !n.readAt && 'bg-indigo-50/40')}
                 >
                   {levelIcon(n.level)}
@@ -190,7 +192,7 @@ export function NotificationBell() {
                     {n.body && <div className="line-clamp-2 text-xs text-gray-500">{n.body}</div>}
                     <div className="mt-0.5 text-[11px] text-gray-400">{new Date(n.createdAt).toLocaleString()}</div>
                   </div>
-                </a>
+                </Link>
               ))}
             </div>
           </div>

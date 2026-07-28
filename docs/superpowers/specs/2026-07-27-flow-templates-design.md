@@ -139,9 +139,11 @@ keys from the node data objects, so the graph stays schema-pure.
 
 `instantiateFlowTemplate(organizationId, userId, template)`:
 
-1. Clone the graph; rewrite every node id to a fresh one (and the matching edge
-   endpoints, `parallel.branches`, and any `perItem` references) so two
-   instantiations never collide.
+1. Clone the graph, keeping node ids as authored. (An earlier draft rewrote them
+   to fresh ids; that was wrong — each instantiation is its own graph, so there
+   is nothing to collide with, and rewriting would mean rewriting every
+   `{{step.<id>.output}}` token too. Keeping them also means the template's
+   per-step notes stay addressable against the created flow.)
 2. Resolve each binding against the workspace: agents matched by name, tool
    connections matched by provider (+ tool name where given). Matched → write
    the real id into the node. Unmatched → leave empty; the node keeps its

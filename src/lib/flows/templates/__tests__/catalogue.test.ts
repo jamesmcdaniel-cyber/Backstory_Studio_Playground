@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { FlowTemplate } from '@prisma/client'
-import { serializeFlowTemplate, serializeBuiltinFlowTemplate, sortStoredFlowTemplates, stepCountOf } from '@/lib/flows/templates/catalogue'
+import { listFlowTemplateCatalogue, serializeFlowTemplate, serializeBuiltinFlowTemplate, sortStoredFlowTemplates, stepCountOf } from '@/lib/flows/templates/catalogue'
 import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
 
 const row = (overrides: Partial<FlowTemplate> = {}): FlowTemplate =>
@@ -95,6 +95,26 @@ test('built-ins serialize as read-only catalogue entries', () => {
     assert.equal(serialized.source, 'builtin')
     assert.equal(serialized.stepCount, stepCountOf(def.graph))
     assert.ok(serialized.stepCount > 0, `${def.id} has no steps`)
+  }
+})
+
+/**
+ * The built-ins are code, not data. Whatever the database is doing — table not
+ * migrated on a fresh environment, no connection configured at all — every
+ * workspace must still see them, or the Flows page and the gallery render an
+ * empty catalogue with no explanation. Without a database configured this
+ * exercises the degradation path directly.
+ */
+test('the catalogue serves the built-ins even when stored rows are unreadable', async () => {
+  const consoleError = console.error
+  console.error = () => {} // the degradation path logs by design; keep the run readable
+  try {
+    const catalogue = await listFlowTemplateCatalogue('00000000-0000-0000-0000-000000000000')
+    for (const builtin of BUILTIN_FLOW_TEMPLATES) {
+      assert.ok(catalogue.some((entry) => entry.id === builtin.id), `expected built-in "${builtin.id}" in the catalogue`)
+    }
+  } finally {
+    console.error = consoleError
   }
 })
 

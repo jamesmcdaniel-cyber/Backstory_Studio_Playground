@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
+import { CheckCircle2, RefreshCw, Search, ShieldCheck, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -24,8 +24,6 @@ type Integration = {
   // but no agent tool resolves it; undefined only from a pre-upgrade cache.
   toolCount?: number
 }
-
-type AiMatch = { id: string; reason: string }
 
 type Connection = {
   connected: boolean
@@ -56,14 +54,10 @@ export function OAuthIntegrationsGrid() {
   // connect dialog templates open (see use-nango-connect).
   const { busy, verifying, connect, verify, disconnect } = useNangoConnect(refreshAll)
 
-  // Search + AI finder (mirrors the Templates library): the box filters by
-  // name; Enter / "Ask AI" asks the model which integrations fit a stated goal.
+  // Plain substring search over the catalog — name and provider slug, filtered
+  // as you type.
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const [aiResults, setAiResults] = useState<AiMatch[] | null>(null)
-  const [aiLoading, setAiLoading] = useState(false)
-  const [aiError, setAiError] = useState<string | null>(null)
-  const aiSeq = useRef(0)
 
   const q = search.trim().toLowerCase()
   const filtered = useMemo(
@@ -75,120 +69,40 @@ export function OAuthIntegrationsGrid() {
     setPage(1)
   }
 
-  const runAiSearch = async () => {
-    const goal = search.trim()
-    if (goal.length < 3 || aiLoading || !integrations.length) return
-    const seq = ++aiSeq.current
-    setAiResults([])
-    setAiError(null)
-    setAiLoading(true)
-    try {
-      const res = await fetch('/api/integrations/ai-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: goal, items: integrations.map((i) => ({ id: i.id, name: i.name, provider: i.provider })) }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (seq !== aiSeq.current) return
-      if (!res.ok) setAiError(data.error || 'Could not find integrations for that goal.')
-      else setAiResults(data.matches || [])
-    } catch {
-      if (seq === aiSeq.current) setAiError('Could not find integrations for that goal.')
-    } finally {
-      if (seq === aiSeq.current) setAiLoading(false)
-    }
-  }
-
-  const closeAiResults = () => {
-    aiSeq.current++
-    setAiResults(null)
-    setAiError(null)
-    setAiLoading(false)
-  }
-
   const { pageItems, pageCount, page: currentPage } = paginate(filtered, page, PAGE_SIZE)
 
   return (
     <div className="space-y-4">
-      {/* Search + AI finder — mirrors the Templates library. */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
+          <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => onSearch(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') runAiSearch() }}
-            placeholder="Describe what you want to accomplish — press Enter for AI matches…"
-            className="h-11 w-full pr-28"
+            placeholder="Search integrations…"
+            aria-label="Search integrations"
+            className="h-11 w-full pl-9 pr-9"
           />
-          <button
-            type="button"
-            disabled={search.trim().length < 3 || aiLoading || !integrations.length}
-            onClick={runAiSearch}
-            className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700 disabled:pointer-events-none disabled:opacity-50"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            {aiLoading ? 'Asking…' : 'Ask AI'}
-          </button>
+          {search && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => onSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
         <Button variant="outline" size="icon" onClick={() => void refreshAll()} disabled={loading}>
           <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
         </Button>
       </div>
 
-      {aiResults !== null && (
-        <div className="space-y-3 rounded-xl border border-indigo-200/60 bg-indigo-50/40 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-300" />
-              <h3 className="text-sm font-semibold">AI suggestions</h3>
-            </div>
-            <button type="button" aria-label="Dismiss AI suggestions" onClick={closeAiResults} className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          {aiLoading ? (
-            <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Finding integrations for your goal…
-            </div>
-          ) : aiError ? (
-            <p className="text-sm text-red-600 dark:text-red-400">{aiError}</p>
-          ) : aiResults.length === 0 ? (
-            <p className="py-2 text-sm text-muted-foreground">No integrations match that goal yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {aiResults.map((match) => {
-                const item = integrations.find((i) => i.id === match.id)
-                if (!item) return null
-                const connection = connections[item.id]
-                return (
-                  <div key={match.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-card p-3">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <IntegrationLogo src={item.logo} slug={item.provider} name={item.name} />
-                      <div className="min-w-0">
-                        <span className="truncate text-sm font-medium">{item.name}</span>
-                        <p className="text-xs italic text-muted-foreground">{match.reason}</p>
-                      </div>
-                    </div>
-                    {connection?.connected ? (
-                      <Badge variant={connection.verifiedAt ? 'good' : 'warn'}>
-                        {connection.verifiedAt ? <ShieldCheck className="mr-1 h-3 w-3" /> : <CheckCircle2 className="mr-1 h-3 w-3" />}
-                        {connection.verifiedAt ? 'Verified' : 'Verify'}
-                      </Badge>
-                    ) : (
-                      <Button size="sm" onClick={() => connect(item)} loading={busy === item.id}>Connect</Button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
       {!filtered.length && !loading && (
         <EmptyState
           title={q ? 'No integrations match your search' : 'No integrations are enabled yet'}
-          description={q ? 'Try a different name, or ask AI what fits your goal.' : 'Enable integrations in your Nango dashboard and they appear here.'}
+          description={q ? 'Try a different name or provider.' : 'Enable integrations in your Nango dashboard and they appear here.'}
         />
       )}
 

@@ -1,5 +1,6 @@
 import type { FlowTemplate } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
+import { apiLogger } from '@/lib/logger'
 import { flowGraphSchema, emptyGraph, type FlowGraph } from '@/lib/flows/graph'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
@@ -138,13 +139,29 @@ export async function fetchFlowTemplateRows(organizationId: string): Promise<{ o
   return { own, global }
 }
 
-/** The full catalogue for a viewer: stored rows ranked own-first, then built-ins. */
+/**
+ * The full catalogue for a viewer: stored rows ranked own-first, then built-ins.
+ *
+ * The built-ins are code, not data — they need no database. So a failed stored-
+ * row read (the table not migrated yet on a fresh environment, a transient
+ * connection error) degrades to the built-in catalogue rather than 500ing the
+ * endpoint, which would leave every template surface silently empty.
+ */
 export async function listFlowTemplateCatalogue(organizationId: string): Promise<SerializedFlowTemplate[]> {
-  const { own, global } = await fetchFlowTemplateRows(organizationId)
-  const stored = sortStoredFlowTemplates([...own, ...global], organizationId).map((row) =>
-    serializeFlowTemplate(row, organizationId),
-  )
-  return [...stored, ...BUILTIN_FLOW_TEMPLATES.map(serializeBuiltinFlowTemplate)]
+  const builtins = BUILTIN_FLOW_TEMPLATES.map(serializeBuiltinFlowTemplate)
+  try {
+    const { own, global } = await fetchFlowTemplateRows(organizationId)
+    const stored = sortStoredFlowTemplates([...own, ...global], organizationId).map((row) =>
+      serializeFlowTemplate(row, organizationId),
+    )
+    return [...stored, ...builtins]
+  } catch (error) {
+    apiLogger.error('flow-template catalogue: stored rows unavailable, serving built-ins only', {
+      organizationId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return builtins
+  }
 }
 
 /**

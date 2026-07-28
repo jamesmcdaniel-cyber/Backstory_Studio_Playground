@@ -101,7 +101,7 @@ export default function TemplateDetails() {
 
   return (
     <>
-      <div className="mx-auto max-w-6xl space-y-5 p-6">
+      <div className="space-y-5">
         {loading ? (
           <div className="space-y-4">
             <Skeleton className="h-9 w-2/3 rounded-lg" />

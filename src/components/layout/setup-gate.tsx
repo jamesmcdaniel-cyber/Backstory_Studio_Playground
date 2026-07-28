@@ -42,7 +42,7 @@ export function SetupGate({ children }: { children: ReactNode }) {
 
   if (!status) {
     return (
-      <div className="flex h-full min-h-[40vh] items-center justify-center">
+      <div className="flex h-full min-h-[40dvh] items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     )

@@ -194,7 +194,7 @@ export default function ApprovalsPage() {
   )
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="space-y-6">
       <PageHeader
         title="Approvals"
         description="Actions waiting on your sign-off before they run."

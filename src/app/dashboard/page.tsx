@@ -111,8 +111,10 @@ export default function AssistantHome() {
   return (
     <div
       className={cn(
-        'mx-auto flex w-full max-w-6xl flex-col px-4 pb-24',
-        started ? 'pt-10 sm:pt-14' : 'min-h-[68vh] justify-center pt-6',
+        // Width + gutters come from the shell's PAGE_CONTAINER; this only sets
+        // the vertical rhythm the two states need.
+        'flex w-full flex-col pb-24',
+        started ? 'pt-4 sm:pt-8' : 'min-h-[68dvh] justify-center',
       )}
     >
       <div className="mb-8 flex items-center justify-between gap-4">

@@ -233,7 +233,7 @@ export default function FlowActivityPage() {
   })
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <PageHeader eyebrow={flowName || 'Flow'} title="Activity" description="Run history for this flow — filter, inspect steps, and watch live runs." />
         <div className="flex items-center gap-2">

@@ -41,7 +41,10 @@ export default function SettingsPage() {
   const supabase = createClient()
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 py-2">
+    // Settings is a form column, so it keeps a narrower reading measure — but it
+    // narrows INSIDE the shell's container (same left edge and gutters as every
+    // other page) rather than centering itself against a different width.
+    <div className="max-w-2xl space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Settings</h1>
         <p className="mt-0.5 text-sm text-gray-500">Manage your account, workspace, and team.</p>

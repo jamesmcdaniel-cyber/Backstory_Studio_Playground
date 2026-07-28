@@ -66,12 +66,20 @@ function AgentHQ() {
   const [granolaFetchingList, setGranolaFetchingList] = useState(false)
   const [granolaFetchingNote, setGranolaFetchingNote] = useState(false)
   const [granolaNotes, setGranolaNotes] = useState<GranolaNote[]>([])
-  const [assistantWidth, setAssistantWidth] = useState<number>(() => {
-    if (typeof window === 'undefined') return ASSISTANT_WIDTH_DEFAULT
-    const saved = Number(window.localStorage.getItem(ASSISTANT_WIDTH_KEY))
-    return saved ? clampAssistantWidth(saved) : ASSISTANT_WIDTH_DEFAULT
-  })
+  // Starts at the default on BOTH server and client — reading localStorage in
+  // the initializer made the first client render disagree with the server HTML
+  // (hydration mismatch), so a user with a saved width watched the two panes
+  // snap to a different split right after load. The saved width is applied in
+  // an effect instead, after hydration has matched.
+  const [assistantWidth, setAssistantWidth] = useState<number>(ASSISTANT_WIDTH_DEFAULT)
   const assistantWidthRef = useRef(assistantWidth)
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem(ASSISTANT_WIDTH_KEY))
+    if (!saved) return
+    const width = clampAssistantWidth(saved)
+    assistantWidthRef.current = width
+    setAssistantWidth(width)
+  }, [])
 
   // Agents / Templates view, driven by the URL (?view=templates) so it's
   // linkable and the old /templates route can redirect straight into it.
@@ -399,7 +407,11 @@ function AgentHQ() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col lg:h-screen lg:min-h-0 lg:overflow-hidden">
+    // h-full (the shell's content region), never min-h-screen/h-screen: this
+    // page already sits inside a viewport-tall <main>, so a second 100vh claim
+    // made the shell taller than the window — a page-level scrollbar, the
+    // sidebar's footer clipped, and dead canvas showing at the edges.
+    <div className="flex flex-col lg:h-full lg:min-h-0 lg:overflow-hidden">
       {/* Agents / Templates toggle — folds the former Templates page into Home. */}
       <div className="flex shrink-0 items-center justify-center border-b bg-white/80 px-4 py-2.5 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
         <ViewToggle view={view} onChange={setView} templateCount={templateCount} />
@@ -629,7 +641,7 @@ function AgentHQ() {
         </section>
 
         {/* ── Right pane: persistent assistant chat for the selected agent ── */}
-        <section className="relative flex h-[70vh] min-w-0 flex-col bg-white lg:h-auto lg:min-h-0">
+        <section className="relative flex h-[70dvh] min-w-0 flex-col bg-white lg:h-auto lg:min-h-0">
           <div
             role="separator"
             aria-orientation="vertical"

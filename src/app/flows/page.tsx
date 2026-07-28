@@ -196,7 +196,7 @@ export default function FlowsPage() {
   const { pageItems, pageCount, page: current } = paginate(visibleFlows, page, PAGE_SIZE)
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <PageHeader eyebrow="Pipelines" title="Flows" description="Wire your agents into deterministic multi-step pipelines." />
         {newFlowButton}

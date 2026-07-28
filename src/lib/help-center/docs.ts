@@ -20,6 +20,16 @@ const ARTICLE_TIMEOUT_MS = 5_000
 const TTL_MS = 60 * 60 * 1000
 /** Per-article budget fed to the model — enough for a full how-to, bounded for tokens. */
 const MAX_ARTICLE_CHARS = 3_000
+/**
+ * Share of a question's meaningful words an article must contain to be used.
+ *
+ * Measured against the live help centre: questions it genuinely covers score
+ * 1.0 at the top hit ("what is activity capture", "how do I connect
+ * Salesforce", "how does forecasting work"), while nonsense strings score 0.20
+ * and off-topic ones ("what is the weather in Tokyo") score 0.00–0.33 — Intercom
+ * returns a few articles for anything. Half the words is the clean separator.
+ */
+const MIN_HIT_SCORE = 0.5
 
 export type HelpArticle = {
   title: string
@@ -126,6 +136,32 @@ async function getText(url: string, timeoutMs: number): Promise<string | null> {
   }
 }
 
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'how', 'can', 'what', 'you', 'your', 'are', 'this', 'that', 'from', 'about',
+  'into', 'does', 'should', 'could', 'would', 'when', 'where', 'which', 'our', 'get', 'use', 'using', 'need',
+  'want', 'there', 'have', 'has', 'was', 'were', 'why', 'who', 'any', 'all', 'not', 'but', 'its',
+])
+
+/** The words in a question worth matching a doc against. */
+export function questionTerms(question: string): string[] {
+  return [...new Set(
+    question.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2 && !STOP_WORDS.has(w)),
+  )]
+}
+
+/**
+ * Share of the question's terms that appear in a hit's title or preview.
+ *
+ * Intercom's search is fuzzy enough to return a couple of articles for almost
+ * any string — including nonsense — so a hit that shares no vocabulary with the
+ * question is dropped before it costs an article fetch and a slice of prompt.
+ */
+export function hitScore(terms: string[], hit: HelpArticle): number {
+  if (!terms.length) return 0
+  const haystack = `${hit.title} ${hit.snippet}`.toLowerCase()
+  return terms.filter((term) => haystack.includes(term)).length / terms.length
+}
+
 /** Search the help centre. Best-effort: returns [] on any failure. */
 export async function searchHelpCenter(query: string, limit = 4): Promise<HelpArticle[]> {
   const q = query.trim().slice(0, 200)
@@ -154,7 +190,8 @@ export async function fetchHelpArticle(article: HelpArticle): Promise<HelpDoc | 
  */
 export async function retrieveHelpDocs(question: string, depth = 2): Promise<HelpDoc[]> {
   try {
-    const hits = await searchHelpCenter(question)
+    const terms = questionTerms(question)
+    const hits = (await searchHelpCenter(question)).filter((hit) => hitScore(terms, hit) >= MIN_HIT_SCORE)
     if (!hits.length) return []
     const docs = await Promise.all(hits.slice(0, depth).map(fetchHelpArticle))
     return docs.filter((doc): doc is HelpDoc => doc !== null)

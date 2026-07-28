@@ -110,19 +110,19 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     ...workspaceItems,
     ...docs.map((d): LibrarianResult => ({ type: 'doc', id: d.url, title: d.title, subtitle: 'Help centre', href: d.url })),
   ]
-  const docBlock = docs.length
-    ? `HELP CENTRE excerpts (official Backstory documentation — authoritative):\n${docs
-        .map((d, i) => `[${workspaceItems.length + i + 1}] ${d.title} (${d.url})\n${d.text}`)
-        .join('\n\n')}\n\n`
-    : ''
-  // Numbered so the model can name the ones it actually used; the workspace list
-  // is a keyword match, so it is offered as candidates rather than as findings.
+  // One numbering space across both blocks — the RELEVANT line the model
+  // returns indexes into `candidates`, so items and docs must share it.
   const itemBlock = workspaceItems.length
     ? `CANDIDATE items from this workspace (keyword match — judge relevance yourself):\n${workspaceItems
         .map((r, i) => `${i + 1}. [${r.type}] ${r.title} — ${r.subtitle}`)
         .join('\n')}`
     : 'This workspace has no items matching the question.'
-  const prompt = `${docBlock}${itemBlock}\n\nUser question: ${question}`
+  const docBlock = docs.length
+    ? `\n\nHELP CENTRE excerpts (official Backstory documentation — authoritative), numbered in the same list:\n\n${docs
+        .map((d, i) => `${workspaceItems.length + i + 1}. [doc] ${d.title} — ${d.url}\n${d.text}`)
+        .join('\n\n')}`
+    : ''
+  const prompt = `${itemBlock}${docBlock}\n\nUser question: ${question}`
 
   const useClaude = Boolean(process.env.ANTHROPIC_API_KEY)
   const client = useClaude ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : qwenClient()

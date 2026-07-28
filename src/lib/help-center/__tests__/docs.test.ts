@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { decodeEntities, extractArticleText, parseSearchResults } from '@/lib/help-center/docs'
+import { decodeEntities, extractArticleText, hitScore, parseSearchResults, questionTerms } from '@/lib/help-center/docs'
 
 /**
  * Fixtures mirror what help.backstory.ai actually serves (Intercom): search
@@ -78,6 +78,35 @@ describe('extractArticleText', () => {
   it('degrades to whole-page text rather than nothing when the markers are missing', () => {
     const text = extractArticleText('<html><body><p>Just a paragraph.</p></body></html>')
     assert.equal(text, 'Just a paragraph.')
+  })
+})
+
+describe('relevance floor', () => {
+  const hit = (title: string, snippet = '') => ({ title, snippet, url: 'https://help.backstory.ai/en/articles/x' })
+
+  it('keeps only the words worth matching a doc against', () => {
+    assert.deepEqual(questionTerms('How do I connect Salesforce?'), ['connect', 'salesforce'])
+    assert.deepEqual(questionTerms('What can I do with Backstory MCP?'), ['backstory', 'mcp'])
+  })
+
+  /**
+   * Scores measured against the live help centre — genuine questions land at
+   * 1.0, nonsense at 0.20, off-topic at 0.00–0.33, so the 0.5 floor separates
+   * them. These lock that separation in.
+   */
+  it('scores a question the docs cover at or above the 0.5 floor', () => {
+    assert.equal(hitScore(questionTerms('What is activity capture?'), hit('Automatic Activity Capture and Filtering')), 1)
+    assert.ok(hitScore(questionTerms('How do I connect Salesforce?'), hit('Salesforce Integration')) >= 0.5)
+  })
+
+  it('scores nonsense and off-topic questions below the floor', () => {
+    const nonsense = hitScore(questionTerms('zzzqqq nonsense term that matches nothing at all'), hit('Automatic Activity Matching'))
+    assert.ok(nonsense < 0.5, `expected a sub-floor score, got ${nonsense}`)
+    assert.equal(hitScore(questionTerms('what is the weather in tokyo'), hit('Multi-Measure Charts and KPIs')), 0)
+  })
+
+  it('scores zero when the question has no matchable words', () => {
+    assert.equal(hitScore(questionTerms('how can I do that?'), hit('Backstory MCP')), 0)
   })
 })
 

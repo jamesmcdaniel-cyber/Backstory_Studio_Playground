@@ -90,6 +90,12 @@ export function applyBindings(graph: FlowGraph, resolutions: BindingResolution[]
       if ((node.type === 'tool' || node.type === 'http') && entry.binding.kind === 'connection') {
         return { ...node, data: { ...node.data, connectionId: entry.resolvedId } }
       }
+      // A polling trigger names the app it checks; the connection lives inside
+      // the trigger config rather than on the node's own data.
+      if (node.type === 'trigger' && entry.binding.kind === 'connection') {
+        const trigger = node.data.trigger && typeof node.data.trigger === 'object' ? node.data.trigger : {}
+        return { ...node, data: { ...node.data, trigger: { ...trigger, connectionId: entry.resolvedId } } }
+      }
       return node
     }),
   }

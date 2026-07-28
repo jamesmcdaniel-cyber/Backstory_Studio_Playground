@@ -67,7 +67,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // container, so only exactly one path segment past "/flows/" goes edge-to-edge.
   const flowSegments = pathname.startsWith('/flows/') ? pathname.slice('/flows/'.length).split('/').filter(Boolean) : []
   const fullscreen = FULLSCREEN_ROUTES.has(pathname) || flowSegments.length === 1
-  const routeMotion = reduceMotion
+  // Fullscreen workspaces must have stable geometry from their first paint.
+  // A translated fullscreen wrapper can temporarily create overflow and makes
+  // the route appear to resize after hydration.
+  const routeMotion = reduceMotion || fullscreen
     ? {}
     : {
         initial: { opacity: 0, y: 7 },

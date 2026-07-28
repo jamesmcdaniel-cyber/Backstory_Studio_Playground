@@ -31,8 +31,9 @@ type GranolaNote = {
 /** Sentinel selection meaning "setting up a brand-new agent". */
 const NEW_AGENT = 'new'
 
-// Right-pane (assistant) width — user-resizable on desktop, persisted per browser.
-const ASSISTANT_WIDTH_KEY = 'dashboard.assistantWidth'
+// Right-pane (assistant) width — user-resizable for the current page session.
+// Do not restore it after hydration: changing this value after first paint made
+// the entire Agents grid visibly resize, unlike every other top-level route.
 const ASSISTANT_WIDTH_DEFAULT = 480
 const ASSISTANT_WIDTH_MIN = 360
 const ASSISTANT_WIDTH_MAX = 800
@@ -66,20 +67,10 @@ function AgentHQ() {
   const [granolaFetchingList, setGranolaFetchingList] = useState(false)
   const [granolaFetchingNote, setGranolaFetchingNote] = useState(false)
   const [granolaNotes, setGranolaNotes] = useState<GranolaNote[]>([])
-  // Starts at the default on BOTH server and client — reading localStorage in
-  // the initializer made the first client render disagree with the server HTML
-  // (hydration mismatch), so a user with a saved width watched the two panes
-  // snap to a different split right after load. The saved width is applied in
-  // an effect instead, after hydration has matched.
+  // The initial split is identical on the server, during hydration, and after
+  // hydration. It changes only in direct response to a drag in this session.
   const [assistantWidth, setAssistantWidth] = useState<number>(ASSISTANT_WIDTH_DEFAULT)
   const assistantWidthRef = useRef(assistantWidth)
-  useEffect(() => {
-    const saved = Number(window.localStorage.getItem(ASSISTANT_WIDTH_KEY))
-    if (!saved) return
-    const width = clampAssistantWidth(saved)
-    assistantWidthRef.current = width
-    setAssistantWidth(width)
-  }, [])
 
   // Agents / Templates view, driven by the URL (?view=templates) so it's
   // linkable and the old /templates route can redirect straight into it.
@@ -116,11 +107,6 @@ function AgentHQ() {
       window.removeEventListener('mouseup', onUp)
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
-      try {
-        window.localStorage.setItem(ASSISTANT_WIDTH_KEY, String(assistantWidthRef.current))
-      } catch {
-        /* storage unavailable */
-      }
     }
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'col-resize'
@@ -130,11 +116,6 @@ function AgentHQ() {
   const resetAssistantWidth = useCallback(() => {
     assistantWidthRef.current = ASSISTANT_WIDTH_DEFAULT
     setAssistantWidth(ASSISTANT_WIDTH_DEFAULT)
-    try {
-      window.localStorage.setItem(ASSISTANT_WIDTH_KEY, String(ASSISTANT_WIDTH_DEFAULT))
-    } catch {
-      /* storage unavailable */
-    }
   }, [])
 
   const load = useCallback(async (force = false) => {
@@ -427,7 +408,7 @@ function AgentHQ() {
          chat composer) behind the grid's overflow-hidden. */
       <div
         className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden"
-        style={{ gridTemplateColumns: `minmax(420px,1fr) ${assistantWidth}px` }}
+        style={{ gridTemplateColumns: `minmax(0,1fr) clamp(${ASSISTANT_WIDTH_MIN}px, ${assistantWidth}px, 50%)` }}
       >
         {/* ── Left pane: activity for the selected agent, or the setup flow ── */}
         <section className="min-w-0 border-b bg-white lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">

@@ -65,6 +65,45 @@ body {
   font-family: var(--font-display), "Arimo", system-ui, sans-serif;
 }
 
+/* GEOMETRY PIN — defends the shell against page-level CSS this app did not
+   write. Browser extensions that "unlock" scroll-locked pages (popup/overlay
+   removers, cookie-banner and annoyance blockers) look for a viewport-filling
+   overflow:hidden container next to a full-screen fixed layer — exactly the
+   shape of this shell and, until recently, the notification dropdown — and
+   then rewrite the page's box model to "restore" it. Reported symptom: the
+   whole app inset by ~24px on every side with a page-level scrollbar, on the
+   bell and on /agents (the one route whose <main> is overflow:hidden), in a
+   normal profile but never in incognito, where extensions are off.
+
+   The shell always occupies the exact viewport, so pinning these is a
+   statement of fact, not a workaround. High specificity + !important so an
+   author-origin extension stylesheet loses regardless of injection order.
+   (User-origin !important would still win; nothing in the page can outrank
+   that, and no fix at this layer could.) */
+html:root,
+html:root > body {
+  margin: 0 !important;
+  padding: 0 !important;
+  border-width: 0 !important;
+  max-width: none !important;
+  transform: none !important;
+}
+/* Nothing mounted directly on <body> — shell, toaster, portals — is in normal
+   flow with a margin, so blanket-pinning margin here costs nothing and stops a
+   `body > *` rule from adding a page-level scrollbar. Margin only: a portal
+   root may legitimately want its own padding. */
+html:root > body > * {
+  margin: 0 !important;
+}
+html:root > body > .app-shell-root {
+  margin: 0 !important;
+  padding: 0 !important;
+  border-width: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+}
+
 /* The access gateway uses a quiet technical grid instead of a marketing
    illustration. It stays CSS-native, crisp at every resolution, and costs no
    image payload. */

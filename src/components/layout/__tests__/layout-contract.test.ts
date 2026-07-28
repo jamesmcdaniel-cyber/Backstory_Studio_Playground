@@ -86,6 +86,18 @@ test('the shell defines exactly one content measure', () => {
   assert.doesNotMatch(shellSource, /h-screen/, 'h-screen overflows the visible viewport on mobile browsers')
 })
 
+test('the shell geometry pin survives page-level CSS the app did not write', () => {
+  // Extensions that "unlock" scroll-locked pages rewrite the box model of the
+  // outermost containers; the reported symptom was the whole app inset 24px
+  // with a page-level scrollbar (shell at 24,24 in a viewport-sized body).
+  // The pin states the shell's actual geometry, so a foreign author-origin
+  // stylesheet can no longer move it. Removing either half re-opens the bug.
+  const globals = readFileSync(path.join(process.cwd(), 'src/app/globals.css'), 'utf8')
+  assert.match(shellSource, /app-shell-root/, 'the shell root needs the class the pin targets')
+  assert.match(globals, /html:root > body > \.app-shell-root/, 'globals.css must pin the shell root box')
+  assert.match(globals, /html:root > body > \*\s*\{[^}]*margin:\s*0\s*!important/, 'direct body children must be margin-pinned')
+})
+
 test('fullscreen routing ignores a trailing slash', () => {
   // A trailing slash silently dropped /agents into the centered container —
   // the same page rendering at two different widths depending on the URL.

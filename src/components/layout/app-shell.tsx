@@ -104,7 +104,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         min-w-0 on <main> keeps a wide child (canvas, table) from stretching the
         flex row past the viewport and scrolling the sidebar off-screen.
       */}
-      <div className="flex h-dvh overflow-hidden bg-background">
+      <div className="app-shell-root flex h-dvh overflow-hidden bg-background">
         <Sidebar />
         <main
           ref={mainRef}

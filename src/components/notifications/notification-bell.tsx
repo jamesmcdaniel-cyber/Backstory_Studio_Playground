@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { AlertCircle, Bell, CheckCircle2, HelpCircle, Info, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -42,8 +43,21 @@ function urlBase64ToUint8Array(base64String: string) {
   return out
 }
 
+/** Panel width (Tailwind w-80) and its minimum gutter from the viewport edge. */
+const PANEL_WIDTH = 320
+const PANEL_GUTTER = 12
+
 export function NotificationBell() {
   const [open, setOpen] = useState(false)
+  // Viewport coords for the portaled panel, computed from the bell's rect when
+  // opening. The sidebar can't host a dropdown that must escape it: its
+  // backdrop-blur + translate classes make it the containing block for ANY
+  // fixed/absolute descendant, so an in-place panel gets trapped (and on narrow
+  // screens hangs off the right edge — mobile Safari then zooms the whole page
+  // out to fit it). Portaling to <body> restores real viewport positioning.
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const [items, setItems] = useState<NotificationItem[]>([])
   const [unread, setUnread] = useState(0)
   const [pushState, setPushState] = useState<PushState>('unknown')
@@ -127,8 +141,47 @@ export function NotificationBell() {
     }
   }
 
+  const toggleOpen = () => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const anchor = anchorRef.current?.getBoundingClientRect()
+    if (anchor) {
+      const width = Math.min(PANEL_WIDTH, window.innerWidth - PANEL_GUTTER * 2)
+      setPanelPos({
+        top: anchor.bottom + 4,
+        // Open rightward from the bell, but never past the viewport edge.
+        left: Math.max(PANEL_GUTTER, Math.min(anchor.left, window.innerWidth - width - PANEL_GUTTER)),
+        width,
+      })
+    }
+    setOpen(true)
+    markRead()
+  }
+
+  // A resized window invalidates the stored coords; close rather than drift.
+  // Outside interactions close the panel WITHOUT being swallowed (no backdrop:
+  // one that overlays the z-50 sidebar would eat its nav clicks, and one under
+  // it can't be reached from there — capture-phase pointerdown avoids both).
+  useEffect(() => {
+    if (!open) return
+    const onResize = () => setOpen(false)
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (panelRef.current?.contains(target) || anchorRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    window.addEventListener('resize', onResize)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+    }
+  }, [open])
+
   return (
-    <div className="relative">
+    <div className="relative" ref={anchorRef}>
       <Button
         variant="outline"
         size="icon"
@@ -136,7 +189,7 @@ export function NotificationBell() {
         // would cut off the unread badge sitting outside the button bounds.
         className="relative h-9 w-9 shrink-0 overflow-visible"
         aria-label="Notifications"
-        onClick={() => { setOpen((o) => !o); if (!open) markRead() }}
+        onClick={toggleOpen}
       >
         <Bell className="h-4 w-4" />
         {badge > 0 && (
@@ -145,12 +198,16 @@ export function NotificationBell() {
           </span>
         )}
       </Button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          {/* Bell lives in the left sidebar, so open rightward (left-0); cap
-              width so the panel never overflows a narrow mobile drawer. */}
-          <div className="absolute left-0 z-40 mt-1 w-80 max-w-[calc(100vw-1.5rem)] rounded-lg border bg-white shadow-lg">
+      {open && panelPos && createPortal(
+        /* Portaled to <body>: inside the sidebar, its backdrop-filter +
+           transform made ANY fixed descendant position against the sidebar box
+           instead of the viewport — the panel got trapped there (hanging off
+           narrow screens, where mobile Safari zooms the page out to fit it). */
+        <div
+          ref={panelRef}
+          className="fixed z-[60] rounded-lg border bg-white shadow-lg"
+          style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
+        >
             <div className="flex items-center justify-between border-b px-3 py-2">
               <span className="text-sm font-semibold">Notifications</span>
               {pushState === 'available' && <button className="text-xs font-medium text-indigo-600" onClick={enablePush}>Enable push</button>}
@@ -195,8 +252,8 @@ export function NotificationBell() {
                 </Link>
               ))}
             </div>
-          </div>
-        </>
+          </div>,
+        document.body,
       )}
     </div>
   )

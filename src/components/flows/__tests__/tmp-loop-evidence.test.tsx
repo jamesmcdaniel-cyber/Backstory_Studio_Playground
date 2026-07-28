@@ -27,9 +27,9 @@ class RO {
 }
 class DMRO { m22 = 1; constructor(_t?: string) {} }
 g.ResizeObserver = RO
-win.ResizeObserver = RO
+win.ResizeObserver = RO as unknown as { prototype: Record<string, unknown> }
 g.DOMMatrixReadOnly = DMRO
-win.DOMMatrixReadOnly = DMRO
+win.DOMMatrixReadOnly = DMRO as unknown as { prototype: Record<string, unknown> }
 g.Element = win.Element
 win.Element.prototype.scrollIntoView = () => {}
 win.Element.prototype.getBoundingClientRect = function () {

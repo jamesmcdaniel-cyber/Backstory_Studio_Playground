@@ -89,7 +89,7 @@ test('every empty agent or connection slot has a binding that fills it', () => {
  * build-time failure instead.
  */
 test('every agent binding names an agent template a workspace can actually deploy', async () => {
-  const { builtInTemplates } = await import('@/app/api/agent-templates/route')
+  const { builtInTemplates } = await import('@/lib/templates/builtin-agents')
   const agentNames = new Set(builtInTemplates.map((template) => template.name.trim().toLowerCase()))
   for (const template of BUILTIN_FLOW_TEMPLATES) {
     for (const binding of template.bindings) {

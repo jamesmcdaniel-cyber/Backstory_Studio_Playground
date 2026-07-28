@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { cachePing } from '@/lib/cache'
+import { encryptionConfigured } from '@/lib/crypto/secrets'
 import { neo4jPing } from '@/lib/rag/neo4j-store'
 import { apiLogger } from '@/lib/logger'
 
@@ -22,7 +23,7 @@ export async function GET() {
 
   const healthy = db.ok // only Postgres is critical to serving
   return NextResponse.json(
-    { status: healthy ? 'ok' : 'unhealthy', timestamp: new Date().toISOString(), checks: { db, cache, neo4j } },
+    { status: healthy ? 'ok' : 'unhealthy', timestamp: new Date().toISOString(), checks: { db, cache, neo4j, secrets: { encrypted: encryptionConfigured() } } },
     { status: healthy ? 200 : 503 },
   )
 }

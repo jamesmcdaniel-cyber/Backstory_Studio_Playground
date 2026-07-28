@@ -554,6 +554,7 @@ export function StepDrawer({
   onDelete,
   onClose,
   onExecuteStep,
+  onExecuteOnly,
   onExecutePrevious,
   onSetMockData,
 }: {
@@ -576,6 +577,8 @@ export function StepDrawer({
   onChange: (node: FlowNode) => void
   onChangeType?: (type: EditableType) => void
   onExecuteStep?: () => void
+  /** Run ONLY this step, replaying the last run's upstream outputs. */
+  onExecuteOnly?: () => void
   onExecutePrevious?: () => void
   onSetMockData?: (value: unknown | undefined) => void
   onAddStep?: (type: EditableType) => void
@@ -717,6 +720,11 @@ export function StepDrawer({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {isWorkspace && !isTrigger && onExecuteOnly && (
+            <Button type="button" size="sm" variant="outline" onClick={onExecuteOnly} title="Runs only this step, using the last run's data for the steps before it">
+              <Play className="mr-1.5 h-4 w-4" /> Only this step
+            </Button>
+          )}
           {isWorkspace && !isTrigger && onExecuteStep && (
             <Button type="button" size="sm" onClick={onExecuteStep}>
               <Play className="mr-1.5 h-4 w-4" /> Execute step

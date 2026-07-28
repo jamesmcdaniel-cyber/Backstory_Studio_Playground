@@ -118,7 +118,14 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   const data = {
     ...(body.name !== undefined && { name: body.name }),
     ...(body.description !== undefined && { description: body.description }),
-    ...(body.status !== undefined && { status: body.status }),
+    // Lifecycle is owned by publish/unpublish, NOT by this endpoint. Accepting
+    // a status here let any caller with a stale client-side value silently
+    // demote a published (ACTIVE) flow back to DRAFT — the flow kept running
+    // from its publishedGraph while its card read "Draft". A caller that wants
+    // to arm or disarm a flow uses /publish.
+    ...(body.status !== undefined && body.status !== 'ACTIVE' && existing.publishedGraph == null
+      ? { status: body.status }
+      : {}),
     ...(body.visibility !== undefined && { visibility: body.visibility }),
     ...(body.folder !== undefined && { folder: body.folder }),
     // Preserve the webhook secret hash across trigger edits — the client

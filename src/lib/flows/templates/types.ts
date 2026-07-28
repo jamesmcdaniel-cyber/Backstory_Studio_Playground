@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { flowGraphSchema, type FlowGraph, type FlowNode } from '@/lib/flows/graph'
+import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
 
 /**
  * Flow templates: a reusable, WIRED flow.
@@ -14,10 +14,11 @@ import { flowGraphSchema, type FlowGraph, type FlowNode } from '@/lib/flows/grap
  * user's flow) and per-template (`FlowTemplateNotes`, below).
  */
 
-/** Node types that never execute — excluded from the per-step notes contract. */
-export const NON_EXECUTABLE_NODE_TYPES: ReadonlySet<string> = new Set(['trigger', 'note'])
-
-export const isExecutableNode = (node: FlowNode): boolean => !NON_EXECUTABLE_NODE_TYPES.has(node.type)
+// One definition of "a step", shared with the flows list and the editor — see
+// graph.ts. Re-exported here because the notes contract is expressed in terms
+// of it (every executable node needs an explanation).
+import { isExecutableNode } from '@/lib/flows/graph'
+export { NON_EXECUTABLE_NODE_TYPES, isExecutableNode, stepCountOf } from '@/lib/flows/graph'
 
 export const flowTemplateInputSchema = z.object({
   name: z.string().min(1),

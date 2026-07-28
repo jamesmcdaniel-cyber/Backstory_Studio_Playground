@@ -1,6 +1,6 @@
 import type { Job } from 'bullmq'
 import { prisma } from '@/lib/prisma'
-import { keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
+import { applyAlwaysOutputData, keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { flowJobOptions } from '@/lib/flows/queue-options'
@@ -1157,12 +1157,8 @@ export async function runFlowExecution(
    * stalling on a value that never arrives. Off by default — a genuinely empty
    * result staying empty is the safer default for everything else.
    */
-  const runAction: RunActionFn = async (node) => {
-    const result = await runActionStep(node)
-    const wantsData = (node.config as { alwaysOutputData?: unknown }).alwaysOutputData === true
-    if (!wantsData || !('output' in result)) return result
-    return result.output === undefined || result.output === null ? { ...result, output: {} } : result
-  }
+  const runAction: RunActionFn = async (node) =>
+    applyAlwaysOutputData(await runActionStep(node), (node.config as { alwaysOutputData?: unknown }).alwaysOutputData)
 
   // Deploy-boundary safety: a run left `waiting` INSIDE a loop/parallel BEFORE
   // per-iteration keying shipped persisted its paused leaf under a BARE nodeId.

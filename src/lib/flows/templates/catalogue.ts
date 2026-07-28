@@ -1,13 +1,12 @@
 import type { FlowTemplate } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
-import { flowGraphSchema, emptyGraph, type FlowGraph } from '@/lib/flows/graph'
+import { flowGraphSchema, emptyGraph, stepCountOf, type FlowGraph } from '@/lib/flows/graph'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
 import {
   flowTemplateBindingSchema,
   flowTemplateNotesSchema,
-  isExecutableNode,
   type FlowTemplateBinding,
   type FlowTemplateDef,
   type FlowTemplateNotes,
@@ -27,10 +26,8 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
-/** Count the steps a card shows — executable nodes only, so notes don't inflate it. */
-export function stepCountOf(graph: FlowGraph): number {
-  return graph.nodes.filter(isExecutableNode).length
-}
+/** Count the steps a card shows — re-exported so existing importers are unchanged. */
+export { stepCountOf } from '@/lib/flows/graph'
 
 /** Tolerant parse: a malformed stored blob degrades to empty rather than 500ing the gallery. */
 function safeNotes(value: unknown): FlowTemplateNotes {

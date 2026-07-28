@@ -28,3 +28,20 @@ export function keepDetachedWorkAlive(
     /* no request scope — the caller's own lifetime already covers the work */
   }
 }
+
+/**
+ * "Always Output Data" (n8n parity): a step that succeeded but produced nothing
+ * still emits an empty object, so the branch below it runs instead of stalling
+ * on a value that never arrives.
+ *
+ * Off by default — a genuinely empty result staying empty is the safer default
+ * everywhere else, and a step that silently invented data would be worse than
+ * one that stops. Pure, so the rule is testable without an engine run.
+ */
+export function applyAlwaysOutputData<T extends { output?: unknown }>(
+  result: T,
+  alwaysOutputData: unknown,
+): T {
+  if (alwaysOutputData !== true || !('output' in result)) return result
+  return result.output === undefined || result.output === null ? { ...result, output: {} } : result
+}

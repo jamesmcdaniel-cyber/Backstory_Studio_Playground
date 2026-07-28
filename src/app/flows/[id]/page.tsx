@@ -1005,7 +1005,16 @@ function FlowBuilder() {
       setPublishing(true)
       try {
         if (action === 'publish' && !validation.ok) {
-          toast.error(validation.errors[0]?.message || 'Fix the flow before publishing.')
+          // Open the Checker rather than only flashing a toast: a publish that
+          // fails validation otherwise leaves the flow sitting as a draft with
+          // no visible reason, which reads as "publish is broken".
+          setShowChecker(true)
+          const count = validation.errors.length
+          toast.error(
+            count > 1
+              ? `${count} things to fix before publishing — see the Checker.`
+              : validation.errors[0]?.message || 'Fix the flow before publishing.',
+          )
           return
         }
         if (action === 'publish' && !(await save())) return
@@ -1016,6 +1025,10 @@ function FlowBuilder() {
         })
         const data = await response.json().catch(() => ({}))
         if (!response.ok) {
+          // The server re-validates against live agents/connections, so it can
+          // reject a graph the client thought was fine (a deleted agent, a
+          // revoked connection). Surface it in the Checker too.
+          if (action === 'publish') setShowChecker(true)
           toast.error(data.error || (action === 'unpublish' ? 'Could not unpublish.' : 'Could not publish.'))
           return
         }
@@ -1149,11 +1162,26 @@ function FlowBuilder() {
   // not including it ("Execute previous nodes"). Both start a partial run whose
   // recorded step rows populate the drawer's INPUT/OUTPUT panes.
   const runPartial = useCallback(
-    async (nodeId: string, mode: 'stopAfter' | 'stopBefore') => {
+    async (nodeId: string, mode: 'stopAfter' | 'stopBefore' | 'only') => {
+      // 'only' is single-step execution: replay the selected run's recorded
+      // outputs up to this node, then run THIS node and stop. Every upstream
+      // step is read from that run rather than re-executed, so testing one
+      // node costs one call instead of the whole pipeline. It needs a run to
+      // replay from — without one there is no upstream data to stand on.
+      if (mode === 'only' && !selectedRun?.id) {
+        toast.error('Run the flow once first — this replays the last run’s data into just this step.')
+        return
+      }
+      const body =
+        mode === 'only'
+          ? { fromRunId: selectedRun!.id, fromNodeId: nodeId, stopAfterNodeId: nodeId }
+          : mode === 'stopAfter'
+            ? { stopAfterNodeId: nodeId }
+            : { stopBeforeNodeId: nodeId }
       const response = await fetch(`/api/flows/${id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mode === 'stopAfter' ? { stopAfterNodeId: nodeId } : { stopBeforeNodeId: nodeId }),
+        body: JSON.stringify(body),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
@@ -1164,7 +1192,7 @@ function FlowBuilder() {
       if (runId) void selectRun(runId)
       pollRuns()
     },
-    [id, pollRuns, selectRun],
+    [id, pollRuns, selectRun, selectedRun],
   )
 
   // "Set mock data": pin a node's output on the graph so it isn't executed and
@@ -1905,6 +1933,7 @@ function FlowBuilder() {
                 rawLogs={selectedNodeRawLogs}
                 mockData={graph.pinData?.[selectedNode.id]}
                 onExecuteStep={() => void runPartial(selectedNode.id, 'stopAfter')}
+                onExecuteOnly={selectedRun?.id ? () => void runPartial(selectedNode.id, 'only') : undefined}
                 onExecutePrevious={() => void runPartial(selectedNode.id, 'stopBefore')}
                 onSetMockData={(value) => setNodeMockData(selectedNode.id, value)}
                 onChange={commitFieldEdit}

@@ -39,6 +39,8 @@ type FlowItem = {
   name: string
   description: string
   status: string
+  /** True once the flow has a published graph — what actually arms triggers. */
+  published?: boolean
   stepCount: number
   folder?: string
   updatedAt: string
@@ -250,8 +252,12 @@ export default function FlowsPage() {
                   <div className="absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r from-indigo-500 to-blue-400 opacity-80 transition-opacity group-hover:opacity-100" />
                   <CardHeader className="space-y-2.5 pt-5">
                     <div className="flex items-center justify-between">
-                      <Badge variant="outline" className={cn('text-[11px] font-medium capitalize', STATUS_STYLE[flow.status] || STATUS_STYLE.draft)}>
-                        {flow.status}
+                      {/* Published is the state that matters — it is what arms
+                          triggers and what a run executes. A flow can be ACTIVE
+                          and unpublished (never armed), so show both rather than
+                          collapsing them into one word. */}
+                      <Badge variant="outline" className={cn('text-[11px] font-medium capitalize', flow.published ? STATUS_STYLE.active : STATUS_STYLE[flow.status] || STATUS_STYLE.draft)}>
+                        {flow.published ? 'Published' : flow.status}
                       </Badge>
                       <span className="flex items-center gap-2 text-xs text-muted-foreground">
                         {flow.stepCount} step{flow.stepCount === 1 ? '' : 's'}

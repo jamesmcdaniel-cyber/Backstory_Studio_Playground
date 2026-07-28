@@ -698,3 +698,18 @@ export type ConditionClause = z.infer<typeof conditionClauseSchema>
 export function emptyGraph(): FlowGraph {
   return { nodes: [{ id: 'trigger', type: 'trigger', data: { trigger: { type: 'manual' } } }], edges: [] }
 }
+
+/** Node types that never execute — excluded from any count of a flow's steps. */
+export const NON_EXECUTABLE_NODE_TYPES: ReadonlySet<string> = new Set(['trigger', 'note'])
+
+/** Whether a node is a STEP: it executes. The single definition — the flows
+ *  list, the template catalogue, and the editor must all agree, or a flow
+ *  reports a different size depending on which surface you look at. */
+export function isExecutableNode(node: { type: string }): boolean {
+  return !NON_EXECUTABLE_NODE_TYPES.has(node.type)
+}
+
+/** How many steps a graph has. */
+export function stepCountOf(graph: { nodes?: { type: string }[] }): number {
+  return (graph.nodes ?? []).filter(isExecutableNode).length
+}

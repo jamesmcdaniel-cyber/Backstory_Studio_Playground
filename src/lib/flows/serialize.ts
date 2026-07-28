@@ -1,3 +1,4 @@
+import { stepCountOf } from '@/lib/flows/graph'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { canEditFlow } from '@/lib/flows/access'
 
@@ -24,7 +25,11 @@ export function serializeFlow(flow: {
   updatedAt: Date
 }, viewerId?: string, access?: FlowViewerAccess) {
   const graph = (flow.graph && typeof flow.graph === 'object' ? flow.graph : { nodes: [], edges: [] }) as FlowGraph
-  const stepCount = (graph.nodes || []).filter((node) => node.type === 'agent').length
+  // Every executable node is a step. Counting only `agent` nodes (the original
+  // rule, from when a flow WAS a chain of agents) reported "1 step" for a
+  // pipeline of tool/http/data/ai nodes — the card undercounted every flow that
+  // wasn't agent-only. Matches stepCountOf() in the flow-template catalogue.
+  const stepCount = stepCountOf(graph)
   const published = flow.publishedGraph != null
   return {
     id: flow.id,

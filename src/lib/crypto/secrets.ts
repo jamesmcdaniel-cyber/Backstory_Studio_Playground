@@ -32,6 +32,19 @@ function getDerivedKey(): Buffer | null {
   return crypto.createHash('sha256').update(raw).digest()
 }
 
+/**
+ * Whether secrets are actually encrypted at rest.
+ *
+ * False means ENCRYPTION_KEY is unset and `encryptSecret` is falling back to
+ * reversible base64 — impossible in production (getDerivedKey throws), but a
+ * staging box running NODE_ENV != 'production' would silently store credentials
+ * in the clear. Surfaced on the health probe so that is visible rather than
+ * discovered later.
+ */
+export function encryptionConfigured(): boolean {
+  return Boolean(process.env.ENCRYPTION_KEY)
+}
+
 // ── One-way token hashing (webhook trigger secrets) ────────────────────────
 
 /**

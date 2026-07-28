@@ -58,6 +58,11 @@ type RunDetails = {
 }
 
 export const groupOrder = ['running', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'failed', 'cancelled', 'completed'] as const
+type ActivityGroup = (typeof groupOrder)[number]
+
+// Keep the initial HQ view inside the available pane height. Counts remain
+// visible in each group header and older runs can be revealed deliberately.
+const INITIAL_RUNS_PER_GROUP = 1
 
 export const groupLabels: Record<string, string> = {
   running: 'Running',
@@ -694,10 +699,12 @@ export function AgentActivityPane({
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [suggestionCount, setSuggestionCount] = useState(0)
+  const [expandedGroups, setExpandedGroups] = useState<Set<ActivityGroup>>(() => new Set())
 
   // Collapse when switching agents; expand the focused run when one arrives.
   useEffect(() => {
     setExpandedId(focusRunId ?? null)
+    setExpandedGroups(new Set())
   }, [focusRunId, agent.id])
 
   // Surface the expanded run (kept fresh as activities poll) to the parent so
@@ -752,6 +759,9 @@ export function AgentActivityPane({
       {groupOrder.map((groupStatus) => {
         const items = activities.filter((activity) => activityStatus(activity) === groupStatus)
         if (!items.length) return null
+        const groupExpanded = expandedGroups.has(groupStatus)
+        const visibleItems = groupExpanded ? items : items.slice(0, INITIAL_RUNS_PER_GROUP)
+        const hiddenCount = items.length - visibleItems.length
         return (
           <div key={groupStatus}>
             <div className="flex items-center gap-2 border-b bg-gray-50 px-4 py-2 text-sm font-medium">
@@ -763,7 +773,7 @@ export function AgentActivityPane({
                 <AlertCircle className="h-4 w-4 text-red-600" />}
               {groupLabels[groupStatus]} <span className="font-mono text-xs tabular-nums text-gray-400">{items.length}</span>
             </div>
-            {items.map((activity) => (
+            {visibleItems.map((activity) => (
               <RunRow
                 key={activity.id}
                 activity={activity}
@@ -774,6 +784,21 @@ export function AgentActivityPane({
                 onSuggestionsChanged={refreshSuggestionCount}
               />
             ))}
+            {(hiddenCount > 0 || groupExpanded) && items.length > INITIAL_RUNS_PER_GROUP && (
+              <button
+                type="button"
+                className="flex w-full items-center justify-center gap-1.5 border-b bg-white px-4 py-2 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-800"
+                onClick={() => setExpandedGroups((current) => {
+                  const next = new Set(current)
+                  if (groupExpanded) next.delete(groupStatus)
+                  else next.add(groupStatus)
+                  return next
+                })}
+              >
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', groupExpanded && 'rotate-180')} />
+                {groupExpanded ? 'Show recent only' : `Show ${hiddenCount} older`}
+              </button>
+            )}
           </div>
         )
       })}

@@ -31,6 +31,7 @@ import { NotificationBell } from '@/components/notifications/notification-bell'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/hooks/use-auth'
+import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { getSnapshot } from '@/lib/client/snapshot'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { cn } from '@/lib/utils'
@@ -85,6 +86,8 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [orgMenuOpen, setOrgMenuOpen] = useState(false)
+  const orgMenuRef = useRef<HTMLDivElement>(null)
+  const orgButtonRef = useRef<HTMLButtonElement>(null)
   const [organizations, setOrganizations] = useState<Organization[]>(() => sidebarCache?.organizations ?? [])
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const logoInputRef = useRef<HTMLInputElement>(null)
@@ -146,6 +149,12 @@ export function Sidebar() {
   useEffect(() => {
     setMobileOpen(false)
   }, [pathname])
+
+  // No backdrop element: this sidebar's backdrop-blur + translate make it the
+  // containing block for fixed children, so one rendered here covered only the
+  // rail — leaving the menu unclosable from the content area while eating the
+  // nav clicks underneath it.
+  useDismissOnOutsidePointer(orgMenuOpen, () => setOrgMenuOpen(false), [orgMenuRef, orgButtonRef])
 
   useEffect(() => {
     try {
@@ -336,6 +345,7 @@ export function Sidebar() {
         <div className={cn('relative border-b p-3', desktopCollapsed && 'lg:px-2')}>
           <div className={cn('flex items-center gap-1', desktopCollapsed && 'lg:flex-col')}>
             <button
+              ref={orgButtonRef}
               className={cn(
                 'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-gray-100',
                 desktopCollapsed && 'lg:w-full lg:flex-none lg:justify-center lg:px-0',
@@ -378,14 +388,13 @@ export function Sidebar() {
             </Tooltip>
           </div>
           {orgMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setOrgMenuOpen(false)} />
-              <div
-                className={cn(
-                  'absolute left-3 right-3 z-20 mt-1 origin-top animate-scale-in rounded-lg border bg-white p-1 shadow-popover',
-                  desktopCollapsed && 'lg:left-full lg:right-auto lg:top-0 lg:ml-2 lg:mt-0 lg:w-64',
-                )}
-              >
+            <div
+              ref={orgMenuRef}
+              className={cn(
+                'absolute left-3 right-3 z-20 mt-1 origin-top animate-scale-in rounded-lg border bg-white p-1 shadow-popover',
+                desktopCollapsed && 'lg:left-full lg:right-auto lg:top-0 lg:ml-2 lg:mt-0 lg:w-64',
+              )}
+            >
                 {organizations.map((org) => (
                   <button
                     key={org.id}
@@ -436,8 +445,7 @@ export function Sidebar() {
                 >
                   <LogOut className="h-3.5 w-3.5" /> Sign out
                 </button>
-              </div>
-            </>
+            </div>
           )}
 
           <div className={cn('mt-2 flex items-center gap-2', desktopCollapsed && 'lg:flex-col')}>

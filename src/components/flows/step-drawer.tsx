@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
+import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { DataTree } from '@/components/flows/data-tree'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 import { type DataField } from '@/lib/flows/datatree'
@@ -349,14 +350,17 @@ function AddNestedStepMenu({
   onPick: (type: EditableType) => void
 }) {
   const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  // The drawer sits inside a backdrop-blur overlay, which is a containing block
+  // for fixed children — the backdrop this used to render stopped at the
+  // overlay's padding instead of the viewport edge.
+  useDismissOnOutsidePointer(open, () => setOpen(false), [menuRef])
   return (
-    <div className="relative">
+    <div className="relative" ref={menuRef}>
       <Button variant="outline" size="sm" className="w-full" onClick={() => setOpen((value) => !value)}>
         <Plus className="mr-1.5 h-4 w-4" /> {label}
       </Button>
       {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-card p-1 shadow-popover">
             {NODE_TYPES.map((type) => (
               <button
@@ -372,7 +376,6 @@ function AddNestedStepMenu({
               </button>
             ))}
           </div>
-        </>
       )}
     </div>
   )

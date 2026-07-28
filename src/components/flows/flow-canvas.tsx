@@ -1,8 +1,9 @@
 'use client'
 
-import { Fragment, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import { Plus, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { CONDITION_OP_LABELS, type AiOp, type DataOp, type FlowGraph, type FlowNode, type VariableOp } from '@/lib/flows/graph'
 import type { StepType } from '@/lib/flows/mutate'
 import type { DataField } from '@/lib/flows/datatree'
@@ -47,9 +48,16 @@ function InsertMenu({
   dragging?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  // The canvas is inside a `transform: scale(zoom)` wrapper, which makes it the
+  // containing block for fixed children: the backdrop this used to render was
+  // both confined to the canvas box AND scaled with it, so at any zoom other
+  // than 1 it didn't line up with what it appeared to cover.
+  useDismissOnOutsidePointer(open, () => setOpen(false), [menuRef])
 
   return (
     <div
+      ref={menuRef}
       className={cn('relative flex flex-col items-center', compact && 'items-start')}
       onClick={(event) => event.stopPropagation()}
       onDragOver={(event) => {
@@ -92,8 +100,6 @@ function InsertMenu({
       )}
 
       {open && (
-        <>
-          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div
             className={cn(
               'absolute z-30 mt-2 max-h-[72vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
@@ -111,7 +117,6 @@ function InsertMenu({
               onClose={() => setOpen(false)}
             />
           </div>
-        </>
       )}
     </div>
   )

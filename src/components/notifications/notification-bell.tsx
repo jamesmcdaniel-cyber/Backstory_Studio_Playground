@@ -7,6 +7,7 @@ import { AlertCircle, Bell, CheckCircle2, HelpCircle, Info, Sparkles } from 'luc
 import { Button } from '@/components/ui/button'
 import { getSnapshot } from '@/lib/client/snapshot'
 import { notificationHref } from '@/lib/notifications/href'
+import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { useProposals } from '@/components/providers/proposals-provider'
 import { KIND_LABEL } from '@/components/onboarding/proposal-shared'
 import { cn } from '@/lib/utils'
@@ -160,24 +161,15 @@ export function NotificationBell() {
     markRead()
   }
 
-  // A resized window invalidates the stored coords; close rather than drift.
-  // Outside interactions close the panel WITHOUT being swallowed (no backdrop:
-  // one that overlays the z-50 sidebar would eat its nav clicks, and one under
-  // it can't be reached from there — capture-phase pointerdown avoids both).
+  useDismissOnOutsidePointer(open, () => setOpen(false), [panelRef, anchorRef])
+
+  // A resized window invalidates the coords captured on open; close rather than
+  // leave the panel floating away from the bell.
   useEffect(() => {
     if (!open) return
     const onResize = () => setOpen(false)
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node
-      if (panelRef.current?.contains(target) || anchorRef.current?.contains(target)) return
-      setOpen(false)
-    }
     window.addEventListener('resize', onResize)
-    document.addEventListener('pointerdown', onPointerDown, true)
-    return () => {
-      window.removeEventListener('resize', onResize)
-      document.removeEventListener('pointerdown', onPointerDown, true)
-    }
+    return () => window.removeEventListener('resize', onResize)
   }, [open])
 
   return (

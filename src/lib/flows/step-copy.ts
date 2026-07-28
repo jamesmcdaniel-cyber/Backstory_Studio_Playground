@@ -64,3 +64,12 @@ export const VARIABLE_VALUE_PLACEHOLDER: Record<VariableOp, string> = {
 export function variableValueOptional(op: VariableOp): boolean {
   return op === 'initialize' || op === 'increment' || op === 'decrement'
 }
+
+/** Plain-English names for the summarize calculations — the UI shows these, never the op key. */
+export const SUMMARIZE_OP_LABELS: Record<'sum' | 'avg' | 'count' | 'min' | 'max', string> = {
+  sum: 'Total',
+  avg: 'Average',
+  count: 'Count',
+  min: 'Lowest',
+  max: 'Highest',
+}

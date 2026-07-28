@@ -2060,7 +2060,7 @@ function DataBody({
     // Ops with required list config start with one empty row so the editor
     // opens ready to fill in.
     const clauses = next === 'filterArray' && !(node.data.clauses ?? []).length ? [{ left: '', op: 'contains' as ConditionOp, right: '' }] : node.data.clauses
-    const fields = next === 'select' && !(node.data.fields ?? []).length ? [{ name: '', value: '' }] : node.data.fields
+    const fields = (next === 'select' || next === 'compose') && !(node.data.fields ?? []).length ? [{ name: '', value: '' }] : node.data.fields
     update({ ...node, data: { ...node.data, op: next, clauses, fields } })
   }
   const inputInvalid = Boolean(showErrors && !node.data.input?.trim())
@@ -2250,7 +2250,7 @@ function DataBody({
           </button>
         </div>
       )}
-      {op === 'select' && (
+      {(op === 'select' || op === 'compose') && (
         <div className="grid gap-2">
           <label className={labelClass}>Fields <span className="text-red-500">*</span></label>
           {(fields.length ? fields : [{ name: '', value: '' }]).map((field, index, list) => (

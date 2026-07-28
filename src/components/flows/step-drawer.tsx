@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
-import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
+import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { DataTree } from '@/components/flows/data-tree'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 import { type DataField } from '@/lib/flows/datatree'
@@ -2291,7 +2291,7 @@ function DataEditor({
     // Ops with required list config start with one empty row so the editor
     // opens ready to fill in.
     const nextClauses = next === 'filterArray' && !(node.data.clauses ?? []).length ? [{ left: '', op: 'contains' as ConditionOp, right: '' }] : node.data.clauses
-    const nextFields = next === 'select' && !(node.data.fields ?? []).length ? [{ name: '', value: '' }] : node.data.fields
+    const nextFields = (next === 'select' || next === 'compose') && !(node.data.fields ?? []).length ? [{ name: '', value: '' }] : node.data.fields
     onChange({ ...node, data: { ...node.data, op: next, clauses: nextClauses, fields: nextFields } })
   }
   const setClauses = (next: ConditionClause[]) => onChange({ ...node, data: { ...node.data, clauses: next } })
@@ -2471,7 +2471,108 @@ function DataEditor({
           <p className="text-[11px] text-muted-foreground">Every condition checks one item of the list at a time; only items where all conditions pass are kept.</p>
         </div>
       )}
-      {op === 'select' && (
+      {(op === 'sort' || op === 'removeDuplicates' || op === 'summarize') && (
+        <div>
+          <label className={labelClass}>{op === 'summarize' ? 'Group by field' : 'Field'}</label>
+          <input
+            className={fieldClass}
+            value={node.data.by ?? ''}
+            placeholder={op === 'summarize' ? 'Leave empty to summarize the whole list' : 'Leave empty to use the whole item'}
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            onChange={(e) => onChange({ ...node, data: { ...node.data, by: e.target.value } })}
+          />
+        </div>
+      )}
+      {op === 'sort' && (
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={node.data.descending === true}
+            onChange={(e) => onChange({ ...node, data: { ...node.data, descending: e.target.checked || undefined } })}
+          />
+          Highest first
+        </label>
+      )}
+      {op === 'limit' && (
+        <>
+          <div>
+            <label className={labelClass}>How many to keep</label>
+            <input
+              className={fieldClass}
+              value={node.data.count ?? ''}
+              placeholder="10"
+              onFocus={blockActive}
+              onBlur={unblockActive}
+              onChange={(e) => onChange({ ...node, data: { ...node.data, count: e.target.value } })}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={node.data.fromEnd === true}
+              onChange={(e) => onChange({ ...node, data: { ...node.data, fromEnd: e.target.checked || undefined } })}
+            />
+            Take from the end of the list
+          </label>
+        </>
+      )}
+      {op === 'aggregate' && (
+        <div>
+          <label className={labelClass}>Field to collect</label>
+          <input
+            className={fieldClass}
+            value={node.data.by ?? ''}
+            placeholder="Leave empty to keep the whole list as one value"
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            onChange={(e) => onChange({ ...node, data: { ...node.data, by: e.target.value } })}
+          />
+        </div>
+      )}
+      {op === 'summarize' && (
+        <div className="space-y-2">
+          <label className={labelClass}>Calculate</label>
+          {(node.data.aggregations ?? [{ field: '', op: 'sum' as const }]).map((entry, i) => {
+            const rows = node.data.aggregations ?? [{ field: '', op: 'sum' as const }]
+            const setRows = (next: typeof rows) => onChange({ ...node, data: { ...node.data, aggregations: next } })
+            return (
+              <div key={i} className="flex gap-1.5">
+                <select
+                  className={`${smallField} w-28`}
+                  value={entry.op}
+                  onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, op: e.target.value as typeof r.op } : r)))}
+                >
+                  {(['sum', 'avg', 'count', 'min', 'max'] as const).map((o) => (
+                    <option key={o} value={o}>{SUMMARIZE_OP_LABELS[o]}</option>
+                  ))}
+                </select>
+                <input
+                  className={`${smallField} flex-1`}
+                  value={entry.field}
+                  placeholder="of field"
+                  onFocus={blockActive}
+                  onBlur={unblockActive}
+                  onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, field: e.target.value } : r)))}
+                />
+                {rows.length > 1 && (
+                  <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove calculation">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            )
+          })}
+          <button
+            type="button"
+            onClick={() => onChange({ ...node, data: { ...node.data, aggregations: [...(node.data.aggregations ?? [{ field: '', op: 'sum' as const }]), { field: '', op: 'sum' as const }] } })}
+            className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add calculation
+          </button>
+        </div>
+      )}
+      {(op === 'select' || op === 'compose') && (
         <div className="space-y-3">
           <label className={labelClass}>Fields</label>
           {fields.map((field, i) => (

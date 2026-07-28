@@ -7,22 +7,35 @@ import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
+import { dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
+import { retrieveHelpDocs } from '@/lib/help-center/docs'
 
-// The Librarian: a holistic workspace assistant. It answers general questions
-// about Backstory AND surfaces the user's own library — templates, flows,
-// agents, and recent runs — as clickable results grounded in what it found.
+// The Assistant: a holistic workspace assistant (the /dashboard home). It
+// answers general questions about Backstory and, WHEN THEY ARE ACTUALLY
+// RELEVANT, links the user's own library — templates, flows, agents, recent
+// runs. The keyword search below only assembles candidates; the model marks
+// which ones it stood behind and the rest never reach the UI.
 
-export type LibrarianResult = {
-  type: 'agent' | 'flow' | 'template' | 'run'
-  id: string
-  title: string
-  subtitle: string
-  href: string
-}
+export type { LibrarianResult } from '@/lib/librarian/relevance'
 
-const SYSTEM_PROMPT = `You are the Librarian, a concise assistant inside Backstory Studio — a platform where sales teams build AI agents and automated flows over their connected tools (Slack, Gmail, Salesforce, Jira, Granola, and a Backstory MCP for account/deal data).
+// Named "the Assistant" to match what the UI calls it (src/app/dashboard/page.tsx).
+const SYSTEM_PROMPT = `You are the Assistant, a concise workspace assistant inside Backstory Studio — a platform where sales teams build AI agents and automated flows over their connected tools (Slack, Gmail, Salesforce, Jira, Granola, and a Backstory MCP for account/deal data).
 
-Answer the user's question directly and briefly (2–5 sentences, no preamble). When the provided library items are relevant, refer to them by name and tell the user what to do next (open a flow, use a template, review a run). If nothing in the library fits, give practical general guidance and point them to the right area (Agents, Flows, Integrations). Never invent items that aren't listed.`
+Answer the question directly, in 2–5 sentences of plain English. No preamble, no restating the question. Markdown is fine for emphasis and short lists.
+
+Different questions want different answers, so pick the one that fits:
+- A plain factual or conceptual question ("what is X", "can Backstory do Y") wants a plain answer and nothing else.
+- A "how do I" question wants concrete guidance — the steps, or where in the product to go.
+- A question about the user's own workspace wants their actual items named.
+
+You may be given HELP CENTRE excerpts: official Backstory product documentation. It is the authoritative source on how Backstory itself works — features, setup, integrations, MCP, permissions. When an excerpt covers the question, answer from it and say what it says, rather than from your own general knowledge; when the excerpts contradict what you assumed, the excerpts win. If they only partly cover it, use what they do cover and be plain about the rest.
+
+You may also be given CANDIDATE items from the user's own workspace. That list is a keyword match, NOT a recommendation — it is often irrelevant, and most answers should cite nothing from it. Refer to an item only when it genuinely answers the question or is the obvious next step, and never pad an answer with a generic "explore the Agents section" or "check your existing agents". Never invent items that are not listed.
+
+End your reply with one final line, exactly this shape and nothing after it:
+RELEVANT: 1, 3
+listing the numbers of the candidates you actually referred to or are recommending — or "RELEVANT: none" when the answer stands on its own. This line is stripped before the user sees it; only the items you list are shown to them.`
+
 
 /** Meaningful search terms from the question (drop short/stop words). */
 function terms(question: string): string[] {
@@ -49,7 +62,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // of matching on nothing.
   const hasWords = words.length > 0
 
-  const [agents, flows, templates, runs] = await Promise.all([
+  // The help centre is fetched alongside the workspace queries, not after them,
+  // so the docs cost concurrency rather than latency.
+  const [docs, agents, flows, templates, runs] = await Promise.all([
+    retrieveHelpDocs(question),
     prisma.agentTask.findMany({
       where: { organizationId: org, ...agentVisibilityScope(uid), ...(hasWords ? { OR: orContains(words, ['description', 'objective']) } : {}) },
       orderBy: { updatedAt: 'desc' },
@@ -81,18 +97,32 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     return (typeof m.title === 'string' && m.title.trim()) || fallback
   }
 
-  const results: LibrarianResult[] = [
+  const workspaceItems = dedupeResults([
     ...flows.map((f): LibrarianResult => ({ type: 'flow', id: f.id, title: f.name || 'Untitled flow', subtitle: `Flow · ${f.status.toLowerCase()}`, href: `/flows/${f.id}` })),
     ...agents.map((a): LibrarianResult => ({ type: 'agent', id: a.id, title: titleOf(a.metadata, a.description.split('\n')[0] || 'Untitled agent'), subtitle: a.folder ? `Agent · ${a.folder}` : 'Agent', href: `/agents?agent=${a.id}` })),
     ...templates.map((t): LibrarianResult => ({ type: 'template', id: t.id, title: t.name, subtitle: 'Template', href: `/templates/${t.id}` })),
     ...runs.map((r): LibrarianResult => ({ type: 'run', id: r.id, title: titleOf(r.metadata, r.agentType), subtitle: `Run · ${r.status.toLowerCase()}`, href: `/agents?run=${r.id}` })),
-  ]
+  ])
 
-  // Ground the answer on what we actually found (names + types only).
-  const grounding = results.length
-    ? `Library items found for this question:\n${results.map((r) => `- [${r.type}] ${r.title} — ${r.subtitle}`).join('\n')}`
-    : 'No matching library items were found.'
-  const prompt = `${grounding}\n\nUser question: ${question}`
+  // Help-centre articles join the same numbered list, so the model can cite a
+  // doc the way it cites a workspace item and the UI links it identically.
+  const candidates = [
+    ...workspaceItems,
+    ...docs.map((d): LibrarianResult => ({ type: 'doc', id: d.url, title: d.title, subtitle: 'Help centre', href: d.url })),
+  ]
+  const docBlock = docs.length
+    ? `HELP CENTRE excerpts (official Backstory documentation — authoritative):\n${docs
+        .map((d, i) => `[${workspaceItems.length + i + 1}] ${d.title} (${d.url})\n${d.text}`)
+        .join('\n\n')}\n\n`
+    : ''
+  // Numbered so the model can name the ones it actually used; the workspace list
+  // is a keyword match, so it is offered as candidates rather than as findings.
+  const itemBlock = workspaceItems.length
+    ? `CANDIDATE items from this workspace (keyword match — judge relevance yourself):\n${workspaceItems
+        .map((r, i) => `${i + 1}. [${r.type}] ${r.title} — ${r.subtitle}`)
+        .join('\n')}`
+    : 'This workspace has no items matching the question.'
+  const prompt = `${docBlock}${itemBlock}\n\nUser question: ${question}`
 
   const useClaude = Boolean(process.env.ANTHROPIC_API_KEY)
   const client = useClaude ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : qwenClient()
@@ -108,11 +138,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   void recordTokenUsage(org, (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)).catch(() => undefined)
 
-  const answer = response.content
+  const raw = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
     .join('\n')
     .trim()
+
+  // Only the items the model actually stood behind are returned — the rest of
+  // the keyword match stays out of the UI.
+  const { answer, picked } = parseRelevance(raw, candidates.length)
+  const results = picked.slice(0, 4).map((n) => candidates[n - 1])
 
   return { success: true, answer: answer || 'I couldn’t generate an answer just now — try rephrasing.', results }
 })

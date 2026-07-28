@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowUp, Bot, FileText, History, Loader2, Paperclip, Sparkles, Workflow, Wrench } from 'lucide-react'
+import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, Sparkles, Workflow, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Markdown } from '@/components/ui/markdown'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 type LibrarianResult = {
-  type: 'agent' | 'flow' | 'template' | 'run'
+  /** `doc` is a help-centre article (an external link); the rest are workspace items. */
+  type: 'agent' | 'flow' | 'template' | 'run' | 'doc'
   id: string
   title: string
   subtitle: string
@@ -26,22 +28,23 @@ const PERSONAS = [
   { key: 'IT', hint: 'Setup, access, and governance' },
 ] as const
 
+// Openers that show what the Assistant reaches across — the library (templates),
+// the connected data (MCP), and the skills layer — rather than five variations
+// on "how do I".
 const SUGGESTIONS = [
-  'How can Backstory improve deal discovery?',
+  'Which template generates meeting briefs?',
   'What can I do with Backstory MCP?',
-  'How can I build an alert for at-risk deals?',
-  'How should I plan my automation roadmap?',
-  'How do I connect Slack?',
+  'Which skills turn account plans into actionable insights?',
 ]
 
-const RESULT_ICON = { flow: Workflow, agent: Bot, template: FileText, run: History }
+const RESULT_ICON = { flow: Workflow, agent: Bot, template: FileText, run: History, doc: BookOpen }
 
 function greeting(): string {
   const h = new Date().getHours()
   return h < 12 ? 'GOOD MORNING' : h < 18 ? 'GOOD AFTERNOON' : 'GOOD EVENING'
 }
 
-export default function LibrarianHome() {
+export default function AssistantHome() {
   const router = useRouter()
   const [input, setInput] = useState('')
   const [persona, setPersona] = useState<(typeof PERSONAS)[number]['key']>('SALES')
@@ -50,18 +53,24 @@ export default function LibrarianHome() {
   const [hello, setHello] = useState('GOOD MORNING')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const threadEndRef = useRef<HTMLDivElement>(null)
+  // Bumped by "New chat" so an in-flight answer from the previous conversation
+  // can't land in the fresh one.
+  const threadSeq = useRef(0)
 
   // Compute the time-of-day greeting on the client to avoid an SSR mismatch.
   useEffect(() => setHello(greeting()), [])
   useEffect(() => { threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [thread, busy])
 
-  const grow = (el: HTMLTextAreaElement) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px` }
+  // Grows with the content; the CSS min-height keeps the empty composer tall.
+  const grow = (el: HTMLTextAreaElement) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 240)}px` }
+  const resetComposer = () => { if (textareaRef.current) textareaRef.current.style.height = '' }
 
   const ask = async (question: string) => {
     const q = question.trim()
     if (!q || busy) return
+    const seq = threadSeq.current
     setInput('')
-    if (textareaRef.current) textareaRef.current.style.height = 'auto'
+    resetComposer()
     setBusy(true)
     try {
       const res = await fetch('/api/librarian', {
@@ -70,38 +79,60 @@ export default function LibrarianHome() {
         body: JSON.stringify({ question: q }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) { toast.error(data.error || 'The Librarian couldn’t answer that.'); return }
+      if (seq !== threadSeq.current) return // the user started a new chat meanwhile
+      if (!res.ok) { toast.error(data.error || 'The Assistant couldn’t answer that.'); return }
       setThread((prev) => [...prev, { question: q, answer: data.answer ?? '', results: data.results ?? [] }])
     } catch {
-      toast.error('Could not reach the Librarian.')
+      if (seq === threadSeq.current) toast.error('Could not reach the Assistant.')
     } finally {
-      setBusy(false)
+      if (seq === threadSeq.current) setBusy(false)
     }
+  }
+
+  const startNewChat = () => {
+    threadSeq.current++
+    setThread([])
+    setInput('')
+    setBusy(false)
+    resetComposer()
+    textareaRef.current?.focus()
   }
 
   const activeHint = PERSONAS.find((p) => p.key === persona)?.hint
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 pb-24 pt-10 sm:pt-16">
-      <p className="mb-10 font-mono text-xs tracking-[0.2em] text-gray-500">
-        <span className="text-horizon-500">{'///'}</span> {hello}
-      </p>
+    <div className="mx-auto w-full max-w-5xl px-4 pb-24 pt-10 sm:pt-14">
+      <div className="mb-8 flex items-center justify-between gap-4">
+        <p className="font-mono text-xs tracking-[0.2em] text-gray-500">
+          <span className="text-horizon-500">{'///'}</span> {hello}
+        </p>
+        {(thread.length > 0 || busy) && (
+          <button
+            type="button"
+            onClick={startNewChat}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3.5 py-2 font-mono text-xs uppercase tracking-wider text-gray-500 shadow-1 transition-colors hover:border-horizon-200 hover:text-horizon-700"
+          >
+            <PenSquare className="h-3.5 w-3.5" /> New chat
+          </button>
+        )}
+      </div>
 
-      {/* Composer — matches the mockup: prompt, attach + BUILD, send, persona row */}
+      {/* Composer — prompt, attach + BUILD, send, persona row */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-2 transition-[border-color,box-shadow,transform] duration-base focus-within:-translate-y-0.5 focus-within:border-horizon-400 focus-within:shadow-4 focus-within:ring-4 focus-within:ring-horizon-500/10">
-        <div className="px-5 pt-5">
+        <div className="px-6 pt-6">
           <textarea
             ref={textareaRef}
             value={input}
             rows={1}
             onChange={(e) => { setInput(e.target.value); grow(e.target) }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input) } }}
-            placeholder="Ask the Librarian about the library, setup, or a goal…"
-            className="w-full resize-none bg-transparent text-lg text-gray-900 outline-none placeholder:text-gray-400"
+            placeholder="Ask the Assistant about the library, setup, or a goal…"
+            aria-label="Ask the Assistant"
+            className="min-h-[3.5rem] w-full resize-none bg-transparent text-xl leading-8 text-gray-900 outline-none placeholder:text-gray-400"
           />
         </div>
 
-        <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -124,7 +155,7 @@ export default function LibrarianHome() {
             onClick={() => void ask(input)}
             disabled={!input.trim() || busy}
             className={cn(
-              'flex h-9 w-9 items-center justify-center rounded-full text-white transition-colors',
+              'flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors',
               input.trim() && !busy ? 'bg-horizon-600 hover:bg-horizon-700' : 'bg-gray-300',
             )}
             aria-label="Send"
@@ -133,8 +164,8 @@ export default function LibrarianHome() {
           </button>
         </div>
 
-        <div className="border-t px-4 py-3">
-          <div className="mb-2 flex items-center justify-between">
+        <div className="border-t px-5 py-4">
+          <div className="mb-2.5 flex items-center justify-between">
             <span className="font-mono text-[11px] uppercase tracking-wider text-gray-500">Tailor output for</span>
             {activeHint && <span className="text-sm text-gray-400">{activeHint}</span>}
           </div>
@@ -178,26 +209,33 @@ export default function LibrarianHome() {
               <p className="text-right text-sm font-medium text-gray-900">{turn.question}</p>
               <div className="rounded-2xl border bg-white p-4 shadow-2 animate-fade-in-up">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-horizon-600">
-                  <Sparkles className="h-3.5 w-3.5" /> Librarian
+                  <Sparkles className="h-3.5 w-3.5" /> Assistant
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">{turn.answer}</p>
+                <div className="mt-2 text-sm leading-6 text-gray-700">
+                  <Markdown>{turn.answer}</Markdown>
+                </div>
                 {turn.results.length > 0 && (
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     {turn.results.map((r) => {
                       const Icon = RESULT_ICON[r.type]
+                      // Help-centre articles leave the app, so they open in a new
+                      // tab and say so rather than dropping the user out of a chat.
+                      const external = r.type === 'doc'
                       return (
                         <Link
                           key={`${r.type}-${r.id}`}
                           href={r.href}
+                          {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
                           className="flex items-center gap-3 rounded-lg border p-3 transition-colors hover:border-horizon-300 hover:bg-gray-50"
                         >
                           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-gray-100 text-gray-500">
                             <Icon className="h-4 w-4" />
                           </span>
-                          <span className="min-w-0">
+                          <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-medium text-gray-900">{r.title}</span>
                             <span className="block truncate text-xs text-gray-400">{r.subtitle}</span>
                           </span>
+                          {external && <ExternalLink aria-label="Opens in a new tab" className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
                         </Link>
                       )
                     })}

@@ -5,6 +5,7 @@ import { RENEWAL_BRIEF } from '@/lib/flows/templates/builtin/renewal-brief'
 import { WEBHOOK_TRIAGE } from '@/lib/flows/templates/builtin/webhook-triage'
 import { CSV_ENRICHMENT } from '@/lib/flows/templates/builtin/csv-enrichment'
 import { NIGHTLY_SYNC } from '@/lib/flows/templates/builtin/nightly-sync'
+import { UPSELL_MOTION } from '@/lib/flows/templates/builtin/upsell-motion'
 
 /**
  * The built-in flow catalogue every workspace sees, served after the org's own
@@ -16,6 +17,7 @@ export const BUILTIN_FLOW_TEMPLATES: FlowTemplateDef[] = [
   SUMMARIZE_EXTRACT,
   SCORE_EACH_ITEM,
   SCHEDULED_WAIT,
+  UPSELL_MOTION,
   CHURN_RISK_SCORECARD,
   RENEWAL_BRIEF,
   WEBHOOK_TRIAGE,

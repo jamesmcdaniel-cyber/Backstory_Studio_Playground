@@ -13,7 +13,7 @@ export const WEBHOOK_TRIAGE: FlowTemplateDef = {
     'Start from an inbound webhook, classify what arrived, and route it — escalations notify on-call and draft a reply at the same time, renewals get a note, everything else stops early.',
   category: 'Account Monitoring',
   icon: '📨',
-  integrations: ['Slack'],
+  integrations: ['slack'],
   tags: ['webhook', 'routing', 'real-time'],
   graph: {
     nodes: [

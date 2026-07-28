@@ -12,7 +12,7 @@ export const RENEWAL_BRIEF: FlowTemplateDef = {
     'Each morning, find the nearest upcoming renewal and write a brief whose depth matches how close it is — a full agent workup inside 15 days, a lighter note further out — then hold it for a human to approve.',
   category: 'Customer Success',
   icon: '🔁',
-  integrations: [],
+  integrations: ['salesforce'],
   tags: ['daily', 'branching', 'approval'],
   graph: {
     nodes: [
@@ -167,7 +167,9 @@ export const RENEWAL_BRIEF: FlowTemplateDef = {
       nodeId: 'brief-critical',
       kind: 'agent',
       label: 'Pick the agent that writes full renewal briefs',
-      match: { agentName: 'Renewal Brief' },
+      // Matches the "Renewal Prep Brief" agent template, so a workspace that
+      // deployed it gets this step wired on instantiate.
+      match: { agentName: 'Renewal Prep Brief' },
     },
   ],
   notes: {
@@ -202,7 +204,7 @@ export const RENEWAL_BRIEF: FlowTemplateDef = {
       'The CRM read retries twice before failing the run. The agent path retries once. The approval step has no timer — the run stays waiting until someone answers, so use the runs list to spot briefs nobody picked up.',
     setup: [
       { label: 'Connect the CRM you track renewals in', kind: 'integration', ref: 'salesforce' },
-      { label: 'Create or pick an agent to write the full 15-day briefs', kind: 'agent', ref: 'brief-critical' },
+      { label: 'Deploy the Renewal Prep Brief agent template, or pick your own, on the full workup step', kind: 'agent', ref: 'brief-critical' },
       { label: 'Confirm the read action name matches your CRM', kind: 'value', ref: 'fetch' },
     ],
     customize: [

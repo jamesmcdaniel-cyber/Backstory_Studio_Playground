@@ -27,7 +27,10 @@ const templateSchema = z.object({
 // exact format live runs produce. The GET handler below appends the matching
 // per-template output contract (generated from the same spec) to these
 // instructions, so a run is held to that example section by section.
-const builtInTemplates = [
+// Exported so the flow catalogue's tests can check that every flow template
+// binding an agent BY NAME names one of these — a typo there ships a template
+// whose agent step silently never resolves.
+export const builtInTemplates = [
   {
     "id": "39-salesai-upsell-engine",
     "name": "SalesAI Upsell Engine",

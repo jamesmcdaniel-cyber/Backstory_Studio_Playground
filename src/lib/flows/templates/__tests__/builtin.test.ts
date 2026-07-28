@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
+import { BUILTIN_CONNECTORS } from '@/lib/connectors/registry'
 import { flowTemplateNotesIssues, flowTemplateNotesSchema, flowTemplateBindingSchema } from '@/lib/flows/templates/types'
 
 /**
@@ -76,6 +77,60 @@ test('every empty agent or connection slot has a binding that fills it', () => {
       if (node.type === 'tool' && !node.data.connectionId) {
         assert.ok(bound.has(node.id), `${template.id}: tool step "${node.id}" is empty with no binding`)
       }
+    }
+  }
+})
+
+/**
+ * An agent binding resolves by NAME against the workspace roster, so a template
+ * that names an agent nobody can have — a typo, or a name the agent gallery
+ * never shipped — instantiates with a permanently empty step and no way for the
+ * user to know why. Pinning the names to the agent catalogue makes that a
+ * build-time failure instead.
+ */
+test('every agent binding names an agent template a workspace can actually deploy', async () => {
+  const { builtInTemplates } = await import('@/app/api/agent-templates/route')
+  const agentNames = new Set(builtInTemplates.map((template) => template.name.trim().toLowerCase()))
+  for (const template of BUILTIN_FLOW_TEMPLATES) {
+    for (const binding of template.bindings) {
+      if (binding.kind !== 'agent') continue
+      const wanted = binding.match.agentName?.trim().toLowerCase()
+      assert.ok(wanted, `${template.id}: agent binding "${binding.label}" names no agent`)
+      assert.ok(
+        agentNames.has(wanted),
+        `${template.id}: agent binding wants "${binding.match.agentName}", which is not an agent template a workspace can deploy`,
+      )
+    }
+  }
+})
+
+/**
+ * `integrations` drives the "Requires" chips and the missing-integration setup
+ * items, which match a connected provider key case-insensitively — so a display
+ * name like "Backstory MCP" would read as permanently unconnected.
+ */
+test('declared integrations use connector keys the workspace can match', () => {
+  const known = new Set(BUILTIN_CONNECTORS.map((connector) => connector.key.toLowerCase()))
+  for (const template of BUILTIN_FLOW_TEMPLATES) {
+    for (const integration of template.integrations) {
+      assert.ok(
+        known.has(integration.trim().toLowerCase()),
+        `${template.id}: "${integration}" is not a connector key (expected one of ${[...known].join(', ')})`,
+      )
+    }
+  }
+})
+
+test('a template that calls a connection or an agent declares what it needs', () => {
+  for (const template of BUILTIN_FLOW_TEMPLATES) {
+    const connectionBindings = template.bindings.filter((binding) => binding.kind === 'connection')
+    for (const binding of connectionBindings) {
+      const provider = binding.match.provider?.trim().toLowerCase()
+      assert.ok(provider, `${template.id}: connection binding "${binding.label}" names no provider`)
+      assert.ok(
+        template.integrations.some((entry) => entry.trim().toLowerCase() === provider),
+        `${template.id}: binds the "${binding.match.provider}" connection but does not list it in integrations, so its card shows no requirement`,
+      )
     }
   }
 })

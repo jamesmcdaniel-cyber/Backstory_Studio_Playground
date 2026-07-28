@@ -13,7 +13,7 @@ export const CHURN_RISK_SCORECARD: FlowTemplateDef = {
     'Weekly: pull every open account from your CRM, score each one for churn risk, keep the ones above threshold, rank them, and post a digest to your team channel.',
   category: 'Customer Success',
   icon: '📉',
-  integrations: ['Slack'],
+  integrations: ['slack'],
   tags: ['weekly', 'scoring', 'customer-success'],
   graph: {
     nodes: [

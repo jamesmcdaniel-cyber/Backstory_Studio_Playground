@@ -42,24 +42,33 @@ function serializeShared(
   }
 }
 
-// GET — built-in skills plus the PUBLIC community library (all orgs).
+// GET — built-in skills, this workspace's own skills at any visibility, and
+// other workspaces' PUBLISHED ones. Mirrors fetchCatalogueRows: the published
+// slice is the only cross-org read.
 export const GET = withAuthenticatedApi(async (_request, auth) => {
-  // systemPrisma: public community skill library — visible to all orgs by design.
-  const shared = await systemPrisma.sharedSkill.findMany({
-    where: { isActive: true },
+  const own = await prisma.sharedSkill.findMany({
+    where: { organizationId: auth.organizationId, isActive: true },
+    orderBy: { updatedAt: 'desc' },
+    take: 500,
+  })
+  // systemPrisma: the PUBLISHED community slice from OTHER orgs. Own rows come
+  // from the tenant-guarded query above.
+  const published = await systemPrisma.sharedSkill.findMany({
+    where: { isActive: true, visibility: 'global', NOT: { organizationId: auth.organizationId } },
     orderBy: { updatedAt: 'desc' },
     take: 500,
   })
   return {
     success: true,
     skills: [
-      ...shared.map((skill) => serializeShared(skill, auth.organizationId)),
+      ...[...own, ...published].map((skill) => serializeShared(skill, auth.organizationId)),
       ...listSkills().map((skill) => ({ ...skill, custom: false, mine: false })),
     ],
   }
 }, { permission: 'agent.read' })
 
-// POST — publish a new skill to the community library.
+// POST — create a skill in THIS workspace. It reaches the shared library only
+// through review; visibility defaults to 'org' and is never taken from the body.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const data = skillSchema.parse(await request.json())
   const skill = await prisma.sharedSkill.create({

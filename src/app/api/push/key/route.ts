@@ -9,4 +9,4 @@ export const GET = withAuthenticatedApi(async () => ({
   success: true,
   enabled: pushEnabled(),
   publicKey: process.env.VAPID_PUBLIC_KEY || null,
-}))
+}), { permission: null })

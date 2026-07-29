@@ -12,4 +12,4 @@ export const GET = withAuthenticatedApi(async () => ({
     TURN_USERNAME: process.env.TURN_USERNAME,
     TURN_CREDENTIAL: process.env.TURN_CREDENTIAL,
   }),
-}))
+}), { permission: 'flow.read' })

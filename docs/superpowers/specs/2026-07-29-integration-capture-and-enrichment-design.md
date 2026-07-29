@@ -63,15 +63,15 @@ The two engines reach external tools by different routes, both constructed in
 - **Agents** — `loadTools` builds bindings carrying a `client.executeTool(...)`,
   which the run loop calls at `execute-agent.ts:1073`.
 
-Capture is therefore a **decorator applied where those are constructed**, not a
-call bolted onto each run loop:
+> **Corrected during planning.** The two are *not* both constructed in
+> `tool-planes.ts` — agent bindings are materialized in
+> `execute-agent.ts:178`. More decisively, `runId`, which §2 requires for
+> provenance, exists only inside the run loop and is not in scope at
+> construction. So capture is an explicit fire-and-forget
+> `captureToolResult(...)` call at the two run-loop sites, which have full
+> context, rather than a constructor decorator. The contract below is unchanged.
 
-```ts
-withCapture(executor, context): FlowToolExecutor
-```
-
-Both engines inherit capture without their loops changing, and any future caller
-gets it by construction rather than by remembering. The wrapper:
+The capture call:
 
 - returns the tool result **unchanged** — it is transparent to the caller;
 - runs only when `isWrite === false` and the provider is enabled for the org;
@@ -156,8 +156,9 @@ Resolved facts index into the existing graph-RAG store alongside signals and
 runs:
 
 - A new `NodeType` value `'fact'`, added to the union in `src/lib/rag/store.ts`.
-  Both store implementations are generic over `NodeType`; this must be confirmed
-  against `neo4j-store.ts` during implementation rather than assumed.
+  **Confirmed during planning:** both stores are generic over `NodeType` —
+  `neo4j-store.ts` casts (`p.type as NodeType`) with no exhaustive switch, so a
+  new member breaks nothing.
 - A new `EdgeRelation` value `'captured_in'` linking a fact to the run that
   observed it, for provenance.
 - Account and opportunity linkage reuses the existing `about_account` and

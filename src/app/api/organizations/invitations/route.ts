@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { hashToken } from '@/lib/crypto/secrets'
 import { sendEmail } from '@/lib/integrations/email'
+import { buildInviteLink } from '@/lib/auth/invite-link'
 
 const INVITE_TTL_DAYS = 14
 
@@ -21,13 +22,17 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
 const createSchema = z.object({
   email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
   role: z.enum(['ADMIN', 'USER']).default('USER'),
+  // Where acceptance lands the recipient. An invite sent from a flow jam passes
+  // that flow so joining and arriving are one motion; validated in
+  // buildInviteLink, which drops anything that isn't a same-origin path.
+  next: z.string().optional(),
 })
 
 // Create an invitation, email a join link (if email is configured), and return
 // the link so the admin can copy it regardless. Admin-only.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   if (auth.dbUser.role !== 'ADMIN') throw new ApiError('Admin access required', 403, 'FORBIDDEN')
-  const { email, role } = createSchema.parse(await request.json())
+  const { email, role, next } = createSchema.parse(await request.json())
 
   // Already a member of this workspace? No invite needed.
   const existing = await prisma.user.findFirst({
@@ -58,7 +63,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const org = await prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { name: true } })
   const base = (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/$/, '')
-  const link = `${base}/invite/${token}`
+  const link = buildInviteLink(base, token, next)
 
   let emailSent = false
   try {

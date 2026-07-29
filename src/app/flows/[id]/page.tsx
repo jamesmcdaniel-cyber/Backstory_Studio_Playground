@@ -520,7 +520,7 @@ function FlowBuilder() {
     setGraph(next)
     setSelectedId((current) => (current && !next.nodes.some((n) => n.id === current) ? null : current))
   }, [viewingVersion])
-  const { participants, roster, cursors, broadcastGraph, sendCursor, setSelection, setInHuddle, setView: publishView, bus, selfClientId } =
+  const { participants, roster, cursors, status: jamStatus, broadcastGraph, sendCursor, setSelection, setInHuddle, setView: publishView, bus, selfClientId } =
     // Return null until our own load succeeded — otherwise a failed-load client
     // (graph = emptyGraph) would answer a newcomer's realtime bootstrap with an
     // empty graph, which the newcomer adopts and its persister autosaves over
@@ -1894,6 +1894,22 @@ function FlowBuilder() {
             )}
           </div>
         )}
+        {/* Realtime health. Silent when live — the point is that a jam which
+            can't connect says so instead of looking like an empty room. */}
+        {jamStatus !== 'live' && (
+          <span
+            title={jamStatus === 'error'
+              ? 'The live channel refused the connection. Your edits still save; teammates just won’t see them live.'
+              : 'Reconnecting to the live channel…'}
+            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              jamStatus === 'error'
+                ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
+                : 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200'
+            }`}
+          >
+            {jamStatus === 'connecting' ? 'Connecting…' : jamStatus === 'degraded' ? 'Reconnecting…' : 'Live editing unavailable'}
+          </span>
+        )}
         <Button variant="outline" size="sm" onClick={() => setShowJam(true)}>
           <Users className="mr-1.5 h-4 w-4" /> Jam
           {others.length > 0 && <span className="ml-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">{others.length}</span>}
@@ -1967,6 +1983,15 @@ function FlowBuilder() {
               Close
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* The live channel is authorized by Postgres and fails CLOSED, so a
+          refusal is stated plainly rather than degrading into a silently
+          single-player builder. Saving is unaffected either way. */}
+      {jamStatus === 'error' && (
+        <div className="flex items-center justify-center gap-2 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs font-medium text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+          Live collaboration is unavailable — your changes still save, but teammates won’t see them until this reconnects.
         </div>
       )}
 

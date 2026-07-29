@@ -7,6 +7,7 @@ type AuthContext = {
   userId: string
   organizationId: string
   role: string
+  permissions?: string[]
 }
 
 export function useAuth() {
@@ -19,6 +20,9 @@ export function useAuth() {
       setContext(null)
       return
     }
+    // Optimistic paint from JWT metadata so the shell doesn't flash, but it
+    // carries no permissions — those are resolved server-side per request, so
+    // the fetch below always runs and overwrites this.
     const metadataOrganization = user.user_metadata?.organization_id
     if (metadataOrganization) {
       setContext({
@@ -26,7 +30,6 @@ export function useAuth() {
         organizationId: metadataOrganization,
         role: user.user_metadata?.role || 'USER',
       })
-      return
     }
 
     setContextLoading(true)
@@ -57,6 +60,10 @@ export function useAuth() {
     },
     isAdmin: context?.role === 'ADMIN',
     role: context?.role || null,
+    permissions: context?.permissions ?? [],
+    // Which affordances render. Cosmetic only — every gated call is re-checked
+    // server-side, so a tampered client gains nothing by lying here.
+    can: (permission: string) => Boolean(context?.permissions?.includes(permission)),
     organizationId: context?.organizationId || null,
     needsOrganizationSetup: Boolean(user && !context && !contextLoading),
   }), [context, contextLoading, loading, signOut, user])

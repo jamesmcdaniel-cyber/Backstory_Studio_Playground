@@ -120,6 +120,8 @@ if (TEST_DB) {
     // behavior is covered against a real internal org in
     // src/app/api/catalogue/__tests__/review.db.test.ts.
     { route: 'catalogue/review', reason: 'reviewer-only — 403 for the smoke org by design' },
+    { route: 'catalogue/entries', reason: 'reviewer-only — 403 for the smoke org by design' },
+    { route: 'catalogue/staff', reason: 'reviewer-only — 403 for the smoke org by design' },
   ]
 
   // Completeness self-check: enumerate every route.ts whose GET is wrapped in

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { hashToken } from '@/lib/crypto/secrets'
 import { invalidateAuthCache } from '@/lib/supabase/auth-utils'
+import type { UserRole } from '@prisma/client'
 
 const schema = z.object({ token: z.string().min(1) })
 
@@ -18,7 +19,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   if (!invite) throw new ApiError('This invitation is invalid or has expired.', 404, 'INVITE_INVALID')
 
-  const role = invite.role === 'ADMIN' ? 'ADMIN' : 'USER'
+  // Invitation.role is free text (the table predates the enum), so an unknown
+  // value falls back to the member tier rather than failing the join.
+  const INVITABLE_ROLES = ['ADMIN', 'USER', 'OWNER', 'VIEWER']
+  const role = (INVITABLE_ROLES.includes(invite.role) ? invite.role : 'USER') as UserRole
   const alreadyMember = auth.organizationId === invite.organizationId
 
   await prisma.$transaction(async (tx) => {

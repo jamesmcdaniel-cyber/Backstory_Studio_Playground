@@ -9,19 +9,35 @@ function memberId(request: NextRequest) {
   return id
 }
 
-// Guard: refuse to leave the workspace without an admin. Called before any
-// change that would drop an ADMIN (demotion or removal).
-async function assertNotLastAdmin(organizationId: string) {
-  const admins = await prisma.user.count({ where: { organizationId, isActive: true, role: 'ADMIN' } })
-  if (admins <= 1) throw new ApiError('Your workspace needs at least one admin.', 400, 'LAST_ADMIN')
+// Roles that can administer a workspace. OWNER is a superset of ADMIN in the
+// permission registry, so it satisfies the last-admin guard too.
+const ADMINISTRATIVE_ROLES = ['ADMIN', 'OWNER'] as const
+
+// Guard: refuse to leave the workspace without an administrator. Called before
+// any change that would drop the last one (demotion or removal).
+async function assertNotLastAdmin(organizationId: string, excludeUserId: string) {
+  const admins = await prisma.user.count({
+    where: {
+      organizationId,
+      isActive: true,
+      role: { in: [...ADMINISTRATIVE_ROLES] },
+      // The row being demoted/removed is about to stop counting, so exclude it
+      // rather than comparing against an off-by-one threshold.
+      NOT: { id: excludeUserId },
+    },
+  })
+  if (admins < 1) throw new ApiError('Your workspace needs at least one admin.', 400, 'LAST_ADMIN')
 }
 
-const roleSchema = z.object({ role: z.enum(['ADMIN', 'USER']) })
+const roleSchema = z.object({ role: z.enum(['ADMIN', 'USER', 'OWNER', 'VIEWER']) })
 
-// Change a member's role. Admin-only, same-workspace only, never demotes the
-// last admin.
+const administrative = (role: string) => (ADMINISTRATIVE_ROLES as readonly string[]).includes(role)
+
+// Change a member's role. Same-workspace only, never demotes the last
+// administrator. Authorization is the members.manage gate below — the inline
+// `role !== 'ADMIN'` check this used to carry predates the permission registry
+// and refused an OWNER, who the registry grants members.manage.
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
-  if (auth.dbUser.role !== 'ADMIN') throw new ApiError('Admin access required', 403, 'FORBIDDEN')
   const id = memberId(request)
   const { role } = roleSchema.parse(await request.json())
   const target = await prisma.user.findFirst({
@@ -29,7 +45,9 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     select: { id: true, role: true },
   })
   if (!target) throw new ApiError('Member not found', 404, 'NOT_FOUND')
-  if (target.role === 'ADMIN' && role === 'USER') await assertNotLastAdmin(auth.organizationId)
+  if (administrative(target.role) && !administrative(role)) {
+    await assertNotLastAdmin(auth.organizationId, target.id)
+  }
   const member = await prisma.user.update({
     where: { id: target.id },
     data: { role },
@@ -41,7 +59,6 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
 // Remove a member from the workspace (soft — deactivate so their history stays
 // intact). Admin-only; can't remove yourself or the last admin.
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
-  if (auth.dbUser.role !== 'ADMIN') throw new ApiError('Admin access required', 403, 'FORBIDDEN')
   const id = memberId(request)
   if (id === auth.dbUser.id) throw new ApiError('You can’t remove yourself.', 400, 'SELF_REMOVE')
   const target = await prisma.user.findFirst({
@@ -49,7 +66,7 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
     select: { id: true, role: true },
   })
   if (!target) throw new ApiError('Member not found', 404, 'NOT_FOUND')
-  if (target.role === 'ADMIN') await assertNotLastAdmin(auth.organizationId)
+  if (administrative(target.role)) await assertNotLastAdmin(auth.organizationId, target.id)
   await prisma.user.update({ where: { id: target.id }, data: { isActive: false } })
   return { success: true }
 }, { permission: 'members.manage' })

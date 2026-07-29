@@ -10,7 +10,6 @@ const INVITE_TTL_DAYS = 14
 
 // Pending (unexpired) invitations for the caller's workspace. Admin-only.
 export const GET = withAuthenticatedApi(async (_request, auth) => {
-  if (auth.dbUser.role !== 'ADMIN') throw new ApiError('Admin access required', 403, 'FORBIDDEN')
   const invitations = await prisma.invitation.findMany({
     where: { organizationId: auth.organizationId, status: 'PENDING', expiresAt: { gt: new Date() } },
     orderBy: { createdAt: 'desc' },
@@ -21,7 +20,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
 
 const createSchema = z.object({
   email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
-  role: z.enum(['ADMIN', 'USER']).default('USER'),
+  role: z.enum(['ADMIN', 'USER', 'OWNER', 'VIEWER']).default('USER'),
   // Where acceptance lands the recipient. An invite sent from a flow jam passes
   // that flow so joining and arriving are one motion; validated in
   // buildInviteLink, which drops anything that isn't a same-origin path.
@@ -31,7 +30,6 @@ const createSchema = z.object({
 // Create an invitation, email a join link (if email is configured), and return
 // the link so the admin can copy it regardless. Admin-only.
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  if (auth.dbUser.role !== 'ADMIN') throw new ApiError('Admin access required', 403, 'FORBIDDEN')
   const { email, role, next } = createSchema.parse(await request.json())
 
   // Already a member of this workspace? No invite needed.

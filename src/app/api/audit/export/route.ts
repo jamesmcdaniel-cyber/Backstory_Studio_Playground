@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { auditRowsToCsv } from '@/lib/audit'
 
 export const runtime = 'nodejs'
@@ -10,7 +10,6 @@ export const runtime = 'nodejs'
  * compliance surface — an immutable record of what agents did.
  */
 export const GET = withAuthenticatedApi(async (request, auth) => {
-  if (auth.dbUser.role !== 'ADMIN') throw new ApiError('Admin access required', 403, 'FORBIDDEN')
 
   const limit = Math.min(Number(request.nextUrl.searchParams.get('limit')) || 5000, 20000)
   const rows = await prisma.auditEvent.findMany({

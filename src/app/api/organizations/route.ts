@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { withAuthenticatedApi } from '@/lib/server/api-handler'
 
 // Organizations the user belongs to. Membership is single-org today; the
 // shape is a list so the org switcher works unchanged when multi-org lands.
@@ -32,7 +32,6 @@ const patchSchema = z.object({
 })
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
-  if (auth.dbUser.role !== 'ADMIN') throw new ApiError('Admin access required', 403, 'FORBIDDEN')
   const body = patchSchema.parse(await request.json())
   const data: { logoUrl?: string | null; name?: string } = {}
   if (body.logoUrl !== undefined) data.logoUrl = body.logoUrl

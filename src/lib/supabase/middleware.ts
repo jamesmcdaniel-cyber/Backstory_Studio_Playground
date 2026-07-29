@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { getSupabaseConfig } from './config'
+import { validatedReturnPath } from '@/lib/auth/return-path'
 
 const publicPages = new Set([
   '/',
@@ -50,11 +51,16 @@ export async function updateSession(request: NextRequest) {
   const isPublic = publicPages.has(pathname) || pathname.startsWith('/invite/')
 
   // Production is SSO/invite-only: password signup is disabled unless
-  // explicitly allowed (AUTH_ALLOW_PASSWORD=true keeps it for dev).
+  // explicitly allowed (AUTH_ALLOW_PASSWORD=true keeps it for dev). The
+  // invitee's deep link MUST survive this bounce — clearing the search string
+  // here is what dropped invited people into a fresh solo workspace instead of
+  // the workspace (and flow) they were invited to.
   if (pathname === '/auth/signup' && process.env.AUTH_ALLOW_PASSWORD === 'false') {
+    const carried = validatedReturnPath(request.nextUrl.searchParams.get('return_to'))
     const url = request.nextUrl.clone()
     url.pathname = '/auth/login'
     url.search = ''
+    if (carried) url.searchParams.set('return_to', carried)
     return copyCookies(response, NextResponse.redirect(url))
   }
 
@@ -66,11 +72,12 @@ export async function updateSession(request: NextRequest) {
     return copyCookies(response, NextResponse.redirect(url))
   }
 
+  // A signed-in user on an auth page goes where they were headed, not to a
+  // blanket /dashboard — an invite or share link opened in an already-signed-in
+  // browser used to lose its destination here.
   if (user && isAuthPage && pathname !== '/auth/callback') {
-    const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
-    url.search = ''
-    return copyCookies(response, NextResponse.redirect(url))
+    const carried = validatedReturnPath(request.nextUrl.searchParams.get('return_to'))
+    return copyCookies(response, NextResponse.redirect(new URL(carried ?? '/dashboard', request.url)))
   }
 
   // Authenticated pages must not be cached by the browser (disk / back-forward

@@ -19,7 +19,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     include: { agentTask: { select: { id: true, description: true } } },
   })
   return { success: true, subscriptions }
-})
+}, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const input = createSchema.parse(await request.json())
@@ -42,4 +42,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, subscription }
-})
+}, { permission: 'agent.write' })

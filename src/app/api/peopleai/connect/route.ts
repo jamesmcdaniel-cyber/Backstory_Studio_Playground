@@ -45,4 +45,4 @@ export async function GET(request: NextRequest) {
 export const DELETE = withAuthenticatedApi(async (_request, auth) => {
   await disconnect(auth.dbUser.id, auth.organizationId)
   return { success: true }
-}, { skipBackstoryGate: true })
+}, { skipBackstoryGate: true, permission: 'integration.manage' })

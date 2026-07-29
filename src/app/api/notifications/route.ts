@@ -14,4 +14,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     prisma.notification.count({ where: { ...where, readAt: null } }),
   ])
   return { success: true, notifications, unread }
-})
+}, { permission: null })

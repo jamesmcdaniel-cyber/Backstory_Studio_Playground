@@ -38,4 +38,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       'Content-Disposition': `attachment; filename="backstory-audit-${new Date().toISOString().slice(0, 10)}.csv"`,
     },
   })
-})
+}, { permission: 'audit.read' })

@@ -81,7 +81,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     take: 300,
   })
   return { success: true, agents: agents.map(serializeAgent) }
-})
+}, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const data = agentSchema.parse(await request.json())
@@ -122,7 +122,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   await syncAgentConnectors(agent.id, auth.organizationId, data.integrations)
   void indexAgentRow(agent)
   return { success: true, agent: serializeAgent(agent) }
-})
+}, { permission: 'agent.write' })
 
 export const PUT = withAuthenticatedApi(async (request, auth) => {
   const body = z.object({ id: z.string().min(1) }).merge(agentSchema.partial()).parse(await request.json())
@@ -169,7 +169,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   }
   void indexAgentRow(agent)
   return { success: true, agent: serializeAgent(agent) }
-})
+}, { permission: 'agent.write' })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const { id } = z.object({ id: z.string().min(1) }).parse(await request.json())
@@ -182,4 +182,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   // resurface in retrieval. Fire-and-forget; best-effort.
   void removeAgentFromGraph(auth.organizationId, id).catch(() => undefined)
   return { success: true }
-})
+}, { permission: 'agent.write' })

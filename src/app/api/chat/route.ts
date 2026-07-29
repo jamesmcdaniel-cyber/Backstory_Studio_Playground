@@ -54,4 +54,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     .join('\n')
     .trim()
   return { success: true, answer: answer || 'No answer returned.' }
-})
+}, { permission: 'agent.run' })

@@ -86,4 +86,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }).catch(() => undefined)
 
   return { success: true, answer, accountId, opportunityId }
-})
+}, { permission: 'agent.run' })

@@ -30,4 +30,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   return { success: true, ok: true }
-})
+}, { permission: 'integration.manage' })

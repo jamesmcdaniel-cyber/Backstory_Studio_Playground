@@ -29,4 +29,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   recordEstimatedUsage(auth.organizationId, ...rawParts)
   return { success: true, notes, bindings }
-})
+}, { permission: 'template.author' })

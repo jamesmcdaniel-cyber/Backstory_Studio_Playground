@@ -119,4 +119,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     ...(parsed.stopBeforeNodeId ? { stopBeforeNodeId: parsed.stopBeforeNodeId } : {}),
   })
   return { success: true, run }
-})
+}, { permission: 'flow.run' })

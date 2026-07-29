@@ -9,4 +9,4 @@ export const runtime = 'nodejs'
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   const catalog = await loadFlowToolCatalog(auth.organizationId, { userId: auth.dbUser.id, takeConnections: 25, takeTools: 100 })
   return { success: true, connections: catalog }
-})
+}, { permission: 'flow.read' })

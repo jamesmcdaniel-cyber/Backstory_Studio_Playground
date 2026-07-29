@@ -148,4 +148,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     .map((d) => ({ title: d.title, url: d.url, label: SOURCE_LABEL[d.source] }))
 
   return { success: true, answer: answer || 'I couldn’t generate an answer just now — try rephrasing.', results, sources }
-})
+}, { permission: 'agent.run' })

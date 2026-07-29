@@ -123,4 +123,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     // Do not leak discovery/registration details to the client.
     return errorRedirect('oauth_start')
   }
-}, { skipBackstoryGate: true })
+}, { skipBackstoryGate: true, permission: 'integration.manage' })

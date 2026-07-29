@@ -50,7 +50,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     }),
   ])
   return { success: true, memories, openSuggestions }
-})
+}, { permission: 'agent.read' })
 
 // PATCH — dismiss or restore a suggestion.
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
@@ -62,7 +62,7 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   })
   if (updated.count !== 1) throw new ApiError('Memory not found', 404, 'NOT_FOUND')
   return { success: true }
-})
+}, { permission: 'agent.write' })
 
 // DELETE — remove one memory, or all of this agent's memories.
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
@@ -77,4 +77,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, deleted: deleted.count }
-})
+}, { permission: 'agent.write' })

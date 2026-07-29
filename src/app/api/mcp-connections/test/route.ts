@@ -107,4 +107,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   } catch (error) {
     return { ok: false, error: safeMcpVerificationError(error) }
   }
-})
+}, { permission: 'integration.manage' })

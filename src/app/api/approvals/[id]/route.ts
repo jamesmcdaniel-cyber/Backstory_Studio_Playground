@@ -61,4 +61,4 @@ export const POST = withAuthenticatedApi(async (request: NextRequest, auth) => {
     }
     throw error
   }
-})
+}, { permission: 'agent.run' })

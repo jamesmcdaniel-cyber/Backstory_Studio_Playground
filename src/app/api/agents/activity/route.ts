@@ -13,4 +13,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     take: limit,
   })
   return { success: true, activities }
-})
+}, { permission: 'agent.read' })

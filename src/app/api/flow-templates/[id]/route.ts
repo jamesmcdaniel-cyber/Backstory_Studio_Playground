@@ -10,4 +10,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const template = await findFlowTemplate(id, auth.organizationId)
   if (!template) throw new ApiError('Flow template not found', 404, 'NOT_FOUND')
   return { success: true, template }
-})
+}, { permission: 'flow.read' })

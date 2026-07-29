@@ -43,7 +43,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   ]
   const limit = Number(request.nextUrl.searchParams.get('limit'))
   return { success: true, templates: limit > 0 ? templates.slice(0, limit) : templates }
-})
+}, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const data = templateSchema.parse(await request.json())
@@ -69,7 +69,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, template: serializeTemplate(template, auth.organizationId) }
-})
+}, { permission: 'template.author' })
 
 export const PUT = withAuthenticatedApi(async (request, auth) => {
   const body = z.object({ id: z.string().min(1) }).merge(templateSchema.partial()).parse(await request.json())
@@ -99,7 +99,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, template: serializeTemplate(template, auth.organizationId) }
-})
+}, { permission: 'template.author' })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const { id } = z.object({ id: z.string().min(1) }).parse(await request.json())
@@ -108,4 +108,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   })
   if (!result.count) throw new ApiError('Template not found', 404, 'NOT_FOUND')
   return { success: true }
-})
+}, { permission: 'template.author' })

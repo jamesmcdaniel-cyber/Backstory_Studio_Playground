@@ -23,4 +23,4 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
       outputTokens: aggregate._sum.outputTokens || 0,
     },
   }
-})
+}, { permission: null })

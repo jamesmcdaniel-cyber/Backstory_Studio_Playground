@@ -119,4 +119,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     detail: { version: flow.version },
   }).catch(() => undefined)
   return { success: true, flow: serializeFlow(flow) }
-})
+}, { permission: 'flow.write' })

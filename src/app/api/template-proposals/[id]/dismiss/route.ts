@@ -15,4 +15,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   await markDismissed(id, auth.organizationId)
   return { status: 'dismissed' }
-})
+}, { permission: 'template.author' })

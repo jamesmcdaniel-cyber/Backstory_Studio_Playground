@@ -164,4 +164,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     }
   }
   return { status: 'accepted', kind: 'template', templateId: template.id }
-})
+}, { permission: 'template.author' })

@@ -26,4 +26,4 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
   } catch (error) {
     throw nangoApiError(error)
   }
-})
+}, { permission: 'flow.read' })

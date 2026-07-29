@@ -57,7 +57,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
       ...listSkills().map((skill) => ({ ...skill, custom: false, mine: false })),
     ],
   }
-})
+}, { permission: 'agent.read' })
 
 // POST — publish a new skill to the community library.
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -71,7 +71,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, skill: serializeShared(skill, auth.organizationId) }
-})
+}, { permission: 'template.author' })
 
 // PUT — edit your own community skill.
 export const PUT = withAuthenticatedApi(async (request, auth) => {
@@ -88,7 +88,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     data: patch,
   })
   return { success: true, skill: serializeShared(skill, auth.organizationId) }
-})
+}, { permission: 'template.author' })
 
 // DELETE — retract your own community skill (soft delete; agents referencing it
 // simply stop composing it).
@@ -100,4 +100,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   })
   if (!result.count) throw new ApiError('Skill not found (you can only remove skills you published)', 404, 'NOT_FOUND')
   return { success: true }
-})
+}, { permission: 'template.author' })

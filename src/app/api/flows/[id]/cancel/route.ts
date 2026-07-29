@@ -36,4 +36,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError('This run has already finished or is not cancellable.', 409, 'FLOW_RUN_NOT_CANCELLABLE')
   }
   return { success: true, status: 'cancelling' }
-})
+}, { permission: 'flow.run' })

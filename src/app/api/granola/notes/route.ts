@@ -72,4 +72,4 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     .filter((n) => n.id)
 
   return { success: true, notes }
-})
+}, { permission: 'agent.read' })

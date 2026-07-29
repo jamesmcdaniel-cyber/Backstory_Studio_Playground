@@ -80,4 +80,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const matches = sanitizeMatches(parseMatches(raw), items as CatalogItem[])
   return { success: true, matches }
-})
+}, { permission: 'agent.read' })

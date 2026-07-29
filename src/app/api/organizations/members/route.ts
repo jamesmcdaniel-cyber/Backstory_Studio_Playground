@@ -15,4 +15,4 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     select: { id: true, name: true, email: true, role: true },
   })
   return { success: true, members, selfId: auth.dbUser.id }
-})
+}, { permission: 'flow.read' })

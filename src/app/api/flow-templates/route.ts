@@ -29,7 +29,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const templates = await listFlowTemplateCatalogue(auth.organizationId)
   const limit = Number(request.nextUrl.searchParams.get('limit'))
   return { success: true, templates: limit > 0 ? templates.slice(0, limit) : templates }
-})
+}, { permission: 'flow.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const data = templateSchema.parse(await request.json())
@@ -58,7 +58,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     visibility: data.visibility ?? 'org',
   })
   return { success: true, template: serializeFlowTemplate(template, auth.organizationId) }
-})
+}, { permission: 'template.author' })
 
 export const PUT = withAuthenticatedApi(async (request, auth) => {
   const body = z.object({ id: z.string().min(1) }).merge(templateSchema.partial()).parse(await request.json())
@@ -90,11 +90,11 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, template: serializeFlowTemplate(template, auth.organizationId) }
-})
+}, { permission: 'template.author' })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const { id } = z.object({ id: z.string().min(1) }).parse(await request.json())
   const result = await prisma.flowTemplate.deleteMany({ where: { id, organizationId: auth.organizationId } })
   if (!result.count) throw new ApiError('Flow template not found', 404, 'NOT_FOUND')
   return { success: true }
-})
+}, { permission: 'template.author' })

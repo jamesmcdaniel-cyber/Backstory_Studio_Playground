@@ -23,4 +23,4 @@ import { getAvailableIntegrations } from '@/lib/integrations/connected'
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   const data = await getAvailableIntegrations(auth.organizationId)
   return { success: true, ...data }
-})
+}, { permission: 'flow.read' })

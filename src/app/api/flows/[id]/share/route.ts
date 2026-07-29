@@ -43,4 +43,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     detail: { role, rotated: Boolean(rotate) },
   }).catch(() => undefined)
   return { success: true, shareToken: updated.shareToken, shareRole: updated.shareRole === 'edit' ? 'edit' : 'view' }
-})
+}, { permission: 'flow.write' })

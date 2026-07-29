@@ -74,7 +74,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     versions: versions.map((v) => ({ ...v, publishedByName: v.publishedBy ? nameById.get(v.publishedBy) ?? null : null })),
     recentEdits,
   }
-})
+}, { permission: 'flow.read' })
 
 const restoreSchema = z.object({ version: z.number().int().positive(), action: z.literal('restore') })
 
@@ -97,4 +97,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const updated = await prisma.flow.update({ where: { id, organizationId: auth.organizationId }, data: { graph: jsonValue(row.graph) } })
   return { success: true, flow: serializeFlow(updated) }
-})
+}, { permission: 'flow.write' })

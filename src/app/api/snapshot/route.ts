@@ -73,4 +73,4 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     notifications,
     unread,
   }
-})
+}, { permission: 'agent.read' })

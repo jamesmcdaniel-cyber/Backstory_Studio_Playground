@@ -70,4 +70,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       }
     }),
   }
-})
+}, { permission: 'agent.read' })

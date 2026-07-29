@@ -40,4 +40,4 @@ export const GET = withAuthenticatedApi(async (request: NextRequest, auth) => {
   }
 
   return { success: true, note }
-})
+}, { permission: 'agent.read' })

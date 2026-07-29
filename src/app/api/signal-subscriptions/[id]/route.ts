@@ -26,7 +26,7 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     data: { ...(input.isActive !== undefined && { isActive: input.isActive }), ...(input.filter !== undefined && { filter: input.filter }) },
   })
   return { success: true, subscription }
-})
+}, { permission: 'agent.write' })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const id = idFrom(request)
@@ -35,4 +35,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   })
   if (result.count === 0) throw new ApiError('Subscription not found', 404, 'NOT_FOUND')
   return { success: true }
-})
+}, { permission: 'agent.write' })

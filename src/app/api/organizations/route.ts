@@ -14,7 +14,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     activeOrganizationId: auth.organizationId,
     organizations: organization ? [organization] : [],
   }
-})
+}, { permission: 'flow.read' })
 
 // Workspace logo: a small image data URL (the client resizes to 128px before
 // uploading), stored inline so no external object storage is needed.
@@ -43,4 +43,4 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     select: { id: true, name: true, slug: true, plan: true, logoUrl: true },
   })
   return { success: true, organization }
-})
+}, { permission: 'org.manage' })

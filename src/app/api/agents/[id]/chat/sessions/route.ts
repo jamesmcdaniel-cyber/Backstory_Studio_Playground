@@ -50,4 +50,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 
   list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
   return { success: true, sessions: list }
-})
+}, { permission: 'agent.read' })

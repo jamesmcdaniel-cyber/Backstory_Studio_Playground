@@ -36,7 +36,7 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     select: { id: true, name: true, email: true, role: true },
   })
   return { success: true, member }
-})
+}, { permission: 'members.manage' })
 
 // Remove a member from the workspace (soft — deactivate so their history stays
 // intact). Admin-only; can't remove yourself or the last admin.
@@ -52,4 +52,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   if (target.role === 'ADMIN') await assertNotLastAdmin(auth.organizationId)
   await prisma.user.update({ where: { id: target.id }, data: { isActive: false } })
   return { success: true }
-})
+}, { permission: 'members.manage' })

@@ -64,4 +64,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     runs: runs.map(shape),
     latest: runs[0] ? shape(runs[0]) : null,
   }
-})
+}, { permission: 'flow.read' })

@@ -59,4 +59,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     // Network error, timeout, or non-JSON body — inconclusive, not a "no".
     return { requiresOAuth: false }
   }
-})
+}, { permission: 'integration.manage' })

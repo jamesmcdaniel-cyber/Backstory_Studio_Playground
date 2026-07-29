@@ -23,4 +23,4 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     meetsGate: meetsTemplateGate(count),
     providers,
   }
-})
+}, { permission: 'flow.read' })

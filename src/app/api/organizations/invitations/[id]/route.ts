@@ -13,4 +13,4 @@ export const DELETE = withAuthenticatedApi(async (request: NextRequest, auth) =>
   })
   if (result.count === 0) throw new ApiError('Invitation not found', 404, 'NOT_FOUND')
   return { success: true }
-})
+}, { permission: 'members.manage' })

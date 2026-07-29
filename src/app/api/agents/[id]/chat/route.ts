@@ -165,7 +165,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     })
   }
   return { success: true, sessionId, messages: rows.reverse().map(serializeMessage) }
-})
+}, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!process.env.ANTHROPIC_API_KEY && !qwenConfigured()) {
@@ -274,7 +274,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     .catch(() => undefined)
 
   return { success: true, sessionId: session.id, messages: [serializeMessage(userMessage), serializeMessage(assistantMessage)] }
-})
+}, { permission: 'agent.run' })
 
 // Marks a proposal message as applied after the client has confirmed the
 // change through the existing PUT /api/agents update endpoint.
@@ -296,4 +296,4 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     data: { metadata: { ...metadata, appliedAt: new Date().toISOString() } as unknown as Prisma.InputJsonValue },
   })
   return { success: true, message: serializeMessage(updated) }
-})
+}, { permission: 'agent.write' })

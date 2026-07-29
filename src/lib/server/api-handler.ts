@@ -29,7 +29,11 @@ type AuthenticatedHandler = (
 
 export function withAuthenticatedApi(
   handler: AuthenticatedHandler,
-  options?: { skipBackstoryGate?: boolean; skipEntitlementGate?: boolean; permission?: Permission },
+  // `permission: null` means "any authenticated caller, deliberately" — the
+  // auth context itself, invite acceptance, notifications. It is spelled out
+  // rather than omitted so the coverage test can tell a considered decision
+  // from a forgotten one.
+  options?: { skipBackstoryGate?: boolean; skipEntitlementGate?: boolean; permission?: Permission | null },
 ) {
   return async (request: NextRequest, context?: unknown): Promise<Response> => {
     try {

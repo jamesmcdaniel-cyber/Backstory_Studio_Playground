@@ -78,4 +78,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (matches.length >= MAX_MATCHES) break
   }
   return { success: true, matches }
-})
+}, { permission: 'flow.read' })

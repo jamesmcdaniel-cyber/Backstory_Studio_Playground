@@ -38,4 +38,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const items = pageItems(result, body.itemsPath)
   // Cap what we return to the picker so a large list can't bloat the response.
   return { success: true as const, items: items.slice(0, 200) }
-})
+}, { permission: 'flow.read' })

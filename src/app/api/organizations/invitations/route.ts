@@ -17,7 +17,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     select: { id: true, email: true, role: true, createdAt: true, expiresAt: true },
   })
   return { success: true, invitations }
-})
+}, { permission: 'members.manage' })
 
 const createSchema = z.object({
   email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
@@ -81,7 +81,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   return { success: true, invitation, link, emailSent }
-})
+}, { permission: 'members.manage' })
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))

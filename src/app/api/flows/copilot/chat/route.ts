@@ -115,4 +115,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       error: error instanceof Error ? error.message : 'Could not apply that change.',
     }
   }
-})
+}, { permission: 'flow.write' })

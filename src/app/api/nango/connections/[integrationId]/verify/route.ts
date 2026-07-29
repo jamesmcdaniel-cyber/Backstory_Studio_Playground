@@ -101,4 +101,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     verifiedAccounts: results.length - failed.length,
     failedAccounts: failed.length,
   }
-})
+}, { permission: 'integration.manage' })

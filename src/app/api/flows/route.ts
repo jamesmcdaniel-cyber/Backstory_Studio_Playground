@@ -48,7 +48,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
       return serializeFlow(flow, auth.dbUser.id, role ? { role, external, includeShare: !external && role === 'edit' } : undefined)
     }),
   }
-})
+}, { permission: 'flow.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const data = flowSchema.parse(await request.json())
@@ -68,7 +68,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, flow: serializeFlow(flow) }
-})
+}, { permission: 'flow.write' })
 
 export const PUT = withAuthenticatedApi(async (request, auth) => {
   const body = z.object({
@@ -169,7 +169,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     }).catch(() => undefined)
   }
   return { success: true, flow: serializeFlow(flow) }
-})
+}, { permission: 'flow.write' })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const { id } = z.object({ id: z.string().min(1) }).parse(await request.json())
@@ -180,4 +180,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   assertFlowEditable(existing, auth.dbUser.id)
   await prisma.flow.deleteMany({ where: { id, organizationId: auth.organizationId } })
   return { success: true }
-})
+}, { permission: 'flow.write' })

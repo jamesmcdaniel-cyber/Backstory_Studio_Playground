@@ -44,7 +44,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     take: 100,
   })
   return { success: true, documents: docs.map(serializeDoc) }
-})
+}, { permission: 'agent.read' })
 
 // POST — upload a file (multipart form-data, field "file") as knowledge.
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -69,7 +69,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (error instanceof UnsupportedFileError) throw new ApiError(error.message, 415, 'UNSUPPORTED_TYPE')
     throw error
   }
-})
+}, { permission: 'agent.write' })
 
 // DELETE — remove a knowledge document (and its chunks, via cascade).
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
@@ -80,4 +80,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   })
   if (!result.count) throw new ApiError('Document not found', 404, 'NOT_FOUND')
   return { success: true }
-})
+}, { permission: 'agent.write' })

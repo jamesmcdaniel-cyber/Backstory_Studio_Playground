@@ -19,7 +19,7 @@ async function granolaState(organizationId: string) {
 
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   return { success: true, ...(await granolaState(auth.organizationId)) }
-})
+}, { permission: 'flow.read' })
 
 // ── POST — validate and save the org's Granola API key (encrypted) ────────
 
@@ -53,7 +53,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
 
   return { success: true, ...(await granolaState(auth.organizationId)) }
-})
+}, { permission: 'integration.manage' })
 
 // ── DELETE — remove the org key (env fallback still applies, if set) ──────
 
@@ -63,4 +63,4 @@ export const DELETE = withAuthenticatedApi(async (_request, auth) => {
   })
 
   return { success: true, ...(await granolaState(auth.organizationId)) }
-})
+}, { permission: 'integration.manage' })

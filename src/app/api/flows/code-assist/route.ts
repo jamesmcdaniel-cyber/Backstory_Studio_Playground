@@ -66,4 +66,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   code = code.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim()
   if (!code) return { success: false as const, error: 'The assistant could not generate code — try rephrasing.' }
   return { success: true as const, code }
-})
+}, { permission: 'flow.write' })

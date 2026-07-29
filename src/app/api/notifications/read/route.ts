@@ -17,4 +17,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     data: { readAt: new Date() },
   })
   return { success: true }
-})
+}, { permission: null })

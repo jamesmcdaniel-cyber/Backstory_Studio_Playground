@@ -14,4 +14,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   // Drop the run's graph node so it can't resurface in retrieval. Best-effort.
   void removeExecutionFromGraph(auth.organizationId, id).catch(() => undefined)
   return { success: true }
-})
+}, { permission: 'agent.write' })

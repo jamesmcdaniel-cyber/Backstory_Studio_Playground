@@ -63,4 +63,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }).catch(() => undefined)
 
   return { success: true, invited: recipients.length }
-})
+}, { permission: 'flow.write' })

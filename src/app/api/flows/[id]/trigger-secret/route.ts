@@ -22,7 +22,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     hasSecret: typeof trigger.webhookSecretHash === 'string',
     url: `${baseUrl}/api/flows/${flow.id}/trigger`,
   }
-})
+}, { permission: 'flow.write' })
 
 // Mint (or rotate) the flow's webhook trigger secret. Mirrors the agent
 // trigger-secret: only a SHA-256 hash is stored (inside flow.trigger), so the
@@ -57,4 +57,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     data: { trigger: { ...trigger, type: 'webhook', webhookSecretHash: hashToken(secret) } },
   })
   return { ...base, hasSecret: true, secret }
-})
+}, { permission: 'flow.write' })

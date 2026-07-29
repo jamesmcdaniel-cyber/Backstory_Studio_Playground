@@ -38,4 +38,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // new workspace/role instead of the stale one.
   invalidateAuthCache(auth.dbUser.supabaseId)
   return { success: true }
-})
+}, { permission: null })

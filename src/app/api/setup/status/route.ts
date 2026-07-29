@@ -32,5 +32,5 @@ export const GET = withAuthenticatedApi(
       backstoryServerUrl: backstoryServerUrl(),
     }
   },
-  { skipBackstoryGate: true, skipEntitlementGate: true },
+  { skipBackstoryGate: true, skipEntitlementGate: true, permission: null },
 )

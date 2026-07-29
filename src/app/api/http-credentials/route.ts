@@ -68,7 +68,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     orderBy: [{ name: 'asc' }, { createdAt: 'desc' }],
   })
   return { success: true, credentials: credentials.map(redactedCredential) }
-})
+}, { permission: 'integration.manage' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const payload = payloadSchema.parse(await request.json())
@@ -103,7 +103,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         data: { organizationId: auth.organizationId, ...data },
       })
   return { success: true, credential: redactedCredential(credential) }
-})
+}, { permission: 'integration.manage' })
 
 // Re-verify a stored credential without re-entering its secrets. The picker
 // calls this to confirm a credential still works (e.g. after a run flagged it).
@@ -158,11 +158,11 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     data: { status: 'verified', lastError: null, lastVerifiedAt: new Date() },
   })
   return { success: true, credential: redactedCredential(credential) }
-})
+}, { permission: 'integration.manage' })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const id = new URL(request.url).searchParams.get('id')
   if (!id) throw new ApiError('Credential id is required.', 400, 'MISSING_ID')
   await prisma.httpCredential.deleteMany({ where: { id, organizationId: auth.organizationId } })
   return { success: true }
-})
+}, { permission: 'integration.manage' })

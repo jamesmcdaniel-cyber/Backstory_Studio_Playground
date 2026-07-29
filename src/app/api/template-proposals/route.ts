@@ -7,4 +7,4 @@ import { listOpenProposals } from '@/lib/templates/proposals'
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   const proposals = await listOpenProposals(auth.organizationId, auth.dbUser.id)
   return { success: true, proposals }
-})
+}, { permission: 'agent.read' })

@@ -63,4 +63,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     return { ...row, source }
   })
   return { success: true, approvals, hasMore }
-})
+}, { permission: 'agent.read' })

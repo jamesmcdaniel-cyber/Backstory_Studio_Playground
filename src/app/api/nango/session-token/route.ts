@@ -28,4 +28,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   } catch (error) {
     throw nangoApiError(error)
   }
-})
+}, { permission: 'integration.manage' })

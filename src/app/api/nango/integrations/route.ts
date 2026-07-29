@@ -41,4 +41,4 @@ export const GET = withAuthenticatedApi(async () => {
 
   if (integrations.length) await cacheSet(CACHE_KEY, integrations, CACHE_TTL_MS)
   return { success: true, integrations }
-})
+}, { permission: 'flow.read' })

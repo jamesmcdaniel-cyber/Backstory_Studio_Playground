@@ -83,4 +83,4 @@ export const POST = withAuthenticatedApi(async (_request, auth) => {
     },
   })
   return { success: true, flowId: flow.id, created: true }
-})
+}, { permission: 'agent.run' })

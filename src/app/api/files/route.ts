@@ -33,4 +33,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     content = (await extractTextAuto(buffer, mimeType, file.name).catch(() => '')).slice(0, CONTENT_PREVIEW_MAX_CHARS) || undefined
   }
   return { success: true, file: { ...saved, url: `/api/files/${saved.id}`, content } }
-})
+}, { permission: 'flow.write' })

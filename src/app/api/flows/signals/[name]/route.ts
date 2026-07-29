@@ -16,4 +16,4 @@ export const POST = withAuthenticatedApi(async (request: NextRequest, auth) => {
   const payload = await request.json().catch(() => ({}))
   const result = await emitFlowSignal({ organizationId: auth.organizationId, signal: name, payload })
   return { success: true, matched: result.matched }
-})
+}, { permission: 'flow.run' })

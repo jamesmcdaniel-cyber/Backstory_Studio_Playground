@@ -120,4 +120,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, draft: enrichedDraft, agentId: agent.id }
-})
+}, { permission: 'agent.write' })

@@ -18,4 +18,4 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       'Cache-Control': 'private, no-store',
     },
   })
-})
+}, { permission: 'flow.read' })

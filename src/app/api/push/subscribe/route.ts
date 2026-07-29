@@ -22,7 +22,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     update: { p256dh: keys.p256dh, auth: keys.auth, userId: auth.dbUser.id },
   })
   return { success: true }
-})
+}, { permission: null })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const endpoint = request.nextUrl.searchParams.get('endpoint')
@@ -30,4 +30,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
     await prisma.pushSubscription.deleteMany({ where: { organizationId: auth.organizationId, endpoint, userId: auth.dbUser.id } })
   }
   return { success: true }
-})
+}, { permission: null })

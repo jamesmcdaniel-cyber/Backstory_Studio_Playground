@@ -14,12 +14,14 @@ failures:
 
 `AgentTemplate.visibility` and `FlowTemplate.visibility` are `'org' | 'global'`,
 where `'global'` means "readable by every other workspace"
-(`src/lib/templates/catalogue.ts:93-97` does a `systemPrisma` cross-org read of
-the global slice). `POST /api/flow-templates` accepts `visibility` straight from
-the request body (`src/app/api/flow-templates/route.ts:25`), and so does the
-`PATCH` at `src/app/api/flow-templates/[id]/route.ts` via
-`route.ts:82`. Nothing checks who the caller is. Any customer workspace can
-push a template into the catalogue that every other customer then sees.
+(`src/lib/templates/catalogue.ts:93-97` and
+`src/lib/flows/templates/catalogue.ts:131-134` each do a `systemPrisma`
+cross-org read of the global slice). Four routes take `visibility` straight from
+the request body: `POST` and `PUT` in `src/app/api/flow-templates/route.ts`
+(schema at `:25`, applied at `:58` and `:82`) and `POST`/`PUT` in
+`src/app/api/agent-templates/route.ts` (schema at `:22`, applied at `:58` and
+`:98`). Nothing checks who the caller is. Any customer workspace can push a
+template into the catalogue that every other customer then sees.
 
 ### 2. The community skill library has no gate at all
 
@@ -274,11 +276,13 @@ distinguishes reviewed from grandfathered.
 
 ## 4. Closing the publish hole
 
-`visibility` is removed from every client-writable Zod schema —
-`src/app/api/flow-templates/route.ts:25` and the `PATCH` passthrough at
-`route.ts:82` are the live instances. It becomes server-controlled: `'org'` on
-create, and only the publish path (a reviewer acting on an approved submission)
-ever writes `'global'`.
+`visibility` is removed from every client-writable Zod schema — the four
+instances in `src/app/api/flow-templates/route.ts` and
+`src/app/api/agent-templates/route.ts` listed under Problem 1. It becomes
+server-controlled: `'org'` on create, and only the publish path (a reviewer
+acting on an approved submission) ever writes `'global'`. The two single-writer
+helpers (`createTemplate`, `createFlowTemplate`) keep their `visibility`
+parameter — they are the seam the publish path uses.
 
 A test walks the create/update route modules and asserts none accepts
 `visibility` from a request body, so this specific regression cannot recur.

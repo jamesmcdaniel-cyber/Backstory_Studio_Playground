@@ -32,6 +32,7 @@ export function JamDialog({
   canEdit,
   onChangeVisibility,
   presence,
+  onFollow,
   onJoinHuddle,
   huddleJoined,
   shareToken,
@@ -45,8 +46,20 @@ export function JamDialog({
   visibility: Visibility
   canEdit: boolean
   onChangeVisibility: (next: Visibility) => void
-  /** Who else is currently in this flow, if presence is live. */
-  presence?: { id: string; name: string; color?: string; inHuddle?: boolean }[]
+  /** Who else is currently in this flow, if presence is live. `label` +
+   *  `needsFollow` describe a teammate on the OTHER builder view, whose cursor
+   *  can't be drawn on yours — following switches you to their view. */
+  presence?: {
+    id: string
+    name: string
+    color?: string
+    inHuddle?: boolean
+    view?: 'inline' | 'canvas'
+    label?: string
+    needsFollow?: boolean
+  }[]
+  /** Switch the builder to a teammate's view. */
+  onFollow?: (view: 'inline' | 'canvas') => void
   /** Starts/joins the voice huddle (closes the dialog first at the call site). */
   onJoinHuddle?: () => void
   huddleJoined?: boolean
@@ -230,6 +243,15 @@ export function JamDialog({
                     </span>
                     {p.name}
                     {p.inHuddle && <Mic className="h-3 w-3 text-emerald-600" />}
+                    {p.needsFollow && (
+                      <button
+                        type="button"
+                        onClick={() => onFollow?.(p.view === 'canvas' ? 'canvas' : 'inline')}
+                        className="rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent"
+                      >
+                        {p.label} — follow
+                      </button>
+                    )}
                   </span>
                 ))}
               </div>

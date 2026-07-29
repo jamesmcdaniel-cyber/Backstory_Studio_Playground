@@ -12,6 +12,7 @@ import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
 import { electPersister, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
 import { toContentSpace } from '@/lib/flows/cursor-space'
 import { joinErrorMessage } from '@/lib/flows/join-error'
+import { describeParticipantView } from '@/lib/flows/cursor-view'
 import { useFlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { HuddleBar } from '@/components/flows/huddle-bar'
 import { CursorLayer } from '@/components/flows/cursor-layer'
@@ -518,7 +519,7 @@ function FlowBuilder() {
     setGraph(next)
     setSelectedId((current) => (current && !next.nodes.some((n) => n.id === current) ? null : current))
   }, [viewingVersion])
-  const { participants, roster, cursors, broadcastGraph, sendCursor, setSelection, setInHuddle, bus, selfClientId } =
+  const { participants, roster, cursors, broadcastGraph, sendCursor, setSelection, setInHuddle, setView: publishView, bus, selfClientId } =
     // Return null until our own load succeeded — otherwise a failed-load client
     // (graph = emptyGraph) would answer a newcomer's realtime bootstrap with an
     // empty graph, which the newcomer adopts and its persister autosaves over
@@ -630,6 +631,10 @@ function FlowBuilder() {
   }, [canvasPan.handlers, zoom, sendCursor])
   // Who's-editing ring: publish our selected node; render everyone else's.
   useEffect(() => { setSelection(selectedId) }, [selectedId, setSelection])
+  // Publish which view we're on: a teammate in the other view can't be drawn
+  // (the coordinate systems differ), so the roster offers to follow them there
+  // instead of leaving them invisible.
+  useEffect(() => { publishView(view) }, [view, publishView])
   // Inline lays out in document pixels, Canvas in DAG coordinates — the same
   // (x, y) means two different places, so only same-view cursors are drawn.
   const viewCursors = useMemo(() => cursors.filter((cursor) => cursor.space === view), [cursors, view])
@@ -2264,7 +2269,15 @@ function FlowBuilder() {
         visibility={visibility as 'shared' | 'view' | 'private'}
         canEdit={canEdit && !external}
         onChangeVisibility={(next) => void updateSharing(next)}
-        presence={others.map((p) => ({ id: p.clientId, name: p.name, color: p.color, inHuddle: p.inHuddle }))}
+        presence={others.map((p) => ({
+          id: p.clientId,
+          name: p.name,
+          color: p.color,
+          inHuddle: p.inHuddle,
+          view: p.view,
+          ...describeParticipantView(p, view),
+        }))}
+        onFollow={(target) => { setShowJam(false); changeView(target) }}
         onJoinHuddle={() => { setShowJam(false); void huddle.join() }}
         huddleJoined={huddle.joined}
         shareToken={shareToken}

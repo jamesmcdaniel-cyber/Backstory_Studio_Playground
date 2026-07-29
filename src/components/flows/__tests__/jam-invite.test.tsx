@@ -98,3 +98,33 @@ test('with a share token the link row states the role it grants', async () => {
   assert.ok(screen.getByText(/anyone with this link can sign in and edit/i))
   cleanup()
 })
+
+test('a teammate on the other view is shown with a follow action, not hidden', async () => {
+  stubMembers('ADMIN')
+  let followed: string | null = null
+  render(
+    <JamDialog
+      {...baseProps}
+      presence={[{ id: 'c2', name: 'Sam', color: '#111', view: 'canvas', label: 'Canvas view', needsFollow: true }]}
+      onFollow={(view) => { followed = view }}
+    />,
+  )
+  await flush()
+  const follow = screen.getByRole('button', { name: /canvas view — follow/i })
+  await act(async () => { follow.click() })
+  assert.equal(followed, 'canvas')
+  cleanup()
+})
+
+test('a teammate on my view gets no follow chip', async () => {
+  stubMembers('ADMIN')
+  render(
+    <JamDialog
+      {...baseProps}
+      presence={[{ id: 'c2', name: 'Sam', color: '#111', view: 'inline', label: '', needsFollow: false }]}
+    />,
+  )
+  await flush()
+  assert.equal(screen.queryByRole('button', { name: /follow/i }), null)
+  cleanup()
+})

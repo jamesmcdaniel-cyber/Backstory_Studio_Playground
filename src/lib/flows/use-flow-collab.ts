@@ -21,6 +21,10 @@ export type CollabParticipant = {
   selection?: string | null
   /** True while this participant is in the voice huddle. */
   inHuddle?: boolean
+  /** Which builder view they're on. Cursor coordinates only mean the same
+   *  thing between participants sharing a view, so the roster surfaces this
+   *  (with a follow action) rather than hiding them. */
+  view?: CursorSpace
 }
 
 /** Events other features (jam autosave, voice huddle) exchange over the
@@ -99,6 +103,7 @@ export function useFlowCollab(
   sendCursor: (x: number, y: number, space?: CursorSpace) => void
   setSelection: (nodeId: string | null) => void
   setInHuddle: (inHuddle: boolean) => void
+  setView: (view: CursorSpace) => void
   bus: CollabBus
   selfClientId: string
 } {
@@ -167,6 +172,7 @@ export function useFlowCollab(
       canEdit,
       selection: presenceRef.current?.selection ?? null,
       inHuddle: presenceRef.current?.inHuddle ?? false,
+      view: presenceRef.current?.view ?? 'inline',
     }
     channelRef.current = channel
     channel
@@ -346,6 +352,12 @@ export function useFlowCollab(
     retrack()
   }, [retrack])
 
+  const setView = useCallback((view: CursorSpace) => {
+    if (!presenceRef.current || presenceRef.current.view === view) return
+    presenceRef.current = { ...presenceRef.current, view }
+    retrack()
+  }, [retrack])
+
   const bus = useMemo<CollabBus>(() => ({
     send: (event, payload) => {
       channelRef.current?.send({ type: 'broadcast', event, payload: { ...payload, clientId } })
@@ -358,5 +370,5 @@ export function useFlowCollab(
     },
   }), [clientId])
 
-  return { participants, roster, cursors, broadcastGraph, sendCursor, setSelection, setInHuddle, bus, selfClientId: clientId }
+  return { participants, roster, cursors, broadcastGraph, sendCursor, setSelection, setInHuddle, setView, bus, selfClientId: clientId }
 }

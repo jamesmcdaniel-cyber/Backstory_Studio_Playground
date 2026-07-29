@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Check, Copy, Link2, Mic, RefreshCw, Send, Users } from 'lucide-react'
+import { Check, Copy, Link2, Mic, RefreshCw, Send, UserPlus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
 type Visibility = 'shared' | 'view' | 'private'
-type Member = { id: string; name: string | null; email: string | null }
+type Member = { id: string; name: string | null; email: string | null; role?: string }
 
 const OPTIONS: { value: Visibility; label: string; hint: string }[] = [
   { value: 'shared', label: 'Everyone can edit', hint: 'Anyone in your workspace can jam on and run this flow.' },
@@ -59,6 +59,12 @@ export function JamDialog({
   const [members, setMembers] = useState<Member[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [sending, setSending] = useState(false)
+  // Only an admin can add a NEW person to the workspace (the invitations API
+  // enforces it); everyone else gets pointed at the share link instead.
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviting, setInviting] = useState(false)
+  const [workspaceLink, setWorkspaceLink] = useState<string | null>(null)
   const inviteLink = typeof window !== 'undefined'
     ? `${window.location.origin}/flows/${flowId}${shareToken ? `?share=${shareToken}` : ''}`
     : `/flows/${flowId}`
@@ -76,8 +82,10 @@ export function JamDialog({
       .then((r) => r.json())
       .then((data) => {
         if (cancelled || !data.success) return
+        const all = (data.members ?? []) as Member[]
+        setIsAdmin(all.some((m) => m.id === data.selfId && m.role === 'ADMIN'))
         // You can't invite yourself — drop the caller from the list.
-        setMembers(((data.members ?? []) as Member[]).filter((m) => m.id !== data.selfId))
+        setMembers(all.filter((m) => m.id !== data.selfId))
       })
       .catch(() => undefined)
     return () => { cancelled = true }
@@ -109,6 +117,33 @@ export function JamDialog({
       setSelected(new Set())
     } finally {
       setSending(false)
+    }
+  }
+
+  // Invite a person who has no account yet: a workspace invitation whose
+  // acceptance lands them on THIS flow. Admin-only — the API enforces it too.
+  const inviteByEmail = async () => {
+    const email = inviteEmail.trim()
+    if (!email) return
+    setInviting(true)
+    try {
+      const res = await fetch('/api/organizations/invitations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, next: `/flows/${flowId}` }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || 'Could not send that invitation.')
+        return
+      }
+      setWorkspaceLink(data.link ?? null)
+      setInviteEmail('')
+      toast.success(data.emailSent
+        ? `Invitation emailed to ${email} — it opens this flow once they join.`
+        : `Invitation created for ${email} — copy the link below and send it to them.`)
+    } finally {
+      setInviting(false)
     }
   }
 
@@ -211,10 +246,59 @@ export function JamDialog({
                 {copied ? 'Copied' : 'Copy'}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Anyone you send this to opens straight into this flow after signing in. They can jam based on the access below.
-            </p>
+            {shareToken ? (
+              <p className="text-xs text-muted-foreground">
+                Anyone with this link can sign in and {shareRole === 'edit' ? 'edit' : 'view and run'} this flow.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground">
+                  Right now only people in your workspace can open this link — anyone else gets “not found”.
+                </p>
+                {canEdit && shareable && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 rounded-full text-xs"
+                    disabled={shareBusy}
+                    onClick={() => void updateShare(true, 'edit')}
+                  >
+                    Make this link work for anyone I send it to
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
+
+          {canInvite && isAdmin && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Invite someone new</p>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  placeholder="teammate@company.com"
+                  className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
+                />
+                <Button size="sm" onClick={() => void inviteByEmail()} loading={inviting} disabled={!inviteEmail.trim()}>
+                  <UserPlus className="mr-1.5 h-4 w-4" /> Invite
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                They join your workspace and land straight on this flow.
+              </p>
+              {workspaceLink && (
+                <p className="break-all rounded-lg border border-border/60 bg-muted/40 p-2 font-mono text-[11px]">{workspaceLink}</p>
+              )}
+            </div>
+          )}
+          {canInvite && !isAdmin && (
+            <p className="rounded-lg border border-border/70 bg-muted/40 p-3 text-xs text-muted-foreground">
+              Only an admin can add people to your workspace. To bring in someone else, turn on the
+              share link below and send them that.
+            </p>
+          )}
 
           {canInvite && members.length > 0 && (
             <div className="space-y-2">

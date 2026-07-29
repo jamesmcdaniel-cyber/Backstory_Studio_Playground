@@ -10,7 +10,9 @@ const g = globalThis as unknown as Record<string, unknown>
 
 // Copy DOM constructors/globals React and Testing Library expect. Some globals
 // (navigator) are read-only on Node 22 — define them non-fatally.
-const keys = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Node', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame']
+// NodeFilter/TreeWalker are what Radix's focus scope walks a dialog with, so
+// they belong here rather than in each dialog test.
+const keys = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Node', 'NodeFilter', 'TreeWalker', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'FocusEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame']
 g.window = dom.window
 for (const key of keys) {
   if (key === 'window') continue

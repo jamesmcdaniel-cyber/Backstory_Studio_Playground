@@ -16,6 +16,10 @@ model Organization {
   // resizes to 128px before upload) so no external storage is required.
   logoUrl          String?
   plan             Plan      @default(TRIAL)
+  /// Platform tier. 'internal' = Backstory; 'partner' = People.ai; 'customer'
+  /// = every paying workspace. Only a platform reviewer may change this — it
+  /// is never settable from a customer-facing route.
+  kind             String    @default("customer")
   // People.ai tenant binding: one Studio workspace per People.ai team. Set on
   // first People.ai connection; every rep from that team lands in this org.
   peopleAiTeamId       String?   @unique
@@ -60,6 +64,7 @@ model Organization {
   sharedSkills        SharedSkill[]
   templateProposals   TemplateProposal[]
   invitations         Invitation[]
+  catalogueSubmissions CatalogueSubmission[]
 
   @@map("organizations")
 }
@@ -101,6 +106,10 @@ model User {
   // identity used for user-scoped People.ai tool calls.
   peopleAiMembershipId String?
   role           UserRole  @default(USER)
+  /// Platform tier, independent of the org role. null for everyone outside
+  /// Backstory. 'staff' = internal employee; 'reviewer' = may decide and
+  /// publish catalogue submissions.
+  platformRole   String?
   organizationId String?   @db.Uuid
   isActive       Boolean   @default(true)
   lastSeenAt     DateTime? @db.Timestamptz(6)
@@ -525,6 +534,9 @@ model AgentTemplate {
   // the shared community library, readable cross-org. Existing rows are
   // backfilled to 'global' by the migration to preserve prior behavior.
   visibility     String   @default("org")
+  /// 'none' = not in the catalogue; 'published' = approved through review;
+  /// 'legacy_published' = was global before review existed, pending audit.
+  catalogueStatus String  @default("none")
   userId         String
   organizationId String   @db.Uuid
   createdAt      DateTime @default(now())
@@ -735,6 +747,9 @@ model FlowTemplate {
   /// 'org' = this workspace only (default); 'global' = published to the shared
   /// community library, readable cross-org. Mirrors AgentTemplate.
   visibility    String  @default("org")
+  /// 'none' = not in the catalogue; 'published' = approved through review;
+  /// 'legacy_published' = was global before review existed, pending audit.
+  catalogueStatus String @default("none")
 
   userId         String
   organizationId String   @db.Uuid
@@ -912,6 +927,12 @@ model SharedSkill {
   tags           Json     @default("[]")
   integrations   Json     @default("[]")
   authorName     String   @default("")
+  /// 'org' = this workspace only; 'global' = published to the shared library.
+  /// Before the review gate every skill was implicitly global; the migration
+  /// backfills existing rows to 'global' + catalogueStatus 'legacy_published'.
+  visibility     String   @default("org")
+  /// 'none' | 'published' | 'legacy_published' — mirrors the template tables.
+  catalogueStatus String  @default("none")
   organizationId String   @db.Uuid
   userId         String?
   isActive       Boolean  @default(true)
@@ -954,6 +975,40 @@ model TemplateProposal {
   @@map("template_proposals")
 }
 
+/// An author's request to publish an artifact to the shared catalogue.
+/// `snapshot` is FROZEN at submit time: it is what a reviewer reads and what
+/// gets published, so edits the author makes afterward cannot reach a
+/// published entry without a fresh submission.
+model CatalogueSubmission {
+  id                String    @id @default(cuid())
+  /// 'flow_template' | 'agent_template' | 'shared_skill'
+  kind              String
+  /// 'pending' | 'changes_requested' | 'approved' | 'rejected' | 'withdrawn'
+  status            String    @default("pending")
+  title             String
+  summary           String    @db.Text
+  snapshot          Json
+  /// The author's own row this was snapshotted from. Informational — the
+  /// snapshot is authoritative and the source may be edited or deleted.
+  sourceId          String?
+  /// The SUBMITTING org, which is what makes this row org-scoped.
+  organizationId    String    @db.Uuid
+  submittedByUserId String
+  reviewerUserId    String?
+  reviewNote        String?   @db.Text
+  decidedAt         DateTime?
+  /// The published row created on approve.
+  publishedEntryId  String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([organizationId, status])
+  @@map("catalogue_submissions")
+}
+
 enum Plan {
   TRIAL
   STARTER
@@ -964,4 +1019,6 @@ enum Plan {
 enum UserRole {
   ADMIN
   USER
+  OWNER
+  VIEWER
 }

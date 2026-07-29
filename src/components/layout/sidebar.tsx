@@ -6,7 +6,6 @@ import { usePathname, useRouter } from 'next/navigation'
 import { motion } from 'motion/react'
 import {
   Bot,
-  Brain,
   Check,
   ChevronDown,
   ChevronRight,
@@ -25,6 +24,7 @@ import {
   Trash2,
   Workflow,
 } from 'lucide-react'
+import { HomeIcon } from '@radix-ui/react-icons'
 import { toast } from 'sonner'
 import { CommandPalette } from '@/components/search/command-palette'
 import { NotificationBell } from '@/components/notifications/notification-bell'
@@ -68,7 +68,7 @@ export function notifyAgentsChanged() {
 }
 
 const navigation = [
-  { name: 'Home', href: '/dashboard', icon: Brain },
+  { name: 'Home', href: '/dashboard', icon: HomeIcon },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Flows', href: '/flows', icon: Workflow },
   { name: 'Integrations', href: '/integrations', icon: Plug },

@@ -2,9 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, Sparkles, Workflow, Wrench } from 'lucide-react'
+import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, Sparkles, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Markdown } from '@/components/ui/markdown'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -47,7 +46,6 @@ function greeting(): string {
 }
 
 export default function AssistantHome() {
-  const router = useRouter()
   const [input, setInput] = useState('')
   const [persona, setPersona] = useState<(typeof PERSONAS)[number]['key']>('SALES')
   const [thread, setThread] = useState<Turn[]>([])
@@ -132,7 +130,7 @@ export default function AssistantHome() {
         )}
       </div>
 
-      {/* Composer — prompt, attach + BUILD, send, persona row */}
+      {/* Composer — prompt, attach, send, persona row */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-2 transition-[border-color,box-shadow,transform] duration-base focus-within:-translate-y-0.5 focus-within:border-horizon-400 focus-within:shadow-4 focus-within:ring-4 focus-within:ring-horizon-500/10">
         <div className="px-6 pt-6">
           <textarea
@@ -156,13 +154,6 @@ export default function AssistantHome() {
               aria-label="Attach"
             >
               <Paperclip className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => router.push('/agents?agent=new')}
-              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-2 font-mono text-xs uppercase tracking-wider text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-            >
-              <Wrench className="h-3.5 w-3.5" /> Build
             </button>
           </div>
           <button

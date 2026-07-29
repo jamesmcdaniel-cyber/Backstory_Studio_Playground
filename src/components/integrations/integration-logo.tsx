@@ -61,6 +61,10 @@ const LOCAL_LOGOS: Record<string, string> = {
   monday: '/logos/monday.jpg',
   mondaydotcom: '/logos/monday.jpg',
   qwen: '/logos/qwen.webp',
+  // Apollo has no Simple Icons entry, and Nango keys it several ways.
+  apollo: '/logos/apollo.png',
+  apolloio: '/logos/apollo.png',
+  apollooauth: '/logos/apollo.png',
 }
 
 function localLogo(slug: string): string | undefined {

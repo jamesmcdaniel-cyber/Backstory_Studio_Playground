@@ -22,6 +22,7 @@ export function integrationSlug(name: string): string | null {
   if (n.includes('snowflake')) return 'snowflake'
   if (n.includes('intercom')) return 'intercom'
   if (n.includes('hubspot')) return 'hubspot'
+  if (n.includes('apollo')) return 'apollo'
   if (n.includes('gmail') || n.includes('email') || n.includes('mail')) return 'gmail'
   if (n.includes('notion')) return 'notion'
   if (n.includes('jira')) return 'jira'

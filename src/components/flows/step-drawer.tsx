@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X, Trash2, Plus, Copy, Database, Settings2, Braces, KeyRound, TerminalSquare, Play, Pin } from 'lucide-react'
+import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
@@ -551,6 +551,8 @@ export function StepDrawer({
   rawLogs,
   mockData,
   layout = 'drawer',
+  navigation,
+  onNavigate,
   onChange,
   onAddStep,
   onDuplicate,
@@ -577,6 +579,19 @@ export function StepDrawer({
   rawLogs?: string[]
   mockData?: unknown
   layout?: 'drawer' | 'workspace'
+  /**
+   * Where this step sits in the flow, so the header can walk to its neighbours.
+   * Testing a flow means opening each step in turn; without this the only way
+   * between two steps is close → find on canvas → reopen.
+   */
+  navigation?: {
+    /** 1-based position, for the "3 / 8" readout. */
+    index: number
+    total: number
+    previous?: { id: string; label: string }
+    next?: { id: string; label: string }
+  }
+  onNavigate?: (nodeId: string) => void
   onChange: (node: FlowNode) => void
   onChangeType?: (type: EditableType) => void
   onExecuteStep?: () => void
@@ -657,11 +672,23 @@ export function StepDrawer({
   useEffect(() => {
     if (!isWorkspace) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        onClose()
+        return
+      }
+      // Alt+←/→ walks to the neighbouring step. Skipped while a field has focus
+      // so Option+Arrow keeps its word-wise cursor movement inside the editors.
+      if (!event.altKey || !onNavigate) return
+      const el = event.target as HTMLElement | null
+      if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) return
+      const target = event.key === 'ArrowLeft' ? navigation?.previous : event.key === 'ArrowRight' ? navigation?.next : undefined
+      if (!target) return
+      event.preventDefault()
+      onNavigate(target.id)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isWorkspace, onClose])
+  }, [isWorkspace, onClose, onNavigate, navigation])
   useEffect(() => {
     if (node.type !== 'http') return
     fetch('/api/http-credentials', { cache: 'no-store' })
@@ -723,6 +750,33 @@ export function StepDrawer({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {navigation && onNavigate && navigation.total > 1 && (
+            <div className="mr-1 flex items-center gap-0.5 border-r border-border pr-2.5">
+              <button
+                type="button"
+                onClick={() => navigation.previous && onNavigate(navigation.previous.id)}
+                disabled={!navigation.previous}
+                aria-label="Previous step"
+                title={navigation.previous ? `Previous step — ${navigation.previous.label} (⌥←)` : 'This is the first step'}
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="min-w-[3rem] text-center font-mono text-xs tabular-nums text-muted-foreground">
+                {navigation.index}/{navigation.total}
+              </span>
+              <button
+                type="button"
+                onClick={() => navigation.next && onNavigate(navigation.next.id)}
+                disabled={!navigation.next}
+                aria-label="Next step"
+                title={navigation.next ? `Next step — ${navigation.next.label} (⌥→)` : 'This is the last step'}
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          )}
           {isWorkspace && !isTrigger && onExecuteOnly && (
             <Button type="button" size="sm" variant="outline" onClick={onExecuteOnly} title="Runs only this step, using the last run's data for the steps before it">
               <Play className="mr-1.5 h-4 w-4" /> Only this step

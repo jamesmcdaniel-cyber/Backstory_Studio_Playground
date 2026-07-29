@@ -23,6 +23,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { emptyGraph, type FlowGraph, type FlowNode, type OutputField } from '@/lib/flows/graph'
 import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, deleteNodes, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter, addEdge, removeEdge, setNodePositions, insertNodeFromHandle, insertNodeOnEdge, copySelection, pasteSelectionAt, type StepType } from '@/lib/flows/mutate'
 import { layoutGraph, type NodePosition } from '@/lib/flows/layout'
+import { stepOrder } from '@/lib/flows/step-order'
 import { writeFlowClipboard, readFlowClipboard, writeFlowSelection, readFlowSelection } from '@/lib/flows/clipboard'
 import { applyCopilotOps, type CopilotOp } from '@/lib/flows/copilot-ops'
 import { buildDataTree } from '@/lib/flows/datatree'
@@ -929,6 +930,20 @@ function FlowBuilder() {
     setOpenNodeId(null)
     setSelectedId(null)
   }, [])
+  // The open step's neighbours in reading order, so the drawer's prev/next
+  // walks the flow the way the user sees it rather than the order the steps
+  // happen to sit in the array.
+  const drawerNavigation = useMemo(() => {
+    if (!drawerNode) return undefined
+    const order = stepOrder(graph)
+    const index = order.indexOf(drawerNode.id)
+    if (index < 0) return undefined
+    const at = (i: number) => {
+      const id = order[i]
+      return id ? { id, label: labelForNode(id) } : undefined
+    }
+    return { index: index + 1, total: order.length, previous: at(index - 1), next: at(index + 1) }
+  }, [drawerNode, graph, labelForNode])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2101,6 +2116,14 @@ function FlowBuilder() {
                 rawOutput={selectedNodeRawOutput}
                 rawLogs={selectedNodeRawLogs}
                 mockData={graph.pinData?.[drawerNode.id]}
+                navigation={drawerNavigation}
+                onNavigate={(nodeId) => {
+                  // Move the canvas selection with the drawer, so closing it
+                  // leaves the user on the step they navigated to.
+                  jumpToNode(nodeId)
+                  setOpenNodeId(nodeId)
+                  setSelectedIds([])
+                }}
                 onExecuteStep={() => void runPartial(drawerNode.id, 'stopAfter')}
                 onExecuteOnly={selectedRun?.id ? () => void runPartial(drawerNode.id, 'only') : undefined}
                 onExecutePrevious={() => void runPartial(drawerNode.id, 'stopBefore')}

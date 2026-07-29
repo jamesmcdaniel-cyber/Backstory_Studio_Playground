@@ -13,6 +13,7 @@ import { electPersister, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
 import { toContentSpace } from '@/lib/flows/cursor-space'
 import { joinErrorMessage } from '@/lib/flows/join-error'
 import { describeParticipantView } from '@/lib/flows/cursor-view'
+import { applyDragPreview, pruneDragPreview, type DragPreview } from '@/lib/flows/drag-preview'
 import { useFlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { HuddleBar } from '@/components/flows/huddle-bar'
 import { CursorLayer } from '@/components/flows/cursor-layer'
@@ -621,6 +622,37 @@ function FlowBuilder() {
     () => participants.filter((p) => p.inHuddle).map((p) => ({ clientId: p.clientId, name: p.name, color: p.color })),
     [participants],
   )
+  // A teammate's in-flight node drag. Positions land here, not in the graph —
+  // the move op broadcast on release is what commits, so a dropped end-packet
+  // can leave a ghost for the TTL at worst.
+  const [dragPreview, setDragPreview] = useState<DragPreview>({})
+  useEffect(() => bus.on('drag', (payload) => {
+    const nodeId = typeof payload.nodeId === 'string' ? payload.nodeId : null
+    if (!nodeId) return
+    setDragPreview((prev) => applyDragPreview(prev, {
+      nodeId,
+      x: typeof payload.x === 'number' ? payload.x : undefined,
+      y: typeof payload.y === 'number' ? payload.y : undefined,
+      done: payload.done === true,
+    }, Date.now()))
+  }), [bus])
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setDragPreview((prev) => (Object.keys(prev).length ? pruneDragPreview(prev, Date.now()) : prev))
+    }, 1_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  // Our own drag, throttled to the graph-broadcast cadence: a drag fires per
+  // animation frame, which would be ~60 messages a second per dragger.
+  const lastDragSentAt = useRef(0)
+  const sendNodeDrag = useCallback((nodeId: string, position: { x: number; y: number }, done: boolean) => {
+    if (!canEdit || viewingVersion) return
+    const now = Date.now()
+    if (!done && now - lastDragSentAt.current < 50) return
+    lastDragSentAt.current = now
+    bus.send('drag', { nodeId, x: position.x, y: position.y, done })
+  }, [bus, canEdit, viewingVersion])
+
   // Live cursors: stream our pointer in content space (throttled in the hook).
   const onCanvasPointerMove = useCallback((event: ReactPointerEvent) => {
     canvasPan.handlers.onPointerMove(event)
@@ -1977,6 +2009,7 @@ function FlowBuilder() {
               selectedIds={selectedIds}
               remoteSelections={viewingVersion ? undefined : remoteSelections}
               cursors={viewCursors}
+              dragPreview={dragPreview}
               focusRequest={focusRequest}
               readOnly={Boolean(viewingVersion) || !canEdit}
               onSelectionChange={canvasSelectionChange}
@@ -1990,6 +2023,7 @@ function FlowBuilder() {
               onCopySelection={canvasCopy}
               onPasteAt={canvasPaste}
               onCursorMove={(position) => sendCursor(position.x, position.y, 'canvas')}
+              onNodeDrag={sendNodeDrag}
             />
           </div>
         )}

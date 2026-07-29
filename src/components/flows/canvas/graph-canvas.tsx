@@ -38,6 +38,7 @@ import { subtitleFor, titleFor, type StepStatus } from '@/lib/flows/node-present
 import { selectedToolPresentation } from '@/lib/flows/tool-presentation'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 import type { RemoteCursor } from '@/lib/flows/cursor-store'
+import type { DragPreview } from '@/lib/flows/drag-preview'
 import { CursorLayer } from '@/components/flows/cursor-layer'
 import { FlowPicker } from '@/components/flows/flow-picker'
 import type { FlowInsertSeed } from '@/components/flows/flow-canvas'
@@ -72,6 +73,9 @@ export type GraphCanvasProps = {
   selectedIds: string[]
   remoteSelections?: Record<string, { name: string; color: string }[]>
   cursors?: RemoteCursor[]
+  /** Positions of nodes a teammate is dragging RIGHT NOW. Applied to the
+   *  canvas only — never to the graph, which the op on release commits. */
+  dragPreview?: DragPreview
   /** Center the viewport on a step (search, copilot jump). The nonce makes a
    *  repeat jump to the same step re-center rather than no-op. */
   focusRequest?: { id: string; nonce: number } | null
@@ -93,6 +97,9 @@ export type GraphCanvasProps = {
   onCopySelection: () => void
   onPasteAt: (position: NodePosition) => void
   onCursorMove?: (position: NodePosition) => void
+  /** Fires continuously while a node is dragged, then once with `done` on
+   *  release, so teammates see the move instead of a teleport. */
+  onNodeDrag?: (nodeId: string, position: NodePosition, done: boolean) => void
 }
 
 const nodeTypes = { step: StepNode }
@@ -142,6 +149,8 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     onCopySelection,
     onPasteAt,
     onCursorMove,
+    onNodeDrag,
+    dragPreview,
   } = props
 
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -274,6 +283,24 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     })
   }, [selectedId, selectedIds, setRfNodes])
 
+  // A teammate's in-flight drag moves their node here without touching the
+  // graph. Same shape as the selection sync above: write only where the two
+  // disagree and return the SAME array otherwise, so this can't re-enter the
+  // rebuild feedback loop.
+  useEffect(() => {
+    if (!dragPreview || Object.keys(dragPreview).length === 0) return
+    setRfNodes((nodes) => {
+      let changed = false
+      const next = nodes.map((node) => {
+        const preview = dragPreview[node.id]
+        if (!preview || (node.position.x === preview.x && node.position.y === preview.y)) return node
+        changed = true
+        return { ...node, position: { x: preview.x, y: preview.y } }
+      })
+      return changed ? next : nodes
+    })
+  }, [dragPreview, setRfNodes])
+
   useEffect(() => {
     if (!focusRequest) return
     void fitView({ nodes: [{ id: focusRequest.id }], maxZoom: 1.2, duration: 300 })
@@ -389,7 +416,17 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     const moved = new Map<string, NodePosition>()
     for (const node of rfNodes) moved.set(node.id, { x: Math.round(node.position.x), y: Math.round(node.position.y) })
     onMoveNodes(moved)
-  }, [rfNodes, onMoveNodes])
+    // Clear teammates' previews for these nodes; the committed op that
+    // onMoveNodes broadcasts is now the authority on where they sit.
+    for (const [nodeId, position] of moved) onNodeDrag?.(nodeId, position, true)
+  }, [rfNodes, onMoveNodes, onNodeDrag])
+
+  const handleNodeDrag = useCallback<NonNullable<React.ComponentProps<typeof ReactFlow<StepFlowNode, StepFlowEdge>>['onNodeDrag']>>(
+    (_event, node) => {
+      onNodeDrag?.(node.id, { x: Math.round(node.position.x), y: Math.round(node.position.y) }, false)
+    },
+    [onNodeDrag],
+  )
 
   const handlePointerMove = useCallback(
     (event: React.PointerEvent) => {
@@ -440,6 +477,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onNodeDrag={handleNodeDrag}
           onNodeDragStop={handleNodeDragStop}
           onNodeDoubleClick={(_, node) => onOpenNode(node.id)}
           onConnect={handleConnect}

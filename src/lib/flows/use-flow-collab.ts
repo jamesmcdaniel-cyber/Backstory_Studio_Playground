@@ -30,12 +30,12 @@ export type CollabParticipant = {
 /** Events other features (jam autosave, voice huddle) exchange over the
  *  flow's ONE channel. Bindings are fixed at subscribe time, so this set is
  *  a whitelist — add here before using a new event. */
-export type BusEvent = 'saved' | 'huddle'
+export type BusEvent = 'saved' | 'huddle' | 'drag'
 export type CollabBus = {
   send: (event: BusEvent, payload: Record<string, unknown>) => void
   on: (event: BusEvent, handler: (payload: Record<string, unknown>) => void) => () => void
 }
-const BUS_EVENTS: BusEvent[] = ['saved', 'huddle']
+const BUS_EVENTS: BusEvent[] = ['saved', 'huddle', 'drag']
 
 // Coalesce edits to at most one message per interval (leading + trailing) so a
 // 10-person session can't flood the channel while still feeling live.
@@ -81,8 +81,9 @@ const EMPTY_GRAPH: FlowGraph = { nodes: [], edges: [] }
  *    node). A newcomer gets one FULL-state bootstrap from exactly one elected
  *    answerer (lowest present clientId).
  *  - CURSORS: content-space pointer positions, throttled, TTL-pruned.
- *  - BUS ('saved', 'huddle'): jam-autosave base advancement and WebRTC
- *    huddle signaling ride the same channel via a tiny event bus.
+ *  - BUS ('saved', 'huddle', 'drag'): jam-autosave base advancement, WebRTC
+ *    huddle signaling, and in-flight node drags ride the same channel via a
+ *    tiny event bus.
  *
  * Remote changes are applied via `onRemoteGraph` (which uses setGraph, NOT the
  * undo-history commit path — so a co-editor's change never pollutes your undo

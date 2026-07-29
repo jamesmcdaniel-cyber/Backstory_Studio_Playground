@@ -21,3 +21,14 @@ test('pruneCursors drops idle cursors and departed clients', () => {
   const out = pruneCursors(list, 12_000, new Set(['fresh', 'stale']), 5_000)
   assert.deepEqual(out.map((c) => c.clientId), ['fresh'])
 })
+
+test('an unknown presence set prunes on TTL only — a presence hiccup must not erase live cursors', () => {
+  const list = [cursor('a', 1_000)]
+  assert.deepEqual(pruneCursors(list, 2_000, null), list)
+  assert.deepEqual(pruneCursors(list, 9_000, null), [], 'still expires on TTL')
+})
+
+test('an empty presence set means "not synced yet", not "everyone left"', () => {
+  const list = [cursor('a', 1_000)]
+  assert.deepEqual(pruneCursors(list, 2_000, new Set()), list)
+})

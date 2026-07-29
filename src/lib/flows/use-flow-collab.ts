@@ -300,20 +300,39 @@ export function useFlowCollab(
 
   useEffect(() => () => { if (flushTimer.current) clearTimeout(flushTimer.current) }, [])
 
-  // Cursor stream: leading-edge throttle; the next move refreshes the tail.
+  // Cursor stream: leading-edge throttle WITH a trailing flush. Without the
+  // trailing send, a pointer that stops mid-interval left teammates looking at
+  // the last position that happened to survive the throttle, not where the
+  // cursor actually rests.
   const lastCursorAt = useRef(0)
-  const sendCursor = useCallback((x: number, y: number, space: CursorSpace = 'inline') => {
-    const now = Date.now()
-    if (now - lastCursorAt.current < CURSOR_INTERVAL_MS) return
-    lastCursorAt.current = now
+  const pendingCursor = useRef<{ x: number; y: number; space: CursorSpace } | null>(null)
+  const cursorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const emitCursor = useCallback((x: number, y: number, space: CursorSpace) => {
     const me = presenceRef.current
     if (!me) return
+    lastCursorAt.current = Date.now()
     channelRef.current?.send({
       type: 'broadcast',
       event: 'cursor',
       payload: { clientId, x, y, name: me.name, color: me.color, space },
     })
   }, [clientId])
+  const sendCursor = useCallback((x: number, y: number, space: CursorSpace = 'inline') => {
+    const elapsed = Date.now() - lastCursorAt.current
+    if (elapsed >= CURSOR_INTERVAL_MS) {
+      emitCursor(x, y, space)
+      return
+    }
+    pendingCursor.current = { x, y, space }
+    if (cursorTimer.current) return
+    cursorTimer.current = setTimeout(() => {
+      cursorTimer.current = null
+      const next = pendingCursor.current
+      pendingCursor.current = null
+      if (next) emitCursor(next.x, next.y, next.space)
+    }, CURSOR_INTERVAL_MS - elapsed)
+  }, [emitCursor])
+  useEffect(() => () => { if (cursorTimer.current) clearTimeout(cursorTimer.current) }, [])
 
   const setSelection = useCallback((nodeId: string | null) => {
     if (!presenceRef.current || presenceRef.current.selection === nodeId) return

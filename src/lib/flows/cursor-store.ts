@@ -26,13 +26,20 @@ export function upsertCursor(list: RemoteCursor[], incoming: RemoteCursor): Remo
   return next
 }
 
-/** Drop cursors idle past the TTL or whose client has left the room. */
+/**
+ * Drop cursors idle past the TTL, and — only when presence is actually known —
+ * those whose client has left the room. An empty or absent presence set means
+ * "we don't know yet", NOT "everyone left": gating on it unconditionally meant
+ * a single presence hiccup erased every cursor on screen while packets kept
+ * arriving, which read as "cursors don't work".
+ */
 export function pruneCursors(
   list: RemoteCursor[],
   now: number,
-  presentClientIds: Set<string>,
+  presentClientIds: Set<string> | null,
   ttlMs = 5_000,
 ): RemoteCursor[] {
-  const kept = list.filter((c) => now - c.ts <= ttlMs && presentClientIds.has(c.clientId))
+  const gate = presentClientIds && presentClientIds.size > 0 ? presentClientIds : null
+  const kept = list.filter((c) => now - c.ts <= ttlMs && (!gate || gate.has(c.clientId)))
   return kept.length === list.length ? list : kept
 }

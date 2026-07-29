@@ -19,7 +19,6 @@ const templateSchema = z.object({
   exampleOutput: z.string().optional(),
   icon: z.string().trim().max(8).optional(),
   allowSubagents: z.boolean().optional(),
-  visibility: z.enum(['org', 'global']).optional(),
 })
 
 
@@ -53,9 +52,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     name: data.name,
     category: data.category,
     description: data.description,
-    // New templates default to org-private; the community "Publish" dialog
-    // passes visibility: 'global' explicitly.
-    visibility: data.visibility ?? 'org',
+    // Catalogue visibility is SERVER-controlled: a template is org-scoped until
+    // a reviewer publishes it from an approved CatalogueSubmission. There is no
+    // request body that can put a row in the shared catalogue.
+    visibility: 'org',
     configuration: {
       instructions: data.instructions,
       integrations: data.integrations,
@@ -95,7 +95,8 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(body.icon !== undefined && { icon: body.icon }),
         ...(body.allowSubagents !== undefined && { allowSubagents: body.allowSubagents }),
       },
-      ...(body.visibility !== undefined && { visibility: body.visibility }),
+      // No visibility passthrough: an update cannot promote a template into
+      // the shared catalogue. Only the reviewer publish path writes 'global'.
     },
   })
   return { success: true, template: serializeTemplate(template, auth.organizationId) }

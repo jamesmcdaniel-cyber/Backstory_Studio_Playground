@@ -22,7 +22,6 @@ const templateSchema = z.object({
   tags: z.array(z.string()).default([]),
   icon: z.string().trim().max(8).optional(),
   exampleOutput: z.string().optional(),
-  visibility: z.enum(['org', 'global']).optional(),
 })
 
 export const GET = withAuthenticatedApi(async (request, auth) => {
@@ -53,9 +52,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     icon: data.icon,
     exampleOutput: data.exampleOutput,
     authorName: auth.dbUser.name || auth.dbUser.email || '',
-    // New templates are org-private; the community "Publish" action passes
-    // visibility: 'global' explicitly.
-    visibility: data.visibility ?? 'org',
+    // Catalogue visibility is SERVER-controlled: a template is org-scoped until
+    // a reviewer publishes it from an approved CatalogueSubmission. There is no
+    // request body that can put a row in the shared catalogue.
+    visibility: 'org',
   })
   return { success: true, template: serializeFlowTemplate(template, auth.organizationId) }
 }, { permission: 'template.author' })
@@ -79,7 +79,8 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
       }),
       ...(body.notes !== undefined && { notes: JSON.parse(JSON.stringify(body.notes)) }),
       ...(body.bindings !== undefined && { bindings: JSON.parse(JSON.stringify(body.bindings)) }),
-      ...(body.visibility !== undefined && { visibility: body.visibility }),
+      // No visibility passthrough: an update cannot promote a template into
+      // the shared catalogue. Only the reviewer publish path writes 'global'.
       configuration: {
         ...config,
         ...(body.integrations !== undefined && { integrations: body.integrations }),

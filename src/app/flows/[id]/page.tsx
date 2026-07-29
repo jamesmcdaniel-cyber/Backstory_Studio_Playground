@@ -11,6 +11,7 @@ import { useFlowCollab } from '@/lib/flows/use-flow-collab'
 import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
 import { electPersister, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
 import { toContentSpace } from '@/lib/flows/cursor-space'
+import { joinErrorMessage } from '@/lib/flows/join-error'
 import { useFlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { HuddleBar } from '@/components/flows/huddle-bar'
 import { CursorLayer } from '@/components/flows/cursor-layer'
@@ -244,7 +245,9 @@ function FlowBuilder() {
   // set, the builder shows an explicit error state instead of a blank canvas,
   // and every save path short-circuits so a failed load can never autosave an
   // empty graph over the stored flow. See loadedOkRef.
-  const [loadError, setLoadError] = useState(false)
+  // null = no failure. Otherwise the API's code (or 'UNKNOWN' for a transient
+  // network failure), so the error state can say WHY a jam link didn't open.
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
   const [fixing, setFixing] = useState(false)
@@ -324,14 +327,18 @@ function FlowBuilder() {
       .then(async ([flowsData, agentsData]) => {
         if (cancelled) return
         let flow = (flowsData.flows || []).find((f: { id: string }) => f.id === id)
+        // Why the single-flow fetch refused us, when it did — drives the
+        // error state's copy (dead share link vs. no access vs. transient).
+        let joinFailure: string | null = null
         if (!flow) {
           // Not in our list: a share-link open (token in URL) or a flow we can
           // access but haven't accepted yet — the single-flow endpoint
           // resolves both and performs token acceptance.
           const shareParam = searchParams.get('share')
           const res = await fetch(`/api/flows/${id}${shareParam ? `?share=${encodeURIComponent(shareParam)}` : ''}`, { cache: 'no-store' }).catch(() => null)
-          const data = res && res.ok ? await res.json().catch(() => null) : null
-          if (data?.flow) flow = data.flow
+          const data = res ? await res.json().catch(() => null) : null
+          if (res?.ok && data?.flow) flow = data.flow
+          else if (res && !res.ok) joinFailure = typeof data?.code === 'string' ? data.code : 'NOT_FOUND'
         }
         if (cancelled) return
         if (flow) {
@@ -358,14 +365,14 @@ function FlowBuilder() {
           // Flow not in the list AND the single-flow fetch didn't resolve it:
           // deleted, inaccessible, or a transient failure. Show the error state
           // rather than a blank builder that would autosave over the real flow.
-          setLoadError(true)
+          setLoadError(joinFailure ?? 'NOT_FOUND')
         }
         setAgents(agentsData.success ? agentsData.agents.map((a: Agent) => ({ id: a.id, title: a.title })) : [])
       })
       .catch(() => {
         // Network/parse failure loading the flow — same guard: never render an
         // editable-but-empty canvas that could clobber the stored graph.
-        if (!cancelled) setLoadError(true)
+        if (!cancelled) setLoadError('UNKNOWN')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -480,7 +487,7 @@ function FlowBuilder() {
 
   // ── Live collaboration (Jam) ────────────────────────────────────────────────
   // Presence (who's here) + live graph broadcast/receive via Supabase Realtime.
-  const { user } = useSupabase()
+  const { user, signOut } = useSupabase()
   const self = useMemo(
     () => (user ? { userId: user.id, name: (user.user_metadata?.full_name as string) || user.email || 'Teammate', canEdit } : null),
     [user, canEdit],
@@ -1692,16 +1699,31 @@ function FlowBuilder() {
   }
 
   if (loadError) {
+    const failure = joinErrorMessage(loadError, user?.email ?? null)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-5 p-8 text-center">
         <div className="max-w-sm space-y-2">
-          <h2 className="text-lg font-semibold">Couldn’t load this flow</h2>
-          <p className="text-sm text-muted-foreground">
-            It may have been deleted, or the connection dropped. Nothing was changed — your flow is safe.
-          </p>
+          <h2 className="text-lg font-semibold">{failure.title}</h2>
+          <p className="text-sm text-muted-foreground">{failure.body}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <Button onClick={() => window.location.reload()}>Try again</Button>
+          {failure.canSwitchAccount && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Signing in as someone else should resume THIS link, share
+                // token and all — an invite usually goes to the work account,
+                // not whichever one the browser happens to be signed into.
+                const destination = `${window.location.pathname}${window.location.search}`
+                void signOut()
+                  .catch(() => undefined)
+                  .finally(() => { window.location.href = `/auth/login?return_to=${encodeURIComponent(destination)}` })
+              }}
+            >
+              Use a different account
+            </Button>
+          )}
           <Button variant="outline" onClick={() => router.push('/flows')}>Back to flows</Button>
         </div>
       </div>

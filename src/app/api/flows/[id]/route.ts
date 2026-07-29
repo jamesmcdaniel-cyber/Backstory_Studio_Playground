@@ -23,7 +23,16 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   const viewer = { userId: auth.dbUser.id, organizationId: auth.organizationId }
   const role = resolveFlowRole({ ...flow, collaboratorRole: flow.collaborators[0]?.role ?? null }, viewer, token)
-  if (!role) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
+  if (!role) {
+    // A caller who PRESENTED a token that doesn't match is told the link is
+    // dead — they already hold a token, so this leaks nothing new, and it's the
+    // only way rotation is comprehensible. Everyone else gets a plain 404 that
+    // can't distinguish "missing" from "not yours".
+    if (token && token !== flow.shareToken) {
+      throw new ApiError('This share link is no longer valid.', 404, 'SHARE_LINK_INVALID')
+    }
+    throw new ApiError('Flow not found', 404, 'NOT_FOUND')
+  }
   const external = flow.organizationId !== auth.organizationId
   if (external && !flow.collaborators.length && token && token === flow.shareToken) {
     // Acceptance: the durable grant. Idempotent — re-opens never duplicate.

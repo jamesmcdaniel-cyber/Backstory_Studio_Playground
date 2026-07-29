@@ -115,6 +115,11 @@ if (TEST_DB) {
     { route: 'nango/integrations', reason: 'needs NANGO_SECRET_KEY — throws 503 before any network call' },
     { route: 'nango/status', reason: 'needs NANGO_SECRET_KEY — throws 503 before any network call' },
     { route: 'granola/notes/[id]', reason: 'needs a Granola key — throws 503 before any network call' },
+    // The seeded smoke org is a customer workspace, so it holds no
+    // catalogue.review permission and this route correctly 403s. Reviewer
+    // behavior is covered against a real internal org in
+    // src/app/api/catalogue/__tests__/review.db.test.ts.
+    { route: 'catalogue/review', reason: 'reviewer-only — 403 for the smoke org by design' },
   ]
 
   // Completeness self-check: enumerate every route.ts whose GET is wrapped in

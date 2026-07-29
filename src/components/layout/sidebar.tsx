@@ -21,6 +21,7 @@ import {
   Plug,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   Workflow,
 } from 'lucide-react'
@@ -82,7 +83,7 @@ function planLabel(plan: string) {
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { user, signOut } = useAuth()
+  const { user, signOut, can } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [orgMenuOpen, setOrgMenuOpen] = useState(false)
@@ -570,6 +571,22 @@ export function Sidebar() {
                 </div>
               )}
             </div>
+          )}
+          {/* Reviewers only. Customer workspaces never resolve this permission,
+              so the entry is absent rather than shown-and-refused. */}
+          {can('catalogue.review') && (
+            <Link
+              href="/admin/catalogue"
+              className={cn(
+                'mb-1 flex items-center gap-2 rounded-lg px-1 py-1 text-sm text-gray-500 transition-colors duration-fast hover:bg-gray-100',
+                desktopCollapsed && 'lg:justify-center lg:px-0',
+              )}
+              title="Catalogue review"
+              aria-label={desktopCollapsed ? 'Catalogue review' : undefined}
+            >
+              <ShieldCheck className="h-4 w-4 shrink-0 text-gray-400" />
+              <span className={cn('truncate', desktopCollapsed && 'lg:hidden')}>Catalogue review</span>
+            </Link>
           )}
           <Link
             href="/settings"

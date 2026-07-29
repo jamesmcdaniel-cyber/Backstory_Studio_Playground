@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ZodError } from 'zod'
 import { apiLogger } from '@/lib/logger'
 import { captureError } from '@/lib/observability/sentry'
-import { AuthContextError, requireAuthContext, type AuthContext } from './auth'
+import { AuthContextError, PermissionDeniedError, requireAuthContext, type AuthContext } from './auth'
+import type { Permission } from '@/lib/authz/permissions'
 
 export class ApiError extends Error {
   constructor(
@@ -21,22 +22,36 @@ export class ApiError extends Error {
 type AuthenticatedHandler = (
   request: NextRequest,
   auth: AuthContext,
+  // Next's dynamic-segment context ({ params }), forwarded untouched so
+  // [id] routes can read their params through the same wrapper.
+  context?: unknown,
 ) => Promise<Response | Record<string, unknown>>
 
 export function withAuthenticatedApi(
   handler: AuthenticatedHandler,
-  options?: { skipBackstoryGate?: boolean; skipEntitlementGate?: boolean },
+  options?: { skipBackstoryGate?: boolean; skipEntitlementGate?: boolean; permission?: Permission },
 ) {
-  return async (request: NextRequest): Promise<Response> => {
+  return async (request: NextRequest, context?: unknown): Promise<Response> => {
     try {
       const auth = await requireAuthContext(options)
-      const result = await handler(request, auth)
+      // The gate runs BEFORE the handler, so a rejected call has no side effects.
+      if (options?.permission && !auth.can(options.permission)) {
+        throw new PermissionDeniedError(options.permission)
+      }
+      const result = await handler(request, auth, context)
 
       return result instanceof Response ? result : NextResponse.json(result)
     } catch (error) {
       if (error instanceof AuthContextError) {
         return NextResponse.json(
-          { success: false, error: error.message, code: error.code },
+          {
+            success: false,
+            error: error.message,
+            code: error.code,
+            // Name the missing permission so a 403 is debuggable without
+            // guessing which gate rejected the call.
+            ...(error instanceof PermissionDeniedError && { detail: { required: error.required } }),
+          },
           { status: error.status },
         )
       }

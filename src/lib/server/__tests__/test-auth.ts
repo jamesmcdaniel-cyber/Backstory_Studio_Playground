@@ -1,16 +1,47 @@
 import crypto from 'node:crypto'
 import { setTestAuthContext } from '../auth'
 import type { AuthContext } from '../auth'
+import { resolvePermissions } from '@/lib/authz/permissions'
+import type { UserRole } from '@prisma/client'
+
+export interface SeedOverrides {
+  /** 'customer' (default) | 'partner' | 'internal' */
+  orgKind?: string
+  role?: UserRole
+  platformRole?: string | null
+}
 
 /** Seed an org + active user and return an AuthContext bound to them. */
-export async function seedTestOrg(prisma: any): Promise<{ organizationId: string; userId: string; auth: AuthContext; cleanup: () => Promise<void> }> {
-  const org = await prisma.organization.create({ data: { name: 'Smoke', slug: `smoke-${crypto.randomUUID()}` } })
-  const user = await prisma.user.create({ data: { supabaseId: crypto.randomUUID(), organizationId: org.id, isActive: true } })
+export async function seedTestOrg(
+  prisma: any,
+  overrides: SeedOverrides = {},
+): Promise<{ organizationId: string; userId: string; auth: AuthContext; cleanup: () => Promise<void> }> {
+  const org = await prisma.organization.create({
+    data: { name: 'Smoke', slug: `smoke-${crypto.randomUUID()}`, kind: overrides.orgKind ?? 'customer' },
+  })
+  const user = await prisma.user.create({
+    data: {
+      supabaseId: crypto.randomUUID(),
+      organizationId: org.id,
+      isActive: true,
+      // ADMIN rather than Prisma's USER default: the smoke suite asserts routes
+      // are REACHABLE, not that they are gated, so its seeded caller needs the
+      // admin-tier permissions those routes now declare.
+      role: overrides.role ?? 'ADMIN',
+      platformRole: overrides.platformRole ?? null,
+    },
+  })
+  const permissions = resolvePermissions(
+    { role: user.role, platformRole: user.platformRole },
+    { kind: org.kind },
+  )
   const auth: AuthContext = {
     organizationId: org.id,
     userId: user.id,
     dbUser: user,
     user: { id: user.supabaseId } as never,
+    permissions,
+    can: (permission) => permissions.has(permission),
   }
   const cleanup = async () => {
     setTestAuthContext(null)

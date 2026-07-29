@@ -35,6 +35,43 @@ export function invalidateAuthCache(supabaseId: string) {
   dbUserCache.delete(supabaseId)
 }
 
+/**
+ * Recovery path for platform staff: addresses listed in PLATFORM_STAFF_EMAILS
+ * are promoted to reviewer on sign-in, and their workspace is marked internal.
+ * Idempotent, and a no-op for everyone else. Once one reviewer exists, further
+ * grants happen in /admin/catalogue — this env var only has to solve the
+ * bootstrap problem of granting the FIRST one, since nobody can grant review
+ * rights before a reviewer exists.
+ */
+async function applyStaffBootstrap(dbUser: NonNullable<DbUserRow>): Promise<NonNullable<DbUserRow>> {
+  const allowlist = (process.env.PLATFORM_STAFF_EMAILS ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+  const email = dbUser.email?.trim().toLowerCase()
+  if (!email || !allowlist.includes(email)) return dbUser
+  if (dbUser.platformRole === 'reviewer' && dbUser.organization?.kind === 'internal') return dbUser
+
+  const updated = await prisma.user.update({
+    where: { id: dbUser.id },
+    data: { platformRole: 'reviewer' },
+    include: { organization: true },
+  })
+  // Drop the cached row in BOTH branches: the cache is keyed on supabaseId and
+  // holds the pre-promotion user for up to a minute otherwise, so the first
+  // request after promotion would still resolve customer-tier permissions.
+  invalidateAuthCache(dbUser.supabaseId)
+
+  if (updated.organizationId && updated.organization && updated.organization.kind !== 'internal') {
+    await prisma.organization.update({
+      where: { id: updated.organizationId },
+      data: { kind: 'internal' },
+    })
+    return { ...updated, organization: { ...updated.organization, kind: 'internal' } }
+  }
+  return updated
+}
+
 // Self-healing bootstrap: the handle_new_user Postgres trigger is optional
 // infra that may never be installed, so provision the app user + organization
 // on first authenticated request when they don't exist yet.
@@ -120,7 +157,8 @@ export async function getAuthWithUser() {
     user = data.user
   }
 
-  const dbUser = (await findDbUserCached(user.id)) ?? (await provisionUser(user))
+  const resolved = (await findDbUserCached(user.id)) ?? (await provisionUser(user))
+  const dbUser = resolved ? await applyStaffBootstrap(resolved) : resolved
 
   return {
     user,

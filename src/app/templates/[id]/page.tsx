@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Bot, Info, Plug, Workflow } from 'lucide-react'
@@ -11,6 +11,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
+import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
+import { useAuth } from '@/hooks/use-auth'
 
 type Template = {
   id: string
@@ -36,6 +38,9 @@ export default function TemplateDetails() {
   const [creating, setCreating] = useState(false)
   const [deploying, setDeploying] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
+  const [submission, setSubmission] = useState<SubmissionStatus | null>(null)
+  const { can } = useAuth()
+  const canSubmit = can('template.submit')
 
   useEffect(() => {
     let cancelled = false
@@ -60,6 +65,25 @@ export default function TemplateDetails() {
       cancelled = true
     }
   }, [id])
+
+  // Where this template stands with the catalogue reviewers, if this workspace
+  // may submit at all. Best-effort: a failure just hides the status, never the
+  // page.
+  const loadSubmission = useCallback(() => {
+    if (!canSubmit) return
+    fetch('/api/catalogue/submissions', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!data?.success) return
+        const match = data.submissions.find(
+          (row: { sourceId: string | null; status: string }) => row.sourceId === id && row.status !== 'withdrawn',
+        )
+        setSubmission(match ?? null)
+      })
+      .catch(() => {})
+  }, [canSubmit, id])
+
+  useEffect(() => { loadSubmission() }, [loadSubmission])
 
   const createAgent = async () => {
     if (!template) return
@@ -134,6 +158,14 @@ export default function TemplateDetails() {
                 <p className="eyebrow mb-1">Template</p>
                 <h1 className="text-2xl font-bold leading-tight">{template.name}</h1>
                 <p className="mt-2 max-w-2xl text-muted-foreground">{template.description}</p>
+                <div className="mt-3">
+                  <SubmitToCatalogue
+                    item={{ id: template.id, kind: 'agent_template', name: template.name }}
+                    canSubmit={canSubmit}
+                    submission={submission}
+                    onSubmitted={loadSubmission}
+                  />
+                </div>
               </div>
               <div className="flex shrink-0 gap-2">
                 <Button variant={template.playbook ? 'outline' : 'default'} onClick={createAgent} loading={creating}>

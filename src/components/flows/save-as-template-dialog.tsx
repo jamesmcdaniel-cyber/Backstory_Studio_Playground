@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import type { FlowGraph } from '@/lib/flows/graph'
 import type { FlowTemplateBinding, FlowTemplateNotes } from '@/lib/flows/templates/types'
+import { useAuth } from '@/hooks/use-auth'
 
 /**
  * "Save as template" — capture the current graph as a reusable flow template.
@@ -39,7 +40,10 @@ export function SaveAsTemplateDialog({
   const [category, setCategory] = useState('Custom')
   const [tags, setTags] = useState('')
   const [integrations, setIntegrations] = useState('')
-  const [publish, setPublish] = useState(false)
+  const [submit, setSubmit] = useState(false)
+  // Only Backstory and People.ai workspaces may propose catalogue entries.
+  const { can } = useAuth()
+  const canSubmit = can('template.submit')
   const [notes, setNotes] = useState<FlowTemplateNotes | null>(null)
   const [bindings, setBindings] = useState<FlowTemplateBinding[]>([])
   const [drafting, setDrafting] = useState(false)
@@ -103,7 +107,6 @@ export function SaveAsTemplateDialog({
           bindings,
           tags: csv(tags),
           integrations: csv(integrations),
-          ...(publish ? { visibility: 'global' } : {}),
         }),
       })
       const data = await response.json().catch(() => ({}))
@@ -111,7 +114,30 @@ export function SaveAsTemplateDialog({
         toast.error(data.error || 'Could not save the template.')
         return
       }
-      toast.success(publish ? 'Published to the community library.' : 'Saved to your flow templates.')
+      const saved = data.template
+      // Saving only ever creates a workspace template now. Reaching the shared
+      // catalogue is a separate, reviewed step — and only some workspaces may
+      // even ask for it, so submitting is offered after the save rather than
+      // folded into it as a checkbox that used to publish outright.
+      if (submit && saved?.id) {
+        const submission = await fetch('/api/catalogue/submissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'flow_template',
+            sourceId: saved.id,
+            title: name.trim() || 'Untitled flow',
+            summary: description.trim() || 'Submitted from the flow builder.',
+          }),
+        })
+        toast.success(
+          submission.ok
+            ? 'Saved, and sent to Backstory for review.'
+            : 'Saved to your flow templates. It could not be sent for review.',
+        )
+      } else {
+        toast.success('Saved to your flow templates.')
+      }
       onOpenChange(false)
     } finally {
       setSaving(false)
@@ -231,19 +257,21 @@ export function SaveAsTemplateDialog({
             )}
           </div>
 
-          <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" checked={publish} onChange={(event) => setPublish(event.target.checked)} className="mt-1" />
-            <span>
-              <span className="font-medium">Publish to the community library</span>
-              <span className="block text-xs text-muted-foreground">Other workspaces can find and use it. Leave off to keep it to this workspace.</span>
-            </span>
-          </label>
+          {canSubmit && (
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" checked={submit} onChange={(event) => setSubmit(event.target.checked)} className="mt-1" />
+              <span>
+                <span className="font-medium">Send to Backstory for review</span>
+                <span className="block text-xs text-muted-foreground">A reviewer decides whether it joins the shared catalogue. Leave off to keep it to this workspace.</span>
+              </span>
+            </label>
+          )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={save} loading={saving} disabled={drafting || !notes}>
-            {publish ? 'Publish template' : 'Save template'}
+            {submit ? 'Save and send for review' : 'Save template'}
           </Button>
         </DialogFooter>
       </DialogContent>

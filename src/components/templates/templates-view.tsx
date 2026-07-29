@@ -180,12 +180,10 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
       const res = await fetch(url, {
         method: dialog.id ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Creating a community template publishes it to the shared global library;
-        // editing an existing one omits visibility so PUT preserves its current
-        // scope — an org-private template can't be force-published by a re-save.
-        body: JSON.stringify(
-          dialog.id ? { id: dialog.id, ...payload } : { ...payload, ...(dialog.kind === 'template' ? { visibility: 'global' } : {}) },
-        ),
+        // Saving only ever creates a WORKSPACE asset. Reaching the shared
+        // catalogue is a separate, reviewed step — the server ignores any
+        // visibility a client sends, so sending one here would only mislead.
+        body: JSON.stringify(dialog.id ? { id: dialog.id, ...payload } : payload),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Save failed')
@@ -197,7 +195,7 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
         const list = await fetch('/api/skills', { cache: 'no-store' }).then((r) => r.json())
         setSkills(list.success ? list.skills : [])
       }
-      toast.success(dialog.id ? 'Saved' : `Published to the community library`)
+      toast.success(dialog.id ? 'Saved' : 'Saved to your workspace')
       setDialog(null)
     } catch (e: any) {
       toast.error(e?.message || 'Could not save')
@@ -207,7 +205,7 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   }
 
   const deleteAsset = async (kind: 'template' | 'skill', id: string, name: string) => {
-    if (!confirm(`Remove "${name}" from the community library?`)) return
+    if (!confirm(`Remove "${name}" from your workspace?`)) return
     const url = kind === 'template' ? '/api/agent-templates' : '/api/skills'
     const res = await fetch(url, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
     if (res.ok) {
@@ -856,12 +854,12 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                   <Textarea rows={3} value={dialog.exampleOutput} onChange={(e) => setDialog({ ...dialog, exampleOutput: e.target.value })} placeholder="Illustrative output shown on the detail page" />
                 </div>
               )}
-              <p className="text-xs text-muted-foreground">Published to the public community library — visible to every workspace.</p>
+              <p className="text-xs text-muted-foreground">Saved to your workspace. To offer it to every workspace, send it to Backstory for review from its card.</p>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>Cancel</Button>
-            <Button onClick={saveAsset} loading={savingAsset}>{dialog?.id ? 'Save' : 'Publish'}</Button>
+            <Button onClick={saveAsset} loading={savingAsset}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -490,9 +490,19 @@ function FlowBuilder() {
   // ── Live collaboration (Jam) ────────────────────────────────────────────────
   // Presence (who's here) + live graph broadcast/receive via Supabase Realtime.
   const { user, signOut } = useSupabase()
+  // Null until the flow has actually loaded, which gates the realtime channels.
+  // Two reasons, both about joining honestly rather than optimistically:
+  //  - `canEdit` defaults to true and is corrected by the load, so joining
+  //    earlier announces permissions we don't know we have.
+  //  - a share-link guest's access is GRANTED by that load (the token is
+  //    redeemed into a collaborator row), so subscribing first means Postgres
+  //    refuses the private channel and the builder flashes "live collaboration
+  //    unavailable" on a perfectly valid first open.
   const self = useMemo(
-    () => (user ? { userId: user.id, name: (user.user_metadata?.full_name as string) || user.email || 'Teammate', canEdit } : null),
-    [user, canEdit],
+    () => (user && !loading && !loadError
+      ? { userId: user.id, name: (user.user_metadata?.full_name as string) || user.email || 'Teammate', canEdit }
+      : null),
+    [user, canEdit, loading, loadError],
   )
   // Refs so the collab hook (stable) can read the latest graph without re-subscribing.
   const graphRef = useRef(graph)

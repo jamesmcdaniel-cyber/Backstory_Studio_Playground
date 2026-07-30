@@ -57,7 +57,8 @@ function renderPair(hub: FakeRealtime, options?: { aCanEdit?: boolean }) {
   return { a, b }
 }
 
-test('an edit by one peer reaches the other', async () => {
+test('an edit by one peer reaches the other', async (t) => {
+  t.after(cleanup)
   const hub = new FakeRealtime()
   const { a, b } = renderPair(hub)
   await settle()
@@ -69,10 +70,10 @@ test('an edit by one peer reaches the other', async () => {
   })
 
   assert.deepEqual(b.graph.nodes.map((n) => n.id).sort(), ['n1', 'n2'])
-  cleanup()
 })
 
-test('a view-only peer cannot push graph ops — the ops topic refuses the write', async () => {
+test('a view-only peer cannot push graph ops — the ops topic refuses the write', async (t) => {
+  t.after(cleanup)
   const hub = new FakeRealtime()
   hub.denyWrite.add(flowOpsTopic('f1'))
   const { a, b } = renderPair(hub, { aCanEdit: false })
@@ -85,10 +86,10 @@ test('a view-only peer cannot push graph ops — the ops topic refuses the write
   })
 
   assert.deepEqual(b.graph.nodes.map((n) => n.id), ['n1'], 'the room never saw the injected node')
-  cleanup()
 })
 
-test('cursors from a peer arrive, carrying their view', async () => {
+test('cursors from a peer arrive, carrying their view', async (t) => {
+  t.after(cleanup)
   const hub = new FakeRealtime()
   const { a, b } = renderPair(hub)
   await settle()
@@ -103,10 +104,10 @@ test('cursors from a peer arrive, carrying their view', async () => {
   assert.equal(seen[0].x, 12)
   assert.equal(seen[0].y, 34)
   assert.equal(seen[0].space, 'canvas')
-  cleanup()
 })
 
-test('presence lists the other person, with the view they are on', async () => {
+test('presence lists the other person, with the view they are on', async (t) => {
+  t.after(cleanup)
   const hub = new FakeRealtime()
   const { a, b } = renderPair(hub)
   await settle()
@@ -119,10 +120,10 @@ test('presence lists the other person, with the view they are on', async () => {
   assert.equal(others.length, 1)
   assert.equal(others[0].name, 'b')
   assert.equal(others[0].view, 'canvas')
-  cleanup()
 })
 
-test('a joiner is bootstrapped with the live, unsaved graph', async () => {
+test('a joiner is bootstrapped with the live, unsaved graph', async (t) => {
+  t.after(cleanup)
   const hub = new FakeRealtime()
   const a: Peer = { graph: graph(['n1', 'unsaved']) }
   const view = render(<PeerView hub={hub} name="a" canEdit peer={a} />)
@@ -139,10 +140,10 @@ test('a joiner is bootstrapped with the live, unsaved graph', async () => {
   await settle()
 
   assert.deepEqual(b.graph.nodes.map((n) => n.id).sort(), ['n1', 'unsaved'])
-  cleanup()
 })
 
-test('the bus delivers remote messages only', async () => {
+test('the bus delivers remote messages only', async (t) => {
+  t.after(cleanup)
   const hub = new FakeRealtime()
   const { a, b } = renderPair(hub)
   await settle()
@@ -160,5 +161,32 @@ test('the bus delivers remote messages only', async () => {
   assert.equal(heardByB.length, 1)
   assert.equal(heardByB[0].nodeId, 'n1')
   assert.equal(heardByA.length, 0, 'a sender never hears its own bus message')
-  cleanup()
+})
+
+test('a permission change is re-announced — stale canEdit would corrupt the persister election', async (t) => {
+  t.after(cleanup)
+  const hub = new FakeRealtime()
+  const a: Peer = { graph: graph(['n1']) }
+  const b: Peer = { graph: graph(['n1']) }
+  // `a` joins believing it can edit (the builder's optimistic default), then
+  // the flow loads and turns out to be view-only for them.
+  const view = render(
+    <>
+      <PeerView hub={hub} name="a" canEdit peer={a} />
+      <PeerView hub={hub} name="b" canEdit peer={b} />
+    </>,
+  )
+  await settle()
+
+  view.rerender(
+    <>
+      <PeerView hub={hub} name="a" canEdit={false} peer={a} />
+      <PeerView hub={hub} name="b" canEdit peer={b} />
+    </>,
+  )
+  await settle()
+
+  const seenByB = b.api!.roster.find((p) => p.userId === 'a')
+  assert.ok(seenByB, 'a is still in the room')
+  assert.equal(seenByB.canEdit, false, 'the room must learn a is view-only')
 })

@@ -103,7 +103,18 @@ export function useFlowRoom(params: {
     }
   }, [])
 
-  if (userId) {
+  // Build our presence payload and RE-ANNOUNCE it whenever identity or
+  // permissions change. This effect is declared before the channel is opened so
+  // the payload exists by the time a subscribe completes.
+  //
+  // `canEdit` is not known until the flow loads, and the channel deliberately
+  // does not re-subscribe when it changes — so without this re-announce a
+  // participant would advertise the permissions it held at join time forever.
+  // A view-only peer still claiming canEdit can WIN the autosave persister
+  // election (when the owner isn't in the room), and since that peer's own
+  // autosave is correctly refused locally, nobody persists the jam at all.
+  useEffect(() => {
+    if (!userId) return
     presenceRef.current = {
       clientId,
       userId,
@@ -114,7 +125,8 @@ export function useFlowRoom(params: {
       inHuddle: presenceRef.current?.inHuddle ?? false,
       view: presenceRef.current?.view ?? 'inline',
     }
-  }
+    retrack()
+  }, [userId, name, canEdit, clientId, retrack])
 
   const bind = useCallback((channel: JamChannel) => {
     channel

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { granolaConfigured, getGranolaApiKey } from '@/lib/integrations/granola'
+import { slackConfigured, getSlackToken } from '@/lib/integrations/slack'
 import {
   BUILTIN_CONNECTORS,
   fromNangoProviderKey,
@@ -54,10 +55,15 @@ async function readPlanes(organizationId: string): Promise<PlaneReads> {
  * `success: true`.
  */
 export async function getAvailableIntegrations(organizationId: string): Promise<AvailableIntegrations> {
-  const [{ connectionsRaw, nango }, hasGranola] = await Promise.all([
+  const [{ connectionsRaw, nango }, hasGranola, hasSlack] = await Promise.all([
     readPlanes(organizationId),
     granolaConfigured(organizationId),
+    slackConfigured(organizationId),
   ])
+
+  // Builtins whose availability is per-WORKSPACE (their own credential, or the
+  // env fallback where the org kind allows it) rather than a global env check.
+  const perOrgConnected: Record<string, boolean> = { Granola: hasGranola, Slack: hasSlack }
 
   // Merge planes, deduping by lowercased key and OR-ing connected state. Builtins
   // are added first so their canonical labels/keys (Slack/Email/Granola) win.
@@ -69,15 +75,16 @@ export async function getAvailableIntegrations(organizationId: string): Promise<
     else byKey.set(id, chip)
   }
 
-  // Built-in delivery/meeting planes, straight from the registry. Granola's
-  // availability is per-org (an API key), the rest come from env via available().
+  // Built-in delivery/meeting planes, straight from the registry. Granola and
+  // Slack resolve per-org (a workspace credential); the rest — HTTP, Backstory —
+  // are always-on platform capabilities and answer via available().
   for (const c of BUILTIN_CONNECTORS) {
     if (c.kind !== 'builtin') continue
     // Resend email is redundant with Gmail delivery, so it's retired from the
     // picker. The registry entry stays so the runtime email plane still works
     // for any agent that already has it selected.
     if (c.providerId === 'email') continue
-    add({ key: c.key, label: c.label, slug: c.slug, connected: c.key === 'Granola' ? hasGranola : c.available() })
+    add({ key: c.key, label: c.label, slug: c.slug, connected: perOrgConnected[c.key] ?? c.available() })
   }
 
   for (const c of nango) {
@@ -125,9 +132,10 @@ export async function listConnectedProviders(
   organizationId: string,
   _userId: string,
 ): Promise<ConnectedProvider[]> {
-  const [{ connectionsRaw, nango }, granolaKey] = await Promise.all([
+  const [{ connectionsRaw, nango }, granolaKey, slackToken] = await Promise.all([
     readPlanes(organizationId),
     getGranolaApiKey(organizationId),
+    getSlackToken(organizationId),
   ])
 
   const providers: ConnectedProvider[] = []
@@ -143,6 +151,13 @@ export async function listConnectedProviders(
   }
   if (granolaKey?.source === 'org') {
     providers.push({ key: 'granola', label: 'Granola', plane: 'builtin' })
+  }
+  // Slack counts on the same terms as Granola, and for the same reason: a
+  // workspace's OWN bot token is an integration this org connected. The env
+  // fallback (source 'env') still doesn't count — it's a platform capability,
+  // and counting it would inflate every eligible org past the template gate.
+  if (slackToken?.source === 'org') {
+    providers.push({ key: 'slack', label: 'Slack', plane: 'builtin' })
   }
 
   return providers

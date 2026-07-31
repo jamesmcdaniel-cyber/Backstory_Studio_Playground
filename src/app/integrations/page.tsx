@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Cable, CheckCircle2, Server } from 'lucide-react'
 import { McpServersPanel } from '@/components/integrations/mcp-servers-panel'
+import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
 import { PageHeader } from '@/components/ui/page-header'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { OAuthIntegrationsGrid } from './oauth-integrations-grid'
@@ -48,6 +49,7 @@ function IntegrationsTabs() {
         <Suspense fallback={<p className="text-sm text-gray-500">Loading integrations...</p>}>
           <OAuthIntegrationsGrid />
         </Suspense>
+        <WorkspaceCredentialsPanel />
       </TabsContent>
       <TabsContent value="servers" className="mt-6">
         {oauthConnected && (

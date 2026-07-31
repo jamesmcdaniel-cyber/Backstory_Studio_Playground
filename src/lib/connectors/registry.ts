@@ -16,8 +16,6 @@
  *
  * Per-org MCP connections are discovered from DB rows rather than declared here.
  */
-import { slackConfigured } from '@/lib/integrations/slack'
-import { emailConfigured } from '@/lib/integrations/email'
 
 export type ConnectorKind = 'backstory' | 'builtin' | 'nango'
 
@@ -70,7 +68,10 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     isWrite: true,
     providerId: 'slack',
     matches: has('slack'),
-    available: () => slackConfigured(),
+    // Same shape as Granola: availability is per-workspace (its own bot token,
+    // or the env fallback if this org kind may use it), so it cannot be decided
+    // by a synchronous, org-less predicate. Resolved at the call site.
+    available: () => true,
   },
   {
     key: 'Email',
@@ -80,7 +81,8 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     isWrite: true,
     providerId: 'email',
     matches: has('email'),
-    available: () => emailConfigured(),
+    available: () => true, // per-workspace Resend key; gated at the call site
+
   },
   {
     key: 'HTTP API',

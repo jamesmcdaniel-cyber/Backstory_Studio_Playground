@@ -7,14 +7,16 @@
  * Key resolution (per organization):
  *  1. The org's saved key from integration_secrets (provider 'granola'),
  *     stored encrypted via the shared secrets helpers.
- *  2. GRANOLA_API_KEY from the environment, as a global fallback.
+ *  2. GRANOLA_API_KEY from the environment — reachable ONLY by internal/partner
+ *     workspaces (see org-credential.ts). It is one Granola account: letting
+ *     every customer org read it is the same cross-tenant path that Slack and
+ *     Email had.
  * All env vars are read at call time (never at module load) so that the
  * Next.js build succeeds even when they are not set.
  */
 
-import { prisma } from '@/lib/prisma'
-import { decryptSecret } from '@/lib/crypto/secrets'
 import type { ToolDefinition } from '@/lib/llm/model-runner'
+import { resolveOrgCredential, type CredentialSource } from './org-credential'
 
 export const GRANOLA_BASE_URL = 'https://public-api.granola.ai/v1'
 
@@ -22,7 +24,7 @@ export const GRANOLA_BASE_URL = 'https://public-api.granola.ai/v1'
 // Per-org key resolution
 // ---------------------------------------------------------------------------
 
-export type GranolaKeySource = 'org' | 'env'
+export type GranolaKeySource = CredentialSource
 
 export type ResolvedGranolaKey = { apiKey: string; source: GranolaKeySource }
 
@@ -32,27 +34,12 @@ export type ResolvedGranolaKey = { apiKey: string; source: GranolaKeySource }
  * is available.
  */
 export async function getGranolaApiKey(organizationId: string): Promise<ResolvedGranolaKey | null> {
-  const secret = await prisma.integrationSecret.findUnique({
-    where: { organizationId_provider: { organizationId, provider: 'granola' } },
+  const resolved = await resolveOrgCredential({
+    organizationId,
+    provider: 'granola',
+    envValue: process.env.GRANOLA_API_KEY,
   })
-
-  if (secret?.isActive) {
-    const config =
-      secret.authConfig && typeof secret.authConfig === 'object' && !Array.isArray(secret.authConfig)
-        ? (secret.authConfig as Record<string, unknown>)
-        : {}
-    if (typeof config.apiKey === 'string' && config.apiKey) {
-      try {
-        return { apiKey: decryptSecret(config.apiKey), source: 'org' }
-      } catch {
-        // Undecryptable payload (e.g. rotated ENCRYPTION_KEY) — fall through
-        // to the env fallback rather than failing the caller.
-      }
-    }
-  }
-
-  const envKey = process.env.GRANOLA_API_KEY
-  return envKey ? { apiKey: envKey, source: 'env' } : null
+  return resolved ? { apiKey: resolved.value, source: resolved.source } : null
 }
 
 export async function granolaConfigured(organizationId: string): Promise<boolean> {

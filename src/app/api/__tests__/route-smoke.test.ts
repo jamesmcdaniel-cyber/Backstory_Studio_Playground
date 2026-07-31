@@ -63,6 +63,9 @@ if (TEST_DB) {
     { name: 'GET /api/integrations/available', run: async () => (await import('../integrations/available/route')).GET(req('/api/integrations/available')) },
     { name: 'GET /api/integrations/count', run: async () => (await import('../integrations/count/route')).GET(req('/api/integrations/count')) },
     { name: 'GET /api/integrations/granola', run: async () => (await import('../integrations/granola/route')).GET(req('/api/integrations/granola')) },
+    // Dynamic [provider] segment: the handler reads the provider off the path,
+    // so the request URL is what selects it — exercise a real one.
+    { name: 'GET /api/integrations/credentials/[provider]', run: async () => (await import('../integrations/credentials/[provider]/route')).GET(req('/api/integrations/credentials/slack')) },
     { name: 'GET /api/mcp-connections', run: async () => (await import('../mcp-connections/route')).GET(req('/api/mcp-connections')) },
     { name: 'GET /api/mcp-connections/oauth/start', run: async () => (await import('../mcp-connections/oauth/start/route')).GET(req('/api/mcp-connections/oauth/start')) },
     { name: 'GET /api/organizations/members', run: async () => (await import('../organizations/members/route')).GET(req('/api/organizations/members')) },

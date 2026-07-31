@@ -27,9 +27,9 @@ import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import { ensureFreshConnectionToken, persistRefreshedAuthcodeTokens } from '@/lib/mcp/connection-token'
 import { GranolaToolClient, getGranolaApiKey, granolaTools } from '@/lib/integrations/granola'
-import { SlackToolClient, slackTools } from '@/lib/integrations/slack'
+import { SlackToolClient, slackTools, getSlackToken } from '@/lib/integrations/slack'
 import { HttpToolClient, httpTools } from '@/lib/integrations/http'
-import { EmailToolClient, emailTools } from '@/lib/integrations/email'
+import { EmailToolClient, emailTools, getEmailCredential } from '@/lib/integrations/email'
 import { BUILTIN_CONNECTORS, isSelected, nangoConnector, type ConnectorDescriptor } from '@/lib/connectors/registry'
 import { formatFlowToolConnectionId, type FlowToolPlane } from '@/lib/flows/tool-connection-id'
 
@@ -337,11 +337,15 @@ export async function loadNativePlaneGroups(
     }
   }
 
-  // Slack REST API — gated on SLACK_BOT_TOKEN.
+  // Slack REST API — gated on a per-org bot token (saved token, then the env
+  // fallback for internal/partner orgs only).
   const slackConn = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === 'slack')!
-  if (slackConn.available() && selected(slackConn)) {
+  if (selected(slackConn)) {
     try {
-      groups.push(group(slackConn, 'https://slack.com/api', new SlackToolClient(), slackTools()))
+      const slackToken = await getSlackToken(organizationId)
+      if (slackToken) {
+        groups.push(group(slackConn, 'https://slack.com/api', new SlackToolClient(slackToken.value), slackTools()))
+      }
     } catch (error) {
       apiLogger.warn('loadTools: Slack tool setup failed, skipping provider', {
         provider: 'slack',
@@ -357,11 +361,15 @@ export async function loadNativePlaneGroups(
     groups.push(group(httpConn, '', new HttpToolClient(), httpTools()))
   }
 
-  // Email via Resend REST API — gated on RESEND_API_KEY.
+  // Email via Resend REST API — gated on a per-org key, so an agent can only
+  // send as its own workspace, never as the shared platform identity.
   const emailConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'email')!
-  if (emailConn.available() && selected(emailConn)) {
+  if (selected(emailConn)) {
     try {
-      groups.push(group(emailConn, 'https://api.resend.com', new EmailToolClient(), emailTools()))
+      const emailKey = await getEmailCredential(organizationId)
+      if (emailKey) {
+        groups.push(group(emailConn, 'https://api.resend.com', new EmailToolClient(emailKey.value), emailTools()))
+      }
     } catch (error) {
       apiLogger.warn('loadTools: Email tool setup failed, skipping provider', {
         provider: 'email',
@@ -519,9 +527,20 @@ export async function resolveFlowToolExecutor(params: {
     }
     if (ref === 'slack' || ref === 'email' || ref === 'http') {
       const descriptor = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === ref)!
-      if (!descriptor.available()) throw new Error(`${descriptor.label} is not configured for this workspace.`)
-      const client: McpToolClient =
-        ref === 'slack' ? new SlackToolClient() : ref === 'email' ? new EmailToolClient() : new HttpToolClient()
+      // Slack and Email resolve a per-workspace credential; a customer org
+      // without one simply doesn't have the integration. HTTP needs none.
+      let client: McpToolClient
+      if (ref === 'slack') {
+        const token = await getSlackToken(organizationId)
+        if (!token) throw new Error(`${descriptor.label} is not configured for this workspace.`)
+        client = new SlackToolClient(token.value)
+      } else if (ref === 'email') {
+        const key = await getEmailCredential(organizationId)
+        if (!key) throw new Error(`${descriptor.label} is not configured for this workspace.`)
+        client = new EmailToolClient(key.value)
+      } else {
+        client = new HttpToolClient()
+      }
       return { provider: ref, isWrite: descriptor.isWrite, execute: (name, args) => client.executeTool('', name, args) }
     }
     throw new Error(`Unknown built-in integration "${ref}" — pick another in the step config.`)

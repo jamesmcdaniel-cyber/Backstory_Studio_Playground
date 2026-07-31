@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
+import { clearClientCaches, syncCacheOwner } from '@/lib/client/cache-owner'
 
 const supabase = createClient()
 
@@ -34,12 +35,19 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // The client caches (snapshot, SWR responses, flow clipboard) hold workspace
+  // data and outlive a session, so every identity transition — first load,
+  // sign-in, sign-out, a sign-out in another tab, an account switch — has to
+  // reconcile them. syncCacheOwner wipes when the owner changes and is a no-op
+  // otherwise, so it is safe to call on every auth event.
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
+      syncCacheOwner(data.user?.id ?? null)
       setUser(data.user)
       setLoading(false)
     })
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      syncCacheOwner(session?.user?.id ?? null)
       setUser(session?.user ?? null)
       setLoading(false)
     })
@@ -128,6 +136,11 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
       })
     },
     signOut: async () => {
+      // Clear BEFORE awaiting the network call, and independently of the
+      // onAuthStateChange listener above: sign-out is usually followed by an
+      // immediate navigation, which can unmount this provider before the event
+      // fires. The wipe must not depend on winning that race.
+      clearClientCaches()
       const { error } = await supabase.auth.signOut()
       if (error) throw error
     },

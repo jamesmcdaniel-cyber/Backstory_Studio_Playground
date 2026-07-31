@@ -12,7 +12,10 @@ const g = globalThis as unknown as Record<string, unknown>
 // (navigator) are read-only on Node 22 — define them non-fatally.
 // NodeFilter/TreeWalker are what Radix's focus scope walks a dialog with, so
 // they belong here rather than in each dialog test.
-const keys = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Node', 'NodeFilter', 'TreeWalker', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'FocusEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame']
+// localStorage is here so client-cache tests can assert on it as a bare global,
+// the way a browser exposes it — the modules under test read window.localStorage
+// and both point at the same jsdom Storage instance.
+const keys = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Node', 'NodeFilter', 'TreeWalker', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'FocusEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'localStorage']
 g.window = dom.window
 for (const key of keys) {
   if (key === 'window') continue

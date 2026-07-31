@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
-import { invalidateAuthCache } from '@/lib/supabase/auth-utils'
 
 const patchSchema = z
   .object({
@@ -43,14 +42,13 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const data = patchSchema.parse(await request.json())
 
   if (data.userId) {
-    const target = await systemPrisma.user.update({
+    await systemPrisma.user.update({
       where: { id: data.userId },
       data: { platformRole: data.platformRole ?? null },
       select: { supabaseId: true },
     })
-    // The auth row is cached for a minute; without this the change would not
-    // take effect until it expired.
-    invalidateAuthCache(target.supabaseId)
+    // No cache to bust: the auth row is read fresh per request (see the note in
+    // src/lib/supabase/auth-utils.ts), so this takes effect on the next call.
     await recordAudit({
       organizationId: auth.organizationId,
       action: 'catalogue.platform_role_set',

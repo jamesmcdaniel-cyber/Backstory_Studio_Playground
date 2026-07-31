@@ -114,6 +114,25 @@ export function useCachedJson<T = unknown>(url: string | null) {
   return { data, loading, error, refresh, mutate }
 }
 
+/**
+ * Drop EVERY cached response — memory, in-flight map, and all persisted
+ * `bs:swr:` keys. Called when the signed-in identity changes: these entries are
+ * authenticated API responses keyed only by URL, so without this the next user
+ * on the same browser paints the previous user's workspace. See
+ * client/cache-owner.ts.
+ */
+export function resetCachedJson(): void {
+  mem.clear()
+  inflight.clear()
+  if (typeof window === 'undefined') return
+  try {
+    const stale = Object.keys(window.localStorage).filter((key) => key.startsWith(LS_PREFIX))
+    for (const key of stale) window.localStorage.removeItem(key)
+  } catch {
+    // Storage unavailable — the memory reset above still applies.
+  }
+}
+
 /** Drop a URL's cached entry so the next mount/refresh refetches from the server. */
 export function invalidateCachedJson(url: string): void {
   mem.delete(url)

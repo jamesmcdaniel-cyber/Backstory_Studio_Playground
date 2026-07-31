@@ -570,7 +570,12 @@ model Integration {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, provider])
+  // Scoped per workspace, not globally per user: the same person may hold a
+  // connection to the same provider in two workspaces over time, and the old
+  // global key meant a stale row from a workspace they had LEFT permanently
+  // occupied the slot, making the provider un-reconnectable. See
+  // src/lib/org-transfer.ts.
+  @@unique([organizationId, userId, provider])
   @@index([organizationId, provider])
   @@map("integrations")
 }

@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import type { ITXClientDenyList } from '@prisma/client/runtime/library'
 import { assertOrgScoped } from '@/lib/tenant-guard'
 
 const globalForPrisma = globalThis as unknown as {
@@ -37,6 +38,16 @@ export const systemPrisma = globalForPrisma.systemPrisma ?? createPrismaClient()
 globalForPrisma.systemPrisma = systemPrisma
 
 export const prisma = globalForPrisma.prisma ?? createGuardedClient(systemPrisma)
+
+/**
+ * The `tx` handed to `prisma.$transaction(async (tx) => …)`.
+ *
+ * NOT `Prisma.TransactionClient` — that's the un-extended client type, and the
+ * tenant guard is a `$extends` query extension, so the extended client's tx has
+ * a different (guarded) shape. Helpers that take a transaction must use this,
+ * or they type-check against a client that has no guard on it.
+ */
+export type GuardedTransactionClient = Omit<typeof prisma, ITXClientDenyList>
 // Cache in all environments: on Vercel this reuses one client (and its pool)
 // across warm serverless invocations. The guarded client wraps the SAME
 // underlying connection pool as systemPrisma — one pool, two lenses.

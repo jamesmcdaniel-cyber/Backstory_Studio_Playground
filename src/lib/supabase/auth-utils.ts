@@ -9,31 +9,26 @@ function findDbUser(supabaseId: string) {
   })
 }
 
-// Per-instance cache of the supabaseId → app user (+org) lookup. This query
-// runs on EVERY authenticated API request via requireAuthContext; the row
-// changes rarely (role/org edits), so a short TTL removes a DB round-trip from
-// the hot path on warm instances while bounding staleness to one minute.
 type DbUserRow = Awaited<ReturnType<typeof findDbUser>>
-const DB_USER_TTL_MS = 60_000
-const dbUserCache = new Map<string, { row: NonNullable<DbUserRow>; ts: number }>()
-
-async function findDbUserCached(supabaseId: string): Promise<DbUserRow> {
-  const hit = dbUserCache.get(supabaseId)
-  if (hit && Date.now() - hit.ts < DB_USER_TTL_MS) return hit.row
-  const row = await findDbUser(supabaseId)
-  if (row) dbUserCache.set(supabaseId, { row, ts: Date.now() })
-  else dbUserCache.delete(supabaseId)
-  return row
-}
 
 /**
- * Drop the cached auth row for a user so the next request re-reads it. Call
- * after mutating a user's org/role out-of-band (e.g. accepting an invitation),
- * or the stale cache would keep them in their old workspace for up to the TTL.
+ * This lookup is deliberately NOT cached.
+ *
+ * It used to be memoized per process for 60s to save a round-trip on the auth
+ * hot path. Every field it returns is an authority field — `organizationId`,
+ * `role`, `platformRole`, `isActive` — so there is no subset that is safe to
+ * serve stale, and a module-level Map is per-instance: an invalidation on the
+ * lambda that handled the mutation is invisible to every other warm instance.
+ * That made member removal, role demotion, and org transfer take effect on one
+ * instance and be ignored by the rest for up to a minute.
+ *
+ * The replacement is one lookup on a unique index (`users.supabaseId`) per
+ * authenticated request. It is a smaller cost than the class of bug it removes,
+ * and it is the ONLY thing standing between a revoked member and their old
+ * workspace until RLS lands. If this ever shows up in a profile, the fix is a
+ * shared-backend cache with explicit invalidation (src/lib/cache.ts), never a
+ * per-instance one.
  */
-export function invalidateAuthCache(supabaseId: string) {
-  dbUserCache.delete(supabaseId)
-}
 
 /**
  * Recovery path for platform staff: addresses listed in PLATFORM_STAFF_EMAILS
@@ -57,10 +52,6 @@ async function applyStaffBootstrap(dbUser: NonNullable<DbUserRow>): Promise<NonN
     data: { platformRole: 'reviewer' },
     include: { organization: true },
   })
-  // Drop the cached row in BOTH branches: the cache is keyed on supabaseId and
-  // holds the pre-promotion user for up to a minute otherwise, so the first
-  // request after promotion would still resolve customer-tier permissions.
-  invalidateAuthCache(dbUser.supabaseId)
 
   if (updated.organizationId && updated.organization && updated.organization.kind !== 'internal') {
     await prisma.organization.update({
@@ -157,7 +148,7 @@ export async function getAuthWithUser() {
     user = data.user
   }
 
-  const resolved = (await findDbUserCached(user.id)) ?? (await provisionUser(user))
+  const resolved = (await findDbUser(user.id)) ?? (await provisionUser(user))
   const dbUser = resolved ? await applyStaffBootstrap(resolved) : resolved
 
   return {

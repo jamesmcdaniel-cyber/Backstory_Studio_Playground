@@ -86,3 +86,20 @@ export function peekSnapshot(): Snapshot | null {
   cached ??= readPersisted()
   return cached?.data ?? null
 }
+
+/**
+ * Drop the snapshot from memory AND localStorage. Called when the signed-in
+ * identity changes (sign-out, account switch) — this cache holds a workspace's
+ * agents, notifications and usage, so leaving it behind paints the previous
+ * user's data to the next one on the same browser. See client/cache-owner.ts.
+ */
+export function resetSnapshotCache(): void {
+  cached = null
+  inflight = null
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(LS_KEY)
+  } catch {
+    // Storage unavailable (private mode / quota) — the memory reset above still applies.
+  }
+}

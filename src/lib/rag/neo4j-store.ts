@@ -10,10 +10,18 @@
  * NEO4J_* is configured — the app builds and runs without it.
  */
 
+import { apiLogger } from '@/lib/logger'
 import { cosineSimilarity, EMBEDDING_DIM } from './embeddings'
 import { nodeVisibleTo, type GraphEdge, type GraphNode, type GraphRagStore, type NodeType, type NodeVisibility, type SearchHit } from './store'
 
 const VECTOR_INDEX = 'entity_embedding'
+
+/**
+ * Ceiling on the no-vector-index fallback scan (see `search`). Sized to stay
+ * well inside a serverless function's memory once each node carries a
+ * 1024-float embedding, while still covering any realistic org's graph.
+ */
+const FALLBACK_SCAN_CAP = Number(process.env.NEO4J_FALLBACK_SCAN_CAP) || 5_000
 
 export function neo4jConfigured(): boolean {
   return Boolean(process.env.NEO4J_URI && process.env.NEO4J_USERNAME && process.env.NEO4J_PASSWORD)
@@ -120,10 +128,23 @@ export class Neo4jGraphStore implements GraphRagStore {
       { index: VECTOR_INDEX, fetch: Math.max(k * 4, 20), q: queryEmbedding, org: organizationId, viewer: viewerUserId, k },
     ).catch(async () => {
       // No vector index (e.g. Community edition): fall back to scoring in-app.
+      //
+      // BOUNDED, deliberately. This pulls whole nodes — embeddings included —
+      // into this process's memory, so an unbounded MATCH here is an OOM that
+      // scales with the biggest org's graph and fires under exactly the
+      // conditions you'd least want it to. The cap trades recall for staying
+      // up: results become approximate, so say so loudly rather than let a
+      // degraded mode look healthy.
       const all = await driver.executeQuery(
-        'MATCH (e:Entity { organizationId: $org }) RETURN e AS node',
-        { org: organizationId },
+        'MATCH (e:Entity { organizationId: $org }) RETURN e AS node LIMIT $scanCap',
+        { org: organizationId, scanCap: FALLBACK_SCAN_CAP },
       )
+      if (all.records.length >= FALLBACK_SCAN_CAP) {
+        apiLogger.warn('neo4j: vector index unavailable and the fallback scan hit its cap — results are approximate', {
+          organizationId,
+          scanCap: FALLBACK_SCAN_CAP,
+        })
+      }
       const scored = all.records
         .map((r) => hydrate(r.get('node')))
         .filter((n): n is GraphNode => n !== null && n.embedding.length > 0 && nodeVisibleTo(n, viewerUserId))

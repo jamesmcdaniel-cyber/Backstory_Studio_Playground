@@ -28,7 +28,15 @@ const flowSchema = z.object({
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   // Org flows (v1 visibility rules) PLUS flows shared with this user across
   // workspaces (accepted collaborator rows).
-  const flows = await prisma.flow.findMany({
+  //
+  // systemPrisma: deliberately cross-tenant. The second OR branch matches flows
+  // in OTHER orgs — that is the whole point of an accepted collaborator row, and
+  // it is the same grant GET /api/flows/[id] resolves. The access boundary is
+  // the collaborator row itself (only this user's), and resolveFlowRole below
+  // decides what each result is worth to them. The tenant guard rejects this
+  // shape by design now, because an OR branch without org scope is exactly what
+  // an accidental leak looks like — so it has to be spelled out here instead.
+  const flows = await systemPrisma.flow.findMany({
     where: {
       OR: [
         { organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },

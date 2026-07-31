@@ -352,11 +352,54 @@ the full timeout before stall recovery, which is a real availability cost at sca
 
 ### Wave 3 — structural hardening
 
-10. Postgres RLS on org-carrying tables, with the tenant guard kept as a dev signal (§5).
-11. Targeted review + tests on the four cross-tenant `systemPrisma` session routes (§6).
-12. Replace 2s polling with Realtime/SSE on run progress (§14).
-13. Cap the Neo4j non-index fallback; cache/authenticate `/api/health`; bound
-    `seededMemo` (§11, §12, §15).
+10. **Guard hardened; RLS deliberately NOT attempted — see below** (§5). The guard
+    now asks the right question: not "does `organizationId` appear somewhere in the
+    where tree" but "is every row this query can match constrained to the org". The
+    four shapes it used to accept and shouldn't — an unscoped `OR` branch,
+    `NOT: { organizationId }`, `organizationId: { not: X }`, and a to-many `some:`
+    filter — are all rejected now. Positive to-one relation filters still carry
+    scope, which is how the transitively-scoped children are meant to be queried.
+    Separately, `raw-sql-org-scoped.test.ts` statically enforces that every
+    `$queryRaw`/`$executeRaw` touching rows filters on `organizationId`, closing the
+    guard's other documented hole.
+11. **Done.** §6 — tightening the guard flagged exactly one production query:
+    `GET /api/flows`, whose second `OR` branch (cross-workspace collaborator flows)
+    carries no org scope. It is a deliberate cross-tenant read, so it moved to
+    `systemPrisma` with the reasoning written down — the same treatment its sibling
+    `GET /api/flows/[id]` already had. `list-isolation.db.test.ts` now backs that
+    boundary with real cross-org data. The other cross-tenant routes turned out to
+    be covered already (`share.db.test.ts`, `skills/visibility.db.test.ts`,
+    `flow-templates/scoping.db.test.ts`, `access-roles.test.ts`).
+12. **Not started** — replace 2s polling with Realtime/SSE on run progress (§14).
+13. **Done.** §11 — the Neo4j no-vector-index fallback is capped
+    (`NEO4J_FALLBACK_SCAN_CAP`, default 5,000) and logs when it truncates, instead
+    of pulling an org's whole embedded graph into process memory. §12 — `/api/health`
+    caches its result for 5s and coalesces concurrent misses, so an anonymous caller
+    can no longer amplify one request into three backend round-trips (one of which
+    opened a fresh Neo4j driver). §15 — `seededMemo` and `readyCache` are bounded.
+
+### On row-level security (§5), and why it is not in this wave
+
+RLS is the right end state and I did not build it, because doing it properly is a
+project rather than a task, and a half-applied RLS is worse than none — it produces
+confident-looking policies with silent gaps.
+
+The specific obstacle is this stack. RLS needs a per-transaction
+`SET LOCAL app.organization_id`, and behind a pgbouncer **transaction** pooler a
+connection is only yours for the length of a transaction. Prisma issues most
+queries outside explicit transactions, so the setting would either leak to the next
+borrower of that pooled connection or be lost before the query runs. Making it
+correct means wrapping *every* model operation in an interactive transaction — two
+extra round-trips each, holding a pooled connection for the duration, against a
+`connection_limit` that §10 already flags as too small. It also needs the app to
+stop connecting as the table owner (RLS does not apply to the owner without
+`FORCE ROW LEVEL SECURITY`), plus policies on 29 tables and an audited bypass path
+for the 68 legitimate `systemPrisma` call sites.
+
+That is worth doing. It is not worth doing quickly, and it wants a load test on the
+other side of it. What this wave did instead is make the guardrail actually hold the
+line it claims to — which removes the specific shapes that leak, and makes the
+remaining cross-tenant reads explicit, named, and tested.
 
 ### Wave 4 — prove it
 

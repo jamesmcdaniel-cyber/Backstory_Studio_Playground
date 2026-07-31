@@ -52,6 +52,27 @@ export function readyCacheFresh(cachedAt: number, now: number = Date.now()): boo
   return now - cachedAt < READY_TTL_MS
 }
 
+/**
+ * Both of these are keyed per org:user, which means they grow with every
+ * distinct person the process ever serves. On a serverless instance that is
+ * bounded by the instance's lifetime; on the long-lived worker it is not, and
+ * `seededMemo` in particular never expired an entry — a slow leak that only
+ * shows up at the scale where you can least afford it.
+ *
+ * Both are pure optimizations: evicting an entry costs one extra query, never
+ * correctness. So they are simply capped, oldest-first (Map/Set preserve
+ * insertion order).
+ */
+const MAX_CACHE_ENTRIES = 5_000
+
+function capEntries(collection: Map<string, unknown> | Set<string>): void {
+  while (collection.size > MAX_CACHE_ENTRIES) {
+    const oldest = collection.keys().next().value
+    if (oldest === undefined) return
+    collection.delete(oldest)
+  }
+}
+
 const readyCache = new Map<string, { ready: boolean; cachedAt: number }>()
 const seededMemo = new Set<string>()
 const cacheKey = (organizationId: string, userId: string) => `${organizationId}:${userId}`
@@ -77,6 +98,7 @@ export async function ensureBackstoryConnection(organizationId: string, userId: 
       // A pre-existing, user-managed connection to the Backstory server already
       // satisfies the gate. Don't seed a duplicate per-user "Backstory MCP" row.
       seededMemo.add(key)
+      capEntries(seededMemo)
       return
     }
     await prisma.mcpConnection.upsert({
@@ -101,6 +123,7 @@ export async function ensureBackstoryConnection(organizationId: string, userId: 
       },
     })
     seededMemo.add(key)
+    capEntries(seededMemo)
   } catch (error) {
     apiLogger.warn('Backstory MCP seeding failed; will retry next request', {
       error: error instanceof Error ? error.message : String(error),
@@ -132,5 +155,6 @@ export async function backstoryMcpReady(organizationId: string, userId: string):
     ready = existingRows.some((r) => evaluateExistingBackstoryConnection(r, backstoryServerUrl()))
   }
   readyCache.set(key, { ready, cachedAt: Date.now() })
+  capEntries(readyCache)
   return ready
 }

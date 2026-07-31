@@ -23,6 +23,7 @@ const testSchema = z.object({
   clientSecret: z.string().optional(),
   tokenUrl: z.string().optional(),
   scopes: z.string().optional(),
+  flow: z.enum(['client_credentials']).optional(),
 }).refine((data) => Boolean(data.connectionId || data.serverUrl), {
   message: 'serverUrl or connectionId is required',
 })
@@ -75,6 +76,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       clientSecret: data.clientSecret,
       tokenUrl: data.tokenUrl,
       scopes: data.scopes,
+      flow: data.flow,
     })
     config = mcpConfigFromConnection({ serverUrl, authType, authConfig: merged })
   } else {

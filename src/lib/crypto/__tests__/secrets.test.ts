@@ -52,3 +52,90 @@ test('development without ENCRYPTION_KEY: falls back to reversible b64', async (
   assert.match(payload, /^b64:/)
   assert.equal(decryptSecret(payload), 'dev-secret')
 })
+
+// ── authConfig merging across auth types ────────────────────────────────────
+
+test('switching an SSO connection to client credentials drops the stored tokens', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const { mergeAuthConfig, encryptSecret } = await freshSecrets()
+
+  const ssoConfig = {
+    flow: 'authcode',
+    clientId: 'old-sso-client',
+    clientSecret: encryptSecret('old-sso-secret'),
+    tokenEndpoint: 'https://auth.example.com/token',
+    accessToken: encryptSecret('at'),
+    refreshToken: encryptSecret('rt'),
+    expiresAt: 1234,
+  }
+
+  const merged = mergeAuthConfig(ssoConfig, {
+    authType: 'oauth2',
+    flow: 'client_credentials',
+    clientId: 'new-client',
+    clientSecret: 'new-secret',
+  })
+
+  // Without this, mcpConfigFromConnection still sees flow==='authcode' and
+  // keeps presenting the stale SSO bearer instead of the new grant.
+  for (const key of ['flow', 'accessToken', 'refreshToken', 'tokenEndpoint', 'expiresAt']) {
+    assert.equal(key in merged, false, `${key} should be cleared`)
+  }
+  assert.equal(merged.clientId, 'new-client')
+})
+
+test('an SSO re-save without a flow marker keeps its tokens intact', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const { mergeAuthConfig, encryptSecret } = await freshSecrets()
+
+  const ssoConfig = { flow: 'authcode', accessToken: encryptSecret('at'), clientId: 'c' }
+  const merged = mergeAuthConfig(ssoConfig, { authType: 'oauth2' })
+
+  assert.equal(merged.flow, 'authcode')
+  assert.equal(merged.accessToken, ssoConfig.accessToken)
+})
+
+test('switching between api_key and oauth2 discards the other type\'s credentials', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const { mergeAuthConfig, encryptSecret } = await freshSecrets()
+
+  const fromApiKey = mergeAuthConfig(
+    { apiKey: encryptSecret('sk-legacy'), headerName: 'X-API-Key' },
+    { authType: 'oauth2', flow: 'client_credentials', clientId: 'c', clientSecret: 's' },
+  )
+  assert.equal('apiKey' in fromApiKey, false)
+  assert.equal('headerName' in fromApiKey, false)
+
+  const fromOauth = mergeAuthConfig(
+    { clientId: 'c', clientSecret: encryptSecret('s'), tokenUrl: 'https://t', scopes: 'read' },
+    { authType: 'api_key', apiKey: 'sk-new' },
+  )
+  for (const key of ['clientId', 'clientSecret', 'tokenUrl', 'scopes']) {
+    assert.equal(key in fromOauth, false, `${key} should be cleared`)
+  }
+})
+
+test('redactConfig surfaces the SSO flow marker but never a secret', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const { redactConfig, encryptSecret } = await freshSecrets()
+
+  const sso = redactConfig('oauth2', {
+    flow: 'authcode',
+    clientId: 'c',
+    clientSecret: encryptSecret('s'),
+    accessToken: encryptSecret('at'),
+  })
+  assert.equal(sso.flow, 'authcode')
+  assert.equal(sso.hasClientSecret, true)
+  assert.equal('clientSecret' in sso, false)
+  assert.equal('accessToken' in sso, false)
+
+  // Client-credentials connections carry no flow marker — that absence is what
+  // the dialog uses to pick the client ID + secret form.
+  const clientCreds = redactConfig('oauth2', { clientId: 'c', clientSecret: encryptSecret('s') })
+  assert.equal(clientCreds.flow, undefined)
+})

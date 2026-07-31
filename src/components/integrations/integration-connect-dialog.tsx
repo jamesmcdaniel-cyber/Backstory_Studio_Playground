@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ArrowUpRight, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
-import { McpConnectionDialog, type McpConnectionDraft, type SerializedConnection } from '@/app/connections/mcp-connection-dialog'
+import { McpConnectionDialog, draftAuthPayload, type McpConnectionDraft, type SerializedConnection } from '@/app/connections/mcp-connection-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -123,17 +123,7 @@ export function IntegrationConnectDialog({
       name: draft.name,
       description: draft.description || undefined,
       serverUrl: draft.serverUrl,
-      authType: draft.authType,
-    }
-    if (draft.authType === 'api_key') {
-      if (draft.apiKey) payload.apiKey = draft.apiKey
-      if (draft.headerName) payload.headerName = draft.headerName
-    }
-    if (draft.authType === 'oauth2') {
-      if (draft.clientId) payload.clientId = draft.clientId
-      if (draft.clientSecret) payload.clientSecret = draft.clientSecret
-      if (draft.tokenUrl) payload.tokenUrl = draft.tokenUrl
-      if (draft.scopes) payload.scopes = draft.scopes
+      ...draftAuthPayload(draft),
     }
     const response = await fetch('/api/mcp-connections', {
       method: 'POST',

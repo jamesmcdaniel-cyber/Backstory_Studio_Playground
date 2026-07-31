@@ -143,6 +143,29 @@ export interface RawAuthInput {
   clientSecret?: string
   tokenUrl?: string
   scopes?: string
+  /**
+   * Which oauth2 grant the caller is configuring. Only 'client_credentials' is
+   * meaningful here — it tells mergeAuthConfig to discard the authorization-code
+   * artefacts (tokens, flow marker) left behind by a previous SSO connect, so a
+   * connection switched to client credentials stops presenting stale SSO tokens.
+   * The authcode side is written directly by the OAuth callback route.
+   */
+  flow?: 'client_credentials' | 'authcode'
+}
+
+/** Keys written only by the authorization-code (SSO) callback. */
+const AUTHCODE_ONLY_KEYS = ['flow', 'accessToken', 'refreshToken', 'tokenEndpoint', 'expiresAt']
+/** Keys that belong to api_key auth and mean nothing under oauth2 (and vice versa). */
+const API_KEY_ONLY_KEYS = ['apiKey', 'headerName']
+const OAUTH_ONLY_KEYS = [...AUTHCODE_ONLY_KEYS, 'clientId', 'clientSecret', 'tokenUrl', 'scopes']
+
+function without(
+  existing: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> {
+  const next = { ...existing }
+  for (const key of keys) delete next[key]
+  return next
 }
 
 /**
@@ -195,8 +218,10 @@ export function mergeAuthConfig(
   }
 
   if (authType === 'api_key') {
+    // Drop oauth2 leftovers so a connection switched from oauth2 to api_key
+    // stops carrying credentials it no longer uses.
     return {
-      ...existing,
+      ...without(existing, OAUTH_ONLY_KEYS),
       ...(input.apiKey !== undefined && {
         apiKey: encryptSecret(input.apiKey),
       }),
@@ -205,8 +230,12 @@ export function mergeAuthConfig(
   }
 
   if (authType === 'oauth2') {
+    const stale =
+      input.flow === 'client_credentials'
+        ? [...API_KEY_ONLY_KEYS, ...AUTHCODE_ONLY_KEYS]
+        : API_KEY_ONLY_KEYS
     return {
-      ...existing,
+      ...without(existing, stale),
       ...(input.clientId !== undefined && { clientId: input.clientId }),
       ...(input.clientSecret !== undefined && {
         clientSecret: encryptSecret(input.clientSecret),
@@ -229,6 +258,8 @@ export interface RedactedAuthConfig {
   tokenUrl?: string
   scopes?: string
   hasClientSecret?: boolean
+  /** 'authcode' marks a connection established via the SSO redirect flow. */
+  flow?: 'authcode'
 }
 
 /**
@@ -259,6 +290,7 @@ export function redactConfig(
   if (type === 'oauth2') {
     return {
       authType: type,
+      ...(cfg.flow === 'authcode' && { flow: 'authcode' as const }),
       ...(cfg.clientId !== undefined && { clientId: cfg.clientId as string }),
       ...(cfg.tokenUrl !== undefined && { tokenUrl: cfg.tokenUrl as string }),
       ...(cfg.scopes !== undefined && { scopes: cfg.scopes as string }),

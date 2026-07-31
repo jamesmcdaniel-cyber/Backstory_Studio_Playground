@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { AlertCircle, CheckCircle2, Loader2, Plug, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react'
-import { McpConnectionDialog, type McpConnectionDraft, type SerializedConnection } from '@/app/connections/mcp-connection-dialog'
+import { McpConnectionDialog, draftAuthPayload, type McpConnectionDraft, type SerializedConnection } from '@/app/connections/mcp-connection-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -15,6 +15,14 @@ const authLabels: Record<string, string> = {
   none: 'None',
   api_key: 'API key',
   oauth2: 'OAuth 2.0',
+}
+
+/** Badge text — oauth2 splits by grant so the list matches the edit form. */
+function authLabel(auth: SerializedConnection['auth']): string {
+  if (auth.authType === 'oauth2') {
+    return auth.flow === 'authcode' ? 'OAuth 2.0 (SSO)' : 'Client credentials'
+  }
+  return authLabels[auth.authType] ?? auth.authType
 }
 
 /**
@@ -60,18 +68,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
       name: draft.name,
       description: draft.description || undefined,
       serverUrl: draft.serverUrl,
-      authType: draft.authType,
-    }
-
-    if (draft.authType === 'api_key') {
-      if (draft.apiKey) payload.apiKey = draft.apiKey
-      if (draft.headerName) payload.headerName = draft.headerName
-    }
-    if (draft.authType === 'oauth2') {
-      if (draft.clientId) payload.clientId = draft.clientId
-      if (draft.clientSecret) payload.clientSecret = draft.clientSecret
-      if (draft.tokenUrl) payload.tokenUrl = draft.tokenUrl
-      if (draft.scopes) payload.scopes = draft.scopes
+      ...draftAuthPayload(draft),
     }
 
     if (editingConnection) {
@@ -243,7 +240,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                     )}
                   </div>
                   <Badge variant="outline" className="shrink-0 text-xs">
-                    {authLabels[conn.auth.authType] ?? conn.auth.authType}
+                    {authLabel(conn.auth)}
                   </Badge>
                 </div>
 

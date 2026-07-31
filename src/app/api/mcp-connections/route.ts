@@ -41,6 +41,10 @@ const mcpConnectionSchema = z.object({
   clientSecret: z.string().optional(),
   tokenUrl: z.string().optional(),
   scopes: z.string().optional(),
+  // Which oauth2 grant is being configured. Sent as 'client_credentials' by the
+  // connection dialog so switching a previously SSO-connected server over to
+  // client credentials clears the stored authorization-code tokens.
+  flow: z.enum(['client_credentials']).optional(),
   // common
   isActive: z.boolean().optional(),
 })
@@ -107,6 +111,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     clientSecret: data.clientSecret,
     tokenUrl: data.tokenUrl,
     scopes: data.scopes,
+    flow: data.flow,
   })
 
   let verification
@@ -180,6 +185,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     clientSecret: body.clientSecret,
     tokenUrl: body.tokenUrl,
     scopes: body.scopes,
+    flow: body.flow,
   })
 
   const connectionFieldsChanged =
@@ -191,6 +197,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     body.clientSecret !== undefined ||
     body.tokenUrl !== undefined ||
     body.scopes !== undefined ||
+    body.flow !== undefined ||
     body.isActive === true
   let verifiedAt: Date | undefined
   if (connectionFieldsChanged) {

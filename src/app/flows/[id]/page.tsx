@@ -1323,6 +1323,13 @@ function FlowBuilder() {
 
   const pollRuns = useCallback(() => {
     const tick = async () => {
+      // Don't poll a tab nobody is looking at. Browsers throttle background
+      // timers but never stop them, so an abandoned builder tab otherwise
+      // issues an authenticated request every couple of seconds for as long as
+      // the run lasts. The interval itself keeps ticking, so returning to the
+      // tab picks the run back up within one 2s beat — no listener needed, and
+      // no cleanup to leak in a component that already has plenty to track.
+      if (typeof document !== 'undefined' && document.hidden) return
       const data = await fetch(`/api/flows/${id}/runs`, { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
       const allRuns = data?.runs as FlowRunDetail[] | undefined
       if (allRuns) setRuns(allRuns.map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt })))
@@ -1363,6 +1370,10 @@ function FlowBuilder() {
       }
     }
     if (pollRef.current) clearInterval(pollRef.current)
+    // The tick itself skips while the tab is hidden (see its first line), so a
+    // builder left open in a background tab on a long run stops polling and
+    // resumes on return. The interval keeps running because it is also what
+    // self-stops the poll once the run reaches a terminal state.
     pollRef.current = setInterval(tick, 2000)
     tick()
   }, [id])

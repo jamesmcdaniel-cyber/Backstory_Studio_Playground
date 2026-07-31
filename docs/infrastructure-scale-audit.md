@@ -260,9 +260,14 @@ hot pollers are per-page and much tighter:
 | Flow activity | 5s | `src/app/flows/[id]/activity/page.tsx:194` |
 | App shell (snapshot) | 8s effective | `snapshot.ts:37` |
 
-100 users with a flow open is ~50 req/s on the flow poll alone, each an authenticated
-Prisma round-trip. Each `/api/snapshot` is 6 queries including `agentTask` `take: 300`
-with full row payloads.
+**Correction (verified while implementing Wave 3):** the three 2s pollers are all
+already conditional — the flow-builder tick self-stops on a terminal run, the
+activity pane needs the row expanded *and* the run active, and the run panel already
+has Supabase Realtime layered on. So this load scales with active runs being
+watched, not with users holding a page open, and the "~50 req/s" figure below is
+wrong. The real defect was that none of them paused for a hidden tab; that is fixed.
+Each `/api/snapshot` is still 6 queries including `agentTask` `take: 300` with full
+row payloads.
 
 **Fix.** Move run/step progress to Supabase Realtime (already in use for the flow jam)
 or SSE; drop the 2s intervals to backoff schedules; trim the snapshot agent payload to
@@ -370,7 +375,20 @@ the full timeout before stall recovery, which is a real availability cost at sca
     boundary with real cross-org data. The other cross-tenant routes turned out to
     be covered already (`share.db.test.ts`, `skills/visibility.db.test.ts`,
     `flow-templates/scoping.db.test.ts`, `access-roles.test.ts`).
-12. **Not started** — replace 2s polling with Realtime/SSE on run progress (§14).
+12. **Done, and scoped down — §14 above overstated this.** Re-reading the pollers
+    before changing them: all three are already conditional. The flow-builder tick
+    self-stops once the run reaches a terminal state, the agent activity pane polls
+    only while a row is expanded *and* the run is active, and the run panel already
+    layers Supabase Realtime broadcasts on top of its poll. So the 2s load scales
+    with **active runs being watched**, not with users holding a page open, and the
+    "~50 req/s from 100 users with a flow open" figure in §14 is wrong.
+    What was real: none of the three paused for a hidden tab. Browsers throttle
+    background timers but never stop them, so a builder abandoned in a background
+    tab kept issuing authenticated requests for the life of the run.
+    `startVisibleInterval` fixes that and catches up on return; the app-shell
+    pollers already behaved this way. An SSE/Realtime rearchitecture is not
+    warranted at this load — and on Vercel, SSE holds a function invocation open,
+    which is not obviously cheaper than a conditional 2s poll.
 13. **Done.** §11 — the Neo4j no-vector-index fallback is capped
     (`NEO4J_FALLBACK_SCAN_CAP`, default 5,000) and logs when it truncates, instead
     of pulling an org's whole embedded graph into process memory. §12 — `/api/health`

@@ -9,6 +9,7 @@ import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 import { StructuredValueView } from '@/components/flows/structured-value-view'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
+import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { agentExecChannel } from '@/lib/flows/run-stream'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { buildProcessTimeline, processFeedRows, type ProcessFeedRow } from '@/lib/agents/process-feed'
@@ -144,7 +145,9 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
     load()
     // A waiting step's feed is static until the user replies — poll gently so
     // a panel left open on a long-waiting run doesn't hammer the API.
-    const timer = window.setInterval(load, waiting ? 15000 : 2000)
+    // Visibility-gated: a panel left open on a backgrounded tab stops polling
+    // and catches up the moment it is looked at again.
+    const stopPolling = startVisibleInterval(load, waiting ? 15000 : 2000)
     // Live streaming: refetch the instant the agent emits an event (debounced),
     // so thinking / tool-call rows appear near-live instead of on the 2s poll.
     let debounce: ReturnType<typeof setTimeout> | null = null
@@ -163,7 +166,7 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
     }
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      stopPolling()
       if (debounce) clearTimeout(debounce)
       if (supabase && channel) void supabase.removeChannel(channel)
     }

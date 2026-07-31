@@ -26,6 +26,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
@@ -482,9 +483,10 @@ function RunRow({
         .catch(() => { if (!cancelled) setDetails(null) })
     fetchDetails()
     // While a run is active, poll its detail so thinking and tool calls stream in
-    // (near-real-time) without a full-page refetch.
-    const timer = isActive ? window.setInterval(fetchDetails, 2000) : undefined
-    return () => { cancelled = true; if (timer) window.clearInterval(timer) }
+    // (near-real-time) without a full-page refetch. Visibility-gated: an expanded
+    // pane on a backgrounded tab polls nothing and catches up on return.
+    const stopPolling = isActive ? startVisibleInterval(fetchDetails, 2000) : undefined
+    return () => { cancelled = true; stopPolling?.() }
   }, [expanded, activity.id, status, isActive])
 
   const sendReply = async () => {

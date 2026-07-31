@@ -164,6 +164,10 @@ model AgentTask {
 
   @@index([organizationId, status])
   @@index([userId])
+  // The scheduler's cursor scan: `status = 'ACTIVE' ORDER BY id`, across all
+  // orgs. The [organizationId, status] index above can't serve it — wrong
+  // leading column — so without this the sweep is a full table scan every tick.
+  @@index([status, id])
   @@map("agent_tasks")
 }
 
@@ -383,6 +387,9 @@ model AgentExecution {
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, startedAt])
   @@index([agentTaskId])
+  // Per-org in-flight count (src/lib/queue/org-capacity.ts), read once per
+  // scheduler tick to stop one workspace occupying the whole worker pool.
+  @@index([organizationId, status])
   @@map("agent_executions")
 }
 
@@ -725,6 +732,8 @@ model Flow {
   collaborators FlowCollaborator[]
 
   @@index([organizationId, updatedAt])
+  // Scheduler cursor scan, as on agent_tasks.
+  @@index([status, id])
   @@map("flows")
 }
 
@@ -848,6 +857,8 @@ model FlowRun {
 
   @@index([flowId, startedAt])
   @@index([status, resumeAt])
+  // Per-org in-flight count — flows and agents share one worker-slot budget.
+  @@index([organizationId, status])
   @@map("flow_runs")
 }
 

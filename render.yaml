@@ -14,9 +14,20 @@ services:
   # show both queues consuming → THEN flip Vercel's EXECUTION_MODE to `queue`
   # (or delete the var; production defaults to queue). Flipping first leaves
   # runs stuck in `pending` with nothing draining them.
+  #
+  # CAPACITY — the worker is the whole execution plane. Every queued agent run,
+  # flow run and template generation lands here, so its instance count and
+  # concurrency ARE the platform's throughput. One instance at concurrency 5 was
+  # the ceiling for the entire product; at 100+ concurrent users that is a queue,
+  # not a pool. numInstances below scales it horizontally — BullMQ workers are
+  # competing consumers on the same Redis, so adding instances needs no
+  # coordination. Per-workspace fairness is enforced separately, at dispatch, by
+  # src/lib/queue/org-capacity.ts (ORG_MAX_INFLIGHT_RUNS).
   - type: worker
     name: backstory-worker
     env: node
+    plan: standard
+    numInstances: 3
     buildCommand: npm ci && npm run db:generate
     startCommand: npm run worker:start
     envVars:
@@ -27,6 +38,14 @@ services:
       # Same Upstash rediss://…:6379 TCP URL as Vercel — set in the dashboard.
       - key: REDIS_URL
         sync: false
+      # NOT the same string as Vercel's. Vercel is serverless and wants
+      # ?pgbouncer=true&connection_limit=1 (one connection per lambda). This is a
+      # long-lived process running FOUR BullMQ workers at AGENT_WORKER_CONCURRENCY
+      # each — with connection_limit=1 every one of those ~20 concurrent jobs
+      # queues behind a single connection and Prisma starts throwing P2024 pool
+      # timeouts under load. Set this to the transaction pooler with
+      # ?pgbouncer=true&connection_limit=20 (keep it comfortably under the
+      # pooler's own client ceiling once multiplied by numInstances).
       - key: DATABASE_URL
         sync: false
       - key: DIRECT_URL
@@ -83,5 +102,15 @@ services:
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
+      # Per-worker, PER-QUEUE concurrency. The runtime starts four workers
+      # (agent, scheduled-agent, flow, template-generation), so total in-flight
+      # jobs per instance is ~4x this — size DATABASE_URL's connection_limit
+      # against that number, not against this one.
       - key: AGENT_WORKER_CONCURRENCY
         value: "5"
+      # Max concurrent runs (agents + flows) one workspace may hold at a time,
+      # enforced at scheduled dispatch. Stops a single org's burst filling every
+      # worker slot while other tenants' runs sit pending. See
+      # src/lib/queue/org-capacity.ts.
+      - key: ORG_MAX_INFLIGHT_RUNS
+        value: "10"

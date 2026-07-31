@@ -14,11 +14,15 @@
  */
 
 import { timingSafeEqual } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
-import { runAgentExecution } from '@/features/agents/execute-agent'
+import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { dispatchFlowExecution, dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
 import { runFlowPoll, lastPolledAt } from '@/features/flows/poll-dispatch'
+import { scanAll, stalestFirst } from '@/lib/scheduling/scan'
+import { resolveRunOwners } from '@/lib/scheduling/owners'
+import { OrgCapacity, orgMaxInFlightRuns } from '@/lib/queue/org-capacity'
 import { parseFlowInput } from '@/lib/flows/input'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
 import { isDue, type AgentSchedule } from '@/lib/scheduling/due'
@@ -34,7 +38,13 @@ export const runtime = 'nodejs'
 export const maxDuration = 800
 export const dynamic = 'force-dynamic'
 
-const MAX_AGENTS_PER_TICK = 25
+/** A flow's stored trigger: schedule/poll cadence plus its default input. */
+type FlowTrigger = { type?: string; schedule?: AgentSchedule; input?: string }
+
+// Per-tick agent-dispatch cap. This bounds how many runs START per tick — NOT
+// how many agents are examined (see scanAll). Env-overridable for the same
+// reason the flow cap is: it is a throughput dial, not an invariant.
+const MAX_AGENTS_PER_TICK = Math.max(1, Number(process.env.AGENT_DISPATCH_PER_TICK) || 25)
 // Per-tick flow-dispatch cap. Configurable because 10/tick is a silent scale
 // cliff once an org has more due schedules than that (they'd starve, oldest
 // first, with no signal). Raised default + env override + a saturation warning
@@ -118,27 +128,54 @@ export async function GET(request: Request) {
     // only path that can fire them — dispatch those even in worker mode.
     const workerOwnsRecurring = workersEnabled && EXECUTION_MODE === 'queue'
 
-    // Load all active agents (capped at 200 to avoid huge fetches)
+    // Scan EVERY active agent, not an arbitrary window of them. Dueness lives in
+    // a JSON schedule column (and cron expressions), so it cannot be pushed into
+    // SQL — the only way to be sure a due agent is noticed is to look at all of
+    // them. The cap that used to sit here was on the SCAN, which meant agents
+    // outside a stable, unordered 200-row window were never examined at all.
     // systemPrisma: global scheduling scan — reads active agents across all orgs by design (CRON_SECRET-gated).
-    const agents = await systemPrisma.agentTask.findMany({
-      where: { status: 'ACTIVE' },
-      take: 200,
-    })
+    const agentScan = await scanAll((cursorId, take) =>
+      systemPrisma.agentTask.findMany({
+        where: { status: 'ACTIVE' },
+        orderBy: { id: 'asc' },
+        take,
+        ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      }),
+    )
+    if (agentScan.truncated) {
+      apiLogger.error('cron/dispatch: agent scan hit the runaway backstop — some agents were not examined', {
+        scanned: agentScan.rows.length,
+      })
+    }
 
     const now = new Date()
 
     // Filter to agents whose schedule is currently due
-    const dueAgents = agents
-      .filter((agent) => {
-        const schedule = agent.schedule as unknown as AgentSchedule | null
-        if (!schedule || typeof schedule !== 'object') return false
-        if (!isDue(schedule, agent.lastExecutedAt, now)) return false
-        // In worker mode, only 'once' agents are dispatched here; recurring ones
-        // are owned by the BullMQ JobScheduler.
-        if (workerOwnsRecurring && schedule.type !== 'once') return false
-        return true
+    const dueAgentsAll = agentScan.rows.filter((agent) => {
+      const schedule = agent.schedule as unknown as AgentSchedule | null
+      if (!schedule || typeof schedule !== 'object') return false
+      if (!isDue(schedule, agent.lastExecutedAt, now)) return false
+      // In worker mode, only 'once' agents are dispatched here; recurring ones
+      // are owned by the BullMQ JobScheduler.
+      if (workerOwnsRecurring && schedule.type !== 'once') return false
+      return true
+    })
+
+    // Stalest first, THEN cap. Dispatching advances lastExecutedAt, so anything
+    // deferred here sorts ahead of what just ran and goes out next tick — the
+    // overflow rotates instead of the same rows winning every time.
+    const dueAgents = stalestFirst(dueAgentsAll, (agent) => agent.lastExecutedAt).slice(0, MAX_AGENTS_PER_TICK)
+    if (dueAgentsAll.length > dueAgents.length) {
+      apiLogger.warn('cron/dispatch: agent dispatch cap reached — stalest went first, rest deferred', {
+        due: dueAgentsAll.length,
+        cap: MAX_AGENTS_PER_TICK,
       })
-      .slice(0, MAX_AGENTS_PER_TICK)
+    }
+
+    // One capacity read and one owner resolution for the whole tick, instead of
+    // two user lookups per agent inside the loop.
+    const agentCapacity = await OrgCapacity.forOrgs([...new Set(dueAgents.map((a) => a.organizationId))])
+    const agentOwners = await resolveRunOwners(dueAgents)
 
     const dueCount = dueAgents.length
     const ranIds: string[] = []
@@ -148,6 +185,11 @@ export async function GET(request: Request) {
       // failing (or throwing) agent does not re-fire on every tick. The whole
       // per-agent body is wrapped so one agent can never abort the tick.
       try {
+        // Capacity gate BEFORE the lastExecutedAt write: a deferred agent must
+        // keep its stale marker, or skipping it would look like a run and push
+        // it to the back of the queue behind the orgs that actually ran.
+        if (!agentCapacity.tryClaim(agent.organizationId)) continue
+
         await prisma.agentTask.update({
           where: { id: agent.id, organizationId: agent.organizationId },
           data: {
@@ -161,27 +203,15 @@ export async function GET(request: Request) {
             ? (agent.metadata as Record<string, unknown>)
             : {}
 
-        // Attribute the run to the agent's owner when set; otherwise the org's
-        // oldest active member (shared agents have no single owner).
-        const owner = agent.userId
-          ? await prisma.user.findFirst({
-              where: { id: agent.userId, organizationId: agent.organizationId, isActive: true },
-            })
-          : null
-        const user =
-          owner ||
-          (await prisma.user.findFirst({
-            where: { organizationId: agent.organizationId, isActive: true },
-            orderBy: { createdAt: 'asc' },
-          }))
-
-        if (!user) {
+        const ownerUserId = agentOwners.get(agent.id)
+        if (!ownerUserId) {
           apiLogger.error('cron/dispatch: no active user found, skipping agent', {
             agentId: agent.id,
             organizationId: agent.organizationId,
           })
           continue
         }
+        const user = { id: ownerUserId }
 
         // Pass the raw objective — runAgentExecution composes skills into the
         // system prompt itself, so composing here too would double-apply them.
@@ -202,7 +232,11 @@ export async function GET(request: Request) {
         })
 
         try {
-          await runAgentExecution({
+          // Enqueue rather than run here. Inline (dev/CI) still executes in the
+          // request; in queue mode this costs one queue.add and the run happens
+          // on the worker pool, so a burst of due schedules can no longer starve
+          // the tick or blow its 800s ceiling mid-run.
+          await dispatchAgentExecution({
             executionId: execution.id,
             agentId: agent.id,
             organizationId: agent.organizationId,
@@ -211,7 +245,7 @@ export async function GET(request: Request) {
           })
           ranIds.push(agent.id)
         } catch (error) {
-          apiLogger.error('cron/dispatch: agent execution failed', {
+          apiLogger.error('cron/dispatch: agent dispatch failed', {
             agentId: agent.id,
             executionId: execution.id,
             error: capError(error),
@@ -242,72 +276,109 @@ export async function GET(request: Request) {
     // its most-recent flow_run.startedAt is the "last run" marker. Recurring
     // flows are owned by this cron (no BullMQ scheduler for flows), so run them
     // even in worker mode.
+    // Complete scan, same reasoning as agents above: the old `take: 100` was a
+    // cap on what got LOOKED AT, so flows outside it never fired.
     // systemPrisma: global scheduling scan — reads active flows across all orgs by design (CRON_SECRET-gated).
-    const flows = await systemPrisma.flow.findMany({
-      where: { status: 'ACTIVE' },
-      include: { runs: { orderBy: { startedAt: 'desc' }, take: 1, select: { startedAt: true, status: true } } },
-      take: 100,
-    })
-    const ranFlowIds: string[] = []
-    for (const flow of flows) {
-      try {
-        const trigger = flow.trigger as { type?: string; schedule?: AgentSchedule; input?: string } | null
-        const schedule = trigger?.schedule
-        const isPoll = trigger?.type === 'poll'
-        if (!trigger || (trigger.type !== 'schedule' && !isPoll) || !schedule || typeof schedule !== 'object') continue
-        // Only PUBLISHED flows run on a schedule — a draft-only flow does not fire.
-        if (flow.publishedGraph == null) continue
-        // A poll's cadence is tracked by its own lastPolledAt (a poll that finds
-        // nothing new creates no run, so the last-run clock would never advance
-        // and it'd poll every tick). Schedules use the last run's start.
-        const lastExecuted = isPoll ? lastPolledAt(flow.pollCursor) : (flow.runs[0]?.startedAt ?? null)
-        if (!isDue(schedule, lastExecuted, now)) continue
-        if (isPoll) {
-          if (ranFlowIds.length >= MAX_FLOWS_PER_TICK) {
-            apiLogger.warn('cron/dispatch: flow dispatch cap reached — some due flows deferred to the next tick', { cap: MAX_FLOWS_PER_TICK })
-            break
-          }
-          const pollOwner = flow.userId
-            ? await prisma.user.findFirst({ where: { id: flow.userId, organizationId: flow.organizationId, isActive: true } })
-            : await prisma.user.findFirst({ where: { organizationId: flow.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } })
-          if (!pollOwner) continue
-          const { dispatched } = await runFlowPoll(flow, pollOwner.id, now)
-          if (dispatched > 0) ranFlowIds.push(flow.id)
-          continue
-        }
-        // Overlap guard: a still-active previous run means skip this tick —
-        // a slow flow must never stack concurrent scheduled executions. A
-        // `waiting` run older than 24h stops blocking (blocksSchedule): it
-        // stays answerable, but an unanswered approval/question must not
-        // wedge the schedule forever.
+    const flowScan = await scanAll((cursorId, take) =>
+      systemPrisma.flow.findMany({
+        // Unpublished flows never fire on a schedule, so exclude them in SQL
+        // rather than loading them to check. AnyNull covers both a SQL NULL and
+        // a stored JSON null, matching the `publishedGraph == null` test this
+        // replaces. Doing it here also keeps publishedGraph — the largest column
+        // on the table — out of the result set entirely.
+        where: { status: 'ACTIVE', publishedGraph: { not: Prisma.AnyNull } },
+        // Explicit select, NOT include: this scan now reads every active flow,
+        // and pulling whole rows (graph JSON and all) into memory once per tick
+        // would trade the starvation bug for a memory one. These are the only
+        // fields the two passes below and runFlowPoll actually read.
+        select: {
+          id: true,
+          organizationId: true,
+          userId: true,
+          trigger: true,
+          pollCursor: true,
+          runs: { orderBy: { startedAt: 'desc' }, take: 1, select: { startedAt: true, status: true } },
+        },
+        orderBy: { id: 'asc' },
+        take,
+        ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      }),
+    )
+    if (flowScan.truncated) {
+      apiLogger.error('cron/dispatch: flow scan hit the runaway backstop — some flows were not examined', {
+        scanned: flowScan.rows.length,
+      })
+    }
+
+    // Pass 1 — decide who is due, cheaply and with no side effects, so the cap
+    // below is applied to a complete picture rather than to whatever the scan
+    // happened to reach first.
+    type DueFlow = { flow: (typeof flowScan.rows)[number]; trigger: FlowTrigger; isPoll: boolean; lastExecuted: Date | null }
+    const dueFlowsAll: DueFlow[] = []
+    for (const flow of flowScan.rows) {
+      const trigger = flow.trigger as FlowTrigger | null
+      const schedule = trigger?.schedule
+      const isPoll = trigger?.type === 'poll'
+      if (!trigger || (trigger.type !== 'schedule' && !isPoll) || !schedule || typeof schedule !== 'object') continue
+      // (Only PUBLISHED flows run on a schedule — enforced by the scan's where.)
+      // A poll's cadence is tracked by its own lastPolledAt (a poll that finds
+      // nothing new creates no run, so the last-run clock would never advance
+      // and it'd poll every tick). Schedules use the last run's start.
+      const lastExecuted = isPoll ? lastPolledAt(flow.pollCursor) : (flow.runs[0]?.startedAt ?? null)
+      if (!isDue(schedule, lastExecuted, now)) continue
+
+      if (!isPoll) {
+        // Overlap guard: a still-active previous run means skip this tick — a
+        // slow flow must never stack concurrent scheduled executions. A
+        // `waiting` run older than 24h stops blocking (blocksSchedule): it stays
+        // answerable, but an unanswered approval/question must not wedge the
+        // schedule forever. Evaluated here so a blocked flow does not consume a
+        // dispatch slot that another org's flow could have used.
         const lastRun = flow.runs[0]
         if (lastRun && blocksSchedule(lastRun, now)) {
           apiLogger.warn('cron/dispatch: flow run still active, skipping tick', { flowId: flow.id })
           continue
         }
-        if (ranFlowIds.length >= MAX_FLOWS_PER_TICK) {
-          // Saturation: more flows were due this tick than the cap. Make it
-          // visible so the cliff can be raised (FLOW_DISPATCH_PER_TICK) rather
-          // than silently starving the overflow.
-          apiLogger.warn('cron/dispatch: flow dispatch cap reached — some due flows deferred to the next tick', {
-            cap: MAX_FLOWS_PER_TICK,
-          })
-          break
-        }
         // Trigger-level filter: a scheduled trigger's "input" is its stored
         // default — gate on that same value before creating a run.
         if (!triggerConditionPasses(trigger, parseFlowInput(trigger.input ?? ''))) continue
-        const owner = flow.userId
-          ? await prisma.user.findFirst({ where: { id: flow.userId, organizationId: flow.organizationId, isActive: true } })
-          : await prisma.user.findFirst({ where: { organizationId: flow.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } })
-        if (!owner) continue
+      }
+
+      dueFlowsAll.push({ flow, trigger, isPoll, lastExecuted })
+    }
+
+    const dueFlows = stalestFirst(dueFlowsAll, (entry) => entry.lastExecuted).slice(0, MAX_FLOWS_PER_TICK)
+    if (dueFlowsAll.length > dueFlows.length) {
+      apiLogger.warn('cron/dispatch: flow dispatch cap reached — stalest went first, rest deferred', {
+        due: dueFlowsAll.length,
+        cap: MAX_FLOWS_PER_TICK,
+      })
+    }
+
+    const flowCapacity = await OrgCapacity.forOrgs([...new Set(dueFlows.map((entry) => entry.flow.organizationId))])
+    const flowOwners = await resolveRunOwners(dueFlows.map((entry) => entry.flow))
+
+    // Pass 2 — dispatch.
+    const ranFlowIds: string[] = []
+    for (const { flow, trigger, isPoll } of dueFlows) {
+      try {
+        if (!flowCapacity.tryClaim(flow.organizationId)) continue
+        const ownerId = flowOwners.get(flow.id)
+        if (!ownerId) continue
+
+        if (isPoll) {
+          const { dispatched } = await runFlowPoll(flow, ownerId, now)
+          if (dispatched > 0) ranFlowIds.push(flow.id)
+          continue
+        }
+
         // Queue-durable in production (EXECUTION_MODE=queue): a burst of due
         // schedules enqueues instead of executing serially inside this
         // request; inline in dev/CI — behavior there is unchanged.
         await dispatchFlowExecution({
           flowId: flow.id,
           organizationId: flow.organizationId,
-          userId: owner.id,
+          userId: ownerId,
           input: parseFlowInput(trigger.input ?? ''),
           usePublished: true,
           trigger: { type: 'schedule' },
@@ -321,6 +392,14 @@ export async function GET(request: Request) {
         })
         continue
       }
+    }
+
+    const saturated = [...new Set([...agentCapacity.saturatedOrgs(), ...flowCapacity.saturatedOrgs()])]
+    if (saturated.length) {
+      apiLogger.warn('cron/dispatch: workspaces at their in-flight run ceiling — deferred to the next tick', {
+        limit: orgMaxInFlightRuns(),
+        organizations: saturated.length,
+      })
     }
 
     // Wait node: resume runs whose timer is due. resumeAt is set ONLY for timer
@@ -338,11 +417,10 @@ export async function GET(request: Request) {
         take: MAX_FLOWS_PER_TICK,
         select: { id: true, flowId: true, organizationId: true, userId: true },
       })
+      const waitOwners = await resolveRunOwners(dueWaits)
       for (const run of dueWaits) {
         try {
-          const userId =
-            run.userId ??
-            (await prisma.user.findFirst({ where: { organizationId: run.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } }))?.id
+          const userId = waitOwners.get(run.id)
           if (!userId) continue
           // reply '' is the timer signal — the wait step resumes with { resumed: true }.
           await dispatchDetachedFlowExecution({

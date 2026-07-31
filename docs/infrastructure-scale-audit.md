@@ -320,13 +320,35 @@ the full timeout before stall recovery, which is a real availability cost at sca
 
 ### Wave 2 — capacity floor (do before inviting 100 users)
 
-5. Rewrite cron candidate selection: due-in-SQL, ordered by staleness, cursor-paginated,
-   indexed `(status, lastExecutedAt)` on `AgentTask` and `Flow` (§7).
-6. Cron enqueues instead of running inline; hoist the per-agent user lookup (§8).
-7. Scale workers horizontally and add a per-org in-flight cap at dequeue (§9).
-8. Split the worker's `DATABASE_URL` with a real pool; confirm Vercel's (§10).
-9. Confirm Upstash env vars are live so rate limits and the usage counter are actually
-   shared; then extend `rateLimit()` to all mutating routes (§13).
+5. **Done.** §7 — the scan and the cap are now separate concerns. `scanAll`
+   (`src/lib/scheduling/scan.ts`) reads *every* active agent and flow by id cursor,
+   so no row is excluded from being examined; the per-tick cap then applies to a
+   list sorted stalest-first (`stalestFirst`), so overflow is deferred and rotates
+   rather than the same rows winning forever. Dueness could not be pushed into SQL
+   — it lives in a JSON `schedule` column and in cron expressions — which is exactly
+   why a complete scan is the only sound answer. Indexes `(status, id)` added on
+   `agent_tasks` and `flows`. Saturation and the runaway backstop both log.
+6. **Done.** §8 — the cron enqueues via `dispatchAgentExecution`
+   (`src/features/agents/dispatch.ts`) instead of calling `runAgentExecution` inside
+   the request; inline mode (dev/CI) is unchanged. The per-candidate user lookups
+   are gone: `resolveRunOwners` (`src/lib/scheduling/owners.ts`) resolves the whole
+   tick in two queries, and it now also refuses to attribute a run to a named owner
+   who has left the org.
+7. **Partly done.** §9 — per-org fairness is in: `OrgCapacity`
+   (`src/lib/queue/org-capacity.ts`) reads each workspace's in-flight runs (agents
+   and flows share one worker-slot budget) and defers dispatch past
+   `ORG_MAX_INFLIGHT_RUNS`, so one org's burst can no longer fill the pool.
+   `render.yaml` now declares `numInstances: 3`. **Needs you:** applying the Render
+   change, and confirming the plan/instance count against real queue depth.
+8. **Needs you.** §10 — `render.yaml` and `.env.example` now document that the worker
+   must NOT reuse Vercel's `connection_limit=1` string and should run ~20. The actual
+   values are console-side and unverified.
+9. **Done, with a caveat.** §13 — the default write budget is enforced in
+   `withAuthenticatedApi` itself (240/min per user, `WRITE_RATE_LIMIT_PER_MIN`,
+   overridable or opt-out per route), so every mutating route is covered including
+   ones not yet written. Reads are deliberately excluded — the shell polls by design.
+   **Caveat:** this is only a global ceiling if `UPSTASH_REDIS_REST_*` or `REDIS_URL`
+   is set on Vercel; otherwise it is per-instance. Still unverified.
 
 ### Wave 3 — structural hardening
 
@@ -383,3 +405,27 @@ The third is the one I'd pick. It needs your call before I build it.
 
 Not verified: the DB-backed route-smoke suite (runs in CI), and none of this has been
 exercised under concurrent load.
+
+## Verification performed on the Wave 2 changes
+
+- `tsc --noEmit` clean; `eslint` 0 errors; `npm test` — 1394 pass, 0 fail, 6 skipped.
+- 17 new tests: `scan.test.ts` (complete multi-page scan, exactly-full final page,
+  empty table, the backstop *reporting* truncation rather than hiding it, stalest
+  ordering, and that a capped overflow rotates on the next tick), `owners.test.ts`
+  (named owner, org fallback, a named owner who left the org, a deactivated owner,
+  an org with no active members, multi-org batches), `org-capacity.test.ts`
+  (ceiling, in-tick accumulation, one saturated org not blocking another).
+- `prisma migrate diff --from-migrations --to-schema-datamodel` reports **no
+  difference** — the migration history reproduces the declared schema exactly.
+- The full migration history (all 43) applies cleanly to a fresh Postgres.
+- Runtime-probed the rewritten scan against a real database, because
+  `Prisma.AnyNull` in a `not:` filter is the kind of thing that typechecks and then
+  throws: it executes, excludes both SQL NULL and JSON null (matching the
+  `publishedGraph == null` check it replaced), keeps `publishedGraph` out of the
+  payload, and the cursor pagination behaves.
+
+**Coverage gap, stated plainly:** the cron route's own glue has no automated test —
+it is `CRON_SECRET`-gated and excluded from the route-smoke harness. The reason the
+selection logic was extracted into `scan.ts` / `owners.ts` / `org-capacity.ts` is that
+those are the parts that carry the bugs, and they *are* unit-tested. The wiring in
+`route.ts` is verified by typecheck and reading only.

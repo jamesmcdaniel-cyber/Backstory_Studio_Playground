@@ -1,6 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { iceServersFromEnv } from '../ice-config'
+import { setErrorReporter, resetErrorReporter } from '@/lib/observability/sentry'
+import {
+  iceServersFromEnv,
+  parseCloudflareIceServers,
+  resolveIceServers,
+  CLOUDFLARE_TURN_TTL_SECONDS,
+} from '../ice-config'
 
 test('STUN always present; TURN appended only with full config', () => {
   assert.deepEqual(iceServersFromEnv({}), [{ urls: 'stun:stun.l.google.com:19302' }])
@@ -19,4 +25,73 @@ test('partial TURN config stays STUN-only; comma list becomes an array', () => {
   ])
   const out = iceServersFromEnv({ TURN_URL: 'turn:a, turns:b', TURN_USERNAME: 'u', TURN_CREDENTIAL: 'c' })
   assert.deepEqual(out[1].urls, ['turn:a', 'turns:b'])
+})
+
+const CF_ENV = { CLOUDFLARE_TURN_KEY_ID: 'key-1', CLOUDFLARE_TURN_API_TOKEN: 'token-1' }
+const CF_BODY = {
+  iceServers: [
+    { urls: ['stun:stun.cloudflare.com:3478'] },
+    { urls: ['turn:turn.cloudflare.com:3478?transport=udp'], username: 'u', credential: 'c' },
+  ],
+}
+
+const okFetch = (body: unknown, calls: unknown[] = []) =>
+  (async (url: unknown, init: unknown) => {
+    calls.push({ url, init })
+    return { ok: true, status: 200, json: async () => body } as unknown as Response
+  }) as unknown as typeof fetch
+
+test('parseCloudflareIceServers keeps well-formed entries and rejects junk', () => {
+  assert.deepEqual(parseCloudflareIceServers(CF_BODY), CF_BODY.iceServers)
+  assert.equal(parseCloudflareIceServers(null), null)
+  assert.equal(parseCloudflareIceServers({}), null)
+  assert.equal(parseCloudflareIceServers({ iceServers: [] }), null)
+  assert.equal(parseCloudflareIceServers({ iceServers: [{ nope: 1 }] }), null)
+})
+
+test('Cloudflare config is used and the request carries key, token, ttl and identifier', async () => {
+  const calls: unknown[] = []
+  const servers = await resolveIceServers(CF_ENV, {
+    customIdentifier: 'org-42',
+    fetchImpl: okFetch(CF_BODY, calls),
+  })
+  assert.deepEqual(servers, CF_BODY.iceServers)
+  const call = calls[0] as { url: string; init: { headers: Record<string, string>; body: string } }
+  assert.match(call.url, /\/v1\/turn\/keys\/key-1\/credentials\/generate-ice-servers$/)
+  assert.equal(call.init.headers.Authorization, 'Bearer token-1')
+  assert.deepEqual(JSON.parse(call.init.body), {
+    ttl: CLOUDFLARE_TURN_TTL_SECONDS,
+    customIdentifier: 'org-42',
+  })
+})
+
+test('a failing Cloudflare call falls through to static TURN env', async () => {
+  setErrorReporter(() => {})
+  const failing = (async () => ({ ok: false, status: 500, json: async () => ({}) }) as unknown as Response) as unknown as typeof fetch
+  const servers = await resolveIceServers(
+    { ...CF_ENV, TURN_URL: 'turn:relay.example.com:3478', TURN_USERNAME: 'u', TURN_CREDENTIAL: 'c' },
+    { fetchImpl: failing },
+  )
+  assert.deepEqual(servers, [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'turn:relay.example.com:3478', username: 'u', credential: 'c' },
+  ])
+  resetErrorReporter()
+})
+
+test('a throwing Cloudflare call with no static env degrades to STUN-only', async () => {
+  setErrorReporter(() => {})
+  const throwing = (async () => { throw new Error('network down') }) as unknown as typeof fetch
+  assert.deepEqual(await resolveIceServers(CF_ENV, { fetchImpl: throwing }), [
+    { urls: 'stun:stun.l.google.com:19302' },
+  ])
+  resetErrorReporter()
+})
+
+test('without Cloudflare env the relay is never called', async () => {
+  let called = false
+  const spy = (async () => { called = true; return {} as Response }) as unknown as typeof fetch
+  const servers = await resolveIceServers({}, { fetchImpl: spy })
+  assert.equal(called, false)
+  assert.deepEqual(servers, [{ urls: 'stun:stun.l.google.com:19302' }])
 })

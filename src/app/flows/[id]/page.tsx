@@ -2035,9 +2035,11 @@ function FlowBuilder() {
           muted={huddle.muted}
           members={huddleMembers}
           speakingIds={huddle.speakingIds}
+          error={huddle.error}
           onJoin={() => void huddle.join()}
           onLeave={huddle.leave}
           onToggleMute={huddle.toggleMute}
+          onDismissError={huddle.clearError}
         />
         {view === 'canvas' && (
           <div className="min-w-0 flex-1 bg-white">

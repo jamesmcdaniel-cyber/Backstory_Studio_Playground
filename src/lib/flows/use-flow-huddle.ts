@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CollabBus } from '@/lib/flows/use-flow-collab'
 import { reduceHuddleSignal, type HuddleSignal } from '@/lib/flows/huddle-signals'
 import { rmsLevel, SPEAKING_THRESHOLD } from '@/lib/flows/audio-level'
+import { describeMediaError, type MediaErrorInfo } from '@/lib/flows/media-errors'
 
 // STUN-only v1: connects on most home/office networks. A minority behind
 // strict/symmetric NATs need a TURN relay — a deliberate follow-up, not v1.
@@ -27,6 +28,7 @@ export function useFlowHuddle(
   const [connecting, setConnecting] = useState(false)
   const [muted, setMuted] = useState(false)
   const [speakingIds, setSpeakingIds] = useState<Set<string>>(new Set())
+  const [error, setError] = useState<MediaErrorInfo | null>(null)
   const peers = useRef<Map<string, PeerEntry>>(new Map())
   const localStream = useRef<MediaStream | null>(null)
   const audioCtx = useRef<AudioContext | null>(null)
@@ -124,6 +126,7 @@ export function useFlowHuddle(
 
   const join = useCallback(async () => {
     if (joinedRef.current) return
+    setError(null)
     setConnecting(true)
     try {
       try {
@@ -141,8 +144,9 @@ export function useFlowHuddle(
       setMuted(false)
       setInHuddle(true)
       send({ kind: 'join' }) // existing members respond with offers
-    } catch {
-      // Mic denied or unavailable — stay out of the huddle.
+    } catch (mediaError) {
+      // Was silently swallowed: the user clicked Join and nothing happened.
+      setError(describeMediaError(mediaError))
     } finally {
       setConnecting(false)
     }
@@ -194,11 +198,13 @@ export function useFlowHuddle(
     return () => window.clearInterval(timer)
   }, [joined, selfClientId])
 
+  const clearError = useCallback(() => setError(null), [])
+
   // Leave cleanly on unmount/navigation (ref pattern: the cleanup must run
   // once at unmount, not every time leave's identity changes).
   const leaveRef = useRef(leave)
   leaveRef.current = leave
   useEffect(() => () => { if (joinedRef.current) leaveRef.current() }, [])
 
-  return { joined, connecting, muted, speakingIds, join, leave, toggleMute }
+  return { joined, connecting, muted, speakingIds, error, join, leave, toggleMute, clearError }
 }

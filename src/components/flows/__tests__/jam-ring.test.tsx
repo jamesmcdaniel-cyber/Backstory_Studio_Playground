@@ -5,6 +5,26 @@ import React from 'react'
 import { render, cleanup, screen } from '@testing-library/react'
 import { act } from 'react'
 import { JamDialog } from '@/components/flows/jam-dialog'
+import type { FlowHuddle } from '@/lib/flows/use-flow-huddle'
+
+/** A huddle we are in. Only the fields the dialog reads need to be real. */
+const joinedHuddle = {
+  joined: true,
+  connecting: false,
+  muted: false,
+  pttEnabled: false,
+  transmitting: true,
+  error: null,
+  speakingIds: new Set<string>(),
+  peerStates: new Map(),
+  peerAudio: new Map(),
+  join: async () => {},
+  leave: () => {},
+  toggleMute: () => {},
+  setPttEnabled: () => {},
+  setPeerAudio: () => {},
+  clearError: () => {},
+} as unknown as FlowHuddle
 
 const flush = async () => { await act(async () => { await Promise.resolve() }) }
 
@@ -62,7 +82,7 @@ test('with no huddle live the dialog still sends a plain jam invite', async () =
 test('while in a huddle the same button rings instead of inviting', async () => {
   const posts: { url: string; body: Record<string, unknown> }[] = []
   stubRoster(posts)
-  render(<JamDialog {...baseProps} huddleJoined />)
+  render(<JamDialog {...baseProps} huddle={joinedHuddle} />)
   await flush()
   assert.ok(screen.getByRole('button', { name: /select teammates to ring/i }))
   await selectAdaAndSend()

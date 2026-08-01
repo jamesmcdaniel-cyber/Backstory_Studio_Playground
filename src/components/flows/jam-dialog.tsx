@@ -6,6 +6,8 @@ import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { HuddlePanel, type HuddleMember } from '@/components/flows/huddle-panel'
+import type { FlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { cn } from '@/lib/utils'
 
 type Visibility = 'shared' | 'view' | 'private'
@@ -33,8 +35,9 @@ export function JamDialog({
   onChangeVisibility,
   presence,
   onFollow,
-  onJoinHuddle,
-  huddleJoined,
+  huddle,
+  huddleMembers,
+  selfClientId,
   shareToken,
   shareRole,
   onShareChanged,
@@ -60,9 +63,11 @@ export function JamDialog({
   }[]
   /** Switch the builder to a teammate's view. */
   onFollow?: (view: 'inline' | 'canvas') => void
-  /** Starts/joins the voice huddle (closes the dialog first at the call site). */
-  onJoinHuddle?: () => void
-  huddleJoined?: boolean
+  /** The whole huddle surface — every voice control lives inside this dialog.
+   *  Absent → the jam has no voice controls. */
+  huddle?: FlowHuddle
+  huddleMembers?: HuddleMember[]
+  selfClientId?: string
   /** Cross-workspace share link state (same-org editors only). */
   shareToken?: string | null
   shareRole?: 'view' | 'edit'
@@ -84,7 +89,6 @@ export function JamDialog({
   const shareable = visibility !== 'private'
   const canInvite = canEdit && shareable
   const here = presence ?? []
-  const huddleLive = here.some((p) => p.inHuddle)
 
   // Load workspace members to invite (once the dialog opens, for editors of a
   // shareable flow).
@@ -119,7 +123,7 @@ export function JamDialog({
       const res = await fetch(`/api/flows/${flowId}/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userIds: Array.from(selected), kind: huddleJoined ? 'huddle' : 'jam' }),
+        body: JSON.stringify({ userIds: Array.from(selected), kind: huddle?.joined ? 'huddle' : 'jam' }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -127,7 +131,7 @@ export function JamDialog({
         return
       }
       toast.success(
-        huddleJoined
+        huddle?.joined
           ? `Rang ${data.invited} ${data.invited === 1 ? 'person' : 'people'} — they’ll get a notification to join the huddle.`
           : `Invited ${data.invited} ${data.invited === 1 ? 'person' : 'people'} — they’ll get a notification linking to this flow.`,
       )
@@ -224,18 +228,14 @@ export function JamDialog({
                   </span>
                   In this jam now
                 </p>
-                {onJoinHuddle && !huddleJoined && (
-                  <Button size="sm" variant="outline" className="h-7 rounded-full" onClick={onJoinHuddle}>
-                    <Mic className="mr-1.5 h-3.5 w-3.5" />
-                    {huddleLive ? 'Join huddle' : 'Start huddle'}
-                  </Button>
-                )}
-                {huddleJoined && (
-                  <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                    <Mic className="h-3.5 w-3.5" /> In huddle
-                  </span>
-                )}
               </div>
+              {/* Every huddle control lives here — there is no separate huddle
+                  bar over the canvas. Only mute is mirrored into the header. */}
+              {huddle && (
+                <div className="mt-2 border-t border-indigo-200/60 pt-2 dark:border-indigo-500/20">
+                  <HuddlePanel huddle={huddle} members={huddleMembers ?? []} selfClientId={selfClientId ?? ''} />
+                </div>
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {here.map((p) => (
                   <span key={p.id} className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card px-2.5 py-1 text-xs">
@@ -328,7 +328,7 @@ export function JamDialog({
 
           {canInvite && members.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">{huddleJoined ? 'Ring teammates' : 'Invite teammates'}</p>
+              <p className="text-xs font-medium text-muted-foreground">{huddle?.joined ? 'Ring teammates' : 'Invite teammates'}</p>
               <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-border/60 p-1">
                 {members.map((m) => {
                   const label = m.name || m.email || 'Teammate'
@@ -351,8 +351,8 @@ export function JamDialog({
               <Button size="sm" className="w-full" onClick={sendInvites} loading={sending} disabled={selected.size === 0}>
                 <Send className="mr-1.5 h-4 w-4" />
                 {selected.size === 0
-                  ? (huddleJoined ? 'Select teammates to ring' : 'Select teammates to invite')
-                  : huddleJoined
+                  ? (huddle?.joined ? 'Select teammates to ring' : 'Select teammates to invite')
+                  : huddle?.joined
                     ? `Ring ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'} to the huddle`
                     : `Send invite to ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'}`}
               </Button>

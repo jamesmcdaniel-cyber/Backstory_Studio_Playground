@@ -15,7 +15,9 @@ const g = globalThis as unknown as Record<string, unknown>
 // localStorage is here so client-cache tests can assert on it as a bare global,
 // the way a browser exposes it — the modules under test read window.localStorage
 // and both point at the same jsdom Storage instance.
-const keys = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Node', 'NodeFilter', 'TreeWalker', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'FocusEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'localStorage']
+// Element/ShadowRoot/DOMRect are what Radix's popover positioning (floating-ui)
+// reaches for as bare globals — same rationale as NodeFilter above.
+const keys = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'ShadowRoot', 'DOMRect', 'Node', 'NodeFilter', 'TreeWalker', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'PointerEvent', 'FocusEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'localStorage']
 g.window = dom.window
 for (const key of keys) {
   if (key === 'window') continue
@@ -24,5 +26,15 @@ for (const key of keys) {
 try {
   Object.defineProperty(g, 'navigator', { value: win.navigator, configurable: true })
 } catch { /* leave Node's navigator */ }
+// jsdom ships no ResizeObserver; floating-ui constructs one to track anchors.
+// A no-op is enough — tests assert on content, not on measured position.
+if (!g.ResizeObserver) {
+  g.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}
+
 // React 18 act() environment flag.
 g.IS_REACT_ACT_ENVIRONMENT = true

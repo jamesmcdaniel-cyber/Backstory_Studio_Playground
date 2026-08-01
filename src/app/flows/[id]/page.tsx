@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Trash2, FlaskConical, History, ScrollText, Users, FileText, BookmarkPlus } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Trash2, FlaskConical, History, ScrollText, Users, FileText, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
@@ -16,7 +16,6 @@ import { describeParticipantView } from '@/lib/flows/cursor-view'
 import { applyDragPreview, pruneDragPreview, type DragPreview } from '@/lib/flows/drag-preview'
 import { useFlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { detectHuddleStart } from '@/lib/flows/huddle-alerts'
-import { HuddleBar } from '@/components/flows/huddle-bar'
 import { CursorLayer } from '@/components/flows/cursor-layer'
 import { flowToN8n } from '@/lib/flows/export/to-n8n'
 import { flowToInstructions } from '@/lib/flows/export/to-instructions'
@@ -53,6 +52,7 @@ import { useCanvasPan } from '@/components/flows/use-canvas-pan'
 import { TestPanel } from '@/components/flows/test-panel'
 import { VersionsPanel } from '@/components/flows/versions-panel'
 import type { StepStatus } from '@/lib/flows/node-presentation'
+import { cn } from '@/lib/utils'
 
 type Agent = { id: string; title: string }
 
@@ -1952,7 +1952,32 @@ function FlowBuilder() {
         <Button variant="outline" size="sm" onClick={() => setShowJam(true)}>
           <Users className="mr-1.5 h-4 w-4" /> Jam
           {others.length > 0 && <span className="ml-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">{others.length}</span>}
+          {huddleMembers.length > 0 && <Mic className="ml-1.5 h-3.5 w-3.5 text-emerald-600" />}
         </Button>
+        {/* The ONE huddle control outside the Jam widget. Muting has to be
+            reachable in one action; everything else lives in the dialog. */}
+        {huddle.joined && (
+          huddle.pttEnabled ? (
+            <Button
+              variant={huddle.transmitting ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setShowJam(true)}
+              title="Push to talk is on — hold Space to speak"
+            >
+              <Radio className={cn('mr-1.5 h-4 w-4', huddle.transmitting && 'animate-pulse')} />
+              {huddle.transmitting ? 'Live' : 'Hold Space'}
+            </Button>
+          ) : (
+            <Button
+              variant={huddle.muted ? 'default' : 'outline'}
+              size="sm"
+              onClick={huddle.toggleMute}
+              aria-label={huddle.muted ? 'Unmute' : 'Mute'}
+            >
+              {huddle.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            </Button>
+          )
+        )}
         {!external && (
           <>
             <Button variant="outline" size="sm" onClick={() => setShowVersions((v) => !v)}>
@@ -2047,22 +2072,6 @@ function FlowBuilder() {
 
       {/* Body: canvas + optional drawer + optional copilot */}
       <div className="relative flex min-h-0 flex-1">
-        <HuddleBar
-          joined={huddle.joined}
-          connecting={huddle.connecting}
-          muted={huddle.muted}
-          members={huddleMembers}
-          speakingIds={huddle.speakingIds}
-          error={huddle.error}
-          peerStates={huddle.peerStates}
-          pttEnabled={huddle.pttEnabled}
-          transmitting={huddle.transmitting}
-          onTogglePtt={() => huddle.setPttEnabled(!huddle.pttEnabled)}
-          onJoin={() => void huddle.join()}
-          onLeave={huddle.leave}
-          onToggleMute={huddle.toggleMute}
-          onDismissError={huddle.clearError}
-        />
         {view === 'canvas' && (
           <div className="min-w-0 flex-1 bg-white">
             <GraphCanvas
@@ -2382,8 +2391,9 @@ function FlowBuilder() {
           ...describeParticipantView(p, view),
         }))}
         onFollow={(target) => { setShowJam(false); changeView(target) }}
-        onJoinHuddle={() => { setShowJam(false); void huddle.join() }}
-        huddleJoined={huddle.joined}
+        huddle={huddle}
+        huddleMembers={huddleMembers}
+        selfClientId={selfClientId}
         shareToken={shareToken}
         shareRole={shareRole}
         onShareChanged={(token, role) => { setShareToken(token); setShareRole(role) }}

@@ -25,6 +25,15 @@ type PeerEntry = {
 /** How a peer's link looks to the rest of the UI. */
 export type PeerConnectionState = 'connected' | 'reconnecting' | 'lost'
 
+/** Per-peer playback, local to this listener. Never broadcast. */
+export type PeerAudioSettings = { volume: number; muted: boolean }
+
+/** The hook's full surface. Passed as one prop so the Jam widget's controls
+ *  cannot drift out of sync with what the hook actually exposes. */
+export type FlowHuddle = ReturnType<typeof useFlowHuddle>
+
+const DEFAULT_PEER_AUDIO: PeerAudioSettings = { volume: 1, muted: false }
+
 /**
  * P2P voice huddle over the flow's collab channel: audio-only WebRTC mesh
  * (one RTCPeerConnection per other participant — fine for the 2-5 person jams
@@ -45,6 +54,11 @@ export function useFlowHuddle(
   const [speakingIds, setSpeakingIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<MediaErrorInfo | null>(null)
   const [peerStates, setPeerStates] = useState<Map<string, PeerConnectionState>>(new Map())
+  const [peerAudio, setPeerAudioState] = useState<Map<string, PeerAudioSettings>>(new Map())
+  // Deliberately NOT cleared by closePeer: a reconnect builds a fresh audio
+  // element, and without this your volume choice would silently reset every
+  // time that peer's wifi hiccupped.
+  const peerAudioRef = useRef<Map<string, PeerAudioSettings>>(new Map())
   const peers = useRef<Map<string, PeerEntry>>(new Map())
   const localStream = useRef<MediaStream | null>(null)
   const audioCtx = useRef<AudioContext | null>(null)
@@ -76,6 +90,21 @@ export function useFlowHuddle(
     try { entry.pc.close() } catch { /* already closed */ }
     entry.audio?.remove()
   }, [])
+
+  const applyPeerAudio = useCallback((peerId: string) => {
+    const entry = peers.current.get(peerId)
+    if (!entry?.audio) return
+    const settings = peerAudioRef.current.get(peerId) ?? DEFAULT_PEER_AUDIO
+    entry.audio.volume = settings.volume
+    entry.audio.muted = settings.muted
+  }, [])
+
+  const setPeerAudio = useCallback((peerId: string, patch: Partial<PeerAudioSettings>) => {
+    const next = { ...(peerAudioRef.current.get(peerId) ?? DEFAULT_PEER_AUDIO), ...patch }
+    peerAudioRef.current.set(peerId, next)
+    setPeerAudioState(new Map(peerAudioRef.current))
+    applyPeerAudio(peerId)
+  }, [applyPeerAudio])
 
   const attachAnalyser = useCallback((stream: MediaStream): AnalyserNode | null => {
     try {
@@ -150,8 +179,13 @@ export function useFlowHuddle(
       document.body.appendChild(audio)
       const entry = peers.current.get(peerId)
       if (entry) {
+        // Remove any previous element FIRST. Without this a second ontrack —
+        // renegotiation, or a second track — orphans the old element in the
+        // body, still attached and still playing, with nothing referencing it.
+        entry.audio?.remove()
         entry.audio = audio
         entry.analyser = attachAnalyser(stream)
+        applyPeerAudio(peerId) // a reconnecting peer returns at the volume you set
       }
     }
     pc.onconnectionstatechange = () => {
@@ -174,7 +208,7 @@ export function useFlowHuddle(
     }
     peers.current.set(peerId, { pc, audio: null, analyser: null, isInitiator, attempts: 0, timer: null })
     return pc
-  }, [send, closePeer, attachAnalyser, setPeerState])
+  }, [send, closePeer, attachAnalyser, setPeerState, applyPeerAudio])
 
   // Signaling: run the pure policy, then perform the WebRTC side effects.
   useEffect(() => bus.on('huddle', (payload) => {
@@ -255,6 +289,10 @@ export function useFlowHuddle(
     setSpeakingIds(new Set())
     setPeerStates(new Map())
     setPttHeld(false)
+    // Volume choices are per-session: a level you set last week is a confusing
+    // default, so unlike peer recreation, leaving does clear them.
+    peerAudioRef.current.clear()
+    setPeerAudioState(new Map())
   }, [send, closePeer, setInHuddle])
 
   const toggleMute = useCallback(() => {
@@ -340,7 +378,7 @@ export function useFlowHuddle(
 
   return {
     joined, connecting, muted, speakingIds, error, peerStates,
-    pttEnabled, transmitting,
-    join, leave, toggleMute, setPttEnabled, clearError,
+    pttEnabled, transmitting, peerAudio,
+    join, leave, toggleMute, setPttEnabled, setPeerAudio, clearError,
   }
 }

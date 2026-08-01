@@ -3,6 +3,7 @@
 import { AlertCircle, Headphones, Loader2, Mic, MicOff, PhoneOff, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { MediaErrorInfo } from '@/lib/flows/media-errors'
+import type { PeerConnectionState } from '@/lib/flows/use-flow-huddle'
 import { cn } from '@/lib/utils'
 
 export type HuddleMember = { clientId: string; name: string; color: string }
@@ -19,6 +20,7 @@ export function HuddleBar({
   members,
   speakingIds,
   error,
+  peerStates,
   onJoin,
   onLeave,
   onToggleMute,
@@ -31,6 +33,8 @@ export function HuddleBar({
   members: HuddleMember[]
   speakingIds: Set<string>
   error?: MediaErrorInfo | null
+  /** Per-peer link health, so a drop is visible rather than silent. */
+  peerStates?: Map<string, PeerConnectionState>
   onJoin: () => void
   onLeave: () => void
   onToggleMute: () => void
@@ -64,10 +68,16 @@ export function HuddleBar({
             {members.slice(0, 6).map((member) => (
               <span
                 key={member.clientId}
-                title={member.name}
+                title={
+                  peerStates?.get(member.clientId) === 'reconnecting' ? `${member.name} — reconnecting`
+                  : peerStates?.get(member.clientId) === 'lost' ? `${member.name} — connection lost`
+                  : member.name
+                }
                 className={cn(
                   'flex h-7 w-7 items-center justify-center rounded-full border-2 border-background text-[10px] font-semibold text-white transition-shadow',
                   speakingIds.has(member.clientId) && 'ring-2 ring-emerald-400',
+                  peerStates?.get(member.clientId) === 'reconnecting' && 'opacity-50 animate-pulse',
+                  peerStates?.get(member.clientId) === 'lost' && 'opacity-40 grayscale',
                 )}
                 style={{ backgroundColor: member.color }}
               >

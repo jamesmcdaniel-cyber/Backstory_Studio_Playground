@@ -5,12 +5,24 @@ import type { CollabBus } from '@/lib/flows/use-flow-collab'
 import { reduceHuddleSignal, type HuddleSignal } from '@/lib/flows/huddle-signals'
 import { rmsLevel, SPEAKING_THRESHOLD } from '@/lib/flows/audio-level'
 import { describeMediaError, type MediaErrorInfo } from '@/lib/flows/media-errors'
+import { nextPeerAction, recoveryDelayMs } from '@/lib/flows/peer-recovery'
 
 // STUN-only v1: connects on most home/office networks. A minority behind
 // strict/symmetric NATs need a TURN relay — a deliberate follow-up, not v1.
 const RTC_CONFIG: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
 
-type PeerEntry = { pc: RTCPeerConnection; audio: HTMLAudioElement | null; analyser: AnalyserNode | null }
+type PeerEntry = {
+  pc: RTCPeerConnection
+  audio: HTMLAudioElement | null
+  analyser: AnalyserNode | null
+  /** Whether WE sent the original offer — only this side restarts ICE. */
+  isInitiator: boolean
+  attempts: number
+  timer: number | null
+}
+
+/** How a peer's link looks to the rest of the UI. */
+export type PeerConnectionState = 'connected' | 'reconnecting' | 'lost'
 
 /**
  * P2P voice huddle over the flow's collab channel: audio-only WebRTC mesh
@@ -29,6 +41,7 @@ export function useFlowHuddle(
   const [muted, setMuted] = useState(false)
   const [speakingIds, setSpeakingIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<MediaErrorInfo | null>(null)
+  const [peerStates, setPeerStates] = useState<Map<string, PeerConnectionState>>(new Map())
   const peers = useRef<Map<string, PeerEntry>>(new Map())
   const localStream = useRef<MediaStream | null>(null)
   const audioCtx = useRef<AudioContext | null>(null)
@@ -43,10 +56,20 @@ export function useFlowHuddle(
     bus.send('huddle', { ...signal, from: selfClientId })
   }, [bus, selfClientId])
 
+  const setPeerState = useCallback((peerId: string, state: PeerConnectionState | null) => {
+    setPeerStates((prev) => {
+      const next = new Map(prev)
+      if (state === null) next.delete(peerId)
+      else next.set(peerId, state)
+      return next
+    })
+  }, [])
+
   const closePeer = useCallback((peerId: string) => {
     const entry = peers.current.get(peerId)
     if (!entry) return
     peers.current.delete(peerId)
+    if (entry.timer !== null) window.clearTimeout(entry.timer)
     try { entry.pc.close() } catch { /* already closed */ }
     entry.audio?.remove()
   }, [])
@@ -64,7 +87,51 @@ export function useFlowHuddle(
     }
   }, [])
 
-  const createPeer = useCallback((peerId: string): RTCPeerConnection => {
+  const restartIce = useCallback(async (peerId: string) => {
+    const entry = peers.current.get(peerId)
+    if (!entry) return
+    entry.attempts += 1
+    try {
+      entry.pc.restartIce()
+      const offer = await entry.pc.createOffer()
+      await entry.pc.setLocalDescription(offer)
+      // A re-offer to a peer we already have: reduceHuddleSignal routes it to
+      // the existing connection, so no signaling change was needed.
+      send({ kind: 'offer', to: peerId, sdp: offer })
+    } catch {
+      // The scheduled follow-up evaluates state again and closes if needed.
+    }
+  }, [send])
+
+  const scheduleRecovery = useCallback((peerId: string) => {
+    const entry = peers.current.get(peerId)
+    if (!entry || entry.timer !== null) return
+    const delay = recoveryDelayMs(entry.pc.connectionState, entry.attempts)
+    entry.timer = window.setTimeout(() => {
+      const current = peers.current.get(peerId)
+      if (!current) return
+      current.timer = null
+      if (current.pc.connectionState === 'connected') {
+        setPeerState(peerId, 'connected')
+        current.attempts = 0
+        return
+      }
+      const action = nextPeerAction(current.pc.connectionState, current.attempts, current.isInitiator)
+      if (action === 'restart-ice') {
+        void restartIce(peerId)
+        scheduleRecoveryRef.current(peerId)
+      } else if (action === 'close') {
+        setPeerState(peerId, 'lost')
+        closePeer(peerId)
+      }
+    }, delay)
+  }, [restartIce, closePeer, setPeerState])
+
+  // scheduleRecovery re-schedules itself; a ref breaks the declaration cycle.
+  const scheduleRecoveryRef = useRef(scheduleRecovery)
+  scheduleRecoveryRef.current = scheduleRecovery
+
+  const createPeer = useCallback((peerId: string, isInitiator: boolean): RTCPeerConnection => {
     const pc = new RTCPeerConnection({ iceServers: iceServersRef.current ?? RTC_CONFIG.iceServers })
     for (const track of localStream.current?.getTracks() ?? []) pc.addTrack(track, localStream.current!)
     pc.onicecandidate = (event) => {
@@ -85,11 +152,26 @@ export function useFlowHuddle(
       }
     }
     pc.onconnectionstatechange = () => {
-      if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) closePeer(peerId)
+      const state = pc.connectionState
+      if (state === 'connected') {
+        const entry = peers.current.get(peerId)
+        if (entry) {
+          entry.attempts = 0
+          if (entry.timer !== null) { window.clearTimeout(entry.timer); entry.timer = null }
+        }
+        setPeerState(peerId, 'connected')
+      } else if (state === 'disconnected' || state === 'failed') {
+        // Was: closePeer(peerId) — a 2s wifi blip killed the peer for good.
+        setPeerState(peerId, 'reconnecting')
+        scheduleRecoveryRef.current(peerId)
+      } else if (state === 'closed') {
+        setPeerState(peerId, null)
+        closePeer(peerId)
+      }
     }
-    peers.current.set(peerId, { pc, audio: null, analyser: null })
+    peers.current.set(peerId, { pc, audio: null, analyser: null, isInitiator, attempts: 0, timer: null })
     return pc
-  }, [send, closePeer, attachAnalyser])
+  }, [send, closePeer, attachAnalyser, setPeerState])
 
   // Signaling: run the pure policy, then perform the WebRTC side effects.
   useEffect(() => bus.on('huddle', (payload) => {
@@ -99,12 +181,12 @@ export function useFlowHuddle(
       for (const instruction of instructions) {
         try {
           if (instruction.action === 'create-offer') {
-            const pc = createPeer(instruction.peerId)
+            const pc = createPeer(instruction.peerId, true)
             const offer = await pc.createOffer()
             await pc.setLocalDescription(offer)
             send({ kind: 'offer', to: instruction.peerId, sdp: offer })
           } else if (instruction.action === 'apply-offer') {
-            const pc = peers.current.get(instruction.peerId)?.pc ?? createPeer(instruction.peerId)
+            const pc = peers.current.get(instruction.peerId)?.pc ?? createPeer(instruction.peerId, false)
             await pc.setRemoteDescription(instruction.sdp as RTCSessionDescriptionInit)
             const answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
@@ -168,6 +250,7 @@ export function useFlowHuddle(
     audioCtx.current = null
     setInHuddle(false)
     setSpeakingIds(new Set())
+    setPeerStates(new Map())
   }, [send, closePeer, setInHuddle])
 
   const toggleMute = useCallback(() => {
@@ -206,5 +289,5 @@ export function useFlowHuddle(
   leaveRef.current = leave
   useEffect(() => () => { if (joinedRef.current) leaveRef.current() }, [])
 
-  return { joined, connecting, muted, speakingIds, error, join, leave, toggleMute, clearError }
+  return { joined, connecting, muted, speakingIds, error, peerStates, join, leave, toggleMute, clearError }
 }

@@ -2036,6 +2036,7 @@ function FlowBuilder() {
           members={huddleMembers}
           speakingIds={huddle.speakingIds}
           error={huddle.error}
+          peerStates={huddle.peerStates}
           onJoin={() => void huddle.join()}
           onLeave={huddle.leave}
           onToggleMute={huddle.toggleMute}

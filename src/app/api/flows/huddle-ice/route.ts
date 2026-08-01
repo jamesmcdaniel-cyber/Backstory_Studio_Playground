@@ -1,15 +1,21 @@
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
-import { iceServersFromEnv } from '@/lib/flows/ice-config'
+import { resolveIceServers } from '@/lib/flows/ice-config'
 
-// GET /api/flows/huddle-ice — WebRTC ICE config for the voice huddle. TURN
-// creds live in env (TURN_URL/TURN_USERNAME/TURN_CREDENTIAL) and reach only
-// authenticated users at call time — never the client bundle. STUN-only until
-// the env vars are set; enabling a relay is a Vercel env change, no deploy.
-export const GET = withAuthenticatedApi(async () => ({
+// GET /api/flows/huddle-ice — WebRTC ICE config for the voice huddle.
+// Credentials are minted server-side per call (Cloudflare short-lived creds,
+// falling back to static TURN_* env, then STUN-only) and reach only
+// authenticated users — never the client bundle. The org id is passed as
+// Cloudflare's customIdentifier so relay usage is attributable per workspace.
+export const GET = withAuthenticatedApi(async (_request, auth) => ({
   success: true,
-  iceServers: iceServersFromEnv({
-    TURN_URL: process.env.TURN_URL,
-    TURN_USERNAME: process.env.TURN_USERNAME,
-    TURN_CREDENTIAL: process.env.TURN_CREDENTIAL,
-  }),
+  iceServers: await resolveIceServers(
+    {
+      CLOUDFLARE_TURN_KEY_ID: process.env.CLOUDFLARE_TURN_KEY_ID,
+      CLOUDFLARE_TURN_API_TOKEN: process.env.CLOUDFLARE_TURN_API_TOKEN,
+      TURN_URL: process.env.TURN_URL,
+      TURN_USERNAME: process.env.TURN_USERNAME,
+      TURN_CREDENTIAL: process.env.TURN_CREDENTIAL,
+    },
+    { customIdentifier: auth.organizationId },
+  ),
 }), { permission: 'flow.read' })

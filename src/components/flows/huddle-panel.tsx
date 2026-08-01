@@ -3,6 +3,7 @@
 import { AlertCircle, Loader2, Mic, MicOff, PhoneOff, Radio, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HuddleMemberControls } from '@/components/flows/huddle-member-controls'
+import { HuddleSettingsMenu } from '@/components/flows/huddle-settings-menu'
 import type { FlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { cn } from '@/lib/utils'
 
@@ -74,6 +75,15 @@ export function HuddlePanel({
                 </Button>
               </>
             )}
+            <HuddleSettingsMenu
+              inputs={huddle.devices.inputs}
+              outputs={huddle.devices.outputs}
+              inputDeviceId={huddle.inputDeviceId}
+              outputDeviceId={huddle.outputDeviceId}
+              canSelectOutput={huddle.canSelectOutput}
+              onSelectInput={(id) => void huddle.selectInputDevice(id)}
+              onSelectOutput={(id) => void huddle.selectOutputDevice(id)}
+            />
             <Button size="sm" variant="destructive" className="h-7 rounded-full" onClick={huddle.leave} aria-label="Leave huddle">
               <PhoneOff className="h-3.5 w-3.5" />
             </Button>

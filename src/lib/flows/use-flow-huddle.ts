@@ -7,6 +7,7 @@ import { rmsLevel, SPEAKING_THRESHOLD } from '@/lib/flows/audio-level'
 import { describeMediaError, type MediaErrorInfo } from '@/lib/flows/media-errors'
 import { nextPeerAction, recoveryDelayMs } from '@/lib/flows/peer-recovery'
 import { isPttTrigger, micEnabled } from '@/lib/flows/push-to-talk'
+import { partitionDevices, type DeviceOption } from '@/lib/flows/audio-devices'
 
 // STUN-only v1: connects on most home/office networks. A minority behind
 // strict/symmetric NATs need a TURN relay — a deliberate follow-up, not v1.
@@ -59,6 +60,14 @@ export function useFlowHuddle(
   // element, and without this your volume choice would silently reset every
   // time that peer's wifi hiccupped.
   const peerAudioRef = useRef<Map<string, PeerAudioSettings>>(new Map())
+  const [devices, setDevices] = useState<{ inputs: DeviceOption[]; outputs: DeviceOption[] }>({ inputs: [], outputs: [] })
+  const [inputDeviceId, setInputDeviceId] = useState<string | null>(null)
+  const [outputDeviceId, setOutputDeviceId] = useState<string | null>(null)
+  const outputDeviceIdRef = useRef<string | null>(null)
+  outputDeviceIdRef.current = outputDeviceId
+  // Chrome/Edge only. A visible but inert picker is worse than none, so the UI
+  // omits the control entirely where this is false.
+  const canSelectOutput = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype
   const peers = useRef<Map<string, PeerEntry>>(new Map())
   const localStream = useRef<MediaStream | null>(null)
   const audioCtx = useRef<AudioContext | null>(null)
@@ -186,6 +195,11 @@ export function useFlowHuddle(
         entry.audio = audio
         entry.analyser = attachAnalyser(stream)
         applyPeerAudio(peerId) // a reconnecting peer returns at the volume you set
+        // Elements created after an output switch must adopt the chosen sink.
+        if (outputDeviceIdRef.current) {
+          void (audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> })
+            .setSinkId?.(outputDeviceIdRef.current)?.catch(() => {})
+        }
       }
     }
     pc.onconnectionstatechange = () => {
@@ -307,12 +321,16 @@ export function useFlowHuddle(
   const transmitting = joined && micEnabled(muted, pttEnabled, pttHeld)
   const transmittingRef = useRef(transmitting)
   transmittingRef.current = transmitting
+  // Mirrors the mic-enabled decision so a mid-call device switch can restore it
+  // without making selectInputDevice depend on every PTT keypress.
+  const micLiveRef = useRef(false)
 
   // The ONLY place the local track's enabled flag is set. Every path that can
   // change it — mute, PTT mode, key hold, blur, device switch — resolves
   // through micEnabled, so "am I live?" has exactly one answer.
   useEffect(() => {
     const live = micEnabled(muted, pttEnabled, pttHeld)
+    micLiveRef.current = live
     localStream.current?.getAudioTracks().forEach((track) => { track.enabled = live })
   }, [muted, pttEnabled, pttHeld, joined])
 
@@ -368,6 +386,59 @@ export function useFlowHuddle(
     return () => window.clearInterval(timer)
   }, [joined, selfClientId])
 
+  // Device labels are empty until mic permission is granted, so this only runs
+  // once joined — and re-runs when hardware changes mid-call.
+  useEffect(() => {
+    if (!joined) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices()
+        if (!cancelled) setDevices(partitionDevices(list))
+      } catch { /* leave the lists empty; the menu renders nothing */ }
+    }
+    void refresh()
+    navigator.mediaDevices?.addEventListener?.('devicechange', refresh)
+    return () => {
+      cancelled = true
+      navigator.mediaDevices?.removeEventListener?.('devicechange', refresh)
+    }
+  }, [joined])
+
+  const selectInputDevice = useCallback(async (deviceId: string) => {
+    try {
+      const next = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } })
+      const track = next.getAudioTracks()[0]
+      if (!track) return
+      // replaceTrack needs no renegotiation, so nobody drops mid-sentence.
+      await Promise.all(
+        Array.from(peers.current.values()).map(async ({ pc }) => {
+          const sender = pc.getSenders().find((s) => s.track?.kind === 'audio')
+          if (sender) await sender.replaceTrack(track)
+        }),
+      )
+      localStream.current?.getTracks().forEach((t) => t.stop())
+      localStream.current = next
+      localAnalyser.current = attachAnalyser(next)
+      // Re-apply, or switching mics while muted would quietly unmute you.
+      track.enabled = micLiveRef.current
+      setInputDeviceId(deviceId)
+    } catch (mediaError) {
+      setError(describeMediaError(mediaError))
+    }
+  }, [attachAnalyser])
+
+  const selectOutputDevice = useCallback(async (deviceId: string) => {
+    if (!canSelectOutput) return
+    setOutputDeviceId(deviceId)
+    await Promise.all(
+      Array.from(peers.current.values()).map(async (entry) => {
+        const sink = entry.audio as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null
+        try { await sink?.setSinkId?.(deviceId) } catch { /* device vanished */ }
+      }),
+    )
+  }, [canSelectOutput])
+
   const clearError = useCallback(() => setError(null), [])
 
   // Leave cleanly on unmount/navigation (ref pattern: the cleanup must run
@@ -379,6 +450,8 @@ export function useFlowHuddle(
   return {
     joined, connecting, muted, speakingIds, error, peerStates,
     pttEnabled, transmitting, peerAudio,
+    devices, inputDeviceId, outputDeviceId, canSelectOutput,
     join, leave, toggleMute, setPttEnabled, setPeerAudio, clearError,
+    selectInputDevice, selectOutputDevice,
   }
 }

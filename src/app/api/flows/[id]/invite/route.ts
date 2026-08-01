@@ -4,10 +4,15 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { assertFlowEditable } from '@/lib/flows/access'
 import { notify } from '@/lib/notifications/service'
+import { ringNotification } from '@/lib/flows/huddle-alerts'
 import { recordAudit } from '@/lib/audit'
 import { rateLimit } from '@/lib/ratelimit'
 
-const bodySchema = z.object({ userIds: z.array(z.string().min(1)).min(1).max(50) })
+const bodySchema = z.object({
+  userIds: z.array(z.string().min(1)).min(1).max(50),
+  // Defaulted so every existing caller keeps today's jam-invite behaviour.
+  kind: z.enum(['jam', 'huddle']).default('jam'),
+})
 
 // POST /api/flows/[id]/invite — invite workspace members to jam on this flow.
 // Each invitee gets an in-app notification + web push that deep-links straight
@@ -32,7 +37,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError('This flow is private — set it to “Everyone can view/edit” before inviting people.', 400, 'FLOW_PRIVATE')
   }
 
-  const { userIds } = bodySchema.parse(await request.json())
+  const { userIds, kind } = bodySchema.parse(await request.json())
   // Only real, active members of THIS workspace (never invite across tenants),
   // and never notify the inviter themselves.
   const recipients = await prisma.user.findMany({
@@ -40,26 +45,27 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     select: { id: true, name: true, email: true },
   })
   const inviterName = auth.dbUser.name || auth.dbUser.email || 'A teammate'
+  const copy = ringNotification(kind, inviterName, flow.name, flow.id)
   await Promise.all(
     recipients.map((r) =>
       notify({
         organizationId: auth.organizationId,
         userId: r.id,
-        type: 'flow.jam_invite',
-        level: 'action',
-        title: `${inviterName} invited you to jam`,
-        body: `Join “${flow.name}” to edit it together in real time.`,
-        link: `/flows/${flow.id}`,
+        type: copy.type,
+        level: copy.level,
+        title: copy.title,
+        body: copy.body,
+        link: copy.link,
       }),
     ),
   )
   await recordAudit({
     organizationId: auth.organizationId,
     actorUserId: auth.dbUser.id,
-    action: 'flow.invited',
+    action: kind === 'huddle' ? 'flow.huddle_ring' : 'flow.invited',
     resourceType: 'flow',
     resourceId: flow.id,
-    detail: { invited: recipients.map((r) => r.id) },
+    detail: { invited: recipients.map((r) => r.id), kind },
   }).catch(() => undefined)
 
   return { success: true, invited: recipients.length }

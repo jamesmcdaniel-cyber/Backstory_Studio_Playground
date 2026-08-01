@@ -2055,6 +2055,9 @@ function FlowBuilder() {
           speakingIds={huddle.speakingIds}
           error={huddle.error}
           peerStates={huddle.peerStates}
+          pttEnabled={huddle.pttEnabled}
+          transmitting={huddle.transmitting}
+          onTogglePtt={() => huddle.setPttEnabled(!huddle.pttEnabled)}
           onJoin={() => void huddle.join()}
           onLeave={huddle.leave}
           onToggleMute={huddle.toggleMute}

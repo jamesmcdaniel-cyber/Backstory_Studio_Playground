@@ -6,6 +6,7 @@ import { reduceHuddleSignal, type HuddleSignal } from '@/lib/flows/huddle-signal
 import { rmsLevel, SPEAKING_THRESHOLD } from '@/lib/flows/audio-level'
 import { describeMediaError, type MediaErrorInfo } from '@/lib/flows/media-errors'
 import { nextPeerAction, recoveryDelayMs } from '@/lib/flows/peer-recovery'
+import { isPttTrigger, micEnabled } from '@/lib/flows/push-to-talk'
 
 // STUN-only v1: connects on most home/office networks. A minority behind
 // strict/symmetric NATs need a TURN relay — a deliberate follow-up, not v1.
@@ -39,6 +40,8 @@ export function useFlowHuddle(
   const [joined, setJoined] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [muted, setMuted] = useState(false)
+  const [pttEnabled, setPttEnabledState] = useState(false)
+  const [pttHeld, setPttHeld] = useState(false)
   const [speakingIds, setSpeakingIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<MediaErrorInfo | null>(null)
   const [peerStates, setPeerStates] = useState<Map<string, PeerConnectionState>>(new Map())
@@ -251,15 +254,56 @@ export function useFlowHuddle(
     setInHuddle(false)
     setSpeakingIds(new Set())
     setPeerStates(new Map())
+    setPttHeld(false)
   }, [send, closePeer, setInHuddle])
 
   const toggleMute = useCallback(() => {
-    setMuted((current) => {
-      const next = !current
-      localStream.current?.getAudioTracks().forEach((track) => { track.enabled = !next })
-      return next
-    })
+    setMuted((current) => !current)
   }, [])
+
+  const setPttEnabled = useCallback((on: boolean) => {
+    setPttEnabledState(on)
+    setPttHeld(false) // never carry a stale hold across a mode change
+  }, [])
+
+  const transmitting = joined && micEnabled(muted, pttEnabled, pttHeld)
+  const transmittingRef = useRef(transmitting)
+  transmittingRef.current = transmitting
+
+  // The ONLY place the local track's enabled flag is set. Every path that can
+  // change it — mute, PTT mode, key hold, blur, device switch — resolves
+  // through micEnabled, so "am I live?" has exactly one answer.
+  useEffect(() => {
+    const live = micEnabled(muted, pttEnabled, pttHeld)
+    localStream.current?.getAudioTracks().forEach((track) => { track.enabled = live })
+  }, [muted, pttEnabled, pttHeld, joined])
+
+  // Push-to-talk key handling, bound only while the mode is on and we're in a
+  // huddle — Space behaves normally everywhere else in the builder.
+  useEffect(() => {
+    if (!joined || !pttEnabled) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isPttTrigger(event.key, event.target as HTMLElement | null, event.repeat)) return
+      event.preventDefault() // Space would otherwise scroll the page
+      setPttHeld(true)
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== ' ') return
+      setPttHeld(false)
+    }
+    // Tabbing away mid-hold must not leave us transmitting into a conversation
+    // we've walked away from — keyup never arrives once focus is gone.
+    const onBlur = () => setPttHeld(false)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+      setPttHeld(false)
+    }
+  }, [joined, pttEnabled])
 
   // Speaking pulse: sample all analysers 4×/s; update only on change.
   useEffect(() => {
@@ -267,7 +311,12 @@ export function useFlowHuddle(
     const buffer = new Uint8Array(256)
     const timer = window.setInterval(() => {
       const next = new Set<string>()
-      if (localAnalyser.current) {
+      // A disabled track emits silence, so this would usually resolve itself —
+      // but showing yourself pulsing while not transmitting is the most
+      // misleading state the bar can reach, so it's gated explicitly. Read
+      // through a ref: depending on `transmitting` would rebuild this interval
+      // on every push-to-talk keypress.
+      if (localAnalyser.current && transmittingRef.current) {
         localAnalyser.current.getByteTimeDomainData(buffer)
         if (rmsLevel(buffer) > SPEAKING_THRESHOLD) next.add(selfClientId)
       }
@@ -289,5 +338,9 @@ export function useFlowHuddle(
   leaveRef.current = leave
   useEffect(() => () => { if (joinedRef.current) leaveRef.current() }, [])
 
-  return { joined, connecting, muted, speakingIds, error, peerStates, join, leave, toggleMute, clearError }
+  return {
+    joined, connecting, muted, speakingIds, error, peerStates,
+    pttEnabled, transmitting,
+    join, leave, toggleMute, setPttEnabled, clearError,
+  }
 }

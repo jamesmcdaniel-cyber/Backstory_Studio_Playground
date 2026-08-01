@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertCircle, Headphones, Loader2, Mic, MicOff, PhoneOff, X } from 'lucide-react'
+import { AlertCircle, Headphones, Loader2, Mic, MicOff, PhoneOff, Radio, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { MediaErrorInfo } from '@/lib/flows/media-errors'
 import type { PeerConnectionState } from '@/lib/flows/use-flow-huddle'
@@ -21,9 +21,12 @@ export function HuddleBar({
   speakingIds,
   error,
   peerStates,
+  pttEnabled,
+  transmitting,
   onJoin,
   onLeave,
   onToggleMute,
+  onTogglePtt,
   onDismissError,
 }: {
   joined: boolean
@@ -35,9 +38,14 @@ export function HuddleBar({
   error?: MediaErrorInfo | null
   /** Per-peer link health, so a drop is visible rather than silent. */
   peerStates?: Map<string, PeerConnectionState>
+  /** Push-to-talk mode: mic stays off unless Space is held. */
+  pttEnabled?: boolean
+  /** Whether the mic is actually live right now, whatever the mode. */
+  transmitting?: boolean
   onJoin: () => void
   onLeave: () => void
   onToggleMute: () => void
+  onTogglePtt?: () => void
   onDismissError?: () => void
 }) {
   // `!error` matters: the FIRST person to start a huddle does so from the jam
@@ -92,9 +100,32 @@ export function HuddleBar({
           </div>
           {joined ? (
             <>
-              <Button variant={muted ? 'default' : 'outline'} size="sm" className="rounded-full" onClick={onToggleMute} aria-label={muted ? 'Unmute' : 'Mute'}>
-                {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </Button>
+              {/* PTT stands IN PLACE OF mute — two competing mute concepts
+                  side by side is how people lose track of their own state. */}
+              {pttEnabled ? (
+                <Button
+                  variant={transmitting ? 'default' : 'outline'}
+                  size="sm"
+                  className="rounded-full"
+                  onClick={onTogglePtt}
+                  aria-label="Turn off push to talk"
+                  title="Push to talk is on — hold Space to speak"
+                >
+                  <Radio className={cn('mr-1.5 h-4 w-4', transmitting && 'animate-pulse')} />
+                  {transmitting ? 'Live' : 'Hold Space'}
+                </Button>
+              ) : (
+                <>
+                  <Button variant={muted ? 'default' : 'outline'} size="sm" className="rounded-full" onClick={onToggleMute} aria-label={muted ? 'Unmute' : 'Mute'}>
+                    {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </Button>
+                  {onTogglePtt && (
+                    <Button variant="outline" size="sm" className="rounded-full" onClick={onTogglePtt} aria-label="Turn on push to talk" title="Push to talk">
+                      <Radio className="h-4 w-4" />
+                    </Button>
+                  )}
+                </>
+              )}
               <Button variant="destructive" size="sm" className="rounded-full" onClick={onLeave} aria-label="Leave huddle">
                 <PhoneOff className="h-4 w-4" />
               </Button>

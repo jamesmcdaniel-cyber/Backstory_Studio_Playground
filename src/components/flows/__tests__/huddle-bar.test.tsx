@@ -41,3 +41,41 @@ test('members still render the huddle controls', () => {
   assert.ok(screen.getByLabelText('Leave huddle'))
   cleanup()
 })
+
+test('push-to-talk replaces the mute button rather than sitting beside it', () => {
+  render(
+    <HuddleBar
+      {...base}
+      joined
+      pttEnabled
+      onTogglePtt={noop}
+      members={[{ clientId: 'a', name: 'Ada', color: '#f00' }]}
+    />,
+  )
+  assert.equal(screen.queryByLabelText('Mute'), null, 'no competing mute control')
+  assert.ok(screen.getByLabelText('Turn off push to talk'))
+  cleanup()
+})
+
+test('with push-to-talk off both mute and the PTT toggle are offered', () => {
+  render(
+    <HuddleBar
+      {...base}
+      joined
+      onTogglePtt={noop}
+      members={[{ clientId: 'a', name: 'Ada', color: '#f00' }]}
+    />,
+  )
+  assert.ok(screen.getByLabelText('Mute'))
+  assert.ok(screen.getByLabelText('Turn on push to talk'))
+  cleanup()
+})
+
+test('the live indicator only appears while actually transmitting', () => {
+  render(<HuddleBar {...base} joined pttEnabled onTogglePtt={noop} members={[{ clientId: 'a', name: 'Ada', color: '#f00' }]} />)
+  assert.ok(screen.getByText('Hold Space'))
+  cleanup()
+  render(<HuddleBar {...base} joined pttEnabled transmitting onTogglePtt={noop} members={[{ clientId: 'a', name: 'Ada', color: '#f00' }]} />)
+  assert.ok(screen.getByText('Live'))
+  cleanup()
+})

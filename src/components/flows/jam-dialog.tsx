@@ -119,14 +119,18 @@ export function JamDialog({
       const res = await fetch(`/api/flows/${flowId}/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userIds: Array.from(selected) }),
+        body: JSON.stringify({ userIds: Array.from(selected), kind: huddleJoined ? 'huddle' : 'jam' }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         toast.error(data.error || 'Could not send invites.')
         return
       }
-      toast.success(`Invited ${data.invited} ${data.invited === 1 ? 'person' : 'people'} — they’ll get a notification linking to this flow.`)
+      toast.success(
+        huddleJoined
+          ? `Rang ${data.invited} ${data.invited === 1 ? 'person' : 'people'} — they’ll get a notification to join the huddle.`
+          : `Invited ${data.invited} ${data.invited === 1 ? 'person' : 'people'} — they’ll get a notification linking to this flow.`,
+      )
       setSelected(new Set())
     } finally {
       setSending(false)
@@ -324,7 +328,7 @@ export function JamDialog({
 
           {canInvite && members.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">Invite teammates</p>
+              <p className="text-xs font-medium text-muted-foreground">{huddleJoined ? 'Ring teammates' : 'Invite teammates'}</p>
               <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-border/60 p-1">
                 {members.map((m) => {
                   const label = m.name || m.email || 'Teammate'
@@ -347,8 +351,10 @@ export function JamDialog({
               <Button size="sm" className="w-full" onClick={sendInvites} loading={sending} disabled={selected.size === 0}>
                 <Send className="mr-1.5 h-4 w-4" />
                 {selected.size === 0
-                  ? 'Select teammates to invite'
-                  : `Send invite to ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'}`}
+                  ? (huddleJoined ? 'Select teammates to ring' : 'Select teammates to invite')
+                  : huddleJoined
+                    ? `Ring ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'} to the huddle`
+                    : `Send invite to ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'}`}
               </Button>
             </div>
           )}

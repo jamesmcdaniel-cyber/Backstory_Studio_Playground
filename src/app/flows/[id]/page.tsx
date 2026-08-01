@@ -15,6 +15,7 @@ import { joinErrorMessage } from '@/lib/flows/join-error'
 import { describeParticipantView } from '@/lib/flows/cursor-view'
 import { applyDragPreview, pruneDragPreview, type DragPreview } from '@/lib/flows/drag-preview'
 import { useFlowHuddle } from '@/lib/flows/use-flow-huddle'
+import { detectHuddleStart } from '@/lib/flows/huddle-alerts'
 import { HuddleBar } from '@/components/flows/huddle-bar'
 import { CursorLayer } from '@/components/flows/cursor-layer'
 import { flowToN8n } from '@/lib/flows/export/to-n8n'
@@ -632,6 +633,23 @@ function FlowBuilder() {
     () => participants.filter((p) => p.inHuddle).map((p) => ({ clientId: p.clientId, name: p.name, color: p.color })),
     [participants],
   )
+  // Toast when a huddle starts while we're on the page but not in it — the
+  // huddle bar alone is easy to miss from another tab. The ref is seeded from
+  // the FIRST presence snapshot, so opening a flow whose huddle is already
+  // running doesn't claim it just "started"; the bar covers that case.
+  const prevParticipantsRef = useRef<typeof participants | null>(null)
+  const { joined: huddleIsJoined, join: joinHuddle } = huddle
+  useEffect(() => {
+    const prev = prevParticipantsRef.current
+    prevParticipantsRef.current = participants
+    if (!prev) return // first snapshot: seed only
+    const starter = detectHuddleStart(prev, participants, selfClientId, huddleIsJoined)
+    if (!starter) return
+    toast(`${starter} started a huddle`, {
+      description: 'Voice chat is live on this flow.',
+      action: { label: 'Join', onClick: () => void joinHuddle() },
+    })
+  }, [participants, selfClientId, huddleIsJoined, joinHuddle])
   // A teammate's in-flight node drag. Positions land here, not in the graph —
   // the move op broadcast on release is what commits, so a dropped end-packet
   // can leave a ghost for the TTL at worst.

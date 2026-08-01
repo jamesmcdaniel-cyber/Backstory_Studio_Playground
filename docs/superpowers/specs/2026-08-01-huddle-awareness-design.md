@@ -116,9 +116,11 @@ No new picker, no new dialog, no new endpoint.
 - **Unit:** every `detectHuddleStart` branch — zero-to-one, one-to-two (silent),
   self excluded, `selfJoined` suppression, empty-to-empty; both `ringNotification`
   variants including that `jam` copy is byte-identical to today's.
-- **Existing:** `src/components/flows/__tests__/jam-invite.test.tsx` must keep
-  passing unchanged — it is the regression guard proving the default `kind`
-  leaves jam invites alone.
+- **Regression:** `src/components/flows/__tests__/jam-invite.test.tsx` must keep
+  passing unchanged, but note it only exercises the workspace-invitation POST —
+  it never posts to `/api/flows/[id]/invite`. The default-`kind` guarantee
+  therefore needs its own new test asserting the dialog sends `kind: 'jam'`
+  when no huddle is live.
 - **Manual:** two browser profiles on one flow. Start a huddle in A and confirm
   B toasts once with a working Join. Add a third participant and confirm B does
   not toast again. Ring from A's dialog and confirm B's notification bell and

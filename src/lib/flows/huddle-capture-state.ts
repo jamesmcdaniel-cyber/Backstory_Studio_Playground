@@ -7,14 +7,19 @@ export type CaptureParticipant = {
 }
 
 /**
- * The capture session currently live in the room, if any. Whoever enabled
- * capture advertises it via presence; late joiners read it from the roster.
- * Only participants actively capturing count — a stale id on someone who
- * switched capture off must not resurrect a session.
+ * The capture session currently live in the room, if any.
+ *
+ * Ownership: only the participant who ENABLED note-taking advertises the
+ * session id; followers advertise just their own `capturing` flag. That
+ * asymmetry is what makes "turn note-taking off" possible — if followers
+ * re-advertised the id, they would keep the session alive for each other and
+ * nobody could end it. The owner's `capturing` flag is deliberately not
+ * required: an owner who opted their own voice out still keeps the session
+ * running for everyone else.
  */
 export function liveCaptureSession(roster: CaptureParticipant[]): string | null {
   for (const participant of roster) {
-    if (participant.capturing && participant.captureSessionId) return participant.captureSessionId
+    if (participant.captureSessionId) return participant.captureSessionId
   }
   return null
 }

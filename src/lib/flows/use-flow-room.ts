@@ -82,6 +82,7 @@ export function useFlowRoom(params: {
   getPresentIds: () => string[]
   setSelection: (nodeId: string | null) => void
   setInHuddle: (inHuddle: boolean) => void
+  setCapture: (capturing: boolean, captureSessionId: string | null) => void
   setView: (view: CursorSpace) => void
   bus: CollabBus
 } {

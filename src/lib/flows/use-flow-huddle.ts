@@ -441,6 +441,10 @@ export function useFlowHuddle(
 
   const clearError = useCallback(() => setError(null), [])
 
+  /** Accessor for the live mic stream (huddle-notes capture records from it).
+   *  A function, not the ref itself — the stream is replaced on device switch. */
+  const getLocalStream = useCallback(() => localStream.current, [])
+
   // Leave cleanly on unmount/navigation (ref pattern: the cleanup must run
   // once at unmount, not every time leave's identity changes).
   const leaveRef = useRef(leave)
@@ -452,6 +456,6 @@ export function useFlowHuddle(
     pttEnabled, transmitting, peerAudio,
     devices, inputDeviceId, outputDeviceId, canSelectOutput,
     join, leave, toggleMute, setPttEnabled, setPeerAudio, clearError,
-    selectInputDevice, selectOutputDevice,
+    selectInputDevice, selectOutputDevice, getLocalStream,
   }
 }

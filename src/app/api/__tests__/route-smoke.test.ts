@@ -51,6 +51,8 @@ if (TEST_DB) {
     { name: 'GET /api/catalogue/submissions', run: async () => (await import('../catalogue/submissions/route')).GET(req('/api/catalogue/submissions')) },
     // A built-in id: resolvable in any org with no seeded row behind it.
     { name: 'GET /api/flow-templates/[id]', run: async () => (await import('../flow-templates/[id]/route')).GET(req('/api/flow-templates/summarize-extract')) },
+    // 404s for a built-in id (no stored row) — smoke only asserts < 500.
+    { name: 'GET /api/flow-templates/[id]/versions', run: async () => (await import('../flow-templates/[id]/versions/route')).GET(req('/api/flow-templates/summarize-extract/versions')) },
     { name: 'GET /api/agents', run: async () => (await import('../agents/route')).GET(req('/api/agents')) },
     { name: 'GET /api/agents/activity', run: async () => (await import('../agents/activity/route')).GET(req('/api/agents/activity')) },
     { name: 'GET /api/approvals', run: async () => (await import('../approvals/route')).GET(req('/api/approvals')) },

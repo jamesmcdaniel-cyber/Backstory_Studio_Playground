@@ -135,6 +135,8 @@ export interface SerializedFlowTemplate {
   visibility: string
   /** Only the creating org may edit/delete. */
   mine: boolean
+  /** Bumped on every content edit; built-ins are always 1 (no history rows). */
+  version: number
 }
 
 /**

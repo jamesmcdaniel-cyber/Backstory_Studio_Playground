@@ -56,6 +56,7 @@ model Organization {
   approvalRequests    ApprovalRequest[]
   agentMemories       AgentMemory[]
   flowVersions        FlowVersion[]
+  flowTemplateVersions FlowTemplateVersion[]
   flows               Flow[]
   storedFiles         StoredFile[]
   customSignals       CustomSignal[]
@@ -768,6 +769,8 @@ model FlowTemplate {
   /// 'none' = not in the catalogue; 'published' = approved through review;
   /// 'legacy_published' = was global before review existed, pending audit.
   catalogueStatus String @default("none")
+  /// Bumped on every content edit; prior payloads live in FlowTemplateVersion.
+  version        Int      @default(1)
 
   userId         String
   organizationId String   @db.Uuid
@@ -776,10 +779,31 @@ model FlowTemplate {
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  versions     FlowTemplateVersion[]
 
   @@index([organizationId, isActive])
   @@index([organizationId, visibility])
   @@map("flow_templates")
+}
+
+/// Immutable prior payload of a FlowTemplate, written before every content
+/// edit or restore. `snapshot` holds {name, description, category, graph,
+/// trigger, notes, bindings, configuration} — everything a restore reproduces.
+model FlowTemplateVersion {
+  id             String   @id @default(cuid())
+  templateId     String
+  organizationId String   @db.Uuid
+  version        Int
+  snapshot       Json
+  savedBy        String?
+  createdAt      DateTime @default(now())
+
+  template     FlowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, version])
+  @@index([organizationId, templateId])
+  @@map("flow_template_versions")
 }
 
 // Cross-workspace jam grants: a user outside the flow's org who accepted a

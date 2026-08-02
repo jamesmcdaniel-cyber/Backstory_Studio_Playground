@@ -11,6 +11,8 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
+import { FlowGraphPreview } from '@/components/flows/flow-graph-preview'
+import type { FlowGraph } from '@/lib/flows/graph'
 import { cn } from '@/lib/utils'
 
 type StepNote = { nodeId: string; title: string; what: string; why?: string }
@@ -38,7 +40,13 @@ type FlowTemplate = {
     testPlan?: string
   }
   bindings: { nodeId: string; kind: 'agent' | 'connection'; label: string }[]
+  graph: FlowGraph
+  custom: boolean
+  mine: boolean
+  version: number
 }
+
+type TemplateVersion = { id: string; version: number; savedByName: string | null; createdAt: string }
 
 const SETUP_ICON = { integration: Plug, agent: Bot, value: SlidersHorizontal } as const
 
@@ -56,6 +64,8 @@ export default function FlowTemplateDetails() {
   const [loadError, setLoadError] = useState(false)
   const [using, setUsing] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
+  const [versions, setVersions] = useState<TemplateVersion[]>([])
+  const [restoring, setRestoring] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -76,6 +86,44 @@ export default function FlowTemplateDetails() {
       cancelled = true
     }
   }, [id])
+
+  // History exists only for stored rows this workspace owns — built-ins have
+  // no version rows and the endpoint 404s for them, so don't ask.
+  useEffect(() => {
+    if (!template?.custom || !template.mine) return
+    let cancelled = false
+    fetch(`/api/flow-templates/${id}/versions`, { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.success) setVersions(data.versions ?? [])
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [id, template?.custom, template?.mine])
+
+  const restoreVersion = async (version: number) => {
+    setRestoring(version)
+    try {
+      const response = await fetch(`/api/flow-templates/${id}/versions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version, action: 'restore' }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.template) {
+        toast.error(data.error || 'Could not restore that version.')
+        return
+      }
+      setTemplate(data.template)
+      toast.success(`Restored version ${version} — the template is now v${data.template.version}.`)
+      const listed = await fetch(`/api/flow-templates/${id}/versions`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      if (listed?.success) setVersions(listed.versions ?? [])
+    } finally {
+      setRestoring(null)
+    }
+  }
 
   const useTemplate = async () => {
     setUsing(true)
@@ -146,6 +194,9 @@ export default function FlowTemplateDetails() {
           <p className="mt-2 max-w-2xl text-muted-foreground">{template.description}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Badge variant="outline">{template.category}</Badge>
+            {template.custom && template.version > 1 && (
+              <Badge variant="outline" className="text-xs text-muted-foreground">v{template.version}</Badge>
+            )}
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <Layers className="h-3.5 w-3.5" /> {template.stepCount} steps
             </span>
@@ -222,6 +273,13 @@ export default function FlowTemplateDetails() {
         </section>
       )}
 
+      {template.graph?.nodes?.length > 1 && (
+        <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-1">
+          <p className="eyebrow mb-3">The shape of it</p>
+          <FlowGraphPreview graph={template.graph} />
+        </section>
+      )}
+
       <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-1">
         <p className="eyebrow mb-4">Step by step</p>
         <ol className="space-y-4">
@@ -292,6 +350,36 @@ export default function FlowTemplateDetails() {
               <IntegrationChip key={integration} name={integration} onClick={() => setConnectOpen(true)} />
             ))}
           </div>
+        </section>
+      )}
+
+      {versions.length > 0 && (
+        <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-1">
+          <p className="eyebrow mb-3">History</p>
+          <ul className="divide-y divide-border/60">
+            {versions.map((entry) => (
+              <li key={entry.id} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                <div className="min-w-0 text-sm">
+                  <span className="font-medium">Version {entry.version}</span>
+                  <span className="ml-2 text-muted-foreground">
+                    {new Date(entry.createdAt).toLocaleString()}
+                    {entry.savedByName ? ` · ${entry.savedByName}` : ''}
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={restoring === entry.version}
+                  onClick={() => restoreVersion(entry.version)}
+                >
+                  Restore
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Each edit keeps the previous version here. Restoring is safe — the current version is saved before it&apos;s replaced.
+          </p>
         </section>
       )}
 

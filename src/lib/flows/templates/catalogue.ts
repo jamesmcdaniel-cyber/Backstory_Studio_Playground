@@ -68,6 +68,7 @@ export function serializeFlowTemplate(row: FlowTemplate, viewerOrgId?: string): 
     source: row.source,
     visibility: row.visibility,
     mine: Boolean(viewerOrgId) && row.organizationId === viewerOrgId,
+    version: row.version,
   }
 }
 
@@ -92,6 +93,7 @@ export function serializeBuiltinFlowTemplate(def: FlowTemplateDef): SerializedFl
     source: 'builtin',
     visibility: 'global',
     mine: false,
+    version: 1,
   }
 }
 

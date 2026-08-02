@@ -4,6 +4,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { createFlowTemplate } from '@/lib/flows/templates/create'
+import { updateFlowTemplateVersioned } from '@/lib/flows/templates/versions'
 import { listFlowTemplateCatalogue, serializeFlowTemplate } from '@/lib/flows/templates/catalogue'
 import {
   flowTemplateBindingSchema,
@@ -66,9 +67,11 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   if (!existing) throw new ApiError('Flow template not found', 404, 'NOT_FOUND')
 
   const config = (existing.configuration && typeof existing.configuration === 'object' ? existing.configuration : {}) as Record<string, unknown>
-  const template = await prisma.flowTemplate.update({
-    where: { id: body.id, organizationId: auth.organizationId },
-    data: {
+  // Snapshot-then-update: the prior payload is kept as a restorable version,
+  // so editing a template is never destructive (see templates/versions.ts).
+  const template = await updateFlowTemplateVersioned(
+    existing,
+    {
       ...(body.name !== undefined && { name: body.name }),
       ...(body.description !== undefined && { description: body.description }),
       ...(body.category !== undefined && { category: body.category }),
@@ -89,7 +92,8 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(body.exampleOutput !== undefined && { exampleOutput: body.exampleOutput }),
       },
     },
-  })
+    auth.dbUser.id,
+  )
   return { success: true, template: serializeFlowTemplate(template, auth.organizationId) }
 }, { permission: 'template.author' })
 

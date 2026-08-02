@@ -164,7 +164,7 @@ function loopItems(value: unknown): unknown[] {
   const structured = asStructured(value)
   if (Array.isArray(structured)) return structured
   if (structured && typeof structured === 'object') {
-    for (const key of ['items', 'records', 'results', 'data']) {
+    for (const key of ['items', 'records', 'results', 'result', 'data']) {
       const candidate = (structured as Record<string, unknown>)[key]
       if (Array.isArray(candidate)) return candidate
     }

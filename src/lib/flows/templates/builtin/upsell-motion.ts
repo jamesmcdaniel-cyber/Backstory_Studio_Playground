@@ -56,7 +56,7 @@ export const UPSELL_MOTION: FlowTemplateDef = {
             { name: 'primaryUseCase', type: 'string' },
             { name: 'risk', type: 'string' },
           ],
-          perItem: { over: '{{step.pull.output}}', itemError: 'collect', concurrency: 4 },
+          perItem: { over: '{{step.pull.output.result}}', itemError: 'collect', concurrency: 4 },
           retries: 1,
           note: 'One agent run per account, four at a time. The agent brings its own tools and instructions, so this step improves whenever you improve the agent — without editing the flow. Failures are collected per account, so one unscorable record cannot cost you the weekly run.',
         },

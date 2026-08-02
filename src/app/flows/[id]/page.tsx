@@ -1620,7 +1620,7 @@ function FlowBuilder() {
     // view-only user must not edit at all. Gate the action (the button is also
     // hidden for these users — this is the server-of-truth guard).
     if (external || !canEdit) {
-      toast.error(external ? 'Copilot isn’t available on flows shared with you.' : 'This flow is view-only — ask its owner to make changes.')
+      toast.error(external ? 'Fix-with-Copilot isn’t available on shared flows — ask in the Copilot chat instead.' : 'This flow is view-only — ask its owner to make changes.')
       return
     }
     if (viewingVersion) {
@@ -1990,14 +1990,14 @@ function FlowBuilder() {
           )
         )}
         {!external && (
-          <>
-            <Button variant="outline" size="sm" onClick={() => setShowVersions((v) => !v)}>
-              <History className="mr-1.5 h-4 w-4" /> History
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowCopilot((v) => !v)}>
-              <Sparkles className="mr-1.5 h-4 w-4" /> Copilot
-            </Button>
-          </>
+          <Button variant="outline" size="sm" onClick={() => setShowVersions((v) => !v)}>
+            <History className="mr-1.5 h-4 w-4" /> History
+          </Button>
+        )}
+        {canEdit && (
+          <Button variant="outline" size="sm" onClick={() => setShowCopilot((v) => !v)}>
+            <Sparkles className="mr-1.5 h-4 w-4" /> Copilot
+          </Button>
         )}
         <Button variant="outline" size="sm" onClick={() => setShowChecker((v) => !v)}>
           <ShieldCheck className="mr-1.5 h-4 w-4" /> Checker
@@ -2305,10 +2305,11 @@ function FlowBuilder() {
           </div>
         )}
 
-        {showCopilot && !external && canEdit && (
+        {showCopilot && canEdit && (
           <ResizablePanel storageKey="flow.copilotWidth">
             <CopilotPanel
               graph={graph}
+              external={external}
               onOps={onCopilotOps}
               onJump={jumpToNode}
               onGraph={(next) => {

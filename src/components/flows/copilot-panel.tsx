@@ -26,12 +26,17 @@ export function CopilotPanel({
   onOps,
   onJump,
   onNeedsAttention,
+  external = false,
 }: {
   graph: FlowGraph
   onGraph: (graph: FlowGraph) => void
   onOps: (ops: CopilotOp[]) => { applied: number; skipped: { reason: string }[] }
   onJump: (nodeId: string) => void
   onNeedsAttention?: (issues: NeedsAttentionItem[]) => void
+  /** Cross-workspace guest: chat goes structure-only (no roster/tools) and the
+   *  whole-flow generate path is hidden — generation grounds on the caller's
+   *  workspace, which is the wrong org for a shared flow. */
+  external?: boolean
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -47,7 +52,7 @@ export function CopilotPanel({
   const onOpsRef = useRef(onOps)
   onOpsRef.current = onOps
 
-  const emptyCanvas = graph.nodes.length <= 1
+  const emptyCanvas = graph.nodes.length <= 1 && !external
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
@@ -106,7 +111,7 @@ export function CopilotPanel({
       const response = await fetch('/api/flows/copilot/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, graph: graphRef.current }),
+        body: JSON.stringify({ messages: history, graph: graphRef.current, ...(external ? { external: true } : {}) }),
       })
       const data = await response.json()
       if (response.ok && data.success) {

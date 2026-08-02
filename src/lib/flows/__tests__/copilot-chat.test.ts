@@ -100,3 +100,13 @@ test('discardNotice pluralizes correctly', () => {
   assert.equal(discardNotice(1), " (I discarded 1 change that didn't validate.)")
   assert.equal(discardNotice(3), " (I discarded 3 changes that didn't validate.)")
 })
+
+test('structure-only grounding (guest): empty roster/tools, explicit do-not-add guidance, no DB touch', async () => {
+  const { buildCopilotGrounding } = await import('@/lib/flows/copilot-grounding')
+  const grounding = await buildCopilotGrounding('org-x', 'user-x', { structureOnly: true })
+  assert.deepEqual(grounding.roster, [])
+  assert.deepEqual(grounding.toolCatalog, [])
+  assert.match(grounding.contextBlock, /Do not add agent steps/)
+  assert.match(grounding.contextBlock, /do not add tool steps/)
+  assert.ok(grounding.graphRules.length > 0, 'graph shape rules still included')
+})

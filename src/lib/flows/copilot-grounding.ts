@@ -49,12 +49,32 @@ const graphRules =
 export async function buildCopilotGrounding(
   organizationId: string,
   userId: string,
+  options: {
+    /**
+     * Cross-workspace guest editing a shared flow: the flow RUNS in its
+     * owner's org, so grounding on the caller's roster/tool catalog would
+     * inject agent/connection ids that resolve to nothing there — and
+     * grounding on the owner's would leak that workspace's roster to an
+     * outsider. Structure-only sidesteps both: no roster, no tools, and the
+     * sanitizer (fed the same empty context) discards any agent/tool op the
+     * model invents anyway.
+     */
+    structureOnly?: boolean
+  } = {},
 ): Promise<{
   roster: { id: string; name: string }[]
   toolCatalog: FlowToolCatalogConnection[]
   contextBlock: string
   graphRules: string
 }> {
+  if (options.structureOnly) {
+    const contextBlock = [
+      'Agents:\n- None available on this flow — it is shared with you from another workspace. Do not add agent steps.',
+      '',
+      'Tools:\n- None available on this flow — do not add tool steps. Use http, ai, data, code, condition and the other generic steps instead.',
+    ].join('\n')
+    return { roster: [], toolCatalog: [], contextBlock, graphRules }
+  }
   const [agents, toolCatalog] = await Promise.all([
     prisma.agentTask.findMany({
       where: { organizationId, status: 'ACTIVE', ...agentVisibilityScope(userId) },

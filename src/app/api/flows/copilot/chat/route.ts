@@ -55,13 +55,20 @@ const requestSchema = z.object({
     .min(1)
     .max(20),
   graph: z.unknown(),
+  // Set by the builder when the caller is a cross-workspace guest on a shared
+  // flow: grounding goes structure-only (no roster/tools — see
+  // buildCopilotGrounding). Client-declared, but over-claiming only REDUCES
+  // what Copilot can reference, so it needs no server-side verification.
+  external: z.boolean().optional(),
 })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { messages, graph: rawGraph } = requestSchema.parse(await request.json())
+  const { messages, graph: rawGraph, external } = requestSchema.parse(await request.json())
   // Gate before any model spend: provider, per-user rate limit, monthly ceiling.
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `flow-copilot-chat:${auth.dbUser.id}`, limit: 20 })
-  const { roster, toolCatalog, contextBlock, graphRules } = await buildCopilotGrounding(auth.organizationId, auth.dbUser.id)
+  const { roster, toolCatalog, contextBlock, graphRules } = await buildCopilotGrounding(auth.organizationId, auth.dbUser.id, {
+    structureOnly: external === true,
+  })
 
   // An invalid/missing graph means we're chatting over a blank canvas.
   const parsedGraph = flowGraphSchema.safeParse(rawGraph)

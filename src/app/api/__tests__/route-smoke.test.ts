@@ -114,6 +114,15 @@ if (TEST_DB) {
     })
   }
 
+  // Seam sentinel: one authed route asserted to 200. The reachability loop
+  // above tolerates 401/403/404, so a silently-inactive test-auth seam (every
+  // route real-authing to 401) would still pass it — this is the tripwire
+  // that makes that failure mode loud instead.
+  test('the test-auth seam is actually active (sentinel route returns 200)', async () => {
+    const res = await (await import('../flows/route')).GET(req('/api/flows'))
+    assert.equal(res.status, 200, `GET /api/flows returned ${res.status} — the injected auth context is not reaching the routes`)
+  })
+
   // Routes deliberately not invoked, with the reason. A withAuthenticatedApi
   // GET route absent from BOTH `cases` and this list fails the completeness
   // test below — so a newly-added route can't silently ship untested (the

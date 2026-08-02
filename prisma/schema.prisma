@@ -65,6 +65,8 @@ model Organization {
   templateProposals   TemplateProposal[]
   invitations         Invitation[]
   catalogueSubmissions CatalogueSubmission[]
+  huddleSegments      HuddleSegment[]
+  huddleNotes         HuddleNote[]
 
   @@map("organizations")
 }
@@ -730,6 +732,8 @@ model Flow {
   runs          FlowRun[]
   versions      FlowVersion[]
   collaborators FlowCollaborator[]
+  huddleSegments HuddleSegment[]
+  huddleNotes    HuddleNote[]
 
   @@index([organizationId, updatedAt])
   // Scheduler cursor scan, as on agent_tasks.
@@ -832,6 +836,47 @@ model FlowVersion {
   @@unique([flowId, version])
   @@index([organizationId, flowId])
   @@map("flow_versions")
+}
+
+/// Transient working state for huddle notes: one row per uploaded audio chunk,
+/// already transcribed. The audio itself is never stored. Rows are deleted the
+/// moment a session is summarised; the retention cron sweeps any orphaned by
+/// someone closing their laptop mid-huddle.
+model HuddleSegment {
+  id             String   @id @default(cuid())
+  flowId         String
+  organizationId String   @db.Uuid
+  sessionId      String
+  speakerName    String
+  text           String   @db.Text
+  startedAt      DateTime
+  createdAt      DateTime @default(now())
+
+  flow         Flow         @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, startedAt])
+  @@index([createdAt])
+  @@map("huddle_segments")
+}
+
+/// What survives a captured huddle: the summary, not the verbatim record.
+model HuddleNote {
+  id             String   @id @default(cuid())
+  flowId         String
+  organizationId String   @db.Uuid
+  sessionId      String   @unique
+  summary        String   @db.Text
+  decisions      Json     @default("[]")
+  participants   Json     @default("[]")
+  startedAt      DateTime
+  createdAt      DateTime @default(now())
+
+  flow         Flow         @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([flowId, createdAt])
+  @@map("huddle_notes")
 }
 
 model FlowRun {

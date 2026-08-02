@@ -95,3 +95,33 @@ test('without Cloudflare env the relay is never called', async () => {
   assert.equal(called, false)
   assert.deepEqual(servers, [{ urls: 'stun:stun.l.google.com:19302' }])
 })
+
+test('turnRestCredentials: coturn use-auth-secret shape — expiry username, HMAC-SHA1 base64 credential', async () => {
+  const { turnRestCredentials } = await import('@/lib/flows/ice-config')
+  const { createHmac } = await import('crypto')
+  const nowMs = 1_700_000_000_000
+  const { username, credential } = turnRestCredentials('s3cret', nowMs, { ttlSeconds: 600, identifier: 'org-1' })
+  assert.equal(username, `${1_700_000_000 + 600}:org-1`)
+  assert.equal(credential, createHmac('sha1', 's3cret').update(username).digest('base64'))
+  // No identifier → bare expiry timestamp.
+  assert.equal(turnRestCredentials('s3cret', nowMs, { ttlSeconds: 600 }).username, String(1_700_000_000 + 600))
+})
+
+test('TURN_URL + TURN_SECRET mints ephemeral creds and beats the static pair', async () => {
+  const { resolveIceServers, turnRestCredentials } = await import('@/lib/flows/ice-config')
+  const nowMs = 1_700_000_000_000
+  const servers = await resolveIceServers(
+    { TURN_URL: 'turn:relay.example.com:3478', TURN_SECRET: 'shh', TURN_USERNAME: 'static-u', TURN_CREDENTIAL: 'static-c' },
+    { customIdentifier: 'org-9', nowMs },
+  )
+  const expected = turnRestCredentials('shh', nowMs, { identifier: 'org-9' })
+  assert.deepEqual(servers, [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'turn:relay.example.com:3478', username: expected.username, credential: expected.credential },
+  ])
+})
+
+test('TURN_SECRET without TURN_URL changes nothing (half-configured relay is ignored)', async () => {
+  const { resolveIceServers } = await import('@/lib/flows/ice-config')
+  assert.deepEqual(await resolveIceServers({ TURN_SECRET: 'shh' }), [{ urls: 'stun:stun.l.google.com:19302' }])
+})

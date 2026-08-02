@@ -1,6 +1,28 @@
+import { createHmac } from 'crypto'
 import { captureError } from '@/lib/observability/sentry'
 
 export type IceServer = { urls: string | string[]; username?: string; credential?: string }
+
+/**
+ * coturn "REST API" ephemeral credentials (use-auth-secret): username is the
+ * expiry unix timestamp (optionally suffixed with an identifier for relay
+ * attribution), credential is base64(HMAC-SHA1(secret, username)). The relay
+ * validates the HMAC and refuses the credential after the timestamp — so a
+ * leaked credential dies on its own instead of living as long as a static
+ * TURN_CREDENTIAL. Pure: caller supplies the clock.
+ */
+export const TURN_SECRET_TTL_SECONDS = 86_400
+
+export function turnRestCredentials(
+  secret: string,
+  nowMs: number,
+  options: { ttlSeconds?: number; identifier?: string } = {},
+): { username: string; credential: string } {
+  const expiry = Math.floor(nowMs / 1000) + (options.ttlSeconds ?? TURN_SECRET_TTL_SECONDS)
+  const username = options.identifier ? `${expiry}:${options.identifier}` : String(expiry)
+  const credential = createHmac('sha1', secret).update(username).digest('base64')
+  return { username, credential }
+}
 
 /**
  * WebRTC ICE servers from env. Always Google STUN; a TURN relay entry is
@@ -28,6 +50,8 @@ export type IceEnv = {
   TURN_URL?: string
   TURN_USERNAME?: string
   TURN_CREDENTIAL?: string
+  /** Self-hosted coturn shared secret (use-auth-secret) — mints ephemeral creds per call. */
+  TURN_SECRET?: string
 }
 
 /**
@@ -55,14 +79,15 @@ export function parseCloudflareIceServers(body: unknown): IceServer[] | null {
 }
 
 /**
- * ICE config, best tier first: Cloudflare short-lived credentials → static
- * TURN_* env → STUN-only. Any Cloudflare failure falls through rather than
- * failing the join, so a relay outage degrades to the previous behaviour
- * instead of breaking the huddle outright.
+ * ICE config, best tier first: Cloudflare short-lived credentials → self-hosted
+ * coturn ephemeral (TURN_URL + TURN_SECRET) → static TURN_* env → STUN-only.
+ * Any Cloudflare failure falls through rather than failing the join, so a
+ * relay outage degrades to the previous behaviour instead of breaking the
+ * huddle outright.
  */
 export async function resolveIceServers(
   env: IceEnv,
-  options: { customIdentifier?: string; fetchImpl?: typeof fetch } = {},
+  options: { customIdentifier?: string; fetchImpl?: typeof fetch; nowMs?: number } = {},
 ): Promise<IceServer[]> {
   const keyId = env.CLOUDFLARE_TURN_KEY_ID
   const token = env.CLOUDFLARE_TURN_API_TOKEN
@@ -89,6 +114,19 @@ export async function resolveIceServers(
       // Never include the response body — it carries the credential.
       captureError(error, { scope: 'flows.huddle.ice', provider: 'cloudflare' })
     }
+  }
+  // Self-hosted coturn with a shared secret: ephemeral creds minted here beat
+  // the static TURN_USERNAME/TURN_CREDENTIAL pair (which stays as the fallback
+  // for relays without use-auth-secret).
+  const turnUrls = (env.TURN_URL ?? '').split(',').map((u) => u.trim()).filter(Boolean)
+  if (turnUrls.length && env.TURN_SECRET) {
+    const { username, credential } = turnRestCredentials(env.TURN_SECRET, options.nowMs ?? Date.now(), {
+      identifier: options.customIdentifier,
+    })
+    return [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls, username, credential },
+    ]
   }
   return iceServersFromEnv(env)
 }

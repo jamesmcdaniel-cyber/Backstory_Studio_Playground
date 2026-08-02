@@ -15,6 +15,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => ({
       TURN_URL: process.env.TURN_URL,
       TURN_USERNAME: process.env.TURN_USERNAME,
       TURN_CREDENTIAL: process.env.TURN_CREDENTIAL,
+      TURN_SECRET: process.env.TURN_SECRET,
     },
     { customIdentifier: auth.organizationId },
   ),

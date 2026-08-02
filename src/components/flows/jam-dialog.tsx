@@ -197,13 +197,13 @@ export function JamDialog({
   }
 
   const [shareBusy, setShareBusy] = useState(false)
-  const updateShare = async (enabled: boolean, role: 'view' | 'edit', rotate = false) => {
+  const updateShare = async (enabled: boolean, role: 'view' | 'edit', rotate = false, revokeCollaborators = false) => {
     setShareBusy(true)
     try {
       const res = await fetch(`/api/flows/${flowId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, role, rotate }),
+        body: JSON.stringify({ enabled, role, rotate, revokeCollaborators }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -211,13 +211,55 @@ export function JamDialog({
         return
       }
       onShareChanged?.(data.shareToken ?? null, data.shareRole === 'edit' ? 'edit' : 'view')
+      if (revokeCollaborators) setGuests([])
       toast.success(!enabled
         ? 'Share link turned off.'
-        : rotate
-          ? 'Link rotated — old links no longer work.'
-          : 'Share link ready — anyone with it can open this flow after signing in.')
+        : revokeCollaborators
+          ? 'Link rotated — old links stopped working and everyone who joined by link was removed.'
+          : rotate
+            ? 'Link rotated — old links no longer work.'
+            : 'Share link ready — anyone with it can open this flow after signing in.')
     } finally {
       setShareBusy(false)
+    }
+  }
+
+  // Cross-workspace guests who accepted the share link — editors manage them
+  // here, since removal is the only way to end a durable accepted grant.
+  type Guest = { userId: string; role: 'view' | 'edit'; name: string | null; email: string | null }
+  const [guests, setGuests] = useState<Guest[]>([])
+  const [removingGuest, setRemovingGuest] = useState<string | null>(null)
+  useEffect(() => {
+    if (!open || !canEdit) return
+    let cancelled = false
+    fetch(`/api/flows/${flowId}/collaborators`, { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.success) setGuests(data.collaborators ?? [])
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [open, canEdit, flowId])
+
+  const removeGuest = async (userId: string) => {
+    setRemovingGuest(userId)
+    try {
+      const res = await fetch(`/api/flows/${flowId}/collaborators`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || 'Could not remove them.')
+        return
+      }
+      setGuests((current) => current.filter((guest) => guest.userId !== userId))
+      toast.success('Removed — they can no longer open this flow.')
+    } finally {
+      setRemovingGuest(null)
     }
   }
 
@@ -457,8 +499,40 @@ export function JamDialog({
                   </div>
                   <p className="text-xs text-muted-foreground">
                     People outside your workspace can open this flow with the link above after signing in.
-                    Rotating makes old links stop working; people who already accepted keep access.
+                    Rotating makes old links stop working; people who already accepted keep access unless you remove them below.
                   </p>
+                  {guests.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">Joined by link</p>
+                      <ul className="space-y-0.5 rounded-lg border border-border/60 p-1">
+                        {guests.map((guest) => (
+                          <li key={guest.userId} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm">
+                            <span className="min-w-0 truncate">
+                              {guest.name || guest.email || 'Guest'}
+                              <span className="ml-1.5 text-xs text-muted-foreground">{guest.role === 'edit' ? 'can edit' : 'can view'}</span>
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              loading={removingGuest === guest.userId}
+                              onClick={() => void removeGuest(guest.userId)}
+                            >
+                              Remove
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                      <button
+                        type="button"
+                        disabled={shareBusy}
+                        onClick={() => void updateShare(true, shareRole ?? 'view', true, true)}
+                        className="text-xs font-medium text-muted-foreground underline-offset-2 transition-colors hover:text-destructive hover:underline"
+                      >
+                        Rotate the link and remove everyone who joined by it
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">Off — only your workspace can open this flow.</p>

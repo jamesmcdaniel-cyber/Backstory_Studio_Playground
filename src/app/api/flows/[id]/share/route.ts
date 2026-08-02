@@ -10,6 +10,9 @@ const bodySchema = z.object({
   enabled: z.boolean(),
   role: z.enum(['view', 'edit']).default('view'),
   rotate: z.boolean().optional(),
+  // Also delete the ACCEPTED collaborator rows (durable grants a rotate alone
+  // deliberately keeps) — "rotate and remove everyone who joined by link".
+  revokeCollaborators: z.boolean().optional(),
 })
 
 // POST /api/flows/[id]/share — manage the cross-workspace share link. Only a
@@ -28,19 +31,28 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   assertFlowEditable(flow, auth.dbUser.id)
-  const { enabled, role, rotate } = bodySchema.parse(await request.json())
+  const { enabled, role, rotate, revokeCollaborators } = bodySchema.parse(await request.json())
   const shareToken = !enabled ? null : rotate || !flow.shareToken ? randomBytes(16).toString('hex') : flow.shareToken
   const updated = await prisma.flow.update({
     where: { id: flow.id, organizationId: auth.organizationId },
     data: { shareToken, shareRole: role },
   })
+  let revoked = 0
+  if (revokeCollaborators) {
+    // Deleting the rows revokes both the app role and the realtime topics
+    // (flow_topic_access reads flow_collaborators) on the guests' next check.
+    const result = await prisma.flowCollaborator.deleteMany({
+      where: { flow: { id: flow.id, organizationId: auth.organizationId } },
+    })
+    revoked = result.count
+  }
   void recordAudit({
     organizationId: auth.organizationId,
     actorUserId: auth.dbUser.id,
     action: enabled ? 'flow.share_link_enabled' : 'flow.share_link_disabled',
     resourceType: 'flow',
     resourceId: flow.id,
-    detail: { role, rotated: Boolean(rotate) },
+    detail: { role, rotated: Boolean(rotate), revokedCollaborators: revoked },
   }).catch(() => undefined)
-  return { success: true, shareToken: updated.shareToken, shareRole: updated.shareRole === 'edit' ? 'edit' : 'view' }
+  return { success: true, shareToken: updated.shareToken, shareRole: updated.shareRole === 'edit' ? 'edit' : 'view', revokedCollaborators: revoked }
 }, { permission: 'flow.write' })

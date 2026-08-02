@@ -47,6 +47,7 @@ if (TEST_DB) {
     { name: 'GET /api/snapshot', run: async () => (await import('../snapshot/route')).GET(req('/api/snapshot')) },
     { name: 'GET /api/template-proposals', run: async () => (await import('../template-proposals/route')).GET(req('/api/template-proposals')) },
     { name: 'GET /api/flows', run: async () => (await import('../flows/route')).GET(req('/api/flows')) },
+    { name: 'GET /api/flows/[id]/collaborators', run: async () => (await import('../flows/[id]/collaborators/route')).GET(req(`/api/flows/${flowId}/collaborators`)) },
     { name: 'GET /api/flow-templates', run: async () => (await import('../flow-templates/route')).GET(req('/api/flow-templates')) },
     { name: 'GET /api/catalogue/submissions', run: async () => (await import('../catalogue/submissions/route')).GET(req('/api/catalogue/submissions')) },
     // A built-in id: resolvable in any org with no seeded row behind it.
@@ -61,6 +62,7 @@ if (TEST_DB) {
     { name: 'GET /api/flows/tool-catalog', run: async () => (await import('../flows/tool-catalog/route')).GET(req('/api/flows/tool-catalog')) },
     { name: 'GET /api/http-credentials', run: async () => (await import('../http-credentials/route')).GET(req('/api/http-credentials')) },
     { name: 'GET /api/flows/huddle-ice', run: async () => (await import('../flows/huddle-ice/route')).GET(req('/api/flows/huddle-ice')) },
+    { name: 'GET /api/flows/[id]/huddle/notes', run: async () => (await import('../flows/[id]/huddle/notes/route')).GET(req(`/api/flows/${flowId}/huddle/notes`)) },
     { name: 'GET /api/granola/notes', run: async () => (await import('../granola/notes/route')).GET(req('/api/granola/notes')) },
     { name: 'GET /api/integrations/available', run: async () => (await import('../integrations/available/route')).GET(req('/api/integrations/available')) },
     { name: 'GET /api/integrations/count', run: async () => (await import('../integrations/count/route')).GET(req('/api/integrations/count')) },

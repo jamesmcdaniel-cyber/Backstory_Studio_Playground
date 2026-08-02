@@ -76,4 +76,55 @@ if (TEST_DB) {
       await prisma.organization.delete({ where: { id: guestOrg.organizationId } }).catch(() => {})
     }
   })
+  test('collaborator management: editors list guests, remove one, and rotate-with-revoke clears the rest', async () => {
+    const s = await seedTestOrg(prisma)
+    const guestA = await seedTestOrg(prisma)
+    const guestB = await seedTestOrg(prisma)
+    const collaboratorsRoute = await import('../[id]/collaborators/route')
+    const list = (flowId: string) =>
+      collaboratorsRoute.GET(new NextRequest(new URL(`http://test/api/flows/${flowId}/collaborators`)))
+    const removeOne = (flowId: string, userId: string) =>
+      collaboratorsRoute.DELETE(new NextRequest(new URL(`http://test/api/flows/${flowId}/collaborators`), { method: 'DELETE', body: JSON.stringify({ userId }) }))
+    try {
+      installTestAuth(s.auth)
+      const flow = await mkFlow(s.organizationId, s.userId)
+      const minted = await (await share(flow.id, { enabled: true, role: 'view' })).json()
+      // Both guests accept the link.
+      for (const guest of [guestA, guestB]) {
+        installTestAuth(guest.auth)
+        const opened = await open(flow.id, minted.shareToken)
+        assert.equal(opened.status, 200)
+      }
+
+      // Owner lists guests: both rows, with identity.
+      installTestAuth(s.auth)
+      const listed = await (await list(flow.id)).json()
+      assert.equal(listed.collaborators.length, 2)
+      const listedIds = listed.collaborators.map((c: { userId: string }) => c.userId).sort()
+      assert.deepEqual(listedIds, [guestA.userId, guestB.userId].sort())
+
+      // Remove one guest: their access is gone, the other keeps theirs.
+      const removed = await removeOne(flow.id, guestA.userId)
+      assert.equal(removed.status, 200)
+      installTestAuth(guestA.auth)
+      assert.equal((await open(flow.id)).status, 404, 'removed guest is refused')
+      installTestAuth(guestB.auth)
+      assert.equal((await open(flow.id)).status, 200, 'other guest keeps access')
+
+      // A guest can never manage collaborators (org-scoped wall).
+      assert.equal((await list(flow.id)).status, 404)
+
+      // Rotate + revokeCollaborators clears the remaining accepted rows too.
+      installTestAuth(s.auth)
+      const rotated = await (await share(flow.id, { enabled: true, role: 'view', rotate: true, revokeCollaborators: true })).json()
+      assert.equal(rotated.revokedCollaborators, 1)
+      installTestAuth(guestB.auth)
+      assert.equal((await open(flow.id)).status, 404, 'revoked guest is refused after rotate')
+    } finally {
+      for (const w of [s, guestA, guestB]) {
+        await w.cleanup()
+        await prisma.organization.delete({ where: { id: w.organizationId } }).catch(() => {})
+      }
+    }
+  })
 }

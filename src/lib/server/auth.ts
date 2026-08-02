@@ -20,10 +20,20 @@ export interface AuthContext {
 // can drive real handlers without a Supabase session. NEVER active in
 // production — double-gated on NODE_ENV and TEST_DATABASE_URL (production sets
 // neither), and null by default so real auth runs unless a test injects.
-let testAuthContext: AuthContext | null = null
+//
+// Stored on globalThis via Symbol.for (not module state) DELIBERATELY: under
+// tsx, a test file and the route chain can load this module as two instances
+// (CJS/ESM duality), and a module-local variable set by the test was invisible
+// to the copy the routes call — the seam silently fell through to real auth.
+// Symbol.for is process-global, so every instance reads the same slot.
+const TEST_AUTH_SLOT = Symbol.for('backstory.testAuthContext')
 
 export function setTestAuthContext(ctx: AuthContext | null): void {
-  testAuthContext = ctx
+  ;(globalThis as Record<symbol, unknown>)[TEST_AUTH_SLOT] = ctx
+}
+
+function getTestAuthContext(): AuthContext | null {
+  return ((globalThis as Record<symbol, unknown>)[TEST_AUTH_SLOT] as AuthContext | null) ?? null
 }
 
 function testAuthActive(): boolean {
@@ -76,7 +86,9 @@ export class PermissionDeniedError extends AuthContextError {
 export async function requireAuthContext(
   options?: { skipBackstoryGate?: boolean; skipEntitlementGate?: boolean },
 ): Promise<AuthContext> {
-  if (testAuthContext && testAuthActive()) return testAuthContext
+  const injected = getTestAuthContext()
+  if (process.env.QA_SEAM_DEBUG) console.log('[seam-debug]', { injected: Boolean(injected), active: testAuthActive(), testDb: Boolean(process.env.TEST_DATABASE_URL), nodeEnv: process.env.NODE_ENV })
+  if (injected && testAuthActive()) return injected
 
   const auth = await getAuthWithUser()
 

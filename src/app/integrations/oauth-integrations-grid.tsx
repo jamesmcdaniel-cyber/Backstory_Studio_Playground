@@ -77,11 +77,17 @@ export function OAuthIntegrationsGrid() {
         <div className="relative flex-1">
           <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            // type/name/autoComplete: without these, browser autofill treats a
+            // bare text input as an identity field and pre-fills the user's
+            // saved email — which silently filters the grid to nothing.
+            type="search"
+            name="integration-search"
+            autoComplete="off"
             value={search}
             onChange={(e) => onSearch(e.target.value)}
             placeholder="Search integrations…"
             aria-label="Search integrations"
-            className="h-11 w-full pl-9 pr-9"
+            className="h-11 w-full pl-9 pr-9 [&::-webkit-search-cancel-button]:hidden"
           />
           {search && (
             <button

@@ -12,6 +12,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useStoreApi,
   useViewport,
   ViewportPortal,
   type Connection,
@@ -19,7 +20,7 @@ import {
   type OnSelectionChangeParams,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { LayoutGrid, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Hand, LayoutGrid, Maximize2, MousePointer2, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { FlowGraph, FlowNode } from '@/lib/flows/graph'
 import type { StepType } from '@/lib/flows/mutate'
@@ -45,6 +46,7 @@ import type { FlowInsertSeed } from '@/components/flows/flow-canvas'
 import type { ToolCatalog } from '@/components/flows/step-drawer'
 import { CanvasActionsContext, StepNode, type StepFlowNode } from './step-node'
 import { StepEdge, type StepFlowEdge } from './step-edge'
+import { useHoldToPan } from './use-hold-to-pan'
 
 /**
  * The n8n-style graph editor. Steps are compact chips positioned freely;
@@ -155,8 +157,11 @@ function GraphCanvasInner(props: GraphCanvasProps) {
 
   const wrapperRef = useRef<HTMLDivElement>(null)
   const { screenToFlowPosition, flowToScreenPosition, fitView, zoomIn, zoomOut } = useReactFlow()
+  const storeApi = useStoreApi()
   const { zoom } = useViewport()
   const [picker, setPicker] = useState<PickerState | null>(null)
+  /** Hand tool: plain left-drag pans instead of marquee-selecting. */
+  const [handTool, setHandTool] = useState(false)
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<StepFlowNode>([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<StepFlowEdge>([])
   /** Last pointer position in flow coordinates — where a paste lands. */
@@ -428,6 +433,16 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     [onNodeDrag],
   )
 
+  // Press-and-hold on empty canvas converts the drag into a pan (a quick drag
+  // still marquee-selects). Redundant while the hand tool already pans.
+  const holdPanning = useHoldToPan(wrapperRef, {
+    enabled: !handTool,
+    panBy: (delta) => void storeApi.getState().panBy(delta),
+    // Drop the pane's pending zero-size selection rect so releasing the hold
+    // doesn't read back as a pane click (which would deselect).
+    onEngage: () => storeApi.setState({ userSelectionRect: null }),
+  })
+
   const handlePointerMove = useCallback(
     (event: React.PointerEvent) => {
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
@@ -444,6 +459,10 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     const onKey = (event: KeyboardEvent) => {
       const el = event.target as HTMLElement | null
       if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) return
+      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (event.key.toLowerCase() === 'h') setHandTool(true)
+        if (event.key.toLowerCase() === 'v') setHandTool(false)
+      }
       if (readOnly) return
       if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey) {
         const edgeIds = selectedEdgeIdsRef.current
@@ -468,7 +487,11 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   }, [onDeleteEdge, onCopySelection, onPasteAt, readOnly])
 
   return (
-    <div ref={wrapperRef} className="relative h-full w-full" onPointerMove={handlePointerMove}>
+    <div
+      ref={wrapperRef}
+      className={cn('relative h-full w-full', holdPanning && '[&_.react-flow__pane]:!cursor-grabbing')}
+      onPointerMove={handlePointerMove}
+    >
       <CanvasActionsContext.Provider value={actions}>
         <ReactFlow<StepFlowNode, StepFlowEdge>
           nodes={rfNodes}
@@ -492,10 +515,11 @@ function GraphCanvasInner(props: GraphCanvasProps) {
           // Node deletion routes through the page so the chain heals; React
           // Flow's own delete key would drop edges without reconnecting.
           deleteKeyCode={null}
-          // n8n feel: left-drag marquee-selects, middle/right-drag pans.
-          selectionOnDrag
+          // n8n feel: left-drag marquee-selects, middle/right-drag pans. The
+          // hand tool flips left-drag to panning; press-and-hold pans either way.
+          selectionOnDrag={!handTool}
           selectionMode={SelectionMode.Partial}
-          panOnDrag={[1, 2]}
+          panOnDrag={handTool ? [0, 1, 2] : [1, 2]}
           panOnScroll
           zoomOnDoubleClick={false}
           minZoom={0.15}
@@ -516,10 +540,36 @@ function GraphCanvasInner(props: GraphCanvasProps) {
             <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.12)]">
               <button
                 type="button"
+                onClick={() => setHandTool(false)}
+                aria-label="Select tool"
+                aria-pressed={!handTool}
+                title="Select — drag to select steps (V). Hold on empty canvas to pan."
+                className={cn(
+                  'flex h-9 w-9 items-center justify-center transition-colors hover:bg-slate-50',
+                  !handTool ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-900',
+                )}
+              >
+                <MousePointer2 className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setHandTool(true)}
+                aria-label="Hand tool"
+                aria-pressed={handTool}
+                title="Hand — drag to pan the canvas (H)"
+                className={cn(
+                  'flex h-9 w-9 items-center justify-center border-t border-slate-200 transition-colors hover:bg-slate-50',
+                  handTool ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-900',
+                )}
+              >
+                <Hand className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
                 onClick={() => void zoomIn()}
                 aria-label="Zoom in"
                 title="Zoom in"
-                className="flex h-9 w-9 items-center justify-center text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                className="flex h-9 w-9 items-center justify-center border-t border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"
               >
                 <ZoomIn className="h-4 w-4" />
               </button>

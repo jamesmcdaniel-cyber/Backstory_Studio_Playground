@@ -53,6 +53,7 @@ export function useFlowCollab(
   sendCursor: (x: number, y: number, space?: CursorSpace) => void
   setSelection: (nodeId: string | null) => void
   setInHuddle: (inHuddle: boolean) => void
+  setCapture: (capturing: boolean, captureSessionId: string | null) => void
   setView: (view: CursorSpace) => void
   bus: CollabBus
   selfClientId: string
@@ -125,6 +126,7 @@ export function useFlowCollab(
     sendCursor: room.sendCursor,
     setSelection: room.setSelection,
     setInHuddle: room.setInHuddle,
+    setCapture: room.setCapture,
     setView: room.setView,
     bus: room.bus,
     selfClientId: clientId,

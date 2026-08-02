@@ -16,6 +16,11 @@ export type CollabParticipant = {
   selection?: string | null
   /** True while this participant is in the voice huddle. */
   inHuddle?: boolean
+  /** True while this participant's own mic is being captured for huddle notes. */
+  capturing?: boolean
+  /** The capture session this participant is part of (minted by whoever
+   *  enabled capture; late joiners read it from the roster). */
+  captureSessionId?: string | null
   /** Which builder view they're on. Cursor coordinates only mean the same
    *  thing between participants sharing a view, so the roster surfaces this
    *  (with a follow action) rather than hiding them. */
@@ -123,6 +128,8 @@ export function useFlowRoom(params: {
       canEdit,
       selection: presenceRef.current?.selection ?? null,
       inHuddle: presenceRef.current?.inHuddle ?? false,
+      capturing: presenceRef.current?.capturing ?? false,
+      captureSessionId: presenceRef.current?.captureSessionId ?? null,
       view: presenceRef.current?.view ?? 'inline',
     }
     retrack()
@@ -232,6 +239,13 @@ export function useFlowRoom(params: {
     retrack()
   }, [retrack])
 
+  const setCapture = useCallback((capturing: boolean, captureSessionId: string | null) => {
+    if (!presenceRef.current) return
+    if (presenceRef.current.capturing === capturing && presenceRef.current.captureSessionId === captureSessionId) return
+    presenceRef.current = { ...presenceRef.current, capturing, captureSessionId }
+    retrack()
+  }, [retrack])
+
   const setView = useCallback((view: CursorSpace) => {
     if (!presenceRef.current || presenceRef.current.view === view) return
     presenceRef.current = { ...presenceRef.current, view }
@@ -252,5 +266,5 @@ export function useFlowRoom(params: {
 
   const getPresentIds = useCallback(() => Array.from(presentIdsRef.current), [])
 
-  return { participants, roster, cursors, status, sendCursor, getPresentIds, setSelection, setInHuddle, setView, bus }
+  return { participants, roster, cursors, status, sendCursor, getPresentIds, setSelection, setInHuddle, setCapture, setView, bus }
 }

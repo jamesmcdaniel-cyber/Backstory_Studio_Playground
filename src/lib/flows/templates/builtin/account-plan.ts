@@ -51,10 +51,10 @@ export const ACCOUNT_PLAN: FlowTemplateDef = {
           label: 'Read the account status',
           connectionId: '',
           toolName: 'get_account_status',
-          args: '{"peopleai_account_id":"{{step.find.output}}"}',
+          args: '{"peopleai_account_id":"{{step.find.output.peopleai_account_id}}"}',
           retries: 2,
           timeoutMs: 30000,
-          note: 'Pulls the current state — engagement, open opportunities, recent movement — as facts, not as something the model recalls. Takes the id straight from the lookup above; if your Backstory returns the id nested inside a record, point this at that field instead.',
+          note: 'Pulls the current state — engagement, open opportunities, recent movement — as facts, not as something the model recalls. Reads the peopleai_account_id field off the lookup above; if your Backstory returns the id under a different field, point this at that field instead.',
         },
       },
       {
@@ -65,7 +65,7 @@ export const ACCOUNT_PLAN: FlowTemplateDef = {
           connectionId: '',
           toolName: 'ask_sales_ai_about_account',
           args:
-            '{"peopleai_account_id":"{{step.find.output}}","question":"What has changed on this account in the last 90 days, who is engaged, and what is the biggest risk to the relationship?"}',
+            '{"peopleai_account_id":"{{step.find.output.peopleai_account_id}}","question":"What has changed on this account in the last 90 days, who is engaged, and what is the biggest risk to the relationship?"}',
           retries: 1,
           onError: 'continue',
           timeoutMs: 45000,

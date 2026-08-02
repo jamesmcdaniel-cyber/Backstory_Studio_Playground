@@ -6,7 +6,9 @@ import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { HuddlePanel, type HuddleMember } from '@/components/flows/huddle-panel'
+import { HuddlePanel, type HuddleCapture, type HuddleMember } from '@/components/flows/huddle-panel'
+import type { HuddleNoteRecord } from '@/lib/flows/use-huddle-capture'
+import { NotebookPen } from 'lucide-react'
 import type { FlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { cn } from '@/lib/utils'
 
@@ -38,6 +40,7 @@ export function JamDialog({
   huddle,
   huddleMembers,
   selfClientId,
+  capture,
   shareToken,
   shareRole,
   onShareChanged,
@@ -68,6 +71,8 @@ export function JamDialog({
   huddle?: FlowHuddle
   huddleMembers?: HuddleMember[]
   selfClientId?: string
+  /** Huddle-notes capture (consent, session, upload state). */
+  capture?: HuddleCapture
   /** Cross-workspace share link state (same-org editors only). */
   shareToken?: string | null
   shareRole?: 'view' | 'edit'
@@ -107,6 +112,29 @@ export function JamDialog({
       .catch(() => undefined)
     return () => { cancelled = true }
   }, [open, canInvite])
+
+  // Huddle notes: fetched when the dialog opens; the same response says
+  // whether transcription is configured (drives the capture toggle's state).
+  // A freshly produced note (capture.latestNote) is merged in so the person
+  // who just left the huddle sees it without reopening.
+  const [notes, setNotes] = useState<HuddleNoteRecord[]>([])
+  const [captureAvailable, setCaptureAvailable] = useState<boolean | undefined>(undefined)
+  useEffect(() => {
+    if (!open || !huddle) return
+    let cancelled = false
+    fetch(`/api/flows/${flowId}/huddle/notes`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled || !data.success) return
+        setNotes((data.notes ?? []) as HuddleNoteRecord[])
+        setCaptureAvailable(Boolean(data.captureAvailable))
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [open, flowId, huddle, capture?.latestNote])
+  const visibleNotes = capture?.latestNote && !notes.some((n) => n.id === capture.latestNote?.id)
+    ? [capture.latestNote, ...notes]
+    : notes
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -233,7 +261,13 @@ export function JamDialog({
                   bar over the canvas. Only mute is mirrored into the header. */}
               {huddle && (
                 <div className="mt-2 border-t border-indigo-200/60 pt-2 dark:border-indigo-500/20">
-                  <HuddlePanel huddle={huddle} members={huddleMembers ?? []} selfClientId={selfClientId ?? ''} />
+                  <HuddlePanel
+                    huddle={huddle}
+                    members={huddleMembers ?? []}
+                    selfClientId={selfClientId ?? ''}
+                    capture={capture}
+                    captureAvailable={captureAvailable}
+                  />
                 </div>
               )}
               <div className="mt-2 flex flex-wrap gap-2">
@@ -257,6 +291,29 @@ export function JamDialog({
                       </button>
                     )}
                   </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {visibleNotes.length > 0 && (
+            <div className="space-y-2">
+              <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <NotebookPen className="h-3.5 w-3.5" /> Huddle notes
+              </p>
+              <div className="max-h-48 space-y-2 overflow-y-auto">
+                {visibleNotes.map((note) => (
+                  <div key={note.id} className="rounded-lg border border-border/60 bg-muted/30 p-2.5 text-xs">
+                    <p className="mb-1 text-[10px] font-medium text-muted-foreground">
+                      {new Date(note.startedAt).toLocaleString()} · {(note.participants as string[]).join(', ')}
+                    </p>
+                    <p className="text-foreground">{note.summary}</p>
+                    {note.decisions.length > 0 && (
+                      <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                        {note.decisions.map((decision, index) => <li key={index}>{decision}</li>)}
+                      </ul>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>

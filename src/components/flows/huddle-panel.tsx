@@ -1,13 +1,17 @@
 'use client'
 
-import { AlertCircle, Loader2, Mic, MicOff, PhoneOff, Radio, X } from 'lucide-react'
+import { AlertCircle, Loader2, Mic, MicOff, NotebookPen, PhoneOff, Radio, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { HuddleMemberControls } from '@/components/flows/huddle-member-controls'
 import { HuddleSettingsMenu } from '@/components/flows/huddle-settings-menu'
 import type { FlowHuddle } from '@/lib/flows/use-flow-huddle'
+import type { useHuddleCapture } from '@/lib/flows/use-huddle-capture'
 import { cn } from '@/lib/utils'
 
 export type HuddleMember = { clientId: string; name: string; color: string }
+
+export type HuddleCapture = ReturnType<typeof useHuddleCapture>
 
 /**
  * Every huddle control, living inside the Jam widget — there is deliberately no
@@ -19,11 +23,17 @@ export function HuddlePanel({
   huddle,
   members,
   selfClientId,
+  capture,
+  captureAvailable,
 }: {
   huddle: FlowHuddle
   /** Everyone whose presence says they're in the huddle, self included. */
   members: HuddleMember[]
   selfClientId: string
+  /** Huddle-notes capture state; absent → the feature is not offered at all. */
+  capture?: HuddleCapture
+  /** Whether transcription is configured server-side. */
+  captureAvailable?: boolean
 }) {
   const { joined, connecting, muted, pttEnabled, transmitting, error, speakingIds, peerStates, peerAudio } = huddle
   const live = members.length > 0
@@ -90,6 +100,50 @@ export function HuddlePanel({
           </>
         )}
       </div>
+
+      {capture && (joined || capture.summarizing) && (
+        <div className="space-y-1.5 rounded-lg border border-border/60 bg-background/60 px-2.5 py-2">
+          {joined && <div className="flex items-center justify-between gap-2">
+            <span className={cn('flex items-center gap-1.5 text-[11px] font-medium', capture.captureLive ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground')}>
+              <NotebookPen className="h-3.5 w-3.5" />
+              {capture.captureLive ? 'Notes are being taken' : 'Take notes'}
+              {capture.captureLive && <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red-500" />}
+            </span>
+            {/* Whole-huddle switch: enable for anyone, disable only for the
+                participant who started it (the session is theirs to end). */}
+            {captureAvailable === false ? (
+              <span className="text-[11px] text-muted-foreground">Transcription isn’t configured for this workspace.</span>
+            ) : !capture.captureLive ? (
+              <Button size="sm" variant="outline" className="h-6 rounded-full text-[11px]" onClick={capture.enableCapture}>
+                Start notes
+              </Button>
+            ) : capture.isOwner ? (
+              <Button size="sm" variant="outline" className="h-6 rounded-full text-[11px]" onClick={capture.disableCapture}>
+                Stop notes
+              </Button>
+            ) : null}
+          </div>}
+          {joined && capture.captureLive && (
+            <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              {/* Personal consent: capture is local, so switching this off means
+                  your audio never leaves this machine — not recorded-then-filtered. */}
+              <span>Include my voice</span>
+              <Switch checked={!capture.optedOut} onCheckedChange={(on) => capture.optOut(!on)} />
+            </label>
+          )}
+          {capture.uploadWarning && (
+            <p className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+              <AlertCircle className="h-3 w-3" /> Part of the conversation could not be saved.
+              <button type="button" className="underline" onClick={capture.clearUploadWarning}>Dismiss</button>
+            </p>
+          )}
+          {capture.summarizing && (
+            <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Writing up notes…
+            </p>
+          )}
+        </div>
+      )}
 
       {error && (
         <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-background/80 px-2.5 py-2">

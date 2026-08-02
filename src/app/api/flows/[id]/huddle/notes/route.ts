@@ -1,8 +1,12 @@
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
+import { transcriptionAvailable } from '@/lib/flows/huddle-transcribe'
 
-// GET /api/flows/[id]/huddle/notes — the flow's huddle notes, newest first.
+// GET /api/flows/[id]/huddle/notes — the flow's huddle notes, newest first,
+// plus whether capture is even possible (the toggle is disabled with an
+// explanation when transcription isn't configured, instead of failing at the
+// end of a call).
 export const GET = withAuthenticatedApi(async (request, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-3)
   if (!id) throw new ApiError('Flow id is required')
@@ -16,5 +20,9 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     orderBy: { createdAt: 'desc' },
     take: 20,
   })
-  return { success: true, notes }
+  return {
+    success: true,
+    notes,
+    captureAvailable: transcriptionAvailable({ OPENAI_API_KEY: process.env.OPENAI_API_KEY }),
+  }
 }, { permission: 'flow.read' })

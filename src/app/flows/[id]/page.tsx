@@ -16,6 +16,7 @@ import { describeParticipantView } from '@/lib/flows/cursor-view'
 import { applyDragPreview, pruneDragPreview, type DragPreview } from '@/lib/flows/drag-preview'
 import { useFlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { detectHuddleStart } from '@/lib/flows/huddle-alerts'
+import { useHuddleCapture } from '@/lib/flows/use-huddle-capture'
 import { CursorLayer } from '@/components/flows/cursor-layer'
 import { flowToN8n } from '@/lib/flows/export/to-n8n'
 import { flowToInstructions } from '@/lib/flows/export/to-instructions'
@@ -531,7 +532,7 @@ function FlowBuilder() {
     setGraph(next)
     setSelectedId((current) => (current && !next.nodes.some((n) => n.id === current) ? null : current))
   }, [viewingVersion])
-  const { participants, roster, cursors, status: jamStatus, broadcastGraph, sendCursor, setSelection, setInHuddle, setView: publishView, bus, selfClientId } =
+  const { participants, roster, cursors, status: jamStatus, broadcastGraph, sendCursor, setSelection, setInHuddle, setCapture, setView: publishView, bus, selfClientId } =
     // Return null until our own load succeeded — otherwise a failed-load client
     // (graph = emptyGraph) would answer a newcomer's realtime bootstrap with an
     // empty graph, which the newcomer adopts and its persister autosaves over
@@ -628,6 +629,16 @@ function FlowBuilder() {
   }, [others])
   // ── Voice huddle ────────────────────────────────────────────────────────────
   const huddle = useFlowHuddle(bus, selfClientId, setInHuddle)
+  // Huddle notes: consent + capture + post-huddle summary (see the
+  // huddle-notes spec — audio never persists, only the note survives).
+  const huddleCapture = useHuddleCapture({
+    flowId: id,
+    joined: huddle.joined,
+    localStream: huddle.getLocalStream,
+    participants,
+    selfClientId,
+    setCapture,
+  })
   // Everyone whose presence says they're in the huddle (incl. self once joined).
   const huddleMembers = useMemo(
     () => participants.filter((p) => p.inHuddle).map((p) => ({ clientId: p.clientId, name: p.name, color: p.color })),
@@ -2394,6 +2405,7 @@ function FlowBuilder() {
         huddle={huddle}
         huddleMembers={huddleMembers}
         selfClientId={selfClientId}
+        capture={huddleCapture}
         shareToken={shareToken}
         shareRole={shareRole}
         onShareChanged={(token, role) => { setShareToken(token); setShareRole(role) }}

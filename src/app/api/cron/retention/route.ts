@@ -107,8 +107,17 @@ export async function GET(request: Request) {
         })).count
       : 0
 
-    apiLogger.info('cron/retention complete', { days, executionsDeleted, signalsDeleted, transcriptsPruned })
-    return Response.json({ success: true, days, executionsDeleted, signalsDeleted, transcriptsPruned })
+    // Huddle segments are transient working state deleted at summary time; any
+    // still here after 24h belong to a session nobody summarised (laptop shut
+    // mid-huddle). Sweeping them is what keeps the "raw speech never lingers"
+    // retention promise honest.
+    // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
+    const huddleSegmentsPruned = (await systemPrisma.huddleSegment.deleteMany({
+      where: { createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+    })).count
+
+    apiLogger.info('cron/retention complete', { days, executionsDeleted, signalsDeleted, transcriptsPruned, huddleSegmentsPruned })
+    return Response.json({ success: true, days, executionsDeleted, signalsDeleted, transcriptsPruned, huddleSegmentsPruned })
   } catch (error) {
     apiLogger.error('cron/retention failed', { error: error instanceof Error ? error.message : String(error) })
     return Response.json({ success: false, error: 'Internal server error' }, { status: 500 })

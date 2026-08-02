@@ -26,6 +26,51 @@ test('linear flow threads output between two agent steps', async () => {
   assert.equal(result.steps.filter((s) => s.status === 'succeeded').length, 2)
 })
 
+test('webhook-triggered flow runs agent, webhook/HTTP, integration, and MCP actions end to end', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: { trigger: { type: 'webhook' } } },
+      { id: 'agent', type: 'agent', data: { agentId: 'triage', input: 'Triage {{trigger.input.account}}' } },
+      { id: 'webhook', type: 'http', data: { method: 'POST', url: 'https://hooks.example.com', bodyMode: 'json', body: '{"summary":"{{step.agent.output}}"}' } },
+      { id: 'http', type: 'http', data: { method: 'GET', url: 'https://api.example.com/{{trigger.input.id}}' } },
+      { id: 'integration', type: 'tool', data: { connectionId: 'native:http', toolName: 'http_request', args: '{"status":"{{step.http.output.status}}"}' } },
+      { id: 'mcp', type: 'tool', data: { connectionId: 'mcp-1', toolName: 'lookup_record', args: '{"deliveryId":"{{step.integration.output.deliveryId}}"}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'agent' },
+      { id: 'e2', source: 'agent', target: 'webhook' },
+      { id: 'e3', source: 'webhook', target: 'http' },
+      { id: 'e4', source: 'http', target: 'integration' },
+      { id: 'e5', source: 'integration', target: 'mcp' },
+    ],
+  }
+  const calls: { id: string; kind: string; config: Record<string, unknown> }[] = []
+  const runAgent: RunAgentFn = async (node) => {
+    assert.equal(node.input, 'Triage Acme')
+    return { output: 'qualified' }
+  }
+  const runAction: RunActionFn = async (node) => {
+    calls.push(node)
+    if (node.id === 'webhook') return { output: { accepted: true } }
+    if (node.id === 'http') return { output: { status: 200 } }
+    if (node.id === 'integration') return { output: { deliveryId: 'del-1' } }
+    return { output: { recordId: 'rec-1' } }
+  }
+  const result = await interpretFlow(graph, { account: 'Acme', id: 'acct-1' }, { runAgent, runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, { recordId: 'rec-1' })
+  assert.deepEqual(calls.map((call) => [call.id, call.kind]), [
+    ['webhook', 'http'],
+    ['http', 'http'],
+    ['integration', 'tool'],
+    ['mcp', 'tool'],
+  ])
+  assert.deepEqual(calls[0].config.body, { summary: 'qualified' })
+  assert.equal(calls[1].config.url, 'https://api.example.com/acct-1')
+  assert.deepEqual(calls[2].config.args, { status: 200 })
+  assert.deepEqual(calls[3].config.args, { deliveryId: 'del-1' })
+})
+
 test('structured trigger input fields are addressable', async () => {
   const graph: FlowGraph = {
     nodes: [

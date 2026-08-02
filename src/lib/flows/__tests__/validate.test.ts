@@ -111,7 +111,7 @@ test('validateFlowGraph checks HTTP request configuration', () => {
   assert.ok(result.warnings.some((issue) => issue.code === 'HTTP_BODY_IGNORED'))
 })
 
-test('validateFlowGraph warns when an http step authenticates with an unavailable connection', () => {
+test('validateFlowGraph blocks an http step that authenticates with an unavailable connection', () => {
   const graph: FlowGraph = {
     nodes: [
       { id: 'trigger', type: 'trigger', data: {} },
@@ -121,12 +121,79 @@ test('validateFlowGraph warns when an http step authenticates with an unavailabl
     edges: [{ id: 'e1', source: 'trigger', target: 'h1' }, { id: 'e2', source: 'h1', target: 'h2' }],
   }
   const result = validateFlowGraph(graph, { toolCatalog: [{ id: 'c1', tools: [] }] })
-  assert.equal(result.ok, true) // warning only — never blocks a run
-  assert.ok(result.warnings.some((issue) => issue.code === 'UNKNOWN_HTTP_CONNECTION' && issue.nodeId === 'h1'))
-  assert.ok(!result.warnings.some((issue) => issue.code === 'UNKNOWN_HTTP_CONNECTION' && issue.nodeId === 'h2'))
+  assert.equal(result.ok, false)
+  assert.ok(result.errors.some((issue) => issue.code === 'UNKNOWN_HTTP_CONNECTION' && issue.nodeId === 'h1'))
+  assert.ok(!result.errors.some((issue) => issue.code === 'UNKNOWN_HTTP_CONNECTION' && issue.nodeId === 'h2'))
   // No catalog context (e.g. plain graph checks): no warning either
   const noContext = validateFlowGraph(graph)
   assert.ok(!noContext.warnings.some((issue) => issue.code === 'UNKNOWN_HTTP_CONNECTION'))
+})
+
+test('mixed webhook, HTTP, agent, integration, and MCP flow has every runnable dependency', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: { trigger: { type: 'webhook' } } },
+      { id: 'agent', type: 'agent', data: { agentId: 'agent-1', input: 'Triage {{trigger.input}}' } },
+      { id: 'webhook', type: 'http', data: { label: 'Webhook', method: 'POST', url: 'https://hooks.example.com/events', body: '{"summary":"{{step.agent.output}}"}', bodyMode: 'json' } },
+      { id: 'http', type: 'http', data: { method: 'GET', url: 'https://api.example.com/status', credentialId: 'http-credential-1' } },
+      { id: 'integration', type: 'tool', data: { connectionId: 'native:http', toolName: 'http_request', args: '{"url":"https://api.example.com/finalize"}' } },
+      { id: 'mcp', type: 'tool', data: { connectionId: 'mcp-connection-1', toolName: 'lookup_record', args: '{"id":"{{trigger.input.id}}"}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'agent' },
+      { id: 'e2', source: 'agent', target: 'webhook' },
+      { id: 'e3', source: 'webhook', target: 'http' },
+      { id: 'e4', source: 'http', target: 'integration' },
+      { id: 'e5', source: 'integration', target: 'mcp' },
+    ],
+  }
+  const result = validateFlowGraph(graph, {
+    agents: [{ id: 'agent-1' }],
+    toolCatalog: [
+      { id: 'native:http', tools: [{ name: 'http_request', inputSchema: { type: 'object', required: ['url'] } }] },
+      { id: 'mcp-connection-1', tools: [{ name: 'lookup_record', inputSchema: { type: 'object', required: ['id'] } }] },
+    ],
+    httpCredentials: [{ id: 'http-credential-1' }],
+    webhookSecretConfigured: true,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.errors, [])
+})
+
+test('runnable dependency checks catch unavailable tools, credentials, and webhook settings', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: { trigger: { type: 'webhook' } } },
+      { id: 'http', type: 'http', data: { method: 'GET', url: 'https://api.example.com', credentialId: 'gone' } },
+      { id: 'tool', type: 'tool', data: { connectionId: 'mcp-1', toolName: 'read', args: '{}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'http' },
+      { id: 'e2', source: 'http', target: 'tool' },
+    ],
+  }
+  const result = validateFlowGraph(graph, {
+    toolCatalog: [{ id: 'mcp-1', tools: [], toolsError: 'offline' }],
+    httpCredentials: [],
+    webhookSecretConfigured: false,
+  })
+  assert.equal(result.ok, false)
+  assert.ok(result.errors.some((issue) => issue.code === 'MISSING_WEBHOOK_SECRET'))
+  assert.ok(result.errors.some((issue) => issue.code === 'UNKNOWN_HTTP_CREDENTIAL'))
+  assert.ok(result.errors.some((issue) => issue.code === 'TOOL_CONNECTION_UNAVAILABLE'))
+})
+
+test('signal triggers require a signal name and HTTP predefined auth requires MCP', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: { trigger: { type: 'signal' } } },
+      { id: 'http', type: 'http', data: { method: 'GET', url: 'https://api.example.com', connectionId: 'native:slack' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'http' }],
+  }
+  const result = validateFlowGraph(graph, { toolCatalog: [{ id: 'native:slack', tools: [] }] })
+  assert.ok(result.errors.some((issue) => issue.code === 'MISSING_SIGNAL'))
+  assert.ok(result.errors.some((issue) => issue.code === 'INVALID_HTTP_AUTH_CONNECTION'))
 })
 
 test('validateFlowGraph warns about a join with no incoming branch, not a wired one', () => {

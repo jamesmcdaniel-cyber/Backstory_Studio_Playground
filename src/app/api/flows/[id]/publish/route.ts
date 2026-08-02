@@ -59,7 +59,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const usedConnectionIds = Array.from(new Set(graph.nodes.flatMap((node) =>
     node.type === 'tool' || node.type === 'http' ? [node.data.connectionId] : [],
   ).filter((id): id is string => Boolean(id))))
-  const [agents, connections] = await Promise.all([
+  const usedHttpCredentialIds = Array.from(new Set(graph.nodes.flatMap((node) =>
+    node.type === 'http' ? [node.data.credentialId] : [],
+  ).filter((id): id is string => Boolean(id))))
+  const [agents, connections, httpCredentials] = await Promise.all([
     prisma.agentTask.findMany({
       where: { organizationId: auth.organizationId, status: 'ACTIVE', ...agentVisibilityScope(auth.dbUser.id) },
       select: { id: true, description: true },
@@ -68,10 +71,21 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     usedConnectionIds.length
       ? loadFlowToolCatalog(auth.organizationId, { userId: auth.dbUser.id, connectionIds: usedConnectionIds, takeConnections: usedConnectionIds.length, takeTools: 100 })
       : Promise.resolve([]),
+    usedHttpCredentialIds.length
+      ? prisma.httpCredential.findMany({
+          where: { organizationId: auth.organizationId, id: { in: usedHttpCredentialIds }, status: { in: ['verified', 'error'] } },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
   ])
+  const persistedTrigger = existing.trigger && typeof existing.trigger === 'object' && !Array.isArray(existing.trigger)
+    ? existing.trigger as Record<string, unknown>
+    : {}
   const validation = validateFlowGraph(graph, {
     agents: agents.map((agent) => ({ id: agent.id, title: agent.description })),
     toolCatalog: connections,
+    httpCredentials,
+    webhookSecretConfigured: typeof persistedTrigger.webhookSecretHash === 'string',
   })
   if (!validation.ok) {
     throw new ApiError(validationErrorMessage(validation), 400, 'FLOW_VALIDATION_ERROR')

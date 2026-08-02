@@ -13,7 +13,11 @@ export type FlowValidationIssue = {
 
 export type FlowValidationContext = {
   agents?: { id: string; title?: string }[]
-  toolCatalog?: { id: string; name?: string; tools?: { name: string; inputSchema?: unknown }[] }[]
+  toolCatalog?: { id: string; name?: string; tools?: { name: string; inputSchema?: unknown }[]; toolsError?: string }[]
+  /** Reusable HTTP credentials visible to the executing workspace. */
+  httpCredentials?: { id: string }[]
+  /** Set by publish validation; omitted for draft/manual-run validation. */
+  webhookSecretConfigured?: boolean
   requireRunnable?: boolean
   /** The flow being validated — lets subflow steps flag direct self-reference. */
   flowId?: string
@@ -157,7 +161,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-function validateTriggerConfig(issues: FlowValidationIssue[], trigger: unknown) {
+function validateTriggerConfig(
+  issues: FlowValidationIssue[],
+  trigger: unknown,
+  context: Pick<FlowValidationContext, 'webhookSecretConfigured'> = {},
+) {
   if (trigger === undefined) return
   if (!isRecord(trigger)) {
     add(issues, 'error', 'INVALID_TRIGGER_CONFIG', 'The Trigger configuration is invalid.', 'trigger')
@@ -201,6 +209,12 @@ function validateTriggerConfig(issues: FlowValidationIssue[], trigger: unknown) 
       add(issues, 'error', 'MISSING_POLL_SCHEDULE', 'A polling trigger needs a check frequency.', 'trigger')
     }
     return
+  }
+  if (type === 'signal' && !String(trigger.signal ?? '').trim()) {
+    add(issues, 'error', 'MISSING_SIGNAL', 'A signal trigger needs a signal name.', 'trigger')
+  }
+  if (type === 'webhook' && context.webhookSecretConfigured === false) {
+    add(issues, 'error', 'MISSING_WEBHOOK_SECRET', 'Create a webhook secret before publishing this flow.', 'trigger')
   }
   if (type !== 'schedule') return
   const schedule = trigger.schedule
@@ -325,6 +339,8 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     connection.id,
     new Set((connection.tools ?? []).map((tool) => tool.name)),
   ]))
+  const toolErrorsByConnection = new Map((context.toolCatalog ?? []).map((connection) => [connection.id, connection.toolsError]))
+  const httpCredentialIds = new Set((context.httpCredentials ?? []).map((credential) => credential.id))
   const toolsByConnection = new Map((context.toolCatalog ?? []).map((connection) => [
     connection.id,
     new Map((connection.tools ?? []).map((tool) => [tool.name, tool])),
@@ -341,7 +357,7 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     add(issues, 'error', 'INVALID_TRIGGER', 'The flow needs exactly one Trigger step with id "trigger".')
   }
   const triggerNode = graph.nodes.find((node): node is Extract<FlowNode, { type: 'trigger' }> => node.type === 'trigger')
-  validateTriggerConfig(issues, triggerNode?.data.trigger)
+  validateTriggerConfig(issues, triggerNode?.data.trigger, context)
 
   const actionable = graph.nodes.filter((node) => node.type !== 'trigger')
   if (context.requireRunnable !== false && actionable.length === 0) {
@@ -370,6 +386,8 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
         add(issues, 'error', 'MISSING_TOOL_CONNECTION', `${nodeLabel(node)} needs a connection.`, node.id)
       } else if (context.toolCatalog && !connectionIds.has(node.data.connectionId)) {
         add(issues, 'error', 'UNKNOWN_TOOL_CONNECTION', `${nodeLabel(node)} uses a connection that is not available.`, node.id)
+      } else if (toolErrorsByConnection.get(node.data.connectionId)) {
+        add(issues, 'error', 'TOOL_CONNECTION_UNAVAILABLE', `${nodeLabel(node)} cannot reach its connection — reconnect it in Integrations and try again.`, node.id)
       }
       if (!node.data.toolName) {
         add(issues, 'error', 'MISSING_TOOL', `${nodeLabel(node)} needs a tool.`, node.id)
@@ -396,8 +414,17 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
 
     if (node.type === 'http') {
       validateHttpUrl(issues, node.data.url, node.id)
+      if (node.data.connectionId && node.data.credentialId) {
+        add(issues, 'error', 'AMBIGUOUS_HTTP_AUTH', `${nodeLabel(node)} has two authentication methods selected — keep either a predefined connection or a generic credential.`, node.id)
+      }
+      if (node.data.connectionId && parseFlowToolConnectionId(node.data.connectionId).plane !== 'mcp') {
+        add(issues, 'error', 'INVALID_HTTP_AUTH_CONNECTION', `${nodeLabel(node)} can only use an MCP connection for predefined authentication — choose one from the HTTP authentication settings.`, node.id)
+      }
       if (node.data.connectionId && context.toolCatalog && !connectionIds.has(node.data.connectionId)) {
-        add(issues, 'warning', 'UNKNOWN_HTTP_CONNECTION', `${nodeLabel(node)} authenticates with a connection that is not available — pick another connection or reconnect it in Integrations.`, node.id)
+        add(issues, 'error', 'UNKNOWN_HTTP_CONNECTION', `${nodeLabel(node)} authenticates with a connection that is not available — pick another connection or reconnect it in Integrations.`, node.id)
+      }
+      if (node.data.credentialId && context.httpCredentials && !httpCredentialIds.has(node.data.credentialId)) {
+        add(issues, 'error', 'UNKNOWN_HTTP_CREDENTIAL', `${nodeLabel(node)} uses an HTTP credential that is not available — choose or create another credential.`, node.id)
       }
       if (node.data.sendHeaders !== false) {
         validateJsonObjectField(issues, node.data.headers, `${nodeLabel(node)} headers must be a JSON object.`, node.id)

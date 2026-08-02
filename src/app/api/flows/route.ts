@@ -14,7 +14,7 @@ function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
 }
 
-const triggerSchema = z.object({ type: z.enum(['manual', 'schedule', 'webhook', 'signal']).default('manual') }).passthrough()
+const triggerSchema = z.object({ type: z.enum(['manual', 'schedule', 'webhook', 'signal', 'poll']).default('manual') }).passthrough()
 const flowSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(''),

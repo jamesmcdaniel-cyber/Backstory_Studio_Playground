@@ -47,6 +47,7 @@ import { retrieveKnowledge } from '@/lib/knowledge/retrieve'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { runFlowCode } from './code-runner'
+import { agentVisibilityScope } from '@/lib/server/visibility'
 
 export type FlowExecutionJob = {
   flowId: string
@@ -169,20 +170,30 @@ async function resolveValidatedGraph(
   const usedConnectionIds = Array.from(new Set(graph.nodes.flatMap((node) =>
     node.type === 'tool' || node.type === 'http' ? [node.data.connectionId] : [],
   ).filter((id): id is string => Boolean(id))))
-  const [agents, toolCatalog] = await Promise.all([
+  const usedHttpCredentialIds = Array.from(new Set(graph.nodes.flatMap((node) =>
+    node.type === 'http' ? [node.data.credentialId] : [],
+  ).filter((id): id is string => Boolean(id))))
+  const [agents, toolCatalog, httpCredentials] = await Promise.all([
     prisma.agentTask.findMany({
-      where: { organizationId: job.organizationId, status: 'ACTIVE' },
+      where: { organizationId: job.organizationId, status: 'ACTIVE', ...agentVisibilityScope(job.userId) },
       select: { id: true, description: true },
       take: 500,
     }),
     usedConnectionIds.length
       ? loadFlowToolCatalog(job.organizationId, { userId: job.userId, connectionIds: usedConnectionIds, takeConnections: usedConnectionIds.length, takeTools: 100 })
       : Promise.resolve([]),
+    usedHttpCredentialIds.length
+      ? prisma.httpCredential.findMany({
+          where: { organizationId: job.organizationId, id: { in: usedHttpCredentialIds }, status: { in: ['verified', 'error'] } },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
   ])
   const agentRefs = agents.map((agent) => ({ id: agent.id, title: agent.description }))
   const validation = validateFlowGraph(graph, {
     agents: agentRefs,
     toolCatalog,
+    httpCredentials,
     flowId: job.flowId,
   })
   if (!validation.ok) {

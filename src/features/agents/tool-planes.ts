@@ -491,7 +491,10 @@ export async function resolveFlowToolExecutor(params: {
 
   if (plane === 'mcp') {
     const conn = await prisma.mcpConnection.findFirst({
-      where: { id: ref, organizationId, isActive: true },
+      // Match catalog visibility exactly: an org-shared connection or one
+      // owned by the acting user. A stored/crafted graph must not be able to
+      // execute another member's personal MCP credentials.
+      where: { id: ref, ...mcpConnectionScope(organizationId, userId) },
     })
     if (!conn) throw new Error('The selected connection no longer exists — pick another in the step config.')
     const fresh = await ensureFreshConnectionToken(conn)

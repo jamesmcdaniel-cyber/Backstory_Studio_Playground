@@ -805,7 +805,12 @@ export async function runFlowExecution(
         // could run it a second time concurrently (double token spend). Hard
         // errors keep the retry budget.
         const turn = await runWithRetries(
-          async () => runner.next(runner.start(user), prompt.system, []),
+          async () =>
+            runner.next(runner.start(user), prompt.system, [], {
+              organizationId: job.organizationId,
+              surface: 'agent_turn',
+              flowRunId: run.id,
+            }),
           {
             retries,
             retryDelayMs,

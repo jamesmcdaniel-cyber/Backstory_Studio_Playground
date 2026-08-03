@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { apiLogger } from '@/lib/logger'
+import { recordLlmCall } from '@/lib/usage/ledger'
 import { qwenClient, qwenConfigured, qwenModel } from './qwen'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import {
@@ -15,6 +16,19 @@ export type ToolDefinition = {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+}
+
+/**
+ * Who to bill a call to. Optional everywhere: a call without context still
+ * runs, it just is not recorded. Keeps every existing caller compiling
+ * unchanged while new call sites opt in.
+ */
+export type LedgerContext = {
+  organizationId: string
+  surface?: 'agent_turn' | 'structured' | 'headline' | 'embedding' | 'eval_judge'
+  agentExecutionId?: string | null
+  flowRunId?: string | null
+  flowRunStepId?: string | null
 }
 
 export type ToolCall = {
@@ -73,7 +87,7 @@ export interface ModelRunner {
   start(input: string): unknown[]
   appendUserMessage(transcript: unknown[], content: string): void
   appendToolResults(transcript: unknown[], results: ToolResult[]): void
-  next(transcript: unknown[], system: string, tools: ToolDefinition[]): Promise<ModelTurn>
+  next(transcript: unknown[], system: string, tools: ToolDefinition[], ledger?: LedgerContext): Promise<ModelTurn>
 }
 
 const ADAPTIVE_THINKING_MODELS = /^claude-(opus-4-[678]|sonnet-(4-6|5)|fable-5|mythos-5)/
@@ -221,13 +235,29 @@ class AgentRunner implements ModelRunner {
     )
   }
 
-  async next(transcript: unknown[], system: string, tools: ToolDefinition[]): Promise<ModelTurn> {
+  async next(transcript: unknown[], system: string, tools: ToolDefinition[], ledger?: LedgerContext): Promise<ModelTurn> {
     const ir = transcript as IRMessage[]
     let lastError: unknown
     for (let i = 0; i < this.chain.length; i += 1) {
       const provider = this.chain[i]
       try {
-        return await provider.next(ir, system, tools)
+        const turn = await provider.next(ir, system, tools)
+        // Recorded here rather than inside the provider so a fallback writes
+        // exactly one row — for the attempt that actually served the turn.
+        // Fire-and-forget: the ledger is best-effort and must not add latency.
+        if (ledger) {
+          void recordLlmCall({
+            organizationId: ledger.organizationId,
+            surface: ledger.surface ?? 'agent_turn',
+            provider: turn.provider,
+            model: turn.servedModel,
+            usage: turn.usage,
+            agentExecutionId: ledger.agentExecutionId,
+            flowRunId: ledger.flowRunId,
+            flowRunStepId: ledger.flowRunStepId,
+          })
+        }
+        return turn
       } catch (error) {
         lastError = error
         // Only fall back on availability failures, and only if a fallback exists.
@@ -322,7 +352,7 @@ function summaryTarget(): { target: 'claude' | 'qwen'; model: string } | null {
 
 // Cheap one-line summary for the activity feed. Best-effort: returns null when
 // no provider is configured or the call fails.
-export async function generateHeadline(summary: string): Promise<string | null> {
+export async function generateHeadline(summary: string, ledger?: LedgerContext): Promise<string | null> {
   const target = summaryTarget()
   if (!target || !summary.trim()) return null
   const system =
@@ -336,6 +366,22 @@ export async function generateHeadline(summary: string): Promise<string | null> 
       system,
       messages: [{ role: 'user', content: summary.slice(0, 4000) }],
     })
+    if (ledger) {
+      void recordLlmCall({
+        organizationId: ledger.organizationId,
+        surface: 'headline',
+        provider: target.target === 'qwen' ? 'qwen' : 'anthropic',
+        model: target.model,
+        usage: {
+          inputTokens: response.usage.input_tokens,
+          cacheWriteTokens: response.usage.cache_creation_input_tokens || 0,
+          cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+          outputTokens: response.usage.output_tokens,
+        },
+        agentExecutionId: ledger.agentExecutionId,
+        flowRunId: ledger.flowRunId,
+      })
+    }
     const text = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
       .map((block) => block.text)
@@ -368,6 +414,8 @@ type StructuredOpts = {
    * unset or when the override isn't a Claude model.
    */
   model?: string
+  /** Optional cost attribution. Omitted callers are simply not recorded. */
+  ledger?: LedgerContext
 }
 
 /**
@@ -430,7 +478,12 @@ export function strictifySchema(schema: Record<string, unknown>): Record<string,
  * One structured call over the Anthropic Messages API (both Claude and Qwen
  * speak it). `output_config` json_schema constrains the reply to the schema.
  */
-async function anthropicWireStructured(opts: StructuredOpts, client: Anthropic, model: string): Promise<string> {
+async function anthropicWireStructured(
+  opts: StructuredOpts,
+  client: Anthropic,
+  model: string,
+  provider: 'anthropic' | 'qwen',
+): Promise<string> {
   const response = await client.messages.create({
     model,
     max_tokens: opts.maxTokens ?? 4096,
@@ -438,6 +491,22 @@ async function anthropicWireStructured(opts: StructuredOpts, client: Anthropic, 
     messages: [{ role: 'user', content: opts.user }],
     output_config: { format: { type: 'json_schema', schema: strictifySchema(opts.schema) } },
   })
+  if (opts.ledger) {
+    void recordLlmCall({
+      organizationId: opts.ledger.organizationId,
+      surface: opts.ledger.surface ?? 'structured',
+      provider,
+      model,
+      usage: {
+        inputTokens: response.usage.input_tokens,
+        cacheWriteTokens: response.usage.cache_creation_input_tokens || 0,
+        cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+        outputTokens: response.usage.output_tokens,
+      },
+      agentExecutionId: opts.ledger.agentExecutionId,
+      flowRunId: opts.ledger.flowRunId,
+    })
+  }
   return response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
@@ -465,8 +534,8 @@ export async function generateStructured(opts: StructuredOpts): Promise<string> 
   for (const target of order) {
     try {
       return target === 'qwen'
-        ? await anthropicWireStructured(opts, qwenClient(), qwenModel(FALLBACK_QWEN_MODEL))
-        : await anthropicWireStructured(opts, claudeClient(), claudeModel)
+        ? await anthropicWireStructured(opts, qwenClient(), qwenModel(FALLBACK_QWEN_MODEL), 'qwen')
+        : await anthropicWireStructured(opts, claudeClient(), claudeModel, 'anthropic')
     } catch (error) {
       lastError = error
       if (!isProviderAvailabilityError(error)) throw error

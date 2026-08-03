@@ -37,6 +37,11 @@ export interface EmbedOptions {
   inputType?: 'document' | 'query'
   fetchImpl?: typeof fetch
   model?: string
+  /**
+   * Optional cost attribution. Only genuine network calls are recorded — a
+   * cache hit costs nothing, so it writes no ledger row.
+   */
+  ledger?: { organizationId: string }
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -60,7 +65,7 @@ export async function embedTexts(texts: string[], options: EmbedOptions = {}): P
 
   // Tests inject a fetch and don't want cache interference or real backoff.
   if (options.fetchImpl) {
-    return fetchEmbeddings(texts, { apiKey, model, inputType, fetchImpl: options.fetchImpl, maxAttempts: 1 })
+    return fetchEmbeddings(texts, { apiKey, model, inputType, fetchImpl: options.fetchImpl, maxAttempts: 1, ledger: options.ledger })
   }
 
   const keyOf = (text: string) => `emb:${model}:${inputType}:${sha256(text)}`
@@ -75,7 +80,7 @@ export async function embedTexts(texts: string[], options: EmbedOptions = {}): P
   }
 
   if (missTexts.length > 0) {
-    const fetched = await fetchEmbeddings(missTexts, { apiKey, model, inputType, fetchImpl: fetch, maxAttempts: 6 })
+    const fetched = await fetchEmbeddings(missTexts, { apiKey, model, inputType, fetchImpl: fetch, maxAttempts: 6, ledger: options.ledger })
     for (let j = 0; j < missTexts.length; j++) {
       const vector = fetched[j] ?? []
       out[missIndexes[j]] = vector
@@ -93,6 +98,7 @@ interface FetchEmbedOptions {
   inputType: 'document' | 'query'
   fetchImpl: typeof fetch
   maxAttempts: number
+  ledger?: { organizationId: string }
 }
 
 /**
@@ -126,7 +132,27 @@ async function fetchEmbeddings(texts: string[], opts: FetchEmbedOptions): Promis
     throw error
   }
 
-  const data = (await response.json()) as { data?: Array<{ embedding: number[]; index: number }> }
+  const data = (await response.json()) as {
+    data?: Array<{ embedding: number[]; index: number }>
+    usage?: { total_tokens?: number }
+  }
+  if (opts.ledger) {
+    // Dynamic import keeps this module free of a static Prisma dependency — it
+    // is also exercised by the RAG eval outside any request context.
+    const { recordLlmCall } = await import('@/lib/usage/ledger')
+    void recordLlmCall({
+      organizationId: opts.ledger.organizationId,
+      surface: 'embedding',
+      provider: 'voyage',
+      model: opts.model,
+      usage: {
+        inputTokens: data.usage?.total_tokens ?? 0,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        outputTokens: 0,
+      },
+    })
+  }
   const rows = data.data ?? []
   // Voyage returns items with an explicit index; order defensively.
   const ordered = new Array<number[]>(texts.length)

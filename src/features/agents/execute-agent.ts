@@ -931,7 +931,11 @@ export async function runAgentExecution(
         return await finalizeCancelled(live.status === 'cancelled')
       }
 
-      const turnResult = await runner.next(transcript, system, [...tools, ASK_USER_TOOL])
+      const turnResult = await runner.next(transcript, system, [...tools, ASK_USER_TOOL], {
+        organizationId,
+        surface: 'agent_turn',
+        agentExecutionId: execution.id,
+      })
       // billableTokens folds the three input buckets back together, so these
       // totals (and every budget check below) mean exactly what they did before
       // usage was split for cost accounting.
@@ -1274,7 +1278,7 @@ export async function runAgentExecution(
 
     const summary = finalText || 'Agent reached the maximum number of tool-call turns.'
     const output = { summary }
-    const headline = await generateHeadline(summary)
+    const headline = await generateHeadline(summary, { organizationId, agentExecutionId: execution.id })
 
     await prisma.executionMessage.create({
       data: { executionId: execution.id, role: 'agent', content: summary },

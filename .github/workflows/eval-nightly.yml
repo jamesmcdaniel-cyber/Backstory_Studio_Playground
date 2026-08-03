@@ -14,6 +14,11 @@ on:
 
 jobs:
   eval:
+    # Source of truth only. Backstory_customers mirrors this tree (it is an
+    # independent repo, not a GitHub fork, so its schedules DO fire) and holds
+    # none of these secrets — without this guard it would fail nightly and open
+    # a regression issue every morning against identical code.
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'jamesmcdaniel-cyber/Backstory_Studio'
     runs-on: ubuntu-latest
     services:
       postgres:

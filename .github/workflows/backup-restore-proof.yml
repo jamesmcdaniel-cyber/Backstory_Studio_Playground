@@ -5,6 +5,9 @@ on:
     - cron: '17 7 * * 1'
 jobs:
   restore-proof:
+    # Source of truth only — see the note in eval-nightly.yml. The mirror has no
+    # backup secrets and no database of its own to prove a restore against.
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'jamesmcdaniel-cyber/Backstory_Studio'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

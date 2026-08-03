@@ -254,6 +254,19 @@ if (TEST_DB) {
     'v1/flows/[id]:PUT': 'API-key-authenticated update; covered by public API tests',
     'v1/flows/[id]:DELETE': 'API-key-authenticated deletion; covered by public API tests',
     'v1/flows/[id]/run:POST': 'API-key-authenticated live flow execution',
+    'organizations/domains:POST': 'starts a DNS TXT challenge; covered by the enterprise identity tests',
+    'organizations/domains:DELETE': 'domain lifecycle; covered by the enterprise identity tests',
+    'organizations/domains/[id]/verify:POST': 'resolves live DNS to check the TXT challenge',
+    'organizations/scim-tokens:POST': 'returns a one-time plaintext bearer token; covered by SCIM service tests',
+    'organizations/scim-tokens:DELETE': 'credential lifecycle; covered by SCIM service tests',
+    'organizations/security:PATCH': 'changes MFA/SSO enforcement; covered by the enterprise policy tests',
+    // Reviewer-only, like the catalogue routes: the smoke org holds no
+    // catalogue.review permission so these correctly 403 without reaching the
+    // handler body. The security-critical logic (domain normalization, the
+    // public-provider blocklist) is unit-tested in
+    // src/lib/auth/__tests__/allowed-domain.test.ts.
+    'admin/domains:POST': 'reviewer-only — 403 for the smoke org by design',
+    'admin/domains:PATCH': 'reviewer-only — 403 for the smoke org by design',
   }
 
   test('every mutating handler is either smoke-tested or documented as skipped', () => {

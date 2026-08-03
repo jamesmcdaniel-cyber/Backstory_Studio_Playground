@@ -105,6 +105,11 @@ if (TEST_DB) {
     // Incident regressions: these 500'd under the tenant guard before the sweep.
     { name: 'GET /api/agents/[id]/chat/sessions', run: async () => (await import('../agents/[id]/chat/sessions/route')).GET(req(`/api/agents/${agentId}/chat/sessions`)) },
     { name: 'GET /api/agents/[id]/chat', run: async () => (await import('../agents/[id]/chat/route')).GET(req(`/api/agents/${agentId}/chat`)) },
+    { name: 'GET /api/api-keys', run: async () => (await import('../api-keys/route')).GET(req('/api/api-keys')) },
+    { name: 'GET /api/flows/[id]/export', run: async () => (await import('../flows/[id]/export/route')).GET(req(`/api/flows/${flowId}/export`)) },
+    { name: 'GET /api/organizations/scim-tokens', run: async () => (await import('../organizations/scim-tokens/route')).GET(req('/api/organizations/scim-tokens')) },
+    { name: 'GET /api/organizations/security', run: async () => (await import('../organizations/security/route')).GET(req('/api/organizations/security')) },
+    { name: 'GET /api/privacy/export', run: async () => (await import('../privacy/export/route')).GET(req('/api/privacy/export')) },
   ]
 
   for (const c of cases) {
@@ -138,6 +143,7 @@ if (TEST_DB) {
     { route: 'catalogue/review', reason: 'reviewer-only — 403 for the smoke org by design' },
     { route: 'catalogue/entries', reason: 'reviewer-only — 403 for the smoke org by design' },
     { route: 'catalogue/staff', reason: 'reviewer-only — 403 for the smoke org by design' },
+    { route: 'admin/domains', reason: 'reviewer-only — 403 for the smoke org by design' },
   ]
 
   // Completeness self-check: enumerate every route.ts whose GET is wrapped in
@@ -197,6 +203,16 @@ if (TEST_DB) {
       'cron/retention',      // CRON_SECRET, fail-closed
       'signals/people-ai',   // People.ai HMAC signature
       'flows/[id]/runs/[runId]/resume', // wait-node webhook callback: unguessable run id + must be waiting on a webhook wait (capability URL, like flows/[id]/trigger)
+      // SCIM 2.0 provisioning: every handler calls authenticateScim(request),
+      // which validates a hashed bearer ScimToken and resolves the org from it.
+      'scim/v2/Users',
+      'scim/v2/Users/[id]',
+      'scim/v2/Groups/[id]',
+      // Public API: every handler calls authenticatePublicApi(request, scope),
+      // which validates a hashed ApiKey and enforces a per-route scope.
+      'v1/flows',
+      'v1/flows/[id]',
+      'v1/flows/[id]/run',
     ])
     const METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
     const offenders: string[] = []

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { prisma, systemPrisma } from '@/lib/prisma'
+import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { hashToken } from '@/lib/crypto/secrets'
 import { transferUserToOrganization } from '@/lib/org-transfer'
@@ -31,7 +31,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // value falls back to the member tier rather than failing the join.
   const INVITABLE_ROLES = ['ADMIN', 'USER', 'OWNER', 'VIEWER']
   const role = (INVITABLE_ROLES.includes(invite.role) ? invite.role : 'USER') as UserRole
-  await prisma.$transaction(async (tx) => {
+  // Deliberately privileged: accepting a membership moves data from the
+  // caller's old tenant into the invitation's tenant in one transaction.
+  await systemPrisma.$transaction(async (tx) => {
     await transferUserToOrganization(tx, {
       userId: auth.dbUser.id,
       fromOrganizationId: auth.organizationId,

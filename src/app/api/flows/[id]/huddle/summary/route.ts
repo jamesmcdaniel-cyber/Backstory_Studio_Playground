@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { assembleTranscript, summaryPrompt } from '@/lib/flows/huddle-transcript'
@@ -70,8 +70,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // create-then-delete in one transaction: if the note write fails the
   // segments survive for a retry; if it succeeds the verbatim record is gone.
   try {
-    const [note] = await prisma.$transaction([
-      prisma.huddleNote.create({
+    const note = await tenantTransaction(auth.organizationId, async (tx) => {
+      const created = await tx.huddleNote.create({
         data: {
           flowId: flow.id,
           organizationId: auth.organizationId,
@@ -81,9 +81,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           participants,
           startedAt,
         },
-      }),
-      prisma.huddleSegment.deleteMany({ where: { sessionId, flowId: flow.id, organizationId: auth.organizationId } }),
-    ])
+      })
+      await tx.huddleSegment.deleteMany({ where: { sessionId, flowId: flow.id, organizationId: auth.organizationId } })
+      return created
+    })
     return { success: true, note }
   } catch (error) {
     // Two "last" participants can race here; sessionId's unique constraint

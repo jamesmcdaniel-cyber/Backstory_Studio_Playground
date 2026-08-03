@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { assertFlowEditable } from '@/lib/flows/access'
@@ -101,8 +101,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   const nextVersion = (latestSnapshot?.version ?? 0) + 1
   const trigger = jsonValue(preserveWebhookSecretHash(triggerFromGraph(graph, existing.trigger), existing.trigger))
-  const [flow] = await prisma.$transaction([
-    prisma.flow.update({
+  const flow = await tenantTransaction(auth.organizationId, async (tx) => {
+    const updated = await tx.flow.update({
       where: { id, organizationId: auth.organizationId },
       data: {
         trigger,
@@ -112,8 +112,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         // ACTIVE. Lifecycle is owned by publish/unpublish, not a separate toggle.
         status: 'ACTIVE',
       },
-    }),
-    prisma.flowVersion.create({
+    })
+    await tx.flowVersion.create({
       data: {
         flowId: id,
         organizationId: auth.organizationId,
@@ -122,8 +122,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         trigger,
         publishedBy: auth.dbUser.id,
       },
-    }),
-  ])
+    })
+    return updated
+  })
   await recordAudit({
     organizationId: auth.organizationId,
     actorUserId: auth.dbUser.id,

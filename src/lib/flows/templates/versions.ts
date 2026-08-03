@@ -1,5 +1,5 @@
 import type { FlowTemplate, Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 
 /**
  * Flow-template versioning: every content edit first snapshots the CURRENT
@@ -49,8 +49,8 @@ export async function updateFlowTemplateVersioned(
   data: Prisma.FlowTemplateUpdateInput,
   savedBy: string,
 ): Promise<FlowTemplate> {
-  const [, updated] = await prisma.$transaction([
-    prisma.flowTemplateVersion.create({
+  return tenantTransaction(existing.organizationId, async (tx) => {
+    await tx.flowTemplateVersion.create({
       data: {
         templateId: existing.id,
         organizationId: existing.organizationId,
@@ -58,13 +58,12 @@ export async function updateFlowTemplateVersioned(
         snapshot: jsonValue(snapshotOfTemplate(existing)),
         savedBy,
       },
-    }),
-    prisma.flowTemplate.update({
+    })
+    return tx.flowTemplate.update({
       where: { id: existing.id, organizationId: existing.organizationId },
       data: { ...data, version: existing.version + 1 },
-    }),
-  ])
-  return updated
+    })
+  })
 }
 
 /**

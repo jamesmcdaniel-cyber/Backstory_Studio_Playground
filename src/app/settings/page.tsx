@@ -57,11 +57,97 @@ export default function SettingsPage() {
         email={user?.emailAddress ?? ''}
       />
       <WorkspaceSection isAdmin={isAdmin} />
+      {isAdmin && <EnterpriseSecuritySection />}
+      {isAdmin && <DeveloperApiSection />}
       <MembersSection isAdmin={isAdmin} selfId={userId} />
       <NotificationsSection />
       <BillingSection />
+      <DataLifecycleSection isAdmin={isAdmin} email={user?.emailAddress ?? ''} supabase={supabase} />
     </div>
   )
+}
+
+function EnterpriseSecuritySection() {
+  const [policy, setPolicy] = useState<{ mfaPolicy: string; ssoEnforced: boolean } | null>(null)
+  const [domains, setDomains] = useState<Array<{ id: string; domain: string; status: string; verificationToken: string }>>([])
+  const load = useCallback(async () => {
+    const data = await fetch('/api/organizations/security', { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
+    if (data?.success) { setPolicy(data.policy); setDomains(data.domains ?? []) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+  const update = async (body: Record<string, unknown>) => {
+    const response = await fetch('/api/organizations/security', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) return toast.error(data.error || 'Security policy update failed.')
+    setPolicy(data.policy); toast.success('Security policy saved.')
+  }
+  const claim = async () => {
+    const domain = window.prompt('Domain to claim (for example, example.com)')?.trim()
+    if (!domain) return
+    const response = await fetch('/api/organizations/domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) return toast.error(data.error || 'Could not claim domain.')
+    await navigator.clipboard.writeText(`${data.dns.name} TXT ${data.dns.value}`).catch(() => undefined)
+    toast.success('DNS TXT challenge copied. Add it, then verify.'); void load()
+  }
+  const verify = async (id: string) => {
+    const response = await fetch(`/api/organizations/domains/${id}/verify`, { method: 'POST' })
+    const data = await response.json().catch(() => ({}))
+    if (response.ok) toast.success('Domain verified.')
+    else toast.error(data.error || 'TXT record not found yet.')
+    void load()
+  }
+  const mintScim = async () => {
+    const name = window.prompt('Name this SCIM token')?.trim()
+    if (!name) return
+    const response = await fetch('/api/organizations/scim-tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) return toast.error(data.error || 'Could not create token.')
+    await navigator.clipboard.writeText(data.token.secret).catch(() => undefined)
+    window.prompt('Copy this token now; it will not be shown again.', data.token.secret)
+  }
+  return (
+    <Section title="Enterprise security" description="SAML/OIDC SSO, verified domains, SCIM 2.0, and workspace MFA.">
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={() => void update({ mfaPolicy: policy?.mfaPolicy === 'required' ? 'optional' : 'required' })}>MFA: {policy?.mfaPolicy ?? 'loading'}</Button>
+        <Button variant="outline" onClick={() => void update({ ssoEnforced: !policy?.ssoEnforced })}>SSO enforcement: {policy?.ssoEnforced ? 'on' : 'off'}</Button>
+        <Button variant="outline" onClick={claim}>Claim domain</Button>
+        <Button variant="outline" onClick={mintScim}>Create SCIM token</Button>
+      </div>
+      {domains.map((domain) => <div key={domain.id} className="flex items-center justify-between rounded border p-2 text-sm"><span>{domain.domain} · {domain.status}</span>{domain.status !== 'verified' && <Button size="sm" variant="ghost" onClick={() => void verify(domain.id)}>Verify DNS</Button>}</div>)}
+      <p className="text-xs text-gray-500">SCIM base URL: <code>/api/scim/v2</code>. Configure the SAML/OIDC provider in Supabase Auth, then verify a domain here before enforcing SSO.</p>
+    </Section>
+  )
+}
+
+function DeveloperApiSection() {
+  const [keys, setKeys] = useState<Array<{ id: string; name: string; prefix: string; revokedAt: string | null }>>([])
+  const load = useCallback(async () => { const data = await fetch('/api/api-keys', { cache: 'no-store' }).then((r) => r.json()).catch(() => null); if (data?.success) setKeys(data.keys ?? []) }, [])
+  useEffect(() => { void load() }, [load])
+  const create = async () => {
+    const name = window.prompt('Name this API key')?.trim(); if (!name) return
+    const response = await fetch('/api/api-keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, scopes: ['flows:read', 'flows:write', 'flows:run'] }) })
+    const data = await response.json().catch(() => ({})); if (!response.ok) return toast.error(data.error || 'Could not create API key.')
+    await navigator.clipboard.writeText(data.key.secret).catch(() => undefined); window.prompt('Copy this key now; it will not be shown again.', data.key.secret); void load()
+  }
+  return <Section title="Developer API" description="Scoped credentials for native workflow import, export, management, and execution."><Button variant="outline" onClick={create}>Create API key</Button>{keys.filter((key) => !key.revokedAt).map((key) => <div key={key.id} className="text-sm text-gray-600">{key.name} · <code>{key.prefix}…</code></div>)}</Section>
+}
+
+function DataLifecycleSection({ isAdmin, email, supabase }: { isAdmin: boolean; email: string; supabase: ReturnType<typeof createClient> }) {
+  const deleteAccount = async () => {
+    const confirmation = window.prompt(`Type ${email} to permanently delete your account.`); if (!confirmation) return
+    const response = await fetch('/api/privacy/account', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation }) })
+    const data = await response.json().catch(() => ({})); if (!response.ok) return toast.error(data.error || 'Account deletion failed.')
+    await supabase.auth.signOut(); window.location.href = '/auth'
+  }
+  const deleteWorkspace = async () => {
+    const org = await fetch('/api/organizations').then((r) => r.json()).catch(() => null); const name = org?.organizations?.[0]?.name
+    const confirmation = window.prompt(`Type ${name} to permanently delete this workspace.`); if (!confirmation) return
+    const response = await fetch('/api/privacy/workspace', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation }) })
+    const data = await response.json().catch(() => ({})); if (!response.ok) return toast.error(data.error || 'Workspace deletion failed.')
+    await supabase.auth.signOut(); window.location.href = '/auth'
+  }
+  return <Section title="Data lifecycle" description="Export or permanently remove customer data."><div className="flex flex-wrap gap-2">{isAdmin && <Button asChild variant="outline"><a href="/api/privacy/export" download>Export workspace data</a></Button>}<Button variant="destructive" onClick={deleteAccount}>Delete my account</Button>{isAdmin && <Button variant="destructive" onClick={deleteWorkspace}>Delete workspace</Button>}</div></Section>
 }
 
 /* ------------------------------- Account -------------------------------- */

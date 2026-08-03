@@ -24,6 +24,8 @@ export const UNGATED_ROUTES: readonly string[] = [
   'agents/[id]/trigger',                  // per-agent trigger token
   'scim/v2/Users',                        // SCIM bearer token
   'scim/v2/Users/[id]',                   // SCIM bearer token
+  'scim/v2/Groups',                       // SCIM bearer token
+  'scim/v2/Groups/[id]',                  // SCIM bearer token
   'v1/flows',                             // workspace API key
   'v1/flows/[id]',                        // workspace API key
   'v1/flows/[id]/run',                    // workspace API key

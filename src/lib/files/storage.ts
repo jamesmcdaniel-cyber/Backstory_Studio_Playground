@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { scanFileBuffer, verifyFileMime } from '@/lib/files/security'
 
 /**
@@ -35,7 +35,7 @@ export async function saveStoredFile(params: {
   const mimeType = verifyFileMime(params.buffer, params.mimeType, filename)
   await scanFileBuffer(params.buffer, filename)
   const quota = Math.max(STORED_FILE_MAX_BYTES, Number(process.env.ORG_FILE_STORAGE_MAX_BYTES) || DEFAULT_ORG_FILE_STORAGE_MAX_BYTES)
-  const reserveAndCreate = async (backend: 'supabase' | 'db') => prisma.$transaction(async (tx) => {
+  const reserveAndCreate = async (backend: 'supabase' | 'db') => tenantTransaction(params.organizationId, async (tx) => {
     const reserved = await tx.organization.updateMany({
       where: { id: params.organizationId, storageBytes: { lte: BigInt(quota - params.buffer.length) } },
       data: { storageBytes: { increment: BigInt(params.buffer.length) } },
@@ -66,7 +66,7 @@ export async function saveStoredFile(params: {
     if (uploaded.error) {
       // The row without bytes is useless — remove it so the caller's error
       // isn't followed by a phantom file in listings.
-      await prisma.$transaction(async (tx) => {
+      await tenantTransaction(params.organizationId, async (tx) => {
         const removed = await tx.storedFile.deleteMany({ where: { id: row.id, organizationId: params.organizationId } })
         if (removed.count) await tx.organization.update({ where: { id: params.organizationId }, data: { storageBytes: { decrement: BigInt(row.size) } } })
       }).catch(() => {})
@@ -89,7 +89,7 @@ export async function deleteStoredFile(id: string, organizationId: string): Prom
       if (removed.error) throw new Error(`Could not delete stored file: ${removed.error.message}`)
     }
   }
-  await prisma.$transaction(async (tx) => {
+  await tenantTransaction(organizationId, async (tx) => {
     const removed = await tx.storedFile.deleteMany({ where: { id, organizationId } })
     if (removed.count) {
       await tx.organization.update({ where: { id: organizationId }, data: { storageBytes: { decrement: BigInt(row.size) } } })

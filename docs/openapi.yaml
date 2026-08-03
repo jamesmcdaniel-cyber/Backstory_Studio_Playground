@@ -1,0 +1,62 @@
+openapi: 3.1.0
+info:
+  title: Backstory Studio API
+  version: 1.0.0
+servers:
+  - url: https://app.backstory.ai
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/flows:
+    get:
+      summary: List workspace flows
+      responses: { '200': { description: Flow list } }
+    post:
+      summary: Import a native workflow package
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlowPackage' }
+      responses: { '201': { description: Flow created }, '400': { description: Invalid package } }
+  /api/v1/flows/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+    get:
+      summary: Get and export a flow
+      responses: { '200': { description: Flow and native package }, '404': { description: Not found } }
+    put:
+      summary: Replace a flow draft from a native package
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/FlowPackage' } } }
+      responses: { '200': { description: Flow updated } }
+    delete:
+      summary: Delete a flow
+      responses: { '204': { description: Deleted } }
+  /api/v1/flows/{id}/run:
+    post:
+      summary: Start a flow run
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { input: {} } } } }
+      responses: { '202': { description: Run accepted }, '429': { description: Rate or budget exceeded } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  schemas:
+    FlowPackage:
+      type: object
+      required: [format, flow]
+      properties:
+        format: { const: backstory.flow.v1 }
+        flow:
+          type: object
+          required: [name, graph]
+          properties:
+            name: { type: string, maxLength: 120 }
+            description: { type: string }
+            folder: { type: string }
+            visibility: { enum: [shared, private, view] }
+            graph: { type: object }

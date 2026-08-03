@@ -13,6 +13,16 @@ test('runs JavaScript with JSON input and context', async () => {
   assert.deepEqual(output, { total: 10, runId: 'run-1' })
 })
 
+test('runs async JavaScript inside QuickJS/WASM', async () => {
+  const { output } = await runFlowCode({
+    language: 'javascript',
+    mode: 'all',
+    code: 'const value = await Promise.resolve(input + 1); return value * 2;',
+    input: 20,
+  })
+  assert.equal(output, 42)
+})
+
 test('runs Python once for each item and preserves order', async () => {
   const { output } = await runFlowCode({
     language: 'python',
@@ -79,7 +89,7 @@ test('does not expose host constructors to JavaScript input', async () => {
       code: 'return input.constructor.constructor("return process")();',
       input: { safe: true },
     }),
-    /Code generation from strings disallowed|process is not defined/,
+    /Code generation from strings disallowed|['"]?process['"]? is not defined/,
   )
 })
 
@@ -89,6 +99,19 @@ test('terminates JavaScript that exceeds its deadline', async () => {
       language: 'javascript',
       mode: 'all',
       code: 'while (true) {}',
+      input: null,
+      timeoutMs: 1000,
+    }),
+    /timed out/,
+  )
+})
+
+test('interrupts Python/WASM that exceeds its deadline', async () => {
+  await assert.rejects(
+    runFlowCode({
+      language: 'python',
+      mode: 'all',
+      code: 'while True:\n    pass',
       input: null,
       timeoutMs: 1000,
     }),

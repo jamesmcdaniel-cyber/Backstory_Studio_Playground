@@ -11,7 +11,7 @@
  * this connection?"), while the runtime read path prefers the typed rows and
  * falls back to `metadata.integrations` for any not-yet-synced agent.
  */
-import { prisma, systemPrisma } from '@/lib/prisma'
+import { prisma, systemPrisma, tenantTransaction } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { BUILTIN_CONNECTORS } from './registry'
 
@@ -52,13 +52,13 @@ export async function syncAgentConnectors(
     const rows = keys.map((key) => ({ agentTaskId, organizationId, ...classifyConnector(key, idByName) }))
 
     // Atomic replace: the current selection is the whole truth for this agent.
-    await prisma.$transaction([
+    await tenantTransaction(organizationId, async (tx) => {
       // Org-scoped: the tenant guard rejects an unscoped delete, and the catch
       // below only warns — unscoped, every sync failed silently and the runtime
       // fell back to the metadata list for good.
-      prisma.agentConnector.deleteMany({ where: { agentTaskId, organizationId } }),
-      ...(rows.length ? [prisma.agentConnector.createMany({ data: rows })] : []),
-    ])
+      await tx.agentConnector.deleteMany({ where: { agentTaskId, organizationId } })
+      if (rows.length) await tx.agentConnector.createMany({ data: rows })
+    })
   } catch (error) {
     apiLogger.warn('syncAgentConnectors failed; runtime will use the metadata fallback', {
       agentTaskId, organizationId, error: error instanceof Error ? error.message : String(error),

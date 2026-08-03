@@ -1,8 +1,9 @@
 /**
- * Complete organization teardown: external resources first (best-effort),
+ * Complete organization teardown: external resources first (fail closed),
  * then the graph, then the org row — whose FK cascades (completed in WS-R4
  * Task 1) delete every owned row. Each external leg is isolated so a provider
- * outage cannot block the database delete.
+ * outage blocks the database delete so we never report erasure while a copy
+ * remains at a processor. The request is safe to retry.
  */
 
 import { systemPrisma } from '@/lib/prisma'
@@ -14,6 +15,7 @@ export async function teardownOrganization(organizationId: string): Promise<{ na
   let nango = 0
   let graphCleared = false
   let filesDeleted = 0
+  const externalFailures: Error[] = []
 
   // systemPrisma: org teardown enumerates the org's own rows by org id — the
   // guard's org-scope requirement is satisfied semantically but these run
@@ -29,11 +31,13 @@ export async function teardownOrganization(organizationId: string): Promise<{ na
           nango += 1
         } catch (error) {
           captureError(error, { source: 'orgTeardown.nango', organizationId, connectionId: connection.connectionId })
+          externalFailures.push(error instanceof Error ? error : new Error(String(error)))
         }
       }
     }
   } catch (error) {
     captureError(error, { source: 'orgTeardown.nangoLeg', organizationId })
+    externalFailures.push(error instanceof Error ? error : new Error(String(error)))
   }
 
   try {
@@ -43,6 +47,11 @@ export async function teardownOrganization(organizationId: string): Promise<{ na
     }
   } catch (error) {
     captureError(error, { source: 'orgTeardown.graph', organizationId })
+    externalFailures.push(error instanceof Error ? error : new Error(String(error)))
+  }
+
+  if (externalFailures.length) {
+    throw new AggregateError(externalFailures, 'External customer-data deletion did not complete; workspace deletion was not committed.')
   }
 
   // Object-store blobs are outside Postgres cascades. Remove each before its

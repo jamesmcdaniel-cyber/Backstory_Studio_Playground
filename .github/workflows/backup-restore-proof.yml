@@ -1,0 +1,27 @@
+name: Backup Restore Proof
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 7 * * 1'
+jobs:
+  restore-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm ci
+      - run: npm run backup:create
+        env:
+          SYSTEM_DATABASE_URL: ${{ secrets.BACKUP_SOURCE_DATABASE_URL }}
+          BACKUP_DIR: ${{ runner.temp }}/backups
+      - run: |
+          export BACKUP_FILE="$(find "$RUNNER_TEMP/backups" -name '*.dump' -type f | head -1)"
+          npm run backup:verify
+        env:
+          RESTORE_DATABASE_URL: ${{ secrets.RESTORE_TEST_DATABASE_URL }}
+          RESTORE_CONFIRM: REPLACE_TARGET_DATABASE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: restore-proof-manifest, path: '${{ runner.temp }}/backups/*.json', retention-days: 90 }

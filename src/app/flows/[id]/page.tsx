@@ -228,7 +228,7 @@ function FlowBuilder() {
   const [savingTemplate, setSavingTemplate] = useState(false)
   // Lifecycle status is owned by publish/unpublish (server-side); the client
   // only mirrors it for exports — there is no manual status control.
-  const [status, setStatus] = useState('draft')
+  const [, setStatus] = useState('draft')
   const [version, setVersion] = useState(1)
   // undefined = not yet loaded: webhook arming copy stays neutral instead of
   // flashing "publish to arm" on already-published flows before the fetch lands.
@@ -1752,18 +1752,12 @@ function FlowBuilder() {
     }
   }, [name, description, graph, router])
 
-  const downloadFlow = useCallback(() => {
+  const downloadFlow = useCallback(async () => {
     const flowName = name.trim() || 'Untitled flow'
-    const payload = {
-      name: flowName,
-      description,
-      status,
-      version,
-      graph,
-      exportedAt: new Date().toISOString(),
-    }
-    downloadBlob(JSON.stringify(payload, null, 2), 'application/json', `${filenameSlug(flowName)}.json`)
-  }, [name, description, status, version, graph])
+    const response = await fetch(`/api/flows/${id}/export`, { cache: 'no-store' })
+    if (!response.ok) return toast.error('Could not export this flow.')
+    downloadBlob(await response.text(), 'application/json', `${filenameSlug(flowName)}.backstory.json`)
+  }, [id, name])
 
   // Webhook-trigger flows export with WORKING credentials: a fresh trigger
   // secret is minted (rotating any prior one) and embedded alongside the

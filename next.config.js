@@ -2,7 +2,13 @@
 const nextConfig = {
   poweredByHeader: false,
   outputFileTracingRoot: __dirname,
-  serverExternalPackages: ['@prisma/client'],
+  // Pyodide resolves its stdlib and core WASM beside the external package at
+  // runtime. Keep it external and explicitly trace those dynamically-loaded
+  // artifacts into every Vercel server function that can execute a flow.
+  serverExternalPackages: ['@prisma/client', 'pyodide'],
+  outputFileTracingIncludes: {
+    '/*': ['./node_modules/pyodide/**/*'],
+  },
   async headers() {
     return [
       {

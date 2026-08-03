@@ -1,5 +1,4 @@
-import type { UserRole } from '@prisma/client'
-import type { GuardedTransactionClient } from '@/lib/prisma'
+import type { Prisma, UserRole } from '@prisma/client'
 
 /**
  * Move a user into another workspace.
@@ -56,7 +55,7 @@ export interface TransferResult {
  * nothing and reports `moved: false`, so a double-accepted invite is harmless.
  */
 export async function transferUserToOrganization(
-  tx: GuardedTransactionClient,
+  tx: Prisma.TransactionClient,
   params: {
     userId: string
     fromOrganizationId: string | null

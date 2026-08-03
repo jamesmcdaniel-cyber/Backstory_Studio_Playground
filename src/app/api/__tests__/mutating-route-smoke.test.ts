@@ -244,6 +244,16 @@ if (TEST_DB) {
     'scim/v2/Users:POST': 'SCIM bearer-token provisioning; covered by SCIM service tests',
     'scim/v2/Users/[id]:PATCH': 'SCIM bearer-token provisioning; covered by SCIM service tests',
     'scim/v2/Users/[id]:DELETE': 'SCIM bearer-token provisioning; covered by SCIM service tests',
+    'scim/v2/Groups/[id]:PATCH': 'SCIM bearer-token group membership; covered by SCIM service tests',
+    'api-keys:POST': 'returns a one-time plaintext credential; covered by public API auth tests',
+    'api-keys:DELETE': 'credential lifecycle; covered by public API auth tests',
+    'flows/import:POST': 'native package import; covered by native package tests',
+    'privacy/account:DELETE': 'irreversible identity deletion; covered by privacy service tests',
+    'privacy/workspace:DELETE': 'irreversible workspace deletion; covered by privacy service tests',
+    'v1/flows:POST': 'API-key-authenticated import; covered by public API tests',
+    'v1/flows/[id]:PUT': 'API-key-authenticated update; covered by public API tests',
+    'v1/flows/[id]:DELETE': 'API-key-authenticated deletion; covered by public API tests',
+    'v1/flows/[id]/run:POST': 'API-key-authenticated live flow execution',
   }
 
   test('every mutating handler is either smoke-tested or documented as skipped', () => {

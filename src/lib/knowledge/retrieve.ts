@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedQuery, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { applyRelevanceFloor } from '@/lib/rag/relevance'
 
@@ -52,7 +52,7 @@ export async function retrieveKnowledge(params: {
       // client session's default search_path isn't guaranteed to include it.
       // SET LOCAL scopes the widened path to this transaction only, so the
       // `::vector(1024)` cast resolves regardless of the session default.
-      const rows = await prisma.$transaction(async (tx) => {
+      const rows = await tenantTransaction(params.organizationId, async (tx) => {
         await tx.$executeRawUnsafe('SET LOCAL search_path = public, extensions')
         // HNSW iterative scan: the index returns global-nearest candidates
         // BEFORE our organizationId filter, so without this a small org can

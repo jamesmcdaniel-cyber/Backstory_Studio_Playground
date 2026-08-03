@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedTexts, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { extractTextAuto, chunkText, isSupported } from './extract'
 import { Prisma } from '@prisma/client'
@@ -83,7 +83,7 @@ export async function ingestKnowledgeFile(params: {
       if (values.length) {
         // search_path guard: see retrieveKnowledge for the Supabase
         // extensions-schema note — SET LOCAL scopes it to this transaction.
-        await prisma.$transaction(async (tx) => {
+        await tenantTransaction(params.organizationId, async (tx) => {
           await tx.$executeRawUnsafe('SET LOCAL search_path = public, extensions')
           await tx.$executeRaw`
             UPDATE "knowledge_chunks" AS c

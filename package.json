@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:all": "concurrently \"npm run dev\" \"npm run worker:dev\"",
-    "build": "prisma generate && node scripts/vercel-migrate.mjs && next build",
+    "build": "prisma generate && node scripts/vercel-migrate.mjs && next build && npm run smoke:wasm",
     "start": "next start",
     "worker:dev": "tsx watch src/lib/workers/runtime.ts",
     "worker:start": "tsx src/lib/workers/runtime.ts",
@@ -24,7 +24,13 @@
     "eval": "tsx --test $(find src/lib/eval -type f -name '*.test.ts' -path '*__tests__*')",
     "eval:rag": "tsx src/lib/eval/rag/run.ts",
     "eval:rag:generate": "tsx src/lib/eval/rag/generate.ts",
-    "load:flow": "k6 run scripts/load/flow-webhook.js"
+    "load:flow": "k6 run scripts/load/flow-webhook.js",
+    "load:platform": "k6 run scripts/load/platform.js",
+    "backup:create": "node scripts/backup/create.mjs",
+    "backup:restore": "node scripts/backup/restore.mjs",
+    "backup:verify": "node scripts/backup/verify.mjs",
+    "test:e2e": "playwright test",
+    "smoke:wasm": "node scripts/smoke-wasm-production.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
@@ -60,6 +66,8 @@
     "neo4j-driver": "^6.2.0",
     "next": "^15.5.19",
     "openai": "^5.20.1",
+    "pyodide": "^314.0.3",
+    "quickjs-emscripten": "^0.32.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.1.0",
@@ -74,6 +82,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.62.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/dagre": "^0.7.54",

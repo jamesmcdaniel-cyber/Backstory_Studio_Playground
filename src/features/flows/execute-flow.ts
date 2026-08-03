@@ -1,5 +1,5 @@
 import type { Job } from 'bullmq'
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { applyAlwaysOutputData, keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
@@ -1325,7 +1325,7 @@ export async function runFlowExecution(
   // the cron scan can wake it. Any other waiting state (human reply, approval,
   // open-ended webhook callback) and every terminal state clear resumeAt.
   const resumeAt = status === 'waiting' && result.waiting?.resumeAt ? new Date(result.waiting.resumeAt) : null
-  await prisma.$transaction(async (tx) => {
+  await tenantTransaction(job.organizationId, async (tx) => {
     await tx.flowRun.update({
       where: { id: run.id, organizationId: job.organizationId },
       data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt },

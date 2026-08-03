@@ -1,4 +1,4 @@
-import { prisma, systemPrisma } from '@/lib/prisma'
+import { prisma, systemPrisma, tenantTransaction } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { embedQuery, embeddingsConfigured, cosineSimilarity, toSqlVector } from '@/lib/rag/embeddings'
 import { keywordScore } from '@/lib/knowledge/retrieve'
@@ -61,7 +61,7 @@ export async function saveAgentMemory(params: {
       // widened search_path to this transaction only (see retrieveKnowledge
       // for the same Supabase extensions-schema note).
       const vectorLiteral = toSqlVector(embedding)
-      const nearest = await prisma.$transaction(async (tx) => {
+      const nearest = await tenantTransaction(params.organizationId, async (tx) => {
         await tx.$executeRawUnsafe('SET LOCAL search_path = public, extensions')
         // HNSW iterative scan keeps recall once the org filter narrows the
         // index's global-nearest candidates (see knowledge/retrieve.ts).
@@ -104,7 +104,7 @@ export async function saveAgentMemory(params: {
 
     if (embedding) {
       const vectorLiteral = toSqlVector(embedding)
-      await prisma.$transaction(async (tx) => {
+      await tenantTransaction(params.organizationId, async (tx) => {
         await tx.$executeRawUnsafe('SET LOCAL search_path = public, extensions')
         await tx.$executeRaw`
           UPDATE "agent_memories" SET "embeddingVec" = ${vectorLiteral}::vector(1024)
@@ -184,7 +184,7 @@ export async function retrieveAgentMemory(params: {
 
     if (queryVec) {
       const vectorLiteral = toSqlVector(queryVec)
-      const rows = await prisma.$transaction(async (tx) => {
+      const rows = await tenantTransaction(params.organizationId, async (tx) => {
         await tx.$executeRawUnsafe('SET LOCAL search_path = public, extensions')
         // HNSW iterative scan keeps recall once the org filter narrows the
         // index's global-nearest candidates (see knowledge/retrieve.ts).

@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, ChevronDown, FileText, Layers } from 'lucide-react'
+import { Workflow, Plus, ChevronDown, FileText, Layers, Upload } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -62,6 +62,7 @@ export default function FlowsPage() {
   // Which template card is mid-instantiate, so only that card spins.
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null)
   const [folderFilter, setFolderFilter] = useState<string | null>(null)
+  const importInput = useRef<HTMLInputElement>(null)
 
   const folders = Array.from(new Set(flows.map((flow) => flow.folder?.trim() || ''))).filter(Boolean).sort()
   const visibleFlows = folderFilter === null ? flows : flows.filter((flow) => (flow.folder?.trim() || '') === folderFilter)
@@ -158,6 +159,17 @@ export default function FlowsPage() {
       setPendingTemplateId(null)
     }
   }
+  const importFlow = async (file: File) => {
+    if (file.size > 5_000_000) return toast.error('Flow packages must be under 5 MB.')
+    try {
+      const payload = JSON.parse(await file.text())
+      const response = await fetch('/api/flows/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.flow?.id) return toast.error(data.error || 'That is not a valid Backstory flow package.')
+      toast.success('Flow imported as a draft.')
+      router.push(`/flows/${data.flow.id}`)
+    } catch { toast.error('Could not read that JSON file.') }
+  }
   const newFlowButton = (
     <div className="flex">
       <Button onClick={() => createFlow()} loading={creating} className="rounded-r-none">
@@ -199,7 +211,11 @@ export default function FlowsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <PageHeader eyebrow="Pipelines" title="Flows" description="Wire your agents into deterministic multi-step pipelines." />
-        {newFlowButton}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => importInput.current?.click()}><Upload className="mr-1.5 h-4 w-4" /> Import JSON</Button>
+          <input ref={importInput} className="hidden" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFlow(file) }} />
+          {newFlowButton}
+        </div>
       </div>
 
       {loading ? (

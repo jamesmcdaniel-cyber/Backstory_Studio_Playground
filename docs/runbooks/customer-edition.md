@@ -55,6 +55,38 @@ Separate Vercel project, separate database, separate Supabase project. Leave
 Cron entries in `vercel.json` are identical; the generation sweep returns `[]`
 on its own, so `generatedOrgs` is simply always empty in the cron response.
 
+### `ALLOWED_EMAIL_DOMAINS` is REQUIRED here
+
+Sign-in admission (`isAllowedEmail`, called from `/auth/callback`) passes only
+for a hardcoded staff domain, an active `PlatformAllowedDomain` row, or a domain
+named in `ALLOWED_EMAIL_DOMAINS`. The customer edition gates `/admin/domains`
+off, so the table has **no writer** there — without this env var the deployment
+admits nobody but `people.ai` / `backstory.ai` and cannot be fixed from inside
+the product.
+
+```
+ALLOWED_EMAIL_DOMAINS=acme.com,globex.io
+```
+
+Public email providers (gmail.com and friends) are refused even if listed.
+Domains admitted this way have no org mapping, so those users follow the normal
+invite / solo-workspace provisioning path.
+
+## Parity notes for the four workstreams landed 2026-08-03
+
+| Workstream | Customer edition |
+|---|---|
+| Cost ledger (§1) | Records identically. The rollup view is cross-workspace and stays internal-only, per that feature's own spec ("not exposed to customer org admins"). |
+| Eval gate (§2) | Dev tooling; runs identically. The nightly workflow is guarded to the source-of-truth repo so the mirror does not fail it every night. |
+| Fork & state overrides (§3) | Fully present — org-scoped flows feature with no edition or admin coupling. |
+| Platform domain allowlist (§4) | Admin screen gated off; `ALLOWED_EMAIL_DOMAINS` is the substitute. See above. |
+
+Verified degrading correctly: the catalogue submit affordance is
+`can('template.submit')`-gated and self-hides for customer orgs; the sidebar's
+catalogue-review link is `can('catalogue.review')`-gated; every caller of a
+gated route is itself gated; `resolveInternalOrgId` is reached only from gated
+routes, so no customer-facing path depends on an internal org existing.
+
 ## Adding a new internal-only surface
 
 1. Gate the route: `withAuthenticatedApi(handler, { permission, internalOnly: true })`.

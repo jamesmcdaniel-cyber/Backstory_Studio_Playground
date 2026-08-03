@@ -88,7 +88,7 @@ if (TEST_DB) {
       assert.ok(!ids_.includes(otherOrgMemory.id), 'org isolation violated: another org memory surfaced')
     } finally {
       unstubEmbedding()
-      await prisma.agentMemory.deleteMany({ where: { id: { in: [near.id, far.id, dismissed.id, otherOrgMemory.id] } } }).catch(() => {})
+      await prisma.agentMemory.deleteMany({ where: { id: { in: [near.id, far.id, dismissed.id, otherOrgMemory.id] }, organizationId: { in: [ids.org, ids.otherOrg] } } }).catch(() => {})
     }
   })
 
@@ -102,7 +102,7 @@ if (TEST_DB) {
       const hits = await retrieveAgentMemory({ organizationId: ids.org, agentId: ids.agent, query: 'a very specific unique phrase', k: 5 })
       assert.ok(hits.some((h: any) => h.id === row.id))
     } finally {
-      await prisma.agentMemory.delete({ where: { id: row.id } }).catch(() => {})
+      await prisma.agentMemory.delete({ where: { id: row.id, organizationId: ids.org } }).catch(() => {})
     }
   })
 
@@ -138,7 +138,7 @@ if (TEST_DB) {
       assert.equal(row.timesUsed, 1)
     } finally {
       unstubEmbedding()
-      if (firstId) await prisma.agentMemory.delete({ where: { id: firstId } }).catch(() => {})
+      if (firstId) await prisma.agentMemory.delete({ where: { id: firstId, organizationId: ids.org } }).catch(() => {})
     }
   })
 
@@ -162,7 +162,7 @@ if (TEST_DB) {
       assert.equal(rows[0]?.has_vec, true)
     } finally {
       unstubEmbedding()
-      if (id) await prisma.agentMemory.delete({ where: { id } }).catch(() => {})
+      if (id) await prisma.agentMemory.delete({ where: { id, organizationId: ids.org } }).catch(() => {})
     }
   })
 
@@ -183,7 +183,7 @@ if (TEST_DB) {
       assert.equal(calls[0].visibility, 'private')
       assert.equal(calls[0].memoryId, id)
     } finally {
-      if (id) await prisma.agentMemory.delete({ where: { id } }).catch(() => {})
+      if (id) await prisma.agentMemory.delete({ where: { id, organizationId: ids.org } }).catch(() => {})
     }
   })
 }

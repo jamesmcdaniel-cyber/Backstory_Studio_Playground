@@ -1,5 +1,5 @@
 import type { User } from '@supabase/supabase-js'
-import { prisma } from '@/lib/prisma'
+import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
 
 function findDbUser(supabaseId: string) {
@@ -75,7 +75,10 @@ async function provisionUser(user: User) {
   const inviteEmail = user.email?.trim().toLowerCase() || null
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    // systemPrisma: this pre-membership bootstrap must discover a pending
+    // invitation by verified email before the user's destination org is known.
+    // The transaction then consumes only that exact invitation.
+    return await systemPrisma.$transaction(async (tx) => {
       // If this email was invited, join that workspace (with the invited role)
       // instead of spawning a fresh solo org — no orphaned workspace, and the
       // invite is consumed atomically with the join.
@@ -103,7 +106,7 @@ async function provisionUser(user: User) {
 
       if (invite) {
         await tx.invitation.update({
-          where: { id: invite.id },
+          where: { id: invite.id, organizationId: invite.organizationId },
           data: { status: 'ACCEPTED', acceptedByUserId: created.id, acceptedAt: new Date() },
         })
       }

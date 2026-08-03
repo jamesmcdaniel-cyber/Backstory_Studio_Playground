@@ -6,6 +6,25 @@ import { canEditFlow } from '@/lib/flows/access'
  *  `includeShare` exposes the share token/role — same-org editors only. */
 export type FlowViewerAccess = { role: 'edit' | 'view'; external: boolean; includeShare?: boolean }
 
+/**
+ * Strip server-only fields out of the stored trigger before it goes on the wire.
+ *
+ * `webhookSecretHash` is the SHA-256 of the flow's trigger secret. Nothing
+ * client-side reads it — the builder learns whether a secret exists from
+ * GET /api/flows/[id]/trigger-secret's `hasSecret` — but serializing the trigger
+ * wholesale handed the hash to every reader of the flow, including view-only
+ * cross-workspace guests holding a share link. The rest of the codebase already
+ * treats it as server-only: the mint route returns the plaintext exactly once
+ * and never the hash, `preserveWebhookSecretHash` re-attaches it on save because
+ * the client is not expected to round-trip it, and the anonymous-share sanitizer
+ * drops it. This closes the one boundary that still leaked it.
+ */
+function publicTrigger(trigger: unknown): unknown {
+  if (!trigger || typeof trigger !== 'object' || Array.isArray(trigger)) return { type: 'manual' }
+  const { webhookSecretHash: _hash, ...rest } = trigger as Record<string, unknown>
+  return rest
+}
+
 /** Wire shape for a flow, shared by the list page and the builder. */
 export function serializeFlow(flow: {
   id: string
@@ -38,7 +57,7 @@ export function serializeFlow(flow: {
     name: flow.name,
     description: flow.description,
     status: flow.status.toLowerCase(),
-    trigger: flow.trigger ?? { type: 'manual' },
+    trigger: publicTrigger(flow.trigger),
     graph,
     visibility: flow.visibility,
     // Whether THIS viewer may edit. Role-aware callers (share/single-flow/list

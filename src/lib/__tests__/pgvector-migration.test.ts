@@ -55,7 +55,7 @@ if (TEST_DB) {
     `
     assert.equal(rows[0]?.has_vec, true)
 
-    await prisma.knowledgeChunk.delete({ where: { id: chunk.id } }).catch(() => {})
+    await prisma.knowledgeChunk.delete({ where: { id: chunk.id, organizationId: ids.org } }).catch(() => {})
   })
 
   test('inserting an agent memory row then writing a 1024-dim vector round-trips', async () => {
@@ -77,7 +77,7 @@ if (TEST_DB) {
     `
     assert.equal(rows[0]?.has_vec, true)
 
-    await prisma.agentMemory.delete({ where: { id: memory.id } }).catch(() => {})
+    await prisma.agentMemory.delete({ where: { id: memory.id, organizationId: ids.org } }).catch(() => {})
   })
 
   test('a <=> distance query orders synthetic vectors nearest-first', async () => {
@@ -115,7 +115,7 @@ if (TEST_DB) {
     assert.equal(ordered[0]?.id, near.id)
     assert.equal(ordered[1]?.id, far.id)
 
-    await prisma.knowledgeChunk.deleteMany({ where: { id: { in: [near.id, far.id] } } }).catch(() => {})
+    await prisma.knowledgeChunk.deleteMany({ where: { id: { in: [near.id, far.id] }, organizationId: ids.org } }).catch(() => {})
   })
 
   test('writing a wrong-dimension vector fails loudly', async () => {
@@ -136,6 +136,6 @@ if (TEST_DB) {
       /dimension/i,
     )
 
-    await prisma.knowledgeChunk.delete({ where: { id: chunk.id } }).catch(() => {})
+    await prisma.knowledgeChunk.delete({ where: { id: chunk.id, organizationId: ids.org } }).catch(() => {})
   })
 }

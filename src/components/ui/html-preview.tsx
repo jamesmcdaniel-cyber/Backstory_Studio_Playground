@@ -52,12 +52,18 @@ export function unwrapHtmlFence(value: string): string {
   return inner && looksLikeHtml(inner) ? inner : value
 }
 
-/** Wraps a raw HTML fragment in a minimal document skeleton so it renders
- *  with sane defaults (font, color, wrapping) inside the sandboxed iframe.
- *  Skipped when the content already declares its own `<html>` root. */
-function toDocument(html: string): string {
-  if (/<html[\s>]/i.test(html)) return html
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${html}</body></html>`
+const PREVIEW_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:"
+const PREVIEW_CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">`
+
+/** Wrap agent HTML and put the restrictive policy before authored markup. */
+export function toPreviewDocument(html: string): string {
+  // Script-less sandboxing still permits images/styles to make requests. A
+  // prompt injection could otherwise encode private flow data into a URL.
+  if (/<html[\s>]/i.test(html)) {
+    const withoutDoctype = html.replace(/^\s*<!doctype[^>]*>/i, '')
+    return `<!doctype html>${PREVIEW_CSP_META}${withoutDoctype}`
+  }
+  return `<!doctype html><html><head>${PREVIEW_CSP_META}<meta charset="utf-8"><style>body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${html}</body></html>`
 }
 
 // Auto-size bounds: a report shorter than the collapse limit renders at its
@@ -157,7 +163,7 @@ export function HtmlPreview({ html, className }: { html: string; className?: str
           <iframe
             ref={iframeRef}
             title="Agent HTML output"
-            srcDoc={toDocument(html)}
+            srcDoc={toPreviewDocument(html)}
             sandbox="allow-same-origin"
             onLoad={onLoad}
             scrolling={height >= (measured ?? Number.POSITIVE_INFINITY) ? 'no' : 'yes'}

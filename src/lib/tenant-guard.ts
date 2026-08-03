@@ -46,12 +46,14 @@
 // no organizationId column; scope them via relation filters when querying
 // from user-facing code.
 export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
+  'Invitation',
   'AgentTask', 'AgentConnector', 'AgentMemory', 'AgentChatMessage', 'AgentChatSession',
   'Signal', 'SignalSubscription', 'CustomSignal', 'AgentExecution', 'Notification',
   'PushSubscription', 'AuditEvent', 'ApprovalRequest', 'AgentTemplate', 'Integration',
   'PeopleAiConnection', 'McpConnection', 'NangoConnection', 'IntegrationSecret',
   'HttpCredential',
-  'Flow', 'FlowVersion', 'FlowRun', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
+  'Flow', 'FlowTemplate', 'FlowTemplateVersion', 'FlowVersion', 'FlowRun',
+  'HuddleSegment', 'HuddleNote', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
   'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent',
 ])
 

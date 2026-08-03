@@ -3,6 +3,8 @@ import { getAuthWithUser } from '@/lib/supabase/auth-utils'
 import { envOAuthConfig } from '@/lib/peopleai/oauth'
 import { disconnect, startConnect, OAUTH_COOKIE } from '@/lib/peopleai/connect-service'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { safeReturnToPath } from '@/lib/mcp/oauth-authcode'
+import { encryptSecret } from '@/lib/crypto/secrets'
 
 export const runtime = 'nodejs'
 
@@ -27,11 +29,15 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const returnTo = request.nextUrl.searchParams.get('return_to') || '/dashboard'
+  const returnTo = safeReturnToPath(request.nextUrl.searchParams.get('return_to')) ?? '/dashboard'
   const { authorizeUrl, statePayload } = await startConnect(config, returnTo)
 
   const response = NextResponse.redirect(authorizeUrl)
-  response.cookies.set(OAUTH_COOKIE, JSON.stringify(statePayload), {
+  response.cookies.set(OAUTH_COOKIE, encryptSecret(JSON.stringify({
+    ...statePayload,
+    userId: auth.dbUser.id,
+    organizationId: auth.organizationId,
+  })), {
     httpOnly: true,
     secure: origin.startsWith('https'),
     sameSite: 'lax',

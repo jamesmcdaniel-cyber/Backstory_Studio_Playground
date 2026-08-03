@@ -52,12 +52,12 @@ if (TEST_DB) {
     assert.ok(restored)
     assert.equal(restored!.version, 3)
     assert.equal(restored!.description, 'first')
-    const v2row = await prisma.flowTemplateVersion.findFirst({ where: { templateId: created.id, version: 2 } })
+    const v2row = await prisma.flowTemplateVersion.findFirst({ where: { templateId: created.id, organizationId: seeded.organizationId, version: 2 } })
     assert.equal((v2row!.snapshot as { description: string }).description, 'second')
 
     // Unknown version → null, nothing written.
     assert.equal(await restoreFlowTemplateVersion(restored!, 99, seeded.userId), null)
 
-    await prisma.flowTemplate.delete({ where: { id: created.id } })
+    await prisma.flowTemplate.delete({ where: { id: created.id, organizationId: seeded.organizationId } })
   })
 }

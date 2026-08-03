@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { whereHasOrgScope, assertOrgScoped, ORG_SCOPED_MODELS } from '../tenant-guard'
 
 test('whereHasOrgScope accepts scope that constrains every matched row', () => {
@@ -83,11 +85,25 @@ test('assertOrgScoped ignores non-where operations and create data', () => {
 })
 
 test('ORG_SCOPED_MODELS covers the known org-carrying models', () => {
-  for (const model of ['AgentTask', 'AgentExecution', 'Flow', 'FlowRun', 'Signal', 'Notification', 'AuditEvent', 'McpConnection', 'KnowledgeDocument']) {
+  for (const model of [
+    'Invitation', 'AgentTask', 'AgentExecution', 'Flow', 'FlowTemplate',
+    'FlowTemplateVersion', 'FlowRun', 'HuddleSegment', 'HuddleNote', 'Signal',
+    'Notification', 'AuditEvent', 'McpConnection', 'KnowledgeDocument',
+  ]) {
     assert.ok(ORG_SCOPED_MODELS.has(model), model)
   }
   assert.ok(!ORG_SCOPED_MODELS.has('User')) // nullable orgId — bootstrap queries are org-less by design
   assert.ok(!ORG_SCOPED_MODELS.has('Organization')) // the tenant row itself
+})
+
+test('ORG_SCOPED_MODELS covers every schema model with a required organizationId', () => {
+  const schemaPath = fileURLToPath(new URL('../../../prisma/schema.prisma', import.meta.url))
+  const schema = readFileSync(schemaPath, 'utf8')
+  const requiredOrgModels = [...schema.matchAll(/model\s+(\w+)\s*\{([\s\S]*?)\n\}/g)]
+    .filter(([, , body]) => /^\s*organizationId\s+String\s/m.test(body))
+    .map(([, model]) => model)
+    .sort()
+  assert.deepEqual([...ORG_SCOPED_MODELS].sort(), requiredOrgModels)
 })
 
 test('whereHasOrgScope rejects an undefined organizationId value', () => {

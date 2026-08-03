@@ -72,8 +72,8 @@ if (TEST_DB) {
       global.fetch = origFetch
       delete process.env.VOYAGE_API_KEY
       if (docId) {
-        await prisma.knowledgeChunk.deleteMany({ where: { documentId: docId } }).catch(() => {})
-        await prisma.knowledgeDocument.delete({ where: { id: docId } }).catch(() => {})
+        await prisma.knowledgeChunk.deleteMany({ where: { documentId: docId, organizationId: ids.org } }).catch(() => {})
+        await prisma.knowledgeDocument.delete({ where: { id: docId, organizationId: ids.org } }).catch(() => {})
       }
     }
   })

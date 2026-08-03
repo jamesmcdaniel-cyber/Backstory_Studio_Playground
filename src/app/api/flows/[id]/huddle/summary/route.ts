@@ -34,7 +34,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
 
   // Second caller: the note already exists — return it, touch nothing.
-  const existing = await prisma.huddleNote.findUnique({ where: { sessionId } })
+  const existing = await prisma.huddleNote.findFirst({
+    where: { sessionId, flowId: flow.id, organizationId: auth.organizationId },
+  })
   if (existing) return { success: true, note: existing }
 
   const segments = await prisma.huddleSegment.findMany({
@@ -86,7 +88,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   } catch (error) {
     // Two "last" participants can race here; sessionId's unique constraint
     // picks the winner. The loser hands back the winner's note.
-    const raced = await prisma.huddleNote.findUnique({ where: { sessionId } })
+    const raced = await prisma.huddleNote.findFirst({
+      where: { sessionId, flowId: flow.id, organizationId: auth.organizationId },
+    })
     if (raced) return { success: true, note: raced }
     throw error
   }

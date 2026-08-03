@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { prisma, systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { hashToken } from '@/lib/crypto/secrets'
 import { transferUserToOrganization } from '@/lib/org-transfer'
@@ -18,7 +18,10 @@ const schema = z.object({ token: z.string().min(1) })
 // readable by their old org and unusable in the new one.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const { token } = schema.parse(await request.json())
-  const invite = await prisma.invitation.findFirst({
+  // systemPrisma: accepting an invite necessarily resolves a capability token
+  // before the destination tenant is known. All subsequent writes use the
+  // resolved organizationId explicitly.
+  const invite = await systemPrisma.invitation.findFirst({
     where: { tokenHash: hashToken(token), status: 'PENDING', expiresAt: { gt: new Date() } },
     select: { id: true, organizationId: true, role: true },
   })
@@ -36,7 +39,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       role,
     })
     await tx.invitation.update({
-      where: { id: invite.id },
+      where: { id: invite.id, organizationId: invite.organizationId },
       data: { status: 'ACCEPTED', acceptedByUserId: auth.dbUser.id, acceptedAt: new Date() },
     })
   })

@@ -4,6 +4,9 @@ import { ApiError } from '@/lib/server/api-handler'
 // generic 500. The Nango node SDK is axios-based, so upstream HTTP failures
 // surface as errors with a `response.status` (or `status`) field.
 export function nangoApiError(error: unknown): ApiError {
+  // Already typed (e.g. getNangoClient's "not configured" 503) — keep its
+  // status and code instead of flattening it to a generic 502.
+  if (error instanceof ApiError) return error
   const message = error instanceof Error ? error.message : String(error)
   if (/not configured/i.test(message)) {
     return new ApiError('Nango is not configured for this environment.', 503, 'NANGO_UNAVAILABLE')

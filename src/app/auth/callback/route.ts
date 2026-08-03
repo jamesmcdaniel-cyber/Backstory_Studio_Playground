@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { isCompanyEmail } from '@/lib/auth/company-domain'
-
-function safeNext(value: string | null) {
-  return value?.startsWith('/') && !value.startsWith('//') ? value : '/dashboard'
-}
+import { validatedReturnPath } from '@/lib/auth/return-path'
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code')
   const tokenHash = request.nextUrl.searchParams.get('token_hash')
   const type = request.nextUrl.searchParams.get('type')
-  const next = safeNext(request.nextUrl.searchParams.get('next'))
+  const next = validatedReturnPath(request.nextUrl.searchParams.get('next')) ?? '/dashboard'
   const supabase = await createClient()
 
   const result = code

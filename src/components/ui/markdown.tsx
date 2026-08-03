@@ -88,12 +88,23 @@ export function Markdown({ children, className }: { children: string; className?
           td: (props) => <td className="border-b border-border/50 px-3 py-2 align-top [tr:last-child_&]:border-b-0" {...props} />,
           blockquote: (props) => <blockquote className="border-l-2 border-indigo-300 pl-3 text-muted-foreground dark:border-indigo-500/50" {...props} />,
           hr: (props) => <hr className="my-4 border-border" {...props} />,
-          // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
-          img: (props) => <img className="max-w-full rounded-lg border border-border" {...props} />,
+          img: ({ src, alt }) => safeInlineImageSource(src)
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={src} alt={alt ?? ''} className="max-w-full rounded-lg border border-border" />
+            : <a href={typeof src === 'string' ? src : undefined} target="_blank" rel="noreferrer">{alt || 'External image'}</a>,
         }}
       >
         {children}
       </ReactMarkdown>
     </div>
+  )
+}
+
+/** Remote model-authored images require an explicit click to prevent egress. */
+export function safeInlineImageSource(src: string | Blob | undefined): boolean {
+  return typeof src === 'string' && (
+    (/^\/(?![\\/])/.test(src) && !/[\x00-\x20\x7F]/.test(src)) ||
+    /^data:image\/(?:png|jpe?g|gif|webp);/i.test(src) ||
+    src.startsWith('blob:')
   )
 }

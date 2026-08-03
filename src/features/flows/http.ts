@@ -1,3 +1,5 @@
+import { readResponseTextLimited } from '@/lib/net/response-body'
+
 export type FlowHttpConfig = {
   credentialId?: unknown
   connectionId?: unknown
@@ -39,6 +41,7 @@ export type FlowHttpOutput = {
 // query-API payloads stay fully structured, bounded so a pathological response
 // can't persist an unbounded object on the run row.
 const PARSE_MAX_CHARS = 400_000
+const RESPONSE_MAX_BYTES = 1_000_000
 
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
 const JSON_RE = /^(?:\{|\[|true|false|null|-?\d|")/
@@ -290,13 +293,13 @@ function shouldParseJson(contentType: string, responseType: 'auto' | 'json' | 't
 }
 
 export async function responseOutput(response: Response, responseType: 'auto' | 'json' | 'text', maxChars = 50_000): Promise<FlowHttpOutput> {
-  // Read the FULL text, then parse JSON from it BEFORE truncating. Truncating
-  // first (the old behavior) silently de-structured any JSON larger than
+  // Read a bounded body, then parse JSON from it BEFORE display truncation.
+  // Truncating first (the old behavior) silently de-structured any JSON larger than
   // maxChars into an invalid, truncated string — so `{{...output.body.field}}`
   // returned undefined with no error. Parsing the whole payload keeps large
   // API responses fully structured; only the raw-text mirror (`bodyText`) is
   // capped, for display/persistence.
-  const raw = await response.text()
+  const raw = await readResponseTextLimited(response, RESPONSE_MAX_BYTES, 'HTTP response')
   const headers = Object.fromEntries(response.headers.entries())
   const bodyText = raw.slice(0, maxChars)
   const parseSource = raw.length > PARSE_MAX_CHARS ? raw.slice(0, PARSE_MAX_CHARS) : raw

@@ -46,10 +46,17 @@ function clientProperty(model: string): string {
   return model.charAt(0).toLowerCase() + model.slice(1)
 }
 
+/**
+ * Test files are scanned too. They use the same guarded client, so an unscoped
+ * query in a DB test fails the suite the moment ORG_SCOPED_MODELS grows to
+ * cover its model — which is exactly how `FlowTemplateVersion` landed on main
+ * red: the model was added to the guard, and a test that had always queried it
+ * by id alone started throwing.
+ */
 function sourceFiles(dir: string): string[] {
   const out: string[] = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === '__tests__' || entry.name === 'node_modules') continue
+    if (entry.name === 'node_modules') continue
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) out.push(...sourceFiles(full))
     else if (/\.tsx?$/.test(entry.name) && statSync(full).isFile()) out.push(full)
@@ -101,7 +108,10 @@ function scan(): Offender[] {
   )
   const offenders: Offender[] = []
 
+  const selfPath = fileURLToPath(import.meta.url)
   for (const file of sourceFiles(SRC)) {
+    // This file carries a deliberately-unscoped sample (the self-check below).
+    if (file === selfPath) continue
     const source = stripComments(readFileSync(file, 'utf8'))
     for (const match of source.matchAll(call)) {
       // `systemPrisma.` also ends in `prisma.` — it is the documented exemption.

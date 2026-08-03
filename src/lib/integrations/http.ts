@@ -9,6 +9,7 @@
 
 import type { ToolDefinition } from '@/lib/llm/model-runner'
 import { assertPublicUrl } from '@/lib/net/ssrf'
+import { readResponseTextLimited } from '@/lib/net/response-body'
 
 const HTTP_TIMEOUT_MS = 30_000
 const MAX_RESPONSE_CHARS = 50_000
@@ -53,7 +54,7 @@ export class HttpToolClient {
     const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS)
     try {
       const response = await fetch(url, { method, headers, body, signal: controller.signal, redirect: 'error' })
-      const text = (await response.text()).slice(0, MAX_RESPONSE_CHARS)
+      const text = (await readResponseTextLimited(response, 250_000, 'HTTP tool response')).slice(0, MAX_RESPONSE_CHARS)
       return { status: response.status, ok: response.ok, body: text }
     } finally {
       clearTimeout(timer)

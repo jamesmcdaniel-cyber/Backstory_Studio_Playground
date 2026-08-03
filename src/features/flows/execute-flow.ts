@@ -27,7 +27,8 @@ import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuth
 import { getByPath, setQueryParam, pageItems, optimizeForAi, paginationComplete } from '@/lib/flows/http-pagination'
 import { fileReference, isFileReference, bodyHasFileReference } from '@/lib/flows/file-ref'
 import { broadcastFlowRunTick } from '@/lib/flows/run-stream'
-import { saveStoredFile, readStoredFile } from '@/lib/files/storage'
+import { saveStoredFile, readStoredFile, STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
+import { readResponseBytesLimited } from '@/lib/net/response-body'
 import { extractTextAuto, isSupported } from '@/lib/knowledge/extract'
 import {
   fetchWithHttpCredential,
@@ -1080,7 +1081,7 @@ export async function runFlowExecution(
                 await markCredentialResult(httpCredential.id, job.organizationId, !authRejected, `HTTP ${response.status}`)
               }
               if (request.failOnHttpError && !response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-              const buffer = Buffer.from(await response.arrayBuffer())
+              const buffer = Buffer.from(await readResponseBytesLimited(response, STORED_FILE_MAX_BYTES, 'Downloaded file'))
               const mimeType = (response.headers.get('content-type') || 'application/octet-stream').split(';')[0].trim()
               const filename = httpDownloadFilename(response.headers.get('content-disposition'), request.url)
               const saved = await saveStoredFile({ organizationId: job.organizationId, userId: job.userId, filename, mimeType, buffer })

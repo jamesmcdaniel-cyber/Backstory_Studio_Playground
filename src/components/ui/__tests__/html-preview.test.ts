@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { looksLikeHtml, unwrapHtmlFence } from '../html-preview'
+import { looksLikeHtml, toPreviewDocument, unwrapHtmlFence } from '../html-preview'
 
 test('detects real HTML documents and fragments', () => {
   assert.equal(looksLikeHtml('<!doctype html><html><body>hi</body></html>'), true)
@@ -27,4 +27,12 @@ test('leaves genuine code blocks and mixed responses alone', () => {
   assert.equal(unwrapHtmlFence(jsonBlock), jsonBlock)
   const withProse = 'Here is the markup:\n\n```html\n<div><p>hi</p></div>\n```'
   assert.equal(unwrapHtmlFence(withProse), withProse)
+})
+
+test('preview documents block model-authored network requests', () => {
+  const document = toPreviewDocument('<!doctype html><html><body><img src="https://attacker.example/leak"></body></html>')
+  assert.match(document, /Content-Security-Policy/)
+  assert.match(document, /default-src 'none'/)
+  assert.match(document, /img-src data: blob:/)
+  assert.ok(document.indexOf('Content-Security-Policy') < document.indexOf('attacker.example'))
 })

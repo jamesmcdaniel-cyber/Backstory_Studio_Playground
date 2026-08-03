@@ -39,6 +39,12 @@ model Organization {
   updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
   /// Transactionally maintained quota counter for StoredFile bytes.
   storageBytes          BigInt    @default(0)
+  /// Enterprise access policy. `optional` allows AAL1; `required` requires a
+  /// verified second factor (AAL2) for every interactive session.
+  mfaPolicy             String    @default("optional")
+  /// When true, members whose email belongs to a verified workspace domain
+  /// must authenticate through an enterprise SSO provider.
+  ssoEnforced           Boolean   @default(false)
 
   users                User[]
   agents               AgentTask[]
@@ -72,6 +78,9 @@ model Organization {
   huddleNotes          HuddleNote[]
   flowWebhookReceipts  FlowWebhookReceipt[]
   outboxEvents         OutboxEvent[]
+  domains              OrganizationDomain[]
+  scimTokens           ScimToken[]
+  apiKeys              ApiKey[]
 
   @@map("organizations")
 }
@@ -122,6 +131,8 @@ model User {
   lastSeenAt           DateTime? @db.Timestamptz(6)
   timezone             String    @default("UTC")
   metadata             Json?
+  /// Stable identity supplied by SCIM. Unique only inside a workspace.
+  scimExternalId       String?
   createdAt            DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -133,9 +144,70 @@ model User {
   ownedAgents         AgentTask[]
   peopleAiConnections PeopleAiConnection[]
   mcpConnections      McpConnection[]
+  apiKeys             ApiKey[]
 
   @@index([organizationId])
+  @@unique([organizationId, scimExternalId])
   @@map("users")
+}
+
+/// A domain becomes authoritative only after its DNS TXT challenge verifies.
+model OrganizationDomain {
+  id                    String    @id @default(cuid())
+  organizationId        String    @db.Uuid
+  domain                String    @unique
+  verificationTokenHash String
+  verificationToken     String
+  status                String    @default("pending") // pending | verified
+  verifiedAt            DateTime? @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@map("organization_domains")
+}
+
+/// Bearer credentials accepted by the SCIM 2.0 provisioning surface. Only a
+/// SHA-256 digest is stored; plaintext is shown once at mint time.
+model ScimToken {
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
+  name           String
+  tokenHash      String    @unique
+  prefix         String
+  createdById    String
+  lastUsedAt     DateTime? @db.Timestamptz(6)
+  expiresAt      DateTime? @db.Timestamptz(6)
+  revokedAt      DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, revokedAt])
+  @@map("scim_tokens")
+}
+
+/// Customer API key. Scopes are a JSON string array so new public API
+/// capabilities do not require an enum migration.
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
+  userId         String?
+  name           String
+  keyHash        String    @unique
+  prefix         String
+  scopes         Json      @default("[]")
+  lastUsedAt     DateTime? @db.Timestamptz(6)
+  expiresAt      DateTime? @db.Timestamptz(6)
+  revokedAt      DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, revokedAt])
+  @@map("api_keys")
 }
 
 model AgentTask {

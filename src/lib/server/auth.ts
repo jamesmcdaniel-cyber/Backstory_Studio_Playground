@@ -2,6 +2,8 @@ import { getAuthWithUser } from '@/lib/supabase/auth-utils'
 import { resolveEntitlement } from '@/lib/entitlement'
 import { backstoryGateEnabled, backstoryMcpReady, ensureBackstoryConnection } from '@/lib/mcp/backstory-connection'
 import { resolvePermissions, type Permission } from '@/lib/authz/permissions'
+import { emailDomain, isEnterpriseIdentity, satisfiesMfaPolicy } from '@/lib/auth/enterprise-policy'
+import { prisma } from '@/lib/prisma'
 
 type AuthResult = NonNullable<Awaited<ReturnType<typeof getAuthWithUser>>>
 
@@ -84,7 +86,7 @@ export class PermissionDeniedError extends AuthContextError {
 }
 
 export async function requireAuthContext(
-  options?: { skipBackstoryGate?: boolean; skipEntitlementGate?: boolean },
+  options?: { skipBackstoryGate?: boolean; skipEntitlementGate?: boolean; skipMfaGate?: boolean; skipSsoGate?: boolean },
 ): Promise<AuthContext> {
   const injected = getTestAuthContext()
   if (process.env.QA_SEAM_DEBUG) console.log('[seam-debug]', { injected: Boolean(injected), active: testAuthActive(), testDb: Boolean(process.env.TEST_DATABASE_URL), nodeEnv: process.env.NODE_ENV })
@@ -98,6 +100,23 @@ export async function requireAuthContext(
 
   if (!auth.dbUser || !auth.organizationId) {
     throw new AuthContextError('Organization access required', 403)
+  }
+
+  const organization = auth.dbUser.organization
+  if (!options?.skipMfaGate && !satisfiesMfaPolicy(organization?.mfaPolicy ?? 'optional', auth.assuranceLevel)) {
+    throw new AuthContextError('Multi-factor authentication is required by this workspace.', 403, 'MFA_REQUIRED')
+  }
+  if (!options?.skipSsoGate && organization?.ssoEnforced) {
+    const domain = emailDomain(auth.dbUser.email)
+    const claimed = domain
+      ? await prisma.organizationDomain.findFirst({
+          where: { organizationId: auth.organizationId, domain, status: 'verified' },
+          select: { id: true },
+        })
+      : null
+    if (claimed && !isEnterpriseIdentity(auth.authMethods)) {
+      throw new AuthContextError('Sign in through your workspace identity provider.', 403, 'SSO_REQUIRED')
+    }
   }
 
   // Native Backstory MCP: seed the per-user connection row (idempotent, never
@@ -121,7 +140,6 @@ export async function requireAuthContext(
 
   // `getAuthWithUser` already includes the organization on dbUser, so resolving
   // permissions costs no extra query.
-  const organization = (auth.dbUser as { organization?: { kind?: string } | null }).organization
   const permissions = resolvePermissions(
     { role: auth.dbUser.role, platformRole: auth.dbUser.platformRole },
     { kind: organization?.kind ?? 'customer' },

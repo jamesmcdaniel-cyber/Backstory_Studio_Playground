@@ -128,10 +128,21 @@ export async function getAuthWithUser() {
   // itself, so behavior (and cost) is never worse than getUser(). Consumers
   // only use identity fields (id/email/user_metadata), all present in claims.
   let user: User | null = null
+  let assuranceLevel: string | null = null
+  let authMethods: string[] = []
   try {
     const { data } = await supabase.auth.getClaims()
     const claims = data?.claims
     if (claims?.sub) {
+      assuranceLevel = typeof claims.aal === 'string' ? claims.aal : null
+      const amr = Array.isArray(claims.amr) ? claims.amr : []
+      authMethods = amr.flatMap((entry) => {
+        if (typeof entry === 'string') return [entry]
+        if (entry && typeof entry === 'object' && typeof (entry as { method?: unknown }).method === 'string') {
+          return [(entry as { method: string }).method]
+        }
+        return []
+      })
       user = {
         id: claims.sub,
         email: typeof claims.email === 'string' ? claims.email : undefined,
@@ -149,6 +160,11 @@ export async function getAuthWithUser() {
     const { data, error } = await supabase.auth.getUser()
     if (error || !data.user) return null
     user = data.user
+    authMethods = [
+      ...(typeof user.app_metadata?.provider === 'string' ? [user.app_metadata.provider] : []),
+      ...(Array.isArray(user.app_metadata?.providers) ? user.app_metadata.providers.filter((value): value is string => typeof value === 'string') : []),
+    ]
+    assuranceLevel = user.factors?.some((factor) => factor.status === 'verified') ? 'aal2' : 'aal1'
   }
 
   const resolved = (await findDbUser(user.id)) ?? (await provisionUser(user))
@@ -159,6 +175,8 @@ export async function getAuthWithUser() {
     userId: user.id,
     dbUser,
     organizationId: dbUser?.organizationId ?? null,
+    assuranceLevel,
+    authMethods,
   }
 }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'motion/react'
@@ -24,8 +24,10 @@ function safeReturnTo(): string {
 }
 
 export function AuthGateway() {
-  const { user, loading: authLoading } = useSupabase()
+  const { user, loading: authLoading, signInWithSSO } = useSupabase()
   const router = useRouter()
+  const [ssoDomain, setSsoDomain] = useState('')
+  const [ssoLoading, setSsoLoading] = useState(false)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -179,6 +181,29 @@ export function AuthGateway() {
                   />
                 )}
               </div>
+
+              <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
+                <span className="h-px flex-1 bg-graphite-200" /> Enterprise SSO <span className="h-px flex-1 bg-graphite-200" />
+              </div>
+              <form
+                className="flex gap-2"
+                onSubmit={async (event) => {
+                  event.preventDefault()
+                  if (!ssoDomain.trim()) return
+                  setSsoLoading(true)
+                  const { error } = await signInWithSSO(ssoDomain, safeReturnTo())
+                  if (error) setSsoLoading(false)
+                }}
+              >
+                <input
+                  aria-label="Company domain"
+                  value={ssoDomain}
+                  onChange={(event) => setSsoDomain(event.target.value)}
+                  placeholder="company.com"
+                  className="h-12 min-w-0 flex-1 rounded-xl border border-graphite-200 bg-white px-4 text-sm outline-none focus:border-horizon-500"
+                />
+                <Button type="submit" variant="outline" loading={ssoLoading} disabled={!ssoDomain.trim()}>Continue</Button>
+              </form>
 
               <div className="mt-6 flex flex-wrap items-center gap-2">
                 <span className="text-xs text-graphite-500">Approved accounts:</span>

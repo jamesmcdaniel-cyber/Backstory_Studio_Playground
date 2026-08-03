@@ -26,6 +26,8 @@ type SupabaseContext = {
   /** Start the Google OAuth redirect. `nextPath` (a same-origin path) is carried
    *  through the callback so the user lands where they intended after auth. */
   signInWithGoogle: (nextPath?: string) => ReturnType<typeof supabase.auth.signInWithOAuth>
+  signInWithSSO: (domain: string, nextPath?: string) => ReturnType<typeof supabase.auth.signInWithSSO>
+  mfa: typeof supabase.auth.mfa
   signOut: () => Promise<void>
 }
 
@@ -135,6 +137,15 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
         options: { redirectTo: redirect.toString() },
       })
     },
+    signInWithSSO: (domain, nextPath) => {
+      const redirect = new URL(`${appOrigin()}/auth/callback`)
+      if (nextPath && /^\/(?!\/)/.test(nextPath)) redirect.searchParams.set('next', nextPath)
+      return supabase.auth.signInWithSSO({
+        domain: domain.trim().toLowerCase(),
+        options: { redirectTo: redirect.toString() },
+      })
+    },
+    mfa: supabase.auth.mfa,
     signOut: async () => {
       // Clear BEFORE awaiting the network call, and independently of the
       // onAuthStateChange listener above: sign-out is usually followed by an

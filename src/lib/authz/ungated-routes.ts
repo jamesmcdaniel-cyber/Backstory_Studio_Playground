@@ -22,4 +22,6 @@ export const UNGATED_ROUTES: readonly string[] = [
   'signals/people-ai',                    // HMAC-signed webhook
   'nango/webhook',                        // HMAC-signed webhook
   'agents/[id]/trigger',                  // per-agent trigger token
+  'scim/v2/Users',                        // SCIM bearer token
+  'scim/v2/Users/[id]',                   // SCIM bearer token
 ]

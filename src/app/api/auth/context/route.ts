@@ -11,5 +11,6 @@ export const GET = withAuthenticatedApi(async (_request, auth) => ({
     // Drives which affordances render. Cosmetic only: the server re-checks
     // every gated call, so a tampered client gains nothing.
     permissions: [...auth.permissions],
+    mfaPolicy: auth.dbUser.organization?.mfaPolicy ?? 'optional',
   },
-}), { permission: null })
+}), { permission: null, skipMfaGate: true, skipSsoGate: true })

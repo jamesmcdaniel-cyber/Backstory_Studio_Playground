@@ -76,6 +76,7 @@ if (TEST_DB) {
     assert.deepEqual(submission.snapshot, { name: 'Weekly pipeline digest' })
 
     // The tenant guard must reject an unscoped read of the new model.
+    // tenant-guard-negative-test: the missing organizationId below is the point.
     await assert.rejects(
       () => prisma.catalogueSubmission.findFirst({ where: { id: submission.id } }),
       /organizationId/,

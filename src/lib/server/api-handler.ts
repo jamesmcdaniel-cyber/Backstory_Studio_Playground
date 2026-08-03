@@ -64,6 +64,8 @@ export function withAuthenticatedApi(
   options?: {
     skipBackstoryGate?: boolean
     skipEntitlementGate?: boolean
+    skipMfaGate?: boolean
+    skipSsoGate?: boolean
     permission?: Permission | null
     /**
      * Override the default per-user write budget, or pass `false` to opt out

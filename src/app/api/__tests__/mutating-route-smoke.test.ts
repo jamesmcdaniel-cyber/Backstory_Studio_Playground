@@ -241,6 +241,9 @@ if (TEST_DB) {
     'integrations/granola/test:POST': 'calls Granola live',
     'mcp-connections/discover:POST': 'probes a live MCP server',
     'mcp-connections/test:POST': 'probes a live MCP server',
+    'scim/v2/Users:POST': 'SCIM bearer-token provisioning; covered by SCIM service tests',
+    'scim/v2/Users/[id]:PATCH': 'SCIM bearer-token provisioning; covered by SCIM service tests',
+    'scim/v2/Users/[id]:DELETE': 'SCIM bearer-token provisioning; covered by SCIM service tests',
   }
 
   test('every mutating handler is either smoke-tested or documented as skipped', () => {

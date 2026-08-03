@@ -21,6 +21,7 @@ export const PERMISSIONS = [
   'flow.read', 'flow.write', 'flow.run',
   'agent.read', 'agent.write', 'agent.run',
   'integration.manage', 'members.manage', 'org.manage', 'audit.read',
+  'security.manage', 'data.export', 'api.manage', 'workspace.delete',
   'template.author', 'template.submit',
   'catalogue.review', 'catalogue.publish', 'catalogue.takedown',
 ] as const
@@ -42,6 +43,7 @@ const MEMBER_PERMISSIONS: Permission[] = [
 const ADMIN_PERMISSIONS: Permission[] = [
   ...MEMBER_PERMISSIONS,
   'integration.manage', 'members.manage', 'org.manage', 'audit.read',
+  'security.manage', 'data.export', 'api.manage',
 ]
 
 const BY_ROLE: Record<UserRole, Permission[]> = {
@@ -50,7 +52,7 @@ const BY_ROLE: Record<UserRole, Permission[]> = {
   ADMIN: ADMIN_PERMISSIONS,
   // OWNER is ADMIN today. It exists so billing and workspace deletion have a
   // tier to land on without another enum migration.
-  OWNER: ADMIN_PERMISSIONS,
+  OWNER: [...ADMIN_PERMISSIONS, 'workspace.delete'],
 }
 
 /**

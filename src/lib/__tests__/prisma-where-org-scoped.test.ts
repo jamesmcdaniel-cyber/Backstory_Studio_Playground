@@ -122,6 +122,15 @@ function scan(): Offender[] {
       const where = balanced(args, args.indexOf('{', whereStart), '{', '}')
       if (where.includes('...')) continue // spread of a scoped object — not decidable here
       if (where.includes('organizationId')) continue
+      // Opt-out for the handful of places that are unscoped ON PURPOSE — the
+      // tests that assert the runtime guard REJECTS an unscoped read. Mark the
+      // line with `tenant-guard-negative-test` (in a comment) to declare intent.
+      const lineText = readFileSync(file, 'utf8').split('\n')[source.slice(0, match.index).split('\n').length - 1] ?? ''
+      const nextLines = readFileSync(file, 'utf8').split('\n').slice(
+        Math.max(0, source.slice(0, match.index).split('\n').length - 3),
+        source.slice(0, match.index).split('\n').length + 1,
+      ).join('\n')
+      if (/tenant-guard-negative-test/.test(lineText) || /tenant-guard-negative-test/.test(nextLines)) continue
       offenders.push({
         file: path.relative(SRC, file),
         line: source.slice(0, match.index).split('\n').length,

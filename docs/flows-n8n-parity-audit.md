@@ -396,3 +396,112 @@ template shows this: a nonexistent account name reaches `get_account_status`
 with an empty `peopleai_account_id`. Templates that chain off a lookup should
 gate on it; a general fix would mean second-guessing every MCP server's success
 contract, which is a product decision rather than a bug.
+
+## 16. Project-wide QA audit (2026-08-02)
+
+A sweep beyond flows, driven the same way §15 was: real handlers, real
+database, evidence rather than reading.
+
+### The structural finding: mutating routes were never invoked
+
+`route-smoke.test.ts` covers the GET surface and, for POST/PUT/PATCH/DELETE,
+asserts only that each handler is wrapped in `withAuthenticatedApi`. Measuring
+which handlers any test actually *calls*:
+
+| method | invoked / total (before) | after |
+| --- | --- | --- |
+| GET | 48 / 62 | 52 / 62 |
+| POST | 7 / 63 | 39 / 63 |
+| PUT | 1 / 6 | 6 / 6 |
+| PATCH | 0 / 7 | 7 / 7 |
+| DELETE | 1 / 23 | 23 / 23 |
+
+**90 of 99 mutating handlers were invoked by no test at all.** That is not an
+abstract coverage number — it is precisely how `POST /api/flows/[id]/publish`
+shipped 500ing on every call (§15): the handler was authenticated, so the
+existing guard was satisfied, and nothing ever called it.
+
+`src/app/api/__tests__/mutating-route-smoke.test.ts` closes it. Every mutating
+handler is either invoked with a plausible body and asserted not to crash, or
+carries a documented `SKIPS` entry (live model turn, external provider call,
+multipart upload). Two completeness tests keep it honest: a new mutating handler
+with neither a case nor a skip fails the build, and a skip entry for a handler
+that no longer exists fails too. The unattended cron tick is included, since
+nothing else calls it.
+
+Invoking all of them found the code itself in good shape — 66 of 67 handlers
+answered correctly on a first shallow pass, and a second pass driving full
+create → read → update → delete lifecycles through agents, agent templates,
+skills, flow templates (including versioning and restore), MCP connections, HTTP
+credentials, signal subscriptions and org invitations came back clean. The gap
+was the coverage, not the behavior.
+
+### Defects found
+
+**A view-only guest could read the webhook secret's hash.** Seeding every
+secret-bearing column with a unique sentinel and grepping every read endpoint's
+response found no plaintext anywhere — but `GET /api/flows` and
+`GET /api/flows/[id]` echoed `trigger.webhookSecretHash`, because the stored
+trigger JSON was serialized wholesale. Nothing client-side reads it (the builder
+learns `hasSecret` from the trigger-secret route), and the rest of the codebase
+already treats it as server-only: the mint route returns the plaintext exactly
+once and never the hash, `preserveWebhookSecretHash` re-attaches it on save
+precisely because the client is not expected to round-trip it, and the
+anonymous-share sanitizer drops it. It reached everyone who can read the flow,
+including cross-workspace guests on a view-only share link. `serializeFlow` now
+strips it at the one wire boundary all three routes share.
+
+**An unconfigured Nango returned "Internal server error".** `nangoApiError`
+already maps "not configured" to a 503 `NANGO_UNAVAILABLE`, but every route
+builds the client OUTSIDE the try/catch that applies it, so the bare `Error`
+from `getNangoClient()` fell through to the generic 500 handler. Four routes
+were affected (connections DELETE, verify, integrations, session-token).
+`getNangoClient` now throws the typed error itself, and `nangoApiError` passes
+an existing `ApiError` through instead of flattening it to a 502.
+
+**The tenant-scope guard scan did not cover test files.** `main` was red when
+this audit started: `FlowTemplateVersion` had just been added to
+`ORG_SCOPED_MODELS`, and a DB test that had always queried it by id alone began
+throwing. Test code uses the same guarded client, so the scan now includes
+`__tests__` — which surfaced 13 more unscoped queries across the pgvector,
+knowledge-ingest, agent-memory and flow-template-version suites, all latent
+until their model joined the guard. A `tenant-guard-negative-test` marker opts
+out the one place that is unscoped on purpose (the test asserting the guard
+rejects an unscoped read).
+
+### Verified healthy
+
+- **The cron tick.** `/api/cron/dispatch` runs every 15 minutes and drives every
+  scheduled agent and flow, poll trigger, due wait, outbox batch, approval reap
+  and MCP health sweep — with no test at all before this pass. Exercised end to
+  end: fail-closed auth (no secret and wrong secret both 401), a due scheduled
+  flow dispatched and ran to `succeeded`, a due timer wait resumed, a run stuck
+  48h in `running` was reaped, a second tick did not double-fire either, a failed
+  agent dispatch left no execution stranded in `running`, and every sub-sweep is
+  individually isolated so one failure cannot abort the tick. `/api/cron/retention`
+  likewise.
+- **No secret material in any response.** 15 read endpoints, 7 seeded sentinels,
+  plus assertions that no ciphertext column and no secret hash is echoed.
+- **Swallowed-failure surface.** Every DB call sitting inside a `.catch()` or a
+  log-only `try/catch` was re-checked; after §15's fixes, all are correctly
+  scoped. That shape is what made the earlier bugs invisible.
+
+### Remaining gaps (not closed)
+
+- **24 mutating handlers stay uncovered by design** — they make live model or
+  provider calls (agent/flow execution, copilot, chat, librarian, drafting,
+  Nango/Granola/MCP probes, multipart uploads). A fake-provider layer would let
+  these run in CI; today they are only exercised by hand.
+- **10 GET routes uncovered**: OAuth callbacks (`peopleai/callback`,
+  `mcp-connections/oauth/callback`), status probes (`nango/status`,
+  `peopleai/status`, `health`), `invitations/lookup`, `granola/notes/[id]`,
+  `nango/integrations`, and the two catalogue reads. The callbacks are the
+  interesting ones — they are the join points of every integration flow.
+- **The queue plane is not in CI.** `EXECUTION_MODE=queue` and the BullMQ worker
+  were verified by hand against a local Redis; nothing re-checks them.
+- **UI is essentially untested above the component level.** There are component
+  and hook tests, but no page-level or browser coverage in CI; the browser QA
+  passes to date have been manual, with a temporary middleware bypass.
+- **No agent-execution E2E in this pass.** The model provider's free tier was
+  exhausted mid-session, so agent steps 403'd. The dispatch path was still
+  verified (execution rows created, failures recorded, nothing stranded).

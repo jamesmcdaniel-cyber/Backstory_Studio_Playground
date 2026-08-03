@@ -11,6 +11,7 @@ const publicPages = new Set([
   '/auth/signup',
   '/auth/callback',
   '/auth/auth-code-error',
+  '/auth/mfa',
   '/privacy',
   '/terms',
 ])
@@ -79,7 +80,7 @@ export async function updateSession(request: NextRequest) {
   // A signed-in user on an auth page goes where they were headed, not to a
   // blanket /dashboard — an invite or share link opened in an already-signed-in
   // browser used to lose its destination here.
-  if (user && isAuthPage && pathname !== '/auth/callback') {
+  if (user && isAuthPage && pathname !== '/auth/callback' && pathname !== '/auth/mfa') {
     const carried = validatedReturnPath(request.nextUrl.searchParams.get('return_to'))
     return copyCookies(response, NextResponse.redirect(new URL(carried ?? '/dashboard', request.url)))
   }

@@ -1063,6 +1063,11 @@ model FlowRun {
   /// Denormalized sum of this run's LlmCall rows, so list views never
   /// aggregate. Internal ops estimate — see src/lib/usage/pricing.ts.
   costUsd           Decimal   @default(0) @db.Decimal(12, 6)
+  /// Per-run "pretend this step produced X" map, set when forking a run or
+  /// patching a failed one. Distinct from graph.pinData, which lives on the
+  /// SHARED flow draft — overriding here never mutates the flow other people
+  /// are editing. Precedence: stateOverrides > pinData > replayed output.
+  stateOverrides    Json?
   graphSnapshot     Json? // the graph definition this run executed against
   // Immutable dependency fingerprint captured before dispatch: graph hash,
   // agent revisions, tool schemas/connections, and model defaults. A worker

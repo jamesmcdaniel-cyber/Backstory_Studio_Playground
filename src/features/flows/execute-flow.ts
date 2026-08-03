@@ -44,6 +44,7 @@ import { structuredResponseInstruction, parseStructuredAgentOutput } from './age
 import { buildAiPrompt, type AiPromptInput } from '@/lib/flows/ai-prompts'
 import { createModelRunner, billableTokens, DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
 import { subflowChildInput, subflowGuard } from '@/lib/flows/subflow'
+import { parseStateOverrides, resolveOverride } from '@/lib/flows/state-overrides'
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { recordTokenUsage } from '@/lib/usage/budget'
@@ -73,6 +74,20 @@ export type FlowExecutionJob = {
   // ran BEFORE `nodeId` (on that run's pinned graph), then execute from
   // `nodeId` onward as a NEW run. Route-failed steps re-take their error edge.
   replayFrom?: { runId: string; nodeId: string }
+  /**
+   * "Pretend this step produced X." Keyed by node id, or by the `node#i`
+   * iteration key inside a loop. Applied after replay seeding AND after
+   * pinData, so an override is the most specific intent and wins. Persisted on
+   * the run for provenance.
+   */
+  overrides?: Record<string, unknown>
+  /**
+   * Patch-and-resume: reopen an existing FAILED run and re-execute from
+   * `nodeId` on the SAME run row. Unlike replayFrom (which forks to a new run)
+   * this keeps the run id — and therefore its idempotency keys, so replayed
+   * steps do not re-fire external writes.
+   */
+  resumeFrom?: { nodeId: string }
   // Partial execution for the node editor step controls. stopAfterNodeId runs
   // through that node and stops ("Execute step"); stopBeforeNodeId runs
   // everything feeding a node but not the node ("Execute previous nodes").
@@ -286,6 +301,10 @@ async function createFlowRunRow(
       trigger: jsonValue({ ...(job.trigger ?? { type: 'manual' }), ...(reusedInput ? { reusedInput: true } : {}), ...(job.replayFrom ? { replayOf: job.replayFrom.runId, fromNodeId: job.replayFrom.nodeId } : {}) }),
       graphSnapshot: jsonValue(graph),
       executionManifest: jsonValue(manifest),
+      // A fork carries its overrides on the NEW run, never on the flow draft.
+      ...(job.overrides && Object.keys(job.overrides).length
+        ? { stateOverrides: jsonValue(job.overrides) }
+        : {}),
       organizationId: job.organizationId,
       userId: job.userId,
     },
@@ -317,7 +336,10 @@ export async function runFlowExecution(
   const flow = await prisma.flow.findFirst({ where: { id: job.flowId, organizationId: job.organizationId } })
   if (!flow) throw new Error('Flow not found')
   const resuming = Boolean(job.flowRunId && job.reply !== undefined)
-  const prepared = Boolean(job.preparedRunId) && !resuming
+  // Patch-and-resume: same run row, re-executed from a chosen step. Carries a
+  // flowRunId but no reply, so it never collides with the resume path above.
+  const patching = Boolean(job.flowRunId && job.resumeFrom && !resuming)
+  const prepared = Boolean(job.preparedRunId) && !resuming && !patching
 
   // Resume: atomically claim the run — only a genuinely `waiting` run may be
   // resumed. A concurrent resume (e.g. the reply route and the approvals
@@ -335,6 +357,23 @@ export async function runFlowExecution(
       data: { status: 'running', startedAt: new Date() },
     })
     if (claimed.count === 0) throw new ApiError('This run is not waiting for input', 409, 'FLOW_RUN_NOT_WAITING')
+  }
+  // Patch claim: only a FAILED run may be patched and resumed. Rewriting a
+  // succeeded run's history corrupts the record, and running/waiting runs are
+  // already owned by the resume path above. Atomic, like the resume claim, so
+  // two concurrent patch requests cannot both re-enter the same run.
+  if (patching) {
+    const claimed = await prisma.flowRun.updateMany({
+      where: { id: job.flowRunId, organizationId: job.organizationId, status: 'failed' },
+      data: { status: 'running', error: null, finishedAt: null, startedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      throw new ApiError(
+        'Only a failed run can be patched and resumed. Start a separate run instead.',
+        409,
+        'FLOW_PATCH_NOT_FAILED',
+      )
+    }
   }
   // Invariant: once the resume claim above flips a run to `running`, the
   // read-only preparation up to and including graph validation is wrapped so
@@ -356,9 +395,19 @@ export async function runFlowExecution(
   let orgAgents: { id: string; title: string }[] = []
   let manifest!: FlowExecutionManifest
   try {
-    if (resuming) {
+    if (resuming || patching) {
       existingRun = await prisma.flowRun.findFirst({ where: { id: job.flowRunId, organizationId: job.organizationId } })
       if (!existingRun) throw new Error('Flow run not found after claim')
+      // Overrides supplied with a patch are persisted on the run itself, so the
+      // row carries the provenance of what was faked and the interpreter below
+      // reads them from one place regardless of fork-vs-patch.
+      if (patching && job.overrides && Object.keys(job.overrides).length) {
+        await prisma.flowRun.updateMany({
+          where: { id: existingRun.id, organizationId: job.organizationId },
+          data: { stateOverrides: jsonValue(job.overrides) },
+        })
+        existingRun = { ...existingRun, stateOverrides: jsonValue(job.overrides) as never }
+      }
     }
     if (prepared) {
       existingRun = await prisma.flowRun.findFirst({ where: { id: job.preparedRunId, organizationId: job.organizationId } })
@@ -389,6 +438,15 @@ export async function runFlowExecution(
       await prisma.flowRun.updateMany({
         where: { id: job.flowRunId, organizationId: job.organizationId, status: 'running' },
         data: { status: 'waiting' },
+      })
+    }
+    // A patch claim that never got to execute rolls back to `failed` — the
+    // state it was in — so the run stays patchable instead of being stranded
+    // `running` with no executor.
+    if (patching) {
+      await prisma.flowRun.updateMany({
+        where: { id: job.flowRunId, organizationId: job.organizationId, status: 'running' },
+        data: { status: 'failed' },
       })
     }
     if (prepared && existingRun) {
@@ -496,6 +554,38 @@ export async function runFlowExecution(
     if (priorSteps.length) order = Math.max(...priorSteps.map((step) => step.order)) + 1
   }
 
+  // Patch-and-resume: same run, re-executed from the chosen step. Seeds from
+  // the run's OWN prior rows below the cutoff, then APPENDS new rows after the
+  // existing max order rather than deleting anything — so the original failed
+  // row survives as evidence of what actually happened, and a second
+  // patch-resume composes with no special handling (each node's latest row
+  // below the cutoff wins, because rows are read in ascending order).
+  if (patching && job.resumeFrom) {
+    const priorSteps = await prisma.flowRunStep.findMany({ where: { flowRunId: run.id }, orderBy: { order: 'asc' } })
+    const target = job.resumeFrom.nodeId
+    const firstTargetRow = priorSteps.find((step) => step.nodeId === target || step.nodeId.startsWith(`${target}#`))
+    const cutoff = firstTargetRow ? firstTargetRow.order : Number.POSITIVE_INFINITY
+    for (const step of priorSteps) {
+      if (step.order >= cutoff) continue
+      if (step.status === 'succeeded' || step.status === 'skipped') completed[step.nodeId] = step.output
+      if (step.status === 'failed') {
+        const baseNode = nodeById.get(step.nodeId.split('#')[0])
+        const onError = baseNode && 'onError' in baseNode.data ? (baseNode.data as { onError?: string }).onError : undefined
+        if ((onError === 'route' || onError === 'continue') && step.output !== null && step.output !== undefined) {
+          completed[step.nodeId] = step.output
+          if (onError === 'route') completedRoutes.add(step.nodeId)
+        }
+      }
+    }
+    // Stale waiting rows would otherwise shadow a later pause, exactly as on
+    // the resume path.
+    await prisma.flowRunStep.updateMany({
+      where: { flowRunId: run.id, status: 'waiting' },
+      data: { status: 'resumed', finishedAt: new Date() },
+    })
+    if (priorSteps.length) order = Math.max(...priorSteps.map((step) => step.order)) + 1
+  }
+
   // Re-run from a step: replay every outcome recorded BEFORE the chosen step,
   // then let the walk execute it (and everything after) fresh. The cutoff is
   // the chosen node's first recorded row order; container iterations carry
@@ -525,6 +615,22 @@ export async function runFlowExecution(
   if (graph.pinData) {
     for (const [nodeId, value] of Object.entries(graph.pinData)) {
       if (nodeById.has(nodeId)) completed[nodeId] = value ?? null
+    }
+  }
+
+  // Per-run overrides beat both pins and replayed outputs: they are the most
+  // specific intent expressed, scoped to THIS run, and — unlike pinData —
+  // never touch the shared flow draft.
+  const overrides = parseStateOverrides(run.stateOverrides)
+  if (overrides) {
+    for (const nodeId of nodeById.keys()) {
+      const { hit, value } = resolveOverride(overrides, nodeId)
+      if (hit) completed[nodeId] = value
+    }
+    // Iteration-specific keys name rows (`node#i`) that are not bare graph
+    // nodes, so they need seeding directly.
+    for (const key of Object.keys(overrides)) {
+      if (key.includes('#') && nodeById.has(key.split('#')[0])) completed[key] = overrides[key]
     }
   }
 

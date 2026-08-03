@@ -5,6 +5,7 @@ import { captureError } from '@/lib/observability/sentry'
 import { AuthContextError, PermissionDeniedError, requireAuthContext, type AuthContext } from './auth'
 import type { Permission } from '@/lib/authz/permissions'
 import { rateLimit, type RateLimitOptions } from '@/lib/ratelimit'
+import { isCustomerEdition } from '@/lib/edition'
 
 /**
  * Default write budget, per user per minute, applied to every mutating request.
@@ -72,10 +73,20 @@ export function withAuthenticatedApi(
      * (for a route that already applies its own, tighter, limit).
      */
     writeRateLimit?: RateLimitOptions | false
+    /**
+     * Internal-edition surface. In the customer edition the route answers 404
+     * as though it did not exist — checked BEFORE auth, so a customer tenant is
+     * never told that an internal route is there to be authenticated against.
+     */
+    internalOnly?: boolean
   },
 ) {
   return async (request: NextRequest, context?: unknown): Promise<Response> => {
     try {
+      if (options?.internalOnly && isCustomerEdition()) {
+        return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
+      }
+
       const auth = await requireAuthContext(options)
       // The gate runs BEFORE the handler, so a rejected call has no side effects.
       if (options?.permission && !auth.can(options.permission)) {

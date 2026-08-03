@@ -1,6 +1,7 @@
 import type { User } from '@supabase/supabase-js'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
+import { allowedDomainOrg } from '@/lib/auth/allowed-domain'
 
 function findDbUser(supabaseId: string) {
   return prisma.user.findFirst({
@@ -73,6 +74,10 @@ async function provisionUser(user: User) {
   const orgName = metaString('organization_name') || metaString('full_name') || emailPrefix
   const name = metaString('full_name') || emailPrefix
   const inviteEmail = user.email?.trim().toLowerCase() || null
+  // An allowed customer domain routes every user into ONE shared workspace
+  // rather than spawning a solo org each. Resolved outside the transaction: it
+  // is a read against a table the transaction never writes.
+  const domainOrgId = await allowedDomainOrg(user.email)
 
   try {
     // systemPrisma: this pre-membership bootstrap must discover a pending
@@ -89,16 +94,23 @@ async function provisionUser(user: User) {
           })
         : null
 
+      // Precedence: an explicit invitation beats the domain rule (someone
+      // invited to a specific workspace goes there), which beats a fresh org.
       const organizationId = invite
         ? invite.organizationId
-        : (await tx.organization.create({ data: { name: orgName, slug: `org-${user.id}` } })).id
+        : domainOrgId
+          ? domainOrgId
+          : (await tx.organization.create({ data: { name: orgName, slug: `org-${user.id}` } })).id
 
       const created = await tx.user.create({
         data: {
           supabaseId: user.id,
           email: user.email ?? null,
           name,
-          role: invite ? (invite.role === 'ADMIN' ? 'ADMIN' : 'USER') : 'ADMIN',
+          // Fresh solo workspaces make their founder ADMIN. Joining an EXISTING
+          // workspace — by invite or by domain rule — must not, or the first
+          // customer to sign in would own the shared org.
+          role: invite ? (invite.role === 'ADMIN' ? 'ADMIN' : 'USER') : domainOrgId ? 'USER' : 'ADMIN',
           organizationId,
         },
         include: { organization: true },
@@ -184,3 +196,6 @@ export async function requireAuth() {
   const auth = await getAuthWithUser()
   return auth?.dbUser ? auth : null
 }
+
+/** Test-only seam: provisioning is otherwise reached solely via getAuthWithUser. */
+export const provisionUserForTest = provisionUser

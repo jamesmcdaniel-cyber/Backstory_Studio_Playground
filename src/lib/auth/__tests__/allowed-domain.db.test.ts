@@ -60,4 +60,30 @@ if (TEST_DB) {
     assert.equal(await allowedDomainOrg('person@people.ai'), null)
     assert.equal(await allowedDomainOrg(`person@${ids.disabledDomain}`), null)
   })
+
+  test('a user from an allowed domain joins the shared workspace as a member', async () => {
+    const { provisionUserForTest } = await import('@/lib/supabase/auth-utils')
+    const created = await provisionUserForTest({
+      id: crypto.randomUUID(),
+      email: `newhire@${ids.activeDomain}`,
+      user_metadata: { full_name: 'New Hire' },
+    } as any)
+
+    assert.ok(created, 'provisioning returned nothing')
+    assert.equal(created.organizationId, ids.org)
+    assert.equal(created.role, 'USER')
+  })
+
+  test('a user from a company domain still gets their own workspace', async () => {
+    const { provisionUserForTest } = await import('@/lib/supabase/auth-utils')
+    const created = await provisionUserForTest({
+      id: crypto.randomUUID(),
+      email: `staff-${Date.now()}@people.ai`,
+      user_metadata: { full_name: 'Staff Person' },
+    } as any)
+
+    assert.ok(created, 'provisioning returned nothing')
+    assert.notEqual(created.organizationId, ids.org)
+    assert.equal(created.role, 'ADMIN')
+  })
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { isCompanyEmail } from '@/lib/auth/company-domain'
+import { isAllowedEmail } from '@/lib/auth/allowed-domain'
 import { validatedReturnPath } from '@/lib/auth/return-path'
 
 export async function GET(request: NextRequest) {
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   // has returned the verified email and before allowing the session into the
   // application.
   const { data: { user }, error: userError } = await supabase.auth.getUser()
-  if (userError || !isCompanyEmail(user?.email)) {
+  if (userError || !(await isAllowedEmail(user?.email))) {
     await supabase.auth.signOut().catch(() => undefined)
     const errorUrl = new URL('/auth/auth-code-error', request.url)
     errorUrl.searchParams.set('reason', userError ? 'session' : 'domain')

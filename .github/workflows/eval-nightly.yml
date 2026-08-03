@@ -1,0 +1,105 @@
+name: Eval Nightly
+
+# Quality gating for judge-scored evals. These need a live model key and cost
+# money per run, so they do NOT block PRs — deterministic scripted replay
+# already does that via `npm test` in ci.yml.
+permissions:
+  contents: read
+  issues: write
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/test
+      DIRECT_URL: postgresql://postgres:ci@localhost:5432/test
+      ENCRYPTION_KEY: ci-encryption-key
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx prisma migrate deploy
+
+      # Fail loudly rather than silently "passing" with no key configured.
+      - name: Require a model key
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$QWEN_API_KEY" ]; then
+            echo "::error::No model key configured. Add ANTHROPIC_API_KEY to repository secrets."
+            exit 1
+          fi
+
+      - name: Judge-scored fixtures
+        run: npm run eval:nightly 2>&1 | tee eval-output.txt
+
+      - name: RAG benchmark
+        if: always()
+        run: npm run eval:rag 2>&1 | tee -a eval-output.txt
+
+      - name: Raise or update the regression issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            let output = 'No output captured.'
+            try {
+              output = fs.readFileSync('eval-output.txt', 'utf8').slice(-8000)
+            } catch {}
+            const body = [
+              `Nightly eval failed on \`${context.sha.slice(0, 7)}\`.`,
+              '',
+              `[Workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              '',
+              '```',
+              output,
+              '```',
+            ].join('\n')
+
+            // One rolling issue rather than a new one every night.
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'eval-regression',
+            })
+
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Eval regression: nightly quality gate failed',
+                body,
+                labels: ['eval-regression'],
+              })
+            }

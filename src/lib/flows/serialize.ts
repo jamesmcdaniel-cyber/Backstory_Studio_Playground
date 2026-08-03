@@ -19,6 +19,8 @@ export function serializeFlow(flow: {
   visibility: string
   shareToken?: string | null
   shareRole?: string
+  shareAnonymous?: boolean
+  anonymousViews?: number
   folder?: string
   userId?: string | null
   createdAt: Date
@@ -53,7 +55,12 @@ export function serializeFlow(flow: {
       // Cross-workspace guest: UI hides run/publish/settings; PUT enforces graph-only.
       external: access.external,
       ...(access.includeShare
-        ? { shareToken: flow.shareToken ?? null, shareRole: flow.shareRole === 'edit' ? 'edit' : 'view' }
+        ? {
+            shareToken: flow.shareToken ?? null,
+            shareRole: flow.shareRole === 'edit' ? 'edit' : 'view',
+            shareAnonymous: Boolean(flow.shareAnonymous),
+            anonymousViews: flow.anonymousViews ?? 0,
+          }
         : {}),
     }),
     folder: flow.folder ?? '',

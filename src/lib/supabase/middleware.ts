@@ -47,8 +47,12 @@ export async function updateSession(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const isAuthPage = pathname.startsWith('/auth/')
   // Invite pages must be viewable signed-out so a recipient can see who invited
-  // them and choose to sign in or create an account.
-  const isPublic = publicPages.has(pathname) || pathname.startsWith('/invite/')
+  // them and choose to sign in or create an account. `/share/` is the anonymous
+  // read-only surface: the token in the path IS the credential, the page serves
+  // a sanitized projection, and bouncing it to /auth/login would defeat the
+  // entire point of an anonymous link.
+  const isPublic =
+    publicPages.has(pathname) || pathname.startsWith('/invite/') || pathname.startsWith('/share/')
 
   // Production is SSO/invite-only: password signup is disabled unless
   // explicitly allowed (AUTH_ALLOW_PASSWORD=true keeps it for dev). The
@@ -83,6 +87,8 @@ export async function updateSession(request: NextRequest) {
   // Authenticated pages must not be cached by the browser (disk / back-forward
   // cache), so a signed-out "Back" can't restore a protected view. The client
   // pageshow guard covers browsers that bfcache no-store pages anyway.
+  // A /share/ page is anonymous but still per-token content that may be turned
+  // off at any moment, so it stays uncached alongside the authenticated pages.
   if (!publicPages.has(pathname)) {
     response.headers.set('Cache-Control', 'no-store, max-age=0, must-revalidate')
   }

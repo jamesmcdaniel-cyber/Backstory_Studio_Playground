@@ -127,4 +127,40 @@ if (TEST_DB) {
       }
     }
   })
+  test('anonymous opt-in is view-only and dies with the link; the token alone never grants it', async () => {
+    const s = await seedTestOrg(prisma)
+    const { resolveAnonymousFlowShare } = await import('@/lib/flows/public-share')
+    try {
+      installTestAuth(s.auth)
+      const flow = await mkFlow(s.organizationId, s.userId)
+
+      // Sharing without the anonymous flag: the token does NOT open publicly.
+      const minted = await (await share(flow.id, { enabled: true, role: 'edit' })).json()
+      assert.equal(minted.shareAnonymous, false)
+      assert.equal((await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-1', countView: false })).status, 'not_found')
+
+      // Opting in works even when the ROLE is edit — anonymous is always
+      // read-only, and never becomes an editable grant.
+      const opened = await (await share(flow.id, { enabled: true, role: 'edit', anonymous: true })).json()
+      assert.equal(opened.shareAnonymous, true)
+      assert.equal(opened.shareToken, minted.shareToken, 'opting in does not rotate the token')
+      const anon = await resolveAnonymousFlowShare(opened.shareToken, { clientKey: 'anon-2', countView: false })
+      assert.equal(anon.status, 'ok')
+
+      // Rotating kills the old public URL and resets the counter.
+      await resolveAnonymousFlowShare(opened.shareToken, { clientKey: 'anon-3' })
+      const rotated = await (await share(flow.id, { enabled: true, role: 'view', rotate: true, anonymous: true })).json()
+      assert.notEqual(rotated.shareToken, opened.shareToken)
+      assert.equal(rotated.anonymousViews, 0, 'the view count resets with the link')
+      assert.equal((await resolveAnonymousFlowShare(opened.shareToken, { clientKey: 'anon-4', countView: false })).status, 'not_found')
+
+      // Turning sharing off ends anonymous access entirely.
+      const disabled = await (await share(flow.id, { enabled: false, role: 'view' })).json()
+      assert.equal(disabled.shareAnonymous, false)
+      assert.equal((await resolveAnonymousFlowShare(rotated.shareToken, { clientKey: 'anon-5', countView: false })).status, 'not_found')
+    } finally {
+      await s.cleanup()
+      await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
+    }
+  })
 }

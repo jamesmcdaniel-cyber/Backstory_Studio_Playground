@@ -13,6 +13,9 @@ const bodySchema = z.object({
   // Also delete the ACCEPTED collaborator rows (durable grants a rotate alone
   // deliberately keeps) — "rotate and remove everyone who joined by link".
   revokeCollaborators: z.boolean().optional(),
+  // Let the link be opened WITHOUT signing in. Always view-only: an anonymous
+  // visitor lands on the public read-only page, never the builder.
+  anonymous: z.boolean().optional(),
 })
 
 // POST /api/flows/[id]/share — manage the cross-workspace share link. Only a
@@ -31,11 +34,20 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   assertFlowEditable(flow, auth.dbUser.id)
-  const { enabled, role, rotate, revokeCollaborators } = bodySchema.parse(await request.json())
+  const { enabled, role, rotate, revokeCollaborators, anonymous } = bodySchema.parse(await request.json())
   const shareToken = !enabled ? null : rotate || !flow.shareToken ? randomBytes(16).toString('hex') : flow.shareToken
+  // Turning the link off (or rotating it) also ends anonymous access — the old
+  // public URL must not keep working, and a link nobody can present shouldn't
+  // stay flagged public. Rotating resets the view counter with the link.
+  const shareAnonymous = enabled ? anonymous === true : false
   const updated = await prisma.flow.update({
     where: { id: flow.id, organizationId: auth.organizationId },
-    data: { shareToken, shareRole: role },
+    data: {
+      shareToken,
+      shareRole: role,
+      shareAnonymous,
+      ...(rotate || !enabled ? { anonymousViews: 0 } : {}),
+    },
   })
   let revoked = 0
   if (revokeCollaborators) {
@@ -52,7 +64,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     action: enabled ? 'flow.share_link_enabled' : 'flow.share_link_disabled',
     resourceType: 'flow',
     resourceId: flow.id,
-    detail: { role, rotated: Boolean(rotate), revokedCollaborators: revoked },
+    detail: { role, rotated: Boolean(rotate), revokedCollaborators: revoked, anonymous: shareAnonymous },
   }).catch(() => undefined)
-  return { success: true, shareToken: updated.shareToken, shareRole: updated.shareRole === 'edit' ? 'edit' : 'view', revokedCollaborators: revoked }
+  return {
+    success: true,
+    shareToken: updated.shareToken,
+    shareRole: updated.shareRole === 'edit' ? 'edit' : 'view',
+    shareAnonymous: updated.shareAnonymous,
+    anonymousViews: updated.anonymousViews,
+    revokedCollaborators: revoked,
+  }
 }, { permission: 'flow.write' })

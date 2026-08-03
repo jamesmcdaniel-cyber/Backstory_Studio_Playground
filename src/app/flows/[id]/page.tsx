@@ -238,6 +238,8 @@ function FlowBuilder() {
   // Cross-workspace guest? (UI hides run/publish/settings; server enforces.)
   const [external, setExternal] = useState(false)
   const [shareToken, setShareToken] = useState<string | null>(null)
+  const [shareAnonymous, setShareAnonymous] = useState(false)
+  const [anonymousViews, setAnonymousViews] = useState(0)
   const [shareRole, setShareRole] = useState<'view' | 'edit'>('view')
   const [publishing, setPublishing] = useState(false)
   const [agents, setAgents] = useState<Agent[]>([])
@@ -362,6 +364,8 @@ function FlowBuilder() {
           setExternal(Boolean(flow.external))
           setShareToken(flow.shareToken ?? null)
           setShareRole(flow.shareRole === 'edit' ? 'edit' : 'view')
+          setShareAnonymous(Boolean(flow.shareAnonymous))
+          setAnonymousViews(Number(flow.anonymousViews ?? 0))
           setSavedSnapshot(JSON.stringify({ name: flow.name, description: flow.description || '', graph: g }))
           // Only now is it safe to persist — every save path checks this flag.
           loadedOkRef.current = true
@@ -2409,7 +2413,14 @@ function FlowBuilder() {
         capture={huddleCapture}
         shareToken={shareToken}
         shareRole={shareRole}
-        onShareChanged={(token, role) => { setShareToken(token); setShareRole(role) }}
+        shareAnonymous={shareAnonymous}
+        anonymousViews={anonymousViews}
+        onShareChanged={(token, role, anonymous, views) => {
+          setShareToken(token)
+          setShareRole(role)
+          setShareAnonymous(anonymous)
+          setAnonymousViews(views)
+        }}
       />
 
       <SaveAsTemplateDialog

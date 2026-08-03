@@ -43,6 +43,8 @@ export function JamDialog({
   capture,
   shareToken,
   shareRole,
+  shareAnonymous,
+  anonymousViews,
   onShareChanged,
 }: {
   open: boolean
@@ -76,7 +78,16 @@ export function JamDialog({
   /** Cross-workspace share link state (same-org editors only). */
   shareToken?: string | null
   shareRole?: 'view' | 'edit'
-  onShareChanged?: (token: string | null, role: 'view' | 'edit') => void
+  /** Link opens without signing in (always read-only). */
+  shareAnonymous?: boolean
+  /** Owner-visible count of anonymous opens. */
+  anonymousViews?: number
+  onShareChanged?: (
+    token: string | null,
+    role: 'view' | 'edit',
+    anonymous: boolean,
+    anonymousViews: number,
+  ) => void
 }) {
   const [copied, setCopied] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
@@ -91,6 +102,22 @@ export function JamDialog({
   const inviteLink = typeof window !== 'undefined'
     ? `${window.location.origin}/flows/${flowId}${shareToken ? `?share=${shareToken}` : ''}`
     : `/flows/${flowId}`
+  // The anonymous link is a DIFFERENT address on purpose: it opens the public
+  // read-only page, never the builder, so the two can't be confused.
+  const publicLink = typeof window !== 'undefined' && shareToken
+    ? `${window.location.origin}/share/flow/${shareToken}`
+    : ''
+  const [copiedPublic, setCopiedPublic] = useState(false)
+  const copyPublic = async () => {
+    try {
+      await navigator.clipboard.writeText(publicLink)
+      setCopiedPublic(true)
+      toast.success('Public link copied')
+      window.setTimeout(() => setCopiedPublic(false), 1500)
+    } catch {
+      toast.error('Could not copy the link')
+    }
+  }
   const shareable = visibility !== 'private'
   const canInvite = canEdit && shareable
   const here = presence ?? []
@@ -197,20 +224,31 @@ export function JamDialog({
   }
 
   const [shareBusy, setShareBusy] = useState(false)
-  const updateShare = async (enabled: boolean, role: 'view' | 'edit', rotate = false, revokeCollaborators = false) => {
+  const updateShare = async (
+    enabled: boolean,
+    role: 'view' | 'edit',
+    rotate = false,
+    revokeCollaborators = false,
+    anonymous = shareAnonymous ?? false,
+  ) => {
     setShareBusy(true)
     try {
       const res = await fetch(`/api/flows/${flowId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, role, rotate, revokeCollaborators }),
+        body: JSON.stringify({ enabled, role, rotate, revokeCollaborators, anonymous }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         toast.error(data.error || 'Could not update the share link.')
         return
       }
-      onShareChanged?.(data.shareToken ?? null, data.shareRole === 'edit' ? 'edit' : 'view')
+      onShareChanged?.(
+        data.shareToken ?? null,
+        data.shareRole === 'edit' ? 'edit' : 'view',
+        Boolean(data.shareAnonymous),
+        Number(data.anonymousViews ?? 0),
+      )
       if (revokeCollaborators) setGuests([])
       toast.success(!enabled
         ? 'Share link turned off.'
@@ -501,6 +539,43 @@ export function JamDialog({
                     People outside your workspace can open this flow with the link above after signing in.
                     Rotating makes old links stop working; people who already accepted keep access unless you remove them below.
                   </p>
+                  <div className="space-y-1.5 rounded-lg border border-border/60 p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-medium">Open without signing in</p>
+                      <Switch
+                        checked={Boolean(shareAnonymous)}
+                        disabled={shareBusy}
+                        onCheckedChange={(on) => void updateShare(true, shareRole ?? 'view', false, false, on)}
+                        aria-label="Let anyone open this link without an account"
+                      />
+                    </div>
+                    {shareAnonymous ? (
+                      <>
+                        <p className="text-xs text-muted-foreground">
+                          Anyone with the link sees a read-only picture of the steps — no settings, connected
+                          accounts, prompts or run history, and they can never edit or run it.
+                        </p>
+                        <div className="flex items-center gap-1.5 rounded-md bg-muted/50 py-1 pl-2.5 pr-1">
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{publicLink}</span>
+                          <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs" onClick={copyPublic}>
+                            {copiedPublic ? <Check className="mr-1 h-3 w-3 text-green-600" /> : <Copy className="mr-1 h-3 w-3" />}
+                            {copiedPublic ? 'Copied' : 'Copy'}
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {anonymousViews
+                            ? `Opened ${anonymousViews} time${anonymousViews === 1 ? '' : 's'} without signing in.`
+                            : 'Not opened yet.'}{' '}
+                          Rotating the link (or turning sharing off) stops it working and resets the count.
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Off — people must sign in to open this flow.
+                      </p>
+                    )}
+                  </div>
+
                   {guests.length > 0 && (
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium text-muted-foreground">Joined by link</p>

@@ -41,7 +41,7 @@ export const GET = withAuthenticatedApi(async () => {
     take: 500,
   })
   return { success: true, domains, organizations, companyDomains: COMPANY_EMAIL_DOMAINS }
-}, { permission: 'catalogue.review' })
+}, { permission: 'catalogue.review', internalOnly: true })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const data = postSchema.parse(await request.json())
@@ -96,7 +96,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
 
   return { success: true, domain: created }
-}, { permission: 'catalogue.review' })
+}, { permission: 'catalogue.review', internalOnly: true })
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const data = patchSchema.parse(await request.json())
@@ -134,4 +134,4 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   })
 
   return { success: true, deactivated }
-}, { permission: 'catalogue.review' })
+}, { permission: 'catalogue.review', internalOnly: true })

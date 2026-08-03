@@ -21,6 +21,12 @@ export const INTERNAL_ONLY_ROUTES = [
   'catalogue/review/[id]',
   'catalogue/entries',
   'catalogue/entries/[id]',
+  // Operator ops surfaces behind /admin. Both reach across every workspace via
+  // systemPrisma — costs aggregates spend per org, domains mutates users in
+  // other tenants — so they belong to the internal edition for the same reason
+  // the staff console does.
+  'admin/costs',
+  'admin/domains',
 ]
 
 const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>; methods: string[] }> = [
@@ -32,6 +38,8 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'catalogue/review/[id]', load: () => import('../catalogue/review/[id]/route'), methods: ['POST'] },
   { name: 'catalogue/entries', load: () => import('../catalogue/entries/route'), methods: ['GET'] },
   { name: 'catalogue/entries/[id]', load: () => import('../catalogue/entries/[id]/route'), methods: ['DELETE'] },
+  { name: 'admin/costs', load: () => import('../admin/costs/route'), methods: ['GET'] },
+  { name: 'admin/domains', load: () => import('../admin/domains/route'), methods: ['GET', 'POST', 'PATCH'] },
 ]
 
 const BODYLESS = new Set(['GET', 'DELETE'])

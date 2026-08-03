@@ -32,7 +32,7 @@ export async function authenticateScim(request: Request): Promise<ScimContext | 
   const limited = await rateLimit(`scim:${token.id}`, { limit: 600, windowMs: 60_000, failureMode: 'closed' })
   if (!limited.ok) return scimError('Rate limit exceeded.', 429)
   await systemPrisma.scimToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } })
-  return token
+  return { organizationId: token.organizationId, tokenId: token.id }
 }
 
 export function supabaseAdmin() {

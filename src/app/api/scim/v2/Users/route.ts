@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return scimError(error instanceof Error ? error.message : 'Identity creation failed.', 502)
   }
-  const name = input.displayName ?? `${input.name?.givenName ?? ''} ${input.name?.familyName ?? ''}`.trim() || input.userName
+  const name = input.displayName ?? (`${input.name?.givenName ?? ''} ${input.name?.familyName ?? ''}`.trim() || input.userName)
   try {
     const user = await systemPrisma.user.create({
       data: { supabaseId: authUserId, organizationId: auth.organizationId, email: input.userName, name, scimExternalId: input.externalId, isActive: input.active, role: roleOf(input.roles?.[0]?.value) },

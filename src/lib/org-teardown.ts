@@ -8,10 +8,12 @@
 import { systemPrisma } from '@/lib/prisma'
 import { captureError } from '@/lib/observability/sentry'
 import { graphRagPersistent, getGraphRagStore } from '@/lib/rag/get-store'
+import { deleteStoredFile } from '@/lib/files/storage'
 
-export async function teardownOrganization(organizationId: string): Promise<{ nango: number; graphCleared: boolean }> {
+export async function teardownOrganization(organizationId: string): Promise<{ nango: number; graphCleared: boolean; filesDeleted: number }> {
   let nango = 0
   let graphCleared = false
+  let filesDeleted = 0
 
   // systemPrisma: org teardown enumerates the org's own rows by org id — the
   // guard's org-scope requirement is satisfied semantically but these run
@@ -43,6 +45,14 @@ export async function teardownOrganization(organizationId: string): Promise<{ na
     captureError(error, { source: 'orgTeardown.graph', organizationId })
   }
 
+  // Object-store blobs are outside Postgres cascades. Remove each before its
+  // metadata row disappears; failures are reported and block deletion so a
+  // workspace cannot be declared erased while customer bytes remain behind.
+  const files = await systemPrisma.storedFile.findMany({ where: { organizationId }, select: { id: true } })
+  for (const file of files) {
+    if (await deleteStoredFile(file.id, organizationId)) filesDeleted += 1
+  }
+
   await systemPrisma.organization.delete({ where: { id: organizationId } })
-  return { nango, graphCleared }
+  return { nango, graphCleared, filesDeleted }
 }

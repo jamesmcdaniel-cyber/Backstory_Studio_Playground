@@ -144,6 +144,7 @@ if (TEST_DB) {
     { route: 'catalogue/entries', reason: 'reviewer-only — 403 for the smoke org by design' },
     { route: 'catalogue/staff', reason: 'reviewer-only — 403 for the smoke org by design' },
     { route: 'admin/domains', reason: 'reviewer-only — 403 for the smoke org by design' },
+    { route: 'admin/costs', reason: 'reviewer-only — 403 for the smoke org by design' },
   ]
 
   // Completeness self-check: enumerate every route.ts whose GET is wrapped in

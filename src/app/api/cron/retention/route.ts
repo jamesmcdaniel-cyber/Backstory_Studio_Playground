@@ -157,8 +157,16 @@ export async function GET(request: Request) {
       where: { createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
     })).count
 
-    apiLogger.info('cron/retention complete', { days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned })
-    return Response.json({ success: true, days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned })
+    // LlmCall detail ages out at 90 days. The denormalized costUsd totals on
+    // AgentExecution/FlowRun survive, so historical run cost stays visible
+    // after the per-call breakdown is gone.
+    // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
+    const llmCallsPruned = (await systemPrisma.llmCall.deleteMany({
+      where: { createdAt: { lt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) } },
+    })).count
+
+    apiLogger.info('cron/retention complete', { days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned })
+    return Response.json({ success: true, days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned })
   } catch (error) {
     apiLogger.error('cron/retention failed', { error: error instanceof Error ? error.message : String(error) })
     return Response.json({ success: false, error: 'Internal server error' }, { status: 500 })

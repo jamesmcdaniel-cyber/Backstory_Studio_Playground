@@ -19,6 +19,27 @@ Backstory Studio is a focused AI-agent workspace: create agents, connect tools, 
 - Custom MCP servers can be added separately for specialized tools.
 - OpenAI (default) or Anthropic plans tool calls and answers follow-up questions about completed runs.
 
+## Editions
+
+This tree builds in two editions, selected by the single constant in
+`src/lib/edition.config.ts`:
+
+- **`internal`** (this repo) — the full platform.
+- **`customer`** (`Backstory_customers`) — the customer-facing build. The AI
+  template-generation pipeline and the cross-workspace operator console
+  (`/admin`, catalogue review, staff administration, cost and domain ops) are
+  gated off, and onboarding is two steps rather than three.
+
+`Backstory_customers` is a mirror of this tree whose only permanent diff is that
+constant, so `git merge upstream/main` carries every feature across cleanly.
+Never import `EDITION` directly — use `isCustomerEdition()` from
+`src/lib/edition.ts`.
+
+Adding an internal-only surface is a deliberate decision: gate the route with
+`internalOnly: true` and add it to `INTERNAL_ONLY_ROUTES` in
+`src/app/api/__tests__/edition-gates.test.ts`, which fails the build on drift.
+Page surfaces go in `CUSTOMER_BLOCKED_PREFIXES` in `src/lib/edition.ts`.
+
 ## Local Setup
 
 ```bash

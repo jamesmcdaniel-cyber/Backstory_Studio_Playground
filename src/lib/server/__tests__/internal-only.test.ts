@@ -21,7 +21,9 @@ describe('internalOnly', () => {
   })
 
   test('does not 404 in the internal edition', async () => {
-    delete process.env.APP_EDITION
+    // Set explicitly rather than deleting: the fork commits EDITION='customer',
+    // so relying on the default would make this suite edition-dependent.
+    process.env.APP_EDITION = 'internal'
     const route = withAuthenticatedApi(async () => ({ success: true }), { internalOnly: true, permission: null })
 
     const response = await route(request())

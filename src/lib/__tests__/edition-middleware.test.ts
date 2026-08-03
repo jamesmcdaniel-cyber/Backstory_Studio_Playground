@@ -14,7 +14,9 @@ describe('isEditionBlockedPath', () => {
   })
 
   test('blocks nothing in the internal edition', () => {
-    delete process.env.APP_EDITION
+    // Set explicitly rather than deleting: the fork commits EDITION='customer',
+    // so relying on the default would make this suite edition-dependent.
+    process.env.APP_EDITION = 'internal'
     assert.equal(isEditionBlockedPath('/admin'), false)
     assert.equal(isEditionBlockedPath('/admin/catalogue'), false)
   })

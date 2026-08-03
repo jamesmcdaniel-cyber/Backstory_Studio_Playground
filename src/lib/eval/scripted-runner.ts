@@ -6,7 +6,7 @@
  * transcript-construction and tool-loop code paths — a refactor there (e.g. the
  * provider-neutral IR in #5) is caught by fixture asserts, offline and free.
  */
-import type { ModelRunner, ModelTurn, ToolDefinition, ToolResult } from '@/lib/llm/model-runner'
+import { emptyUsage, type ModelRunner, type ModelTurn, type ToolDefinition, type ToolResult } from '@/lib/llm/model-runner'
 import type { ScriptedTurn } from './types'
 
 export class ScriptedRunner implements ModelRunner {
@@ -57,6 +57,6 @@ export class ScriptedRunner implements ModelRunner {
     for (const call of toolCalls) content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input })
     transcript.push({ role: 'assistant', content })
 
-    return { text, toolCalls, usage: { inputTokens: 0, outputTokens: 0 } }
+    return { text, toolCalls, usage: emptyUsage(), provider: 'anthropic', servedModel: 'scripted' }
   }
 }

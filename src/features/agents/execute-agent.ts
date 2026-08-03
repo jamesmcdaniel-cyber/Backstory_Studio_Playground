@@ -31,6 +31,7 @@ import { buildAgentSystemPrompt } from './system-prompt'
 import {
   createModelRunner,
   generateHeadline,
+  billableTokens,
   DEFAULT_AGENT_MODEL,
   type ToolDefinition,
   type ToolResult,
@@ -931,16 +932,19 @@ export async function runAgentExecution(
       }
 
       const turnResult = await runner.next(transcript, system, [...tools, ASK_USER_TOOL])
-      usage.inputTokens += turnResult.usage.inputTokens
+      // billableTokens folds the three input buckets back together, so these
+      // totals (and every budget check below) mean exactly what they did before
+      // usage was split for cost accounting.
+      usage.inputTokens += billableTokens(turnResult.usage) - turnResult.usage.outputTokens
       usage.outputTokens += turnResult.usage.outputTokens
-      treeTokens.used += turnResult.usage.inputTokens + turnResult.usage.outputTokens
+      treeTokens.used += billableTokens(turnResult.usage)
 
       // Record this turn's spend on the live cross-process counter, then enforce
       // both the per-run cap and the (in-flight-aware) monthly ceiling mid-run so
       // a runaway can't blow far past the budget between the start-of-run check
       // and completion.
       const runTotal = usage.inputTokens + usage.outputTokens
-      const monthTotal = await recordTokenUsage(organizationId, turnResult.usage.inputTokens + turnResult.usage.outputTokens)
+      const monthTotal = await recordTokenUsage(organizationId, billableTokens(turnResult.usage))
       if (perRunTokenCap > 0 && runTotal >= perRunTokenCap) {
         finalText = turnResult.text || 'Run stopped: it reached its per-run token cap.'
         await recordEvent(execution.id, null, 'run.capped', { reason: 'per_run_token_cap', runTotal, cap: perRunTokenCap })

@@ -29,10 +29,40 @@ export type ToolResult = {
   isError?: boolean
 }
 
+/**
+ * Token counts split by BILLING bucket. Cache reads bill at roughly 0.1x and
+ * cache writes at roughly 1.25x, so collapsing these into one number (as this
+ * type previously did) makes the total impossible to convert to dollars —
+ * especially here, where withRollingCache means most turns are cache-heavy.
+ */
+export type TokenUsage = {
+  inputTokens: number
+  cacheWriteTokens: number
+  cacheReadTokens: number
+  outputTokens: number
+}
+
+export function emptyUsage(): TokenUsage {
+  return { inputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0 }
+}
+
+/**
+ * Total tokens for quota purposes — every input bucket plus output. This is
+ * exactly what `inputTokens + outputTokens` meant before the split, so callers
+ * enforcing budgets keep their current behavior.
+ */
+export function billableTokens(usage: TokenUsage): number {
+  return usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens + usage.outputTokens
+}
+
 export type ModelTurn = {
   text: string
   toolCalls: ToolCall[]
-  usage: { inputTokens: number; outputTokens: number }
+  usage: TokenUsage
+  /** Which endpoint actually served this turn — the chain may have fallen back. */
+  provider: ProviderKind
+  /** The model string actually sent, which may differ from the one requested. */
+  servedModel: string
 }
 
 // The transcript is provider-native message JSON. It is persisted on the
@@ -144,12 +174,13 @@ class AnthropicProvider implements Provider {
           input: (block.input || {}) as Record<string, unknown>,
         })),
       usage: {
-        inputTokens:
-          message.usage.input_tokens +
-          (message.usage.cache_creation_input_tokens || 0) +
-          (message.usage.cache_read_input_tokens || 0),
+        inputTokens: message.usage.input_tokens,
+        cacheWriteTokens: message.usage.cache_creation_input_tokens || 0,
+        cacheReadTokens: message.usage.cache_read_input_tokens || 0,
         outputTokens: message.usage.output_tokens,
       },
+      provider: this.kind,
+      servedModel: this.model,
     }
   }
 }

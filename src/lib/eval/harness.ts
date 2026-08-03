@@ -9,7 +9,7 @@
  * same ModelRunner interface, a fixture that passes here pins the loop's
  * behavior across refactors of the runner internals.
  */
-import type { ModelRunner, ToolCall, ToolResult } from '@/lib/llm/model-runner'
+import { billableTokens, type ModelRunner, type ToolCall, type ToolResult } from '@/lib/llm/model-runner'
 import { ScriptedRunner } from './scripted-runner'
 import type { EvalFixture, ScriptedTurn, Trajectory, TrajectoryExpectation } from './types'
 
@@ -41,7 +41,9 @@ export async function runLoop(
 
   for (let turn = 0; turn < maxTurns; turn += 1) {
     const result = await runner.next(transcript, fixture.system, tools)
-    trajectory.usage.inputTokens += result.usage.inputTokens
+    // Trajectory.usage keeps its two-field display shape; fold every input
+    // bucket into inputTokens so the total still reads as it did before the split.
+    trajectory.usage.inputTokens += billableTokens(result.usage) - result.usage.outputTokens
     trajectory.usage.outputTokens += result.usage.outputTokens
 
     if (!result.toolCalls.length) {

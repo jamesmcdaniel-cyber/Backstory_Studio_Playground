@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { useSupabase } from './supabase-provider'
 import { ProposalDetailDialog } from '@/components/onboarding/proposal-detail-dialog'
 import type { ProposalCard } from '@/components/onboarding/proposal-shared'
+import { isCustomerEdition } from '@/lib/edition'
 
 /** Poll cadence + budget while generation may still be landing proposals. */
 const POLL_MS = 5_000
@@ -37,6 +38,15 @@ export function ProposalsProvider({ children }: { children: React.ReactNode }) {
   const polls = useRef(0)
 
   useEffect(() => {
+    // The customer edition has no AI proposals. The provider stays MOUNTED and
+    // simply never fetches — removing it would make every useProposals()
+    // consumer throw. Consumers already render nothing for an empty array
+    // (RecommendationsBar returns null; the bell's section and badge both key
+    // off proposals.length), so this one guard is the whole client-side change.
+    if (isCustomerEdition()) {
+      setLoaded(true)
+      return
+    }
     if (!user) {
       setProposals([])
       setLoaded(false)

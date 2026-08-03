@@ -35,6 +35,7 @@ import {
 import { listOpenProposals } from '@/lib/templates/proposals'
 import { generateTemplateProposals, ORG_GATE_USER_ID } from '@/lib/templates/generate-proposals'
 import { apiLogger } from '@/lib/logger'
+import { isCustomerEdition } from '@/lib/edition'
 
 /** The payload the worker (and inline path) run generation for. */
 export type TemplateGenerationJob = { organizationId: string }
@@ -158,6 +159,9 @@ async function maybeGenerateForOrg(
 export async function maybeGenerateOnGateClear(
   organizationId: string,
 ): Promise<{ dispatched: boolean; reason: 'gate' | 'debounce' | 'dispatched' }> {
+  // The customer edition has no AI template generation. Guarded here rather
+  // than at the call sites so any future caller inherits it.
+  if (isCustomerEdition()) return { dispatched: false, reason: 'gate' }
   return maybeGenerateForOrg(organizationId, new Date())
 }
 
@@ -168,6 +172,10 @@ export async function maybeGenerateOnGateClear(
  * ids dispatched (for the cron response).
  */
 export async function sweepTemplateGeneration(now: Date = new Date()): Promise<string[]> {
+  // The customer edition has no AI template generation. Returning [] keeps the
+  // cron response contract (`generatedOrgs`) edition-independent, so the caller
+  // in cron/dispatch needs no edition awareness of its own.
+  if (isCustomerEdition()) return []
   // systemPrisma: global org enumeration — the only cross-org read (CRON_SECRET-gated).
   const orgs = await systemPrisma.organization.findMany({
     select: { id: true },

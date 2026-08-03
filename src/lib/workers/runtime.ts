@@ -11,6 +11,7 @@ import { executeTemplateGenerationJob } from '@/lib/templates/generation-queue'
 import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
 import { initSentry, captureError, flushErrorReporting } from '@/lib/observability/sentry'
 import { processOutboxBatch } from '@/lib/outbox'
+import { isCustomerEdition } from '@/lib/edition'
 
 class WorkerRuntime {
   private server = Fastify({ logger: true })
@@ -27,8 +28,15 @@ class WorkerRuntime {
     { queue: QUEUE_NAMES.FLOW_EXECUTION, handler: executeFlowJob, onFailed: deadLetterFromFlowJob(QUEUE_NAMES.FLOW_EXECUTION) },
     // Gated AI template generation: its own queue + dead-letter target. The
     // dead-letter terminalizes nothing (generation is additive) — see
-    // template-generation-dead-letter.ts.
-    { queue: QUEUE_NAMES.TEMPLATE_GENERATION, handler: executeTemplateGenerationJob, onFailed: deadLetterFromTemplateGenerationJob(QUEUE_NAMES.TEMPLATE_GENERATION) },
+    // template-generation-dead-letter.ts. Absent entirely in the customer
+    // edition, which never enqueues this job.
+    ...(isCustomerEdition()
+      ? []
+      : [{
+          queue: QUEUE_NAMES.TEMPLATE_GENERATION,
+          handler: executeTemplateGenerationJob as Processor<any, any, string>,
+          onFailed: deadLetterFromTemplateGenerationJob(QUEUE_NAMES.TEMPLATE_GENERATION),
+        }]),
   ]
   private workers = this.workerSpecs.map(
     (spec) => new Worker(spec.queue, spec.handler, { ...workerConfig, connection: getRedisConnection() }),

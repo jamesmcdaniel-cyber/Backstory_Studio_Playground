@@ -2,6 +2,7 @@ import type { User } from '@supabase/supabase-js'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
 import { allowedDomainOrg } from '@/lib/auth/allowed-domain'
+import { isCustomerEdition } from '@/lib/edition'
 
 function findDbUser(supabaseId: string) {
   return prisma.user.findFirst({
@@ -39,7 +40,15 @@ type DbUserRow = Awaited<ReturnType<typeof findDbUser>>
  * bootstrap problem of granting the FIRST one, since nobody can grant review
  * rights before a reviewer exists.
  */
-async function applyStaffBootstrap(dbUser: NonNullable<DbUserRow>): Promise<NonNullable<DbUserRow>> {
+export async function applyStaffBootstrap(dbUser: NonNullable<DbUserRow>): Promise<NonNullable<DbUserRow>> {
+  // The customer edition has no platform staff. This is a hard no-op rather
+  // than a matter of leaving PLATFORM_STAFF_EMAILS unset, because this function
+  // grants platformRole 'reviewer' AND flips the workspace to kind 'internal' —
+  // which resolvePermissions turns into catalogue.review/publish/takedown, i.e.
+  // the whole operator console. An env var alone would leave that one config
+  // mistake away in a customer deploy.
+  if (isCustomerEdition()) return dbUser
+
   const allowlist = (process.env.PLATFORM_STAFF_EMAILS ?? '')
     .split(',')
     .map((entry) => entry.trim().toLowerCase())

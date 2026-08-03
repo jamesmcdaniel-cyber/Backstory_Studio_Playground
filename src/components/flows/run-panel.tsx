@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ChevronRight, Download, RotateCcw, X } from 'lucide-react'
+import { ChevronRight, Download, Pencil, RotateCcw, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -174,7 +174,7 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
   return rows
 }
 
-function StepRow({ step, label, waitingKind, onRerunFrom }: { step: RunStep; label: string; waitingKind?: 'input' | 'approval'; onRerunFrom?: () => void }) {
+function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { step: RunStep; label: string; waitingKind?: 'input' | 'approval'; onRerunFrom?: () => void; onForkWithEdits?: () => void }) {
   const [open, setOpen] = useState(false)
   // An in-flight agent step with a linked execution shows the agent's REAL
   // process (below) instead of the decorative typewriter word. Steps without
@@ -227,6 +227,16 @@ function StepRow({ step, label, waitingKind, onRerunFrom }: { step: RunStep; lab
                     title="Start a new run that replays everything before this step, then runs from here"
                   >
                     <RotateCcw className="h-3 w-3" /> Re-run from here
+                  </button>
+                )}
+                {onForkWithEdits && (
+                  <button
+                    type="button"
+                    onClick={onForkWithEdits}
+                    className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700"
+                    title="Run again with this step's result replaced by a value you choose"
+                  >
+                    <Pencil className="h-3 w-3" /> Run with edits
                   </button>
                 )}
                 {step.output != null && (
@@ -315,6 +325,7 @@ export function RunPanel({
   labelForNode,
   onReply,
   onRerunFrom,
+  onForkWithEdits,
 }: {
   runs: { id: string; status: string; startedAt?: string }[]
   selected: FlowRunDetail | null
@@ -323,6 +334,7 @@ export function RunPanel({
   labelForNode: (nodeId: string) => string
   onReply?: (flowRunId: string, reply: string) => Promise<void>
   onRerunFrom?: (runId: string, nodeId: string) => void
+  onForkWithEdits?: (runId: string, nodeId: string, recordedOutput: unknown, runFailed: boolean) => void
 }) {
   return (
     <div className="flex h-full w-full flex-col border-l border-border bg-card">
@@ -372,6 +384,17 @@ export function RunPanel({
                   onRerunFrom={
                     onRerunFrom && (selected.status === 'succeeded' || selected.status === 'failed')
                       ? () => onRerunFrom(selected.id, step.nodeId.split('#')[0])
+                      : undefined
+                  }
+                  onForkWithEdits={
+                    onForkWithEdits && (selected.status === 'succeeded' || selected.status === 'failed')
+                      ? () =>
+                          onForkWithEdits(
+                            selected.id,
+                            step.nodeId.split('#')[0],
+                            step.output,
+                            selected.status === 'failed',
+                          )
                       : undefined
                   }
                   waitingKind={step.status === 'waiting' && selected.waiting?.nodeId === step.nodeId ? selected.waiting.kind : undefined}

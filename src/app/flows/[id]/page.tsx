@@ -1515,6 +1515,55 @@ function FlowBuilder() {
     pollRuns()
   }, [id, pollRuns])
 
+  const forkWithEdits = useCallback(
+    async (runId: string, nodeId: string, recordedOutput: unknown, runFailed: boolean) => {
+      const edited = window.prompt(
+        `Replace what "${nodeId}" produced. Everything after it runs again with this value.`,
+        JSON.stringify(recordedOutput ?? null, null, 2),
+      )
+      if (edited === null) return
+
+      let value: unknown
+      try {
+        value = JSON.parse(edited)
+      } catch {
+        toast.error('That is not valid JSON — check for a missing quote or comma.')
+        return
+      }
+
+      // The asymmetry is real and worth stating plainly: a fork is a NEW run, so
+      // it gets fresh idempotency keys and any step that writes to an external
+      // system writes again. Continuing the same run keeps its keys, so already
+      // completed steps stay deduped.
+      const patch =
+        runFailed &&
+        window.confirm(
+          'Continue this same run from the edited step?\n\n' +
+            'OK — continue this run. Steps that already ran will not repeat their external actions.\n\n' +
+            'Cancel — start a separate run instead. Steps that send email, post messages, or write to other systems WILL run again.',
+        )
+
+      const response = await fetch(`/api/flows/${id}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromRunId: runId,
+          fromNodeId: nodeId,
+          mode: patch ? 'patch' : 'fork',
+          overrides: { [nodeId]: value },
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        toast.error(data.error || 'Could not start that run.')
+        return
+      }
+      toast.success(patch ? 'Continuing this run from the edited step.' : 'Started a separate run with your edit.')
+      pollRuns()
+    },
+    [id, pollRuns],
+  )
+
   const selectRun = useCallback(
     async (runId: string) => {
       pinnedRunId.current = runId
@@ -2414,6 +2463,9 @@ function FlowBuilder() {
               labelForNode={labelForNode}
               onReply={replyToRun}
               onRerunFrom={(runId, nodeId) => void rerunFromStep(runId, nodeId)}
+              onForkWithEdits={(runId, nodeId, recordedOutput, runFailed) =>
+                void forkWithEdits(runId, nodeId, recordedOutput, runFailed)
+              }
             />
           </ResizablePanel>
         )}

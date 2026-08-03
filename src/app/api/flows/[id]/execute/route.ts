@@ -7,6 +7,7 @@ import { parseFlowInput } from '@/lib/flows/input'
 import { deriveRunWaiting } from '@/lib/flows/run-waiting'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkMonthlyTokenBudget } from '@/lib/usage/budget'
+import { recordAudit } from '@/lib/audit'
 
 export const runtime = 'nodejs'
 export const maxDuration = 800
@@ -48,8 +49,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       // step") or up to but not including it ("Execute previous nodes").
       stopAfterNodeId: z.string().optional(),
       stopBeforeNodeId: z.string().optional(),
+      // "Pretend this step produced X", keyed by node id (or `node#i` inside a
+      // loop). Rides alongside fromRunId/fromNodeId.
+      overrides: z.record(z.string(), z.unknown()).optional(),
+      // 'fork' (default) starts a NEW run — new idempotency keys, so external
+      // writes re-fire. 'patch' reopens the SAME failed run, keeping its keys.
+      mode: z.enum(['fork', 'patch']).optional(),
     })
     .parse(body)
+  if (parsed.mode === 'patch' && !(parsed.fromRunId && parsed.fromNodeId)) {
+    throw new ApiError('Patching a run needs both fromRunId and fromNodeId.', 400, 'FLOW_REPLAY_ARGS')
+  }
   if (parsed.stopAfterNodeId && parsed.stopBeforeNodeId) {
     throw new ApiError('Pick one of stopAfterNodeId or stopBeforeNodeId.', 400, 'FLOW_PARTIAL_ARGS')
   }
@@ -106,6 +116,45 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     })
     return { success: true, run: { flowRunId: parsed.flowRunId, status: 'running', output: null } }
   }
+  // Patch-and-resume: reopen the SAME failed run from a chosen step, with any
+  // overrides applied. Ownership-checked like the resume path above — a crafted
+  // fromRunId must never re-enter another flow's run against this graph.
+  if (parsed.mode === 'patch' && parsed.fromRunId && parsed.fromNodeId) {
+    const owned = await prisma.flowRun.findFirst({
+      where: { id: parsed.fromRunId, flowId: flow.id, organizationId: auth.organizationId },
+      select: { id: true, status: true },
+    })
+    if (!owned) throw new ApiError('Run not found', 404, 'NOT_FOUND')
+    // Friendly synchronous check; the worker's atomic failed→running claim is
+    // still the authority for concurrent patches.
+    if (owned.status !== 'failed') {
+      throw new ApiError(
+        'Only a failed run can be patched and resumed. Start a separate run instead.',
+        409,
+        'FLOW_PATCH_NOT_FAILED',
+      )
+    }
+    await dispatchDetachedFlowExecution({
+      flowId: id,
+      organizationId: auth.organizationId,
+      userId: auth.dbUser.id,
+      flowRunId: parsed.fromRunId,
+      resumeFrom: { nodeId: parsed.fromNodeId },
+      overrides: parsed.overrides,
+    })
+    if (parsed.overrides && Object.keys(parsed.overrides).length) {
+      await recordAudit({
+        organizationId: auth.organizationId,
+        action: 'flow.run_overridden',
+        actorUserId: auth.dbUser.id,
+        resourceType: 'flow',
+        resourceId: flow.id,
+        detail: { mode: 'patch', nodes: Object.keys(parsed.overrides), fromRunId: parsed.fromRunId },
+      })
+    }
+    return { success: true, run: { flowRunId: parsed.fromRunId, status: 'running', output: null } }
+  }
+
   // Fresh run (or re-run from a step): the run row is created and validated
   // BEFORE this returns — invalid graphs/input still fail the request — and
   // execution continues in the background, surviving client navigation.
@@ -115,8 +164,19 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     userId: auth.dbUser.id,
     input: parseFlowInput(parsed.input),
     replayFrom: parsed.fromRunId && parsed.fromNodeId ? { runId: parsed.fromRunId, nodeId: parsed.fromNodeId } : undefined,
+    ...(parsed.overrides ? { overrides: parsed.overrides } : {}),
     ...(parsed.stopAfterNodeId ? { stopAfterNodeId: parsed.stopAfterNodeId } : {}),
     ...(parsed.stopBeforeNodeId ? { stopBeforeNodeId: parsed.stopBeforeNodeId } : {}),
   })
+  if (parsed.overrides && Object.keys(parsed.overrides).length) {
+    await recordAudit({
+      organizationId: auth.organizationId,
+      action: 'flow.run_overridden',
+      actorUserId: auth.dbUser.id,
+      resourceType: 'flow',
+      resourceId: flow.id,
+      detail: { mode: 'fork', nodes: Object.keys(parsed.overrides), fromRunId: parsed.fromRunId ?? null },
+    })
+  }
   return { success: true, run }
 }, { permission: 'flow.run' })

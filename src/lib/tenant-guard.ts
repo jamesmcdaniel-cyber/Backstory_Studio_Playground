@@ -55,6 +55,14 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'Flow', 'FlowTemplate', 'FlowTemplateVersion', 'FlowVersion', 'FlowRun',
   'HuddleSegment', 'HuddleNote', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
   'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent',
+  // PLATFORM config, listed here only because it carries a required
+  // organizationId. That column names the workspace domain members JOIN — it is
+  // not the row's owner. Every real access is via systemPrisma (the sign-in gate
+  // runs before any org context exists; administration is gated on
+  // catalogue.review), and its RLS policy denies the tenant role outright.
+  // Enumerating it keeps a guarded query from ever going unscoped by accident.
+  // Deliberately EXCLUDED from the privacy export — see src/lib/privacy/export.ts.
+  'PlatformAllowedDomain',
 ])
 
 const GUARDED_OPERATIONS = new Set([

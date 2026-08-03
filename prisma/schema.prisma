@@ -79,6 +79,7 @@ model Organization {
   flowWebhookReceipts  FlowWebhookReceipt[]
   outboxEvents         OutboxEvent[]
   domains              OrganizationDomain[]
+  allowedDomains       PlatformAllowedDomain[]
   scimTokens           ScimToken[]
   apiKeys              ApiKey[]
 
@@ -166,6 +167,32 @@ model OrganizationDomain {
 
   @@index([organizationId, status])
   @@map("organization_domains")
+}
+
+/// Platform-level access gate: which email domains may reach the product at
+/// all. Deliberately SEPARATE from OrganizationDomain — that model answers
+/// "does this domain belong to workspace X" for SSO enforcement, and
+/// overloading it would let a customer verifying a domain silently grant
+/// itself platform access.
+///
+/// COMPANY_EMAIL_DOMAINS (src/lib/auth/company-domain.ts) stays hardcoded and
+/// is NOT represented here, so no table edit can lock staff out.
+model PlatformAllowedDomain {
+  id             String    @id @default(cuid())
+  /// Bare hostname, lowercased. Exact match only — no wildcards.
+  domain         String    @unique
+  /// The shared workspace every user from this domain joins.
+  organizationId String    @db.Uuid
+  note           String    @default("")
+  addedByUserId  String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  /// Set to disable without losing the audit trail. Null = active.
+  disabledAt     DateTime? @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("platform_allowed_domains")
 }
 
 /// Bearer credentials accepted by the SCIM 2.0 provisioning surface. Only a

@@ -40,6 +40,11 @@ export function organizationExportStream(organizationId: string): ReadableStream
         for (const user of await systemPrisma.user.findMany({ where: { organizationId }, orderBy: { id: 'asc' } })) emit('User', user)
 
         for (const model of [...ORG_SCOPED_MODELS].sort()) {
+          // PlatformAllowedDomain is platform config that merely POINTS at this
+          // workspace; its rows carry internal operator notes and the staff user
+          // who granted access. Exporting it would hand a customer our access
+          // administration, so it is skipped despite carrying an organizationId.
+          if (model === 'PlatformAllowedDomain') continue
           const delegate = (systemPrisma as unknown as Record<string, { findMany(args: unknown): Promise<Array<{ id: string }>> }>)[propertyOf(model)]
           if (!delegate) continue
           let cursor: string | undefined

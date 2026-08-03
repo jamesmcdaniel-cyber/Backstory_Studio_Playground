@@ -12,8 +12,9 @@
  */
 export type FlowQueueDecision = { jobId?: string; attempts?: number }
 
-export function flowJobOptions(flowRunId: string | undefined, preparedRunId?: string, now: number = Date.now()): FlowQueueDecision {
+export function flowJobOptions(flowRunId: string | undefined, preparedRunId?: string, deliveryId?: string, now: number = Date.now()): FlowQueueDecision {
   if (flowRunId) return { jobId: `${flowRunId}-resume-${now}` }
   if (preparedRunId) return { jobId: `${preparedRunId}-start`, attempts: 1 }
+  if (deliveryId) return { jobId: `delivery-${deliveryId}`, attempts: 1 }
   return { attempts: 1 }
 }

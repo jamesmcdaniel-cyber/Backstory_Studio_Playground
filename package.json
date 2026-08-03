@@ -23,7 +23,8 @@
     "test": "TSX_TSCONFIG_PATH=tsconfig.test.json tsx --test $(find src -type f \\( -name '*.test.ts' -o -name '*.test.tsx' \\) -path '*__tests__*')",
     "eval": "tsx --test $(find src/lib/eval -type f -name '*.test.ts' -path '*__tests__*')",
     "eval:rag": "tsx src/lib/eval/rag/run.ts",
-    "eval:rag:generate": "tsx src/lib/eval/rag/generate.ts"
+    "eval:rag:generate": "tsx src/lib/eval/rag/generate.ts",
+    "load:flow": "k6 run scripts/load/flow-webhook.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
@@ -91,5 +92,9 @@
     "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "$postcss",
+    "sharp": "^0.35.3"
   }
 }

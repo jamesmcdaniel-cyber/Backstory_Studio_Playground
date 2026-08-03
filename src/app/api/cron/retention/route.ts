@@ -1,7 +1,8 @@
 /**
  * /api/cron/retention — daily pruning of unbounded-growth tables.
  *
- * Deletes agent executions and signals older than RETENTION_DAYS (default 90).
+ * Deletes terminal executions, signals, flow runs, files, webhook receipts,
+ * and settled outbox events after their configured retention windows.
  * Deleting an execution cascades its workflow steps/events/messages. Audit
  * events are intentionally NOT pruned (append-only for compliance). Capped per
  * run so a backlog is worked down over successive days rather than in one huge
@@ -15,6 +16,7 @@ import { Prisma } from '@prisma/client'
 import { systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { removeRetiredFromGraph } from '@/lib/rag/indexer'
+import { deleteStoredFile } from '@/lib/files/storage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -51,6 +53,14 @@ export async function GET(request: Request) {
     const staleSignals = await systemPrisma.signal.findMany({
       where: { receivedAt: { lt: cutoff } }, select: { id: true, organizationId: true }, take: CAP,
     })
+    // systemPrisma: global retention sweep — terminal flow runs contain the
+    // same sensitive inputs/outputs as agent executions and must not outlive
+    // the configured retention window.
+    const staleFlowRuns = await systemPrisma.flowRun.findMany({
+      where: { startedAt: { lt: cutoff }, status: { in: ['succeeded', 'failed', 'cancelled'] } },
+      select: { id: true },
+      take: CAP,
+    })
 
     // Graph parity: prune the run:/signal: nodes for the rows this sweep is
     // about to delete — graph-first, because after the Postgres delete the
@@ -82,6 +92,37 @@ export async function GET(request: Request) {
     const signalsDeleted = staleSignals.length
       ? (await systemPrisma.signal.deleteMany({ where: { id: { in: staleSignals.map((s) => s.id) } } })).count
       : 0
+    // systemPrisma: global retention sweep — ids were selected by age/status above.
+    const flowRunsDeleted = staleFlowRuns.length
+      ? (await systemPrisma.flowRun.deleteMany({ where: { id: { in: staleFlowRuns.map((run) => run.id) } } })).count
+      : 0
+
+    // Public webhook replay receipts only need to cover the retry window.
+    // systemPrisma: global expiry sweep by an intrinsic timestamp.
+    const webhookReceiptsPruned = (await systemPrisma.flowWebhookReceipt.deleteMany({
+      where: { expiresAt: { lt: new Date() } },
+    })).count
+    // Delivered/dead-letter outbox rows are operational history, not permanent
+    // audit records. Pending/processing rows are never removed by retention.
+    const outboxEventsPruned = (await systemPrisma.outboxEvent.deleteMany({
+      where: { createdAt: { lt: cutoff }, status: { in: ['delivered', 'failed'] } },
+    })).count
+
+    // Original uploaded bytes have their own retention window. Delete through
+    // the storage abstraction so Supabase objects and database rows stay in sync.
+    const fileDays = Number(process.env.FILE_RETENTION_DAYS) || days
+    // systemPrisma: global retention read; each deletion below is re-scoped to its org.
+    const staleFiles = await systemPrisma.storedFile.findMany({
+      where: { createdAt: { lt: new Date(Date.now() - fileDays * 24 * 60 * 60 * 1000) } },
+      select: { id: true, organizationId: true },
+      take: Math.min(CAP, 500),
+    })
+    const fileResults = await Promise.allSettled(staleFiles.map((file) => deleteStoredFile(file.id, file.organizationId)))
+    const storedFilesPruned = fileResults.filter((result) => result.status === 'fulfilled' && result.value).length
+    const storedFileDeleteFailures = fileResults.filter((result) => result.status === 'rejected').length
+    if (storedFileDeleteFailures) {
+      apiLogger.warn('cron/retention: some stored files could not be removed', { failed: storedFileDeleteFailures })
+    }
 
     // Transcripts are the fattest column (provider message JSON, growing per
     // turn — can reach MBs per run). They only matter for RESUMING a run, so
@@ -116,8 +157,8 @@ export async function GET(request: Request) {
       where: { createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
     })).count
 
-    apiLogger.info('cron/retention complete', { days, executionsDeleted, signalsDeleted, transcriptsPruned, huddleSegmentsPruned })
-    return Response.json({ success: true, days, executionsDeleted, signalsDeleted, transcriptsPruned, huddleSegmentsPruned })
+    apiLogger.info('cron/retention complete', { days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned })
+    return Response.json({ success: true, days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned })
   } catch (error) {
     apiLogger.error('cron/retention failed', { error: error instanceof Error ? error.message : String(error) })
     return Response.json({ success: false, error: 'Internal server error' }, { status: 500 })

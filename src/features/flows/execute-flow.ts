@@ -48,6 +48,9 @@ import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { runFlowCode } from './code-runner'
 import { agentVisibilityScope } from '@/lib/server/visibility'
+import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
+import { flowSideEffectKey, withIdempotencyHeader } from '@/lib/flows/idempotency'
+import { flowSignalOutboxEvent } from '@/lib/outbox'
 
 export type FlowExecutionJob = {
   flowId: string
@@ -80,6 +83,8 @@ export type FlowExecutionJob = {
   // interactive execute route return a run id immediately while the run
   // continues in the background.
   preparedRunId?: string
+  /** Stable source delivery key (currently outbox signals) for queue dedupe. */
+  deliveryId?: string
 }
 
 // Bound HTTP responses so downstream prompts/logs stay manageable.
@@ -107,6 +112,10 @@ function httpDownloadFilename(contentDisposition: string | null, url: string): s
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
+}
+
+function signalDepthOfTrigger(trigger: FlowExecutionJob['trigger']): number {
+  return typeof trigger?.depth === 'number' ? trigger.depth : 0
 }
 
 // Write planes are the consequential audit entries — the same set the agent
@@ -159,7 +168,7 @@ async function resolveValidatedGraph(
   flow: FlowRow,
   existingRun: FlowRunRow | null,
   replaySource: FlowRunRow | null,
-): Promise<{ graph: FlowGraph; agents: { id: string; title: string }[] }> {
+): Promise<{ graph: FlowGraph; agents: { id: string; title: string }[]; manifest: FlowExecutionManifest }> {
   const currentGraph = job.usePublished && flow.publishedGraph != null ? flow.publishedGraph : flow.graph
   const source = existingRun
     ? existingRun.graphSnapshot ?? currentGraph
@@ -176,7 +185,7 @@ async function resolveValidatedGraph(
   const [agents, toolCatalog, httpCredentials] = await Promise.all([
     prisma.agentTask.findMany({
       where: { organizationId: job.organizationId, status: 'ACTIVE', ...agentVisibilityScope(job.userId) },
-      select: { id: true, description: true },
+      select: { id: true, description: true, updatedAt: true },
       take: 500,
     }),
     usedConnectionIds.length
@@ -199,7 +208,14 @@ async function resolveValidatedGraph(
   if (!validation.ok) {
     throw new ApiError(validationErrorMessage(validation), 400, 'FLOW_VALIDATION_ERROR')
   }
-  return { graph, agents: agentRefs }
+  const manifest = buildFlowExecutionManifest({
+    graph,
+    agents,
+    toolCatalog,
+    agentModel: DEFAULT_AGENT_MODEL,
+    summaryModel: DEFAULT_SUMMARY_MODEL,
+  })
+  return { graph, agents: agentRefs, manifest }
 }
 
 /**
@@ -257,6 +273,7 @@ async function createFlowRunRow(
   graph: FlowGraph,
   input: unknown,
   reusedInput: boolean,
+  manifest: FlowExecutionManifest,
 ): Promise<FlowRunRow> {
   return prisma.flowRun.create({
     data: {
@@ -267,6 +284,7 @@ async function createFlowRunRow(
       // the run panel surfaces it so replayed payloads are never silent.
       trigger: jsonValue({ ...(job.trigger ?? { type: 'manual' }), ...(reusedInput ? { reusedInput: true } : {}), ...(job.replayFrom ? { replayOf: job.replayFrom.runId, fromNodeId: job.replayFrom.nodeId } : {}) }),
       graphSnapshot: jsonValue(graph),
+      executionManifest: jsonValue(manifest),
       organizationId: job.organizationId,
       userId: job.userId,
     },
@@ -335,6 +353,7 @@ export async function runFlowExecution(
   // extend into that phase.
   let graph!: FlowGraph
   let orgAgents: { id: string; title: string }[] = []
+  let manifest!: FlowExecutionManifest
   try {
     if (resuming) {
       existingRun = await prisma.flowRun.findFirst({ where: { id: job.flowRunId, organizationId: job.organizationId } })
@@ -354,6 +373,14 @@ export async function runFlowExecution(
     const resolvedGraph = await resolveValidatedGraph(job, flow, existingRun, replaySource)
     graph = resolvedGraph.graph
     orgAgents = resolvedGraph.agents
+    manifest = resolvedGraph.manifest
+    if (existingRun?.executionManifest && !executionManifestMatches(existingRun.executionManifest, manifest)) {
+      throw new ApiError(
+        'This run’s agent or integration configuration changed after it started. Start a new run so it can use the updated configuration safely.',
+        409,
+        'FLOW_DEPENDENCY_DRIFT',
+      )
+    }
   } catch (error) {
     // The `status: 'running'` guard means we only roll back a claim we
     // ourselves hold — never stomp a reaper's terminal `failed` write.
@@ -383,7 +410,7 @@ export async function runFlowExecution(
     input = resolved.input
     reusedInput = resolved.reusedInput
   }
-  const run = existingRun ?? await createFlowRunRow(job, flow, graph, input, reusedInput)
+  const run = existingRun ?? await createFlowRunRow(job, flow, graph, input, reusedInput, manifest)
   // Resume integrity: a resume request carries the user's reply, not the run
   // input, so `input` re-derives as '' here — downstream `Run input` tokens
   // would resolve empty. Reload the original input persisted on the run row.
@@ -977,6 +1004,18 @@ export async function runFlowExecution(
       }
       if (node.kind === 'http') {
         const request = prepareHttpRequest(node.config)
+        const requestForAttempt = (url: string, page = 0) => ({
+          ...request,
+          url,
+          init: {
+            ...request.init,
+            headers: withIdempotencyHeader(
+              request.init.headers as Record<string, string>,
+              String(request.init.method || 'GET'),
+              flowSideEffectKey(run.id, node.id, page),
+            ),
+          },
+        })
         let httpCredential: ResolvedHttpCredential | null = null
         const credentialId = typeof node.config.credentialId === 'string' ? node.config.credentialId.trim() : ''
         if (credentialId) {
@@ -1035,7 +1074,7 @@ export async function runFlowExecution(
               controller.abort()
             }, request.timeoutMs)
             try {
-              const response = await fetchWithHttpCredential(request, httpCredential, controller.signal)
+              const response = await fetchWithHttpCredential(requestForAttempt(request.url), httpCredential, controller.signal)
               if (httpCredential?.id) {
                 const authRejected = response.status === 401 || response.status === 403
                 await markCredentialResult(httpCredential.id, !authRejected, `HTTP ${response.status}`)
@@ -1046,8 +1085,8 @@ export async function runFlowExecution(
               const filename = httpDownloadFilename(response.headers.get('content-disposition'), request.url)
               const saved = await saveStoredFile({ organizationId: job.organizationId, userId: job.userId, filename, mimeType, buffer })
               let content: string | undefined
-              if (isSupported(mimeType, filename)) {
-                content = (await extractTextAuto(buffer, mimeType, filename)).slice(0, 200_000)
+              if (isSupported(saved.mimeType, filename)) {
+                content = (await extractTextAuto(buffer, saved.mimeType, filename)).slice(0, 200_000)
               }
               return fileReference(saved, { content }) as unknown as Record<string, unknown>
             } catch (error) {
@@ -1063,7 +1102,7 @@ export async function runFlowExecution(
 
         // Fetch ONE page (URL overridable for pagination), retried per page. The
         // SSRF guard re-runs before every attempt AND every page.
-        const fetchPage = (pageUrl: string): Promise<FlowHttpOutput> =>
+        const fetchPage = (pageUrl: string, page = 0): Promise<FlowHttpOutput> =>
           runWithRetries(async () => {
             await assertPublicUrl(pageUrl)
             const controller = new AbortController()
@@ -1073,7 +1112,7 @@ export async function runFlowExecution(
               controller.abort()
             }, request.timeoutMs)
             try {
-              const response = await fetchWithHttpCredential({ ...request, url: pageUrl }, httpCredential, controller.signal)
+              const response = await fetchWithHttpCredential(requestForAttempt(pageUrl, page), httpCredential, controller.signal)
               const nextOutput = await responseOutput(response, request.responseType, HTTP_MAX_RESPONSE_CHARS)
               // Record credential health so the picker can flag a revoked token
               // instead of failing silently. Auth rejection flips it to 'error';
@@ -1109,7 +1148,7 @@ export async function runFlowExecution(
               const step = typeof pagination.step === 'number' ? pagination.step : 1
               pageUrl = setQueryParam(request.url, pagination.param, start + i * step)
             }
-            last = await fetchPage(pageUrl)
+            last = await fetchPage(pageUrl, i)
             pages += 1
             // Stop-condition FIRST, so a terminal page (a 404 past the end, a
             // has_more that flipped false) neither contributes items nor costs
@@ -1280,9 +1319,32 @@ export async function runFlowExecution(
   // the cron scan can wake it. Any other waiting state (human reply, approval,
   // open-ended webhook callback) and every terminal state clear resumeAt.
   const resumeAt = status === 'waiting' && result.waiting?.resumeAt ? new Date(result.waiting.resumeAt) : null
-  await prisma.flowRun.update({
-    where: { id: run.id, organizationId: job.organizationId },
-    data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt },
+  await prisma.$transaction(async (tx) => {
+    await tx.flowRun.update({
+      where: { id: run.id, organizationId: job.organizationId },
+      data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt },
+    })
+    // Commit the terminal state and its downstream signal atomically. The
+    // outbox worker handles delivery/retry after commit, so a process crash can
+    // no longer leave a completed run without its chained flows.
+    if (job.usePublished && (status === 'succeeded' || status === 'failed')) {
+      const succeeded = status === 'succeeded'
+      await tx.outboxEvent.create({
+        data: flowSignalOutboxEvent({
+          organizationId: job.organizationId,
+          aggregateId: run.id,
+          dedupeKey: `flow:${run.id}:${status}`,
+          signal: {
+            signal: succeeded ? 'flow.completed' : 'flow.failed',
+            payload: succeeded
+              ? { flowId: flow.id, flowName: flow.name, output: effectiveOutput }
+              : { flowId: flow.id, flowName: flow.name, error: runError, runId: run.id },
+            sourceFlowId: flow.id,
+            depth: signalDepthOfTrigger(job.trigger) + 1,
+          },
+        }),
+      })
+    }
   })
   // Final realtime nudge on the terminal/waiting status, so the builder settles
   // immediately instead of on the next poll.
@@ -1331,45 +1393,6 @@ export async function runFlowExecution(
       .catch(() => undefined)
   }
 
-  // Fire the flow.completed signal for other flows listening in this org.
-  // Dynamic import: signals.ts imports runFlowExecution statically (it fires
-  // matched flows), so a static import here back to signals.ts would be a
-  // cycle — this keeps the edge one-directional. Fire-and-forget: a signal
-  // emit must never block or fail this run's completion.
-  // PUBLISHED RUNS ONLY: a builder Test/Run of a draft must never chain real
-  // production flows — only scheduled/webhook/signal (published) runs emit.
-  if (status === 'succeeded' && job.usePublished) {
-    void import('./signals')
-      .then((signals) =>
-        signals.emitFlowSignal({
-          organizationId: job.organizationId,
-          signal: 'flow.completed',
-          payload: { flowId: flow.id, flowName: flow.name, output: effectiveOutput },
-          sourceFlowId: flow.id,
-          depth: signals.signalDepthOf(job.trigger) + 1,
-        }),
-      )
-      .catch(() => undefined)
-  }
-
-  // Symmetric to flow.completed: a failed published run fires flow.failed so an
-  // org error-handler flow can react. sourceFlowId excludes the failing flow
-  // itself, and the signal depth cap bounds a failed handler re-firing —
-  // together they keep a flow.failed → flow.failed chain from looping.
-  if (status === 'failed' && job.usePublished) {
-    void import('./signals')
-      .then((signals) =>
-        signals.emitFlowSignal({
-          organizationId: job.organizationId,
-          signal: 'flow.failed',
-          payload: { flowId: flow.id, flowName: flow.name, error: runError, runId: run.id },
-          sourceFlowId: flow.id,
-          depth: signals.signalDepthOf(job.trigger) + 1,
-        }),
-      )
-      .catch(() => undefined)
-  }
-
   return { flowRunId: run.id, status, output: effectiveOutput }
 }
 
@@ -1387,7 +1410,7 @@ export async function dispatchFlowExecution(
   if (inlineExecution) return runFlowExecution(job)
   if (!workersEnabled) throw new Error('Flow worker is disabled')
   const queue = createQueue(QUEUE_NAMES.FLOW_EXECUTION)
-  await queue.add('execute-flow', job, flowJobOptions(job.flowRunId))
+  await queue.add('execute-flow', job, flowJobOptions(job.flowRunId, undefined, job.deliveryId))
   return { queued: true }
 }
 
@@ -1413,7 +1436,7 @@ export async function dispatchDetachedFlowExecution(job: FlowExecutionJob): Prom
   if (!inlineExecution) {
     if (!workersEnabled) throw new Error('Flow worker is disabled')
     const queue = createQueue(QUEUE_NAMES.FLOW_EXECUTION)
-    await queue.add('execute-flow', job, flowJobOptions(job.flowRunId, job.preparedRunId))
+    await queue.add('execute-flow', job, flowJobOptions(job.flowRunId, job.preparedRunId, job.deliveryId))
     return
   }
   const detached = runFlowExecution(job)
@@ -1447,12 +1470,12 @@ export async function startFlowExecution(
   const flow = await prisma.flow.findFirst({ where: { id: job.flowId, organizationId: job.organizationId } })
   if (!flow) throw new Error('Flow not found')
   const replaySource = await loadReplaySource(job)
-  const { graph } = await resolveValidatedGraph(job, flow, null, replaySource)
+  const { graph, manifest } = await resolveValidatedGraph(job, flow, null, replaySource)
   let input: unknown = job.input ?? ''
   // A replay re-runs the SOURCE run's input by default — explicit input wins.
   if (replaySource && job.input === undefined) input = storedRunInput(replaySource.input)
   const resolved = await resolveFreshRunInput(job, flow, graph, input)
-  const run = await createFlowRunRow(job, flow, graph, resolved.input, resolved.reusedInput)
+  const run = await createFlowRunRow(job, flow, graph, resolved.input, resolved.reusedInput, manifest)
   try {
     // job.input carries the RESOLVED input so the worker executes exactly what
     // was validated + persisted here (no re-resolution drift).

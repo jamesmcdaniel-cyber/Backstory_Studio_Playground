@@ -1,9 +1,11 @@
 import { McpClient, mcpConfigFromConnection, type McpClientConfig, type McpConnectionRow } from '@/lib/mcp/mcp-client'
+import { createHash } from 'node:crypto'
 
 export type McpVerification = {
   verifiedAt: Date
   toolCount: number
   toolNames: string[]
+  schemaHash: string
 }
 
 /** Keep external connection failures useful without echoing credentials. */
@@ -18,10 +20,15 @@ export function safeMcpVerificationError(error: unknown): string {
 
 export async function verifyMcpConfig(config: McpClientConfig): Promise<McpVerification> {
   const tools = await new McpClient(config).getServerTools(config.serverUrl)
+  const schemaHash = createHash('sha256').update(JSON.stringify(
+    tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  )).digest('hex')
   return {
     verifiedAt: new Date(),
     toolCount: tools.length,
     toolNames: tools.slice(0, 30).map((tool) => tool.name),
+    schemaHash,
   }
 }
 

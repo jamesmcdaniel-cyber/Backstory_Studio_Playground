@@ -52,7 +52,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'PeopleAiConnection', 'McpConnection', 'NangoConnection', 'IntegrationSecret',
   'HttpCredential',
   'Flow', 'FlowVersion', 'FlowRun', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
-  'TemplateProposal', 'StoredFile', 'CatalogueSubmission',
+  'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent',
 ])
 
 const GUARDED_OPERATIONS = new Set([

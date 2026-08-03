@@ -97,7 +97,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (existing) {
       await prisma.mcpConnection.update({
         where: { id: existing.id, organizationId: auth.organizationId },
-        data: { lastVerifiedAt: verification.verifiedAt },
+        data: { lastVerifiedAt: verification.verifiedAt, healthStatus: 'healthy', lastError: null, toolSchemaHash: verification.schemaHash },
       })
     }
     return {
@@ -107,6 +107,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       toolNames: verification.toolNames,
     }
   } catch (error) {
+    if (existing) {
+      await prisma.mcpConnection.update({
+        where: { id: existing.id, organizationId: auth.organizationId },
+        data: { lastVerifiedAt: new Date(), healthStatus: 'unhealthy', lastError: safeMcpVerificationError(error) },
+      }).catch(() => undefined)
+    }
     return { ok: false, error: safeMcpVerificationError(error) }
   }
 }, { permission: 'integration.manage' })

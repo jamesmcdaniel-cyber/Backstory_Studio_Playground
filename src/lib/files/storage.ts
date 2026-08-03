@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { prisma } from '@/lib/prisma'
+import { scanFileBuffer, verifyFileMime } from '@/lib/files/security'
 
 /**
  * Original-file storage for uploads (run-form file inputs and future step
@@ -10,6 +11,7 @@ import { prisma } from '@/lib/prisma'
  */
 
 export const STORED_FILE_MAX_BYTES = 10_000_000
+export const DEFAULT_ORG_FILE_STORAGE_MAX_BYTES = 500_000_000
 const BUCKET = 'stored-files'
 
 function supabaseAdmin() {
@@ -30,45 +32,70 @@ export async function saveStoredFile(params: {
     throw new Error(`Files can be at most ${Math.round(STORED_FILE_MAX_BYTES / 1_000_000)} MB.`)
   }
   const filename = params.filename.replace(/[\r\n]/g, ' ').slice(0, 200) || 'file'
-  const supabase = supabaseAdmin()
-  if (supabase) {
-    const row = await prisma.storedFile.create({
+  const mimeType = verifyFileMime(params.buffer, params.mimeType, filename)
+  await scanFileBuffer(params.buffer, filename)
+  const quota = Math.max(STORED_FILE_MAX_BYTES, Number(process.env.ORG_FILE_STORAGE_MAX_BYTES) || DEFAULT_ORG_FILE_STORAGE_MAX_BYTES)
+  const reserveAndCreate = async (backend: 'supabase' | 'db') => prisma.$transaction(async (tx) => {
+    const reserved = await tx.organization.updateMany({
+      where: { id: params.organizationId, storageBytes: { lte: BigInt(quota - params.buffer.length) } },
+      data: { storageBytes: { increment: BigInt(params.buffer.length) } },
+    })
+    if (reserved.count !== 1) {
+      throw new Error(`Workspace file storage limit reached (${Math.round(quota / 1_000_000)} MB). Delete old files and try again.`)
+    }
+    return tx.storedFile.create({
       data: {
         organizationId: params.organizationId,
         userId: params.userId ?? null,
         filename,
-        mimeType: params.mimeType,
+        mimeType,
         size: params.buffer.length,
-        backend: 'supabase',
-        storagePath: '',
+        backend,
+        ...(backend === 'supabase' ? { storagePath: '' } : { data: params.buffer }),
       },
     })
+  })
+  const supabase = supabaseAdmin()
+  if (supabase) {
+    const row = await reserveAndCreate('supabase')
     const storagePath = `${params.organizationId}/${row.id}`
     const uploaded = await supabase.storage.from(BUCKET).upload(storagePath, params.buffer, {
-      contentType: params.mimeType,
+      contentType: mimeType,
       upsert: true,
     })
     if (uploaded.error) {
       // The row without bytes is useless — remove it so the caller's error
       // isn't followed by a phantom file in listings.
-      await prisma.storedFile.delete({ where: { id: row.id, organizationId: params.organizationId } }).catch(() => {})
+      await prisma.$transaction(async (tx) => {
+        const removed = await tx.storedFile.deleteMany({ where: { id: row.id, organizationId: params.organizationId } })
+        if (removed.count) await tx.organization.update({ where: { id: params.organizationId }, data: { storageBytes: { decrement: BigInt(row.size) } } })
+      }).catch(() => {})
       throw new Error(`Could not store the file: ${uploaded.error.message}`)
     }
     await prisma.storedFile.update({ where: { id: row.id, organizationId: params.organizationId }, data: { storagePath } })
-    return { id: row.id, filename, mimeType: params.mimeType, size: params.buffer.length }
+    return { id: row.id, filename, mimeType, size: params.buffer.length }
   }
-  const row = await prisma.storedFile.create({
-    data: {
-      organizationId: params.organizationId,
-      userId: params.userId ?? null,
-      filename,
-      mimeType: params.mimeType,
-      size: params.buffer.length,
-      backend: 'db',
-      data: params.buffer,
-    },
+  const row = await reserveAndCreate('db')
+  return { id: row.id, filename, mimeType, size: params.buffer.length }
+}
+
+export async function deleteStoredFile(id: string, organizationId: string): Promise<boolean> {
+  const row = await prisma.storedFile.findFirst({ where: { id, organizationId } })
+  if (!row) return false
+  if (row.backend === 'supabase' && row.storagePath) {
+    const supabase = supabaseAdmin()
+    if (supabase) {
+      const removed = await supabase.storage.from(BUCKET).remove([row.storagePath])
+      if (removed.error) throw new Error(`Could not delete stored file: ${removed.error.message}`)
+    }
+  }
+  await prisma.$transaction(async (tx) => {
+    const removed = await tx.storedFile.deleteMany({ where: { id, organizationId } })
+    if (removed.count) {
+      await tx.organization.update({ where: { id: organizationId }, data: { storageBytes: { decrement: BigInt(row.size) } } })
+    }
   })
-  return { id: row.id, filename, mimeType: params.mimeType, size: params.buffer.length }
+  return true
 }
 
 export async function readStoredFile(

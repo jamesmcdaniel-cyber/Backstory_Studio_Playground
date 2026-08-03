@@ -23,7 +23,7 @@ export const maxDuration = 800
  */
 export async function POST(request: NextRequest) {
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
-  const limited = await rateLimit(`signals:${ip}`, { limit: 120, windowMs: 60_000 })
+  const limited = await rateLimit(`signals:${ip}`, { limit: 120, windowMs: 60_000, failureMode: 'closed' })
   if (!limited.ok) {
     return NextResponse.json({ success: false, error: 'Rate limit exceeded' }, { status: 429 })
   }

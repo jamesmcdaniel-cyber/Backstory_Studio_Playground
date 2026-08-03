@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     const id = request.nextUrl.pathname.split('/').at(-2)
     // Public endpoint — throttle per agent id to blunt secret-guessing and
     // trigger floods before any DB work.
-    const limited = await rateLimit(`trigger:${id ?? 'unknown'}`, { limit: 60, windowMs: 60_000 })
+    const limited = await rateLimit(`trigger:${id ?? 'unknown'}`, { limit: 60, windowMs: 60_000, failureMode: 'closed' })
     if (!limited.ok) {
       return NextResponse.json({ success: false, error: 'Rate limit exceeded' }, { status: 429 })
     }

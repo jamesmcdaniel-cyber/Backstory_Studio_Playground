@@ -15,6 +15,7 @@ const REQUIRED_IN_PRODUCTION = [
   'NEXT_PUBLIC_SUPABASE_URL',
   'NEXT_PUBLIC_SUPABASE_ANON_KEY',
   'ENCRYPTION_KEY',
+  'FILE_SCAN_URL',
 ] as const
 
 /** At least one model provider key must be present for agent runs. Claude
@@ -31,6 +32,13 @@ export function assertServerEnv(): void {
     missing.push(`one of ${MODEL_KEYS.join(' or ')}` as never)
   }
 
+  const hasSharedRateLimitBackend = Boolean(
+    process.env.REDIS_URL ||
+    (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN),
+  )
+  if (!hasSharedRateLimitBackend) {
+    missing.push('REDIS_URL or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN' as never)
+  }
   if (missing.length > 0) {
     throw new Error(
       `Missing required environment variables: ${missing.join(', ')}. ` +

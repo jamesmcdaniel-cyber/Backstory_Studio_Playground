@@ -21,6 +21,8 @@ const FULL_PROD_ENV = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon',
   ENCRYPTION_KEY: 'k',
   ANTHROPIC_API_KEY: 'sk-ant-x',
+  REDIS_URL: 'redis://localhost:6379',
+  FILE_SCAN_URL: 'https://scanner.example.test/scan',
 }
 
 beforeEach(() => {

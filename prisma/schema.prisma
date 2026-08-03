@@ -9,20 +9,20 @@ datasource db {
 }
 
 model Organization {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name             String
-  slug             String    @unique
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                  String
+  slug                  String    @unique
   // Workspace avatar shown in the org switcher — a small data URL (client
   // resizes to 128px before upload) so no external storage is required.
-  logoUrl          String?
-  plan             Plan      @default(TRIAL)
+  logoUrl               String?
+  plan                  Plan      @default(TRIAL)
   /// Platform tier. 'internal' = Backstory; 'partner' = People.ai; 'customer'
   /// = every paying workspace. Only a platform reviewer may change this — it
   /// is never settable from a customer-facing route.
-  kind             String    @default("customer")
+  kind                  String    @default("customer")
   // People.ai tenant binding: one Studio workspace per People.ai team. Set on
   // first People.ai connection; every rep from that team lands in this org.
-  peopleAiTeamId       String?   @unique
+  peopleAiTeamId        String?   @unique
   /// HMAC signing secret for this org's People.ai webhook deliveries.
   /// Stored encrypted (src/lib/crypto/secrets.ts encryptSecret) — verification
   /// needs the plaintext, so this is NOT a hash. Null = org falls back to the
@@ -30,44 +30,48 @@ model Organization {
   peopleAiWebhookSecret String?
   // Entitlement snapshot, derived from an active People.ai Sales AI
   // connection and revalidated on a TTL (see src/lib/entitlement.ts).
-  entitlementTier      String?
-  entitlementStatus    String    @default("unknown")
-  entitlementCheckedAt DateTime? @db.Timestamptz(6)
-  trialStartDate   DateTime  @default(now()) @db.Timestamptz(6)
-  trialEndDate     DateTime? @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+  entitlementTier       String?
+  entitlementStatus     String    @default("unknown")
+  entitlementCheckedAt  DateTime? @db.Timestamptz(6)
+  trialStartDate        DateTime  @default(now()) @db.Timestamptz(6)
+  trialEndDate          DateTime? @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(6)
+  /// Transactionally maintained quota counter for StoredFile bytes.
+  storageBytes          BigInt    @default(0)
 
-  users              User[]
-  agents             AgentTask[]
-  executions         AgentExecution[]
-  templates          AgentTemplate[]
-  flowTemplates      FlowTemplate[]
-  integrations       Integration[]
-  notifications      Notification[]
-  mcpConnections     McpConnection[]
-  nangoConnections   NangoConnection[]
-  integrationSecrets IntegrationSecret[]
-  httpCredentials    HttpCredential[]
-  peopleAiConnections PeopleAiConnection[]
-  signals             Signal[]
-  signalSubscriptions SignalSubscription[]
-  auditEvents         AuditEvent[]
-  approvalRequests    ApprovalRequest[]
-  agentMemories       AgentMemory[]
-  flowVersions        FlowVersion[]
+  users                User[]
+  agents               AgentTask[]
+  executions           AgentExecution[]
+  templates            AgentTemplate[]
+  flowTemplates        FlowTemplate[]
+  integrations         Integration[]
+  notifications        Notification[]
+  mcpConnections       McpConnection[]
+  nangoConnections     NangoConnection[]
+  integrationSecrets   IntegrationSecret[]
+  httpCredentials      HttpCredential[]
+  peopleAiConnections  PeopleAiConnection[]
+  signals              Signal[]
+  signalSubscriptions  SignalSubscription[]
+  auditEvents          AuditEvent[]
+  approvalRequests     ApprovalRequest[]
+  agentMemories        AgentMemory[]
+  flowVersions         FlowVersion[]
   flowTemplateVersions FlowTemplateVersion[]
-  flows               Flow[]
-  storedFiles         StoredFile[]
-  customSignals       CustomSignal[]
-  pushSubscriptions   PushSubscription[]
-  knowledgeDocuments  KnowledgeDocument[]
-  sharedSkills        SharedSkill[]
-  templateProposals   TemplateProposal[]
-  invitations         Invitation[]
+  flows                Flow[]
+  storedFiles          StoredFile[]
+  customSignals        CustomSignal[]
+  pushSubscriptions    PushSubscription[]
+  knowledgeDocuments   KnowledgeDocument[]
+  sharedSkills         SharedSkill[]
+  templateProposals    TemplateProposal[]
+  invitations          Invitation[]
   catalogueSubmissions CatalogueSubmission[]
-  huddleSegments      HuddleSegment[]
-  huddleNotes         HuddleNote[]
+  huddleSegments       HuddleSegment[]
+  huddleNotes          HuddleNote[]
+  flowWebhookReceipts  FlowWebhookReceipt[]
+  outboxEvents         OutboxEvent[]
 
   @@map("organizations")
 }
@@ -100,33 +104,33 @@ model Invitation {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  supabaseId     String    @unique @db.Uuid
-  email          String?
-  name           String?
-  imageUrl       String?
+  id                   String    @id @default(cuid())
+  supabaseId           String    @unique @db.Uuid
+  email                String?
+  name                 String?
+  imageUrl             String?
   // People.ai membership id from the MCP OAuth context — the delegated
   // identity used for user-scoped People.ai tool calls.
   peopleAiMembershipId String?
-  role           UserRole  @default(USER)
+  role                 UserRole  @default(USER)
   /// Platform tier, independent of the org role. null for everyone outside
   /// Backstory. 'staff' = internal employee; 'reviewer' = may decide and
   /// publish catalogue submissions.
-  platformRole   String?
-  organizationId String?   @db.Uuid
-  isActive       Boolean   @default(true)
-  lastSeenAt     DateTime? @db.Timestamptz(6)
-  timezone       String    @default("UTC")
-  metadata       Json?
-  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+  platformRole         String?
+  organizationId       String?   @db.Uuid
+  isActive             Boolean   @default(true)
+  lastSeenAt           DateTime? @db.Timestamptz(6)
+  timezone             String    @default("UTC")
+  metadata             Json?
+  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
 
-  organization Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  executions   AgentExecution[]
-  templates    AgentTemplate[]
-  flowTemplates FlowTemplate[]
-  integrations Integration[]
-  ownedAgents  AgentTask[]
+  organization        Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  executions          AgentExecution[]
+  templates           AgentTemplate[]
+  flowTemplates       FlowTemplate[]
+  integrations        Integration[]
+  ownedAgents         AgentTask[]
   peopleAiConnections PeopleAiConnection[]
   mcpConnections      McpConnection[]
 
@@ -156,14 +160,14 @@ model AgentTask {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  owner        User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  executions   AgentExecution[]
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner               User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  executions          AgentExecution[]
   signalSubscriptions SignalSubscription[]
-  chatMessages AgentChatMessage[]
-  chatSessions AgentChatSession[]
-  connectors   AgentConnector[]
-  memories     AgentMemory[]
+  chatMessages        AgentChatMessage[]
+  chatSessions        AgentChatSession[]
+  connectors          AgentConnector[]
+  memories            AgentMemory[]
 
   @@index([organizationId, status])
   @@index([userId])
@@ -205,14 +209,14 @@ model AgentConnector {
 /// distilled from executions, and proactive suggestions. Retrieved by kind +
 /// status to ground future runs without re-asking or re-deriving.
 model AgentMemory {
-  id                String    @id @default(cuid())
-  organizationId    String    @db.Uuid
-  agentId           String
-  kind              String // 'user_answer' | 'learning' | 'suggestion'
-  title             String
-  content           String    @db.Text
-  question          String?   @db.Text
-  embedding         Json?
+  id             String  @id @default(cuid())
+  organizationId String  @db.Uuid
+  agentId        String
+  kind           String // 'user_answer' | 'learning' | 'suggestion'
+  title          String
+  content        String  @db.Text
+  question       String? @db.Text
+  embedding      Json?
 
   /// pgvector copy of `embedding` (WS-R5). Reads/writes go through raw SQL —
   /// Prisma cannot query Unsupported columns. The Json column is legacy,
@@ -301,7 +305,7 @@ model Signal {
   receivedAt     DateTime  @default(now())
   processedAt    DateTime?
 
-  organization  Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   subscriptionRuns AgentExecution[]
 
   @@unique([organizationId, dedupeKey])
@@ -488,7 +492,7 @@ model AuditEvent {
   organizationId String   @db.Uuid
   actorUserId    String?
   actorKind      String   @default("user") // 'user' | 'agent' | 'system'
-  action         String              // e.g. 'tool.write', 'agent.config_changed'
+  action         String // e.g. 'tool.write', 'agent.config_changed'
   resourceType   String?
   resourceId     String?
   tool           String?
@@ -528,29 +532,29 @@ model ApprovalRequest {
 }
 
 model AgentTemplate {
-  id             String   @id @default(cuid())
-  name           String
-  description    String?  @db.Text
-  type           String
-  configuration  Json?
-  isActive       Boolean  @default(true)
-  schedule       String?
-  priority       String   @default("MEDIUM")
-  metadata       Json?
+  id              String   @id @default(cuid())
+  name            String
+  description     String?  @db.Text
+  type            String
+  configuration   Json?
+  isActive        Boolean  @default(true)
+  schedule        String?
+  priority        String   @default("MEDIUM")
+  metadata        Json?
   // Where the template came from: 'user' (hand-authored) or 'ai_generated'
   // (proposed by the auto-generation engine, sub-project C).
-  source         String   @default("user")
+  source          String   @default("user")
   // 'org' = visible only to the owning org (default); 'global' = published to
   // the shared community library, readable cross-org. Existing rows are
   // backfilled to 'global' by the migration to preserve prior behavior.
-  visibility     String   @default("org")
+  visibility      String   @default("org")
   /// 'none' = not in the catalogue; 'published' = approved through review;
   /// 'legacy_published' = was global before review existed, pending audit.
-  catalogueStatus String  @default("none")
-  userId         String
-  organizationId String   @db.Uuid
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  catalogueStatus String   @default("none")
+  userId          String
+  organizationId  String   @db.Uuid
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -625,10 +629,13 @@ model McpConnection {
   name           String
   description    String?
   serverUrl      String
-  authType       String    @default("none")   // 'none' | 'api_key' | 'oauth2'
-  authConfig     Json      @default("{}")     // encrypted secret blob + non-secret fields
+  authType       String    @default("none") // 'none' | 'api_key' | 'oauth2'
+  authConfig     Json      @default("{}") // encrypted secret blob + non-secret fields
   isActive       Boolean   @default(true)
   lastVerifiedAt DateTime?
+  healthStatus   String    @default("unknown") // unknown | healthy | unhealthy | schema_changed
+  lastError      String?   @db.Text
+  toolSchemaHash String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -636,8 +643,8 @@ model McpConnection {
   user          User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
   agentBindings AgentConnector[]
 
-  @@index([organizationId, isActive])
   @@unique([organizationId, userId, provider])
+  @@index([organizationId, isActive])
   @@map("mcp_connections")
 }
 
@@ -729,12 +736,13 @@ model Flow {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization  Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  runs          FlowRun[]
-  versions      FlowVersion[]
-  collaborators FlowCollaborator[]
-  huddleSegments HuddleSegment[]
-  huddleNotes    HuddleNote[]
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  runs            FlowRun[]
+  versions        FlowVersion[]
+  collaborators   FlowCollaborator[]
+  huddleSegments  HuddleSegment[]
+  huddleNotes     HuddleNote[]
+  webhookReceipts FlowWebhookReceipt[]
 
   @@index([organizationId, updatedAt])
   // Scheduler cursor scan, as on agent_tasks.
@@ -748,37 +756,37 @@ model Flow {
 /// explanation anchored to it, and `bindings` says how to fill the graph's
 /// empty agent/connection slots in whatever workspace instantiates it.
 model FlowTemplate {
-  id            String  @id @default(cuid())
-  name          String
-  description   String? @db.Text
-  category      String  @default("Custom")
-  graph         Json
-  trigger       Json    @default("{}")
+  id              String  @id @default(cuid())
+  name            String
+  description     String? @db.Text
+  category        String  @default("Custom")
+  graph           Json
+  trigger         Json    @default("{}")
   /// FlowTemplateNotes — objective, per-step explanations, setup checklist.
-  notes         Json?
+  notes           Json?
   /// FlowTemplateBinding[] — how to resolve the graph's agent/connection slots.
-  bindings      Json    @default("[]")
+  bindings        Json    @default("[]")
   /// integrations, tags, icon, exampleOutput, authorName
-  configuration Json?
-  isActive      Boolean @default(true)
+  configuration   Json?
+  isActive        Boolean @default(true)
   /// 'user' (hand-authored / saved from a flow) or 'ai_generated'.
-  source        String  @default("user")
+  source          String  @default("user")
   /// 'org' = this workspace only (default); 'global' = published to the shared
   /// community library, readable cross-org. Mirrors AgentTemplate.
-  visibility    String  @default("org")
+  visibility      String  @default("org")
   /// 'none' = not in the catalogue; 'published' = approved through review;
   /// 'legacy_published' = was global before review existed, pending audit.
-  catalogueStatus String @default("none")
+  catalogueStatus String  @default("none")
   /// Bumped on every content edit; prior payloads live in FlowTemplateVersion.
-  version        Int      @default(1)
+  version         Int     @default(1)
 
   userId         String
   organizationId String   @db.Uuid
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   versions     FlowTemplateVersion[]
 
   @@index([organizationId, isActive])
@@ -904,22 +912,27 @@ model HuddleNote {
 }
 
 model FlowRun {
-  id             String    @id @default(cuid())
-  flowId         String
-  status         String    @default("running") // running | succeeded | failed | waiting
-  trigger        Json      @default("{}")
-  input          Json      @default("{}")
-  output         Json?
-  error          String?
-  graphSnapshot  Json? // the graph definition this run executed against
-  startedAt      DateTime  @default(now())
-  finishedAt     DateTime?
+  id                String    @id @default(cuid())
+  flowId            String
+  status            String    @default("running") // running | succeeded | failed | waiting
+  trigger           Json      @default("{}")
+  input             Json      @default("{}")
+  output            Json?
+  error             String?
+  graphSnapshot     Json? // the graph definition this run executed against
+  // Immutable dependency fingerprint captured before dispatch: graph hash,
+  // agent revisions, tool schemas/connections, and model defaults. A worker
+  // compares it before executing so a queued/resumed run cannot silently pick
+  // up incompatible live configuration.
+  executionManifest Json?
+  startedAt         DateTime  @default(now())
+  finishedAt        DateTime?
   // When a `wait` step pauses the run on a timer, the wall-clock time it should
   // resume. The cron scan wakes waiting runs whose resumeAt is due. Null for
   // runs waiting on a human reply / approval / open-ended webhook callback.
-  resumeAt       DateTime?
-  organizationId String    @db.Uuid
-  userId         String?
+  resumeAt          DateTime?
+  organizationId    String    @db.Uuid
+  userId            String?
 
   flow  Flow          @relation(fields: [flowId], references: [id], onDelete: Cascade)
   steps FlowRunStep[]
@@ -929,6 +942,55 @@ model FlowRun {
   // Per-org in-flight count — flows and agents share one worker-slot budget.
   @@index([organizationId, status])
   @@map("flow_runs")
+}
+
+/// Replay guard for public flow webhooks. Providers supply a delivery id and
+/// timestamp; the unique key makes retries safe across every web instance.
+model FlowWebhookReceipt {
+  id             String   @id @default(cuid())
+  flowId         String
+  organizationId String   @db.Uuid
+  deliveryId     String
+  payloadHash    String
+  flowRunId      String?
+  status         String   @default("processing") // processing | accepted | failed
+  lastError      String?
+  receivedAt     DateTime @default(now())
+  expiresAt      DateTime
+
+  flow         Flow         @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, deliveryId])
+  @@index([expiresAt])
+  @@index([organizationId, receivedAt])
+  @@map("flow_webhook_receipts")
+}
+
+/// Durable handoff for side effects that must survive a process crash after the
+/// owning transaction commits. Workers claim rows with a compare-and-set status
+/// transition; failures are retried with exponential backoff.
+model OutboxEvent {
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
+  topic          String
+  aggregateId    String?
+  dedupeKey      String?
+  payload        Json
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  availableAt    DateTime  @default(now()) @db.Timestamptz(6)
+  lockedAt       DateTime? @db.Timestamptz(6)
+  lastError      String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  deliveredAt    DateTime? @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, dedupeKey])
+  @@index([status, availableAt])
+  @@index([organizationId, createdAt])
+  @@map("outbox_events")
 }
 
 model FlowRunStep {
@@ -1004,25 +1066,25 @@ model KnowledgeChunk {
 /// workspace, writable only by the creator's org. Attached to agents by id and
 /// composed into the system prompt at run time alongside built-in skills.
 model SharedSkill {
-  id             String   @id @default(cuid())
-  name           String
-  description    String   @default("")
-  category       String   @default("Community")
-  instructions   String   @db.Text
-  tags           Json     @default("[]")
-  integrations   Json     @default("[]")
-  authorName     String   @default("")
+  id              String   @id @default(cuid())
+  name            String
+  description     String   @default("")
+  category        String   @default("Community")
+  instructions    String   @db.Text
+  tags            Json     @default("[]")
+  integrations    Json     @default("[]")
+  authorName      String   @default("")
   /// 'org' = this workspace only; 'global' = published to the shared library.
   /// Before the review gate every skill was implicitly global; the migration
   /// backfills existing rows to 'global' + catalogueStatus 'legacy_published'.
-  visibility     String   @default("org")
+  visibility      String   @default("org")
   /// 'none' | 'published' | 'legacy_published' — mirrors the template tables.
-  catalogueStatus String  @default("none")
-  organizationId String   @db.Uuid
-  userId         String?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  catalogueStatus String   @default("none")
+  organizationId  String   @db.Uuid
+  userId          String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Org deletion cascades community skills — an orphaned skill has no owner able to edit or retire it.
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)

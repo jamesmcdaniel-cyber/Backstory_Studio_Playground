@@ -9,10 +9,9 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
- * Readiness probe. Postgres is the only CRITICAL dependency for serving — if
- * it's down we return 503 so load balancers / deploy gates / uptime monitors
- * see the outage. The cache (Redis) and Neo4j degrade gracefully (best-effort
- * RAG + fall-through cache), so they're reported but never fail the check.
+ * Readiness probe. Postgres is always critical. Redis is also critical in
+ * production because it owns global abuse limits and durable queue handoff;
+ * Neo4j remains an optional best-effort RAG dependency.
  *
  * This endpoint is anonymous and fans out to three backends, one of which
  * (neo4jPing) opens and closes a driver per call. That combination is an
@@ -38,7 +37,7 @@ async function runProbes(): Promise<HealthSnapshot> {
     cachePing().then((c) => ({ ok: c.ok, configured: c.configured })).catch(() => ({ ok: false, configured: false })),
     neo4jPing().catch(() => ({ ok: false, configured: false })),
   ])
-  const healthy = db.ok // only Postgres is critical to serving
+  const healthy = db.ok && (process.env.NODE_ENV !== 'production' || (cache.configured && cache.ok))
   return {
     healthy,
     body: {

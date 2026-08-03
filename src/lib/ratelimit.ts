@@ -13,6 +13,8 @@ import { Redis } from 'ioredis'
 export interface RateLimitOptions {
   limit: number
   windowMs: number
+  /** Public ingress may choose availability-safe denial when Redis is down. */
+  failureMode?: 'open' | 'closed'
 }
 
 export interface RateLimitResult {
@@ -77,13 +79,13 @@ function createMemoryLimiter(now: () => number): RateLimiter {
 
 /**
  * Upstash REST fixed-window limiter — the same INCR + PEXPIRE-on-first-hit
- * algorithm as the TCP limiter, over one pipelined HTTPS call. Fails open:
- * an unreachable Redis must not take the endpoint down with it.
+ * algorithm as the TCP limiter, over one pipelined HTTPS call. Callers choose
+ * whether a backend outage fails open or closed.
  */
 function createUpstashRestLimiter(url: string, token: string): RateLimiter {
   const base = url.replace(/\/$/, '')
   return {
-    async check(key, { limit, windowMs }) {
+    async check(key, { limit, windowMs, failureMode }) {
       try {
         const redisKey = `ratelimit:${key}`
         // Pipeline: INCR, then PEXPIRE NX (only sets the TTL when absent — the
@@ -98,7 +100,7 @@ function createUpstashRestLimiter(url: string, token: string): RateLimiter {
           ]),
           signal: AbortSignal.timeout(3_000),
         })
-        if (!res.ok) return { ok: true }
+        if (!res.ok) return failureMode === 'closed' ? { ok: false, retryAfterMs: 1_000 } : { ok: true }
         const results = (await res.json()) as Array<{ result?: unknown }>
         const count = Number(results[0]?.result ?? 0)
         if (count > limit) {
@@ -107,7 +109,7 @@ function createUpstashRestLimiter(url: string, token: string): RateLimiter {
         }
         return { ok: true }
       } catch {
-        return { ok: true }
+        return failureMode === 'closed' ? { ok: false, retryAfterMs: 1_000 } : { ok: true }
       }
     },
   }
@@ -117,7 +119,7 @@ function createRedisLimiter(redisUrl: string): RateLimiter {
   const redis = new Redis(redisUrl, { maxRetriesPerRequest: 1, lazyConnect: true })
 
   return {
-    async check(key, { limit, windowMs }) {
+    async check(key, { limit, windowMs, failureMode }) {
       try {
         const redisKey = `ratelimit:${key}`
         const count = await redis.incr(redisKey)
@@ -128,8 +130,7 @@ function createRedisLimiter(redisUrl: string): RateLimiter {
         }
         return { ok: true }
       } catch {
-        // Redis being down must not take the endpoint down with it.
-        return { ok: true }
+        return failureMode === 'closed' ? { ok: false, retryAfterMs: 1_000 } : { ok: true }
       }
     },
   }

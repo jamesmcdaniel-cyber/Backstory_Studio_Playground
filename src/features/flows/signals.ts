@@ -57,6 +57,10 @@ export async function emitFlowSignal(params: {
   payload: unknown
   sourceFlowId?: string
   depth?: number
+  /** Stable outbox id used to deduplicate queue handoff after a crash. */
+  deliveryId?: string
+  /** Durable outbox delivery retries when any matching handoff fails. */
+  strictDelivery?: boolean
 }): Promise<{ matched: number }> {
   const depth = params.depth ?? 0
   if (depth >= SIGNAL_DEPTH_CAP) {
@@ -76,6 +80,7 @@ export async function emitFlowSignal(params: {
   const matches = flows.filter(
     (flow) => flow.id !== params.sourceFlowId && flowListensTo(flow, params.signal),
   )
+  const failures: string[] = []
 
   for (const flow of matches) {
     try {
@@ -99,6 +104,7 @@ export async function emitFlowSignal(params: {
           organizationId: params.organizationId,
           signal: params.signal,
         })
+        failures.push(`${flow.id}: no active owner`)
         continue
       }
       await dispatchFlowExecution({
@@ -108,6 +114,7 @@ export async function emitFlowSignal(params: {
         input: params.payload,
         usePublished: true,
         trigger: { type: 'signal', signal: params.signal, depth },
+        deliveryId: params.deliveryId ? `${params.deliveryId}-${flow.id}` : undefined,
       })
     } catch (error) {
       apiLogger.warn('emitFlowSignal: flow run failed, continuing with other matches', {
@@ -116,7 +123,12 @@ export async function emitFlowSignal(params: {
         signal: params.signal,
         error: error instanceof Error ? error.message : String(error),
       })
+      failures.push(`${flow.id}: ${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+
+  if (params.strictDelivery && failures.length) {
+    throw new Error(`Signal handoff failed for ${failures.length} flow(s): ${failures.join('; ').slice(0, 250)}`)
   }
 
   return { matched: matches.length }

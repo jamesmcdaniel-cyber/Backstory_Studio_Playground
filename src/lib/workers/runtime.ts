@@ -10,10 +10,12 @@ import { deadLetterFromTemplateGenerationJob } from '@/lib/queue/template-genera
 import { executeTemplateGenerationJob } from '@/lib/templates/generation-queue'
 import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
 import { initSentry, captureError, flushErrorReporting } from '@/lib/observability/sentry'
+import { processOutboxBatch } from '@/lib/outbox'
 
 class WorkerRuntime {
   private server = Fastify({ logger: true })
   private scheduleTimer?: NodeJS.Timeout
+  private outboxTimer?: NodeJS.Timeout
   // handler is typed as the generic BullMQ Processor so this array (mixing
   // the agent- and flow-job handler signatures) unifies to one element type —
   // each queue is still wired to its own correctly-typed handler at runtime.
@@ -63,6 +65,7 @@ class WorkerRuntime {
   private setupShutdown() {
     const shutdown = async () => {
       if (this.scheduleTimer) clearInterval(this.scheduleTimer)
+      if (this.outboxTimer) clearInterval(this.outboxTimer)
       await this.server.close()
       await Promise.all(this.workers.map((worker) => worker.close()))
       await flushErrorReporting()
@@ -86,9 +89,13 @@ class WorkerRuntime {
       void flushErrorReporting().finally(() => process.exit(1))
     })
     await registerAgentSchedules()
+    await processOutboxBatch().catch((error) => this.server.log.error(error, 'Initial outbox delivery failed'))
     this.scheduleTimer = setInterval(() => {
       registerAgentSchedules().catch((error) => this.server.log.error(error, 'Schedule reconciliation failed'))
     }, 60_000)
+    this.outboxTimer = setInterval(() => {
+      processOutboxBatch().catch((error) => this.server.log.error(error, 'Outbox delivery failed'))
+    }, 15_000)
     await this.server.listen({ port, host: '0.0.0.0' })
   }
 }

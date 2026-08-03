@@ -89,7 +89,7 @@ export function TriggerEditor({
   const sampleWebhookBody = JSON.stringify({ input: { account: 'Acme', priority: 'high' } }, null, 2)
   const webhookHeader = webhook?.secret ? `x-trigger-secret: ${webhook.secret}` : 'x-trigger-secret: <secret>'
   const curlExample = webhook
-    ? `curl -X POST '${webhook.url}' \\\n  -H 'content-type: application/json' \\\n  -H '${webhookHeader}' \\\n  --data '${JSON.stringify({ input: { account: 'Acme', priority: 'high' } })}'`
+    ? `curl -X POST '${webhook.url}' \\\n  -H 'content-type: application/json' \\\n  -H '${webhookHeader}' \\\n  -H 'x-trigger-delivery-id: evt_123_unique' \\\n  -H "x-trigger-timestamp: $(date +%s)" \\\n  --data '${JSON.stringify({ input: { account: 'Acme', priority: 'high' } })}'`
     : ''
 
   // Auto-load the webhook's status (URL + whether a secret already exists)

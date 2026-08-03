@@ -1,0 +1,21 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { flowSignalOutboxEvent, outboxRetryDelayMs } from '../outbox'
+
+test('outbox retry delay backs off exponentially and caps at one hour', () => {
+  assert.equal(outboxRetryDelayMs(1), 1_000)
+  assert.equal(outboxRetryDelayMs(4), 8_000)
+  assert.equal(outboxRetryDelayMs(99), 3_600_000)
+})
+
+test('flow signal outbox rows are tenant scoped and deduplicated', () => {
+  const event = flowSignalOutboxEvent({
+    organizationId: 'org-1',
+    aggregateId: 'run-1',
+    dedupeKey: 'flow:run-1:succeeded',
+    signal: { signal: 'flow.completed', payload: { ok: true }, depth: 1 },
+  })
+  assert.equal(event.organizationId, 'org-1')
+  assert.equal(event.dedupeKey, 'flow:run-1:succeeded')
+  assert.deepEqual(event.payload, { signal: 'flow.completed', payload: { ok: true }, depth: 1 })
+})

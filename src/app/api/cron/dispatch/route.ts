@@ -33,6 +33,9 @@ import { reapStuckFlowRuns } from '@/lib/flows/reap'
 import { sweepTemplateGeneration } from '@/lib/templates/generation-queue'
 import { blocksSchedule } from '@/lib/flows/schedule-blocking'
 import { captureError } from '@/lib/observability/sentry'
+import { processOutboxBatch } from '@/lib/outbox'
+import { reapStuckApprovals } from '@/lib/approvals/reap'
+import { sweepMcpConnectionHealth } from '@/lib/mcp/health-sweep'
 
 export const runtime = 'nodejs'
 export const maxDuration = 800
@@ -91,6 +94,14 @@ export async function GET(request: Request) {
   if (unauthorized) return unauthorized
 
   try {
+    const now = new Date()
+    // Fallback delivery path for deployments whose worker has been restarted or
+    // temporarily unavailable. Claims are compare-and-set, so this can race a
+    // healthy worker without double-processing a row.
+    const outbox = await processOutboxBatch().catch((error) => {
+      apiLogger.error('cron/dispatch: outbox processing failed', { error: capError(error) })
+      return { delivered: 0, retried: 0, failed: 0 }
+    })
     // I5 — reap stuck runs: any execution still "running" past the time limit
     // is marked failed so it doesn't pin resources or block reporting.
     // systemPrisma: global reaper sweep — runs across all orgs by design (CRON_SECRET-gated).
@@ -119,6 +130,17 @@ export async function GET(request: Request) {
       apiLogger.error('cron/dispatch: flow reaper failed', { error: capError(error) })
       captureError(error, { source: 'cron.dispatch.flowReaper' })
     }
+    let reapedApprovals = 0
+    try {
+      reapedApprovals = await reapStuckApprovals(now)
+    } catch (error) {
+      apiLogger.error('cron/dispatch: approval reaper failed', { error: capError(error) })
+      captureError(error, { source: 'cron.dispatch.approvalReaper' })
+    }
+    const mcpHealth = await sweepMcpConnectionHealth(now).catch((error) => {
+      apiLogger.error('cron/dispatch: MCP health sweep failed', { error: capError(error) })
+      return { checked: 0, unhealthy: 0, changed: 0 }
+    })
 
     // Single-owner scheduling: when the BullMQ worker is live in queue mode it
     // owns RECURRING dispatch (via its JobScheduler), so this cron must not also
@@ -147,8 +169,6 @@ export async function GET(request: Request) {
         scanned: agentScan.rows.length,
       })
     }
-
-    const now = new Date()
 
     // Filter to agents whose schedule is currently due
     const dueAgentsAll = agentScan.rows.filter((agent) => {
@@ -453,7 +473,7 @@ export async function GET(request: Request) {
       captureError(error, { source: 'cron.dispatch.templateGeneration' })
     }
 
-    return Response.json({ success: true, due: dueCount, ran: ranIds, ranFlows: ranFlowIds, resumedWaits: resumedWaitIds, generatedOrgs })
+    return Response.json({ success: true, due: dueCount, ran: ranIds, ranFlows: ranFlowIds, resumedWaits: resumedWaitIds, generatedOrgs, outbox, reapedApprovals, mcpHealth })
   } catch (error) {
     apiLogger.error('cron/dispatch: unhandled error', {
       error: error instanceof Error ? error.message : String(error),

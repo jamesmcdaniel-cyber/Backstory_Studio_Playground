@@ -20,17 +20,21 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError(`Files can be at most ${Math.round(STORED_FILE_MAX_BYTES / 1_000_000)} MB.`, 400, 'FILE_TOO_LARGE')
   }
   const buffer = Buffer.from(await file.arrayBuffer())
-  const mimeType = file.type || 'application/octet-stream'
-  const saved = await saveStoredFile({
-    organizationId: auth.organizationId,
-    userId: auth.dbUser.id,
-    filename: file.name,
-    mimeType,
-    buffer,
-  })
+  let saved
+  try {
+    saved = await saveStoredFile({
+      organizationId: auth.organizationId,
+      userId: auth.dbUser.id,
+      filename: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      buffer,
+    })
+  } catch (error) {
+    throw new ApiError(error instanceof Error ? error.message : 'The file could not be stored.', 400, 'FILE_REJECTED')
+  }
   let content: string | undefined
-  if (isSupported(mimeType, file.name)) {
-    content = (await extractTextAuto(buffer, mimeType, file.name).catch(() => '')).slice(0, CONTENT_PREVIEW_MAX_CHARS) || undefined
+  if (isSupported(saved.mimeType, file.name)) {
+    content = (await extractTextAuto(buffer, saved.mimeType, file.name).catch(() => '')).slice(0, CONTENT_PREVIEW_MAX_CHARS) || undefined
   }
   return { success: true, file: { ...saved, url: `/api/files/${saved.id}`, content } }
 }, { permission: 'flow.write' })

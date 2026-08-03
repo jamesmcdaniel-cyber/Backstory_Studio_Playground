@@ -103,13 +103,21 @@ deleted) so upstream merges stay clean.
   `{ proposals: [], loaded: true }`. It stays mounted so every `useProposals()`
   consumer keeps working — removing the provider would make consumers throw
   ("must be used within ProposalsProvider").
-- `RecommendationsBar` is not rendered on `/agents`.
-- The notification bell's badge is `unread + proposals.length`; with an empty
-  provider this is arithmetically correct with no edit. The empty-state condition
-  at the proposals section needs the section hidden rather than rendering an
-  always-empty block.
+
+**The provider is the only client-side edit required.** Every consumer already
+guards on emptiness, so an inert provider cascades correctly with no further
+changes — verified during planning:
+
+- `RecommendationsBar` opens with `if (!proposals.length) return null`.
+- The notification bell renders its proposals section under
+  `{proposals.length > 0 && ...}`, and its badge is `unread + proposals.length`,
+  which is arithmetically correct against an empty array.
 - The "Suggested for you" badge on `flow-template-card.tsx` and "Made for your
   team" on the connect page become unreachable. Left in place; harmless.
+
+This is a deliberate design property rather than a coincidence: gating one
+provider, instead of editing each of its consumers, is what keeps the customer
+edition's diff small enough to merge cleanly.
 
 ### Not affected
 

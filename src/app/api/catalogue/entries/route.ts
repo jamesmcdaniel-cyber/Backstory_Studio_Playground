@@ -37,7 +37,7 @@ export const GET = withAuthenticatedApi(async (request) => {
     systemPrisma.sharedSkill.findMany({ where, orderBy: { updatedAt: 'desc' }, take: 200 }),
   ])
   return { success: true, entries: serialize(agentTemplates, flowTemplates, skills) }
-}, { permission: 'catalogue.review' })
+}, { permission: 'catalogue.review', internalOnly: true })
 
 type Row = { id: string; name: string; organizationId: string; updatedAt: Date }
 

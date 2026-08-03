@@ -36,7 +36,7 @@ export const GET = withAuthenticatedApi(async () => {
     take: 500,
   })
   return { success: true, organizations, users }
-}, { permission: 'catalogue.review' })
+}, { permission: 'catalogue.review', internalOnly: true })
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const data = patchSchema.parse(await request.json())
@@ -91,4 +91,4 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   }
 
   return { success: true }
-}, { permission: 'catalogue.review' })
+}, { permission: 'catalogue.review', internalOnly: true })

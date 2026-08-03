@@ -83,4 +83,4 @@ export const POST = withAuthenticatedApi(async (request: NextRequest, auth, cont
   }
 
   return { success: true, status: data.decision, publishedEntryId }
-}, { permission: 'catalogue.publish' })
+}, { permission: 'catalogue.publish', internalOnly: true })

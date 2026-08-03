@@ -27,4 +27,4 @@ export const DELETE = withAuthenticatedApi(async (_request: NextRequest, auth, c
     resourceId: id,
   })
   return { success: true }
-}, { permission: 'catalogue.takedown' })
+}, { permission: 'catalogue.takedown', internalOnly: true })

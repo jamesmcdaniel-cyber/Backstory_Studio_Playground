@@ -13,4 +13,4 @@ export const GET = withAuthenticatedApi(async (request) => {
     take: 200,
   })
   return { success: true, submissions }
-}, { permission: 'catalogue.review' })
+}, { permission: 'catalogue.review', internalOnly: true })

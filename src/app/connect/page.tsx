@@ -7,6 +7,13 @@ import { AlertCircle, ArrowRight, Check, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { gateMeter } from '@/lib/onboarding/gate-meter'
 import { ProposalInbox } from '@/components/onboarding/proposal-inbox'
+import { isCustomerEdition } from '@/lib/edition'
+import {
+  onboardingStages,
+  liveStageIndex,
+  unlockedStage as resolveUnlockedStage,
+  shouldForwardToDashboard,
+} from '@/lib/onboarding/stages'
 
 type SetupStatusState = {
   entitled: boolean
@@ -30,7 +37,9 @@ type CatalogueRow = { id: string; name: string; type?: string; source?: string }
 
 const oauthErrorCodes = new Set(['oauth', 'oauth_state', 'oauth_start', 'oauth_params'])
 
-const STAGES = ['Connect your tools', 'Your data takes shape', 'Your AI goes live'] as const
+const CUSTOMER = isCustomerEdition()
+const STAGES = onboardingStages()
+const LIVE_STAGE = liveStageIndex()
 
 /**
  * The entitlement gate's front door, grown into the three-step onboarding:
@@ -84,20 +93,25 @@ function ConnectInner() {
   useEffect(() => {
     if (!entitlementDone) return
     let cancelled = false
-    fetch('/api/integrations/count', { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && data) setGate({ connected: data.connected ?? 0, required: data.required ?? 3, meetsGate: Boolean(data.meetsGate), providers: data.providers ?? [] })
-      })
-      .catch(() => {})
-    fetch('/api/template-proposals', { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && data?.success) setOpenProposals(((data.proposals ?? []) as { status: string }[]).filter((p) => p.status === 'open').length)
-      })
-      .catch(() => {
-        if (!cancelled) setOpenProposals(0)
-      })
+    // Both of these exist to serve AI template generation — the 3-integration
+    // meter gates it, the proposals ARE it. The customer edition has neither,
+    // so it skips them and forwards on entitlement alone.
+    if (!CUSTOMER) {
+      fetch('/api/integrations/count', { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (!cancelled && data) setGate({ connected: data.connected ?? 0, required: data.required ?? 3, meetsGate: Boolean(data.meetsGate), providers: data.providers ?? [] })
+        })
+        .catch(() => {})
+      fetch('/api/template-proposals', { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (!cancelled && data?.success) setOpenProposals(((data.proposals ?? []) as { status: string }[]).filter((p) => p.status === 'open').length)
+        })
+        .catch(() => {
+          if (!cancelled) setOpenProposals(0)
+        })
+    }
     fetch('/api/agent-templates', { cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
@@ -115,7 +129,7 @@ function ConnectInner() {
   // same as the old auto-redirect. Anyone mid-journey stays on the stepper.
   useEffect(() => {
     if (status.loading || !entitlementDone) return
-    if (gate?.meetsGate && openProposals === 0) {
+    if (shouldForwardToDashboard({ entitlementDone, meetsGate: Boolean(gate?.meetsGate), openProposals })) {
       const timer = window.setTimeout(() => {
         window.location.assign('/dashboard')
       }, 1200)
@@ -124,7 +138,7 @@ function ConnectInner() {
   }, [status.loading, entitlementDone, gate?.meetsGate, openProposals])
 
   // The furthest stage the user may open; they can always look back.
-  const unlockedStage = !entitlementDone ? 0 : gate?.meetsGate ? 2 : 1
+  const unlockedStage = resolveUnlockedStage({ entitlementDone, meetsGate: Boolean(gate?.meetsGate) })
   useEffect(() => {
     setStage((current) => Math.min(Math.max(current, entitlementDone ? 1 : 0), unlockedStage))
   }, [entitlementDone, unlockedStage])
@@ -234,14 +248,26 @@ function ConnectInner() {
                 <div className="rounded-lg border p-4">
                   <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Step 3</p>
                   <p className="mt-0.5 text-sm font-semibold text-gray-900">Connect the tools your team works in</p>
-                  <p className="mt-1 text-sm leading-5 text-gray-600">
-                    Once {gate?.required ?? 3} tools are connected, your AI starts learning how your team uses them and
-                    drafts automations for you.
-                  </p>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-100">
-                    <div className="h-full rounded-full bg-gray-900 transition-all" style={{ width: `${meter.percent}%` }} />
-                  </div>
-                  <p className="mt-1.5 text-xs font-medium text-gray-600">{meter.label}</p>
+                  {/* The meter and its copy describe AI generation, which the
+                      customer edition does not have — promising it would be a
+                      lie, and gating on it would block them behind a meter that
+                      unlocks nothing. */}
+                  {CUSTOMER ? (
+                    <p className="mt-1 text-sm leading-5 text-gray-600">
+                      Connect the tools your agents should work across. You can add more at any time.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mt-1 text-sm leading-5 text-gray-600">
+                        Once {gate?.required ?? 3} tools are connected, your AI starts learning how your team uses them and
+                        drafts automations for you.
+                      </p>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-100">
+                        <div className="h-full rounded-full bg-gray-900 transition-all" style={{ width: `${meter.percent}%` }} />
+                      </div>
+                      <p className="mt-1.5 text-xs font-medium text-gray-600">{meter.label}</p>
+                    </>
+                  )}
                   <div className="mt-3 flex gap-2">
                     <Link
                       href="/integrations"
@@ -249,13 +275,13 @@ function ConnectInner() {
                     >
                       Open integrations <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
-                    {meter.meetsGate && (
+                    {(CUSTOMER || meter.meetsGate) && (
                       <button
                         type="button"
-                        onClick={() => setStage(1)}
+                        onClick={() => setStage(CUSTOMER ? LIVE_STAGE : 1)}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
                       >
-                        See what your AI found <ArrowRight className="h-3.5 w-3.5" />
+                        {CUSTOMER ? 'Your AI goes live' : 'See what your AI found'} <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
@@ -270,7 +296,7 @@ function ConnectInner() {
           </section>
         )}
 
-        {stage === 1 && (
+        {!CUSTOMER && stage === 1 && (
           <section className="mt-6">
             <h1 className="text-2xl font-semibold text-gray-900">Your data takes shape</h1>
             <p className="mt-2 text-sm leading-6 text-gray-600">
@@ -285,7 +311,7 @@ function ConnectInner() {
             <div className="mt-5 flex justify-end">
               <button
                 type="button"
-                onClick={() => setStage(2)}
+                onClick={() => setStage(LIVE_STAGE)}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
               >
                 Your AI goes live <ArrowRight className="h-3.5 w-3.5" />
@@ -294,7 +320,7 @@ function ConnectInner() {
           </section>
         )}
 
-        {stage === 2 && (
+        {stage === LIVE_STAGE && (
           <section className="mt-6">
             <h1 className="text-2xl font-semibold text-gray-900">Your AI goes live</h1>
             <p className="mt-2 text-sm leading-6 text-gray-600">

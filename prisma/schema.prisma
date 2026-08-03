@@ -169,6 +169,38 @@ model OrganizationDomain {
   @@map("organization_domains")
 }
 
+/// One LLM or embedding API call. Detail rows for internal cost visibility;
+/// denormalized totals live on AgentExecution/FlowRun so list views never
+/// aggregate. Rows older than 90 days are swept by the retention cron — the
+/// totals survive, so historical run cost stays visible after detail ages out.
+///
+/// Deliberately declares no relation fields: the three parent ids are nullable
+/// and point at different models, so keeping them as plain columns avoids three
+/// optional relations on hot models for a table only ever queried directly.
+model LlmCall {
+  id               String   @id @default(cuid())
+  organizationId   String   @db.Uuid
+  agentExecutionId String?
+  flowRunId        String?
+  flowRunStepId    String?
+  /// agent_turn | structured | headline | embedding | eval_judge
+  surface          String
+  provider         String
+  model            String
+  inputTokens      Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  outputTokens     Int      @default(0)
+  costUsd          Decimal  @default(0) @db.Decimal(12, 6)
+  /// Which price table produced costUsd. 'unknown' means the model had no rate.
+  priceVersion     String
+  createdAt        DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([flowRunId])
+  @@map("llm_calls")
+}
+
 /// Platform-level access gate: which email domains may reach the product at
 /// all. Deliberately SEPARATE from OrganizationDomain — that model answers
 /// "does this domain belong to workspace X" for SSO enforcement, and
@@ -476,6 +508,9 @@ model AgentExecution {
   transcript      Json?
   inputTokens     Int       @default(0)
   outputTokens    Int       @default(0)
+  /// Denormalized sum of this execution's LlmCall rows, so list views never
+  /// aggregate. Internal ops estimate — see src/lib/usage/pricing.ts.
+  costUsd         Decimal   @default(0) @db.Decimal(12, 6)
   userId          String
   organizationId  String    @db.Uuid
   startedAt       DateTime  @default(now())
@@ -1025,6 +1060,9 @@ model FlowRun {
   input             Json      @default("{}")
   output            Json?
   error             String?
+  /// Denormalized sum of this run's LlmCall rows, so list views never
+  /// aggregate. Internal ops estimate — see src/lib/usage/pricing.ts.
+  costUsd           Decimal   @default(0) @db.Decimal(12, 6)
   graphSnapshot     Json? // the graph definition this run executed against
   // Immutable dependency fingerprint captured before dispatch: graph hash,
   // agent revisions, tool schemas/connections, and model defaults. A worker

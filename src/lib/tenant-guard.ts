@@ -63,6 +63,11 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // Enumerating it keeps a guarded query from ever going unscoped by accident.
   // Deliberately EXCLUDED from the privacy export — see src/lib/privacy/export.ts.
   'PlatformAllowedDomain',
+  // Per-call cost ledger. Genuinely tenant data (that workspace's spend), so it
+  // carries the standard tenant_isolation RLS policy — but it is also excluded
+  // from the privacy export, since cost is internal ops visibility and the rows
+  // carry our price-table version rather than anything the customer authored.
+  'LlmCall',
 ])
 
 const GUARDED_OPERATIONS = new Set([

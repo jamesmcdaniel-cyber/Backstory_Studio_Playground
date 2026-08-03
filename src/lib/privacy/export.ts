@@ -45,6 +45,10 @@ export function organizationExportStream(organizationId: string): ReadableStream
           // who granted access. Exporting it would hand a customer our access
           // administration, so it is skipped despite carrying an organizationId.
           if (model === 'PlatformAllowedDomain') continue
+          // LlmCall is internal cost accounting: high-volume per-call rows
+          // carrying our price-table version, not customer-authored content.
+          // Cost is deliberately not a customer-facing surface.
+          if (model === 'LlmCall') continue
           const delegate = (systemPrisma as unknown as Record<string, { findMany(args: unknown): Promise<Array<{ id: string }>> }>)[propertyOf(model)]
           if (!delegate) continue
           let cursor: string | undefined

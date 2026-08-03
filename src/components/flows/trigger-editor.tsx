@@ -18,6 +18,12 @@ export type TriggerData = {
   input?: string
   inputFields?: TriggerInputField[]
   signal?: string
+  /**
+   * Webhook reply mode. 'whenFinished' (the default) holds the caller's request
+   * open until the run finishes and answers with its result; 'immediately'
+   * acknowledges and runs in the background. Read by the trigger route.
+   */
+  responseMode?: 'whenFinished' | 'immediately'
   condition?: { match?: 'all' | 'any'; clauses?: ConditionClause[] }
   // Poll trigger: which read-tool to call and how to detect new items.
   connectionId?: string
@@ -71,6 +77,7 @@ export function TriggerEditor({
   classes,
   children,
   toolCatalog = [],
+  onPersisted,
 }: {
   flowId: string
   trigger: TriggerData
@@ -79,9 +86,12 @@ export function TriggerEditor({
   classes?: Partial<TriggerEditorClasses>
   children?: ReactNode
   toolCatalog?: TriggerToolCatalog
+  /** A secret rotation persists Flow.trigger outside the graph autosave path. */
+  onPersisted?: (updatedAt: string) => void
 }) {
   const { field, label, smallField } = { field: fieldClass, label: labelClass, smallField: smallFieldDefault, ...classes }
   const typeSelectId = useId()
+  const replyModeSelectId = useId()
   const [webhook, setWebhook] = useState<{ url: string; secret: string | null; hasSecret: boolean } | null>(null)
   const [minting, setMinting] = useState(false)
   const type = trigger.type ?? 'manual'
@@ -183,6 +193,7 @@ export function TriggerEditor({
         return
       }
       setWebhook({ url: data.url, secret: data.secret, hasSecret: true })
+      if (typeof data.updatedAt === 'string') onPersisted?.(data.updatedAt)
       if (data.secret) toast.success('Webhook secret created — copy it now; it is shown only once.')
     } finally {
       setMinting(false)
@@ -415,6 +426,23 @@ export function TriggerEditor({
               <>Runs the <strong>published</strong> version.</>
             )}
           </p>
+          <div>
+            <label className={label} htmlFor={replyModeSelectId}>What the caller gets back</label>
+            <select
+              id={replyModeSelectId}
+              className={field}
+              value={trigger.responseMode ?? 'whenFinished'}
+              onChange={(e) => onChange({ ...trigger, responseMode: e.target.value as TriggerData['responseMode'] })}
+            >
+              <option value="whenFinished">Wait for the run, reply with its result</option>
+              <option value="immediately">Reply right away, run in the background</option>
+            </select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {trigger.responseMode === 'immediately'
+                ? 'The call is acknowledged as soon as the run starts. Use this for senders that time out, or for fire-and-forget hooks.'
+                : 'The call stays open until the run finishes and answers with its output. Senders that give up early should use the other mode.'}
+            </p>
+          </div>
         </div>
       )}
 

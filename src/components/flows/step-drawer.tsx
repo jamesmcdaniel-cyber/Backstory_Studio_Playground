@@ -546,6 +546,7 @@ export function StepDrawer({
   variableNames,
   issues,
   published,
+  onFlowPersisted,
   rawInput,
   rawOutput,
   rawLogs,
@@ -574,6 +575,7 @@ export function StepDrawer({
   variableNames?: string[]
   issues?: { level: 'error' | 'warning'; message: string }[]
   published?: boolean
+  onFlowPersisted?: (updatedAt: string) => void
   rawInput?: unknown
   rawOutput?: unknown
   rawLogs?: string[]
@@ -856,6 +858,7 @@ export function StepDrawer({
             onChange={(nextTrigger) => onChange({ ...node, data: { trigger: nextTrigger } })}
             published={published}
             toolCatalog={toolCatalog}
+            onPersisted={onFlowPersisted}
           >
             <InputFieldsEditor
               fields={trigger.inputFields ?? []}

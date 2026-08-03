@@ -147,14 +147,14 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   } catch (error) {
     const message = error instanceof ApiError ? error.message : safeError(error)
     await prisma.httpCredential.update({
-      where: { id: row.id },
+      where: { id: row.id, organizationId: auth.organizationId },
       data: { status: 'error', lastError: message.slice(0, 500) },
     })
     throw error
   }
 
   const credential = await prisma.httpCredential.update({
-    where: { id: row.id },
+    where: { id: row.id, organizationId: auth.organizationId },
     data: { status: 'verified', lastError: null, lastVerifiedAt: new Date() },
   })
   return { success: true, credential: redactedCredential(credential) }

@@ -53,7 +53,10 @@ export async function syncAgentConnectors(
 
     // Atomic replace: the current selection is the whole truth for this agent.
     await prisma.$transaction([
-      prisma.agentConnector.deleteMany({ where: { agentTaskId } }),
+      // Org-scoped: the tenant guard rejects an unscoped delete, and the catch
+      // below only warns — unscoped, every sync failed silently and the runtime
+      // fell back to the metadata list for good.
+      prisma.agentConnector.deleteMany({ where: { agentTaskId, organizationId } }),
       ...(rows.length ? [prisma.agentConnector.createMany({ data: rows })] : []),
     ])
   } catch (error) {

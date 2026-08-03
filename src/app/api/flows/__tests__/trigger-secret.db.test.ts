@@ -49,7 +49,10 @@ if (TEST_DB) {
     try {
       installTestAuth(s.auth)
       const flow = await mkFlow(s.organizationId, s.userId)
-      assert.equal((await mint(flow.id)).status, 200)
+      const minted = await mint(flow.id)
+      assert.equal(minted.status, 200)
+      const mintedBody = await minted.json()
+      assert.ok(mintedBody.updatedAt, 'the builder needs the new optimistic-lock timestamp')
       const res = await get(flow.id)
       const body = await res.json()
       assert.equal(body.hasSecret, true)

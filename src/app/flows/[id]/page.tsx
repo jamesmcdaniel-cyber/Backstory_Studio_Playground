@@ -21,6 +21,8 @@ import { CursorLayer } from '@/components/flows/cursor-layer'
 import { flowToN8n } from '@/lib/flows/export/to-n8n'
 import { flowToInstructions } from '@/lib/flows/export/to-instructions'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -219,6 +221,9 @@ function FlowBuilder() {
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [folder, setFolder] = useState('')
+  const [showFlowSettings, setShowFlowSettings] = useState(false)
+  const [settingsDraft, setSettingsDraft] = useState({ name: '', description: '', folder: '' })
   const [graph, setGraph] = useState<FlowGraph>(emptyGraph())
   const [savingTemplate, setSavingTemplate] = useState(false)
   // Lifecycle status is owned by publish/unpublish (server-side); the client
@@ -353,6 +358,7 @@ function FlowBuilder() {
           baseUpdatedAt.current = flow.updatedAt ?? null
           setName(flow.name)
           setDescription(flow.description || '')
+          setFolder(flow.folder || '')
           setGraph(g)
           setStatus(flow.status)
           setVersion(flow.version ?? 1)
@@ -1439,13 +1445,60 @@ function FlowBuilder() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, visibility: next }),
     })
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
       toast.error('Could not change sharing.')
       return
     }
+    // A settings PUT advances Flow.updatedAt too. Keep the optimistic-lock base
+    // in sync or the next canvas save is falsely rejected as a teammate edit.
+    if (data.flow?.updatedAt) baseUpdatedAt.current = data.flow.updatedAt
     setVisibility(next)
     toast.success(next === 'shared' ? 'Everyone in your workspace can edit this flow.' : next === 'view' ? 'Everyone can view and run it — only you can edit.' : 'Only you can see this flow now.')
   }, [id])
+
+  const openFlowSettings = useCallback(() => {
+    setSettingsDraft({ name, description, folder })
+    setShowFlowSettings(true)
+  }, [name, description, folder])
+
+  const saveFlowSettings = useCallback(async () => {
+    const nextName = settingsDraft.name.trim()
+    if (!nextName) {
+      toast.error('Flow name is required.')
+      return
+    }
+    setSaving(true)
+    try {
+      const response = await fetch('/api/flows', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          name: nextName,
+          description: settingsDraft.description,
+          folder: settingsDraft.folder.trim().slice(0, 60),
+          ...(baseUpdatedAt.current ? { baseUpdatedAt: baseUpdatedAt.current } : {}),
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        toast.error(data.error || 'Could not save flow settings.')
+        return
+      }
+      const nextDescription = settingsDraft.description
+      const nextFolder = settingsDraft.folder.trim().slice(0, 60)
+      setName(nextName)
+      setDescription(nextDescription)
+      setFolder(nextFolder)
+      if (data.flow?.updatedAt) baseUpdatedAt.current = data.flow.updatedAt
+      setSavedSnapshot(JSON.stringify({ name: nextName, description: nextDescription, graph }))
+      setShowFlowSettings(false)
+      toast.success('Flow settings saved.')
+    } finally {
+      setSaving(false)
+    }
+  }, [id, settingsDraft, graph])
 
   const rerunFromStep = useCallback(async (runId: string, nodeId: string) => {
     const response = await fetch(`/api/flows/${id}/execute`, {
@@ -1853,6 +1906,11 @@ function FlowBuilder() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>Flow settings</DropdownMenuLabel>
+            {canEdit && !external && (
+              <DropdownMenuItem onSelect={openFlowSettings}>
+                <FileText className="h-4 w-4" /> Edit details…
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={duplicateFlow}>
               <Copy className="h-4 w-4" /> Duplicate
             </DropdownMenuItem>
@@ -2150,6 +2208,7 @@ function FlowBuilder() {
               variableNames={upstreamVariables.map((variable) => variable.name)}
               flowId={id}
               published={published}
+              onFlowPersisted={(updatedAt) => { baseUpdatedAt.current = updatedAt }}
               statusByNode={viewingVersion ? {} : statusByNode}
               issuesByNode={viewingVersion ? undefined : issuesByNode}
               highlightIds={viewingVersion ? [] : selectedIds.length > 1 ? selectedIds : highlightIds}
@@ -2264,6 +2323,7 @@ function FlowBuilder() {
                 toolCatalog={toolCatalog}
                 dataFields={dataFields}
                 published={published}
+                onFlowPersisted={(updatedAt) => { baseUpdatedAt.current = updatedAt }}
                 labelCtx={labelCtx}
                 previewCtx={previewCtx}
                 variableNames={upstreamVariables.map((variable) => variable.name)}
@@ -2431,6 +2491,50 @@ function FlowBuilder() {
         flowDescription={description}
         graph={graph}
       />
+
+      <Dialog open={showFlowSettings} onOpenChange={setShowFlowSettings}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Flow settings</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Name</span>
+              <input
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={settingsDraft.name}
+                onChange={(event) => setSettingsDraft((current) => ({ ...current, name: event.target.value }))}
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Description</span>
+              <Textarea
+                rows={3}
+                value={settingsDraft.description}
+                onChange={(event) => setSettingsDraft((current) => ({ ...current, description: event.target.value }))}
+                placeholder="What this flow does and when to use it."
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Folder</span>
+              <input
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={settingsDraft.folder}
+                maxLength={60}
+                onChange={(event) => setSettingsDraft((current) => ({ ...current, folder: event.target.value }))}
+                placeholder="Optional"
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowFlowSettings(false)}>Cancel</Button>
+            <Button onClick={() => void saveFlowSettings()} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save settings
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {subflowDraft && (() => {
         // Every main-chain step from the picked start downward is a legal end.

@@ -286,3 +286,113 @@ node-level settings (retry wait, always-output-data, max redirects, batch size,
 wait-for-subflow) live in the shared **Advanced parameters** panel.
 
 Still deliberately absent, per §11: ignore-SSL and proxy on HTTP.
+
+## 14. Execution and persistence re-audit (2026-08-02)
+
+The representative mixed graph now has two contract layers: graph validation
+and interpreter execution both cover a webhook trigger followed by an agent,
+an outbound webhook, a plain HTTP request, a connected integration tool, and a
+custom MCP tool. The graph is only publishable when the agent, both tool-plane
+connections, HTTP credential, and webhook secret are present; the interpreter
+test verifies resolved output is threaded through every step to the MCP result.
+
+Built-in template contracts remain green: every graph parses; every executable
+step is documented; every empty agent/connection slot has a binding; connector
+requirements use real catalogue keys; and the three starter templates have no
+workspace setup requirements. Templates that necessarily depend on a customer
+system remain drafts with an explicit setup checklist rather than pretending to
+be runnable with missing credentials.
+
+This pass also closed three persistence seams found outside the node engine:
+
+- Flow details (name, description, and folder) are now editable from the
+  builder's Flow settings dialog and save through the same guarded flow writer.
+- Canvas and settings edits are durably awaited in the edit timeline; History
+  names the fields changed, while publish continues to atomically create the
+  restorable `FlowVersion` snapshot.
+- Sharing changes and webhook-secret rotation now return/propagate the new
+  `updatedAt`, so the next canvas save does not fail its optimistic lock against
+  the builder's own immediately preceding settings write.
+
+## 15. Live end-to-end re-audit (2026-08-02)
+
+§14 proves the contracts. This pass ran them: a scratch Postgres migrated from
+zero, a seeded workspace, and one flow carrying a webhook trigger → HTTP request
+→ integration tool (native plane) → MCP tool (People.ai plane) → agent → output,
+driven through the real API routes with live endpoints (postman-echo, the live
+People.ai MCP server, a live model). It found six defects that no unit or
+contract test could reach, because each one lives *behind* a query the tests
+never execute.
+
+**All six are the same mistake:** a Prisma query on an org-carrying model with a
+`where` that omits `organizationId`. The tenant guard throws on those at run
+time — which is correct for a leak, but means the code path either 500s or, when
+the call sits inside a `catch`, silently does nothing forever.
+
+| Where | Symptom |
+| --- | --- |
+| `POST /api/flows/[id]/publish` | **Every publish 500'd.** The version-number lookup was unscoped. No flow could be armed, so webhook/schedule/signal/poll triggers were unreachable on any flow published after the regression. |
+| `execute-flow` cancellation poll | Cancel flipped the run to `cancelling`; the interpreter's poll threw into `.catch(() => null)` and never saw it. **Cancelling a running flow did nothing.** |
+| `http-auth` refresh-token rotation | A rotated OAuth2 refresh token was never persisted, so the next cold start reused a dead one. |
+| `http-auth` credential health writes | `markCredentialResult` never wrote; the credential picker's verified/error state never moved after a run. |
+| `PATCH /api/http-credentials` | Re-verifying a stored HTTP credential 500'd on both the success and failure branch. |
+| `POST /api/nango/connections/[id]/verify` | Integration re-verification 500'd. |
+| `syncAgentConnectors` | Every sync failed into a warning log, so agents permanently fell back to the `metadata.integrations` list instead of the typed rows. |
+
+`src/lib/__tests__/prisma-where-org-scoped.test.ts` now fails the build on this
+shape: any literal `where` on an org-scoped model that names no
+`organizationId`. It is deliberately narrow — a `where` built in a variable or
+carrying a spread is not statically decidable and is skipped rather than guessed
+at — but every one of the defects above is exactly the shape it catches. Genuine
+global-unique writes (the push-subscription endpoint) use `systemPrisma` with a
+justification, as the guard's own docs prescribe.
+
+Two more gaps closed in the same pass:
+
+- **Webhook reply mode was unreachable.** The trigger route has always honored
+  `responseMode: 'immediately'` (acknowledge, run in the background — the answer
+  for senders that time out), but nothing in the product could set it: it was
+  absent from the trigger editor, and the only other way in — a `trigger`-only
+  `PUT /api/flows` — is reverted by the next canvas save, because the graph's
+  trigger node is the source of truth for `Flow.trigger`. It is now a field on
+  the webhook trigger editor, so it persists through the graph like every other
+  trigger setting.
+- **Restoring a version left no trace.** Restore rewrites the draft canvas
+  exactly as a manual save does, but recorded no audit row, so History showed
+  the canvas changing with nothing to explain it. It now records `flow.edited`
+  naming the version it came from, and the panel renders "restored vN".
+
+### Verified live, not merely typechecked
+
+- All six node classes execute: HTTP (real request/response envelope),
+  integration tool (`native:http`), MCP tool (live People.ai `find_account`,
+  `get_account_status`, `ask_sales_ai_about_account`), agent (real model call),
+  trigger, output.
+- The external webhook path end to end: mint secret → publish → `POST
+  /trigger` with `x-trigger-secret` → 202 accepted (immediate reply mode) →
+  background run against the *published* graph, with the run row carrying
+  `trigger: webhook` and a pinned graph snapshot. A wrong secret 401s; a
+  trigger condition that fails skips the run without creating one.
+- Settings round-trip (name, description, folder, visibility, trigger config)
+  and survive a subsequent canvas save, including the webhook secret hash.
+- Version history: publish → v1, edit → publish → v2, snapshot payload is the
+  pre-edit graph, restore returns the draft to v1 and is logged, and a settings
+  `PUT` cannot demote a published flow back to draft.
+- All 11 built-in templates instantiate: the notes contract holds for every one,
+  bindings resolve agents by name and connections by provider/tool, and the five
+  that need no customer system are runnable with an empty or purely advisory
+  setup checklist. The six that call Slack/a CRM stay DRAFT with a checklist and
+  a validation error naming the exact unbound step — the intended signal, not a
+  failure.
+
+### Known behavior worth calling out
+
+An MCP server that reports a miss *in band* — `isError: false` with an
+`{ error: … }` payload, which is what People.ai returns for "record not found" —
+produces a **succeeded** tool step. `flowToolOutput` only fails a step on
+`isError: true`, so `onError` never fires and the empty field flows downstream,
+where it surfaces as an opaque type error two steps later. The account-plan
+template shows this: a nonexistent account name reaches `get_account_status`
+with an empty `peopleai_account_id`. Templates that chain off a lookup should
+gate on it; a general fix would mean second-guessing every MCP server's success
+contract, which is a product decision rather than a bug.

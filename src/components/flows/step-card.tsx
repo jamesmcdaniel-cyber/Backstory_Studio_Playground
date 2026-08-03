@@ -201,6 +201,7 @@ export function StepCard({
   variableNames,
   flowId,
   published,
+  onFlowPersisted,
   onChange,
   onClick,
   onRefreshAgents,
@@ -227,6 +228,7 @@ export function StepCard({
   variableNames?: string[]
   flowId?: string
   published?: boolean
+  onFlowPersisted?: (updatedAt: string) => void
   onChange?: (node: FlowNode) => void
   onClick?: (shiftKey?: boolean) => void
   onRefreshAgents?: () => void
@@ -600,7 +602,7 @@ export function StepCard({
             className="overflow-hidden"
           >
             <div onClick={stopEvent} onFocus={stopEvent} className="border-t border-slate-200 px-5 py-4">
-              {renderNodeBody({ node, agents, members, toolCatalog, dataFields, update, onRefreshAgents, tokenWiring, showErrors, variableNames, flowId, published })}
+              {renderNodeBody({ node, agents, members, toolCatalog, dataFields, update, onRefreshAgents, tokenWiring, showErrors, variableNames, flowId, published, onFlowPersisted })}
             </div>
           </motion.div>
         ) : (
@@ -686,6 +688,7 @@ function renderNodeBody({
   variableNames,
   flowId,
   published,
+  onFlowPersisted,
 }: {
   node: FlowNode
   agents: Agent[]
@@ -699,10 +702,11 @@ function renderNodeBody({
   variableNames?: string[]
   flowId?: string
   published?: boolean
+  onFlowPersisted?: (updatedAt: string) => void
 }) {
   switch (node.type) {
     case 'trigger':
-      return <TriggerBody node={node} update={update} flowId={flowId} published={published} toolCatalog={toolCatalog} />
+      return <TriggerBody node={node} update={update} flowId={flowId} published={published} toolCatalog={toolCatalog} onFlowPersisted={onFlowPersisted} />
     case 'agent':
       return <AgentBody node={node} agents={agents} update={update} onRefreshAgents={onRefreshAgents} tokenWiring={tokenWiring} showErrors={showErrors} />
     case 'ai':
@@ -801,12 +805,14 @@ function TriggerBody({
   flowId,
   published,
   toolCatalog,
+  onFlowPersisted,
 }: {
   node: Extract<FlowNode, { type: 'trigger' }>
   update: (node: FlowNode) => void
   flowId?: string
   published?: boolean
   toolCatalog: ToolCatalog
+  onFlowPersisted?: (updatedAt: string) => void
 }) {
   const [choosingInput, setChoosingInput] = useState(false)
   const trigger = triggerData(node)
@@ -847,6 +853,7 @@ function TriggerBody({
         published={published}
         classes={{ field: controlClass, label: labelClass }}
         toolCatalog={toolCatalog}
+        onPersisted={onFlowPersisted}
       />
       {fields.length > 0 && (
         <div className="space-y-3">

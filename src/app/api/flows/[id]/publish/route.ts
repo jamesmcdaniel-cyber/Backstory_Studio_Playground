@@ -95,7 +95,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // Derived from the snapshot history (not flow.version, which seeds at 1) so
   // the number keeps advancing across unpublish/republish cycles.
   const latestSnapshot = await prisma.flowVersion.findFirst({
-    where: { flowId: id },
+    where: { flowId: id, organizationId: auth.organizationId },
     orderBy: { version: 'desc' },
     select: { version: true },
   })

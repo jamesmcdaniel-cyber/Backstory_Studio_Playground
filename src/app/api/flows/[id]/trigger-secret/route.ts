@@ -52,9 +52,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   const secret = randomBytes(24).toString('base64url')
-  await prisma.flow.update({
+  const updated = await prisma.flow.update({
     where: { id: flow.id, organizationId: auth.organizationId },
     data: { trigger: { ...trigger, type: 'webhook', webhookSecretHash: hashToken(secret) } },
+    select: { updatedAt: true },
   })
-  return { ...base, hasSecret: true, secret }
+  return { ...base, hasSecret: true, secret, updatedAt: updated.updatedAt }
 }, { permission: 'flow.write' })

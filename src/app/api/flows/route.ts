@@ -161,19 +161,37 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     // No baseUpdatedAt: documented last-write-wins for callers that don't opt in.
     flow = await prisma.flow.update({ where: { id: body.id, organizationId: existing.organizationId }, data })
   }
-  // Per-user edit log: record WHO saved a graph change, so the History panel can
-  // show a Jam-style timeline of who edited when. Jam autosaves coalesce via
-  // suppressAudit (one row per window), so this stays low-volume; best-effort,
-  // never blocks the save.
-  if (body.graph !== undefined && !body.suppressAudit) {
-    void recordAudit({
+  // Per-user edit log: capture canvas AND flow-setting changes. Previously a
+  // rename, description/folder edit, or sharing change was persisted but left
+  // no trace in History, which made the version panel imply nothing happened.
+  // Jam graph autosaves still coalesce via suppressAudit; a settings change is
+  // always recorded even if a caller happens to include that flag.
+  const changedFields = [
+    body.name !== undefined && body.name !== existing.name ? 'name' : null,
+    body.description !== undefined && body.description !== existing.description ? 'description' : null,
+    body.visibility !== undefined && body.visibility !== existing.visibility ? 'visibility' : null,
+    body.folder !== undefined && body.folder !== existing.folder ? 'folder' : null,
+    body.trigger !== undefined && JSON.stringify(body.trigger) !== JSON.stringify(existing.trigger) ? 'trigger' : null,
+    body.graph !== undefined && JSON.stringify(body.graph) !== JSON.stringify(existing.graph) ? 'graph' : null,
+  ].filter((field): field is string => Boolean(field))
+  const settingsChanged = changedFields.some((field) => field !== 'graph')
+  if (changedFields.length > 0 && (!body.suppressAudit || settingsChanged)) {
+    // Await the durable write. Fire-and-forget work can be cut off when a
+    // serverless request finishes, leaving a successful save absent from the
+    // edit timeline.
+    await recordAudit({
       // Edits audit into the OWNING org's timeline — including guest edits.
       organizationId: existing.organizationId,
       actorUserId: auth.dbUser.id,
       action: 'flow.edited',
       resourceType: 'flow',
       resourceId: body.id,
-      detail: { nodes: body.graph.nodes.length, edges: body.graph.edges.length },
+      detail: {
+        fields: changedFields,
+        ...(body.graph !== undefined && changedFields.includes('graph')
+          ? { nodes: body.graph.nodes.length, edges: body.graph.edges.length }
+          : {}),
+      },
     }).catch(() => undefined)
   }
   return { success: true, flow: serializeFlow(flow) }

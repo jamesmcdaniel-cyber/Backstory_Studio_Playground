@@ -4,6 +4,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { assertFlowEditable } from '@/lib/flows/access'
 import { serializeFlow } from '@/lib/flows/serialize'
+import { recordAudit } from '@/lib/audit'
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
@@ -66,7 +67,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     id: e.id,
     at: e.createdAt,
     by: e.actorUserId ? editorNameById.get(e.actorUserId) ?? 'A teammate' : 'A teammate',
-    detail: e.detail as { nodes?: number; edges?: number } | null,
+    detail: e.detail as { fields?: string[]; nodes?: number; edges?: number } | null,
   }))
 
   return {
@@ -96,5 +97,23 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!row) throw new ApiError('Version not found', 404, 'NOT_FOUND')
 
   const updated = await prisma.flow.update({ where: { id, organizationId: auth.organizationId }, data: { graph: jsonValue(row.graph) } })
+  // A restore rewrites the draft canvas exactly as a manual save does, so it
+  // belongs in the same timeline — without this the History panel showed the
+  // draft silently changing with no entry explaining it. Awaited: fire-and-forget
+  // work can be cut off when a serverless request ends.
+  const restoredGraph = row.graph as { nodes?: unknown[]; edges?: unknown[] } | null
+  await recordAudit({
+    organizationId: auth.organizationId,
+    actorUserId: auth.dbUser.id,
+    action: 'flow.edited',
+    resourceType: 'flow',
+    resourceId: id,
+    detail: {
+      fields: ['graph'],
+      restoredFromVersion: version,
+      ...(Array.isArray(restoredGraph?.nodes) ? { nodes: restoredGraph.nodes.length } : {}),
+      ...(Array.isArray(restoredGraph?.edges) ? { edges: restoredGraph.edges.length } : {}),
+    },
+  }).catch(() => undefined)
   return { success: true, flow: serializeFlow(updated) }
 }, { permission: 'flow.write' })

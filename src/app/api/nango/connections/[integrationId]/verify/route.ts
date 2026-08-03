@@ -76,7 +76,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           : { status: 'error', checkedAt: verifiedAt.toISOString(), error: result.error },
       } satisfies Prisma.InputJsonObject
       await prisma.nangoConnection.update({
-        where: { id: row.id },
+        where: { id: row.id, organizationId: auth.organizationId },
         data: {
           status: result.ok ? 'connected' : 'error',
           lastError: result.ok ? null : result.error,

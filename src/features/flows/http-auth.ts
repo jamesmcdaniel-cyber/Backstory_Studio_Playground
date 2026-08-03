@@ -23,6 +23,8 @@ export type HttpCredentialConfig = Record<string, string>
 
 export type ResolvedHttpCredential = {
   id?: string
+  /** Owning workspace — required to write the row back (tenant guard). */
+  organizationId?: string
   name?: string
   authType: HttpAuthType
   allowedHost: string
@@ -97,11 +99,13 @@ async function requestOauth2Token(
   // invalidates the old one. Persist it (best effort) so the next cold start
   // doesn't reuse a dead token. Never throw from this path — the request the
   // caller wanted has already succeeded.
-  if (payload.refresh_token && payload.refresh_token !== credential.config.refreshToken && credential.id) {
+  if (payload.refresh_token && payload.refresh_token !== credential.config.refreshToken && credential.id && credential.organizationId) {
     credential.config.refreshToken = payload.refresh_token
     try {
-      await prisma.httpCredential.update({
-        where: { id: credential.id },
+      // Org-scoped: the tenant guard rejects an id-only write, and this one is
+      // swallowed below — unscoped, rotation would never persist at all.
+      await prisma.httpCredential.updateMany({
+        where: { id: credential.id, organizationId: credential.organizationId },
         data: { secretConfig: encryptSecret(JSON.stringify(credential.config)) },
       })
     } catch {
@@ -336,6 +340,7 @@ export async function resolveHttpCredential(
   }
   return {
     id: row.id,
+    organizationId: row.organizationId,
     name: row.name,
     authType: row.authType as HttpAuthType,
     allowedHost: row.allowedHost,
@@ -369,16 +374,23 @@ export function redactedCredential(row: {
  * the run. An auth rejection (401/403) flips the row to 'error'; any success
  * clears a prior error back to 'verified'.
  */
-export async function markCredentialResult(credentialId: string, ok: boolean, error?: string): Promise<void> {
+export async function markCredentialResult(
+  credentialId: string,
+  organizationId: string,
+  ok: boolean,
+  error?: string,
+): Promise<void> {
   try {
+    // Org-scoped: the tenant guard rejects an id-only write, and the catch
+    // below swallows it — unscoped, the picker's health state never updated.
     if (ok) {
       await prisma.httpCredential.updateMany({
-        where: { id: credentialId, status: 'error' },
+        where: { id: credentialId, organizationId, status: 'error' },
         data: { status: 'verified', lastError: null, lastVerifiedAt: new Date() },
       })
     } else {
       await prisma.httpCredential.updateMany({
-        where: { id: credentialId },
+        where: { id: credentialId, organizationId },
         data: { status: 'error', lastError: (error || 'Authentication was rejected.').slice(0, 500) },
       })
     }

@@ -1077,7 +1077,7 @@ export async function runFlowExecution(
               const response = await fetchWithHttpCredential(requestForAttempt(request.url), httpCredential, controller.signal)
               if (httpCredential?.id) {
                 const authRejected = response.status === 401 || response.status === 403
-                await markCredentialResult(httpCredential.id, !authRejected, `HTTP ${response.status}`)
+                await markCredentialResult(httpCredential.id, job.organizationId, !authRejected, `HTTP ${response.status}`)
               }
               if (request.failOnHttpError && !response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
               const buffer = Buffer.from(await response.arrayBuffer())
@@ -1119,7 +1119,7 @@ export async function runFlowExecution(
               // any non-auth response clears a prior error.
               if (httpCredential?.id) {
                 const authRejected = nextOutput.status === 401 || nextOutput.status === 403
-                await markCredentialResult(httpCredential.id, !authRejected, `HTTP ${nextOutput.status}`)
+                await markCredentialResult(httpCredential.id, job.organizationId, !authRejected, `HTTP ${nextOutput.status}`)
               }
               if (request.failOnHttpError && !nextOutput.ok) throw new Error(`HTTP ${nextOutput.status}: ${nextOutput.bodyText.slice(0, 200)}`)
               return nextOutput
@@ -1263,7 +1263,12 @@ export async function runFlowExecution(
     const nowMs = Date.now()
     if (nowMs - lastCancelPoll < 2000) return false
     lastCancelPoll = nowMs
-    const fresh = await prisma.flowRun.findUnique({ where: { id: run.id }, select: { status: true } }).catch(() => null)
+    // Org-scoped: the tenant guard rejects an id-only read, and this call is
+    // swallowed by .catch — an unscoped query here would silently disable
+    // cancellation for every run instead of failing loudly.
+    const fresh = await prisma.flowRun
+      .findFirst({ where: { id: run.id, organizationId: job.organizationId }, select: { status: true } })
+      .catch(() => null)
     cancelSeen = fresh?.status === 'cancelling' || fresh?.status === 'cancelled'
     return cancelSeen
   }

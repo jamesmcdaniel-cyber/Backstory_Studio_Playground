@@ -59,6 +59,32 @@ test('webhook flow with no secret yet shows the create-secret call to action', a
   }
 })
 
+test('creating a webhook secret reports the persisted flow timestamp to the builder', async () => {
+  const realFetch = globalThis.fetch
+  const persisted: string[] = []
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    return calls === 1
+      ? { ok: true, json: async () => ({ success: true, hasSecret: false, url: 'https://app.example/api/flows/f1/trigger' }) }
+      : { ok: true, json: async () => ({ success: true, hasSecret: true, secret: 'once', url: 'https://app.example/api/flows/f1/trigger', updatedAt: '2026-08-02T12:00:00.000Z' }) }
+  }) as unknown as typeof fetch
+  try {
+    render(React.createElement(TriggerEditor, {
+      flowId: 'f1',
+      trigger: { type: 'webhook' },
+      onChange: () => {},
+      onPersisted: (updatedAt: string) => persisted.push(updatedAt),
+    }))
+    fireEvent.click(await screen.findByRole('button', { name: /create webhook secret/i }))
+    await screen.findByText('x-trigger-secret: once')
+    assert.deepEqual(persisted, ['2026-08-02T12:00:00.000Z'])
+  } finally {
+    globalThis.fetch = realFetch
+    cleanup()
+  }
+})
+
 test('type picker writes through onChange', () => {
   const seen: { type?: string }[] = []
   render(React.createElement(TriggerEditor, { flowId: 'f1', trigger: { type: 'manual' }, onChange: (t: { type?: string }) => seen.push(t) }))

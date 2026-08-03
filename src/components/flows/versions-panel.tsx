@@ -29,7 +29,7 @@ export function VersionsPanel({
   onClose: () => void
 }) {
   const [versions, setVersions] = useState<VersionRow[]>([])
-  const [recentEdits, setRecentEdits] = useState<{ id: string; at: string; by: string; detail?: { nodes?: number; edges?: number } | null }[]>([])
+  const [recentEdits, setRecentEdits] = useState<{ id: string; at: string; by: string; detail?: { fields?: string[]; nodes?: number; edges?: number; restoredFromVersion?: number } | null }[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -68,7 +68,13 @@ export function VersionsPanel({
                 <li key={edit.id} className="flex items-baseline justify-between gap-2 text-xs">
                   <span className="truncate">
                     <span className="font-medium text-foreground">{edit.by}</span>
-                    {edit.detail?.nodes != null ? ` · ${edit.detail.nodes} step${edit.detail.nodes === 1 ? '' : 's'}` : ''}
+                    {edit.detail?.restoredFromVersion != null
+                      ? ` · restored v${edit.detail.restoredFromVersion}`
+                      : edit.detail?.fields?.length
+                      ? ` · ${edit.detail.fields.map((field) => field === 'graph' ? 'canvas' : field).join(', ')}`
+                      : edit.detail?.nodes != null
+                        ? ` · ${edit.detail.nodes} step${edit.detail.nodes === 1 ? '' : 's'}`
+                        : ''}
                   </span>
                   <span className="shrink-0 text-muted-foreground">{new Date(edit.at).toLocaleString()}</span>
                 </li>

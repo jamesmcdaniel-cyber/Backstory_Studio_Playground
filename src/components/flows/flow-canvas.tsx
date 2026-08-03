@@ -133,6 +133,7 @@ export function FlowCanvas({
   variableNames,
   flowId,
   published,
+  onFlowPersisted,
   statusByNode,
   issuesByNode,
   highlightIds,
@@ -161,6 +162,7 @@ export function FlowCanvas({
   variableNames?: string[]
   flowId?: string
   published?: boolean
+  onFlowPersisted?: (updatedAt: string) => void
   statusByNode: Record<string, StepStatus>
   issuesByNode?: Record<string, { errors: number; warnings: number; items: { level: 'error' | 'warning'; message: string }[] }>
   highlightIds?: string[]
@@ -239,6 +241,7 @@ export function FlowCanvas({
         variableNames={selectedId === node.id ? variableNames : undefined}
         flowId={flowId}
         published={published}
+        onFlowPersisted={onFlowPersisted}
         onChange={onChangeNode}
         onClick={(shiftKey) => onSelect(node.id, shiftKey)}
         onRefreshAgents={onRefreshAgents}

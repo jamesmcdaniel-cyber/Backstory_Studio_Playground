@@ -71,6 +71,9 @@ function AgentHQ() {
   // hydration. It changes only in direct response to a drag in this session.
   const [assistantWidth, setAssistantWidth] = useState<number>(ASSISTANT_WIDTH_DEFAULT)
   const assistantWidthRef = useRef(assistantWidth)
+  // The ?agent= id we already refetched for, so a genuinely unknown id costs one
+  // refresh and not an endless loop.
+  const deepLinkMiss = useRef<string | null>(null)
 
   // Agents / Templates view, driven by the URL (?view=templates) so it's
   // linkable and the old /templates route can redirect straight into it.
@@ -176,14 +179,24 @@ function AgentHQ() {
       router.replace('/agents')
       return
     }
-    if (!agents.length) return
+    if (loading) return
     if (agents.some((candidate) => candidate.id === agentParam)) {
       setSelectedAgentId(agentParam)
       setConfigureOpen(false)
       setFocusRunId(null)
+      router.replace('/agents')
+      return
+    }
+    // The link can name an agent this snapshot predates — one created moments
+    // ago on another screen. Refetch once for it rather than dropping the link
+    // and silently landing on somebody else's agent.
+    if (deepLinkMiss.current !== agentParam) {
+      deepLinkMiss.current = agentParam
+      load(true).catch(() => undefined)
+      return
     }
     router.replace('/agents')
-  }, [searchParams, agents, router])
+  }, [searchParams, agents, loading, router, load])
 
   useEffect(() => {
     const runParam = searchParams.get('run')

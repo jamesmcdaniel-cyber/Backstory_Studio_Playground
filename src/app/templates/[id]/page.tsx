@@ -12,6 +12,8 @@ import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
+import { notifyAgentsChanged } from '@/components/layout/sidebar'
+import { createAgentFromTemplate } from '@/lib/client/agent-from-template'
 import { useAuth } from '@/hooks/use-auth'
 
 type Template = {
@@ -88,28 +90,16 @@ export default function TemplateDetails() {
   const createAgent = async () => {
     if (!template) return
     setCreating(true)
-    const response = await fetch('/api/agents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: template.name,
-        description: template.description,
-        instructions: template.instructions,
-        integrations: template.integrations,
-        skills: template.skills || [],
-        model: template.model,
-        icon: template.icon || '',
-        allowSubagents: template.allowSubagents === true,
-        schedule: { type: 'manual', timezone: 'UTC', isActive: false },
-      }),
-    })
+    const result = await createAgentFromTemplate(template)
     setCreating(false)
-    if (response.ok) {
-      router.push('/dashboard')
-    } else {
-      const data = await response.json().catch(() => ({}))
-      toast.error(data.error || 'Could not create the agent. Please try again.')
+    if (!result.ok) {
+      toast.error(result.error)
+      return
     }
+    // Land on the agent itself, so the instructions this template just handed
+    // over are right there to review, run, or schedule.
+    notifyAgentsChanged()
+    router.push(result.href)
   }
 
   // Playbook templates provision the full motion: agents + a wired Flow.

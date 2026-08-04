@@ -78,6 +78,7 @@ export function HttpCredentialDialog({
   requestUrl,
   requestMethod,
   initialAuthType = 'basic',
+  editableUrl = false,
   onSaved,
 }: {
   open: boolean
@@ -85,26 +86,48 @@ export function HttpCredentialDialog({
   requestUrl: string
   requestMethod: string
   initialAuthType?: HttpAuthOption
+  /**
+   * Let the user type the URL to verify against. A flow HTTP node already knows
+   * its request URL and passes it in; an agent has no single URL — it decides at
+   * run time — so its config panel supplies an endpoint to verify against and
+   * to bind the credential's host to.
+   */
+  editableUrl?: boolean
   onSaved: (credential: HttpCredentialSummary) => void
 }) {
   const [name, setName] = useState('')
   const [authType, setAuthType] = useState<HttpAuthOption>(initialAuthType)
   const [config, setConfig] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  // Editable mode owns the URL locally; otherwise the caller's prop is the URL.
+  const [urlDraft, setUrlDraft] = useState(requestUrl)
+  const url = editableUrl ? urlDraft : requestUrl
   const host = useMemo(() => {
     try {
-      return new URL(requestUrl).hostname
+      return new URL(url).hostname
     } catch {
       return ''
     }
-  }, [requestUrl])
+  }, [url])
 
   useEffect(() => {
     if (!open) return
     setAuthType(initialAuthType)
     setConfig({})
-    setName(host ? `${host} ${HTTP_AUTH_OPTIONS.find((option) => option.value === initialAuthType)?.label || 'credential'}` : '')
-  }, [host, initialAuthType, open])
+    setUrlDraft(requestUrl)
+  }, [initialAuthType, open, requestUrl])
+
+  // Name defaults to "<host> <method>" and follows the host until the user
+  // types their own — in editable mode the host isn't known when the dialog
+  // opens, so a name pinned at open time would always be blank.
+  const [nameTouched, setNameTouched] = useState(false)
+  useEffect(() => {
+    if (!open || nameTouched) return
+    setName(host ? `${host} ${HTTP_AUTH_OPTIONS.find((option) => option.value === authType)?.label || 'credential'}` : '')
+  }, [authType, host, nameTouched, open])
+  useEffect(() => {
+    if (!open) setNameTouched(false)
+  }, [open])
 
   const set = (key: string) => (value: string) => setConfig((current) => ({ ...current, [key]: value }))
 
@@ -118,7 +141,7 @@ export function HttpCredentialDialog({
       const response = await fetch('/api/http-credentials', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, authType, url: requestUrl, method: requestMethod, config }),
+        body: JSON.stringify({ name, authType, url, method: requestMethod, config }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
@@ -156,7 +179,30 @@ export function HttpCredentialDialog({
             This credential will be encrypted and restricted to <strong>{host || 'the request host'}</strong>.
           </div>
 
-          <SecretField id="credential-name" label="Credential name" value={name} onChange={setName} placeholder="Production API credential" />
+          {editableUrl && (
+            <div className="space-y-2">
+              <Label htmlFor="credential-url">API endpoint</Label>
+              <Input
+                id="credential-url"
+                value={urlDraft}
+                onChange={(event) => setUrlDraft(event.target.value)}
+                placeholder="https://api.example.com/v1/me"
+                className={inputClass}
+              />
+              <p className="text-xs text-muted-foreground">
+                We send one {requestMethod} request here to check the credential works. The credential is then locked to
+                that host — the agent may call any path on it, and nothing else.
+              </p>
+            </div>
+          )}
+
+          <SecretField
+            id="credential-name"
+            label="Credential name"
+            value={name}
+            onChange={(value) => { setNameTouched(true); setName(value) }}
+            placeholder="Production API credential"
+          />
 
           <div className="space-y-2">
             <Label>Authentication method</Label>

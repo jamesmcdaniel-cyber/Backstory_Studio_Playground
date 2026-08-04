@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { humanizeToolName } from '@/lib/flows/humanize-tool-name'
 import { cn } from '@/lib/utils'
 import { isCancellableRunStatus, isTerminalRunStatus } from '@/lib/agents/run-status'
 import {
@@ -171,11 +172,27 @@ function stepProvider(step: Pick<RunStep, 'node' | 'input' | 'output'>): Provide
   return { slug: PROVIDER_LOGO_SLUGS[provider] ?? provider, name: prettyName }
 }
 
+/**
+ * The chip's headline: the action in plain English. Drops the internal plane
+ * prefix ("nango:") — that's plumbing, not something a user asked for — and the
+ * provider word the tool name repeats, so `nango:gmail.gmail_send_email` reads
+ * as "Send email" beside the Gmail mark instead of spelling Gmail three times.
+ */
+function stepLabel(node: string): string {
+  const cleaned = node.replace(/^nango:/, '')
+  const dot = cleaned.indexOf('.')
+  if (dot === -1) return humanizeToolName(cleaned) || cleaned
+  // Multi-dot tool paths (google.calendar.create_event) read as words too.
+  const action = humanizeToolName(cleaned.slice(dot + 1).replace(/\./g, ' '), cleaned.slice(0, dot))
+  return action || cleaned
+}
+
 // One tool call: header always visible; inputs/outputs expand on click so a
 // successful call's data is inspectable, not hidden behind a bare status badge.
 // A call still in flight shows a live spinner ("Calling…") rather than a badge.
 function ToolCallCard({ step }: { step: RunStep }) {
   const [open, setOpen] = useState(false)
+  const provider = stepProvider(step)
   const duration = stepDuration(step)
   const failed = step.status === 'failed'
   const running = step.status === 'running'
@@ -193,15 +210,14 @@ function ToolCallCard({ step }: { step: RunStep }) {
         className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-gray-50 disabled:cursor-default disabled:hover:bg-transparent"
       >
         <span className="flex min-w-0 items-center gap-2">
-          {(() => {
-            const provider = stepProvider(step)
-            return provider ? (
-              <IntegrationLogo slug={provider.slug} name={provider.name} className="h-4 w-4 shrink-0 rounded-sm" />
-            ) : (
-              <Wrench className={cn('h-3.5 w-3.5 shrink-0', running ? 'text-blue-500' : 'text-gray-400')} />
-            )
-          })()}
-          <span className="truncate font-mono text-xs">{step.node}</span>
+          {provider ? (
+            <IntegrationLogo slug={provider.slug} name={provider.name} className="h-4 w-4 shrink-0 rounded-sm" />
+          ) : (
+            <Wrench className={cn('h-3.5 w-3.5 shrink-0', running ? 'text-blue-500' : 'text-gray-400')} />
+          )}
+          {/* Raw node id stays on the title for debugging, off the surface. */}
+          <span className="truncate text-xs font-medium" title={step.node}>{stepLabel(step.node)}</span>
+          {provider && <span className="shrink-0 text-xs text-gray-400">{provider.name}</span>}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {duration && <span className="text-xs text-gray-500">{duration}</span>}

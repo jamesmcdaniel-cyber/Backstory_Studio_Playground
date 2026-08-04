@@ -269,8 +269,15 @@ async function loadTools(organizationId: string, providers: string[], ownerUserI
   // discovery/binding lives in ./tool-planes, shared with the flow tool catalog
   // and the flow tool-step executor.
   const discovered: DiscoveredTool[] = []
+  // Planes that produced no usable client. Kept so the run can report WHICH
+  // attached tool is unavailable and why, instead of behaving as though the
+  // agent had nothing attached at all.
+  const unavailable: { name: string; reason: string }[] = []
   const pushGroup = (group: ToolPlaneGroup, options: { cap?: number; namePrefix?: string } = {}) => {
-    if (!group.client) return
+    if (!group.client) {
+      if (group.toolsError) unavailable.push({ name: group.name, reason: group.toolsError })
+      return
+    }
     const prefix = options.namePrefix ?? group.provider
     const tools = options.cap ? group.tools.slice(0, options.cap) : group.tools
     for (const tool of tools) {
@@ -314,7 +321,45 @@ async function loadTools(organizationId: string, providers: string[], ownerUserI
   // Select which tools to expose: over the cap, rank by relevance to the
   // objective (best-effort, embeddings-gated) with a reserved write budget;
   // otherwise the deterministic cap. Delivery tools aren't crowded out either way.
-  return selectDiscoveredTools(discovered, organizationId, query)
+  const selected = await selectDiscoveredTools(discovered, organizationId, query)
+  if (unavailable.length) {
+    apiLogger.warn('loadTools: attached integrations produced no usable tools', {
+      organizationId, unavailable: unavailable.map((entry) => entry.name), loaded: selected.tools.length,
+    })
+  }
+  return { ...selected, unavailable }
+}
+
+/**
+ * The tool inventory the model is told about.
+ *
+ * Without this the model only sees tool schemas and has to infer its own
+ * capabilities, which is how a run with a working Gmail connection still
+ * answered "I don't have any tools connected". Naming what loaded — and what
+ * was attached but did NOT load, with the reason — makes both the capable and
+ * the broken case reportable instead of guessed at.
+ */
+export function toolInventorySection(
+  tools: { name: string }[],
+  unavailable: { name: string; reason: string }[],
+): string {
+  const lines: string[] = ['TOOLS AVAILABLE THIS RUN']
+  if (tools.length) {
+    lines.push(
+      `You have ${tools.length} tool${tools.length === 1 ? '' : 's'} loaded and callable right now: ${tools.map((tool) => tool.name).join(', ')}.`,
+      'These are real and working — call them. Never tell the user you have no tools, or that a tool is unavailable, when it appears in this list; if a call fails, report the actual error it returned.',
+    )
+  } else {
+    lines.push('No tools loaded for this run. Answer from the context you were given and say plainly that you could not call any tool.')
+  }
+  if (unavailable.length) {
+    lines.push(
+      'Attached to this agent but NOT usable this run:',
+      ...unavailable.map((entry) => `- ${entry.name}: ${entry.reason}`),
+      'If the task needs one of these, say exactly which integration is unavailable and quote its reason. Do not describe it as "no tools connected".',
+    )
+  }
+  return lines.join('\n')
 }
 
 async function recordEvent(executionId: string, stepId: string | null, kind: string, payload?: unknown) {
@@ -602,7 +647,7 @@ export async function runAgentExecution(
     const providers = await resolveAgentConnectorKeys(agent.id, agentMetadata)
     const skillIds = Array.isArray(agentMetadata.skills) ? agentMetadata.skills.map(String) : []
     const toolQuery = [agent.objective, data.input].filter(Boolean).join('\n')
-    const { tools, bindings } = await loadTools(organizationId, providers, userId, toolQuery)
+    const { tools, bindings, unavailable } = await loadTools(organizationId, providers, userId, toolQuery)
     // Community skills are public-library rows; resolve any attached ids that
     // aren't built in and compose them the same way. Best-effort.
     // systemPrisma: public community skill library — cross-org by design, same
@@ -613,6 +658,11 @@ export async function runAgentExecution(
           .catch(() => [])
       : []
     let system = buildAgentSystemPrompt(agent.objective, skillIds, communitySkills)
+
+    // Name the tools this run actually holds (and any attached-but-broken
+    // integration) before anything else steers the model — the fix for runs
+    // claiming "no tools connected" while holding a working connection.
+    system += `\n\n${toolInventorySection(tools, unavailable)}`
 
     // Goal awareness + strategize mode (WS1.9). The goal steers every turn;
     // complex tasks are told to plan before acting.

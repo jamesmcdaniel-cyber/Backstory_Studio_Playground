@@ -154,7 +154,13 @@ const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) =
 export function fromNangoProviderKey(providerConfigKey: string): { key: string; label: string; slug: string } {
   const k = providerConfigKey.toLowerCase()
   if (k.includes('slack')) return { key: 'slack', label: 'Slack', slug: 'slack' }
-  if (k.includes('mail') || k.includes('gmail')) return { key: 'gmail', label: 'Gmail', slug: 'gmail' }
+  // Google's mail provider only. A bare 'mail' substring used to match here,
+  // which labelled every other mail provider (outlook-mail, fastmail…) as Gmail
+  // — a wrong chip, and a wrong connection once runtime resolution started
+  // matching on this canonical key.
+  if (k.includes('gmail') || k.includes('google-mail') || k.includes('google_mail')) {
+    return { key: 'gmail', label: 'Gmail', slug: 'gmail' }
+  }
   if (k.includes('salesforce')) return { key: 'salesforce', label: 'Salesforce', slug: 'salesforce' }
   if (k === 'atlassian') return { key: 'jira', label: 'Jira', slug: 'jira' }
   if (k === 'google-drive' || k === 'google_drive') return { key: 'google_drive', label: 'Google Drive', slug: 'googledrive' }

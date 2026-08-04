@@ -45,3 +45,12 @@ test('nango key derivation is stable and runtime-matchable', () => {
   assert.deepEqual(fromNangoProviderKey('google-drive'), { key: 'google_drive', label: 'Google Drive', slug: 'googledrive' })
   assert.deepEqual(fromNangoProviderKey('atlassian'), { key: 'jira', label: 'Jira', slug: 'jira' })
 })
+
+test('only Google mail derives to Gmail — runtime resolution matches on this key', () => {
+  assert.equal(fromNangoProviderKey('gmail-v2').key, 'gmail')
+  assert.equal(fromNangoProviderKey('google_mail').key, 'gmail')
+  // A bare 'mail' substring used to claim Gmail, which mislabelled every other
+  // mail provider's chip — and would now hand its connection to the Gmail tool.
+  assert.equal(fromNangoProviderKey('outlook-mail').key, 'outlook_mail')
+  assert.equal(fromNangoProviderKey('fastmail').key, 'fastmail')
+})

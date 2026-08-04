@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Loader2, Play, Trash2, X } from 'lucide-react'
+import { Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,11 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { MiniCalendar } from '@/components/ui/mini-calendar'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import {
+  HttpCredentialDialog,
+  HTTP_AUTH_OPTIONS,
+  type HttpCredentialSummary,
+} from '@/components/flows/http-credential-dialog'
 import { KnowledgePanel } from '@/app/agents/knowledge-panel'
 import { cn } from '@/lib/utils'
 
@@ -67,6 +72,153 @@ const MEMORY_KIND_LABEL: Record<string, string> = {
   user_answer: 'Answer',
   learning: 'Learning',
   suggestion: 'Suggestion',
+}
+
+/**
+ * API credentials for the HTTP API tool, using the same verify-and-save dialog
+ * the flow HTTP node uses.
+ *
+ * Before this, an agent calling an authenticated API had nowhere to put the key
+ * — the tool's own description told the model to read credentials out of the
+ * agent's instructions, which meant pasting secrets into plain-text prompt
+ * copy. Credentials saved here are encrypted, host-locked, verified once, and
+ * attached by the runtime automatically when the agent calls that host.
+ */
+function HttpCredentialsPanel({ active }: { active: boolean }) {
+  const [credentials, setCredentials] = useState<HttpCredentialSummary[] | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    fetch('/api/http-credentials', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      // A member without integration.manage can't list credentials; show the
+      // section as empty rather than erroring at them about permissions.
+      .then((data) => setCredentials(Array.isArray(data?.credentials) ? data.credentials : []))
+      .catch(() => setCredentials([]))
+  }, [])
+
+  useEffect(() => {
+    if (!active) return
+    load()
+  }, [active, load])
+
+  const remove = async (credential: HttpCredentialSummary) => {
+    setBusyId(credential.id)
+    try {
+      const response = await fetch(`/api/http-credentials?id=${encodeURIComponent(credential.id)}`, { method: 'DELETE' })
+      if (!response.ok) {
+        toast.error('Could not remove that credential.')
+        return
+      }
+      setCredentials((current) => (current ?? []).filter((row) => row.id !== credential.id))
+      toast.success(`Removed ${credential.name}.`)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const reverify = async (credential: HttpCredentialSummary) => {
+    setBusyId(credential.id)
+    try {
+      const response = await fetch('/api/http-credentials', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: credential.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        toast.error(data.error || 'The API rejected that credential.')
+        load()
+        return
+      }
+      setCredentials((current) => (current ?? []).map((row) => (row.id === credential.id ? data.credential : row)))
+      toast.success(`${credential.name} still works.`)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Label>API credentials</Label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Keys for the APIs this agent calls. Each one is encrypted, locked to a single host, and applied automatically
+            when the agent calls that host — so keys never go in the instructions.
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setDialogOpen(true)}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" /> Add
+        </Button>
+      </div>
+
+      {credentials === null ? (
+        <p className="mt-3 text-xs text-muted-foreground">Loading credentials…</p>
+      ) : credentials.length === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          No API credentials yet. Add one to let this agent call an authenticated API.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {credentials.map((credential) => (
+            <li key={credential.id} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2">
+              <Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium">{credential.name}</p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {credential.allowedHost} · {HTTP_AUTH_OPTIONS.find((o) => o.value === credential.authType)?.label || credential.authType}
+                </p>
+              </div>
+              <Badge
+                variant="outline"
+                className={cn(
+                  'shrink-0 text-[10px]',
+                  credential.status === 'verified' ? 'border-green-200 text-green-700' : 'border-amber-200 text-amber-700',
+                )}
+                title={credential.lastError || undefined}
+              >
+                {credential.status === 'verified' ? 'Verified' : 'Needs attention'}
+              </Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 px-2 text-xs"
+                disabled={busyId === credential.id}
+                onClick={() => reverify(credential)}
+              >
+                {busyId === credential.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Test'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                aria-label={`Remove ${credential.name}`}
+                disabled={busyId === credential.id}
+                onClick={() => remove(credential)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <HttpCredentialDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        requestUrl=""
+        requestMethod="GET"
+        editableUrl
+        onSaved={(credential) =>
+          setCredentials((current) => [...(current ?? []).filter((row) => row.id !== credential.id), credential])
+        }
+      />
+    </div>
+  )
 }
 
 const MEMORY_KIND_VARIANT: Record<string, 'info' | 'good' | 'warn'> = {
@@ -468,6 +620,10 @@ export function AgentConfigForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingAgent?.id, template?.id, active])
 
+  // Matches the connector registry's HTTP descriptor (`has('http')`), so the
+  // credentials panel appears for exactly the selections that load the tool.
+  const httpAttached = draft.integrations.some((key) => key.toLowerCase().includes('http'))
+
   const toggleIntegration = (label: string) => {
     const next = draft.integrations.includes(label)
       ? draft.integrations.filter((i) => i !== label)
@@ -752,6 +908,11 @@ export function AgentConfigForm({
               Click a tool to attach it to this agent — a green dot means it&apos;s connected and
               ready, but the agent only uses tools you attach here.
             </p>
+
+            {/* HTTP API is the one attachable tool that needs its own per-API
+                credentials, so its setup lives inline with the chip rather than
+                on a separate settings page. */}
+            {httpAttached && <HttpCredentialsPanel active={active} />}
             <div className="flex items-center gap-2">
               <Link
                 href="/integrations?tab=servers"

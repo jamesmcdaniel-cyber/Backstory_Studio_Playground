@@ -114,6 +114,30 @@ export async function cachedToolDiscovery<T>(organizationId: string, serverUrl: 
 
 const EMPTY_SCHEMA = { type: 'object', properties: {} }
 
+/**
+ * A plane the agent has ATTACHED but that produced no usable client — the
+ * credential is missing, the connection was revoked, or discovery failed.
+ *
+ * These used to be dropped with a bare `continue`, so an agent whose Gmail
+ * connection didn't resolve was indistinguishable from an agent with nothing
+ * attached: the run simply had no delivery tool and the model reported it had
+ * no tools connected. Emitting a client-less group with `toolsError` keeps the
+ * fact reportable — the agent runtime tells the model (and the user) which
+ * attached tool is unavailable and why, and the flow catalog already renders
+ * `toolsError` as "reconnect".
+ */
+function unavailableGroup(params: {
+  id: string
+  plane: FlowToolPlane
+  name: string
+  provider: string
+  isWrite: boolean
+  reason: string
+}): ToolPlaneGroup {
+  const { reason, ...base } = params
+  return { ...base, serverUrl: '', tools: [], toolsError: reason }
+}
+
 // ── People.ai Sales AI MCP (a.k.a. Backstory MCP) ─────────────────────────────
 
 /**
@@ -304,6 +328,20 @@ export async function loadNativePlaneGroups(
   const selected = (descriptor: ConnectorDescriptor) =>
     options.providers ? isSelected(descriptor, options.providers) : true
   const groups: ToolPlaneGroup[] = []
+  // Only the agent path (which passes `providers`) reports an attached plane as
+  // unavailable. The flow catalog gates on availability alone, so flagging every
+  // unconfigured builtin there would be noise, not a finding.
+  const reportUnavailable = (descriptor: ConnectorDescriptor, reason: string) => {
+    if (!options.providers) return
+    groups.push(unavailableGroup({
+      id: formatFlowToolConnectionId('native', descriptor.providerId),
+      plane: 'native',
+      name: descriptor.label,
+      provider: descriptor.providerId,
+      isWrite: descriptor.isWrite,
+      reason,
+    }))
+  }
   const group = (
     descriptor: ConnectorDescriptor,
     serverUrl: string,
@@ -327,6 +365,8 @@ export async function loadNativePlaneGroups(
       const granolaKey = await getGranolaApiKey(organizationId)
       if (granolaKey) {
         groups.push(group(granolaConn, 'https://public-api.granola.ai/v1', new GranolaToolClient(granolaKey.apiKey), granolaTools()))
+      } else {
+        reportUnavailable(granolaConn, 'No Granola API key is configured for this workspace — add one in Integrations.')
       }
     } catch (error) {
       apiLogger.warn('loadTools: Granola tool setup failed, skipping provider', {
@@ -334,6 +374,7 @@ export async function loadNativePlaneGroups(
         organizationId,
         error: error instanceof Error ? error.message : String(error),
       })
+      reportUnavailable(granolaConn, 'Granola could not be set up for this run — reconnect it in Integrations.')
     }
   }
 
@@ -345,6 +386,8 @@ export async function loadNativePlaneGroups(
       const slackToken = await getSlackToken(organizationId)
       if (slackToken) {
         groups.push(group(slackConn, 'https://slack.com/api', new SlackToolClient(slackToken.value), slackTools()))
+      } else {
+        reportUnavailable(slackConn, 'No Slack bot token is configured for this workspace — connect Slack in Integrations.')
       }
     } catch (error) {
       apiLogger.warn('loadTools: Slack tool setup failed, skipping provider', {
@@ -352,13 +395,16 @@ export async function loadNativePlaneGroups(
         organizationId,
         error: error instanceof Error ? error.message : String(error),
       })
+      reportUnavailable(slackConn, 'Slack could not be set up for this run — reconnect it in Integrations.')
     }
   }
 
-  // HTTP API — always available (no credentials); SSRF-guarded in the client.
+  // HTTP API — always available; SSRF-guarded in the client. The org is passed
+  // so a saved, host-locked credential for the called API is attached
+  // automatically instead of living in the agent's instructions.
   const httpConn = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === 'http')!
   if (selected(httpConn)) {
-    groups.push(group(httpConn, '', new HttpToolClient(), httpTools()))
+    groups.push(group(httpConn, '', new HttpToolClient(organizationId), httpTools()))
   }
 
   // Email via Resend REST API — gated on a per-org key, so an agent can only
@@ -369,6 +415,8 @@ export async function loadNativePlaneGroups(
       const emailKey = await getEmailCredential(organizationId)
       if (emailKey) {
         groups.push(group(emailConn, 'https://api.resend.com', new EmailToolClient(emailKey.value), emailTools()))
+      } else {
+        reportUnavailable(emailConn, 'No email sending key is configured for this workspace — connect Gmail, or add an email key in Integrations.')
       }
     } catch (error) {
       apiLogger.warn('loadTools: Email tool setup failed, skipping provider', {
@@ -376,6 +424,7 @@ export async function loadNativePlaneGroups(
         organizationId,
         error: error instanceof Error ? error.message : String(error),
       })
+      reportUnavailable(emailConn, 'Email could not be set up for this run — reconnect it in Integrations.')
     }
   }
 
@@ -403,7 +452,22 @@ export async function loadNangoPlaneGroups(
     if (options.providers && !isSelected(connector, options.providers)) continue
     try {
       const connection = await resolveDeliveryConnection(organizationId, spec.capability, ownerUserId)
-      if (!connection) continue
+      if (!connection) {
+        // Attached but not resolvable. Reported rather than skipped so the run
+        // can say "Gmail is attached but no connected account resolved" instead
+        // of behaving as though nothing was ever attached.
+        if (options.providers) {
+          groups.push(unavailableGroup({
+            id: formatFlowToolConnectionId('nango', spec.capability),
+            plane: 'nango',
+            name: connector.label,
+            provider: connector.providerId,
+            isWrite: connector.isWrite,
+            reason: `No connected ${connector.label} account resolved for this workspace — reconnect it in Integrations.`,
+          }))
+        }
+        continue
+      }
       const deliveryClient: McpToolClient = {
         executeTool: (_serverUrl, _toolName, args) => spec.run(connection, args),
       }
@@ -431,6 +495,9 @@ export async function loadNangoPlaneGroups(
   // gate, writes (create/update/comment) keep it. Connections resolve once per
   // provider. Selection matches `nango:<provider>` or the bare provider key.
   const connByProvider = new Map<string, DeliveryConnection | null>()
+  // One unavailable report per PROVIDER, not per tool — a provider contributes
+  // many tools and repeating the same reason for each would bury the signal.
+  const reportedUnavailable = new Set<string>()
   for (const tool of NANGO_PROVIDER_TOOLS) {
     if (options.providers && !options.providers.some((p) => p === `nango:${tool.provider}` || p.toLowerCase() === tool.provider)) continue
     try {
@@ -438,7 +505,20 @@ export async function loadNangoPlaneGroups(
         connByProvider.set(tool.provider, await resolveNangoConnection(organizationId, PROVIDER_CONFIG_KEYS[tool.provider] ?? [tool.provider], ownerUserId))
       }
       const connection = connByProvider.get(tool.provider)
-      if (!connection) continue
+      if (!connection) {
+        if (options.providers && !reportedUnavailable.has(tool.provider)) {
+          reportedUnavailable.add(tool.provider)
+          groups.push(unavailableGroup({
+            id: formatFlowToolConnectionId('nango', tool.provider),
+            plane: 'nango',
+            name: providerLabel(tool.provider),
+            provider: `nango:${tool.provider}`,
+            isWrite: tool.isWrite,
+            reason: `No connected ${providerLabel(tool.provider)} account resolved for this workspace — reconnect it in Integrations.`,
+          }))
+        }
+        continue
+      }
       groups.push({
         id: formatFlowToolConnectionId('nango', tool.name),
         plane: 'nango',
@@ -542,7 +622,7 @@ export async function resolveFlowToolExecutor(params: {
         if (!key) throw new Error(`${descriptor.label} is not configured for this workspace.`)
         client = new EmailToolClient(key.value)
       } else {
-        client = new HttpToolClient()
+        client = new HttpToolClient(organizationId)
       }
       return { provider: ref, isWrite: descriptor.isWrite, execute: (name, args) => client.executeTool('', name, args) }
     }

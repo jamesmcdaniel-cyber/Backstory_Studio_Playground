@@ -12,6 +12,8 @@
 
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
+import { apiLogger } from '@/lib/logger'
+import { fromNangoProviderKey } from '@/lib/connectors/registry'
 import { getNangoClient, nangoConfigured } from './client'
 
 export interface DeliveryConnection {
@@ -100,11 +102,35 @@ export async function resolveNangoConnection(
   userId?: string | null,
 ): Promise<DeliveryConnection | null> {
   const connections = await prisma.nangoConnection.findMany({
-    where: { organizationId, providerConfigKey: { in: [...providerConfigKeys] }, status: 'connected' },
+    where: { organizationId, status: 'connected' },
   })
   if (connections.length === 0) return null
-  const own = userId ? connections.find((connection) => connection.userId === userId) : undefined
-  const chosen = own ?? connections.find((connection) => !connection.userId) ?? connections[0]
+
+  const wanted = new Set(providerConfigKeys.map((key) => key.toLowerCase()))
+  let candidates = connections.filter((connection) => wanted.has(connection.providerConfigKey.toLowerCase()))
+
+  // Canonical fallback. The integration picker calls a connection "connected"
+  // after normalizing its providerConfigKey through fromNangoProviderKey, which
+  // tolerates suffixed/variant Nango integration ids ('slack-prod', 'gmail-v2',
+  // 'salesforce-prod'). Resolution used an exact allowlist, so any org whose
+  // Nango integration id wasn't spelled exactly like ours got a green chip in
+  // the config panel and ZERO tools at run time — the agent then reported it had
+  // nothing connected. Both sides now agree on what a provider key means.
+  if (candidates.length === 0) {
+    const canonical = new Set(providerConfigKeys.map((key) => fromNangoProviderKey(key).key))
+    candidates = connections.filter((connection) => canonical.has(fromNangoProviderKey(connection.providerConfigKey).key))
+    if (candidates.length > 0) {
+      apiLogger.info('nango: connection resolved by canonical provider key, not an exact match', {
+        organizationId,
+        expected: [...wanted],
+        matched: candidates.map((connection) => connection.providerConfigKey),
+      })
+    }
+  }
+  if (candidates.length === 0) return null
+
+  const own = userId ? candidates.find((connection) => connection.userId === userId) : undefined
+  const chosen = own ?? candidates.find((connection) => !connection.userId) ?? candidates[0]
   return {
     connectionId: chosen.connectionId,
     providerConfigKey: chosen.providerConfigKey,

@@ -5,6 +5,8 @@
  * (`items[n].events` + `items[n].steps`); no React or fetch in here.
  */
 
+import { humanizeToolName } from '@/lib/flows/humanize-tool-name'
+
 export type ProcessEvent = { id: string; kind: string; payload?: any; ts: string }
 
 /** One tool-call step of an execution (a WorkflowStep row on the wire). */
@@ -101,14 +103,23 @@ function titleCase(value: string): string {
   return value.replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-/** "nango:slack.send_message" → "send message in Slack"; "ask_user" → null. */
+function lowerFirst(value: string): string {
+  return value.charAt(0).toLowerCase() + value.slice(1)
+}
+
+/**
+ * "nango:slack.send_message" → "send message in Slack". The internal plane
+ * prefix is dropped, and so is the provider word a tool name repeats
+ * ("gmail.gmail_send_email"), so the phrase names the provider exactly once.
+ */
 function toolPhrase(node: string): string {
   const cleaned = node.replace(/^nango:/, '')
   const dot = cleaned.indexOf('.')
-  if (dot === -1) return cleaned.replace(/[_-]+/g, ' ')
-  const provider = titleCase(cleaned.slice(0, dot).replace(/[_-]+/g, ' '))
-  // Multi-dot tool paths (google.calendar.create_event) read as spaces too.
-  const tool = cleaned.slice(dot + 1).replace(/[._-]+/g, ' ')
+  if (dot === -1) return lowerFirst(humanizeToolName(cleaned) || cleaned)
+  const providerKey = cleaned.slice(0, dot)
+  const provider = titleCase(providerKey.replace(/[_-]+/g, ' '))
+  // Multi-dot tool paths (google.calendar.create_event) read as words too.
+  const tool = lowerFirst(humanizeToolName(cleaned.slice(dot + 1).replace(/\./g, ' '), providerKey) || cleaned)
   return provider ? `${tool} in ${provider}` : tool
 }
 

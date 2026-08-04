@@ -17,6 +17,35 @@ export function electPersister(candidates: PersisterCandidate[], ownerUserId?: s
 }
 
 /**
+ * Should THIS client write the graph to Postgres?
+ *
+ * `electPersister` answers "who, among the peers presence reports". That is the
+ * right question during a jam and the wrong one when presence reports nothing:
+ * the roster is fed exclusively by realtime presence, it starts empty, and it
+ * STAYS empty when the jam channel can't subscribe (it fails closed by design —
+ * there is no public-channel fallback). An empty roster elects nobody, so
+ * autosave was gated off entirely and a solo editor's canvas edits — a dragged
+ * node most visibly, since a drag has no dirty-state prompt — were discarded on
+ * navigation.
+ *
+ * So: if presence reports NO peers, we are the only writer there can be, and we
+ * persist our own work. The moment presence reports anyone, it also reports us,
+ * and the jam election takes over unchanged — which keeps the single-writer
+ * guarantee that stops peers racing the optimistic lock.
+ */
+export function shouldPersistGraph(params: {
+  roster: PersisterCandidate[]
+  selfClientId: string
+  selfUserId: string
+  canEdit: boolean
+  ownerId?: string | null
+}): boolean {
+  if (!params.canEdit) return false
+  if (!params.roster.length) return true
+  return electPersister(params.roster, params.ownerId) === params.selfClientId
+}
+
+/**
  * When a newcomer joins, exactly ONE existing client answers with the full
  * live graph (lowest clientId among those already present) — instead of every
  * peer blasting a bootstrap at once.

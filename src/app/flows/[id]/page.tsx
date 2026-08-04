@@ -9,7 +9,7 @@ import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
 import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
-import { electPersister, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
+import { shouldPersistGraph, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
 import { toContentSpace } from '@/lib/flows/cursor-space'
 import { joinErrorMessage } from '@/lib/flows/join-error'
 import { describeParticipantView } from '@/lib/flows/cursor-view'
@@ -556,10 +556,18 @@ function FlowBuilder() {
   // first, else lowest editor clientId — every peer computes the same answer
   // from presence). One writer → zero optimistic-lock contention during a
   // jam; the election self-heals when the persister leaves. Solo editing gets
-  // plain autosave (the sole editor elects itself).
+  // plain autosave — and, crucially, so does an editor whose realtime channel
+  // never came up: the roster is presence-fed and empty in that case, which
+  // used to elect nobody and silently disable autosave altogether.
   const isPersister = useMemo(
-    () => electPersister(roster.map((p) => ({ clientId: p.clientId, userId: p.userId, canEdit: p.canEdit })), ownerId) === selfClientId,
-    [roster, ownerId, selfClientId],
+    () => shouldPersistGraph({
+      roster: roster.map((p) => ({ clientId: p.clientId, userId: p.userId, canEdit: p.canEdit })),
+      selfClientId,
+      selfUserId: self?.userId ?? '',
+      canEdit,
+      ownerId,
+    }),
+    [roster, ownerId, selfClientId, self?.userId, canEdit],
   )
   const lastJamAuditAt = useRef(0)
   const autosave = useCallback(async () => {

@@ -110,28 +110,41 @@ The one-shot `generateStructured` call and its proposal schema.
 `buildAssistantContext` survives as the run's seed context rather than its only
 grounding.
 
-## Rollout: EXECUTION_MODE
+## Rollout: EXECUTION_MODE — done 2026-08-04
 
-Production currently runs `EXECUTION_MODE=inline` on Vercel (confirmed via
-`vercel env ls production`), bounded by the ~5 minute serverless ceiling. A
-wide fan-out across transcripts, email and Salesforce can exceed that.
+Production ran `EXECUTION_MODE=inline` on Vercel, bounded by the ~5 minute
+serverless ceiling. A wide fan-out across transcripts, email and Salesforce can
+exceed that, so `queue` is a prerequisite for this feature to be reliable, not
+merely a nice-to-have.
 
-Flipping to `queue` removes the ceiling and is a prerequisite for this feature
-to be reliable, not merely a nice-to-have.
-
-`render.yaml` is explicit about the order, and about the failure mode if it is
-not followed:
+Flipped after confirming `backstory-worker` on Render was green and consuming
+on the same Upstash Redis that Vercel enqueues to. Order matters, per
+`render.yaml`:
 
 > Rollout order: deploy this worker → confirm its logs show both queues
 > consuming → THEN flip Vercel's `EXECUTION_MODE` to `queue`. Flipping first
 > leaves runs stuck in `pending` with nothing draining them.
 
-So the flip is gated on confirming `backstory-worker` on Render is green, and
-that its `REDIS_URL` is the same Upstash `rediss://…:6379` URL Vercel enqueues
-to. A different Redis means Vercel enqueues to one queue while the worker
-listens to another, and every run hangs in `pending`.
+Final state:
 
-Rollback is `EXECUTION_MODE=inline` plus a redeploy.
+| Target | Value | Why |
+| --- | --- | --- |
+| Production | `queue` | Runs execute on the worker, no serverless ceiling |
+| Preview | `inline` | **Must be set explicitly — see below** |
+
+**Preview must never be left unset.** `resolveExecutionMode()` falls back to
+`NODE_ENV === 'production' ? 'queue' : 'inline'`, and Vercel Preview builds also
+run with `NODE_ENV=production`. An unset Preview therefore resolves to `queue`,
+so preview deployments would enqueue onto the shared Upstash Redis and the
+production worker would execute those jobs against the **production database**.
+The single env record originally covered Production and Preview together, so
+removing it silently exposed this; both targets are now set explicitly.
+
+Rollback is setting Production back to `inline` plus a redeploy.
+
+Remaining verification: trigger one agent run in production and confirm it
+leaves `pending` — the only end-to-end proof the worker is draining Vercel's
+queue rather than a different one.
 
 ## Testing
 

@@ -10,6 +10,7 @@
  * process. The proxy is injectable for tests.
  */
 
+import { randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { getNangoClient, nangoConfigured } from './client'
 
@@ -128,15 +129,99 @@ export async function slackPostMessage(
   return response.data
 }
 
+/**
+ * Agents compose report deliverables as HTML (see features/agents/report-format).
+ * Same sniff the Resend tool uses, so both send paths agree on what "is HTML".
+ */
+const LOOKS_HTML = /<[a-z][\s\S]*>/i
+
+/** Headers are single-line: a CR/LF in to/subject would inject arbitrary headers. */
+function headerValue(value: string): string {
+  return value.replace(/[\r\n]+/g, ' ').trim()
+}
+
+/**
+ * RFC 2047 encoded-word. Report subjects carry em-dashes and emoji, which are
+ * not legal raw in a header.
+ */
+function encodeHeader(value: string): string {
+  const clean = headerValue(value)
+  return /^[\x20-\x7E]*$/.test(clean)
+    ? clean
+    : `=?UTF-8?B?${Buffer.from(clean, 'utf8').toString('base64')}?=`
+}
+
+/**
+ * Base64 body, folded at 76 chars. Report markup runs thousands of characters
+ * per line; unencoded that breaks the RFC 5322 998-octet line limit and the
+ * message gets mangled in transit (dropped markup, breaks mid-token).
+ */
+function encodeBody(value: string): string {
+  return (Buffer.from(value, 'utf8').toString('base64').match(/.{1,76}/g) ?? ['']).join('\r\n')
+}
+
+/** Readable fallback for clients that refuse HTML, mirroring the Resend path. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|h[1-6]|li)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
+ * RFC 5322 message for the Gmail send API. An HTML body goes out as
+ * multipart/alternative (plain text first, HTML last — receivers render the
+ * last part they understand); a plain body stays a single text/plain part.
+ */
+export function buildGmailMimeMessage(args: { to: string; subject: string; body: string }): string {
+  const headers = [`To: ${headerValue(args.to)}`, `Subject: ${encodeHeader(args.subject)}`, 'MIME-Version: 1.0']
+
+  if (!LOOKS_HTML.test(args.body)) {
+    return [
+      ...headers,
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: base64',
+      '',
+      encodeBody(args.body),
+    ].join('\r\n')
+  }
+
+  const boundary = `bs_${randomBytes(16).toString('hex')}`
+  return [
+    ...headers,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    encodeBody(htmlToText(args.body)),
+    `--${boundary}`,
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    encodeBody(args.body),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n')
+}
+
 export async function gmailSendEmail(
   connection: DeliveryConnection,
   args: { to: string; subject: string; body: string },
   proxy: NangoProxy = defaultProxy(),
 ): Promise<unknown> {
-  // RFC 2822 message, base64url-encoded, per the Gmail send API.
-  const raw = Buffer.from(
-    [`To: ${args.to}`, `Subject: ${args.subject}`, 'Content-Type: text/plain; charset=UTF-8', '', args.body].join('\r\n'),
-  ).toString('base64url')
+  const raw = Buffer.from(buildGmailMimeMessage(args), 'utf8').toString('base64url')
   const response = await proxy({
     method: 'POST',
     endpoint: '/gmail/v1/users/me/messages/send',

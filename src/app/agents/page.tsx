@@ -638,6 +638,14 @@ function AgentHQ() {
             hasFailedRun={hasFailedRun}
             runOutput={runOutput}
             onAgentUpdated={() => load(true).catch(() => undefined)}
+            onOpenAgent={(agentId) => {
+              // Refresh first: an agent the assistant just created may not be
+              // in the polled list yet when the user clicks through to it.
+              void load(true).catch(() => undefined)
+              setSelectedAgentId(agentId)
+              setConfigureOpen(false)
+              setFocusRunId(null)
+            }}
           />
         </section>
       </div>

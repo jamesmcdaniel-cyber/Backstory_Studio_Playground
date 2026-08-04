@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import type { AuthContext } from '@/lib/server/auth'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { serializeAgent } from '@/lib/agents/serialize'
@@ -65,6 +66,66 @@ const agentSchema = z.object({
   schedule: scheduleSchema.default({ type: 'manual', timezone: 'UTC', isActive: false }),
 })
 
+// Creating an agent FROM an existing one: `cloneFrom` names the source and
+// every other field is optional, overriding what would otherwise be inherited.
+// This is what the assistant's "create as a new agent" proposal posts — the new
+// agent keeps the source's tools, so only the name/description/instructions
+// differ.
+const cloneSchema = agentSchema.partial().extend({ cloneFrom: z.string().min(1) })
+
+/**
+ * Resolve a `cloneFrom` create into a full agent payload: the source agent's
+ * configuration is the base, the body overrides it.
+ *
+ * Inherited: model, connected tools, skills, folder, visibility, icon,
+ * priority, and the delegation/approval settings — everything that makes the
+ * source able to do its job.
+ *
+ * Deliberately NOT inherited: the schedule (a spun-off agent starts manual so
+ * it can never silently double the source's cadence) and the goal (the new
+ * agent serves a different outcome). Either can still be set by the body.
+ */
+async function resolveClonedAgent(
+  body: z.infer<typeof cloneSchema>,
+  auth: AuthContext,
+): Promise<z.infer<typeof agentSchema>> {
+  const source = await prisma.agentTask.findFirst({
+    where: {
+      id: body.cloneFrom,
+      organizationId: auth.organizationId,
+      status: { not: 'DELETED' },
+      ...agentVisibilityScope(auth.dbUser.id),
+    },
+  })
+  if (!source) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
+  const base = serializeAgent(source)
+  const { cloneFrom, ...overrides } = body
+  void cloneFrom
+  const inherited = {
+    title: `${base.title} (copy)`,
+    description: base.description,
+    instructions: base.instructions,
+    model: base.model,
+    priority: base.priority,
+    integrations: base.integrations,
+    skills: base.skills,
+    folder: base.folder,
+    visibility: base.visibility === 'private' ? 'private' : 'shared',
+    icon: base.icon,
+    allowSubagents: base.allowSubagents,
+    subagentIds: base.subagentIds,
+    allowFlows: base.allowFlows,
+    flowIds: base.flowIds,
+    autoAnswerFromMemory: base.autoAnswerFromMemory,
+    alwaysStrategize: base.alwaysStrategize,
+    requireApproval: base.requireApproval,
+    schedule: { type: 'manual' as const, timezone: 'UTC', isActive: false },
+  }
+  // Only fields the caller actually sent override the inherited configuration.
+  const provided = Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined))
+  return agentSchema.parse({ ...inherited, ...provided })
+}
+
 // serializeAgent lives in @/lib/agents/serialize so /api/snapshot returns the
 // exact same agent shape as this route.
 
@@ -84,7 +145,9 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
 }, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const data = agentSchema.parse(await request.json())
+  const body = await request.json()
+  const cloning = Boolean(body) && typeof body === 'object' && typeof (body as { cloneFrom?: unknown }).cloneFrom === 'string'
+  const data = cloning ? await resolveClonedAgent(cloneSchema.parse(body), auth) : agentSchema.parse(body)
   const agent = await prisma.agentTask.create({
     data: {
       type: 'agent',

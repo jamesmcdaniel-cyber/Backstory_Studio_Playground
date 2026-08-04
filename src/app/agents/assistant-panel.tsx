@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Check, Clock, Loader2, MessageSquare, Plus, Send } from 'lucide-react'
+import { ArrowRight, Check, Clock, Loader2, MessageSquare, Plus, Send, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,6 +17,12 @@ import type { Agent } from '@/lib/types'
  * (not per-execution): the server grounds answers in the agent's config and
  * recent runs, and change requests come back as proposals the user applies via
  * the existing agent update API after an explicit confirm.
+ *
+ * A proposal targets one of two things, and the card says which: `update`
+ * changes the agent in view, `new` stands up a separate agent from the proposed
+ * instructions that inherits this agent's tools, skills and model. Both actions
+ * stay available on every proposal, so a misjudged target is one click to fix
+ * rather than a re-prompt.
  */
 
 type ProposalSchedule = {
@@ -27,8 +33,12 @@ type ProposalSchedule = {
   isActive: boolean
 }
 
+/** Which agent an applied proposal lands on. */
+type ProposalTarget = 'update' | 'new'
+
 type AssistantProposal = {
   summary: string
+  target?: ProposalTarget
   title?: string
   description?: string
   instructions?: string
@@ -45,6 +55,8 @@ type ChatMessage = {
   createdAt: string
   proposal?: AssistantProposal | null
   appliedAt?: string | null
+  /** Set when applying this proposal created a separate agent. */
+  createdAgentId?: string | null
 }
 
 type SessionSummary = {
@@ -101,27 +113,42 @@ function AgentOutput({ text }: { text: string }) {
 
 function ProposalCard({
   message,
+  agentTitle,
   applying,
   onApply,
+  onOpenAgent,
 }: {
   message: ChatMessage
+  agentTitle: string
   applying: boolean
-  onApply: () => void
+  onApply: (target: ProposalTarget) => void
+  onOpenAgent?: (agentId: string) => void
 }) {
   const proposal = message.proposal
   if (!proposal) return null
   const rows = proposalRows(proposal)
+  const isNew = proposal.target === 'new'
+  // A separate agent needs instructions to run on; without them only the
+  // update action makes sense.
+  const canCreateNew = Boolean(proposal.instructions?.trim())
+  const createdAgentId = message.createdAgentId
   return (
     <div className="mt-2 rounded-lg border bg-white p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="eyebrow">Proposed changes</p>
+        <p className="eyebrow">{isNew ? 'New agent' : 'Proposed changes'}</p>
         {message.appliedAt && (
           <Badge variant="outline" className="gap-1 border-green-200 text-green-700">
-            <Check className="h-3 w-3" /> Applied
+            <Check className="h-3 w-3" /> {createdAgentId ? 'Created' : 'Applied'}
           </Badge>
         )}
       </div>
       <p className="text-sm text-gray-700">{proposal.summary}</p>
+      {isNew && !message.appliedAt && (
+        <p className="mt-1 text-xs text-gray-500">
+          This creates a separate agent. It keeps the same connected tools, skills and model as {agentTitle}, so only the
+          name, description and instructions differ.
+        </p>
+      )}
       {rows.length > 0 && (
         <dl className="mt-2 space-y-2 border-t pt-2">
           {rows.map((row) => (
@@ -132,11 +159,40 @@ function ProposalCard({
           ))}
         </dl>
       )}
+      {/* Both destinations stay one click away until the user picks one, so a
+          proposal aimed at the wrong agent never has to be re-prompted. */}
       {!message.appliedAt && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          {isNew ? (
+            <>
+              <Button variant="ghost" size="sm" disabled={applying} onClick={() => onApply('update')}>
+                Change this agent instead
+              </Button>
+              <Button size="sm" disabled={applying} onClick={() => onApply('new')}>
+                {applying ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" />}
+                Create new agent
+              </Button>
+            </>
+          ) : (
+            <>
+              {canCreateNew && (
+                <Button variant="ghost" size="sm" disabled={applying} onClick={() => onApply('new')}>
+                  Save as a new agent
+                </Button>
+              )}
+              <Button size="sm" disabled={applying} onClick={() => onApply('update')}>
+                {applying ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Check className="mr-1.5 h-3.5 w-3.5" />}
+                Apply changes
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      {createdAgentId && onOpenAgent && (
         <div className="mt-3 flex justify-end">
-          <Button size="sm" disabled={applying} onClick={onApply}>
-            {applying ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Check className="mr-1.5 h-3.5 w-3.5" />}
-            Apply changes
+          <Button variant="outline" size="sm" className="max-w-full" onClick={() => onOpenAgent(createdAgentId)}>
+            <span className="truncate">Open {proposal.title || 'the new agent'}</span>
+            <ArrowRight className="ml-1.5 h-3.5 w-3.5 shrink-0" />
           </Button>
         </div>
       )}
@@ -149,12 +205,15 @@ export function AssistantPanel({
   hasFailedRun,
   runOutput,
   onAgentUpdated,
+  onOpenAgent,
 }: {
   agent: Agent | null
   hasFailedRun?: boolean
   /** The run expanded on the left, whose output renders at the top here. */
   runOutput?: { title: string; at: string; status: string; text: string } | null
   onAgentUpdated: () => void
+  /** Select another agent — used to jump to one a proposal just created. */
+  onOpenAgent?: (agentId: string) => void
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -284,34 +343,41 @@ export function AssistantPanel({
     }
   }
 
-  const applyProposal = async (message: ChatMessage) => {
+  const applyProposal = async (message: ChatMessage, target: ProposalTarget) => {
     if (!agent || !message.proposal || applyingId) return
     setApplyingId(message.id)
     try {
-      // Strip the display-only summary; everything else maps onto the
-      // existing PUT /api/agents payload.
-      const { summary, ...changes } = message.proposal
+      // Strip the display-only fields; everything else maps onto the existing
+      // /api/agents payloads. `new` posts a create keyed to this agent, so the
+      // new agent inherits its tools, skills and model and overrides only what
+      // the proposal names; `update` puts the changes onto this agent.
+      const { summary, target: proposed, ...changes } = message.proposal
       void summary
+      void proposed
+      const creating = target === 'new'
       const response = await fetch('/api/agents', {
-        method: 'PUT',
+        method: creating ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: agent.id, ...changes }),
+        body: JSON.stringify(creating ? { cloneFrom: agent.id, ...changes } : { id: agent.id, ...changes }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
-        toast.error(data.error || 'Could not apply the changes.')
+        toast.error(data.error || (creating ? 'Could not create the agent.' : 'Could not apply the changes.'))
         return
       }
+      const createdAgentId = creating && typeof data.agent?.id === 'string' ? (data.agent.id as string) : null
       // Best-effort: persist the applied marker on the proposal message.
       fetch(`/api/agents/${agent.id}/chat`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId: message.id }),
+        body: JSON.stringify({ messageId: message.id, ...(createdAgentId ? { createdAgentId } : {}) }),
       }).catch(() => undefined)
       setMessages((previous) => previous.map((candidate) =>
-        candidate.id === message.id ? { ...candidate, appliedAt: new Date().toISOString() } : candidate,
+        candidate.id === message.id
+          ? { ...candidate, appliedAt: new Date().toISOString(), createdAgentId }
+          : candidate,
       ))
-      toast.success('Agent configuration updated.')
+      toast.success(createdAgentId ? `Created ${data.agent?.title || 'the new agent'}.` : 'Agent configuration updated.')
       notifyAgentsChanged()
       onAgentUpdated()
     } finally {
@@ -471,8 +537,10 @@ export function AssistantPanel({
                 {message.role !== 'user' && message.proposal && (
                   <ProposalCard
                     message={message}
+                    agentTitle={agent.title}
                     applying={applyingId === message.id}
-                    onApply={() => applyProposal(message)}
+                    onApply={(target) => applyProposal(message, target)}
+                    onOpenAgent={onOpenAgent}
                   />
                 )}
               </div>

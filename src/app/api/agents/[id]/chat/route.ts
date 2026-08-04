@@ -6,7 +6,15 @@ import { qwenConfigured } from '@/lib/llm/qwen'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { buildAssistantContext } from '@/features/agents/assistant-context'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
-import { agentIdFromRequest, requireAgent, deriveTitle, LEGACY_SESSION_ID } from './shared'
+import {
+  agentIdFromRequest,
+  requireAgent,
+  deriveTitle,
+  normalizeProposal,
+  proposalSchema,
+  LEGACY_SESSION_ID,
+  type NormalizedProposal,
+} from './shared'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -23,6 +31,7 @@ const SYSTEM_PROMPT = [
   "You are the Backstory assistant for a single agent. You answer questions about the agent's recent runs, help debug failures, and turn natural-language requests into configuration changes.",
   'Ground every statement in the provided context (agent config, recent runs, tool calls, errors). If the context does not contain the answer, say so plainly.',
   'When the user asks to change the agent — its instructions/objective, schedule, skills, connected tools/integrations, model, name, or description — fill in the proposal object with only the fields that should change and set every other proposal field to null. The instructions field must contain the complete updated instructions text, not a diff. Never claim a change was applied; the user reviews and confirms it in the interface.',
+  'Set proposal.target to "update" when the request changes how THIS agent does the job it already has. Set it to "new" when the request describes a DIFFERENT job — a task, lookup, or report this agent was not built for, or when the user asks for instructions for an agent to run. A "new" proposal must include title, description, and complete instructions, and must leave model, integrations and skills null: the new agent inherits this agent\'s tools, skills and model automatically.',
   'When the message is not a change request, set proposal to null.',
   'When debugging, use the latest failed run: quote the relevant error and the tool calls around it.',
   'When asked what Backstory MCP does or what can be done with it, enumerate every tool in context.backstoryTools by exact name and explain what each one does. Do not group tools in a way that omits individual names. If the catalog is empty, say it could not be loaded rather than inventing a list.',
@@ -43,6 +52,11 @@ const RESPONSE_SCHEMA = {
       description: 'A concrete configuration change for the user to confirm, or null when the message is not a change request.',
       properties: {
         summary: { type: 'string', description: 'One sentence describing the change.' },
+        target: {
+          type: 'string',
+          enum: ['update', 'new'],
+          description: '"update" changes this agent. "new" creates a separate agent from these instructions, inheriting this agent\'s tools, skills and model.',
+        },
         title: { type: ['string', 'null'] },
         description: { type: ['string', 'null'] },
         instructions: { type: ['string', 'null'], description: 'Complete replacement instructions, not a diff.' },
@@ -62,55 +76,11 @@ const RESPONSE_SCHEMA = {
           required: ['type', 'time', 'cron', 'timezone', 'isActive'],
         },
       },
-      required: ['summary', 'title', 'description', 'instructions', 'model', 'integrations', 'skills', 'schedule'],
+      required: ['summary', 'target', 'title', 'description', 'instructions', 'model', 'integrations', 'skills', 'schedule'],
     },
   },
   required: ['reply', 'proposal'],
 } as const
-
-const proposalSchema = z
-  .object({
-    summary: z.string().default(''),
-    title: z.string().nullish(),
-    description: z.string().nullish(),
-    instructions: z.string().nullish(),
-    model: z.string().nullish(),
-    integrations: z.array(z.string()).nullish(),
-    skills: z.array(z.string()).nullish(),
-    schedule: z
-      .object({
-        type: z.enum(['manual', 'hourly', 'daily', 'weekly', 'cron']),
-        time: z.string().default(''),
-        cron: z.string().default(''),
-        timezone: z.string().default('UTC'),
-        isActive: z.boolean().default(false),
-      })
-      .nullish(),
-  })
-  .nullish()
-
-/** Drop null/empty fields; returns null when nothing actionable remains. */
-function normalizeProposal(raw: z.infer<typeof proposalSchema>) {
-  if (!raw) return null
-  const changes: Record<string, unknown> = {}
-  if (raw.title?.trim()) changes.title = raw.title.trim()
-  if (raw.description?.trim()) changes.description = raw.description.trim()
-  if (raw.instructions?.trim()) changes.instructions = raw.instructions.trim()
-  if (raw.model?.trim()) changes.model = raw.model.trim()
-  if (raw.integrations) changes.integrations = raw.integrations
-  if (raw.skills) changes.skills = raw.skills
-  if (raw.schedule) {
-    changes.schedule = {
-      type: raw.schedule.type,
-      timezone: raw.schedule.timezone || 'UTC',
-      isActive: raw.schedule.type === 'manual' ? false : raw.schedule.isActive,
-      ...(raw.schedule.time ? { time: raw.schedule.time } : {}),
-      ...(raw.schedule.cron ? { cron: raw.schedule.cron } : {}),
-    }
-  }
-  if (!Object.keys(changes).length) return null
-  return { summary: raw.summary?.trim() || 'Configuration update', ...changes }
-}
 
 function serializeMessage(message: AgentChatMessage) {
   const metadata =
@@ -124,6 +94,9 @@ function serializeMessage(message: AgentChatMessage) {
     createdAt: message.createdAt,
     proposal: metadata.proposal ?? null,
     appliedAt: metadata.appliedAt ?? null,
+    // Set when applying the proposal created a separate agent rather than
+    // updating this one, so the card can still link to it after a reload.
+    createdAgentId: metadata.createdAgentId ?? null,
   }
 }
 
@@ -215,7 +188,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     .map((row) => ({ role: row.role, content: row.content.slice(0, 2000) }))
 
   let reply = ''
-  let proposal: Record<string, unknown> | null = null
+  let proposal: NormalizedProposal | null = null
   try {
     const text = await generateStructured({
       schemaName: 'assistant_reply',
@@ -277,10 +250,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 }, { permission: 'agent.run' })
 
 // Marks a proposal message as applied after the client has confirmed the
-// change through the existing PUT /api/agents update endpoint.
+// change through the existing /api/agents endpoints — PUT for a change to this
+// agent, POST (cloneFrom) when the proposal stood up a separate agent, whose id
+// comes back as createdAgentId.
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const agentId = agentIdFromRequest(request)
-  const { messageId } = z.object({ messageId: z.string().min(1) }).parse(await request.json())
+  const { messageId, createdAgentId } = z
+    .object({ messageId: z.string().min(1), createdAgentId: z.string().min(1).optional() })
+    .parse(await request.json())
   await requireAgent(agentId, auth)
 
   const row = await prisma.agentChatMessage.findFirst({
@@ -293,7 +270,13 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
       : {}
   const updated = await prisma.agentChatMessage.update({
     where: { id: row.id, organizationId: auth.organizationId },
-    data: { metadata: { ...metadata, appliedAt: new Date().toISOString() } as unknown as Prisma.InputJsonValue },
+    data: {
+      metadata: {
+        ...metadata,
+        appliedAt: new Date().toISOString(),
+        ...(createdAgentId ? { createdAgentId } : {}),
+      } as unknown as Prisma.InputJsonValue,
+    },
   })
   return { success: true, message: serializeMessage(updated) }
 }, { permission: 'agent.write' })

@@ -1,0 +1,49 @@
+# BullMQ worker on Fly.io — the queue plane's consumer (EXECUTION_MODE=queue).
+# Fly-hosted equivalent of render.yaml's `backstory-worker`: same image
+# (Dockerfile.worker), same env contract. Deploy with:
+#   fly deploy --config fly.worker.toml
+#
+# IMPORTANT — one queue, one Redis: REDIS_URL (a secret, set via
+# `fly secrets set`) must be the SAME Upstash rediss://…:6379 TCP URL Vercel
+# uses to enqueue, or the worker consumes a queue nothing writes to.
+#
+# DATABASE_URL is NOT Vercel's string: this is a long-lived process running
+# four BullMQ workers at AGENT_WORKER_CONCURRENCY each — use the transaction
+# pooler with ?pgbouncer=true&connection_limit=20 (Vercel's connection_limit=1
+# would queue ~20 concurrent jobs behind one connection → Prisma P2024).
+
+app = "backstory-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  NODE_ENV = "production"
+  EXECUTION_MODE = "queue"
+  WORKER_PORT = "3002"
+  # Per-worker, PER-QUEUE concurrency; the runtime starts four queues, so
+  # in-flight jobs per machine ≈ 4x this. Size DATABASE_URL's connection_limit
+  # against that product.
+  AGENT_WORKER_CONCURRENCY = "5"
+  # Per-workspace in-flight ceiling, enforced at dispatch (org-capacity.ts).
+  ORG_MAX_INFLIGHT_RUNS = "10"
+  AGENT_MODEL = "claude-opus-4-8"
+  SUMMARY_MODEL = "claude-haiku-4-5"
+
+# No [[services]] block on purpose: the worker takes no public traffic. The
+# health endpoint is checked machine-locally.
+[checks]
+  [checks.health]
+    type = "http"
+    port = 3002
+    path = "/health"
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "60s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "1gb"
+  # Competing consumers on one Redis — scale with `fly scale count N`
+  # (render.yaml ran numInstances: 3).

@@ -33,7 +33,10 @@ export function queueHealthAlert(check: QueueConsumersCheck | null | undefined):
   return null
 }
 
-const CHECK_INTERVAL_MS = 60_000
+// Every open builder tab polls at this cadence and each uncached probe costs
+// ~13 Redis commands server-side — 3 minutes keeps the banner honest without
+// burning the metered command budget.
+const CHECK_INTERVAL_MS = 180_000
 
 /** Polls /api/health once a minute (skipping hidden tabs) and returns the alert. */
 export function useQueueHealth(): string | null {

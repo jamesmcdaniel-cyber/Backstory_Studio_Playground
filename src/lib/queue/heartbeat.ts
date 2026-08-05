@@ -11,14 +11,17 @@ import { getRedisConnection, QUEUE_NAMES } from '@/lib/queue/config'
  */
 
 export const WORKER_HEARTBEAT_KEY = 'worker:heartbeat'
-/** How often the worker runtime rewrites the heartbeat. */
-export const WORKER_HEARTBEAT_INTERVAL_MS = 30_000
+/** How often the worker runtime rewrites the heartbeat. 60s (not lower):
+ * Upstash bills per command, and this write runs 24/7. */
+export const WORKER_HEARTBEAT_INTERVAL_MS = 60_000
 /**
  * How old a heartbeat may be before dispatch treats the backend as offline.
- * Four missed intervals — a worker mid-deploy (60s health grace in
- * fly.worker.toml) does not trip the gate; a dead fleet does.
+ * Three missed intervals — a worker mid-deploy (60s health grace in
+ * fly.worker.toml) does not trip the gate; a dead fleet does. The gate also
+ * falls back to registered-consumer detection, so this latency only affects
+ * how fast a TRULY dead fleet is called out.
  */
-export const WORKER_HEARTBEAT_STALE_MS = 2 * 60_000
+export const WORKER_HEARTBEAT_STALE_MS = 3 * 60_000
 
 export const EXECUTION_BACKEND_OFFLINE_MESSAGE =
   'Execution backend is offline — no worker has reported a heartbeat recently, so the run was not started. Check the worker fleet (fly logs) and /api/health.'

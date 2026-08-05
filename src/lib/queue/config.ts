@@ -45,6 +45,16 @@ export const workerConfig = {
   // re-fired — so we allow one stall recovery.
   lockDuration: AGENT_RUN_TIMEOUT_MS,
   maxStalledCount: 1,
+  // Upstash bills per COMMAND, and an idle BullMQ worker is mostly polling:
+  // the blocking dequeue re-issues every `drainDelay` seconds when the queue
+  // is empty, and the stalled-job scan runs every `stalledInterval` ms — per
+  // queue, 24/7. The defaults (5s / 30s) burned ~2.5M commands/month across
+  // four queues, which blew the 500K free-tier cap mid-month and took the
+  // whole plane down. 60s / 5min cuts idle burn ~10x; a job enqueued while
+  // blocked is still picked up immediately (the block is on the queue key),
+  // and stall recovery latency of minutes is fine for runs that live minutes.
+  drainDelay: 60,
+  stalledInterval: 300_000,
 } satisfies Partial<WorkerOptions>
 
 export function createQueue(name: string, overrides: Partial<QueueOptions> = {}) {

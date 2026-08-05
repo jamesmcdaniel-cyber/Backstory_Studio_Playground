@@ -26,9 +26,10 @@ export function queueHealthAlert(check: QueueConsumersCheck | null | undefined):
       ? 'Runs are queued but no worker is consuming them — new runs will not start. Contact an operator.'
       : 'The execution backend is offline — runs will not start. Contact an operator.'
   }
-  if (check.heartbeat && !check.heartbeat.fresh) {
-    return 'The execution worker has not reported a heartbeat recently — runs may not start.'
-  }
+  // A stale/missing heartbeat with consumers registered is NOT an alarm: a
+  // worker image predating the heartbeat writer consumes fine. The consumers
+  // verdict (ok) covers every stranding case this banner exists for; the
+  // heartbeat stays monitor data (/api/health), never a user-facing red pill.
   return null
 }
 

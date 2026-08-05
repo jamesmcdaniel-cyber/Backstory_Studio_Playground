@@ -24,9 +24,13 @@ describe('queueHealthAlert', () => {
     assert.match(alert ?? '', /offline/i)
   })
 
-  it('warns on a stale heartbeat even while consumers still look registered', () => {
-    const alert = queueHealthAlert({ configured: true, ok: true, stranded: [], heartbeat: { ageMs: 10 * 60_000, fresh: false } })
-    assert.match(alert ?? '', /heartbeat/i)
+  it('silent on a missing/stale heartbeat while consumers are registered — a worker image predating the heartbeat writer is healthy, not offline', () => {
+    // The production false alarm: the deployed worker consumed fine but wrote
+    // no heartbeat yet, and the banner said "Execution backend offline". The
+    // consumers verdict (ok) already covers every stranding case the banner
+    // exists for; the heartbeat is monitor data, not a user-facing alarm.
+    assert.equal(queueHealthAlert({ configured: true, ok: true, stranded: [], heartbeat: { ageMs: null, fresh: false } }), null)
+    assert.equal(queueHealthAlert({ configured: true, ok: true, stranded: [], heartbeat: { ageMs: 10 * 60_000, fresh: false } }), null)
   })
 
   it('silent when the health payload is missing entirely (client offline ≠ backend outage)', () => {

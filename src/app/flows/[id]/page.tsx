@@ -262,9 +262,9 @@ function FlowBuilder() {
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
   const [fixing, setFixing] = useState(false)
-  // Copilot is the workflow-building assistant — open by default so it's always
-  // there; the top-bar toggle can still hide it.
-  const [showCopilot, setShowCopilot] = useState(true)
+  // Copilot is the workflow-building assistant — closed until the user opens
+  // it from the top bar; nothing (including Run) may pop it open on its own.
+  const [showCopilot, setShowCopilot] = useState(false)
   const [showRuns, setShowRuns] = useState(false)
   const [showChecker, setShowChecker] = useState(false)
   const [showTest, setShowTest] = useState(false)

@@ -43,10 +43,14 @@ export type TemplateGenerationJob = { organizationId: string }
 export type GenerationResult = { written: number; skipped: string | null }
 
 /**
- * Don't regenerate for the same org more often than this. ~20h (not a full 24h)
- * so a daily cron tick that drifts an hour or two still fires each calendar day.
+ * Don't regenerate for the same org more often than this. ~3.5 days: the
+ * product cadence is "a recommendation batch once or twice a week", not daily —
+ * a fresh batch every morning reads as notification spam. Slightly under a
+ * half-week so a cron tick that drifts still fires twice in a calendar week.
+ * Must stay well under STALE_OPEN_PROPOSALS_MS or the stale-inbox escape
+ * hatch below could never trigger.
  */
-export const GENERATION_DEBOUNCE_MS = 20 * 60 * 60 * 1000
+export const GENERATION_DEBOUNCE_MS = 3.5 * 24 * 60 * 60 * 1000
 
 /**
  * How long an unreviewed inbox may block regeneration. Past this, generation

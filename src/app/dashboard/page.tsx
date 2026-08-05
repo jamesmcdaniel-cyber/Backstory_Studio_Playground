@@ -6,7 +6,6 @@ import { toast } from 'sonner'
 import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, Sparkles, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Markdown } from '@/components/ui/markdown'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 type LibrarianResult = {
   /** `doc` is a help-centre article (an external link); the rest are workspace items. */
@@ -19,15 +18,6 @@ type LibrarianResult = {
 /** An external page the answer was written from — always a real, retrieved URL. */
 type LibrarianSource = { title: string; url: string; label: string }
 type Turn = { question: string; answer: string; results: LibrarianResult[]; sources: LibrarianSource[] }
-
-// Visual-only for now: the persona tunes the hint copy (behavior wiring is a
-// deliberate follow-up).
-const PERSONAS = [
-  { key: 'SALES', hint: 'Deal impact and next actions' },
-  { key: 'CSM', hint: 'Retention and account health' },
-  { key: 'MARKETING', hint: 'Campaigns and pipeline influence' },
-  { key: 'IT', hint: 'Setup, access, and governance' },
-] as const
 
 // Openers that show what the Assistant reaches across — the library (templates),
 // the connected data (MCP), and the skills layer — rather than five variations
@@ -47,7 +37,6 @@ function greeting(): string {
 
 export default function AssistantHome() {
   const [input, setInput] = useState('')
-  const [persona, setPersona] = useState<(typeof PERSONAS)[number]['key']>('SALES')
   const [thread, setThread] = useState<Turn[]>([])
   const [busy, setBusy] = useState(false)
   const [hello, setHello] = useState('GOOD MORNING')
@@ -98,7 +87,6 @@ export default function AssistantHome() {
     textareaRef.current?.focus()
   }
 
-  const activeHint = PERSONAS.find((p) => p.key === persona)?.hint
 
   // Before the first question this is a landing surface, so the composer sits in
   // the middle of the screen rather than pinned under the header with the rest
@@ -130,7 +118,7 @@ export default function AssistantHome() {
         )}
       </div>
 
-      {/* Composer — prompt, attach, send, persona row */}
+      {/* Composer — prompt, attach, send */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-2 transition-[border-color,box-shadow,transform] duration-base focus-within:-translate-y-0.5 focus-within:border-horizon-400 focus-within:shadow-4 focus-within:ring-4 focus-within:ring-horizon-500/10">
         <div className="px-6 pt-6">
           <textarea
@@ -170,25 +158,6 @@ export default function AssistantHome() {
           </button>
         </div>
 
-        <div className="border-t px-5 py-4">
-          <div className="mb-2.5 flex items-center justify-between">
-            <span className="font-mono text-[11px] uppercase tracking-wider text-gray-500">Tailor output for</span>
-            {activeHint && <span className="text-sm text-gray-400">{activeHint}</span>}
-          </div>
-          <Tabs value={persona} onValueChange={(value) => setPersona(value as (typeof PERSONAS)[number]['key'])}>
-            <TabsList className="grid h-auto w-full grid-cols-4">
-              {PERSONAS.map((p) => (
-                <TabsTrigger
-                  key={p.key}
-                  value={p.key}
-                  className="py-2 font-mono text-xs tracking-wider"
-                >
-                  {p.key}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </div>
       </div>
 
       {/* Suggestion chips (empty state only). One row on a wide screen, spread

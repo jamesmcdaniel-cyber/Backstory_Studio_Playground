@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { cachePing } from '@/lib/cache'
 import { encryptionConfigured } from '@/lib/crypto/secrets'
 import { neo4jPing } from '@/lib/rag/neo4j-store'
+import { probeQueueConsumers } from '@/lib/queue/consumer-probe'
 import { apiLogger } from '@/lib/logger'
 
 export const runtime = 'nodejs'
@@ -32,18 +33,45 @@ let lastProbe: { at: number; snapshot: HealthSnapshot } | null = null
 let inFlight: Promise<HealthSnapshot> | null = null
 
 async function runProbes(): Promise<HealthSnapshot> {
-  const [db, cache, neo4j] = await Promise.all([
+  const [db, cache, neo4j, queueConsumers] = await Promise.all([
     probe(async () => { await prisma.$queryRaw`SELECT 1` }),
     cachePing().then((c) => ({ ok: c.ok, configured: c.configured })).catch(() => ({ ok: false, configured: false })),
     neo4jPing().catch(() => ({ ok: false, configured: false })),
+    // Consumer side of the queue plane. Redis reachable ≠ Redis consumed: with
+    // EXECUTION_MODE=queue and no worker registered (down, or listening on a
+    // different Redis), every run is accepted into `waiting` and hangs forever
+    // while this endpoint reports ok. Shipped exactly that way on 2026-08-04.
+    probeQueueConsumers().catch(() => ({ configured: true, ok: false, stranded: [] })),
   ])
-  const healthy = db.ok && (process.env.NODE_ENV !== 'production' || (cache.configured && cache.ok))
+  if (queueConsumers.configured && !queueConsumers.ok) {
+    apiLogger.error('queue consumer probe failed — runs will strand in waiting', {
+      stranded: queueConsumers.stranded,
+      error: 'error' in queueConsumers ? queueConsumers.error : undefined,
+    })
+  }
+  const healthy =
+    db.ok &&
+    (process.env.NODE_ENV !== 'production' || (cache.configured && cache.ok)) &&
+    (!queueConsumers.configured || queueConsumers.ok)
   return {
     healthy,
     body: {
       status: healthy ? 'ok' : 'unhealthy',
       timestamp: new Date().toISOString(),
-      checks: { db, cache, neo4j, secrets: { encrypted: encryptionConfigured() } },
+      // queueConsumers.error (if any) stays server-side via the probe's own
+      // shape — reports carry only queue names + counts, no topology.
+      checks: {
+        db,
+        cache,
+        neo4j,
+        queueConsumers: {
+          configured: queueConsumers.configured,
+          ok: queueConsumers.ok,
+          stranded: queueConsumers.stranded,
+          ...('reports' in queueConsumers && queueConsumers.reports ? { queues: queueConsumers.reports } : {}),
+        },
+        secrets: { encrypted: encryptionConfigured() },
+      },
     },
   }
 }

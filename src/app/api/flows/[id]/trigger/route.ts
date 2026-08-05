@@ -25,7 +25,11 @@ export async function POST(request: NextRequest) {
   try {
     const id = request.nextUrl.pathname.split('/').at(-2)
     // Public endpoint — throttle per flow id to blunt secret-guessing floods.
-    const limited = await rateLimit(`flow-trigger:${id ?? 'unknown'}`, { limit: 60, windowMs: 60_000, failureMode: 'closed' })
+    // Fails OPEN on a limiter-backend outage: with Redis down, fail-closed
+    // 429'd every webhook and events were lost. The secret is 24 random bytes
+    // (brute-force infeasible even unthrottled) and delivery matters more
+    // than throttling during an outage.
+    const limited = await rateLimit(`flow-trigger:${id ?? 'unknown'}`, { limit: 60, windowMs: 60_000, failureMode: 'open' })
     if (!limited.ok) return NextResponse.json({ success: false, error: 'Rate limit exceeded' }, { status: 429 })
 
     const provided =

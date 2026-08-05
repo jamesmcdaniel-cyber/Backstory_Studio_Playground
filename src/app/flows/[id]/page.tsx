@@ -1850,24 +1850,33 @@ function FlowBuilder() {
     downloadBlob(await response.text(), 'application/json', `${filenameSlug(flowName)}.backstory.json`)
   }, [id, name])
 
-  // Webhook-trigger flows export with WORKING credentials: a fresh trigger
-  // secret is minted (rotating any prior one) and embedded alongside the
-  // trigger URL, so the exported file runs against Backstory without the user
-  // hunting for credentials. Non-webhook flows (or a failed mint, e.g. a
-  // view-only viewer) export without credentials, as before.
+  // Webhook-trigger flows export with WORKING credentials when that costs
+  // nothing: a flow with NO secret yet gets one minted and embedded. A flow
+  // whose secret already exists exports WITHOUT credentials — the old
+  // behavior force-rotated, so downloading an export silently killed every
+  // integration already calling the live webhook.
   const exportCredentials = useCallback(async (): Promise<{ triggerUrl: string; triggerSecret: string } | undefined> => {
     const triggerNode = graph.nodes.find((n) => n.type === 'trigger')
     const triggerType = triggerNode && 'trigger' in triggerNode.data ? triggerNode.data.trigger?.type : undefined
     if (triggerType !== 'webhook') return undefined
     try {
+      // Non-rotate mint: creates a secret only when none exists; otherwise it
+      // is read-only and returns secret: null.
       const response = await fetch(`/api/flows/${id}/trigger-secret`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rotate: true }),
+        body: JSON.stringify({ rotate: false }),
       })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok || typeof data.secret !== 'string' || !data.secret) return undefined
-      toast('A fresh trigger secret was minted into this export — any previously issued secret no longer works.', { duration: 6000 })
+      if (!response.ok) return undefined
+      if (typeof data.secret !== 'string' || !data.secret) {
+        toast('Your existing webhook secret stays valid and is not included in the export — paste it in where the export says <secret>.', { duration: 6000 })
+        return undefined
+      }
+      toast('A trigger secret was minted into this export.', { duration: 6000 })
+      // The mint wrote the flow row — adopt its timestamp so autosave doesn't
+      // see a phantom concurrent edit.
+      if (typeof data.updatedAt === 'string') baseUpdatedAt.current = data.updatedAt
       return { triggerUrl: String(data.url || ''), triggerSecret: data.secret }
     } catch {
       return undefined

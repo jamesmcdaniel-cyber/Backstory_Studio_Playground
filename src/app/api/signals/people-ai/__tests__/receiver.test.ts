@@ -43,6 +43,7 @@ if (ENABLED) {
   })
 
   after(async () => {
+    await prisma.outboxEvent.deleteMany({ where: { organizationId: ids.org } })
     await prisma.signal.deleteMany({ where: { organizationId: ids.org } })
     await prisma.organization.deleteMany({ where: { id: ids.org } })
     await prisma.$disconnect()
@@ -64,6 +65,17 @@ if (ENABLED) {
     const signal = await prisma.signal.findUnique({ where: { id: json.signalId, organizationId: ids.org } })
     assert.equal(signal.organizationId, ids.org)
     assert.equal(signal.opportunityId, 'opp-9')
+
+    // The event must ALSO reach flow signal triggers — durably, via the
+    // outbox (agent routing alone was the gap: flows never saw People.ai
+    // events). Delivery is the outbox loop's job; the receiver's contract is
+    // the pending row.
+    const outbox = await prisma.outboxEvent.findFirst({
+      where: { organizationId: ids.org, topic: 'flow.signal', aggregateId: json.signalId },
+    })
+    assert.ok(outbox, 'accepting a signal must enqueue a durable flow.signal outbox event')
+    assert.equal(outbox.payload.signal, 'people-ai.deal.risk_detected')
+    assert.equal(outbox.payload.payload.signalId, json.signalId)
   })
 
   test('replayed event is acknowledged as duplicate without a second row', async () => {

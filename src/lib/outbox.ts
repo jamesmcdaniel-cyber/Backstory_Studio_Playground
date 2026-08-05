@@ -28,6 +28,42 @@ export function flowSignalOutboxEvent(input: {
   }
 }
 
+/**
+ * A Nango provider event (sync/forward) as a durable `provider.<app>` flow
+ * signal. Previously emitted inline from the webhook route: a transient
+ * failure was logged, acked ok to Nango, and the event was gone — Nango never
+ * retries an acked delivery. dedupeKey is null on purpose: provider events
+ * carry no natural idempotency key, and inventing one from the payload would
+ * collide two legitimately identical events.
+ */
+export function providerSignalOutboxEvent(input: {
+  organizationId: string
+  connectionId: string
+  providerConfigKey: string
+  event: string
+  model?: string
+  records: unknown
+}) {
+  return {
+    organizationId: input.organizationId,
+    topic: OUTBOX_TOPIC_FLOW_SIGNAL,
+    aggregateId: input.connectionId,
+    dedupeKey: null,
+    payload: JSON.parse(
+      JSON.stringify({
+        signal: `provider.${input.providerConfigKey}`,
+        payload: {
+          provider: input.providerConfigKey,
+          connectionId: input.connectionId,
+          event: input.event,
+          model: input.model,
+          records: input.records,
+        },
+      }),
+    ) as Prisma.InputJsonValue,
+  }
+}
+
 export function outboxRetryDelayMs(attempts: number): number {
   return Math.min(60 * 60_000, 1_000 * 2 ** Math.max(0, attempts - 1))
 }

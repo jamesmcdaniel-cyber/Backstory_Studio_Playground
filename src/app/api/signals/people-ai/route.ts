@@ -7,6 +7,7 @@ import { rateLimit } from '@/lib/ratelimit'
 import { verifySignature } from '@/lib/signals/verify'
 import { mapEventToSignal } from '@/lib/signals/map'
 import { routeSignal } from '@/lib/signals/router'
+import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { captureError } from '@/lib/observability/sentry'
 import { decryptSecret } from '@/lib/crypto/secrets'
 
@@ -107,6 +108,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, duplicate: true }, { status: 200 })
     }
     throw error
+  }
+
+  // Flow signal triggers hear the event too — durably. Agent routing (below)
+  // is fire-and-forget after the response; flows get an outbox row instead,
+  // so a crash or transient failure is retried by the outbox loop rather than
+  // lost behind the 202. Failure here must not lose the agent path: log and go on.
+  try {
+    await prisma.outboxEvent.create({
+      data: flowSignalOutboxEvent({
+        organizationId: organization.id,
+        aggregateId: signal.id,
+        dedupeKey: `flow-signal:${signal.id}`,
+        signal: {
+          signal: `people-ai.${mapped.type}`,
+          payload: {
+            signalId: signal.id,
+            type: mapped.type,
+            accountId: mapped.accountId,
+            opportunityId: mapped.opportunityId,
+            stakeholderId: mapped.stakeholderId,
+            payload: mapped.payload,
+          },
+        },
+      }),
+    })
+  } catch (error) {
+    apiLogger.error('people-ai signal: flow outbox enqueue failed', {
+      signalId: signal.id,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    captureError(error, { path: '/api/signals/people-ai', signalId: signal.id, stage: 'flow-outbox' })
   }
 
   // Route after the response so the webhook returns fast even in inline mode.

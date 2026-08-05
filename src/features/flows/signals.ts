@@ -76,6 +76,16 @@ export async function emitFlowSignal(params: {
     where: { organizationId: params.organizationId, status: 'ACTIVE' },
     take: MAX_FLOWS_PER_EMIT,
   })
+  if (flows.length === MAX_FLOWS_PER_EMIT) {
+    // The scan hit its cap — listeners beyond it are silently unmatched. Say
+    // so rather than letting "my flow never fires" go undiagnosable in an org
+    // that grew past the cap.
+    apiLogger.warn('emitFlowSignal: active-flow scan hit its cap — listeners beyond it will not match', {
+      organizationId: params.organizationId,
+      signal: params.signal,
+      cap: MAX_FLOWS_PER_EMIT,
+    })
+  }
 
   const matches = flows.filter(
     (flow) => flow.id !== params.sourceFlowId && flowListensTo(flow, params.signal),

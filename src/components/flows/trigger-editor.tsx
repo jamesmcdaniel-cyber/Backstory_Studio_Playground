@@ -364,6 +364,7 @@ export function TriggerEditor({
           </div>
           <p className="text-xs text-muted-foreground">
             Fires when this signal is emitted anywhere in your workspace. The signal payload arrives as the Run input. Runs the published version.
+            Besides the built-in names, integration events arrive as <code className="font-mono">provider.&lt;app&gt;</code> (e.g. <code className="font-mono">provider.salesforce</code>) and People.ai events as <code className="font-mono">people-ai.&lt;event-type&gt;</code>.
           </p>
           <p className="text-xs text-muted-foreground">
             Tip: use <code className="rounded bg-muted px-1">provider.&lt;app&gt;</code> (e.g. <code className="rounded bg-muted px-1">provider.github</code>) to fire when a connected app forwards new items through Nango.

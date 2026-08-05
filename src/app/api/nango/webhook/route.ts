@@ -5,7 +5,7 @@ import { MIN_INTEGRATIONS_FOR_TEMPLATES } from '@/lib/integrations/integration-c
 import { maybeGenerateOnGateClear } from '@/lib/templates/generation-queue'
 import { apiLogger } from '@/lib/logger'
 import { systemPrisma } from '@/lib/prisma'
-import { emitFlowSignal } from '@/features/flows/signals'
+import { providerSignalOutboxEvent } from '@/lib/outbox'
 
 export const runtime = 'nodejs'
 
@@ -79,14 +79,19 @@ export async function POST(request: NextRequest) {
           apiLogger.warn('nango provider event dropped — no mirror row for connection', { connectionId, providerConfigKey })
         }
         if (conn) {
-          const payload = {
-            provider: providerConfigKey,
-            connectionId,
-            event: body.type,
-            model: typeof body.model === 'string' ? body.model : undefined,
-            records: body.records ?? body.data ?? body.payload ?? null,
-          }
-          await emitFlowSignal({ organizationId: conn.organizationId, signal: `provider.${providerConfigKey}`, payload })
+          // Durable handoff: Nango never retries an acked delivery, so an
+          // inline emit that failed used to lose the event forever. The
+          // outbox loop (worker + cron fallback) delivers with retries.
+          await systemPrisma.outboxEvent.create({
+            data: providerSignalOutboxEvent({
+              organizationId: conn.organizationId,
+              connectionId,
+              providerConfigKey,
+              event: body.type,
+              model: typeof body.model === 'string' ? body.model : undefined,
+              records: body.records ?? body.data ?? body.payload ?? null,
+            }),
+          })
         }
       } catch (error) {
         apiLogger.error('nango provider-event signal failed', {

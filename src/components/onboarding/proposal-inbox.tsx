@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Check, Sparkles, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { landOnAcceptedProposal } from '@/lib/client/apply-proposal'
 import { KIND_LABEL, ProposalPreview, type ProposalCard } from './proposal-shared'
 
 export type { ProposalCard } from './proposal-shared'
@@ -74,29 +75,7 @@ export function ProposalInbox({
         toast.error(data.error || 'Could not accept that suggestion.')
         return
       }
-      if (proposal.kind === 'process_improvement') {
-        const target = data.open as { targetType?: string; targetId?: string } | null
-        if (target?.targetType === 'flow' && target.targetId) {
-          window.open(`/flows/${target.targetId}`, '_blank', 'noopener')
-        } else if (target?.targetType === 'agent' && target.targetId) {
-          window.open(`/agents?agent=${target.targetId}`, '_blank', 'noopener')
-        }
-        toast.success('Opened what it wants to improve.')
-        return
-      }
-      // 1-click: accept provisioned a LIVE artifact — land the user on it.
-      if (typeof data.agentId === 'string' && data.agentId) {
-        const missing = Array.isArray(data.missingIntegrations) ? (data.missingIntegrations as string[]) : []
-        toast.success(missing.length ? `Agent created — connect ${missing.join(', ')} to fully activate it.` : 'Agent created and ready to run.')
-        window.location.href = `/agents?agent=${data.agentId}`
-        return
-      }
-      if (typeof data.flowId === 'string' && data.flowId) {
-        toast.success('Flow created and wired — ready to run.')
-        window.location.href = `/flows/${data.flowId}`
-        return
-      }
-      toast.success('Added to your catalogue.')
+      landOnAcceptedProposal(proposal.kind, data)
     } finally {
       setBusyId(null)
     }

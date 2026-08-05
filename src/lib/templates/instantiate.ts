@@ -55,6 +55,8 @@ export async function provisionAgentFromConfig(
   userId: string,
   configuration: unknown,
   fallbackTitle: string,
+  /** The template this agent came from, stamped so a re-accept can find it. */
+  templateId?: string,
 ): Promise<{ agent: AgentTask; missing: string[] }> {
   const config = asObject(configuration)
   const title = str(config.name, fallbackTitle)
@@ -79,6 +81,7 @@ export async function provisionAgentFromConfig(
         integrations,
         skills: [],
         icon: '',
+        ...(templateId ? { templateId } : {}),
       },
     },
   })
@@ -87,4 +90,26 @@ export async function provisionAgentFromConfig(
   await syncAgentConnectors(agent.id, organizationId, integrations)
   const missing = await missingIntegrations(organizationId, userId, integrations)
   return { agent, missing }
+}
+
+/**
+ * The live agent a template already provisioned, if any (matched on the
+ * `templateId` stamped into its metadata at provision time).
+ *
+ * Accepting a recommendation is idempotent — a second Apply must still LAND the
+ * user on the agent the first one built, instead of returning a bare template id
+ * that no surface knows how to open.
+ */
+export async function findAgentFromTemplate(
+  organizationId: string,
+  templateId: string,
+): Promise<AgentTask | null> {
+  return prisma.agentTask.findFirst({
+    where: {
+      organizationId,
+      status: { not: 'DELETED' },
+      metadata: { path: ['templateId'], equals: templateId },
+    },
+    orderBy: { createdAt: 'asc' },
+  })
 }

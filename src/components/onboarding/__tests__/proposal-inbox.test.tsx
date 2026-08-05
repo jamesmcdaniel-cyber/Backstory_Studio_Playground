@@ -27,9 +27,9 @@ function stubFetch(routes: Record<string, (init?: RequestInit) => unknown>) {
   return { calls, restore: () => { globalThis.fetch = realFetch } }
 }
 
-test('renders open proposals and accepting removes the card with a catalogue toast', async () => {
+test('renders open proposals and accepting posts to the accept route, removing the card', async () => {
   const stub = stubFetch({
-    '/accept': () => ({ status: 'accepted', templateId: 't1' }),
+    '/accept': () => ({ status: 'accepted', kind: 'agent', templateId: 't1', agentId: 'a1' }),
     '/api/template-proposals': () => ({ success: true, proposals: [proposal()] }),
   })
   try {

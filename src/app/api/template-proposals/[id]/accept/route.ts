@@ -5,13 +5,15 @@ import {
   proposalToCreateTemplateArgs,
   proposalImprovementTarget,
 } from '@/lib/templates/accept-proposal'
-import { provisionAgentFromConfig, missingIntegrations } from '@/lib/templates/instantiate'
+import { provisionAgentFromConfig, missingIntegrations, findAgentFromTemplate } from '@/lib/templates/instantiate'
 import { generateFlowGraph } from '@/lib/flows/generate-flow-graph'
 import { createFlowTemplate } from '@/lib/flows/templates/create'
 import { serializeFlowTemplate } from '@/lib/flows/templates/catalogue'
 import { instantiateFlowTemplate, loadBindingContext } from '@/lib/flows/templates/instantiate'
 import { draftFlowTemplateNotes, inferBindings } from '@/lib/flows/templates/draft-notes'
 import { recordEstimatedUsage } from '@/lib/usage/ai-guard'
+import { apiLogger } from '@/lib/logger'
+import { captureError } from '@/lib/observability/sentry'
 
 export const runtime = 'nodejs'
 // Accepting a flow_template generates a wired graph via the model (up to 3 calls
@@ -24,7 +26,11 @@ const asStr = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 // POST /api/template-proposals/[id]/accept — promote an open proposal.
 //   agent_template | flow_template → create a real org-scoped, AI-generated
-//     AgentTemplate via A's single writer, stamp createdTemplateId, return its id.
+//     AgentTemplate via A's single writer, stamp createdTemplateId, AND provision
+//     the live artifact it describes: a wired flow for a flow_template, otherwise
+//     (and whenever that generation fails) an ACTIVE agent in the workspace. The
+//     response always names what to open — accepting is never a catalogue-only
+//     write the user cannot find.
 //   process_improvement → create NO template; return the flow/agent editor target
 //     for D to open prefilled.
 // Idempotent: an already-accepted/dismissed proposal returns its current state
@@ -42,9 +48,18 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // Idempotent: terminal proposals report their existing outcome, never re-create.
   if (proposal.status !== 'open') {
     if (proposal.status === 'accepted') {
-      return isImprovement
-        ? { status: 'accepted', open: proposalImprovementTarget(proposal) }
-        : { status: 'accepted', templateId: proposal.createdTemplateId }
+      if (isImprovement) return { status: 'accepted', open: proposalImprovementTarget(proposal) }
+      // Re-applying must still LAND the user on the agent the first accept built.
+      // A bare templateId is not something any surface can open, so a second
+      // Apply used to look — correctly — like it did nothing.
+      const existing = proposal.createdTemplateId
+        ? await findAgentFromTemplate(auth.organizationId, proposal.createdTemplateId).catch(() => null)
+        : null
+      return {
+        status: 'accepted',
+        templateId: proposal.createdTemplateId,
+        ...(existing ? { kind: 'agent', agentId: existing.id } : {}),
+      }
     }
     return { status: proposal.status }
   }
@@ -66,7 +81,18 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     // Lost the claim (already accepted/dismissed) — return the current outcome
     // idempotently rather than creating a second template.
     const current = await getProposal(id, auth.organizationId)
-    if (current?.status === 'accepted') return { status: 'accepted', templateId: current.createdTemplateId }
+    if (current?.status === 'accepted') {
+      // Same as the idempotent path above: name the agent the winning accept
+      // built (null while it is still provisioning) so this caller can land too.
+      const existing = current.createdTemplateId
+        ? await findAgentFromTemplate(auth.organizationId, current.createdTemplateId).catch(() => null)
+        : null
+      return {
+        status: 'accepted',
+        templateId: current.createdTemplateId,
+        ...(existing ? { kind: 'agent', agentId: existing.id } : {}),
+      }
+    }
     return { status: current?.status ?? 'dismissed' }
   }
 
@@ -90,33 +116,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // accept itself already committed, so a failure here only costs the id echo).
   await stampCreatedTemplate(id, auth.organizationId, template.id).catch(() => undefined)
 
-  // 1-CLICK: an agent_template is also provisioned as a LIVE, ready-to-run agent
-  // (instructions + integrations + the proposed cadence) so accepting lands the
-  // user on a working agent, not a catalogue entry to instantiate later. The
-  // template still exists in the library. Best-effort: if provisioning fails the
-  // template stands, so the client falls back to the template page. (flow_template
-  // provisions a wired flow — see the flow-instantiation path.)
-  if (proposal.kind === 'agent_template') {
-    try {
-      const { agent, missing } = await provisionAgentFromConfig(
-        auth.organizationId,
-        auth.dbUser.id,
-        proposal.configuration,
-        template.name,
-      )
-      return { status: 'accepted', kind: 'agent', templateId: template.id, agentId: agent.id, missingIntegrations: missing }
-    } catch {
-      return { status: 'accepted', kind: 'agent', templateId: template.id }
-    }
-  }
-
+  // 1-CLICK: accepting must always leave a LIVE artifact the user can open —
+  // never a catalogue row they have to go find and instantiate. A flow_template
+  // first tries the wired flow below; everything else (and any flow whose graph
+  // could not be generated) becomes a live agent in the workspace.
+  //
   // flow_template: generate the wired graph from the proposal's instructions via
   // the shared copilot pipeline (grounded on the org's real agents/tools, so
   // nodes reference ids that exist), then write it into the FLOW-TEMPLATE
   // catalogue and instantiate THAT through the same path every other template
   // takes. The recommendation stays reusable instead of being consumed once, and
   // there is one instantiate path regardless of where a template came from.
-  // Best-effort: if generation fails the agent-template row still stands.
   if (proposal.kind === 'flow_template') {
     try {
       const config = asObj(proposal.configuration)
@@ -140,7 +150,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         userId: auth.dbUser.id,
         name: template.name,
         description: summary,
-        category: proposal.kind === 'flow_template' ? 'Suggested' : 'Custom',
+        category: 'Suggested',
         graph,
         notes,
         bindings,
@@ -159,9 +169,41 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         setup,
         missingIntegrations: missing,
       }
-    } catch {
-      return { status: 'accepted', kind: 'flow', templateId: template.id }
+    } catch (error) {
+      // Graph generation is a multi-call model pipeline inside a 120s function —
+      // an outage, a timeout, or an ungeneratable graph all land here. Falling
+      // through to the agent path below means the user still gets something they
+      // can run; swallowing it (as this used to) left Apply looking like a no-op.
+      apiLogger.error('Flow provisioning failed for an accepted recommendation — falling back to an agent', {
+        proposalId: id,
+        templateId: template.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      captureError(error, { path: request.nextUrl.pathname, code: 'FLOW_PROVISION_FAILED' })
     }
   }
-  return { status: 'accepted', kind: 'template', templateId: template.id }
+
+  // The agent path: instructions + integrations + the proposed cadence become an
+  // ACTIVE agent, so accepting lands the user on a working agent in their
+  // workspace. The template still exists in the library alongside it.
+  try {
+    const { agent, missing } = await provisionAgentFromConfig(
+      auth.organizationId,
+      auth.dbUser.id,
+      proposal.configuration,
+      template.name,
+      template.id,
+    )
+    return { status: 'accepted', kind: 'agent', templateId: template.id, agentId: agent.id, missingIntegrations: missing }
+  } catch (error) {
+    // Nothing live could be created. Report that honestly — the client must not
+    // announce a success the user then cannot find anywhere.
+    apiLogger.error('Agent provisioning failed for an accepted recommendation', {
+      proposalId: id,
+      templateId: template.id,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    captureError(error, { path: request.nextUrl.pathname, code: 'AGENT_PROVISION_FAILED' })
+    return { status: 'accepted', kind: 'template', templateId: template.id, provisioned: false }
+  }
 }, { permission: 'template.author', internalOnly: true })

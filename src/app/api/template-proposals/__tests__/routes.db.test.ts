@@ -115,7 +115,55 @@ if (TEST_DB) {
     }
   })
 
-  test('accept twice → idempotent: one template, second returns the same id', async () => {
+  test('accept agent_template → also provisions a LIVE agent the user can find', async () => {
+    const s = await seed()
+    try {
+      const p = await mkProposal(s.organizationId, {
+        configuration: {
+          name: 'Weekly Digest',
+          category: 'Sales',
+          instructions: 'You build the digest.',
+          integrations: ['slack'],
+          model: 'claude-sonnet-5',
+          schedule: 'weekly',
+        },
+      })
+      const body = await (await accept(p.id)).json()
+      assert.ok(body.agentId, 'accept returns the live agent id')
+      const agent = await prisma.agentTask.findFirst({ where: { id: body.agentId, organizationId: s.organizationId } })
+      assert.ok(agent, 'a real agent exists in the workspace')
+      assert.equal(agent.status, 'ACTIVE')
+      assert.equal(agent.metadata.title, 'Weekly Digest')
+      assert.equal(agent.metadata.templateId, body.templateId, 'agent records the template it came from')
+    } finally {
+      await s.cleanup()
+      await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
+    }
+  })
+
+  test('accept flow_template when the graph cannot be generated → still lands a LIVE agent, never a silent no-op', async () => {
+    const s = await seed()
+    // No model endpoint configured → generateFlowGraph throws, the same way a
+    // model outage or a 120s timeout does in production.
+    const keys = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, QWEN_API_KEY: process.env.QWEN_API_KEY, QWEN_BASE_URL: process.env.QWEN_BASE_URL }
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.QWEN_API_KEY
+    delete process.env.QWEN_BASE_URL
+    try {
+      const p = await mkProposal(s.organizationId, { kind: 'flow_template' })
+      const body = await (await accept(p.id)).json()
+      assert.ok(body.agentId, 'falls back to provisioning an agent instead of returning a bare template id')
+      const agent = await prisma.agentTask.findFirst({ where: { id: body.agentId, organizationId: s.organizationId } })
+      assert.ok(agent, 'the agent really exists')
+      assert.equal(agent.objective, 'You build the digest.', 'built from the proposal instructions')
+    } finally {
+      Object.entries(keys).forEach(([k, v]) => { if (v !== undefined) process.env[k] = v })
+      await s.cleanup()
+      await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
+    }
+  })
+
+  test('accept twice → idempotent: one template, one agent, second accept still lands on it', async () => {
     const s = await seed()
     try {
       const p = await mkProposal(s.organizationId)
@@ -123,8 +171,11 @@ if (TEST_DB) {
       const second = await (await accept(p.id)).json()
       assert.equal(second.status, 'accepted')
       assert.equal(second.templateId, first.templateId, 'same template id, no re-create')
+      assert.equal(second.agentId, first.agentId, 're-applying lands on the agent it already created')
       const count = await prisma.agentTemplate.count({ where: { organizationId: s.organizationId } })
       assert.equal(count, 1, 'exactly one template created across two accepts')
+      const agents = await prisma.agentTask.count({ where: { organizationId: s.organizationId } })
+      assert.equal(agents, 1, 'exactly one agent created across two accepts')
     } finally {
       await s.cleanup()
       await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})

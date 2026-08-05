@@ -1429,7 +1429,7 @@ function FlowBuilder() {
       // fresh Run (or a poll restart) clears the banner.
       if (
         !done(latest) &&
-        isRunPickupStalled({ status: latest.status, startedAt: latest.startedAt, stepCount: latest.steps.length }, Date.now())
+        isRunPickupStalled({ status: latest.status, startedAt: latest.startedAt ?? '', stepCount: latest.steps.length }, Date.now())
       ) {
         setPickupStalledRunId((prev) => {
           if (prev !== latest.id) toast.error(NEVER_PICKED_UP_ERROR)

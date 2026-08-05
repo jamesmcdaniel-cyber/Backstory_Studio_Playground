@@ -75,6 +75,42 @@ DROP TYPE "IntegrationType"; DROP TYPE "MCPAgentType";`
   production runs inline (`EXECUTION_MODE=inline`), bounded by the 5-minute
   serverless ceiling.
 
+## Alerting — put eyes on what already exists
+
+The 2026-08-05 outage theme was *silent* failure: the queue had no consumer for
+weeks and nothing said so. The signals now exist; they need subscribers:
+
+- **Uptime monitor on `/api/health`** (UptimeRobot / Better Stack free tier):
+  alert on non-200. The endpoint 503s when the DB is down, the cache is down
+  in prod, or the queue plane has no consumers. The JSON also carries
+  alertable detail for keyword monitors: `checks.queueConsumers.ok: false`,
+  growing `queues[].waiting`, `deadLetters.total > 0`, and
+  `heartbeat.fresh: false` (worker stopped writing `worker:heartbeat` —
+  including the split-brain two-Redis case).
+- **`SENTRY_DSN` on the worker** (fly secrets / Render dashboard): without it
+  every worker crash and dead-lettered job is console-only in `fly logs`. The
+  boot audit (`src/lib/workers/assert-env.ts`) warns when it is missing.
+- **Fly machine alerts**: the `fly.worker.toml` health check restarts a sick
+  worker, but a region outage or OOM loop is silent — enable email alerts on
+  machine state in the Fly dashboard.
+- **Single machine = single point of failure**: acceptable for now; when it
+  matters, `fly scale count 2` gives rolling restarts and one-machine-dies
+  tolerance (BullMQ handles competing consumers natively).
+
+## EXECUTION_MODE is explicit, always
+
+Set the literal `queue` in Vercel production env (not empty, not absent).
+Production *infers* `queue` when the var is unset/empty — that inference now
+logs a warning (`execution-mode.ts`), but an explicit literal removes the
+"what mode are we actually in" class entirely. `inline` on Vercel is
+**unsupported** for real traffic: detached promises die when the serverless
+function freezes, so background flow runs simply stop. The safe rollout is
+always: worker green and consuming → flip `EXECUTION_MODE=queue` → redeploy.
+Dispatch is additionally guarded by the worker heartbeat
+(`src/lib/queue/heartbeat.ts`): if no worker wrote `worker:heartbeat` in the
+last 2 minutes, flow runs fail immediately with "Execution backend is
+offline" instead of stranding in `waiting`.
+
 ## Secrets
 
 `ENCRYPTION_KEY` is **required in production** — the server refuses to boot

@@ -8,7 +8,17 @@
 export function resolveExecutionMode(): 'inline' | 'queue' {
   const explicit = process.env.EXECUTION_MODE
   if (explicit === 'queue' || explicit === 'inline') return explicit
-  return process.env.NODE_ENV === 'production' ? 'queue' : 'inline'
+  const inferred = process.env.NODE_ENV === 'production' ? 'queue' : 'inline'
+  // Production must never run on an INFERRED mode silently: an empty value
+  // (the Vercel env-CLI trap) or a typo resolves to `queue` — and if no
+  // consumer exists, every run strands. Say which mode was inferred and why.
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(
+      `EXECUTION_MODE is ${explicit === undefined ? 'unset' : `invalid (${JSON.stringify(explicit)})`} — inferred "${inferred}". ` +
+        'Set it to the literal "queue" or "inline" explicitly (inline on Vercel is unsupported: detached promises die when the function freezes).',
+    )
+  }
+  return inferred
 }
 
 export const EXECUTION_MODE = resolveExecutionMode()

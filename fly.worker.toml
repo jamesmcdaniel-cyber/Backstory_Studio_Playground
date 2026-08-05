@@ -11,6 +11,27 @@
 # four BullMQ workers at AGENT_WORKER_CONCURRENCY each — use the transaction
 # pooler with ?pgbouncer=true&connection_limit=20 (Vercel's connection_limit=1
 # would queue ~20 concurrent jobs behind one connection → Prisma P2024).
+#
+# SECRETS (set via `fly secrets set NAME=value`) — the boot audit
+# (src/lib/workers/assert-env.ts) enforces these, so a gap fails at deploy
+# time instead of at a user's run:
+#   fatal (worker refuses to boot):
+#     REDIS_URL DATABASE_URL ENCRYPTION_KEY ANTHROPIC_API_KEY
+#   warned (capability silently degrades without them):
+#     SENTRY_DSN            — crashes/dead-letters console-only otherwise
+#     NANGO_SECRET_KEY      — integration tools in flows fail
+#     VOYAGE_API_KEY        — RAG embeddings unavailable
+#     VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY — run-completion push dropped
+#     NEXT_PUBLIC_APP_URL   — notification links point nowhere
+#     SUPABASE_SERVICE_ROLE_KEY — no realtime run updates (slow polling)
+#   plus the rest of render.yaml's sync:false list (DIRECT_URL, NEO4J_*,
+#   GRANOLA_API_KEY, SLACK_BOT_TOKEN, RESEND_API_KEY, PEOPLE_AI_*,
+#   BACKSTORY_MCP_*, UPSTASH_REDIS_REST_*).
+#
+# The worker writes `worker:heartbeat` to Redis every 30s (heartbeat.ts);
+# the web app refuses to enqueue flow runs when it is >2 min stale, and
+# /api/health reports its age. A healthy fleet with a stale heartbeat means
+# split-brain Redis — the exact render.yaml trap above.
 
 app = "backstory-worker"
 primary_region = "iad"

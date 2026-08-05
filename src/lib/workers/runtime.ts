@@ -10,6 +10,7 @@ import { deadLetterFromFlowJob } from '@/lib/queue/flow-dead-letter'
 import { deadLetterFromTemplateGenerationJob } from '@/lib/queue/template-generation-dead-letter'
 import { executeTemplateGenerationJob } from '@/lib/templates/generation-queue'
 import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
+import { assertWorkerEnv } from '@/lib/workers/assert-env'
 import { initSentry, captureError, flushErrorReporting } from '@/lib/observability/sentry'
 import { processOutboxBatch } from '@/lib/outbox'
 import { isCustomerEdition } from '@/lib/edition'
@@ -87,6 +88,13 @@ class WorkerRuntime {
   }
 
   async start(port = 3002) {
+    // Fail loud at boot, not at a user's run: fatal env gaps throw here (the
+    // process exits via the start() catch below); degraded-capability gaps
+    // are warned once where fly logs surfaces them.
+    assertWorkerEnv(workerConfig.concurrency, {
+      warn: (msg) => this.server.log.warn(msg),
+      error: (msg) => this.server.log.error(msg),
+    })
     await initSentry('worker')
     // Reports and keeps running — does NOT exit, unlike uncaughtException
     // below. A single unhandled rejection in one BullMQ job must not take

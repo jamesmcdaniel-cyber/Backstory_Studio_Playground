@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   isHeartbeatFresh,
   consumerAliveVerdict,
+  resolveConsumerAlive,
   WORKER_HEARTBEAT_STALE_MS,
   WORKER_HEARTBEAT_INTERVAL_MS,
   EXECUTION_BACKEND_OFFLINE_MESSAGE,
@@ -62,5 +63,55 @@ describe('consumerAliveVerdict', () => {
 
   it('no heartbeat and the consumer probe unreadable → dead (fail closed)', () => {
     assert.equal(consumerAliveVerdict(false, null), false)
+  })
+})
+
+describe('resolveConsumerAlive', () => {
+  const now = 1_754_400_000_000
+
+  it('a fresh heartbeat short-circuits — the workers probe is never called', async () => {
+    let probed = false
+    const alive = await resolveConsumerAlive(
+      { readHeartbeat: async () => String(now - 1_000), registeredWorkers: async () => { probed = true; return 0 } },
+      now,
+    )
+    assert.equal(alive, true)
+    assert.equal(probed, false)
+  })
+
+  it('a FAILED heartbeat read falls through to the workers probe instead of declaring offline', async () => {
+    // The production false positive: a cold serverless instance whose first
+    // Redis read timed out threw "backend offline" while the worker was
+    // demonstrably consuming. A read failure is "heartbeat unknown", not
+    // "backend dead" — the registered-workers signal must still be consulted.
+    const alive = await resolveConsumerAlive(
+      { readHeartbeat: async () => { throw new Error('read timed out') }, registeredWorkers: async () => 1 },
+      now,
+    )
+    assert.equal(alive, true)
+  })
+
+  it('heartbeat read failed AND zero workers → offline', async () => {
+    const alive = await resolveConsumerAlive(
+      { readHeartbeat: async () => { throw new Error('down') }, registeredWorkers: async () => 0 },
+      now,
+    )
+    assert.equal(alive, false)
+  })
+
+  it('heartbeat read failed AND workers probe failed → offline (fail closed at the end)', async () => {
+    const alive = await resolveConsumerAlive(
+      { readHeartbeat: async () => { throw new Error('down') }, registeredWorkers: async () => { throw new Error('down too') } },
+      now,
+    )
+    assert.equal(alive, false)
+  })
+
+  it('stale heartbeat with live workers → alive (worker image predating the heartbeat writer)', async () => {
+    const alive = await resolveConsumerAlive(
+      { readHeartbeat: async () => String(now - WORKER_HEARTBEAT_STALE_MS * 5), registeredWorkers: async () => 2 },
+      now,
+    )
+    assert.equal(alive, true)
   })
 })

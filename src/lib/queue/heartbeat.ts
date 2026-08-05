@@ -83,10 +83,16 @@ export function consumerAliveVerdict(heartbeatFresh: boolean, registeredWorkers:
 // needed on the fallback path (no fresh heartbeat).
 let flowQueueHandle: Queue | null = null
 
-async function registeredFlowWorkers(): Promise<number | null> {
+async function registeredFlowWorkers(timeoutMs = 5_000): Promise<number | null> {
   try {
     flowQueueHandle ??= new Queue(QUEUE_NAMES.FLOW_EXECUTION, { connection: getRedisConnection() })
-    const workers = await flowQueueHandle.getWorkers()
+    const workers = await Promise.race([
+      flowQueueHandle.getWorkers(),
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('worker probe timed out')), timeoutMs)
+        if (typeof timer === 'object') timer.unref?.()
+      }),
+    ])
     return workers.length
   } catch {
     return null
@@ -94,18 +100,41 @@ async function registeredFlowWorkers(): Promise<number | null> {
 }
 
 /**
- * Producer-side gate: throw EXECUTION_BACKEND_OFFLINE_MESSAGE unless the
- * consumer side is provably alive (see consumerAliveVerdict). An unreadable
- * Redis counts as offline — the enqueue would strand the job just the same.
+ * Liveness resolution with injectable probes (tested directly): a fresh
+ * heartbeat is sufficient; a FAILED heartbeat read means "unknown", not
+ * "dead" — a cold serverless instance whose first Redis command times out
+ * must still consult the registered-workers signal before declaring the
+ * backend offline. Only both-signals-negative is offline.
  */
-export async function assertQueueConsumerAlive(now: number = Date.now()): Promise<void> {
+export async function resolveConsumerAlive(
+  deps: { readHeartbeat: () => Promise<string | null>; registeredWorkers: () => Promise<number | null> },
+  now: number,
+): Promise<boolean> {
   let raw: string | null = null
   try {
-    raw = await readHeartbeat()
+    raw = await deps.readHeartbeat()
   } catch {
-    throw new Error(EXECUTION_BACKEND_OFFLINE_MESSAGE)
+    raw = null
   }
   const fresh = isHeartbeatFresh(raw, now)
-  const alive = consumerAliveVerdict(fresh, fresh ? 0 : await registeredFlowWorkers())
+  if (fresh) return true
+  let workers: number | null = null
+  try {
+    workers = await deps.registeredWorkers()
+  } catch {
+    workers = null
+  }
+  return consumerAliveVerdict(false, workers)
+}
+
+/**
+ * Producer-side gate: throw EXECUTION_BACKEND_OFFLINE_MESSAGE unless the
+ * consumer side is provably alive (see resolveConsumerAlive).
+ */
+export async function assertQueueConsumerAlive(now: number = Date.now()): Promise<void> {
+  const alive = await resolveConsumerAlive(
+    { readHeartbeat: () => readHeartbeat(), registeredWorkers: () => registeredFlowWorkers() },
+    now,
+  )
   if (!alive) throw new Error(EXECUTION_BACKEND_OFFLINE_MESSAGE)
 }

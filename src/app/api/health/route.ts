@@ -69,6 +69,10 @@ async function runProbes(): Promise<HealthSnapshot> {
           ok: queueConsumers.ok,
           stranded: queueConsumers.stranded,
           ...('reports' in queueConsumers && queueConsumers.reports ? { queues: queueConsumers.reports } : {}),
+          // Alertable extras for uptime monitors: dead-lettered jobs (any
+          // total > 0 deserves eyes) and worker heartbeat freshness.
+          ...('deadLetters' in queueConsumers && queueConsumers.deadLetters ? { deadLetters: queueConsumers.deadLetters } : {}),
+          ...('heartbeat' in queueConsumers && queueConsumers.heartbeat ? { heartbeat: queueConsumers.heartbeat } : {}),
         },
         secrets: { encrypted: encryptionConfigured() },
       },

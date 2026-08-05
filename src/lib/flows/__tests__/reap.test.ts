@@ -13,11 +13,12 @@ if (TEST_DB) {
 
   let prisma: any
   let reapStuckFlowRuns: any
+  let reapNeverPickedUpRuns: any
   const ids: Record<string, string> = {}
 
   before(async () => {
     ;({ prisma } = await import('@/lib/prisma'))
-    ;({ reapStuckFlowRuns } = await import('../reap'))
+    ;({ reapStuckFlowRuns, reapNeverPickedUpRuns } = await import('../reap'))
     const org = await prisma.organization.create({ data: { name: 'Reap', slug: `reap-${Date.now()}` } })
     ids.org = org.id
     const flow = await prisma.flow.create({
@@ -142,5 +143,62 @@ if (TEST_DB) {
     assert.equal(stuckRunAfter.status, 'failed')
     const stuckStepAfter = await prisma.flowRunStep.findUnique({ where: { id: stuckStep.id } })
     assert.equal(stuckStepAfter.status, 'failed')
+  })
+
+  test('reapNeverPickedUpRuns fails only zero-step running runs past the pickup window', async () => {
+    // freshRunning (zero steps, seeded ~5 min ago) has aged past the pickup
+    // window by now — settle it so this test's counts cover only its own runs.
+    await prisma.flowRun.update({ where: { id: ids.freshRunning, organizationId: ids.org }, data: { status: 'succeeded' } })
+
+    const strandedAge = new Date(Date.now() - 6 * 60 * 1000)
+    const stranded = await prisma.flowRun.create({
+      data: { flowId: ids.flow, organizationId: ids.org, status: 'running', startedAt: strandedAge },
+    })
+    const justDispatched = await prisma.flowRun.create({
+      data: { flowId: ids.flow, organizationId: ids.org, status: 'running', startedAt: new Date(Date.now() - 60 * 1000) },
+    })
+    const pickedUp = await prisma.flowRun.create({
+      data: { flowId: ids.flow, organizationId: ids.org, status: 'running', startedAt: strandedAge },
+    })
+    await prisma.flowRunStep.create({
+      data: { flowRunId: pickedUp.id, nodeId: 'n5', status: 'running', startedAt: strandedAge },
+    })
+
+    const reaped = await reapNeverPickedUpRuns()
+    assert.equal(reaped, 1)
+
+    const strandedAfter = await prisma.flowRun.findUnique({ where: { id: stranded.id, organizationId: ids.org } })
+    assert.equal(strandedAfter.status, 'failed')
+    assert.match(strandedAfter.error, /never picked up/i)
+    assert.ok(strandedAfter.finishedAt)
+
+    const justDispatchedAfter = await prisma.flowRun.findUnique({ where: { id: justDispatched.id, organizationId: ids.org } })
+    assert.equal(justDispatchedAfter.status, 'running', 'inside the pickup window — left alone')
+
+    const pickedUpAfter = await prisma.flowRun.findUnique({ where: { id: pickedUp.id, organizationId: ids.org } })
+    assert.equal(pickedUpAfter.status, 'running', 'has a step, so it WAS picked up — the 30-min reaper owns it')
+
+    await prisma.flowRun.update({ where: { id: justDispatched.id, organizationId: ids.org }, data: { status: 'succeeded' } })
+    await prisma.flowRun.update({ where: { id: pickedUp.id, organizationId: ids.org }, data: { status: 'succeeded' } })
+  })
+
+  test('reapNeverPickedUpRuns spares a run whose first step lands between read and write', async () => {
+    const lateRun = await prisma.flowRun.create({
+      data: { flowId: ids.flow, organizationId: ids.org, status: 'running', startedAt: new Date(Date.now() - 6 * 60 * 1000) },
+    })
+    // The worker picks the run up in the gap between the candidate read and
+    // the guarded write — the write's re-checked `steps: none` must spare it.
+    const reaped = await reapNeverPickedUpRuns(new Date(), async () => {
+      await prisma.flowRunStep.create({ data: { flowRunId: lateRun.id, nodeId: 'n6', status: 'running', startedAt: new Date() } })
+    })
+    assert.equal(reaped, 0)
+
+    const after = await prisma.flowRun.findUnique({ where: { id: lateRun.id, organizationId: ids.org } })
+    assert.equal(after.status, 'running')
+    await prisma.flowRun.update({ where: { id: lateRun.id, organizationId: ids.org }, data: { status: 'succeeded' } })
+  })
+
+  test('reapNeverPickedUpRuns is idempotent — second pass reaps nothing', async () => {
+    assert.equal(await reapNeverPickedUpRuns(), 0)
   })
 }

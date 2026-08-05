@@ -1,6 +1,7 @@
 import { Queue } from 'bullmq'
 import { QUEUE_NAMES, workersEnabled, getRedisConnection } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
+import { workerHeartbeatAgeMs, WORKER_HEARTBEAT_STALE_MS } from '@/lib/queue/heartbeat'
 
 /**
  * Health probe for the queue plane's CONSUMER side.
@@ -22,12 +23,23 @@ const CRITICAL_QUEUES = [
   QUEUE_NAMES.FLOW_EXECUTION,
 ] as const
 
+/** Dead-letter queues: jobs land here after a terminal failure and sit
+ * `waiting` forever (no consumer, by design) until an operator inspects them.
+ * A non-zero count is an alertable signal — see deadLetterVerdict. */
+const DEAD_LETTER_QUEUES = [
+  QUEUE_NAMES.DEAD_LETTER,
+  QUEUE_NAMES.FLOW_DEAD_LETTER,
+  QUEUE_NAMES.TEMPLATE_GENERATION_DEAD_LETTER,
+] as const
+
 export interface QueueConsumerReport {
   queue: string
   /** BullMQ workers currently registered on this queue (CLIENT LIST). */
   workers: number
   waiting: number
   active: number
+  /** Jobs that exhausted their attempts on this queue (retained last 100). */
+  failed?: number
 }
 
 export interface QueueConsumerCheck {
@@ -37,6 +49,10 @@ export interface QueueConsumerCheck {
   /** Queues that have jobs waiting AND nobody consuming — live user impact. */
   stranded: string[]
   reports?: QueueConsumerReport[]
+  /** Total jobs parked across all dead-letter queues + which DLQs are non-empty. */
+  deadLetters?: { total: number; queues: string[] }
+  /** Worker liveness heartbeat (see heartbeat.ts): age of the newest write. */
+  heartbeat?: { ageMs: number | null; fresh: boolean }
   error?: string
 }
 
@@ -52,6 +68,14 @@ export function consumerVerdict(reports: QueueConsumerReport[]): { ok: boolean; 
   return {
     ok: reports.every((r) => r.workers > 0),
     stranded: reports.filter((r) => r.workers === 0 && r.waiting > 0).map((r) => r.queue),
+  }
+}
+
+/** Pure summary over dead-letter backlog counts: total + non-empty queue names. */
+export function deadLetterVerdict(counts: { queue: string; waiting: number }[]): { total: number; queues: string[] } {
+  return {
+    total: counts.reduce((sum, c) => sum + c.waiting, 0),
+    queues: counts.filter((c) => c.waiting > 0).map((c) => c.queue),
   }
 }
 
@@ -90,16 +114,40 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
     return { configured: false, ok: true, stranded: [] }
   }
   try {
-    const reports = await withTimeout(
-      Promise.all(
-        CRITICAL_QUEUES.map(async (name): Promise<QueueConsumerReport> => {
-          const q = queueHandle(name)
-          const [workers, counts] = await Promise.all([q.getWorkers(), q.getJobCounts('waiting', 'active')])
-          return { queue: name, workers: workers.length, waiting: counts.waiting ?? 0, active: counts.active ?? 0 }
-        }),
-      ),
+    const [reports, deadLetterCounts, heartbeatAge] = await withTimeout(
+      Promise.all([
+        Promise.all(
+          CRITICAL_QUEUES.map(async (name): Promise<QueueConsumerReport> => {
+            const q = queueHandle(name)
+            const [workers, counts] = await Promise.all([q.getWorkers(), q.getJobCounts('waiting', 'active', 'failed')])
+            return {
+              queue: name,
+              workers: workers.length,
+              waiting: counts.waiting ?? 0,
+              active: counts.active ?? 0,
+              failed: counts.failed ?? 0,
+            }
+          }),
+        ),
+        Promise.all(
+          DEAD_LETTER_QUEUES.map(async (name) => {
+            const counts = await queueHandle(name).getJobCounts('waiting')
+            return { queue: name, waiting: counts.waiting ?? 0 }
+          }),
+        ),
+        workerHeartbeatAgeMs(),
+      ]),
     )
-    return { configured: true, ...consumerVerdict(reports), reports }
+    return {
+      configured: true,
+      ...consumerVerdict(reports),
+      reports,
+      deadLetters: deadLetterVerdict(deadLetterCounts),
+      heartbeat: {
+        ageMs: heartbeatAge,
+        fresh: heartbeatAge !== null && heartbeatAge <= WORKER_HEARTBEAT_STALE_MS,
+      },
+    }
   } catch (error) {
     // An unreadable queue plane is a failed check, not an unknown — this is
     // exactly the state where runs hang invisibly.

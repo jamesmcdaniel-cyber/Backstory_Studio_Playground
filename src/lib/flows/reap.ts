@@ -8,6 +8,7 @@
  */
 
 import { systemPrisma } from '@/lib/prisma'
+import { NEVER_PICKED_UP_TIMEOUT_MS, NEVER_PICKED_UP_ERROR } from '@/lib/flows/run-stall'
 
 // Dispatch/execute routes cap at maxDuration 1200s; 30 min = budget + slack.
 export const STUCK_FLOW_RUN_TIMEOUT_MS = 30 * 60 * 1000
@@ -59,4 +60,34 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
     })
     return reaped.count
   })
+}
+
+/**
+ * Fast path for the 2026-08-04 outage class: a run `running` with ZERO steps
+ * past the pickup window was never consumed by the execution backend (a
+ * picked-up run records its first step within seconds), so it fails after
+ * ~5 minutes instead of waiting out the 30-minute budget above. Runs WITH
+ * steps — however old — are left to reapStuckFlowRuns.
+ *
+ * `onAfterRead` is the same test-only seam as above: it lets a test land the
+ * run's first step in the read→write gap and prove the guarded write spares it.
+ */
+export async function reapNeverPickedUpRuns(now = new Date(), onAfterRead?: () => Promise<void>): Promise<number> {
+  const cutoff = new Date(now.getTime() - NEVER_PICKED_UP_TIMEOUT_MS)
+  // systemPrisma: global reaper sweep — runs across all orgs by design (invoked from CRON_SECRET-gated dispatch).
+  const stranded = await systemPrisma.flowRun.findMany({
+    where: { status: 'running', startedAt: { lt: cutoff }, steps: { none: {} } },
+    select: { id: true },
+    take: REAP_BATCH_LIMIT,
+  })
+  if (stranded.length === 0) return 0
+  await onAfterRead?.()
+  // `status` and `steps: none` re-checked at write time: a run the worker
+  // picked up (or that settled) between read and write is spared. No step
+  // cleanup needed — matching runs have no steps by definition.
+  const reaped = await systemPrisma.flowRun.updateMany({
+    where: { id: { in: stranded.map((run) => run.id) }, status: 'running', steps: { none: {} } },
+    data: { status: 'failed', error: NEVER_PICKED_UP_ERROR, finishedAt: now },
+  })
+  return reaped.count
 }

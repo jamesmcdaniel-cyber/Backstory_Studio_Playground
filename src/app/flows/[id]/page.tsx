@@ -9,6 +9,8 @@ import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
 import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
+import { useQueueHealth } from '@/components/flows/use-queue-health'
+import { isRunPickupStalled, NEVER_PICKED_UP_ERROR } from '@/lib/flows/run-stall'
 import { shouldPersistGraph, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
 import { toContentSpace } from '@/lib/flows/cursor-space'
 import { joinErrorMessage } from '@/lib/flows/join-error'
@@ -321,12 +323,18 @@ function FlowBuilder() {
   // Serialized snapshot of the last-saved state, for the unsaved-changes dot.
   const [savedSnapshot, setSavedSnapshot] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Run id the poller flagged as never picked up by the execution backend
+  // (running, zero steps, past the pickup window). Set once per run — renders
+  // the explanatory banner and stops the poll instead of spinning forever.
+  const [pickupStalledRunId, setPickupStalledRunId] = useState<string | null>(null)
   // Run the user explicitly picked (dropdown or ?run= deep-link). While set,
   // the poll tick refreshes that run's details instead of stealing selection.
   const pinnedRunId = useRef<string | null>(null)
   // Last run + status this session has SEEN, so pollRuns only toasts outcomes
   // it witnessed transition (never a stale terminal run on first poll).
   const watchedRun = useRef<{ id: string; status: string } | null>(null)
+  // Queue-plane health banner: warns before a Run click would strand a run.
+  const queueAlert = useQueueHealth()
   const dirty = savedSnapshot !== '' && JSON.stringify({ name, description, graph }) !== savedSnapshot
 
   useEffect(() => {
@@ -1415,6 +1423,27 @@ function FlowBuilder() {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
+      // Never-picked-up stop: a run still `running` with zero steps past the
+      // pickup window was never consumed by the execution backend. Stop
+      // polling and say so — the server-side reaper will fail the run; a
+      // fresh Run (or a poll restart) clears the banner.
+      if (
+        !done(latest) &&
+        isRunPickupStalled({ status: latest.status, startedAt: latest.startedAt, stepCount: latest.steps.length }, Date.now())
+      ) {
+        setPickupStalledRunId((prev) => {
+          if (prev !== latest.id) toast.error(NEVER_PICKED_UP_ERROR)
+          return latest.id
+        })
+        if (pollRef.current) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+        }
+      } else {
+        // Terminal or healthy-and-progressing latest run: drop a stale banner
+        // (covers both the stalled run resolving and a newer run starting).
+        setPickupStalledRunId(null)
+      }
     }
     if (pollRef.current) clearInterval(pollRef.current)
     // The tick itself skips while the tab is hidden (see its first line), so a
@@ -2056,6 +2085,25 @@ function FlowBuilder() {
               </span>
             )}
           </div>
+        )}
+        {/* Queue-plane health. Silent when the backend is consuming — the
+            point is that a Run which would strand says so BEFORE (banner) and
+            shortly after (stall pill) instead of "Thinking…" forever. */}
+        {queueAlert && (
+          <span
+            title={queueAlert}
+            className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300"
+          >
+            Execution backend offline
+          </span>
+        )}
+        {!queueAlert && pickupStalledRunId && (
+          <span
+            title={NEVER_PICKED_UP_ERROR}
+            className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300"
+          >
+            Run was never picked up
+          </span>
         )}
         {/* Realtime health. Silent when live — the point is that a jam which
             can't connect says so instead of looking like an empty room. */}

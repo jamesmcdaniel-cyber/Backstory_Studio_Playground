@@ -4,6 +4,7 @@ import { Worker, type Processor } from 'bullmq'
 import { executeAgentJob } from '@/features/agents/execute-agent'
 import { executeFlowJob } from '@/features/flows/execute-flow'
 import { getRedisConnection, QUEUE_NAMES, workerConfig } from '@/lib/queue/config'
+import { writeWorkerHeartbeat, WORKER_HEARTBEAT_INTERVAL_MS } from '@/lib/queue/heartbeat'
 import { deadLetterFromJob } from '@/lib/queue/dead-letter'
 import { deadLetterFromFlowJob } from '@/lib/queue/flow-dead-letter'
 import { deadLetterFromTemplateGenerationJob } from '@/lib/queue/template-generation-dead-letter'
@@ -17,6 +18,7 @@ class WorkerRuntime {
   private server = Fastify({ logger: true })
   private scheduleTimer?: NodeJS.Timeout
   private outboxTimer?: NodeJS.Timeout
+  private heartbeatTimer?: NodeJS.Timeout
   // handler is typed as the generic BullMQ Processor so this array (mixing
   // the agent- and flow-job handler signatures) unifies to one element type —
   // each queue is still wired to its own correctly-typed handler at runtime.
@@ -74,6 +76,7 @@ class WorkerRuntime {
     const shutdown = async () => {
       if (this.scheduleTimer) clearInterval(this.scheduleTimer)
       if (this.outboxTimer) clearInterval(this.outboxTimer)
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
       await this.server.close()
       await Promise.all(this.workers.map((worker) => worker.close()))
       await flushErrorReporting()
@@ -96,6 +99,14 @@ class WorkerRuntime {
       captureError(error, { source: 'worker.uncaughtException' })
       void flushErrorReporting().finally(() => process.exit(1))
     })
+    // Liveness heartbeat: the producer's dispatch gate reads this key before
+    // enqueueing. Written FIRST so a freshly-booted worker unblocks dispatch
+    // immediately; failures are logged, not fatal — the health check (which
+    // pings the same Redis) is what recycles a truly disconnected worker.
+    await writeWorkerHeartbeat().catch((error) => this.server.log.error(error, 'Heartbeat write failed'))
+    this.heartbeatTimer = setInterval(() => {
+      writeWorkerHeartbeat().catch((error) => this.server.log.error(error, 'Heartbeat write failed'))
+    }, WORKER_HEARTBEAT_INTERVAL_MS)
     await registerAgentSchedules()
     await processOutboxBatch().catch((error) => this.server.log.error(error, 'Initial outbox delivery failed'))
     this.scheduleTimer = setInterval(() => {

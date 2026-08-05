@@ -29,7 +29,7 @@ import { isDue, type AgentSchedule } from '@/lib/scheduling/due'
 import { workersEnabled } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
-import { reapStuckFlowRuns } from '@/lib/flows/reap'
+import { reapStuckFlowRuns, reapNeverPickedUpRuns } from '@/lib/flows/reap'
 import { sweepTemplateGeneration } from '@/lib/templates/generation-queue'
 import { blocksSchedule } from '@/lib/flows/schedule-blocking'
 import { captureError } from '@/lib/observability/sentry'
@@ -129,6 +129,18 @@ export async function GET(request: Request) {
     } catch (error) {
       apiLogger.error('cron/dispatch: flow reaper failed', { error: capError(error) })
       captureError(error, { source: 'cron.dispatch.flowReaper' })
+    }
+    // Fast path: a `running` run with zero steps was never picked up by the
+    // execution backend — fail it after ~5 minutes instead of letting it show
+    // "Thinking…" until the 30-minute reaper above catches it.
+    try {
+      const neverPickedUp = await reapNeverPickedUpRuns()
+      if (neverPickedUp > 0) {
+        apiLogger.error('cron/dispatch: reaped runs never picked up by the execution backend', { count: neverPickedUp })
+      }
+    } catch (error) {
+      apiLogger.error('cron/dispatch: never-picked-up reaper failed', { error: capError(error) })
+      captureError(error, { source: 'cron.dispatch.neverPickedUpReaper' })
     }
     let reapedApprovals = 0
     try {

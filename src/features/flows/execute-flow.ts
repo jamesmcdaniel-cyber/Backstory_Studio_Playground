@@ -2,6 +2,7 @@ import type { Job } from 'bullmq'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { applyAlwaysOutputData, keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
+import { assertQueueConsumerAlive } from '@/lib/queue/heartbeat'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { flowJobOptions } from '@/lib/flows/queue-options'
 import { runAgentExecution } from '@/features/agents/execute-agent'
@@ -1526,6 +1527,9 @@ export async function dispatchFlowExecution(
 ): Promise<{ flowRunId: string; status: string; output: unknown } | { queued: true }> {
   if (inlineExecution) return runFlowExecution(job)
   if (!workersEnabled) throw new Error('Flow worker is disabled')
+  // Fail loud, not silent: with no live consumer (worker down, or listening on
+  // a different Redis) an enqueued job would strand forever in `waiting`.
+  await assertQueueConsumerAlive()
   const queue = createQueue(QUEUE_NAMES.FLOW_EXECUTION)
   await queue.add('execute-flow', job, flowJobOptions(job.flowRunId, undefined, job.deliveryId))
   return { queued: true }
@@ -1552,6 +1556,10 @@ export async function flushDetachedFlowExecutions(): Promise<void> {
 export async function dispatchDetachedFlowExecution(job: FlowExecutionJob): Promise<void> {
   if (!inlineExecution) {
     if (!workersEnabled) throw new Error('Flow worker is disabled')
+    // Throws when no worker heartbeat is fresh — startFlowExecution catches
+    // this and terminalizes the prepared run, so the user sees "backend
+    // offline" in seconds instead of "Thinking…" forever.
+    await assertQueueConsumerAlive()
     const queue = createQueue(QUEUE_NAMES.FLOW_EXECUTION)
     await queue.add('execute-flow', job, flowJobOptions(job.flowRunId, job.preparedRunId, job.deliveryId))
     return

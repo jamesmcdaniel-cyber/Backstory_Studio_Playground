@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { consumerVerdict } from '../consumer-probe'
+import { consumerVerdict, deadLetterVerdict } from '../consumer-probe'
 
 const report = (queue: string, workers: number, waiting: number, active = 0) => ({ queue, workers, waiting, active })
 
@@ -34,4 +34,23 @@ test('waiting jobs with zero consumers are reported as stranded — the acute al
 
 test('no reports (probe could not read the queues) → not ok', () => {
   assert.equal(consumerVerdict([]).ok, false)
+})
+
+test('dead-letter verdict totals waiting jobs across DLQs and names the non-empty ones', () => {
+  const verdict = deadLetterVerdict([
+    { queue: 'agent-dead-letter', waiting: 0 },
+    { queue: 'flow-dead-letter', waiting: 3 },
+    { queue: 'template-generation-dead-letter', waiting: 1 },
+  ])
+  assert.equal(verdict.total, 4)
+  assert.deepEqual(verdict.queues, ['flow-dead-letter', 'template-generation-dead-letter'])
+})
+
+test('empty dead-letter queues → zero total, no queues named', () => {
+  const verdict = deadLetterVerdict([
+    { queue: 'agent-dead-letter', waiting: 0 },
+    { queue: 'flow-dead-letter', waiting: 0 },
+  ])
+  assert.equal(verdict.total, 0)
+  assert.deepEqual(verdict.queues, [])
 })

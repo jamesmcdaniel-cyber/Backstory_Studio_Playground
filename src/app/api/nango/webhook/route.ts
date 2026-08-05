@@ -72,6 +72,12 @@ export async function POST(request: NextRequest) {
       try {
         // systemPrisma: org-less webhook — resolve the owning org from the mirror.
         const conn = await systemPrisma.nangoConnection.findFirst({ where: { connectionId }, select: { organizationId: true } })
+        if (!conn) {
+          // A provider event for a connection we have no mirror row for is a
+          // DROPPED event — without this line it vanished without a trace
+          // (webhook acked ok, no signal emitted, no flow ran).
+          apiLogger.warn('nango provider event dropped — no mirror row for connection', { connectionId, providerConfigKey })
+        }
         if (conn) {
           const payload = {
             provider: providerConfigKey,

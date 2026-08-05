@@ -180,6 +180,12 @@ export function TriggerEditor({
   }
 
   const mintWebhook = async (rotate: boolean) => {
+    if (!flowId) {
+      // Without an id the POST would hit /api/flows//trigger-secret and 404 —
+      // say so instead of silently doing nothing.
+      toast.error('Save the flow first, then create the webhook.')
+      return
+    }
     setMinting(true)
     try {
       const response = await fetch(`/api/flows/${flowId}/trigger-secret`, {
@@ -417,7 +423,8 @@ export function TriggerEditor({
             </div>
           )}
           <p className="text-xs text-muted-foreground">
-            POST to the URL with the <code className="font-mono">x-trigger-secret</code> header; the JSON body, or its <code className="font-mono">input</code> field, becomes the flow input.{' '}
+            POST to the URL with the <code className="font-mono">x-trigger-secret</code> header; the JSON body, or its <code className="font-mono">input</code> field, becomes the flow input.
+            The <code className="font-mono">x-trigger-delivery-id</code> / <code className="font-mono">x-trigger-timestamp</code> headers are optional — include them (as in the cURL) and repeated deliveries of the same event are deduplicated.{' '}
             {published === false ? (
               'Webhook calls run the published version — publish this flow to arm the webhook.'
             ) : published ? (

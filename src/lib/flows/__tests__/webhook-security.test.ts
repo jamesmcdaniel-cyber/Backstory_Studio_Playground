@@ -1,8 +1,53 @@
-import { test } from 'node:test'
+import { test, beforeEach, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { FLOW_WEBHOOK_MAX_BODY_BYTES, parseWebhookBody, parseWebhookReplayHeaders, webhookPayloadHash } from '../webhook-security'
+import {
+  FLOW_WEBHOOK_MAX_BODY_BYTES,
+  parseWebhookBody,
+  parseWebhookReplayHeaders,
+  requireWebhookReplayProtection,
+  webhookPayloadHash,
+} from '../webhook-security'
 
 const headers = (values: Record<string, string>) => new Headers(values)
+
+const ORIGINAL_ENV = { ...process.env }
+beforeEach(() => {
+  process.env = { ...ORIGINAL_ENV }
+})
+after(() => {
+  process.env = { ...ORIGINAL_ENV }
+})
+
+test('replay protection is OPT-IN everywhere — production must accept header-less senders', () => {
+  // The outage mode this guards against: Zapier/GitHub/Stripe-style senders
+  // cannot emit x-trigger-* headers, so a prod-default mandate 400s every
+  // delivery and the webhook looks dead. Strictness is an explicit env choice.
+  Object.assign(process.env, { NODE_ENV: 'production' })
+  delete process.env.FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION
+  assert.equal(requireWebhookReplayProtection(), false)
+  const parsed = parseWebhookReplayHeaders(headers({}), Date.now())
+  assert.equal(parsed.error, undefined)
+  assert.equal(parsed.value, undefined)
+})
+
+test('FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION=true still enforces the headers', () => {
+  Object.assign(process.env, { NODE_ENV: 'production' })
+  process.env.FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION = 'true'
+  assert.equal(requireWebhookReplayProtection(), true)
+  assert.match(parseWebhookReplayHeaders(headers({}), Date.now()).error ?? '', /require/i)
+})
+
+test('headers are still validated whenever the sender provides them', () => {
+  Object.assign(process.env, { NODE_ENV: 'production' })
+  delete process.env.FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION
+  const now = Date.parse('2026-08-02T12:00:00Z')
+  // Partial headers are an error even in lax mode — half a replay guard is a bug at the sender.
+  assert.match(parseWebhookReplayHeaders(headers({ 'x-trigger-delivery-id': 'evt_1' }), now).error ?? '', /require/i)
+  assert.deepEqual(
+    parseWebhookReplayHeaders(headers({ 'x-trigger-delivery-id': 'evt_1', 'x-trigger-timestamp': String(now) }), now).value,
+    { deliveryId: 'evt_1', timestampMs: now },
+  )
+})
 
 test('webhook replay headers accept seconds or milliseconds inside the skew window', () => {
   const now = Date.parse('2026-08-02T12:00:00Z')

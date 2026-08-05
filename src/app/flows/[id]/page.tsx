@@ -878,8 +878,13 @@ function FlowBuilder() {
     setSelectedIds(ids.length > 1 ? ids : [])
     setSelectedId(ids.length === 1 ? ids[0] : null)
     // Changing the selection closes the drawer; re-open with a double-click.
-    setOpenNodeId(null)
-  }, [])
+    // Exception: single-clicking the TRIGGER opens its drawer immediately —
+    // it has no drag/delete interactions to conflict with, and "where do I
+    // configure the webhook?" was unanswerable while a single click on the
+    // trigger appeared to do nothing.
+    const solo = ids.length === 1 ? graph.nodes.find((node) => node.id === ids[0]) : null
+    setOpenNodeId(solo?.type === 'trigger' ? solo.id : null)
+  }, [graph])
   const canvasOpenNode = useCallback((nodeId: string) => {
     setSelectedId(nodeId)
     setSelectedIds([])

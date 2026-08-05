@@ -34,7 +34,11 @@ export async function POST(request: NextRequest) {
     if (!id || !provided) return NextResponse.json({ success: false, error: 'Missing trigger secret' }, { status: 401 })
 
     // systemPrisma: session-less webhook trigger (per-flow secret, no org context); flow id is globally unique.
-    const flow = await systemPrisma.flow.findFirst({ where: { id, status: 'ACTIVE' } })
+    // Looked up WITHOUT a status filter: the secret is verified first, and only
+    // a caller holding the valid secret learns the flow's arming state. An
+    // unarmed flow used to 401 "Invalid trigger secret", which sent people off
+    // rotating credentials when the actual fix was "publish the flow".
+    const flow = await systemPrisma.flow.findFirst({ where: { id } })
     const trigger = (flow?.trigger && typeof flow.trigger === 'object' && !Array.isArray(flow.trigger) ? flow.trigger : {}) as Record<string, unknown>
     const hash = typeof trigger.webhookSecretHash === 'string' ? trigger.webhookSecretHash : null
     if (!flow || !hash || !timingSafeEqualHex(hashToken(provided), hash)) {
@@ -43,8 +47,11 @@ export async function POST(request: NextRequest) {
     if (trigger.type !== 'webhook') {
       return NextResponse.json({ success: false, error: 'This flow is not configured for webhook triggering.' }, { status: 409 })
     }
-    if (flow.publishedGraph == null) {
-      return NextResponse.json({ success: false, error: 'Publish the flow before triggering it externally.' }, { status: 409 })
+    if (flow.status !== 'ACTIVE' || flow.publishedGraph == null) {
+      return NextResponse.json(
+        { success: false, error: 'The webhook secret is valid but the flow is not armed — publish the flow to start receiving events.' },
+        { status: 409 },
+      )
     }
 
     // The run is attributed to the flow's owner (or the org's oldest member).
@@ -71,6 +78,10 @@ export async function POST(request: NextRequest) {
     }
     const input = flowInputFromWebhookBody(body)
     if (!triggerConditionPasses(trigger, input)) {
+      // No run row is created for a filtered delivery, so this log line is the
+      // ONLY record the event arrived — without it "my webhook missed the
+      // event" and "the condition filtered it" are indistinguishable.
+      apiLogger.info('flow webhook delivery filtered by trigger condition', { flowId: flow.id, organizationId: flow.organizationId })
       return NextResponse.json({ success: true, filtered: true, message: 'Trigger condition not met — run skipped.' })
     }
     let receiptId: string | undefined

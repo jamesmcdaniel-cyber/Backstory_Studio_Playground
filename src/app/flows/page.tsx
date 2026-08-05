@@ -159,16 +159,46 @@ export default function FlowsPage() {
       setPendingTemplateId(null)
     }
   }
+  const finishImport = (response: Response, data: { flow?: { id?: string }; warnings?: string[]; source?: string; error?: string }) => {
+    if (!response.ok || !data.flow?.id) {
+      toast.error(data.error || 'That is not a valid Backstory flow package or n8n workflow.')
+      return
+    }
+    const warnings = Array.isArray(data.warnings) ? data.warnings : []
+    if (data.source === 'n8n') {
+      toast.success(
+        warnings.length > 0
+          ? `Imported from n8n as a draft — ${warnings.length} step${warnings.length === 1 ? '' : 's'} need${warnings.length === 1 ? 's' : ''} attention (see the notes on the canvas).`
+          : 'Imported from n8n as a draft, ready to run.',
+        { duration: 8000 },
+      )
+    } else {
+      toast.success('Flow imported as a draft.')
+    }
+    router.push(`/flows/${data.flow.id}`)
+  }
+
   const importFlow = async (file: File) => {
     if (file.size > 5_000_000) return toast.error('Flow packages must be under 5 MB.')
     try {
       const payload = JSON.parse(await file.text())
       const response = await fetch('/api/flows/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.flow?.id) return toast.error(data.error || 'That is not a valid Backstory flow package.')
-      toast.success('Flow imported as a draft.')
-      router.push(`/flows/${data.flow.id}`)
+      finishImport(response, data)
     } catch { toast.error('Could not read that JSON file.') }
+  }
+
+  // URL import (n8n parity): paste an n8n.io template page URL or any link to
+  // raw workflow JSON — the server fetches it (browser CORS can't) and
+  // converts it the same way as a file import.
+  const importFromUrl = async () => {
+    const url = window.prompt('Paste an n8n.io template URL, or a link to a workflow/flow JSON file:')?.trim()
+    if (!url) return
+    try {
+      const response = await fetch('/api/flows/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
+      const data = await response.json().catch(() => ({}))
+      finishImport(response, data)
+    } catch { toast.error('Could not import from that URL.') }
   }
   const newFlowButton = (
     <div className="flex">
@@ -212,7 +242,15 @@ export default function FlowsPage() {
       <div className="flex items-start justify-between gap-4">
         <PageHeader eyebrow="Pipelines" title="Flows" description="Wire your agents into deterministic multi-step pipelines." />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => importInput.current?.click()}><Upload className="mr-1.5 h-4 w-4" /> Import JSON</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline"><Upload className="mr-1.5 h-4 w-4" /> Import</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => importInput.current?.click()}>From a JSON file (Backstory or n8n)</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void importFromUrl()}>From a URL (n8n.io template or raw JSON)</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <input ref={importInput} className="hidden" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFlow(file) }} />
           {newFlowButton}
         </div>

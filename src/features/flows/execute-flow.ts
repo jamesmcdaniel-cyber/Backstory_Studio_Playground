@@ -38,7 +38,7 @@ import {
   resolveHttpCredential,
   type ResolvedHttpCredential,
 } from './http-auth'
-import { shouldPersistInterpreterStep } from './run-step-persistence'
+import { shouldPersistInterpreterStep, persistedCodeStepInput } from './run-step-persistence'
 import { prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
@@ -642,23 +642,60 @@ export async function runFlowExecution(
   // `outcome.iterationKey` (the per-iteration `${nodeId}#${index}` inside a
   // loop, or the bare id on the main chain).
   const pending: Promise<unknown>[] = []
-  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; output?: unknown; error?: string }) => {
+  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string }) => {
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
     broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status })
+    const rowKey = outcome.iterationKey ?? outcome.nodeId
     if (!shouldPersistInterpreterStep(nodeTypeById.get(outcome.nodeId))) {
-      // Adapter (agent/tool/http/ai/subflow) rows are written by the adapter,
-      // which stores NULL output on failure. For an onError route/continue
-      // failure the interpreter computed the {error, input} pass-through here —
-      // backfill it onto the failed row so a RESUME replays this step from its
-      // stored output (and re-takes the error edge) instead of re-executing it,
-      // which would duplicate an external write and could diverge the path if
-      // the transient error has since cleared. Non-failure emits are no-ops.
+      // Adapter (agent/tool/http/ai/subflow/code/knowledge) rows are written
+      // by the adapter — but the value DOWNSTREAM CONSUMED is computed after
+      // the adapter returns (asStructured / structured-output parse), so:
+      // - success: overwrite the row's output with the consumed value, so the
+      //   run panel shows what later steps actually read AND a resume replays
+      //   the step from the consumed shape (a structured agent replayed from
+      //   its raw text would break every {{step.x.output.field}} reference).
+      // - per-item aggregate: the children each have a #i row, but the
+      //   aggregate array had no row anywhere — create it when the update
+      //   matched nothing.
+      if (outcome.status === 'succeeded' && outcome.output !== undefined) {
+        const aggregateOrder = order++
+        pending.push(
+          (async () => {
+            const updated = await prisma.flowRunStep.updateMany({
+              where: { flowRunId: run.id, nodeId: rowKey, status: 'succeeded' },
+              data: { output: jsonValue(outcome.output) },
+            })
+            if (updated.count === 0) {
+              await prisma.flowRunStep.create({
+                data: {
+                  flowRunId: run.id,
+                  nodeId: rowKey,
+                  order: aggregateOrder,
+                  status: 'succeeded',
+                  input: jsonValue(outcome.input ?? {}),
+                  output: jsonValue(outcome.output ?? null),
+                  startedAt: new Date(),
+                  finishedAt: new Date(),
+                },
+              })
+            }
+          })().catch(() => undefined),
+        )
+        return
+      }
+      // The adapter stores NULL output on failure. For an onError
+      // route/continue failure the interpreter computed the {error, input}
+      // pass-through here — backfill it onto the failed row so a RESUME
+      // replays this step from its stored output (and re-takes the error
+      // edge) instead of re-executing it, which would duplicate an external
+      // write and could diverge the path if the transient error has since
+      // cleared. Other emits are no-ops.
       if (outcome.status === 'failed' && outcome.output !== undefined) {
         pending.push(
           prisma.flowRunStep
             .updateMany({
-              where: { flowRunId: run.id, nodeId: outcome.iterationKey ?? outcome.nodeId, status: 'failed' },
+              where: { flowRunId: run.id, nodeId: rowKey, status: 'failed' },
               data: { output: jsonValue(outcome.output) },
             })
             .catch(() => undefined),
@@ -671,9 +708,12 @@ export async function runFlowExecution(
         .create({
           data: {
             flowRunId: run.id,
-            nodeId: outcome.iterationKey ?? outcome.nodeId,
+            nodeId: rowKey,
             order: order++,
             status: outcome.status,
+            // The resolved input the node evaluated (see StepOutcome.input) —
+            // `{}` only for outcomes that genuinely carry none (skips, stop).
+            input: jsonValue(outcome.input ?? {}),
             output: jsonValue(outcome.output ?? null),
             error: outcome.error ? outcome.error.slice(0, 300) : null,
             startedAt: new Date(),
@@ -756,8 +796,17 @@ export async function runFlowExecution(
         order: order++,
         status: 'running',
         // Persisted request details must never contain credentials: an http
-        // step's Authorization header value is replaced with 'redacted'.
-        input: jsonValue(node.kind === 'http' ? redactHttpStepInput(node.config) : node.config),
+        // step's Authorization header value is replaced with 'redacted'. A
+        // code step's context.steps (a full copy of every prior step's
+        // output) is replaced with a marker — each of those outputs already
+        // lives on its own row, and duplicating them made rows quadratic.
+        input: jsonValue(
+          node.kind === 'http'
+            ? redactHttpStepInput(node.config)
+            : node.kind === 'code'
+              ? persistedCodeStepInput(node.config)
+              : node.config,
+        ),
         startedAt: new Date(),
       },
     })

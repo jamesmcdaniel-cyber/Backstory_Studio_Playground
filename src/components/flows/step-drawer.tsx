@@ -548,6 +548,7 @@ export function StepDrawer({
   published,
   onFlowPersisted,
   rawInput,
+  rawInputInferred,
   rawOutput,
   rawLogs,
   mockData,
@@ -577,6 +578,10 @@ export function StepDrawer({
   published?: boolean
   onFlowPersisted?: (updatedAt: string) => void
   rawInput?: unknown
+  /** True when rawInput was inferred (parent outputs / run input) rather than
+   * read off the recorded step row — the pane labels it so a debugging user
+   * knows they are not looking at ground truth. */
+  rawInputInferred?: boolean
   rawOutput?: unknown
   rawLogs?: string[]
   mockData?: unknown
@@ -806,6 +811,11 @@ export function StepDrawer({
               <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw JSON this step received on the selected run — its resolved input, or the upstream data feeding it.</p>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+              {rawInputInferred && rawInput !== undefined && (
+                <p className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                  Inferred from upstream outputs — this step did not record an input on the selected run.
+                </p>
+              )}
               <pre className="max-h-[45%] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
                 {rawJson(rawInput, 'No input data yet.\nExecute the previous nodes to inspect their raw output here.')}
               </pre>

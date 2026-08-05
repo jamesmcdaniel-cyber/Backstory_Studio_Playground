@@ -66,6 +66,9 @@ const STATUS_TEXT: Record<string, string> = {
 
 function preview(value: unknown): string {
   if (value == null) return '—'
+  // The schema default: rows written before input capture existed (and skip
+  // rows) carry a literal {} — render the same em-dash as "nothing recorded".
+  if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0) return '—'
   if (typeof value === 'string') return value
   try {
     return JSON.stringify(value, null, 2)
@@ -97,20 +100,35 @@ function downloadOutput(value: unknown, baseName: string) {
 
 /** Prose step outputs render as Markdown (HTML reports render live); structured data stays monospaced. */
 function OutputView({ value }: { value: unknown }) {
+  // The rendered view (Markdown / live HTML) is a derivative — the toggle
+  // guarantees the RAW persisted value is always one click away.
+  const [showRaw, setShowRaw] = useState(false)
   const isProse =
     typeof value === 'string' &&
     value.trim() !== '' &&
     value.trim()[0] !== '{' &&
     value.trim()[0] !== '['
   if (isProse) {
-    // A report-format step output (self-contained HTML document) renders as
-    // the actual report, matching the assistant panel — never raw markup.
-    if (looksLikeHtml(value as string)) {
-      return <HtmlPreview html={value as string} />
-    }
     return (
-      <div className="max-h-56 overflow-auto rounded border border-border/60 bg-background px-2.5 py-2">
-        <Markdown className="text-xs [&_p]:leading-5">{value as string}</Markdown>
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowRaw((v) => !v)}
+          className="mb-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+        >
+          {showRaw ? 'Show rendered' : 'Show raw'}
+        </button>
+        {showRaw ? (
+          <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded bg-muted px-2 py-1.5 text-xs">{value as string}</pre>
+        ) : looksLikeHtml(value as string) ? (
+          // A report-format step output (self-contained HTML document) renders
+          // as the actual report, matching the assistant panel.
+          <HtmlPreview html={value as string} />
+        ) : (
+          <div className="max-h-56 overflow-auto rounded border border-border/60 bg-background px-2.5 py-2">
+            <Markdown className="text-xs [&_p]:leading-5">{value as string}</Markdown>
+          </div>
+        )}
       </div>
     )
   }
@@ -214,7 +232,30 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
             <pre className="max-h-40 overflow-auto rounded bg-muted px-2 py-1.5 text-xs">{preview((step.input as { prompt?: unknown })?.prompt ?? step.input)}</pre>
           </div>
           {/* A waiting step's stored output is the internal pause record — the
-              banner above already explains the pause in plain english. */}
+              banner explains the pause in plain english; the timing details
+              (resume time, webhook timeout) surface here so "what exactly is
+              it waiting for" is answerable without reading the database. */}
+          {step.status === 'waiting' && (() => {
+            const waiting = (step.output as { waiting?: { kind?: string; resumeAt?: string; timeoutAt?: string } } | null)?.waiting
+            if (!waiting) return null
+            return (
+              <p className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+                {waiting.kind === 'timer' && waiting.resumeAt
+                  ? `Waiting until ${new Date(waiting.resumeAt).toLocaleString()}`
+                  : waiting.kind === 'webhook'
+                    ? `Waiting for a webhook callback${waiting.timeoutAt ? ` (gives up ${new Date(waiting.timeoutAt).toLocaleString()})` : ''}`
+                    : waiting.kind === 'approval'
+                      ? 'Waiting for an approval decision'
+                      : 'Waiting for a reply'}
+              </p>
+            )
+          })()}
+          {Array.isArray(step.logs) && step.logs.length > 0 && (
+            <div>
+              <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Logs</p>
+              <pre className="max-h-40 overflow-auto rounded bg-muted px-2 py-1.5 text-xs">{(step.logs as unknown[]).map((line) => String(line)).join('\n')}</pre>
+            </div>
+          )}
           {step.status !== 'waiting' && (
             <div>
               <div className="mb-0.5 flex items-center justify-between gap-2">

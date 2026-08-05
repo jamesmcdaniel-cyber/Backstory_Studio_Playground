@@ -1256,6 +1256,23 @@ function FlowBuilder() {
     return triggerInput === '' ? undefined : triggerInput
   }, [graph.edges, selectedNode, selectedRun, testInput])
 
+  // True when the INPUT pane's value was inferred (parent outputs / run
+  // input) rather than read off the step row — the drawer says so, because an
+  // inferred value can differ from what the node actually evaluated.
+  const selectedNodeInputInferred = useMemo(() => {
+    if (!selectedNode || selectedNodeRawInput === undefined) return false
+    const steps = selectedRun?.steps ?? []
+    const ownStep = [...steps]
+      .reverse()
+      .find((entry) => entry.nodeId === selectedNode.id || entry.nodeId.startsWith(`${selectedNode.id}#`))
+    const recorded =
+      ownStep &&
+      ownStep.input !== undefined &&
+      ownStep.input !== null &&
+      !(typeof ownStep.input === 'object' && !Array.isArray(ownStep.input) && Object.keys(ownStep.input as object).length === 0)
+    return !recorded
+  }, [selectedNode, selectedNodeRawInput, selectedRun])
+
   const selectedNodeRawOutput = useMemo(() => {
     if (!selectedNode) return undefined
     const step = [...(selectedRun?.steps ?? [])]
@@ -2441,6 +2458,7 @@ function FlowBuilder() {
                 previewCtx={previewCtx}
                 variableNames={upstreamVariables.map((variable) => variable.name)}
                 rawInput={selectedNodeRawInput}
+                rawInputInferred={selectedNodeInputInferred}
                 rawOutput={selectedNodeRawOutput}
                 rawLogs={selectedNodeRawLogs}
                 mockData={graph.pinData?.[drawerNode.id]}

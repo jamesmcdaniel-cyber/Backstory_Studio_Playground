@@ -18,6 +18,13 @@ export type StepOutcome = {
   // rows / build the resume `completed` map key by `iterationKey`.
   iterationKey?: string
   status: 'succeeded' | 'failed' | 'skipped' | 'waiting' | 'stopped'
+  /**
+   * The RESOLVED input the node actually evaluated (operands after template
+   * resolution, the record a transform mapped, the list a loop iterated).
+   * Persisted onto the step row so the run panel shows real I/O instead of
+   * the schema-default `{}`. Adapter-persisted types record their own input.
+   */
+  input?: unknown
   output?: unknown
   error?: string
 }
@@ -423,6 +430,17 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     const stepKey = node.id + indexKey
     const emit = (outcome: StepOutcome) => emitOutcome({ ...outcome, iterationKey: stepKey })
 
+    // Resolved comparison operands for condition/filter capture — handles both
+    // the multi-clause shape and the legacy single left/op/right.
+    const resolvedClauseInput = (data: { clauses?: { left: string; op: string; right: string }[]; left?: string; op?: string; right?: string }) => {
+      const list = data.clauses?.length
+        ? data.clauses
+        : data.left !== undefined
+          ? [{ left: data.left, op: data.op ?? 'equals', right: data.right ?? '' }]
+          : []
+      return { clauses: list.map((c) => ({ left: resolveTemplate(c.left, ctx), op: c.op, right: resolveTemplate(c.right, ctx) })) }
+    }
+
     // Shared failure disposition for a step that carries an `onError` policy
     // (agent/tool/http). 'stop' → fail the run; 'continue' → swallow the error
     // and proceed with no output; 'route' → the output becomes a pass-through
@@ -556,11 +574,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         break
       }
       if (control) {
-        emit({ nodeId: node.id, status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped', ...(control.kind === 'fail' ? { error: control.error } : {}) })
+        emit({ nodeId: node.id, status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped', input: { items }, ...(control.kind === 'fail' ? { error: control.error, output: outputs } : {}) })
         return control
       }
       ctx.step[node.id] = { output: outputs }
-      emit({ nodeId: node.id, status: 'succeeded', output: outputs })
+      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output: outputs })
       return { kind: 'ok', output: outputs }
     }
 
@@ -574,7 +592,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // inside a container body (no branch edges) a 'branch' result threads no
       // output and the body just proceeds.
       const branch = evalCondition(node.data, ctx) ? 'true' : 'false'
-      emit({ nodeId: node.id, status: 'succeeded', output: branch === 'true' })
+      emit({ nodeId: node.id, status: 'succeeded', input: resolvedClauseInput(node.data), output: branch === 'true' })
       return { kind: 'branch', branch, output: branch === 'true' }
     }
 
@@ -588,7 +606,12 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         ? (matches.length ? matches.map((c) => c.id) : 'default')
         : (matches[0]?.id ?? 'default')
       const shown = Array.isArray(branch) ? branch.join(', ') : branch
-      emit({ nodeId: node.id, status: 'succeeded', output: shown })
+      emit({
+        nodeId: node.id,
+        status: 'succeeded',
+        input: { cases: node.data.cases.map((c) => ({ id: c.id, left: resolveTemplate(c.left, ctx), op: c.op, right: resolveTemplate(c.right, ctx) })) },
+        output: shown,
+      })
       return { kind: 'branch', branch, output: shown }
     }
 
@@ -606,7 +629,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // adapter persists, so execute-flow's onStep path can store it verbatim
       // and the existing reply machinery renders/answers it unchanged.
       const question = resolveTemplate(node.data.message, ctx)
-      emit({ nodeId: node.id, status: 'waiting', output: { waiting: { kind: 'input', question } } })
+      emit({ nodeId: node.id, status: 'waiting', input: { question }, output: { waiting: { kind: 'input', question } } })
       return { kind: 'pause', nodeId: stepKey, question }
     }
 
@@ -623,9 +646,16 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       }
       // First visit: compute the resume condition and pause the run.
       const nowMs = opts.now ? opts.now.unix * 1000 : Date.parse(new Date().toISOString())
+      const waitInput = {
+        mode: node.data.mode,
+        ...(node.data.amount !== undefined ? { amount: resolveTemplate(node.data.amount, ctx) } : {}),
+        ...(node.data.unit !== undefined ? { unit: node.data.unit } : {}),
+        ...(node.data.until !== undefined ? { until: resolveTemplate(node.data.until, ctx) } : {}),
+        ...(node.data.timeoutMinutes !== undefined ? { timeoutMinutes: node.data.timeoutMinutes } : {}),
+      }
       if (node.data.mode === 'webhook') {
         const timeoutAt = node.data.timeoutMinutes ? new Date(nowMs + node.data.timeoutMinutes * 60_000).toISOString() : undefined
-        emit({ nodeId: node.id, status: 'waiting', output: { waiting: { kind: 'webhook', ...(timeoutAt ? { timeoutAt } : {}) } } })
+        emit({ nodeId: node.id, status: 'waiting', input: waitInput, output: { waiting: { kind: 'webhook', ...(timeoutAt ? { timeoutAt } : {}) } } })
         // A webhook wait with a safety timeout still records a resumeAt so the
         // cron scan can give up on a callback that never arrives.
         return { kind: 'pause', nodeId: stepKey, waitKind: 'webhook', ...(timeoutAt ? { resumeAt: timeoutAt } : {}) }
@@ -639,11 +669,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const broken = missingTokenFailure({ amount: node.data.amount, until: node.data.until })
       if (broken) return broken
       if ('error' in timing) {
-        emit({ nodeId: node.id, status: 'failed', error: timing.error })
+        emit({ nodeId: node.id, status: 'failed', input: waitInput, error: timing.error })
         return { kind: 'fail', error: timing.error }
       }
       const resumeAt = new Date(timing.resumeAtMs).toISOString()
-      emit({ nodeId: node.id, status: 'waiting', output: { waiting: { kind: 'timer', resumeAt } } })
+      emit({ nodeId: node.id, status: 'waiting', input: waitInput, output: { waiting: { kind: 'timer', resumeAt } } })
       return { kind: 'pause', nodeId: stepKey, waitKind: 'timer', resumeAt }
     }
 
@@ -665,7 +695,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const named = Object.keys(map).length > 0
       if (named) namedOutputs = { ...(namedOutputs ?? {}), ...map }
       ctx.step[node.id] = { output: map }
-      emit({ nodeId: node.id, status: 'succeeded', output: map })
+      emit({ nodeId: node.id, status: 'succeeded', input: lastOutput, output: map })
       return { kind: 'ok', output: named ? map : undefined }
     }
 
@@ -679,7 +709,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const mode = node.data.mode ?? 'passthrough'
       if (mode === 'passthrough') {
         ctx.step[node.id] = { output: lastOutput }
-        emit({ nodeId: node.id, status: 'succeeded', output: lastOutput })
+        emit({ nodeId: node.id, status: 'succeeded', input: lastOutput, output: lastOutput })
         return { kind: 'ok', output: lastOutput }
       }
       const branchOutputs = (incomingSources.get(node.id) ?? [])
@@ -698,7 +728,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               ? mergeAllCombinations(branchOutputs)
               : mergeByKey(branchOutputs, node.data.key, node.data.includeUnpaired !== false)
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', output })
+      emit({ nodeId: node.id, status: 'succeeded', input: { branches: branchOutputs }, output })
       return { kind: 'ok', output }
     }
 
@@ -728,18 +758,23 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         output[field.name] = field.type ? coerceFieldType(value, field.type) : value
       }
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', output })
+      emit({ nodeId: node.id, status: 'succeeded', input: lastOutput, output })
       return { kind: 'ok', output }
     }
 
     if (node.type === 'variable') {
+      const variableInput = {
+        op: node.data.op,
+        name: node.data.name,
+        ...(node.data.value !== undefined ? { value: resolveTemplate(node.data.value, ctx) } : {}),
+      }
       const res = applyVariableOp(node, ctx, declaredTypes)
       if ('error' in res) {
-        emit({ nodeId: node.id, status: 'failed', error: res.error })
+        emit({ nodeId: node.id, status: 'failed', input: variableInput, error: res.error })
         return { kind: 'fail', error: res.error }
       }
       ctx.step[node.id] = { output: res.output }
-      emit({ nodeId: node.id, status: 'succeeded', output: res.output })
+      emit({ nodeId: node.id, status: 'succeeded', input: variableInput, output: res.output })
       return { kind: 'ok', output: res.output }
     }
 
@@ -770,11 +805,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         fromEnd: node.data.fromEnd,
       })
       if ('error' in res) {
-        emit({ nodeId: node.id, status: 'failed', error: res.error })
+        emit({ nodeId: node.id, status: 'failed', input: { op: node.data.op, input }, error: res.error })
         return { kind: 'fail', error: res.error }
       }
       ctx.step[node.id] = { output: res.output }
-      emit({ nodeId: node.id, status: 'succeeded', output: res.output })
+      emit({ nodeId: node.id, status: 'succeeded', input: { op: node.data.op, input }, output: res.output })
       return { kind: 'ok', output: res.output }
     }
 
@@ -782,10 +817,10 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // Gate: pass through when the condition holds; else drop (loop) / end (chain).
       const passed = evalCondition(node.data, ctx)
       if (passed) {
-        emit({ nodeId: node.id, status: 'succeeded', output: true })
+        emit({ nodeId: node.id, status: 'succeeded', input: resolvedClauseInput(node.data), output: true })
         return { kind: 'ok', output: undefined }
       }
-      emit({ nodeId: node.id, status: 'skipped', output: false })
+      emit({ nodeId: node.id, status: 'skipped', input: resolvedClauseInput(node.data), output: false })
       return { kind: 'drop' }
     }
 
@@ -1051,7 +1086,19 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         break
       }
       if (control) {
-        emit({ nodeId: node.id, status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped', ...(control.kind === 'fail' ? { error: control.error } : {}) })
+        // A FAILED loop keeps its partial per-item results (errors marked
+        // per item) — they were real work, and each #i row alone doesn't show
+        // the aggregate shape downstream would have consumed. Pause/stop rows
+        // stay output-less: the resume machinery re-enters them.
+        const partial = iterations
+          .filter((r) => r.control?.kind !== 'drop')
+          .map((r) => (r.control?.kind === 'fail' ? { error: r.control.error } : r.output))
+        emit({
+          nodeId: node.id,
+          status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped',
+          input: { items },
+          ...(control.kind === 'fail' ? { error: control.error, output: partial } : {}),
+        })
         return control
       }
       const output = iterations
@@ -1059,7 +1106,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         .filter((r) => !(policy === 'skip' && r.control?.kind === 'fail'))
         .map((r) => (policy === 'collect' && r.control?.kind === 'fail' ? { error: r.control.error } : r.output))
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', output })
+      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output })
       return { kind: 'ok', output }
     }
 
@@ -1075,13 +1122,22 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         }),
       )
       const control = results.map((r) => r.res.control).find((c): c is NodeResult => c !== undefined && c.kind !== 'drop')
+      const parallelInput = { branches: node.data.branches }
       if (control) {
-        emit({ nodeId: node.id, status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped' })
+        // Keep the finished branches' outputs on a failed parallel — same
+        // partial-work rationale as the loop above.
+        const partial = Object.fromEntries(results.filter((r) => !r.res.control).map((r) => [r.key, r.res.output]))
+        emit({
+          nodeId: node.id,
+          status: control.kind === 'fail' ? 'failed' : control.kind === 'pause' ? 'waiting' : 'stopped',
+          input: parallelInput,
+          ...(control.kind === 'fail' ? { error: control.error, output: partial } : {}),
+        })
         return control
       }
       const output = Object.fromEntries(results.filter((r) => r.res.control?.kind !== 'drop').map((r) => [r.key, r.res.output]))
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', output })
+      emit({ nodeId: node.id, status: 'succeeded', input: parallelInput, output })
       return { kind: 'ok', output }
     }
 

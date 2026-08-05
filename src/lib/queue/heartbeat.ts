@@ -1,4 +1,5 @@
-import { getRedisConnection } from '@/lib/queue/config'
+import { Queue } from 'bullmq'
+import { getRedisConnection, QUEUE_NAMES } from '@/lib/queue/config'
 
 /**
  * Worker liveness heartbeat, written to the SAME Redis the producer enqueues
@@ -67,9 +68,35 @@ export async function workerHeartbeatAgeMs(now: number = Date.now()): Promise<nu
 }
 
 /**
- * Producer-side gate: throw EXECUTION_BACKEND_OFFLINE_MESSAGE unless a worker
- * heartbeat is fresh. An unreadable Redis counts as offline — the enqueue
- * would strand the job just the same.
+ * Pure liveness decision: a fresh heartbeat is sufficient; without one, live
+ * registered BullMQ consumers (the authoritative-but-costlier signal) also
+ * count — this keeps dispatch working across a worker image that predates the
+ * heartbeat (rollout ordering, DR restores). `null` = probe unreadable →
+ * fail closed: that is exactly the state where an enqueued job strands.
+ */
+export function consumerAliveVerdict(heartbeatFresh: boolean, registeredWorkers: number | null): boolean {
+  if (heartbeatFresh) return true
+  return registeredWorkers !== null && registeredWorkers > 0
+}
+
+// Lazy singleton: a Queue handle holds a Redis connection, and this is only
+// needed on the fallback path (no fresh heartbeat).
+let flowQueueHandle: Queue | null = null
+
+async function registeredFlowWorkers(): Promise<number | null> {
+  try {
+    flowQueueHandle ??= new Queue(QUEUE_NAMES.FLOW_EXECUTION, { connection: getRedisConnection() })
+    const workers = await flowQueueHandle.getWorkers()
+    return workers.length
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Producer-side gate: throw EXECUTION_BACKEND_OFFLINE_MESSAGE unless the
+ * consumer side is provably alive (see consumerAliveVerdict). An unreadable
+ * Redis counts as offline — the enqueue would strand the job just the same.
  */
 export async function assertQueueConsumerAlive(now: number = Date.now()): Promise<void> {
   let raw: string | null = null
@@ -78,5 +105,7 @@ export async function assertQueueConsumerAlive(now: number = Date.now()): Promis
   } catch {
     throw new Error(EXECUTION_BACKEND_OFFLINE_MESSAGE)
   }
-  if (!isHeartbeatFresh(raw, now)) throw new Error(EXECUTION_BACKEND_OFFLINE_MESSAGE)
+  const fresh = isHeartbeatFresh(raw, now)
+  const alive = consumerAliveVerdict(fresh, fresh ? 0 : await registeredFlowWorkers())
+  if (!alive) throw new Error(EXECUTION_BACKEND_OFFLINE_MESSAGE)
 }

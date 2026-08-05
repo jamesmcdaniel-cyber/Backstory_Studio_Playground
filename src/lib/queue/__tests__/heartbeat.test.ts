@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   isHeartbeatFresh,
+  consumerAliveVerdict,
   WORKER_HEARTBEAT_STALE_MS,
   WORKER_HEARTBEAT_INTERVAL_MS,
   EXECUTION_BACKEND_OFFLINE_MESSAGE,
@@ -42,5 +43,24 @@ describe('isHeartbeatFresh', () => {
 
   it('offline message names the user-visible failure', () => {
     assert.match(EXECUTION_BACKEND_OFFLINE_MESSAGE, /execution backend is offline/i)
+  })
+})
+
+describe('consumerAliveVerdict', () => {
+  it('a fresh heartbeat is sufficient on its own', () => {
+    assert.equal(consumerAliveVerdict(true, null), true)
+    assert.equal(consumerAliveVerdict(true, 0), true)
+  })
+
+  it('no heartbeat but registered consumers → alive (worker image predating the heartbeat, DR restore)', () => {
+    assert.equal(consumerAliveVerdict(false, 1), true)
+  })
+
+  it('no heartbeat and zero registered consumers → dead (the stranding outage)', () => {
+    assert.equal(consumerAliveVerdict(false, 0), false)
+  })
+
+  it('no heartbeat and the consumer probe unreadable → dead (fail closed)', () => {
+    assert.equal(consumerAliveVerdict(false, null), false)
   })
 })

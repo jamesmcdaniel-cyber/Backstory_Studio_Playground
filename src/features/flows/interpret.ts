@@ -481,14 +481,23 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     const onMissingToken = (path: string) => missingTokens.add(path)
     const failStep = (error: string, resolvedInput: unknown): NodeResult => {
       const mode = 'onError' in node.data ? ((node.data as { onError?: 'stop' | 'continue' | 'route' }).onError ?? 'stop') : 'stop'
-      emit({ nodeId: node.id, status: 'failed', error, ...(mode === 'route' || mode === 'continue' ? { output: { error, input: resolvedInput } } : {}) })
+      // `input` rides on the outcome so the persistence layer can record a
+      // step row for a step that failed BEFORE its adapter ran (resolution
+      // failures) — otherwise the run fails with no step naming the culprit.
+      emit({ nodeId: node.id, status: 'failed', error, input: resolvedInput, ...(mode === 'route' || mode === 'continue' ? { output: { error, input: resolvedInput } } : {}) })
       return onFailure(mode, error, resolvedInput)
+    }
+    // How the run-level error refers to this step. The canvas shows labels, so
+    // the label is what the user can actually find; ids are the last resort.
+    const stepDisplayName = () => {
+      const data = node.data as { label?: string; toolName?: string }
+      return data.label?.trim() || data.toolName?.trim() || node.id
     }
     const missingTokenFailure = (resolvedInput: unknown): NodeResult | null => {
       if (!missingTokens.size) return null
       const list = [...missingTokens].map((p) => `{{${p}}}`).join(', ')
       return failStep(
-        `Unknown data reference ${list} — this flow has no step or input with that name. Open the step's settings and pick the value from the data menu instead of typing it.`,
+        `Unknown data reference ${list} in step "${stepDisplayName()}" — this flow has no step or input with that name. Open that step's settings and pick the value from the data menu instead of typing it.`,
         resolvedInput,
       )
     }

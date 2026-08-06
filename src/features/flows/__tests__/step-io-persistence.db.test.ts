@@ -107,6 +107,31 @@ if (TEST_DB) {
     assert.equal((rows[0].input as any).query, 'find accounts')
   })
 
+  test('a resolution failure on an adapter step persists a failed row naming the node — never a failed run with zero steps', async () => {
+    // The bad reference fails during input resolution, BEFORE the http adapter
+    // runs — so the adapter writes no row. Without the interpreter-side
+    // fallback the run fails with "No steps recorded" and nothing names the
+    // offending node (the bug this test pins).
+    const graph = {
+      nodes: [
+        { id: 'trigger', type: 'trigger', data: {} },
+        {
+          id: 'h1',
+          type: 'http',
+          data: { label: 'Find Opportunity', method: 'GET', url: 'https://api.example.com/{{$json.query.opportunityId}}' },
+        },
+      ],
+      edges: [{ id: 'e1', source: 'trigger', target: 'h1' }],
+    }
+    const { result, steps } = await run(graph, '')
+    assert.equal(result.status, 'failed')
+    const failed = steps.find((s: any) => s.nodeId === 'h1')
+    assert.ok(failed, 'the failing node must have a step row for the run panel to point at')
+    assert.equal(failed.status, 'failed')
+    assert.match(failed.error ?? '', /Unknown data reference/)
+    assert.ok(failed.input, 'the resolved config is persisted for inspection')
+  })
+
   test('a per-item code step records each item row AND the aggregate array downstream consumed', async () => {
     const graph = {
       nodes: [

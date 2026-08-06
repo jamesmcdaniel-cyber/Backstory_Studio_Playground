@@ -2699,3 +2699,30 @@ test('per-item over a single object runs once (n8n parity), not zero times', asy
   assert.equal(empty.status, 'succeeded')
   assert.deepEqual(urls, [])
 })
+
+test('a broken data reference on an adapter step names the step and reports a failed outcome with its input', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      {
+        id: 'h1',
+        type: 'http',
+        data: { label: 'Find Opportunity', method: 'GET', url: 'https://api.example.com/{{$json.query.opportunityId}}' },
+      },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'h1' }],
+  }
+  const outcomes: { nodeId: string; status: string; input?: unknown; error?: string }[] = []
+  const runAction: RunActionFn = async () => ({ output: { ok: true } })
+  const result = await interpretFlow(graph, '', { runAgent: stub({}), runAction, onStep: (o) => outcomes.push(o) })
+  assert.equal(result.status, 'failed')
+  // The run-level error must say WHICH step holds the bad reference — the run
+  // panel shows this message with no step rows to fall back on.
+  assert.match(result.error ?? '', /\{\{\$json\.query\.opportunityId\}\}/)
+  assert.match(result.error ?? '', /Find Opportunity/)
+  const failed = outcomes.find((o) => o.status === 'failed')
+  assert.equal(failed?.nodeId, 'h1')
+  // The resolved config rides on the outcome so the persistence layer can
+  // record a step row even though the adapter never started.
+  assert.ok(failed?.input !== undefined, 'failed outcome must carry the resolved input')
+})

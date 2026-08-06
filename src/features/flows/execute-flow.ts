@@ -691,14 +691,40 @@ export async function runFlowExecution(
       // edge) instead of re-executing it, which would duplicate an external
       // write and could diverge the path if the transient error has since
       // cleared. Other emits are no-ops.
-      if (outcome.status === 'failed' && outcome.output !== undefined) {
+      if (outcome.status === 'failed') {
+        const failedOrder = order++
         pending.push(
-          prisma.flowRunStep
-            .updateMany({
-              where: { flowRunId: run.id, nodeId: rowKey, status: 'failed' },
-              data: { output: jsonValue(outcome.output) },
-            })
-            .catch(() => undefined),
+          (async () => {
+            if (outcome.output !== undefined) {
+              const updated = await prisma.flowRunStep.updateMany({
+                where: { flowRunId: run.id, nodeId: rowKey, status: 'failed' },
+                data: { output: jsonValue(outcome.output) },
+              })
+              if (updated.count > 0) return
+            }
+            // A resolution failure (missing/foreign data reference) fails the
+            // step BEFORE its adapter runs, so no row exists at all — without
+            // this create the run fails with zero steps and nothing names the
+            // offending node. Only create when NO row exists for this key: a
+            // timed-out adapter leaves a 'running' row the end-of-run sweep
+            // closes, and a second row here would duplicate it.
+            const existing = await prisma.flowRunStep.count({ where: { flowRunId: run.id, nodeId: rowKey } })
+            if (existing === 0) {
+              await prisma.flowRunStep.create({
+                data: {
+                  flowRunId: run.id,
+                  nodeId: rowKey,
+                  order: failedOrder,
+                  status: 'failed',
+                  input: jsonValue(outcome.input ?? {}),
+                  output: jsonValue(outcome.output ?? null),
+                  error: outcome.error ? outcome.error.slice(0, 300) : null,
+                  startedAt: new Date(),
+                  finishedAt: new Date(),
+                },
+              })
+            }
+          })().catch(() => undefined),
         )
       }
       return

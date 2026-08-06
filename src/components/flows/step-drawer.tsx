@@ -77,6 +77,10 @@ function cleanOptimize(next: { dataPath?: string; fields?: string[]; maxItems?: 
 /** Node types that support the per-item fan-out modifier (see perItemSchema). */
 const PER_ITEM_TYPES: ReadonlySet<FlowNode['type']> = new Set(['agent', 'tool', 'http', 'ai', 'code', 'subflow', 'data', 'transform', 'knowledge'])
 
+/** Curated chat models for the agent step's per-step override; a free-typed
+ * value saved earlier stays selectable. */
+export const AGENT_STEP_MODELS = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5']
+
 type PerItemConfigLike = { over: string; itemError?: 'fail' | 'skip' | 'collect'; concurrency?: number }
 
 /**
@@ -528,7 +532,7 @@ function ToolConfigurationSection({
           )}
         </>
       )}
-      <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
+      <AdvancedParamsSection node={node} onChange={onChange} />
       <p className="text-xs text-muted-foreground">Runs this exact connected action with the configured inputs.</p>
     </div>
   )
@@ -643,6 +647,8 @@ export function StepDrawer({
       .filter((connection) => parseFlowToolConnectionId(connection.id).plane === 'mcp'),
     [toolCatalog],
   )
+  // Provider-grouped connections for the agent step's "extra tools" grants.
+  const providerGroupsForAgent = useMemo(() => groupToolConnections(toolCatalog), [toolCatalog])
   const isTrigger = node.type === 'trigger'
   const trigger = ((node.type === 'trigger' ? node.data.trigger : undefined) as TriggerData | undefined) ?? { type: 'manual' }
   // Chip-editor handles keyed by field, so a datatree click inserts a token
@@ -882,18 +888,32 @@ export function StepDrawer({
                   <label className={labelClass}>Label (optional)</label>
                   <input className={fieldClass} value={(node.data as { label?: string }).label ?? ''} placeholder="A short name for this step" onFocus={blockActive} onBlur={unblockActive} onChange={(e) => setLabel(e.target.value)} />
                 </div>
-                <div>
-                  <label className={labelClass}>Notes (optional)</label>
-                  <textarea
-                    rows={2}
-                    className={fieldClass}
-                    value={(node.data as { note?: string }).note ?? ''}
-                    placeholder="Why this step exists, gotchas, links…"
-                    onFocus={blockActive}
-                    onBlur={unblockActive}
-                    onChange={(e) => onChange({ ...node, data: { ...node.data, note: e.target.value || undefined } } as FlowNode)}
-                  />
-                </div>
+                {typeof (node.data as { note?: string }).note === 'string' ? (
+                  <div>
+                    <label className={labelClass}>Notes</label>
+                    <textarea
+                      rows={2}
+                      className={fieldClass}
+                      value={(node.data as { note?: string }).note ?? ''}
+                      placeholder="Why this step exists, gotchas, links…"
+                      onFocus={blockActive}
+                      onBlur={(e) => {
+                        unblockActive()
+                        // An emptied note disappears back to the "Add a note" link.
+                        if (!e.target.value.trim()) onChange({ ...node, data: { ...node.data, note: undefined } } as FlowNode)
+                      }}
+                      onChange={(e) => onChange({ ...node, data: { ...node.data, note: e.target.value } } as FlowNode)}
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="self-start text-xs font-semibold text-primary hover:underline"
+                    onClick={() => onChange({ ...node, data: { ...node.data, note: '' } } as FlowNode)}
+                  >
+                    + Add a note
+                  </button>
+                )}
               </>
             )}
             {PER_ITEM_TYPES.has(node.type) && (
@@ -957,7 +977,100 @@ export function StepDrawer({
                 agent&apos;s context automatically — so it has everything it needs without wiring each token.
               </p>
             </div>
-            <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
+            {/* n8n-style agent attachments, collapsed so the default view stays
+                minimal: agent + message is all a simple step needs. */}
+            <details className="rounded-lg border border-border/70 p-2" open={Boolean(node.data.model || node.data.memory || node.data.toolConnectionIds?.length)}>
+              <summary className="cursor-pointer text-sm font-medium">Model, memory &amp; tools for this step</summary>
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label className={labelClass}>Chat model</label>
+                  <select
+                    className={fieldClass}
+                    value={node.data.model ?? ''}
+                    onChange={(e) => onChange({ ...node, data: { ...node.data, model: e.target.value || undefined } })}
+                  >
+                    <option value="">Agent default</option>
+                    {(node.data.model && !AGENT_STEP_MODELS.includes(node.data.model) ? [node.data.model, ...AGENT_STEP_MODELS] : AGENT_STEP_MODELS).map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Memory</label>
+                  <select
+                    className={fieldClass}
+                    value={node.data.memory ? node.data.memory.store ?? 'postgres' : ''}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      onChange({
+                        ...node,
+                        data: {
+                          ...node.data,
+                          memory: value ? { ...(node.data.memory ?? {}), store: value as NonNullable<typeof node.data.memory>['store'] } : undefined,
+                        },
+                      })
+                    }}
+                  >
+                    <option value="">Off — each run starts fresh</option>
+                    <option value="postgres">Remember past runs (built-in)</option>
+                    <option value="redis">Remember past runs (Redis)</option>
+                    <option value="mongodb">Remember past runs (MongoDB)</option>
+                    <option value="xata">Remember past runs (Xata)</option>
+                  </select>
+                  {node.data.memory && (
+                    <div className="mt-2">
+                      <TokenTextEditor
+                        ref={registerEditor('agent.memory.sessionKey')}
+                        value={node.data.memory.sessionKey ?? ''}
+                        labelCtx={labelCtx}
+                        placeholder="Session key (optional) — e.g. one thread per account"
+                        onFocus={focusEditor('agent.memory.sessionKey')}
+                        onChange={(sessionKey) => onChange({ ...node, data: { ...node.data, memory: { ...node.data.memory!, sessionKey: sessionKey || undefined } } })}
+                        ariaLabel="Memory session key"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className={labelClass}>Extra tools for this step</label>
+                  {providerGroupsForAgent.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No tool connections yet — connect apps under Integrations.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {providerGroupsForAgent.flatMap((group) =>
+                        group.connections.map((connection) => {
+                          const attached = node.data.toolConnectionIds ?? []
+                          const active = attached.includes(connection.id)
+                          return (
+                            <button
+                              key={connection.id}
+                              type="button"
+                              aria-pressed={active}
+                              onClick={() => {
+                                const next = active ? attached.filter((id) => id !== connection.id) : [...attached, connection.id]
+                                onChange({ ...node, data: { ...node.data, toolConnectionIds: next.length ? next : undefined } })
+                              }}
+                              className={cn(
+                                'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors',
+                                active ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground hover:border-foreground/30',
+                              )}
+                              title={active ? 'Granted for this step — click to remove' : 'Grant to the agent for this step'}
+                            >
+                              <IntegrationLogo slug={group.brand.slug} name={group.brand.label} className="h-4 w-4 rounded-sm" />
+                              {connection.name || group.brand.label}
+                            </button>
+                          )
+                        }),
+                      )}
+                    </div>
+                  )}
+                  <p className="mt-1.5 text-xs text-muted-foreground">On top of the tools the agent already owns.</p>
+                </div>
+              </div>
+            </details>
+            <AdvancedParamsSection node={node} onChange={onChange} />
             <div>
               <label className={labelClass}>Human assistance</label>
               <select
@@ -1997,7 +2110,7 @@ export function StepDrawer({
                 Return a JSON-compatible value. Use <code>input</code> for this step&apos;s data and <code>context</code> for trigger, steps, variables, time, and run metadata. Imports, files, network calls, and child processes are unavailable.
               </p>
             </div>
-            <AdvancedParamsSection node={node} onChange={onChange} defaultOpen />
+            <AdvancedParamsSection node={node} onChange={onChange} />
           </>
         )}
 

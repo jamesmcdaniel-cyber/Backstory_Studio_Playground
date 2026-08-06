@@ -25,7 +25,9 @@ const BY_TYPE: Partial<Record<FlowNode['type'], AdvancedParamKey[]>> = {
   subflow: ['onError', 'retries', 'retryDelayMs', 'timeoutMs', 'waitForCompletion', 'alwaysOutputData'],
   tool: ['onError', 'retries', 'retryDelayMs', 'timeoutMs', 'alwaysOutputData'],
   http: ['responseType', 'failOnHttpError', 'onError', 'retries', 'retryDelayMs', 'timeoutMs', 'maxRedirects', 'alwaysOutputData'],
-  code: ['onError', 'timeoutMs', 'alwaysOutputData'],
+  // No alwaysOutputData: the code schema doesn't store it and the interpreter
+  // never passes it — offering it was a dead toggle.
+  code: ['onError', 'timeoutMs'],
   loop: ['concurrency', 'batchSize'],
 }
 

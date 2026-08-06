@@ -36,7 +36,7 @@ import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 import { groupToolConnections, selectedToolPresentation, stepBrandFallback, toolActionChoices } from '@/lib/flows/tool-presentation'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
-import { orgMemberLabel, type OrgMember, type ToolCatalog } from './step-drawer'
+import { AGENT_STEP_MODELS, orgMemberLabel, type OrgMember, type ToolCatalog } from './step-drawer'
 import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { AdvancedParamsSection } from './advanced-params'
 import { DataTree } from './data-tree'
@@ -1450,9 +1450,6 @@ function AgentBody({
   )
 }
 
-/** Curated chat models for the per-step override; free-typed values persist. */
-const AGENT_STEP_MODELS = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5']
-
 /**
  * n8n-style agent attachments: the chat model that runs this step, memory so
  * the agent remembers past runs of this step, and extra tools granted for the
@@ -1485,8 +1482,12 @@ function AgentConfigSection({
     update({ ...node, data: { ...node.data, toolConnectionIds: next.length ? next : undefined } })
   }
   return (
-    <div className="space-y-3 rounded-lg border border-slate-200 p-3">
-      <p className="text-sm font-semibold text-slate-900">Agent configuration for this step</p>
+    <details
+      className="rounded-lg border border-slate-200 p-3"
+      open={Boolean(node.data.model || node.data.memory || (node.data.toolConnectionIds?.length ?? 0) > 0)}
+    >
+      <summary className="cursor-pointer text-sm font-semibold text-slate-900">Model, memory &amp; tools for this step</summary>
+      <div className="mt-3 space-y-3">
       <div className="grid gap-2">
         <label className={labelClass}>Chat model</label>
         <select
@@ -1574,7 +1575,8 @@ function AgentConfigSection({
           On top of the tools the agent already owns; open the agent to change its permanent toolset.
         </p>
       </div>
-    </div>
+      </div>
+    </details>
   )
 }
 

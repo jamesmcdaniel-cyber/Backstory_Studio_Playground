@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Bot, Info, Plug, Workflow } from 'lucide-react'
@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
+import { unmetRequirements, type WorkspaceConnections } from '@/components/integrations/integration-match'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
@@ -41,6 +42,10 @@ export default function TemplateDetails() {
   const [deploying, setDeploying] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
   const [submission, setSubmission] = useState<SubmissionStatus | null>(null)
+  // What this workspace has actually connected. Null until it answers — the
+  // banner stays hidden rather than flashing a "connect these" list that
+  // resolves to nothing a moment later.
+  const [workspace, setWorkspace] = useState<WorkspaceConnections | null>(null)
   const { can } = useAuth()
   const canSubmit = can('template.submit')
 
@@ -67,6 +72,30 @@ export default function TemplateDetails() {
       cancelled = true
     }
   }, [id])
+
+  // The workspace's connected tools, so the banner can name only what's missing.
+  // Refetched when the user comes back to the tab — connecting happens on
+  // another surface, and returning here should show the banner shrink.
+  const loadWorkspace = useCallback(() => {
+    fetch('/api/integrations/available', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!data?.success) return
+        setWorkspace({ tools: data.tools ?? [], connections: data.connections ?? [] })
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadWorkspace()
+    const refetchOnReturn = () => { if (!document.hidden) loadWorkspace() }
+    window.addEventListener('focus', refetchOnReturn)
+    document.addEventListener('visibilitychange', refetchOnReturn)
+    return () => {
+      window.removeEventListener('focus', refetchOnReturn)
+      document.removeEventListener('visibilitychange', refetchOnReturn)
+    }
+  }, [loadWorkspace])
 
   // Where this template stands with the catalogue reviewers, if this workspace
   // may submit at all. Best-effort: a failure just hides the status, never the
@@ -101,6 +130,14 @@ export default function TemplateDetails() {
     notifyAgentsChanged()
     router.push(result.href)
   }
+
+  // The template's requirements this workspace hasn't connected yet. Empty
+  // until the workspace answers, so a slow/failed read never renders a banner
+  // asking for tools that are already in place.
+  const missing = useMemo(
+    () => (template && workspace ? unmetRequirements(template.integrations, workspace) : []),
+    [template, workspace],
+  )
 
   // Playbook templates provision the full motion: agents + a wired Flow.
   const deployPlaybook = async () => {
@@ -171,20 +208,23 @@ export default function TemplateDetails() {
               </div>
             </div>
 
-            {template.integrations.length > 0 && (
+            {/* Only what's actually MISSING. A workspace that already has these
+                connected sees nothing here — a banner that keeps asking for
+                tools you've connected is a banner people stop reading. */}
+            {missing.length > 0 && (
               <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                   <Info className="h-4 w-4 shrink-0" />
-                  <span>This template uses</span>
-                  {template.integrations.map((integration) => (
+                  <span>This template still needs</span>
+                  {missing.map((requirement) => (
                     <IntegrationChip
-                      key={integration}
-                      name={integration}
+                      key={requirement.name}
+                      name={requirement.name}
                       onClick={() => setConnectOpen(true)}
                       className="border-amber-300/70 bg-amber-100/70 text-amber-900 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100 dark:hover:bg-amber-400/20"
                     />
                   ))}
-                  <span>— connect them so every step can run.</span>
+                  <span>— connect {missing.length === 1 ? 'it' : 'them'} so every step can run.</span>
                 </div>
                 <Button
                   size="sm"

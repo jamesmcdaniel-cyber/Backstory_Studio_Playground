@@ -146,3 +146,59 @@ export function classifyRequirements(names: string[], catalog: CatalogEntry[] = 
   }
   return out
 }
+
+/** One attachable tool as `/api/integrations/available` reports it. */
+export type WorkspaceTool = { key: string; label: string; slug: string; connected: boolean }
+
+/** What the workspace has actually connected, from `/api/integrations/available`. */
+export type WorkspaceConnections = {
+  tools: WorkspaceTool[]
+  connections: { id: string; name: string }[]
+}
+
+/**
+ * Does the workspace already satisfy this requirement?
+ *
+ * Matching is deliberately the same shape as matchCatalogEntry — normalized
+ * equality, then a prefix match either way so "Backstory MCP" is satisfied by a
+ * server named "Backstory" and "salesforce" by "salesforce-sandbox". The logo
+ * slug doubles as the alias table, so a capability name ("Email") finds the
+ * provider a workspace actually connected (Gmail).
+ */
+function isRequirementMet(requirement: Requirement, state: WorkspaceConnections): boolean {
+  // Platform capabilities (HTTP, web, the model) have nothing to connect.
+  if (requirement.kind === 'builtin') return true
+
+  const tokens = [requirement.label, integrationSlug(requirement.name) ?? '']
+    .map(normalize)
+    .filter(Boolean)
+  if (!tokens.length) return false
+
+  const hit = (candidate: string) => {
+    const target = normalize(candidate)
+    return Boolean(target) && tokens.some((t) => t === target || target.startsWith(t) || t.startsWith(target))
+  }
+
+  // A custom MCP server exists only because someone configured it, so its
+  // presence IS its connected state.
+  if (state.connections.some((c) => hit(c.name))) return true
+
+  return state.tools.some((tool) => tool.connected && [tool.key, tool.label, tool.slug].some(hit))
+}
+
+/**
+ * The subset of a template's declared integrations the workspace has NOT
+ * connected — what a "connect these first" banner should name, and nothing more.
+ *
+ * An empty result means the template is ready to run and the banner should not
+ * render at all. A workspace state with no tools and no connections yields every
+ * requirement back: absence of evidence is not evidence of a connection, and the
+ * banner disappearing on a failed/pending fetch would be worse than showing it.
+ */
+export function unmetRequirements(
+  names: string[],
+  state: WorkspaceConnections,
+  catalog: CatalogEntry[] = [],
+): Requirement[] {
+  return classifyRequirements(names, catalog).filter((requirement) => !isRequirementMet(requirement, state))
+}

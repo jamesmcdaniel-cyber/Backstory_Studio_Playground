@@ -29,6 +29,9 @@ export type AgentMetadata = {
   /** When true, outbound write-tool calls are queued for human approval instead
    *  of executing inline. See @/lib/agents/approval. */
   requireApproval?: boolean
+  /** Configured API endpoints (agent setup → HTTP API) — each one surfaces as
+   *  a named tool at run time. Validated by parseAgentHttpEndpoints on read. */
+  httpEndpoints?: unknown[]
   /** AI-proposed goal surfaced from a run's reflection pass, pending user confirmation. */
   suggestedGoal?: string
 }

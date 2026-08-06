@@ -29,6 +29,7 @@ import { ensureFreshConnectionToken, persistRefreshedAuthcodeTokens } from '@/li
 import { GranolaToolClient, getGranolaApiKey, granolaTools } from '@/lib/integrations/granola'
 import { SlackToolClient, slackTools, getSlackToken } from '@/lib/integrations/slack'
 import { HttpToolClient, httpTools } from '@/lib/integrations/http'
+import type { AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { EmailToolClient, emailTools, getEmailCredential } from '@/lib/integrations/email'
 import { BUILTIN_CONNECTORS, isSelected, nangoConnector, type ConnectorDescriptor } from '@/lib/connectors/registry'
 import { formatFlowToolConnectionId, type FlowToolPlane } from '@/lib/flows/tool-connection-id'
@@ -323,7 +324,7 @@ export async function loadMcpConnectionPlaneGroups(
  */
 export async function loadNativePlaneGroups(
   organizationId: string,
-  options: { providers?: string[] } = {},
+  options: { providers?: string[]; httpEndpoints?: AgentHttpEndpoint[]; httpUserId?: string } = {},
 ): Promise<ToolPlaneGroup[]> {
   const selected = (descriptor: ConnectorDescriptor) =>
     options.providers ? isSelected(descriptor, options.providers) : true
@@ -404,7 +405,10 @@ export async function loadNativePlaneGroups(
   // automatically instead of living in the agent's instructions.
   const httpConn = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === 'http')!
   if (selected(httpConn)) {
-    groups.push(group(httpConn, '', new HttpToolClient(organizationId), httpTools()))
+    // The agent's configured API endpoints ride along: each becomes its own
+    // named tool next to the generic `request`.
+    const endpoints = options.httpEndpoints ?? []
+    groups.push(group(httpConn, '', new HttpToolClient(organizationId, endpoints, options.httpUserId), httpTools(endpoints)))
   }
 
   // Email via Resend REST API — gated on a per-org key, so an agent can only

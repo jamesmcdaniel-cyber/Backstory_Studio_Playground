@@ -1,4 +1,5 @@
 import { readAgentMetadata } from '@/lib/agents/metadata'
+import { parseAgentHttpEndpoints } from '@/lib/integrations/http-endpoints'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 
 /**
@@ -34,6 +35,7 @@ export function serializeAgent(agent: {
     allowSubagents: (metadata as { allowSubagents?: boolean }).allowSubagents === true,
     subagentIds: ((metadata as { subagentIds?: string[] }).subagentIds ?? []).filter((id) => typeof id === 'string'),
     allowFlows: (metadata as { allowFlows?: boolean }).allowFlows === true,
+    httpEndpoints: parseAgentHttpEndpoints(metadata.httpEndpoints),
     flowIds: ((metadata as { flowIds?: string[] }).flowIds ?? []).filter((id) => typeof id === 'string'),
     autoAnswerFromMemory: metadata.autoAnswerFromMemory === true,
     alwaysStrategize: metadata.alwaysStrategize === true,

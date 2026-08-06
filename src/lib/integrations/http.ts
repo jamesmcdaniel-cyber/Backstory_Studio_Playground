@@ -17,17 +17,26 @@ import { prisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { readResponseTextLimited } from '@/lib/net/response-body'
-import { applyHttpCredential, resolveHttpCredential } from '@/features/flows/http-auth'
+import { applyHttpCredential, resolveHttpCredential, resolveHttpConnectionToken } from '@/features/flows/http-auth'
+import {
+  endpointToolDefinition,
+  endpointToolName,
+  fillEndpointTemplate,
+  type AgentHttpEndpoint,
+} from '@/lib/integrations/http-endpoints'
 
 const HTTP_TIMEOUT_MS = 30_000
 const MAX_RESPONSE_CHARS = 50_000
 
-export function httpTools(): ToolDefinition[] {
+export function httpTools(endpoints: AgentHttpEndpoint[] = []): ToolDefinition[] {
   return [
+    // Each configured endpoint is its own named tool — the model calls
+    // "get_weather(city)" with typed args instead of composing raw requests.
+    ...endpoints.map((endpoint) => endpointToolDefinition(endpoint)),
     {
       name: 'request',
       description:
-        'Make an HTTP request to an external API and return the response. Use for querying REST/JSON APIs (GET) or sending data to them (POST/PUT/PATCH/DELETE). Public hosts only. Saved workspace credentials for the host are attached automatically — do not put API keys, tokens, or passwords in the headers yourself unless the user supplied one for this specific call.',
+        'Make an HTTP request to an external API and return the response. Use for querying REST/JSON APIs (GET) or sending data to them (POST/PUT/PATCH/DELETE). Public hosts only. Saved workspace credentials for the host are attached automatically — do not put API keys, tokens, or passwords in the headers yourself unless the user supplied one for this specific call. Prefer this agent’s configured endpoint tools when one matches the task.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -46,9 +55,15 @@ export class HttpToolClient {
   /**
    * Org scope for credential lookup. Omitted by callers with no org context
    * (the credential store is org-owned), in which case requests go out
-   * unauthenticated exactly as before.
+   * unauthenticated exactly as before. `endpoints` are the agent's configured
+   * API endpoints (each one a named tool); `userId` widens connection lookup
+   * to the acting user's personal connections for endpoint auth.
    */
-  constructor(private readonly organizationId?: string) {}
+  constructor(
+    private readonly organizationId?: string,
+    private readonly endpoints: AgentHttpEndpoint[] = [],
+    private readonly userId?: string,
+  ) {}
 
   /**
    * The saved credential bound to this host, or null. Host-locked by the store:
@@ -78,24 +93,74 @@ export class HttpToolClient {
   }
 
   async executeTool(_serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+    const endpoint = this.endpoints.find((entry) => endpointToolName(entry) === name)
+    if (endpoint) return this.executeEndpoint(endpoint, args)
     if (name !== 'request') throw new Error(`Unknown HTTP tool: ${name}`)
     const url = String(args.url || '')
-    await assertPublicUrl(url)
-
     const method = String(args.method || 'GET').toUpperCase()
-    const headers: Record<string, string> = { accept: 'application/json, text/plain;q=0.9, */*;q=0.8' }
+    const headers: Record<string, string> = {}
     if (args.headers && typeof args.headers === 'object' && !Array.isArray(args.headers)) {
       for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
         if (typeof value === 'string') headers[key.toLowerCase()] = value
       }
     }
     const body = typeof args.body === 'string' && method !== 'GET' ? args.body : undefined
+    return this.performRequest({ url, method, headers, body })
+  }
+
+  /**
+   * A configured endpoint call: substitute the model's {{param}} args (encoded
+   * where they land in the URL/query), then attach the endpoint's own auth —
+   * its bound credential, its bound connection token, or the host-matched
+   * workspace credential fallback.
+   */
+  private async executeEndpoint(endpoint: AgentHttpEndpoint, args: Record<string, unknown>): Promise<unknown> {
+    const base = fillEndpointTemplate(endpoint.url, args, { encode: true })
+    const url = new URL(base)
+    for (const [key, value] of Object.entries(endpoint.query ?? {})) {
+      url.searchParams.set(key, fillEndpointTemplate(value, args))
+    }
+    const headers: Record<string, string> = {}
+    for (const [key, value] of Object.entries(endpoint.headers ?? {})) {
+      headers[key.toLowerCase()] = fillEndpointTemplate(value, args)
+    }
+    const body =
+      endpoint.bodyMode === 'json' && endpoint.body && endpoint.method !== 'GET' && endpoint.method !== 'HEAD'
+        ? fillEndpointTemplate(endpoint.body, args)
+        : undefined
+
+    let boundCredential: Awaited<ReturnType<typeof resolveHttpCredential>> | null = null
+    let bearerToken: string | undefined
+    if (endpoint.credentialId && this.organizationId) {
+      boundCredential = await resolveHttpCredential(endpoint.credentialId, this.organizationId)
+    } else if (endpoint.connectionId && this.organizationId) {
+      bearerToken = await resolveHttpConnectionToken({
+        connectionId: endpoint.connectionId,
+        organizationId: this.organizationId,
+        userId: this.userId,
+      })
+    }
+    return this.performRequest({ url: url.toString(), method: endpoint.method, headers, body, boundCredential, bearerToken })
+  }
+
+  private async performRequest(params: {
+    url: string
+    method: string
+    headers: Record<string, string>
+    body?: string
+    boundCredential?: Awaited<ReturnType<typeof resolveHttpCredential>> | null
+    bearerToken?: string
+  }): Promise<unknown> {
+    const { url, method, body } = params
+    await assertPublicUrl(url)
+    const headers: Record<string, string> = { accept: 'application/json, text/plain;q=0.9, */*;q=0.8', ...params.headers }
     if (body && !headers['content-type']) headers['content-type'] = 'application/json'
 
-    // Attach the workspace credential for this host, if any. applyHttpCredential
-    // re-checks the host binding itself, so this can't be pointed elsewhere.
+    // Attach auth: an endpoint-bound credential, a connection's fresh token, or
+    // the workspace credential for this host. applyHttpCredential re-checks the
+    // host binding itself, so a credential can't be pointed elsewhere.
     let request: { url: string; init: RequestInit } = { url, init: { method, headers, body } }
-    const credential = await this.credentialForHost(new URL(url).hostname.toLowerCase())
+    const credential = params.boundCredential ?? (params.bearerToken ? null : await this.credentialForHost(new URL(url).hostname.toLowerCase()))
     if (credential) {
       try {
         request = await applyHttpCredential(request, credential)
@@ -104,6 +169,8 @@ export class HttpToolClient {
           `The saved credential for ${credential.allowedHost} could not be applied: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
+    } else if (params.bearerToken) {
+      request.init.headers = { ...headers, authorization: `Bearer ${params.bearerToken}` }
     }
 
     const controller = new AbortController()
@@ -111,7 +178,7 @@ export class HttpToolClient {
     try {
       const response = await fetch(request.url, { ...request.init, signal: controller.signal, redirect: 'error' })
       const text = (await readResponseTextLimited(response, 250_000, 'HTTP tool response')).slice(0, MAX_RESPONSE_CHARS)
-      return { status: response.status, ok: response.ok, body: text, authenticated: Boolean(credential) }
+      return { status: response.status, ok: response.ok, body: text, authenticated: Boolean(credential || params.bearerToken) }
     } finally {
       clearTimeout(timer)
     }

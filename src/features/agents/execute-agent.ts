@@ -24,6 +24,7 @@ import {
   type ToolPlaneGroup,
 } from './tool-planes'
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
+import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
@@ -263,7 +264,13 @@ export async function selectDiscoveredTools(
   }
 }
 
-async function loadTools(organizationId: string, providers: string[], ownerUserId?: string | null, query?: string) {
+async function loadTools(
+  organizationId: string,
+  providers: string[],
+  ownerUserId?: string | null,
+  query?: string,
+  httpEndpoints: AgentHttpEndpoint[] = [],
+) {
   // Every plane contributes to one list; the cap/priority policy is applied once
   // at the end (capDiscoveredTools) so write tools aren't crowded out. Plane
   // discovery/binding lives in ./tool-planes, shared with the flow tool catalog
@@ -307,7 +314,7 @@ async function loadTools(organizationId: string, providers: string[], ownerUserI
 
   // ---- Native built-ins (Granola / Slack / HTTP / Email) --------------------
   // Each gated on its availability AND a matching providers entry.
-  for (const group of await loadNativePlaneGroups(organizationId, { providers })) pushGroup(group)
+  for (const group of await loadNativePlaneGroups(organizationId, { providers, httpEndpoints, httpUserId: ownerUserId ?? undefined })) pushGroup(group)
 
   // ---- Nango delivery (outbound writes as the acting user) -----------------
   // Slack/Gmail/Salesforce writes through the org's Nango connections,
@@ -647,7 +654,9 @@ export async function runAgentExecution(
     const providers = await resolveAgentConnectorKeys(agent.id, agentMetadata)
     const skillIds = Array.isArray(agentMetadata.skills) ? agentMetadata.skills.map(String) : []
     const toolQuery = [agent.objective, data.input].filter(Boolean).join('\n')
-    const { tools, bindings, unavailable } = await loadTools(organizationId, providers, userId, toolQuery)
+    // Configured API endpoints (agent setup → HTTP API) become named tools.
+    const httpEndpoints = parseAgentHttpEndpoints(agentMetadata.httpEndpoints)
+    const { tools, bindings, unavailable } = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints)
     // Community skills are public-library rows; resolve any attached ids that
     // aren't built in and compose them the same way. Best-effort.
     // systemPrisma: public community skill library — cross-org by design, same

@@ -8,6 +8,7 @@ import { readAgentMetadata } from '@/lib/agents/metadata'
 import { serializeAgent } from '@/lib/agents/serialize'
 import { indexAgent, removeAgentFromGraph } from '@/lib/rag/indexer'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
+import { AGENT_HTTP_ENDPOINT_LIMIT, agentHttpEndpointSchema } from '@/lib/integrations/http-endpoints'
 
 /** Best-effort graph-RAG indexing of an agent node (gated on embeddings). */
 function indexAgentRow(agent: { id: string; organizationId: string; objective: string; description: string; metadata: unknown; userId?: string | null; visibility?: string }): Promise<void> {
@@ -57,6 +58,8 @@ const agentSchema = z.object({
   goal: z.string().max(2000).nullable().optional(),
   // When true, a question closely matching a past answer is auto-answered from memory.
   autoAnswerFromMemory: z.boolean().optional(),
+  // Configured API endpoints (HTTP API tool) — each becomes a named tool at run time.
+  httpEndpoints: z.array(agentHttpEndpointSchema).max(AGENT_HTTP_ENDPOINT_LIMIT).optional(),
   // When true, every run starts with an explicit numbered plan before any tool call.
   alwaysStrategize: z.boolean().optional(),
   // When true, this agent's outbound writes (Slack/Gmail/Salesforce delivery) are
@@ -119,6 +122,7 @@ async function resolveClonedAgent(
     autoAnswerFromMemory: base.autoAnswerFromMemory,
     alwaysStrategize: base.alwaysStrategize,
     requireApproval: base.requireApproval,
+    httpEndpoints: base.httpEndpoints,
     schedule: { type: 'manual' as const, timezone: 'UTC', isActive: false },
   }
   // Only fields the caller actually sent override the inherited configuration.
@@ -177,6 +181,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         autoAnswerFromMemory: data.autoAnswerFromMemory === true,
         alwaysStrategize: data.alwaysStrategize === true,
         requireApproval: data.requireApproval === true,
+        httpEndpoints: data.httpEndpoints ?? [],
       },
     },
   })
@@ -217,6 +222,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(body.allowFlows !== undefined && { allowFlows: body.allowFlows }),
         ...(body.flowIds !== undefined && { flowIds: body.flowIds }),
         ...(body.autoAnswerFromMemory !== undefined && { autoAnswerFromMemory: body.autoAnswerFromMemory }),
+        ...(body.httpEndpoints !== undefined && { httpEndpoints: body.httpEndpoints }),
         ...(body.alwaysStrategize !== undefined && { alwaysStrategize: body.alwaysStrategize }),
         ...(body.requireApproval !== undefined && { requireApproval: body.requireApproval }),
         // A saved NON-EMPTY goal supersedes any prior AI-suggested one; saving

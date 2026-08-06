@@ -321,19 +321,132 @@ test('utility nodes map to native data ops; credential-less leftovers become pas
       n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
       n8nNode('Dedupe', 'n8n-nodes-base.removeDuplicates', {}),
       n8nNode('Cap', 'n8n-nodes-base.limit', { maxItems: 5 }),
-      n8nNode('To File', 'n8n-nodes-base.convertToFile', { operation: 'toText' }),
+      n8nNode('Leftover', 'n8n-nodes-base.executionData', {}),
     ],
-    connections: chain('Start', 'Dedupe', 'Cap', 'To File'),
+    connections: chain('Start', 'Dedupe', 'Cap', 'Leftover'),
   }
   const result = n8nToFlow(workflow)
   const graph = flowGraphSchema.parse(result.graph)
   const ops = graph.nodes.filter((n) => n.type === 'data') as any[]
   assert.deepEqual(ops.map((o) => o.data.op).sort(), ['limit', 'removeDuplicates'])
   assert.ok(ops.every((o) => typeof o.data.input === 'string' && o.data.input.startsWith('{{')), 'data ops read their upstream')
-  const stub = graph.nodes.find((n) => n.type === 'code' && (n as any).data.label === 'To File') as any
-  assert.ok(stub, 'convertToFile becomes a runnable passthrough stub, not a dead note')
+  const stub = graph.nodes.find((n) => n.type === 'code' && (n as any).data.label === 'Leftover') as any
+  assert.ok(stub, 'an unmapped credential-less node becomes a runnable passthrough stub, not a dead note')
   assert.match(stub.data.code, /return input/)
-  assert.ok(result.warnings.some((w) => /To File/.test(w)))
+  assert.ok(result.warnings.some((w) => /Leftover/.test(w)))
+})
+
+test('Loop Over Items imports as a native Loop step: body per item, done edge continues, no dropped connections', () => {
+  const workflow = {
+    name: 'Batch',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Split', 'n8n-nodes-base.code', { jsCode: 'return [{ json: { n: 1 } }, { json: { n: 2 } }]' }),
+      n8nNode('Loop', 'n8n-nodes-base.splitInBatches', { batchSize: 1 }),
+      n8nNode('Work', 'n8n-nodes-base.set', { assignments: { assignments: [{ name: 'x', value: '={{ $json.n }}' }] } }),
+      n8nNode('After', 'n8n-nodes-base.set', { assignments: { assignments: [{ name: 'done', value: '={{ $json.count }}' }] } }),
+    ],
+    connections: {
+      Start: { main: [[{ node: 'Split', type: 'main' as const, index: 0 }]] },
+      Split: { main: [[{ node: 'Loop', type: 'main' as const, index: 0 }]] },
+      // Output 0 = done → After; output 1 = loop → Work; Work loops back.
+      Loop: {
+        main: [
+          [{ node: 'After', type: 'main' as const, index: 0 }],
+          [{ node: 'Work', type: 'main' as const, index: 0 }],
+        ],
+      },
+      Work: { main: [[{ node: 'Loop', type: 'main' as const, index: 0 }]] },
+    },
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const loop = graph.nodes.find((n) => n.type === 'loop') as any
+  assert.ok(loop, 'splitInBatches becomes a native Loop step')
+  assert.equal(loop.data.over, '{{step.id-Split.output}}', 'the loop iterates its upstream list')
+  assert.deepEqual(loop.data.body, ['id-Work'], 'the loop branch is the body')
+  const work = graph.nodes.find((n: any) => n.data?.label === 'Work') as any
+  assert.deepEqual(work.data.fields, [{ name: 'x', value: '{{item.n}}' }], 'body steps read the current item')
+  // Done edge continues; no edges touch the body; nothing was "dropped".
+  assert.ok(graph.edges.some((e) => e.source === loop.id && e.target === 'id-After'))
+  assert.ok(!graph.edges.some((e) => e.source === 'id-Work' || e.target === 'id-Work'), 'body steps live in the loop, not on edges')
+  assert.ok(!result.warnings.some((w) => /[Dd]ropped/.test(w)), 'the loop-back edge is understood, not dropped')
+  const validation = validateFlowGraph(graph)
+  assert.deepEqual(validation.errors ?? [], [])
+})
+
+test('retrieval Q&A becomes Knowledge search + answer; vector store load/insert map to knowledge/ingestion guidance', () => {
+  const workflow = {
+    name: 'RAG',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('QA', '@n8n/n8n-nodes-langchain.chainRetrievalQa', { text: '={{ $json.question }}' }),
+      n8nNode('Search Docs', '@n8n/n8n-nodes-langchain.vectorStoreInMemory', { mode: 'load', prompt: '={{ $json.question }}', topK: 4 }),
+      n8nNode('Ingest', '@n8n/n8n-nodes-langchain.vectorStoreInMemory', { mode: 'insert', memoryKey: 'kb' }),
+      n8nNode('Done', 'n8n-nodes-base.set', { assignments: { assignments: [{ name: 'answer', value: 'x' }] } }),
+    ],
+    connections: {
+      Start: { main: [[{ node: 'QA', type: 'main' as const, index: 0 }]] },
+      QA: { main: [[{ node: 'Search Docs', type: 'main' as const, index: 0 }]] },
+      'Search Docs': { main: [[{ node: 'Ingest', type: 'main' as const, index: 0 }]] },
+      Ingest: { main: [[{ node: 'Done', type: 'main' as const, index: 0 }]] },
+    },
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const knowledgeSteps = graph.nodes.filter((n) => n.type === 'knowledge') as any[]
+  assert.equal(knowledgeSteps.length, 2, 'retrieval QA and the load-mode store are both Knowledge searches')
+  const qa = knowledgeSteps.find((k) => k.data.label === 'QA')
+  assert.equal(qa.data.query, '{{trigger.input.question}}')
+  const answer = graph.nodes.find((n: any) => n.type === 'ai' && /answer/.test(n.data?.label ?? '')) as any
+  assert.ok(answer, 'a synthesized answer step follows the QA search')
+  assert.match(answer.data.input, /Retrieved context/)
+  // The QA node's outgoing connection re-sources from the answer step.
+  assert.ok(graph.edges.some((e) => e.source === qa.id && e.target === answer.id))
+  assert.ok(graph.edges.some((e) => e.source === answer.id && e.target === 'id-Search Docs'))
+  const search = knowledgeSteps.find((k) => k.data.label === 'Search Docs')
+  assert.equal(search.data.topK, 4)
+  const ingest = graph.nodes.find((n: any) => n.data?.label === 'Ingest') as any
+  assert.equal(ingest.type, 'code', 'ingestion passes through with Knowledge-upload guidance')
+  assert.ok(result.warnings.some((w) => /Ingest/.test(w) && /Knowledge/.test(w)))
+})
+
+test('extractFromFile parses the file reference for real; convertToFile produces a file-shaped object', async () => {
+  const workflow = {
+    name: 'Files',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Parse CSV', 'n8n-nodes-base.extractFromFile', { operation: 'csv' }),
+      n8nNode('To File', 'n8n-nodes-base.convertToFile', { operation: 'toJson', options: { fileName: 'out.json' } }),
+    ],
+    connections: chain('Start', 'Parse CSV', 'To File'),
+  }
+  const graph = flowGraphSchema.parse(n8nToFlow(workflow).graph)
+  const parse = graph.nodes.find((n: any) => n.data?.label === 'Parse CSV') as any
+  const convert = graph.nodes.find((n: any) => n.data?.label === 'To File') as any
+  assert.equal(parse.type, 'code')
+  assert.equal(convert.type, 'code')
+
+  const { runFlowCode } = await import('@/features/flows/code-runner')
+  const parsed = await runFlowCode({
+    language: 'javascript',
+    mode: 'all',
+    code: parse.data.code,
+    input: { fileId: 'f1', filename: 'deals.csv', mimeType: 'text/csv', size: 10, url: 'u', content: 'name,amount\n"Acme, Inc",100\nGlobex,250' },
+    context: { steps: {} },
+  })
+  assert.deepEqual(parsed.output, [
+    { name: 'Acme, Inc', amount: '100' },
+    { name: 'Globex', amount: '250' },
+  ])
+  const converted = await runFlowCode({
+    language: 'javascript',
+    mode: 'all',
+    code: convert.data.code,
+    input: [{ a: 1 }],
+    context: { steps: {} },
+  })
+  assert.deepEqual(converted.output, { filename: 'out.json', mimeType: 'application/json', content: JSON.stringify([{ a: 1 }], null, 2) })
 })
 
 test('a MAIN-chain MCP client call becomes a tool step named after its MCP tool — never an AI step', () => {

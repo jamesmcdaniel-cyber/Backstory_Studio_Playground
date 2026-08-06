@@ -450,8 +450,80 @@ function mapNode(
       } as FlowNode
     }
     case 'n8n-nodes-base.splitInBatches':
-      warn(`“${name}”: n8n loops (Loop Over Items) don’t import — rebuild it as a Backstory Loop step; its looping connection was dropped.`)
+      // Only reached when the loop branch is EMPTY (loops with a body import
+      // as native Loop steps in the main pass).
+      warn(`“${name}”: a Loop Over Items with no body steps — imported as a note; add a Loop step if you rebuild it.`)
       return { id, type: 'note', data: { text: noteText(node) } } as FlowNode
+    case 'n8n-nodes-base.extractFromFile': {
+      // Files flow through Backstory as references carrying pre-extracted text
+      // (`.content` for text/CSV/JSON/PDF) — extraction is reading + parsing it.
+      const operation = String(parameters.operation ?? 'text')
+      const parseTail =
+        operation === 'fromJson'
+          ? 'return JSON.parse(text)'
+          : operation === 'csv'
+            ? `const lines = text.split(/\\r?\\n/).filter((l) => l.trim())
+const parseLine = (line) => { const out = []; let cur = ''; let q = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++ } else q = false } else cur += ch } else if (ch === '"') q = true; else if (ch === ',') { out.push(cur); cur = '' } else cur += ch } out.push(cur); return out }
+const header = parseLine(lines[0] || '')
+return lines.slice(1).map((l) => { const cells = parseLine(l); return Object.fromEntries(header.map((h, i) => [h, cells[i] ?? ''])) })`
+            : 'return { data: text, filename: ref ? ref.filename : undefined }'
+      if (['xls', 'xlsx', 'ods', 'binaryToPropery'].includes(operation)) {
+        warn(`“${name}”: spreadsheet/binary extraction (${operation}) can't run in the flow sandbox — the step passes the file reference through; convert the file to CSV upstream.`)
+        return { id, type: 'code', data: { label, language: 'javascript', mode: 'all', code: `// Imported from n8n Extract From File (${operation}) — spreadsheet/binary\n// extraction is not available in the sandbox; the file reference passes through.\nreturn input` } } as FlowNode
+      }
+      return {
+        id,
+        type: 'code',
+        data: {
+          label,
+          language: 'javascript',
+          mode: 'all',
+          code: `// Imported from n8n Extract From File (${operation}): reads the incoming
+// file reference's extracted text and parses it.
+const ref = input && typeof input === 'object' && typeof input.fileId === 'string'
+  ? input
+  : input && typeof input === 'object'
+    ? Object.values(input).find((v) => v && typeof v === 'object' && typeof v.fileId === 'string')
+    : null
+const text = ref && typeof ref.content === 'string' ? ref.content : typeof input === 'string' ? input : null
+if (text == null) return input // nothing extractable — pass the value through
+${parseTail}`,
+        },
+      } as FlowNode
+    }
+    case 'n8n-nodes-base.convertToFile': {
+      const operation = String(parameters.operation ?? 'toText')
+      const options = (parameters.options ?? {}) as { fileName?: unknown }
+      const fileName = typeof options.fileName === 'string' && options.fileName ? options.fileName : undefined
+      const body =
+        operation === 'toJson'
+          ? `return { filename: ${JSON.stringify(fileName ?? 'data.json')}, mimeType: 'application/json', content: JSON.stringify(input, null, 2) }`
+          : operation === 'csv'
+            ? `const rows = Array.isArray(input) ? input : [input]
+const keys = Array.from(new Set(rows.flatMap((r) => (r && typeof r === 'object' ? Object.keys(r) : []))))
+const cell = (v) => { const s = v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
+const lines = [keys.join(',')].concat(rows.map((r) => keys.map((k) => cell(r && typeof r === 'object' ? r[k] : undefined)).join(',')))
+return { filename: ${JSON.stringify(fileName ?? 'data.csv')}, mimeType: 'text/csv', content: lines.join('\\n') }`
+            : operation === 'toText'
+              ? `return { filename: ${JSON.stringify(fileName ?? 'data.txt')}, mimeType: 'text/plain', content: typeof input === 'string' ? input : JSON.stringify(input, null, 2) }`
+              : null
+      if (!body) {
+        warn(`“${name}”: Convert to File (${operation}) has no sandbox equivalent — the step passes its input through; use CSV/JSON/text conversion instead.`)
+        return { id, type: 'code', data: { label, language: 'javascript', mode: 'all', code: `// Imported from n8n Convert to File (${operation}) — this format can't be\n// produced in the sandbox; the input passes through unchanged.\nreturn input` } } as FlowNode
+      }
+      return {
+        id,
+        type: 'code',
+        data: {
+          label,
+          language: 'javascript',
+          mode: 'all',
+          code: `// Imported from n8n Convert to File (${operation}): produces a file-shaped
+// object ({ filename, mimeType, content }) downstream steps can template.
+${body}`,
+        },
+      } as FlowNode
+    }
     case 'n8n-nodes-base.stopAndError': {
       const reason =
         parameters.errorType === 'errorObject'
@@ -532,6 +604,23 @@ function mapNode(
       return { id, type: 'data', data: { label, op, input: `{{${jsonBase}}}` } } as FlowNode
     }
     default: {
+      // MAIN-chain vector store nodes: a query ("load") is a Knowledge search;
+      // ingestion ("insert"/"update") belongs in Knowledge uploads, not a flow.
+      if (type.startsWith('@n8n/n8n-nodes-langchain.vectorStore')) {
+        const mode = String(parameters.mode ?? 'load')
+        if (mode === 'load' || mode === 'retrieve') {
+          const query = typeof parameters.prompt === 'string' && parameters.prompt.trim() ? tr(parameters.prompt) : typeof parameters.query === 'string' && parameters.query.trim() ? tr(parameters.query) : `{{${jsonBase}}}`
+          const rawTopK = Number(parameters.topK ?? parameters.limit ?? 5)
+          warn(`“${name}”: imported as a Knowledge search — upload the documents it queried under Knowledge so the search has content.`)
+          return { id, type: 'knowledge', data: { label, query, topK: Number.isFinite(rawTopK) ? Math.min(20, Math.max(1, Math.floor(rawTopK))) : 5 } } as FlowNode
+        }
+        warn(`“${name}”: vector-store ingestion (${mode}) doesn't run inside flows — upload these documents under Knowledge instead; the step passes its input through.`)
+        return {
+          id,
+          type: 'code',
+          data: { label, language: 'javascript', mode: 'all', code: `// Imported from n8n ${type} (${mode} mode) — document ingestion lives in\n// Backstory Knowledge (upload the documents there); this step passes through.\nreturn input` },
+        } as FlowNode
+      }
       // A MAIN-chain MCP client node is a TOOL CALL (it names the tool it
       // invokes), not an LLM — it must win over the generic LangChain check.
       if (type.endsWith('.mcpClient')) {
@@ -683,17 +772,59 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     }
   }
 
-  // What `$json` means per node: the direct upstream on the MAIN chain.
+  // n8n Loop Over Items (splitInBatches): output 0 = "done" (after the loop),
+  // output 1 = "loop" (the body), and the body's last node connects BACK to
+  // the splitInBatches node. Walk the loop output to collect the body members
+  // — they become a native Loop step's `body` id list instead of dropped edges.
+  const loopBodyByName = new Map<string, string[]>()
+  const bodyMemberNames = new Set<string>()
+  const bodyStartNames = new Set<string>()
+  for (const node of sourceNodes) {
+    if (node.type !== 'n8n-nodes-base.splitInBatches' || !node.name) continue
+    const starts = (workflow.connections?.[node.name]?.main?.[1] ?? [])
+      .map((target) => target?.node)
+      .filter((n): n is string => Boolean(n))
+    const members: string[] = []
+    const queue = [...starts]
+    const seen = new Set<string>([node.name])
+    while (queue.length) {
+      const current = queue.shift()!
+      if (seen.has(current) || !nodeByName.has(current)) continue
+      seen.add(current)
+      members.push(current)
+      const outputs = workflow.connections?.[current]?.main ?? []
+      // A nested Loop Over Items owns its own loop branch — walk only its
+      // "done" output for the OUTER body.
+      const walkable = nodeByName.get(current)?.type === 'n8n-nodes-base.splitInBatches' ? [outputs[0]] : outputs
+      for (const targets of walkable) {
+        for (const target of targets ?? []) {
+          if (target?.node && target.node !== node.name) queue.push(target.node)
+        }
+      }
+    }
+    if (members.length === 0) continue
+    starts.forEach((start) => bodyStartNames.add(start))
+    members.forEach((member) => bodyMemberNames.add(member))
+    loopBodyByName.set(node.name, members)
+  }
+
+  // What `$json` means per node: the direct upstream on the MAIN chain. The
+  // loop back-edge (body → splitInBatches) is NOT a parent — without the guard
+  // it can shadow the loop's real upstream when it appears first in the file.
   const parentByName = new Map<string, string>()
   for (const [sourceName, conn] of Object.entries(workflow.connections ?? {})) {
     for (const targets of conn?.main ?? []) {
       for (const target of targets ?? []) {
-        if (target?.node && !parentByName.has(target.node)) parentByName.set(target.node, sourceName)
+        if (!target?.node || parentByName.has(target.node)) continue
+        if (bodyMemberNames.has(sourceName) && nodeByName.get(target.node)?.type === 'n8n-nodes-base.splitInBatches') continue
+        parentByName.set(target.node, sourceName)
       }
     }
   }
   const triggerNames = new Set(sourceNodes.filter((n) => n8nTriggerType(n.type)).map((n) => n.name ?? ''))
   const jsonBaseFor = (nodeName: string | undefined): string => {
+    // The first node inside a Loop body reads the CURRENT ITEM, not a step.
+    if (nodeName && bodyStartNames.has(nodeName)) return 'item'
     const parent = nodeName ? parentByName.get(nodeName) : undefined
     if (!parent || triggerNames.has(parent)) return 'trigger.input'
     const parentId = idByName.get(parent)
@@ -741,6 +872,9 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         tools.push({ name: subName, kind: 'http', description: described || `HTTP ${String(p.method ?? 'GET')} ${String(p.url ?? '')}`.trim() })
       } else if (subType.endsWith('.toolCode')) {
         tools.push({ name: subName, kind: 'code', description: described || 'custom code tool' })
+      } else if (subType.endsWith('.toolVectorStore')) {
+        tools.push({ name: subName, kind: 'utility', description: described || 'searches a document knowledge base' })
+        warn(`Agent “${name}”: its vector-store tool “${subName}” maps to Backstory Knowledge — upload those documents under Knowledge and the agent searches them natively.`)
       } else if (/Tool$/.test(subType) && !subType.startsWith('@n8n/n8n-nodes-langchain.tool')) {
         // App node exposed as a tool (gmailTool, slackTool, googleSheetsTool…)
         // — the strongest integration signal an n8n export carries.
@@ -782,7 +916,11 @@ export function n8nToFlow(input: unknown): N8nImportResult {
 
   // First recognized trigger becomes THE trigger; extra triggers become notes.
   const nodes: FlowNode[] = []
-  const routersByName = new Map<string, { aiId: string; switchId: string; cases: Array<{ id: string }> }>()
+  // Synthesized companions (a classifier's routing switch, a retrieval chain's
+  // answer step): outgoing edges re-source from the companion, and the internal
+  // hop is added as an extra edge.
+  const edgeSourceOverride = new Map<string, string>()
+  const synthEdges: Array<{ source: string; target: string }> = []
   let triggerId: string | null = null
   for (const [index, node] of sourceNodes.entries()) {
     const id = idOf(node, index)
@@ -846,6 +984,52 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       warn(
         `“${node.name}”: imported as a real Agent step — a new agent carries its instructions and ${spec.tools.length} tool${spec.tools.length === 1 ? '' : 's'}; open the agent to confirm its connections before running.`,
       )
+    } else if (node.type === 'n8n-nodes-base.splitInBatches' && node.name && loopBodyByName.has(node.name)) {
+      // Loop Over Items → a native Loop step whose body is the walked loop
+      // branch. Body steps run per item ({{item}}); the loop's output is the
+      // collected per-iteration results, flowing on via the "done" edge.
+      const memberIds = (loopBodyByName.get(node.name) ?? [])
+        .map((member) => idByName.get(member))
+        .filter((memberId): memberId is string => Boolean(memberId))
+      const batchSize = Number(node.parameters?.batchSize ?? 1)
+      mapped = {
+        id,
+        type: 'loop',
+        data: {
+          label: node.name,
+          over: `{{${jsonBaseFor(node.name)}}}`,
+          body: memberIds,
+          ...(Number.isFinite(batchSize) && batchSize > 1 ? { batchSize: Math.min(1000, Math.floor(batchSize)) } : {}),
+        },
+      } as FlowNode
+      warn(`“${node.name}”: imported as a native Loop step over its upstream list — its ${memberIds.length} body step${memberIds.length === 1 ? '' : 's'} run once per item; check the “over” list if the loop fed itself differently.`)
+    } else if (node.type === '@n8n/n8n-nodes-langchain.chainRetrievalQa' && node.name) {
+      // Retrieval Q&A = search the knowledge base, then answer from the hits —
+      // a Knowledge step plus a synthesized answer step.
+      const tr = trFor(node.name)
+      const p = node.parameters ?? {}
+      const question = typeof p.text === 'string' && p.text.trim() ? tr(p.text) : typeof p.query === 'string' && p.query.trim() ? tr(p.query) : `{{${jsonBaseFor(node.name)}}}`
+      let answerId = `${id}-answer`
+      while (usedIds.has(answerId)) answerId = `${answerId}-x`
+      usedIds.add(answerId)
+      mapped = { id, type: 'knowledge', data: { label: node.name, query: question, topK: 5 } } as FlowNode
+      const answer = {
+        id: answerId,
+        type: 'ai',
+        data: {
+          label: `${node.name} — answer`,
+          aiOp: 'ask',
+          input: `Question: ${question}\n\nRetrieved context:\n{{step.${id}.output}}`,
+          instructions: 'Answer the question using only the retrieved context. Say so plainly if the context does not contain the answer.',
+        },
+      } as FlowNode
+      const answerPosition = position ? { x: position.x + 220, y: position.y } : undefined
+      nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
+      nodes.push(answerPosition ? ({ ...answer, position: answerPosition } as FlowNode) : answer)
+      edgeSourceOverride.set(node.name, answerId)
+      synthEdges.push({ source: id, target: answerId })
+      warn(`“${node.name}”: imported as a Knowledge search + answer step — upload the documents it searched under Knowledge so the search has something to find.`)
+      continue
     } else {
       mapped = mapNode(node, id, trFor(node.name), warn, idByName, jsonBaseFor(node.name))
       // Classifiers route each item down ONE category output in n8n — mirror
@@ -863,7 +1047,8 @@ export function n8nToFlow(input: unknown): N8nImportResult {
             op: 'eq' as ConditionOp,
             right: category,
           }))
-          routersByName.set(node.name, { aiId: id, switchId, cases })
+          edgeSourceOverride.set(node.name, switchId)
+          synthEdges.push({ source: id, target: switchId })
           nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
           const routerPosition = position ? { x: position.x + 220, y: position.y } : undefined
           const router = { id: switchId, type: 'switch', data: { label: `${node.name} routes`, cases } } as FlowNode
@@ -897,23 +1082,35 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   const typeById = new Map(nodes.map((n) => [n.id, n.type]))
   const casesById = new Map(nodes.filter((n) => n.type === 'switch').map((n) => [n.id, (n as Extract<FlowNode, { type: 'switch' }>).data.cases]))
   let edgeIndex = 0
-  // Classifier → its routing switch: the categorize result feeds the switch,
-  // and the n8n per-category outputs re-source from the switch below.
-  for (const router of routersByName.values()) {
-    edges.push({ id: `e-${edgeIndex++}`, source: router.aiId, target: router.switchId })
-    if (!adjacency.has(router.aiId)) adjacency.set(router.aiId, new Set())
-    adjacency.get(router.aiId)!.add(router.switchId)
+  // Synthesized hops (classifier → its routing switch, knowledge → its answer
+  // step); outgoing connections re-source from the companion via the override.
+  for (const synth of synthEdges) {
+    edges.push({ id: `e-${edgeIndex++}`, source: synth.source, target: synth.target })
+    if (!adjacency.has(synth.source)) adjacency.set(synth.source, new Set())
+    adjacency.get(synth.source)!.add(synth.target)
   }
+  // Loop bodies live in the Loop step's `body` id list, not on edges — their
+  // members' connections (internal hops and the back-edge) don't become edges,
+  // and nothing outside may target them directly.
+  const bodyMemberIds = new Set(
+    Array.from(bodyMemberNames)
+      .map((member) => idByName.get(member))
+      .filter((memberId): memberId is string => Boolean(memberId)),
+  )
   for (const [sourceName, conn] of Object.entries(workflow.connections ?? {})) {
+    if (bodyMemberNames.has(sourceName)) continue
     const mappedSourceId = idByName.get(sourceName)
     if (!mappedSourceId || !nodeIds.has(mappedSourceId)) continue
-    const router = routersByName.get(sourceName)
-    const sourceId = router ? router.switchId : mappedSourceId
+    const sourceId = edgeSourceOverride.get(sourceName) ?? mappedSourceId
+    const isLoopSource = loopBodyByName.has(sourceName)
     const outputs = Array.isArray(conn?.main) ? conn.main : []
     for (const [outIdx, targets] of outputs.entries()) {
+      // A Loop step's body branch (output 1) is its `body` list, not edges;
+      // only the "done" output (0) continues the flow.
+      if (isLoopSource && outIdx !== 0) continue
       for (const target of targets ?? []) {
         const targetId = target?.node ? idByName.get(target.node) : undefined
-        if (!targetId || !nodeIds.has(targetId)) continue
+        if (!targetId || !nodeIds.has(targetId) || bodyMemberIds.has(targetId)) continue
         if (reaches(targetId, sourceId)) {
           warn(`Dropped the looping connection ${sourceName} → ${target.node} (our flows are one-way; rebuild n8n loops as a Loop step).`)
           continue
@@ -939,7 +1136,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   // trigger whose connections were name-mismatched.
   const hasIncoming = new Set(edges.map((e) => e.target))
   for (const node of nodes) {
-    if (node.id === triggerId || node.type === 'note') continue
+    if (node.id === triggerId || node.type === 'note' || bodyMemberIds.has(node.id)) continue
     if (!hasIncoming.has(node.id) ) {
       edges.push({ id: `e-${edgeIndex++}`, source: triggerId, target: node.id })
       hasIncoming.add(node.id)

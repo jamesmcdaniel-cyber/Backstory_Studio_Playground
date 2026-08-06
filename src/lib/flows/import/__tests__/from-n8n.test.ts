@@ -673,3 +673,142 @@ test('a workflow with no trigger gets a manual trigger wired to its roots', () =
   assert.ok(trigger)
   assert.ok(graph.edges.some((e) => e.source === trigger!.id && e.target === 'id-Only'))
 })
+
+test('real JS expressions never mistranslate into garbage tokens', () => {
+  const names = new Map([['Params', 'params']])
+  // A ternary starting with $json must stay raw (untranslatable), not become a token.
+  const ternary = "={{ $json.query && ($json.query.accounts || $json.query.account) ? $json.query.accounts : 'Aveva' }}"
+  let flagged = 0
+  const out = fromN8nExpression(ternary, names, 'trigger.input', () => flagged++)
+  assert.equal(flagged, 1)
+  assert.match(out, /\{\{ ?\$json\.query/)
+  assert.doesNotMatch(out, /trigger\.input/)
+  // Plain paths (incl. brackets) still translate.
+  assert.equal(fromN8nExpression('={{ $json.a[0].b }}', names, 'trigger.input'), '{{trigger.input.a[0].b}}')
+})
+
+test("$('Node').item paired-item references become {{item.…}} inside a per-item step", () => {
+  const workflow = {
+    name: 'Per item',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Fan', 'n8n-nodes-base.code', { jsCode: 'return [{ json: { id: 1 } }, { json: { id: 2 } }]' }),
+      n8nNode(
+        'Post',
+        'n8n-nodes-base.httpRequest',
+        { method: 'POST', url: "={{ $json.url }}", jsonBody: "={{ $('Fan').item.json.id }} vs {{ $('Fan').first().json.id }}" },
+        {},
+      ),
+    ],
+    connections: chain('Start', 'Fan', 'Post'),
+  }
+  const graph = flowGraphSchema.parse(n8nToFlow(workflow).graph)
+  const http = graph.nodes.find((n) => n.type === 'http') as any
+  assert.deepEqual(http.data.perItem, { over: '{{step.id-Fan.output}}' })
+  assert.equal(http.data.url, '{{item.url}}')
+  // .item (paired) → current item; .first() → whole-step reference.
+  assert.equal(http.data.body, '{{item.id}} vs {{step.id-Fan.output.id}}')
+})
+
+test('a Set node with JS expressions imports as a code step evaluating the originals', () => {
+  const workflow = {
+    name: 'JS set',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Params', 'n8n-nodes-base.set', {
+        assignments: {
+          assignments: [
+            { id: '1', name: 'accounts', type: 'string', value: "={{ $json.accounts ? $json.accounts : 'Aveva' }}" },
+            { id: '2', name: 'to', type: 'string', value: 'x@y.z' },
+            { id: '3', name: 'testMode', type: 'boolean', value: true },
+          ],
+        },
+      }),
+    ],
+    connections: chain('Start', 'Params'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const params = graph.nodes.find((n: any) => n.data?.label === 'Params') as any
+  assert.equal(params.type, 'code')
+  assert.equal(params.data.input, '{{trigger.input}}')
+  assert.match(params.data.code, /"accounts": \(\$json\.accounts \? \$json\.accounts : 'Aveva'\)/)
+  assert.match(params.data.code, /"to": "x@y.z"/)
+  assert.match(params.data.code, /"testMode": true/)
+  assert.ok(result.warnings.some((w) => w.includes('Params') && w.includes('Code step')))
+})
+
+test('a mid-chain No-Op imports as a passthrough code step so downstream references resolve', () => {
+  const workflow = {
+    name: 'NoOp chain',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Make', 'n8n-nodes-base.code', { jsCode: 'return [{ json: { a: 1 } }]' }),
+      n8nNode('Review', 'n8n-nodes-base.noOp', {}),
+      n8nNode('After', 'n8n-nodes-base.code', { jsCode: 'return $input.all()' }),
+    ],
+    connections: chain('Start', 'Make', 'Review', 'After'),
+  }
+  const graph = flowGraphSchema.parse(n8nToFlow(workflow).graph)
+  const review = graph.nodes.find((n: any) => n.data?.label === 'Review') as any
+  assert.equal(review.type, 'code')
+  assert.match(review.data.code, /return input/)
+})
+
+test('untranslatable JS in an HTTP url hoists into an inserted compute step the request references', () => {
+  const workflow = {
+    name: 'Hoist',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Call', 'n8n-nodes-base.httpRequest', {
+        method: 'GET',
+        url: '=https://api.example.com/x?since={{ Math.floor((Date.now() - 1000) / 1000) }}&id={{ $json.id }}',
+      }),
+    ],
+    connections: chain('Start', 'Call'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const http = graph.nodes.find((n) => n.type === 'http') as any
+  const compute = graph.nodes.find((n: any) => n.type === 'code' && String(n.data?.label ?? '').includes('expressions')) as any
+  assert.ok(compute, 'a compute code step is inserted')
+  assert.equal(http.data.url, `https://api.example.com/x?since={{step.${compute.id}.output.expr0}}&id={{trigger.input.id}}`)
+  assert.match(compute.data.code, /Math\.floor\(\(Date\.now\(\) - 1000\) \/ 1000\)/)
+  // Wiring: trigger → compute → http.
+  assert.ok(graph.edges.some((e) => e.source === 'trigger' && e.target === compute.id))
+  assert.ok(graph.edges.some((e) => e.source === compute.id && e.target === http.id))
+  // The kept-as-is warning is replaced by the hoist explanation.
+  assert.ok(!result.warnings.some((w) => w.includes('kept as-is')))
+  assert.ok(result.warnings.some((w) => w.includes('moved into an inserted Code step')))
+})
+
+test('a per-run agent system message rides on the agent step input, not the created agent', () => {
+  const workflow = {
+    name: 'Dynamic agent',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Prep', 'n8n-nodes-base.code', { jsCode: 'return [{ json: { sys: "be brief", task: "do it" } }]' }),
+      n8nNode('Agent', '@n8n/n8n-nodes-langchain.agent', {
+        promptType: 'define',
+        text: '={{ $json.task }}',
+        options: { systemMessage: '={{ $json.sys }}' },
+      }),
+      n8nNode('Model', '@n8n/n8n-nodes-langchain.lmChatAnthropic', { model: 'claude-sonnet-5' }, { credentials: { anthropicApi: {} } }),
+      n8nNode('MCP', '@n8n/n8n-nodes-langchain.mcpClientTool', { endpointUrl: 'https://mcp.example.com/mcp' }, { credentials: { httpHeaderAuth: {} } }),
+    ],
+    connections: {
+      ...chain('Start', 'Prep', 'Agent'),
+      Model: { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel' as const, index: 0 }]] },
+      MCP: { ai_tool: [[{ node: 'Agent', type: 'ai_tool' as const, index: 0 }]] },
+    } as any,
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const agent = graph.nodes.find((n) => n.type === 'agent') as any
+  // Per-item over the prep list; system message + task resolve per item.
+  assert.deepEqual(agent.data.perItem, { over: '{{step.id-Prep.output}}' })
+  assert.equal(agent.data.input, '{{item.sys}}\n\n{{item.task}}')
+  const spec = result.agents[0]
+  assert.ok(!spec.instructions.includes('{{'), 'created agent instructions carry no flow tokens')
+  assert.ok(spec.instructions.includes('imported from an n8n workflow'))
+})

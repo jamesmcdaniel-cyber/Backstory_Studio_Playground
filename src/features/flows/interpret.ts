@@ -550,7 +550,23 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // stop signals propagate immediately (per-item approvals, human review).
     const perItem = perItemChild ? undefined : nodePerItem(node)
     if (perItem) {
-      const items = loopItems(resolveTemplate(perItem.over, ctx, onMissingToken)).slice(0, maxLoop)
+      const overValue = resolveTemplate(perItem.over, ctx, onMissingToken)
+      let items = loopItems(overValue).slice(0, maxLoop)
+      // n8n parity: per-item over a SINGLE object is one iteration, not zero.
+      // loopItems finds no list inside a plain object — but an upstream that
+      // usually fans out can legitimately produce one record, and n8n runs the
+      // step once for it. An object whose list key is a present-but-empty
+      // array stays zero iterations.
+      const structuredOver = asStructured(overValue)
+      if (
+        items.length === 0 &&
+        structuredOver &&
+        typeof structuredOver === 'object' &&
+        !Array.isArray(structuredOver) &&
+        !['items', 'records', 'results', 'result', 'data'].some((key) => Array.isArray((structuredOver as Record<string, unknown>)[key]))
+      ) {
+        items = [structuredOver]
+      }
       const broken = missingTokenFailure({ over: perItem.over })
       if (broken) return broken
       const policy = perItem.itemError ?? 'fail'

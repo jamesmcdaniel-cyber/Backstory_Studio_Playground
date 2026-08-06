@@ -2645,3 +2645,57 @@ test('DAG resume: a filter that dropped on the prior run stays dead (its downstr
   assert.equal(result.status, 'succeeded')
   assert.ok(!runs.includes('afterFilter'), 'the node after a dropped filter must not run on resume')
 })
+
+test('an unreachable orphan with an out-edge into the chain does not freeze the downstream join', async () => {
+  // An import can leave a demoted-trigger stub (no incoming edge) wired into
+  // the first real step. The orphan never runs — but its edge must resolve
+  // (dead) so the OR-join at n1 still fires off the trigger's edge.
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'orphan', type: 'note', data: { text: 'demoted second trigger' } },
+      { id: 'n1', type: 'agent', data: { agentId: 'a1', input: '{{trigger.input}}' } },
+    ],
+    edges: [
+      { id: 'e0', source: 'trigger', target: 'n1' },
+      { id: 'e1', source: 'orphan', target: 'n1' },
+    ],
+  }
+  const result = await interpretFlow(graph, 'go', { runAgent: stub({ a1: 'RAN' }) })
+  assert.equal(result.status, 'succeeded')
+  assert.equal(result.output, 'RAN')
+  assert.equal(result.steps.filter((s) => s.nodeId === 'n1' && s.status === 'succeeded').length, 1)
+})
+
+test('per-item over a single object runs once (n8n parity), not zero times', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      {
+        id: 'call',
+        type: 'http',
+        data: { method: 'GET', url: 'https://api.example.com/{{item.id}}', perItem: { over: '{{trigger.input}}' } },
+      },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'call' }],
+  }
+  const urls: string[] = []
+  const runAction: RunActionFn = async (node) => {
+    urls.push(String(node.config.url))
+    return { output: { ok: true } }
+  }
+  const single = await interpretFlow(graph, { id: 'one' }, { runAgent: stub({}), runAction })
+  assert.equal(single.status, 'succeeded')
+  assert.deepEqual(urls, ['https://api.example.com/one'])
+
+  urls.length = 0
+  const list = await interpretFlow(graph, [{ id: 'a' }, { id: 'b' }], { runAgent: stub({}), runAction })
+  assert.equal(list.status, 'succeeded')
+  assert.deepEqual(urls, ['https://api.example.com/a', 'https://api.example.com/b'])
+
+  // A present-but-empty list key stays zero iterations.
+  urls.length = 0
+  const empty = await interpretFlow(graph, { items: [] }, { runAgent: stub({}), runAction })
+  assert.equal(empty.status, 'succeeded')
+  assert.deepEqual(urls, [])
+})

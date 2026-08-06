@@ -98,16 +98,23 @@ export function fromN8nExpression(
     const jsonMatch = expr.match(/^\$json(?:\.(.+))?$/)
     if (jsonMatch && isPlainPath(jsonMatch[1])) return `{{${jsonBase}${jsonMatch[1] ? '.' + jsonMatch[1] : ''}}}`
     // $node["Name"].json.path  |  $('Name').item.json.path  |  $('Name').json.path
-    const nodeMatch =
-      expr.match(/^\$node\[(?:"|')(.+?)(?:"|')\]\.json(?:\.(.+))?$/) ??
-      expr.match(/^\$\((?:"|')(.+?)(?:"|')\)(?:\.(?:item|first\(\)))?\.json(?:\.(.+))?$/)
-    if (nodeMatch && !isPlainPath(nodeMatch[2])) {
-      onUntranslatable?.(expr)
-      return `{{${expr}}}`
-    }
-    if (nodeMatch) {
-      const id = names.get(nodeMatch[1]) ?? nodeMatch[1]
-      return `{{step.${id}.output${nodeMatch[2] ? '.' + nodeMatch[2] : ''}}}`
+    const dollarMatch = expr.match(/^\$\((?:"|')(.+?)(?:"|')\)(?:\.(item|first\(\)))?\.json(?:\.(.+))?$/)
+    const bracketMatch = dollarMatch ? null : expr.match(/^\$node\[(?:"|')(.+?)(?:"|')\]\.json(?:\.(.+))?$/)
+    const nodeName = dollarMatch?.[1] ?? bracketMatch?.[1]
+    if (nodeName !== undefined) {
+      const path = dollarMatch ? dollarMatch[3] : bracketMatch?.[2]
+      if (!isPlainPath(path)) {
+        onUntranslatable?.(expr)
+        return `{{${expr}}}`
+      }
+      // `.item` (and legacy $node["X"].json) is n8n's PAIRED item — the named
+      // node's item for the CURRENT item. Inside a per-item step ({{item}}
+      // base) that is the current item itself, whose fields flow down the main
+      // chain; `.first()` stays a whole-step reference.
+      const paired = dollarMatch ? dollarMatch[2] !== 'first()' : true
+      if (jsonBase === 'item' && paired) return `{{item${path ? '.' + path : ''}}}`
+      const id = names.get(nodeName) ?? nodeName
+      return `{{step.${id}.output${path ? '.' + path : ''}}}`
     }
     // Unknown expression — kept visible as text for the user to fix; a JS
     // call (Date.now(), Math.*) will NOT evaluate in our templates.
@@ -129,7 +136,10 @@ export function withN8nCodeShim(code: string, labelToId: Record<string, string>)
   return `/* n8n compatibility shim (added on import — the original code is below, unchanged) */
 const __n8nLabelToId = ${JSON.stringify(labelToId)};
 const __n8nItems = (v) => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
-const __n8nWrap = (v) => __n8nItems(v).map((json) => ({ json }));
+/* n8n items are always objects; a primitive (an agent's reply text, an AI
+ * step's answer) wraps the way its n8n producer would have shaped it. */
+const __n8nJson = (v) => (v !== null && typeof v === 'object' ? v : { output: v, text: v });
+const __n8nWrap = (v) => __n8nItems(v).map((v2) => ({ json: __n8nJson(v2) }));
 const $ = (name) => {
   const id = __n8nLabelToId[name] ?? name;
   const out = context && context.steps && context.steps[id] ? context.steps[id].output : undefined;
@@ -149,6 +159,8 @@ const $input = {
   item: __n8nWrap(input)[0],
 };
 const $json = ($input.first() || {}).json;
+/* Legacy n8n Code API: "items" is the incoming item list. */
+const items = $input.all();
 const __n8nUnwrap = (r) =>
   Array.isArray(r)
     ? r.map((x) => (x && typeof x === 'object' && 'json' in x ? x.json : x))
@@ -611,17 +623,62 @@ ${parseTail}`,
       const operation = String(parameters.operation ?? 'toText')
       const options = (parameters.options ?? {}) as { fileName?: unknown }
       const fileName = typeof options.fileName === 'string' && options.fileName ? options.fileName : undefined
+      const sourceProperty =
+        typeof parameters.sourceProperty === 'string' && parameters.sourceProperty ? parameters.sourceProperty : undefined
+      // A dynamic n8n fileName (`={{ $json.account }}_report.html`) becomes a
+      // JS template literal over the current item's fields.
+      const fileNameJs = (fallback: string): string => {
+        if (!fileName) return JSON.stringify(fallback)
+        if (!fileName.startsWith('=')) return JSON.stringify(fileName)
+        const raw = fileName.slice(1)
+        const parts: string[] = []
+        let last = 0
+        for (const match of raw.matchAll(/\{\{\s*([\s\S]*?)\s*\}\}/g)) {
+          parts.push(escapeForTemplateLiteral(raw.slice(last, match.index)))
+          const expr = match[1].trim()
+          const jsonPath = expr.match(/^\$json\.([\w$.]+)$/)
+          parts.push('${' + (jsonPath ? `json.${jsonPath[1]}` : expr) + '}')
+          last = match.index + match[0].length
+        }
+        parts.push(escapeForTemplateLiteral(raw.slice(last)))
+        return '`' + parts.join('') + '`'
+      }
+      // toText (and toJson in 'each' mode) makes one file PER ITEM — n8n keeps
+      // the item's json fields alongside the binary, so spreading them lets
+      // downstream steps keep referencing item fields. toJson's default mode
+      // and csv aggregate everything into one file.
+      const perItemFile = (mimeType: string, defaultName: string, contentExpr: string): string => `const list = Array.isArray(input) ? input : [input]
+const files = list.map((item) => {
+  const json = item && typeof item === 'object' ? item : {}
+  const content = ${contentExpr}
+  return { ...json, filename: ${fileNameJs(defaultName)}, mimeType: ${JSON.stringify(mimeType)}, content }
+})
+return Array.isArray(input) ? files : files[0]`
       const body =
         operation === 'toJson'
-          ? `return { filename: ${JSON.stringify(fileName ?? 'data.json')}, mimeType: 'application/json', content: JSON.stringify(input, null, 2) }`
+          ? parameters.mode === 'each'
+            ? perItemFile(
+                'application/json',
+                'data.json',
+                sourceProperty ? `JSON.stringify(json[${JSON.stringify(sourceProperty)}] ?? null, null, 2)` : 'JSON.stringify(json, null, 2)',
+              )
+            : `const json = (Array.isArray(input) ? input[0] : input) ?? {}
+return { filename: ${fileNameJs('data.json')}, mimeType: 'application/json', content: JSON.stringify(input, null, 2) }`
           : operation === 'csv'
             ? `const rows = Array.isArray(input) ? input : [input]
 const keys = Array.from(new Set(rows.flatMap((r) => (r && typeof r === 'object' ? Object.keys(r) : []))))
 const cell = (v) => { const s = v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s }
 const lines = [keys.join(',')].concat(rows.map((r) => keys.map((k) => cell(r && typeof r === 'object' ? r[k] : undefined)).join(',')))
-return { filename: ${JSON.stringify(fileName ?? 'data.csv')}, mimeType: 'text/csv', content: lines.join('\\n') }`
+const json = rows[0] && typeof rows[0] === 'object' ? rows[0] : {}
+return { filename: ${fileNameJs('data.csv')}, mimeType: 'text/csv', content: lines.join('\\n') }`
             : operation === 'toText'
-              ? `return { filename: ${JSON.stringify(fileName ?? 'data.txt')}, mimeType: 'text/plain', content: typeof input === 'string' ? input : JSON.stringify(input, null, 2) }`
+              ? perItemFile(
+                  'text/plain',
+                  'data.txt',
+                  sourceProperty
+                    ? `String(json[${JSON.stringify(sourceProperty)}] ?? '')`
+                    : `typeof item === 'string' ? item : JSON.stringify(item, null, 2)`,
+                )
               : null
       if (!body) {
         warn(`“${name}”: Convert to File (${operation}) has no sandbox equivalent — the step passes its input through; use CSV/JSON/text conversion instead.`)
@@ -768,7 +825,13 @@ ${body}`,
         const translatedParams = Object.fromEntries(
           Object.entries(parameters)
             .filter(([key]) => key !== 'options' && key !== 'authentication' && key !== 'genericAuthType')
-            .map(([key, value]) => [key, typeof value === 'string' ? tr(value) : value]),
+            // Braces in a non-`=` value are literal to n8n, but OUR template
+            // resolver would still try (and fail) to resolve them — translate
+            // them too, which is also what the author almost always meant.
+            .map(([key, value]) => [
+              key,
+              typeof value === 'string' ? tr(value.startsWith('=') || !value.includes('{{') ? value : `=${value}`) : value,
+            ]),
         )
         warn(`“${name}” (${app}) imported as a Tool step without a connection — open it and pick the matching integration; its n8n parameters are preserved in Args.`)
         return {
@@ -938,10 +1001,60 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     }
   }
   const triggerNames = new Set(sourceNodes.filter((n) => n8nTriggerType(n.type)).map((n) => n.name ?? ''))
+
+  // n8n's IF/Switch/Filter route items without reshaping them — $json inside a
+  // node downstream of a branch reads the nearest DATA-producing ancestor, not
+  // the branch node (whose output here is the branch decision, not the items).
+  const PASS_THROUGH_TYPES = new Set(['n8n-nodes-base.if', 'n8n-nodes-base.switch', 'n8n-nodes-base.filter'])
+  const dataParentOf = (nodeName: string): string | undefined => {
+    let current = parentByName.get(nodeName)
+    for (let hops = 0; current && PASS_THROUGH_TYPES.has(nodeByName.get(current)?.type ?? '') && hops < 50; hops++) {
+      current = parentByName.get(current)
+    }
+    return current
+  }
+
+  // n8n executes EVERY node once per incoming item; our HTTP/tool/agent steps
+  // run once. When such a step's data-parent produces an item LIST (a code
+  // node — n8n code returns items —, splitOut, a file conversion), enable
+  // per-item on it: its $json references translate to {{item.…}} and the step
+  // fans out over the upstream list exactly as n8n did.
+  const ITEM_PRODUCING_TYPES = new Set([
+    'n8n-nodes-base.code',
+    'n8n-nodes-base.splitOut',
+    'n8n-nodes-base.convertToFile',
+    'n8n-nodes-base.extractFromFile',
+  ])
+  const isItemProducing = (name: string | undefined, depth = 0): boolean => {
+    if (!name || depth > 50) return false
+    const type = nodeByName.get(name)?.type ?? ''
+    // A No-Op passes its parent's items through unchanged.
+    if (type === 'n8n-nodes-base.noOp') return isItemProducing(dataParentOf(name), depth + 1)
+    return ITEM_PRODUCING_TYPES.has(type)
+  }
+  const perItemOverByName = new Map<string, string>()
+  for (const node of sourceNodes) {
+    if (!node.name || node === firstTrigger || bodyMemberNames.has(node.name)) continue
+    const type = node.type ?? ''
+    const eligible =
+      type === 'n8n-nodes-base.httpRequest' ||
+      type.endsWith('.mcpClient') ||
+      (type === AGENT_NODE_TYPE &&
+        (subsByTarget.get(node.name) ?? []).some((s) => s.connType === 'ai_tool' || s.connType === 'ai_memory')) ||
+      (Boolean(node.credentials && Object.keys(node.credentials).length > 0) && !/Trigger$/.test(type) && !subNodeNames.has(node.name))
+    if (!eligible) continue
+    const parent = dataParentOf(node.name)
+    if (!parent || !isItemProducing(parent)) continue
+    const parentId = idByName.get(parent)
+    if (parentId) perItemOverByName.set(node.name, `{{step.${parentId}.output}}`)
+  }
+
   const jsonBaseFor = (nodeName: string | undefined): string => {
     // The first node inside a Loop body reads the CURRENT ITEM, not a step.
     if (nodeName && bodyStartNames.has(nodeName)) return 'item'
-    const parent = nodeName ? parentByName.get(nodeName) : undefined
+    // A per-item step reads the CURRENT ITEM of its upstream list.
+    if (nodeName && perItemOverByName.has(nodeName)) return 'item'
+    const parent = nodeName ? dataParentOf(nodeName) : undefined
     if (!parent || triggerNames.has(parent)) return 'trigger.input'
     const parentId = idByName.get(parent)
     return parentId ? `step.${parentId}.output` : 'trigger.input'
@@ -1254,6 +1367,12 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           )
         }
       }
+    }
+    // n8n per-item parity: fan the step out over its upstream item list; its
+    // {{item.…}} references (translated above) read the current item.
+    if (mapped && node.name && perItemOverByName.has(node.name) && (mapped.type === 'http' || mapped.type === 'tool' || mapped.type === 'agent')) {
+      mapped = { ...mapped, data: { ...mapped.data, perItem: { over: perItemOverByName.get(node.name)! } } } as FlowNode
+      warn(`“${node.name}”: runs once per upstream item (n8n executes per item) — the collected results flow on as a list.`)
     }
     if (mapped) nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
   }

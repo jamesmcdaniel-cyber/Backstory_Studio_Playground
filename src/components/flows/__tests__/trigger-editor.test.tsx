@@ -45,21 +45,26 @@ test('unpublished webhook flow shows publish-to-arm guidance', async () => {
   }
 })
 
-test('webhook flow with no secret yet shows the create-secret call to action', async () => {
+test('webhook flow with no secret yet auto-mints one — no button click needed', async () => {
   const realFetch = globalThis.fetch
-  globalThis.fetch = (async () => {
-    return { ok: true, json: async () => ({ success: true, hasSecret: false, url: 'https://app.example/api/flows/f1/trigger' }) }
+  const requests: { url: string; method: string }[] = []
+  globalThis.fetch = (async (url: unknown, init?: { method?: string }) => {
+    requests.push({ url: String(url), method: init?.method ?? 'GET' })
+    return init?.method === 'POST'
+      ? { ok: true, json: async () => ({ success: true, hasSecret: true, secret: 'auto-minted', url: 'https://app.example/api/flows/f1/trigger', updatedAt: '2026-08-02T12:00:00.000Z' }) }
+      : { ok: true, json: async () => ({ success: true, hasSecret: false, url: 'https://app.example/api/flows/f1/trigger' }) }
   }) as unknown as typeof fetch
   try {
     render(React.createElement(TriggerEditor, { flowId: 'f1', trigger: { type: 'webhook' }, onChange: () => {}, published: true }))
-    await screen.findByText(/create webhook secret/i)
+    await screen.findByText('x-trigger-secret: auto-minted')
+    assert.equal(requests.filter((r) => r.method === 'POST' && r.url.includes('/api/flows/f1/trigger-secret')).length, 1)
   } finally {
     globalThis.fetch = realFetch
     cleanup()
   }
 })
 
-test('creating a webhook secret reports the persisted flow timestamp to the builder', async () => {
+test('the auto-minted webhook secret reports the persisted flow timestamp to the builder', async () => {
   const realFetch = globalThis.fetch
   const persisted: string[] = []
   let calls = 0
@@ -76,7 +81,6 @@ test('creating a webhook secret reports the persisted flow timestamp to the buil
       onChange: () => {},
       onPersisted: (updatedAt: string) => persisted.push(updatedAt),
     }))
-    fireEvent.click(await screen.findByRole('button', { name: /create webhook secret/i }))
     await screen.findByText('x-trigger-secret: once')
     assert.deepEqual(persisted, ['2026-08-02T12:00:00.000Z'])
   } finally {

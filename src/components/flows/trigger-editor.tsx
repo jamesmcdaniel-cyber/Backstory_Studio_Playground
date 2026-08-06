@@ -3,7 +3,6 @@
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link2, RefreshCw, Copy, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import { CONDITION_OPS, CONDITION_OP_LABELS, type ConditionOp, type ConditionClause, type TriggerInputField } from '@/lib/flows/graph'
 import { KNOWN_SIGNALS, KNOWN_SIGNAL_LABELS } from '@/lib/flows/trigger'
 import { nextOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
@@ -102,9 +101,11 @@ export function TriggerEditor({
     ? `curl -X POST '${webhook.url}' \\\n  -H 'content-type: application/json' \\\n  -H '${webhookHeader}' \\\n  -H 'x-trigger-delivery-id: evt_123_unique' \\\n  -H "x-trigger-timestamp: $(date +%s)" \\\n  --data '${JSON.stringify({ input: { account: 'Acme', priority: 'high' } })}'`
     : ''
 
-  // Auto-load the webhook's status (URL + whether a secret already exists)
-  // instead of requiring a manual mint click just to see it — GET never
-  // returns the secret itself, only hasSecret.
+  // Auto-load the webhook's status (URL + whether a secret already exists) —
+  // GET never returns the secret itself, only hasSecret. When no secret exists
+  // yet, mint one automatically so the webhook is ready without a button click;
+  // the ref guards against double-minting from Strict Mode's twin effect runs.
+  const autoMintStarted = useRef(false)
   useEffect(() => {
     if (!flowId) return
     if (type !== 'webhook') return
@@ -112,14 +113,20 @@ export function TriggerEditor({
     fetch(`/api/flows/${flowId}/trigger-secret`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
+        if (!alive || !d?.success) return
         // Never clobber a mint that finished while this GET was in flight —
         // the plaintext secret is shown exactly once and is unrecoverable.
-        if (alive && d?.success) setWebhook((prev) => (prev?.secret ? prev : { url: d.url, secret: null, hasSecret: d.hasSecret }))
+        setWebhook((prev) => (prev?.secret ? prev : { url: d.url, secret: null, hasSecret: d.hasSecret }))
+        if (!d.hasSecret && !autoMintStarted.current) {
+          autoMintStarted.current = true
+          void mintWebhook(false, { auto: true })
+        }
       })
       .catch(() => {})
     return () => {
       alive = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, flowId])
 
   // Chip-editor handles for the "only run when…" condition rows — the same
@@ -179,11 +186,11 @@ export function TriggerEditor({
     }
   }
 
-  const mintWebhook = async (rotate: boolean) => {
+  const mintWebhook = async (rotate: boolean, { auto = false } = {}) => {
     if (!flowId) {
       // Without an id the POST would hit /api/flows//trigger-secret and 404 —
       // say so instead of silently doing nothing.
-      toast.error('Save the flow first, then create the webhook.')
+      if (!auto) toast.error('Save the flow first, then create the webhook.')
       return
     }
     setMinting(true)
@@ -195,7 +202,9 @@ export function TriggerEditor({
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
-        toast.error(data.error || 'Could not create the webhook URL.')
+        // The auto-mint is best-effort (e.g. the flow may not be editable);
+        // surface errors only for an explicit user action.
+        if (!auto) toast.error(data.error || 'Could not create the webhook URL.')
         return
       }
       setWebhook({ url: data.url, secret: data.secret, hasSecret: true })
@@ -374,15 +383,12 @@ export function TriggerEditor({
 
       {type === 'webhook' && (
         <div className="space-y-3">
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => mintWebhook(false)} loading={minting}>
-              <Link2 className="mr-1.5 h-3.5 w-3.5" /> {webhook && !webhook.hasSecret ? 'Create webhook secret' : 'Get webhook URL'}
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => mintWebhook(true)} title="Rotate the secret (invalidates the old one)">
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          {webhook?.hasSecret && (
+          {!webhook && (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Link2 className="h-3.5 w-3.5" /> {flowId ? 'Preparing the webhook URL…' : 'Save the flow to get its webhook URL.'}
+            </p>
+          )}
+          {webhook && (
             <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-2.5">
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
@@ -396,12 +402,29 @@ export function TriggerEditor({
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Auth header</p>
-                  <button type="button" className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700" onClick={() => copyText(webhookHeader, 'Auth header')}>
-                    <Copy className="h-3 w-3" /> Copy
-                  </button>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+                      onClick={() => mintWebhook(true)}
+                      disabled={minting}
+                      title="Rotate the secret (invalidates the old one)"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${minting ? 'animate-spin' : ''}`} /> Rotate
+                    </button>
+                    <button type="button" className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700" onClick={() => copyText(webhookHeader, 'Auth header')}>
+                      <Copy className="h-3 w-3" /> Copy
+                    </button>
+                  </div>
                 </div>
                 <p className="break-all rounded bg-background px-2 py-1.5 font-mono text-[11px] text-amber-700 dark:text-amber-400">{webhookHeader}</p>
-                {!webhook.secret && <p className="mt-1 text-[11px] text-muted-foreground">A secret already exists. Rotate to mint and display a new one.</p>}
+                {!webhook.secret && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {webhook.hasSecret
+                      ? 'A secret already exists. Rotate to mint and display a new one.'
+                      : 'Creating the webhook secret…'}
+                  </p>
+                )}
               </div>
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">

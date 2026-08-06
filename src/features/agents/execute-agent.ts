@@ -177,7 +177,7 @@ async function persistFlowSessionMemory(
     skip: FLOW_SESSION_MAX_ROWS,
     select: { id: true },
   })
-  if (stale.length) await prisma.agentMemory.deleteMany({ where: { id: { in: stale.map((row) => row.id) } } })
+  if (stale.length) await prisma.agentMemory.deleteMany({ where: { organizationId, id: { in: stale.map((row) => row.id) } } })
 }
 
 type PendingQuestion = {

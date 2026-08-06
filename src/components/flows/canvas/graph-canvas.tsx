@@ -84,6 +84,10 @@ export type GraphCanvasProps = {
   readOnly?: boolean
   onSelectionChange: (ids: string[]) => void
   onOpenNode: (nodeId: string) => void
+  /** A completed click — never fired when the pointer dragged past the drag
+   *  threshold, unlike `onSelectionChange`, which fires on mousedown. Anything
+   *  that opens UI on a single click must hang off this, not selection. */
+  onNodeClick?: (nodeId: string) => void
   onMoveNodes: (positions: Map<string, NodePosition>) => void
   onConnectNodes: (source: string, target: string, branch?: string) => void
   onDeleteEdge: (edgeId: string) => void
@@ -142,6 +146,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     readOnly,
     onSelectionChange,
     onOpenNode,
+    onNodeClick,
     onMoveNodes,
     onConnectNodes,
     onDeleteEdge,
@@ -505,6 +510,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
           onEdgesChange={onEdgesChange}
           onNodeDrag={handleNodeDrag}
           onNodeDragStop={handleNodeDragStop}
+          onNodeClick={onNodeClick ? (_, node) => onNodeClick(node.id) : undefined}
           onNodeDoubleClick={(_, node) => onOpenNode(node.id)}
           onConnect={handleConnect}
           onConnectEnd={handleConnectEnd}

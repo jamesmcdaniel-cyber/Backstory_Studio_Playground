@@ -878,12 +878,18 @@ function FlowBuilder() {
     setSelectedIds(ids.length > 1 ? ids : [])
     setSelectedId(ids.length === 1 ? ids[0] : null)
     // Changing the selection closes the drawer; re-open with a double-click.
-    // Exception: single-clicking the TRIGGER opens its drawer immediately —
-    // it has no drag/delete interactions to conflict with, and "where do I
-    // configure the webhook?" was unanswerable while a single click on the
-    // trigger appeared to do nothing.
-    const solo = ids.length === 1 ? graph.nodes.find((node) => node.id === ids[0]) : null
-    setOpenNodeId(solo?.type === 'trigger' ? solo.id : null)
+    // Selection fires on MOUSEDOWN — the first event of a drag — so nothing
+    // may open here, or pressing a node to move it opens its drawer and
+    // swallows the drag. Single-click opens live in canvasNodeClick below.
+    setOpenNodeId(null)
+  }, [])
+  // Single-clicking the TRIGGER opens its drawer immediately — "where do I
+  // configure the webhook?" was unanswerable while a single click on the
+  // trigger appeared to do nothing. Safe here because onNodeClick only fires
+  // when the pointer didn't travel: dragging the trigger never opens it.
+  const canvasNodeClick = useCallback((nodeId: string) => {
+    const node = graph.nodes.find((candidate) => candidate.id === nodeId)
+    if (node?.type === 'trigger') setOpenNodeId(node.id)
   }, [graph])
   const canvasOpenNode = useCallback((nodeId: string) => {
     setSelectedId(nodeId)
@@ -2298,6 +2304,7 @@ function FlowBuilder() {
               focusRequest={focusRequest}
               readOnly={Boolean(viewingVersion) || !canEdit}
               onSelectionChange={canvasSelectionChange}
+              onNodeClick={canvasNodeClick}
               onOpenNode={canvasOpenNode}
               onMoveNodes={canvasMoveNodes}
               onConnectNodes={canvasConnect}

@@ -99,11 +99,13 @@ const STEP_TONE: Partial<Record<StepType, string>> = {
 
 const LEAF_ICON: Record<string, LucideIcon> = {
   'ai-run-agent': Bot,
+  'ai-custom-agent': Bot,
   'ai-run-prompt': Sparkles,
 }
 
 const LEAF_TONE: Record<string, string> = {
   'ai-run-prompt': 'bg-indigo-600 text-white',
+  'ai-custom-agent': 'bg-indigo-600 text-white',
 }
 
 const GROUP_ICON: Record<string, LucideIcon> = {
@@ -466,8 +468,8 @@ export function FlowPicker({
   }
 
   return (
-    <div>
-      <div className="border-b border-slate-200 p-4">
+    <div className="flex max-h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-slate-200 p-4">
         {drillLabel ? (
           <div className="flex items-center gap-2">
             <button
@@ -502,7 +504,7 @@ export function FlowPicker({
           />
         </div>
       </div>
-      <div className="max-h-[calc(72vh-126px)] space-y-5 overflow-y-auto p-4">{body}</div>
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">{body}</div>
     </div>
   )
 }

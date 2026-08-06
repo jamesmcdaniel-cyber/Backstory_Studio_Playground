@@ -38,6 +38,7 @@ import { useWorkspaceFlows } from './use-workspace-flows'
 import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
 import { AGENT_STEP_MODELS, orgMemberLabel, type OrgMember, type ToolCatalog } from './step-drawer'
 import { TriggerEditor, type TriggerData } from './trigger-editor'
+import { AgentInlineCreate } from './agent-inline-create'
 import { AdvancedParamsSection } from './advanced-params'
 import { DataTree } from './data-tree'
 import { TokenTextEditor, type TokenTextEditorHandle } from './token-text-editor'
@@ -1343,6 +1344,14 @@ function AgentBody({
           </a>
         </div>
       </div>
+      {!node.data.agentId && (
+        <AgentInlineCreate
+          onCreated={(agent) => {
+            update({ ...node, data: { ...node.data, agentId: agent.id } })
+            onRefreshAgents?.()
+          }}
+        />
+      )}
       <div className="grid gap-2">
         <label className={labelClass}>Message to agent</label>
         <TokenTextEditor

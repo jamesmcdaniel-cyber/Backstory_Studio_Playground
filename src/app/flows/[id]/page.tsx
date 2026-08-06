@@ -2493,6 +2493,7 @@ function FlowBuilder() {
                   setOpenNodeId(nodeId)
                   setSelectedIds([])
                 }}
+                onRefreshAgents={refreshAgents}
                 onExecuteStep={() => void runPartial(drawerNode.id, 'stopAfter')}
                 onExecuteOnly={selectedRun?.id ? () => void runPartial(drawerNode.id, 'only') : undefined}
                 onExecutePrevious={() => void runPartial(drawerNode.id, 'stopBefore')}

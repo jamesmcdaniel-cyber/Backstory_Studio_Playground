@@ -19,6 +19,7 @@ import type { TokenLabelContext } from '@/lib/flows/token-text'
 import type { FlowContext } from '@/features/flows/context'
 import { cn } from '@/lib/utils'
 import { TriggerEditor, type TriggerData } from './trigger-editor'
+import { AgentInlineCreate } from './agent-inline-create'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { groupToolConnections, selectedToolPresentation, toolActionChoices } from '@/lib/flows/tool-presentation'
@@ -559,6 +560,7 @@ export function StepDrawer({
   layout = 'drawer',
   navigation,
   onNavigate,
+  onRefreshAgents,
   onChange,
   onAddStep,
   onDuplicate,
@@ -603,6 +605,8 @@ export function StepDrawer({
     next?: { id: string; label: string }
   }
   onNavigate?: (nodeId: string) => void
+  /** Re-fetch the agents list after an inline agent create, so the select shows the new agent's title. */
+  onRefreshAgents?: () => void
   onChange: (node: FlowNode) => void
   onChangeType?: (type: EditableType) => void
   onExecuteStep?: () => void
@@ -942,8 +946,15 @@ export function StepDrawer({
                   </option>
                 ))}
               </select>
-              {agents.length === 0 && <p className="mt-1.5 text-xs text-amber-600">No agents yet — create one first.</p>}
             </div>
+            {!node.data.agentId && (
+              <AgentInlineCreate
+                onCreated={(agent) => {
+                  onChange({ ...node, data: { ...node.data, agentId: agent.id } })
+                  onRefreshAgents?.()
+                }}
+              />
+            )}
             <div>
               <label className={labelClass}>Message to agent</label>
               <TokenTextEditor

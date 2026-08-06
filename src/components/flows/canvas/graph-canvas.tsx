@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -165,6 +165,31 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   const storeApi = useStoreApi()
   const { zoom } = useViewport()
   const [picker, setPicker] = useState<PickerState | null>(null)
+  const pickerElRef = useRef<HTMLDivElement>(null)
+
+  // Keep the insert picker fully on screen: clamp its position to the wrapper
+  // using its MEASURED size (the initial inline style only knows the click
+  // point). Re-clamps as the popover grows/shrinks (search, drill-in) so the
+  // bottom edge never ends up cut off by the canvas edge.
+  useLayoutEffect(() => {
+    if (!picker) return
+    const el = pickerElRef.current
+    const wrapper = wrapperRef.current
+    if (!el || !wrapper) return
+    const clamp = () => {
+      const margin = 16
+      // Keep the 72vh cap, but a short canvas (split panes, small windows)
+      // tightens it further so the popover always fits inside the wrapper.
+      el.style.maxHeight = `${Math.min(Math.round(window.innerHeight * 0.72), Math.max(200, wrapper.clientHeight - margin * 2))}px`
+      el.style.left = `${Math.max(margin, Math.min(picker.screen.x, wrapper.clientWidth - el.offsetWidth - margin))}px`
+      el.style.top = `${Math.max(margin, Math.min(picker.screen.y, wrapper.clientHeight - el.offsetHeight - margin))}px`
+    }
+    clamp()
+    const observer = new ResizeObserver(clamp)
+    observer.observe(el)
+    observer.observe(wrapper)
+    return () => observer.disconnect()
+  }, [picker])
   /** Hand tool: plain left-drag pans instead of marquee-selecting. */
   const [handTool, setHandTool] = useState(false)
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<StepFlowNode>([])
@@ -631,12 +656,13 @@ function GraphCanvasInner(props: GraphCanvasProps) {
         <>
           <div className="absolute inset-0 z-30" onClick={() => setPicker(null)} />
           <div
+            ref={pickerElRef}
             className={cn(
-              'absolute z-40 max-h-[72vh] w-[min(620px,calc(100%-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
+              'absolute z-40 flex max-h-[72vh] w-[min(620px,calc(100%-2rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
             )}
             style={{
-              left: Math.max(8, Math.min(picker.screen.x, (wrapperRef.current?.clientWidth ?? 800) - 640)),
-              top: Math.max(8, Math.min(picker.screen.y, (wrapperRef.current?.clientHeight ?? 600) - 120)),
+              left: Math.max(16, Math.min(picker.screen.x, (wrapperRef.current?.clientWidth ?? 800) - 640)),
+              top: Math.max(16, Math.min(picker.screen.y, (wrapperRef.current?.clientHeight ?? 600) - 120)),
             }}
           >
             <FlowPicker

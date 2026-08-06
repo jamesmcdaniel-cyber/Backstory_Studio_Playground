@@ -129,6 +129,7 @@ export const AI_CAPABILITY_LEAVES: PickerLeaf[] = [
   { id: 'ai-score', label: 'Score', description: 'Rate input on a numeric scale with a reason.', mode: 'action', stepType: 'ai', seed: { aiOp: 'score' } },
   { id: 'ai-knowledge', label: 'Search knowledge', description: 'Find the most relevant passages from your uploaded documents.', mode: 'action', stepType: 'knowledge' },
   { id: 'ai-run-agent', label: 'Run an agent', description: 'Run one of your agents and pass its response to the next step.', mode: 'action', stepType: 'agent' },
+  { id: 'ai-custom-agent', label: 'Custom agent', description: 'Define a new agent right on this step — instructions, chat model, memory, and tools.', mode: 'action', stepType: 'agent' },
 ]
 
 /** Trigger-mode top level: the four ways a flow can start. */

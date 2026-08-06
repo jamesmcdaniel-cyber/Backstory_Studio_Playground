@@ -102,7 +102,7 @@ function InsertMenu({
       {open && (
           <div
             className={cn(
-              'absolute z-30 mt-2 max-h-[72vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
+              'absolute z-30 mt-2 flex max-h-[72vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
               compact ? 'left-0 top-full w-[min(620px,calc(100vw-4rem))]' : 'left-1/2 top-full w-[min(720px,calc(100vw-4rem))] -translate-x-1/2',
             )}
           >

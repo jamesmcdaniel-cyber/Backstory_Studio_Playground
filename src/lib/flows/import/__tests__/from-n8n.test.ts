@@ -310,6 +310,111 @@ test('utility nodes map to native data ops; credential-less leftovers become pas
   assert.ok(result.warnings.some((w) => /To File/.test(w)))
 })
 
+test('a MAIN-chain MCP client call becomes a tool step named after its MCP tool — never an AI step', () => {
+  const workflow = {
+    name: 'MCP call',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode(
+        'Backstory MCP: Top Records',
+        '@n8n/n8n-nodes-langchain.mcpClient',
+        { endpointUrl: 'https://mcp.backstory.ai/mcp', tool: { value: 'top_records', mode: 'list' } },
+        { credentials: { mcpOAuth2Api: { id: '9', name: 'MCP' } } },
+      ),
+    ],
+    connections: chain('Start', 'Backstory MCP: Top Records'),
+  }
+  const graph = flowGraphSchema.parse(n8nToFlow(workflow).graph)
+  const tool = graph.nodes.find((n) => n.type === 'tool') as any
+  assert.ok(tool, 'mcpClient on the main chain is a TOOL CALL, not an LLM')
+  assert.equal(tool.data.toolName, 'top_records')
+  assert.equal(graph.nodes.filter((n) => n.type === 'ai').length, 0)
+})
+
+test('respondToWebhook becomes a native output step carrying the translated response', () => {
+  const workflow = {
+    name: 'Dashboard',
+    nodes: [
+      n8nNode('Webhook', 'n8n-nodes-base.webhook', { path: 'dash', responseMode: 'responseNode' }),
+      n8nNode('Render', 'n8n-nodes-base.code', { jsCode: 'return { html: "<b>hi</b>" }' }),
+      n8nNode('Respond to Webhook', 'n8n-nodes-base.respondToWebhook', { respondWith: 'text', responseBody: '={{ $json.html }}' }),
+    ],
+    connections: chain('Webhook', 'Render', 'Respond to Webhook'),
+  }
+  const graph = flowGraphSchema.parse(n8nToFlow(workflow).graph)
+  const output = graph.nodes.find((n) => n.type === 'output') as any
+  assert.ok(output, 'respondToWebhook → output step (the webhook trigger replies with the run result)')
+  assert.deepEqual(output.data.outputs, [{ name: 'response', value: '{{step.id-Render.output.html}}' }])
+})
+
+test('schedule triggers keep their cadence: weekly interval with an hour imports as a real schedule', () => {
+  const workflow = {
+    name: 'Weekly',
+    nodes: [
+      n8nNode('Weekly Schedule', 'n8n-nodes-base.scheduleTrigger', {
+        rule: { interval: [{ field: 'weeks', triggerAtDay: [1], triggerAtHour: 8 }] },
+      }),
+      n8nNode('Work', 'n8n-nodes-base.set', { assignments: { assignments: [{ name: 'a', value: 'b' }] } }),
+    ],
+    connections: chain('Weekly Schedule', 'Work'),
+  }
+  const graph = flowGraphSchema.parse(n8nToFlow(workflow).graph)
+  const trigger = graph.nodes.find((n) => n.type === 'trigger') as any
+  assert.equal(trigger.data.trigger.type, 'schedule')
+  assert.equal(trigger.data.trigger.schedule.type, 'weekly')
+  assert.equal(trigger.data.trigger.schedule.time, '08:00')
+})
+
+test('http query parameters and auth carry over: query lands on the step, credentialed auth warns', () => {
+  const workflow = {
+    name: 'API pull',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode(
+        'GET /opportunities',
+        'n8n-nodes-base.httpRequest',
+        {
+          url: 'https://api.people.ai/opportunities',
+          method: 'GET',
+          authentication: 'genericCredentialType',
+          genericAuthType: 'httpHeaderAuth',
+          sendQuery: true,
+          queryParameters: { parameters: [{ name: 'offset', value: '0' }, { name: 'limit', value: '1000' }] },
+        },
+        { credentials: { httpHeaderAuth: { id: '1', name: 'Header Auth' } } },
+      ),
+    ],
+    connections: chain('Start', 'GET /opportunities'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const http = graph.nodes.find((n) => n.type === 'http') as any
+  assert.ok(http, 'a credentialed httpRequest is still an http step, not a tool')
+  assert.deepEqual(JSON.parse(http.data.query), { offset: '0', limit: '1000' })
+  assert.ok(result.warnings.some((w) => /GET \/opportunities/.test(w) && /auth/i.test(w)), 'the dropped credential is called out')
+})
+
+test('giant embedded data-URIs in code are stripped so the import fits the 100K code cap', () => {
+  const bigAsset = 'data:image/jpeg;base64,' + '/9j/4AAQ'.repeat(20_000)
+  const workflow = {
+    name: 'Heavy code',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Render', 'n8n-nodes-base.code', {
+        jsCode: `const HEADER_IMAGES = ["${bigAsset}"];\nreturn { count: HEADER_IMAGES.length }`,
+      }),
+    ],
+    connections: chain('Start', 'Render'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph) // must not throw the 100K cap
+  const code = graph.nodes.find((n) => n.type === 'code') as any
+  assert.ok(code.data.code.length <= 100_000)
+  assert.match(code.data.code, /removed-on-import/)
+  assert.match(code.data.code, /return \{ count: HEADER_IMAGES\.length \}/, 'the actual logic survives intact')
+  assert.ok(result.warnings.some((w) => /Render/.test(w) && /asset/i.test(w)))
+})
+
 test('a workflow with no trigger gets a manual trigger wired to its roots', () => {
   const workflow = {
     name: 'Headless',

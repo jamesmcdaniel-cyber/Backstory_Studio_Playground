@@ -172,6 +172,18 @@ function noteText(node: N8nNodeIn): string {
   return `${heading}${params}`.slice(0, 5000)
 }
 
+/** n8n scheduleTrigger rule.interval → our schedule shape (imported paused). */
+function scheduleFromRule(parameters: Record<string, unknown> | undefined): Record<string, unknown> {
+  const interval = ((parameters?.rule as { interval?: Array<Record<string, unknown>> })?.interval ?? [])[0] ?? {}
+  const cron = (parameters?.cronExpression ?? interval.expression) as string | undefined
+  if (typeof cron === 'string' && cron.trim()) return { type: 'cron', cron, isActive: false }
+  const hour = typeof interval.triggerAtHour === 'number' ? interval.triggerAtHour : undefined
+  const time = hour !== undefined ? `${String(hour).padStart(2, '0')}:00` : undefined
+  const field = String(interval.field ?? 'days')
+  const type = field.startsWith('week') ? 'weekly' : field.startsWith('hour') || field.startsWith('minute') ? 'hourly' : field.startsWith('month') ? 'monthly' : 'daily'
+  return { type, ...(time ? { time } : {}), isActive: false }
+}
+
 const TRIGGER_TYPES: Record<string, 'manual' | 'webhook' | 'schedule'> = {
   'n8n-nodes-base.manualTrigger': 'manual',
   'n8n-nodes-base.webhook': 'webhook',
@@ -213,6 +225,17 @@ function mapNode(
       return { id, type: 'note', data: { text: (node.notes ?? 'No-op step from n8n.').slice(0, 5000) } } as FlowNode
     case 'n8n-nodes-base.httpRequest': {
       const sendBody = parameters.sendBody === true || typeof parameters.jsonBody === 'string'
+      const pairs = (source: unknown): Record<string, string> =>
+        Object.fromEntries(
+          (((source as { parameters?: Array<{ name?: string; value?: unknown }> })?.parameters ?? [])
+            .filter((p) => typeof p.name === 'string' && p.name)
+            .map((p) => [String(p.name), tr(String(p.value ?? ''))])),
+        )
+      const query = parameters.sendQuery === true ? pairs(parameters.queryParameters) : {}
+      const headers = parameters.sendHeaders === true ? pairs(parameters.headerParameters) : {}
+      if (parameters.authentication || node.credentials) {
+        warn(`“${name}”: its n8n credential does not transfer — add the auth header (or an MCP connection) on the HTTP step before running.`)
+      }
       return {
         id,
         type: 'http',
@@ -220,6 +243,8 @@ function mapNode(
           label,
           method: typeof parameters.method === 'string' ? parameters.method : 'GET',
           url: tr(String(parameters.url ?? '')),
+          ...(Object.keys(query).length ? { query: JSON.stringify(query) } : {}),
+          ...(Object.keys(headers).length ? { headers: JSON.stringify(headers) } : {}),
           ...(sendBody && typeof parameters.jsonBody === 'string' ? { bodyMode: 'json', body: tr(parameters.jsonBody) } : {}),
         },
       } as FlowNode
@@ -260,7 +285,19 @@ function mapNode(
     }
     case 'n8n-nodes-base.code': {
       const python = String(parameters.language ?? '').toLowerCase().includes('python')
-      const original = String((python ? parameters.pythonCode : parameters.jsCode) ?? parameters.jsCode ?? parameters.pythonCode ?? '')
+      let original = String((python ? parameters.pythonCode : parameters.jsCode) ?? parameters.jsCode ?? parameters.pythonCode ?? '')
+      // Embedded binary assets (base64 data URIs) can push a code node past
+      // our 100K cap and sink the whole import — strip them to placeholders
+      // (the code structure survives; the assets should live outside code).
+      const stripped = original.replace(/(["'`])(data:[^"'`\\]{500,})\1/g, '$1data:asset-removed-on-import$1')
+      if (stripped !== original) {
+        warn(`“${name}”: large embedded data-URI asset(s) were removed on import (they exceeded the code size limit) — host them externally and reference by URL.`)
+        original = stripped
+      }
+      if (original.length > 95_000) {
+        warn(`“${name}”: code exceeds the 100K limit even after asset removal — truncated; the step will need repair.`)
+        original = `${original.slice(0, 95_000)}\n// [truncated on import — code exceeded the 100K limit]`
+      }
       if (python && /\$input|\$json|_\(/.test(original)) {
         warn(`“${name}”: Python code using the n8n runtime API imported as-is — review it (the JS compatibility shim doesn’t apply to Python).`)
       }
@@ -279,6 +316,14 @@ function mapNode(
     }
     case 'n8n-nodes-base.merge':
       return { id, type: 'join', data: { label, mode: 'append' } } as FlowNode
+    case 'n8n-nodes-base.respondToWebhook':
+      // The webhook trigger's default response mode replies with the run's
+      // result — a named `output` step makes this node's payload BE that result.
+      return {
+        id,
+        type: 'output',
+        data: { label, outputs: [{ name: 'response', value: tr(String(parameters.responseBody ?? '')) }] },
+      } as FlowNode
     case 'n8n-nodes-base.wait': {
       if (parameters.resume === 'webhook') return { id, type: 'wait', data: { label, mode: 'webhook' } } as FlowNode
       if (parameters.resume === 'specificTime') {
@@ -312,6 +357,23 @@ function mapNode(
       return { id, type: 'data', data: { label, op, input: `{{${jsonBase}}}` } } as FlowNode
     }
     default: {
+      // A MAIN-chain MCP client node is a TOOL CALL (it names the tool it
+      // invokes), not an LLM — it must win over the generic LangChain check.
+      if (type.endsWith('.mcpClient')) {
+        const toolName = String((parameters.tool as { value?: unknown })?.value ?? 'mcp-tool')
+        warn(`“${name}”: imported as a Tool step calling “${toolName}” — open it and pick your MCP connection.`)
+        return {
+          id,
+          type: 'tool',
+          data: {
+            label,
+            connectionId: '',
+            toolName,
+            args: JSON.stringify((parameters.parameters as { value?: unknown })?.value ?? {}),
+            note: `Imported from n8n MCP client (endpoint ${String(parameters.endpointUrl ?? 'unknown')}). Pick the matching MCP connection.`,
+          },
+        } as FlowNode
+      }
       if (isLlmType(type)) {
         warn(`“${name}”: imported as a native AI step running on Backstory models — review its instructions.`)
         return { id, type: 'ai', data: { label, aiOp: 'ask', instructions: llmInstructions(parameters, tr) } } as FlowNode
@@ -469,11 +531,11 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         data: {
           trigger:
             triggerType === 'schedule'
-              ? { type: 'schedule', schedule: { type: 'daily', isActive: false } }
+              ? { type: 'schedule', schedule: scheduleFromRule(node.parameters) }
               : { type: triggerType },
         },
       } as FlowNode
-      if (triggerType === 'schedule') warn(`“${node.name ?? 'Trigger'}”: schedule imported as daily (paused) — set the cadence you want.`)
+      if (triggerType === 'schedule') warn(`“${node.name ?? 'Trigger'}”: schedule imported PAUSED — review the cadence, then activate it.`)
     } else if (triggerType) {
       warn(`“${node.name ?? node.type}”: a flow has one trigger — this extra ${TRIGGER_TYPES[node.type ?? '']} trigger became a note; switch the flow's trigger type in the builder if you want this one instead.`)
       mapped = {

@@ -992,9 +992,62 @@ ${body}`,
     case 'n8n-nodes-base.aggregate':
     case 'n8n-nodes-base.summarize':
     case 'n8n-nodes-base.splitOut': {
-      const op = type === 'n8n-nodes-base.splitOut' ? 'flatten' : (type.split('.').pop() as 'sort' | 'limit' | 'removeDuplicates' | 'aggregate' | 'summarize')
+      if (type === 'n8n-nodes-base.splitOut') {
+        // Split Out translates faithfully: the field to split becomes the
+        // flatten op's field, and each element carries the other fields along.
+        const field = typeof parameters.fieldToSplitOut === 'string' ? parameters.fieldToSplitOut.trim() : ''
+        return { id, type: 'data', data: { label, op: 'flatten', input: `{{${jsonBase}}}`, ...(field ? { by: field } : {}) } } as FlowNode
+      }
+      const op = type.split('.').pop() as 'sort' | 'limit' | 'removeDuplicates' | 'aggregate' | 'summarize'
       warn(`“${name}”: imported as a native “${op}” data step — its settings don't transfer 1:1; review them.`)
       return { id, type: 'data', data: { label, op, input: `{{${jsonBase}}}` } } as FlowNode
+    }
+    // Date & Time → the native date ops. n8n's operations map 1:1 where one
+    // exists; anything else falls back to a format step with a warning.
+    case 'n8n-nodes-base.dateTime': {
+      const operation = String(parameters.operation ?? 'formatDate')
+      const dateInput = typeof parameters.date === 'string' && parameters.date.trim() ? tr(parameters.date) : `{{${jsonBase}}}`
+      const unit = String(parameters.timeUnit ?? parameters.units ?? 'days')
+      if (operation === 'addToDate' || operation === 'subtractFromDate') {
+        const magnitude = String(parameters.duration ?? parameters.value ?? '1')
+        const amount = operation === 'subtractFromDate' && !magnitude.startsWith('-') ? `-${magnitude}` : magnitude
+        return { id, type: 'data', data: { label, op: 'dateShift', input: dateInput, amount: tr(amount), unit } } as FlowNode
+      }
+      if (operation === 'getTimeBetweenDates') {
+        const start = typeof parameters.startDate === 'string' && parameters.startDate.trim() ? tr(parameters.startDate) : `{{${jsonBase}}}`
+        const end = typeof parameters.endDate === 'string' && parameters.endDate.trim() ? tr(parameters.endDate) : `{{${jsonBase}}}`
+        return { id, type: 'data', data: { label, op: 'dateDiff', input: start, to: end, unit } } as FlowNode
+      }
+      if (operation === 'extractDate') {
+        const part = String(parameters.part ?? 'date')
+        return { id, type: 'data', data: { label, op: 'datePart', input: dateInput, part } } as FlowNode
+      }
+      if (operation !== 'formatDate' && operation !== 'getCurrentDate') {
+        warn(`“${name}”: the “${operation}” date operation has no direct equivalent — imported as a date format step; review it.`)
+      }
+      const format = typeof parameters.format === 'string' && /^[YMDHms\s:./-]+$/.test(parameters.format) ? parameters.format : undefined
+      return { id, type: 'data', data: { label, op: 'formatDate', input: operation === 'getCurrentDate' ? '{{now}}' : dateInput, ...(format ? { format } : {}) } } as FlowNode
+    }
+    // Rename Keys → the renameKeys op; each n8n pair maps to a rename row.
+    case 'n8n-nodes-base.renameKeys': {
+      const pairs = ((parameters.keys as { key?: unknown[] })?.key ?? [])
+        .filter((entry): entry is { currentKey?: unknown; newKey?: unknown } => Boolean(entry && typeof entry === 'object'))
+        .map((entry) => ({ name: String(entry.currentKey ?? ''), value: String(entry.newKey ?? '') }))
+        .filter((entry) => entry.name && entry.value)
+      if (!pairs.length) warn(`“${name}”: no key pairs found — open the step and add the renames.`)
+      return { id, type: 'data', data: { label, op: 'renameKeys', input: `{{${jsonBase}}}`, fields: pairs } } as FlowNode
+    }
+    // Markdown ⇄ HTML → the two conversion ops.
+    case 'n8n-nodes-base.markdown': {
+      const toHtml = String(parameters.mode ?? 'markdownToHtml') === 'markdownToHtml'
+      const source = toHtml ? parameters.markdown : parameters.html
+      const input = typeof source === 'string' && source.trim() ? tr(source) : `{{${jsonBase}}}`
+      return { id, type: 'data', data: { label, op: toHtml ? 'markdownToHtml' : 'htmlToMarkdown', input } } as FlowNode
+    }
+    // XML ⇄ JSON → parse/build ops.
+    case 'n8n-nodes-base.xml': {
+      const toJson = String(parameters.mode ?? 'xmlToJson') === 'xmlToJson'
+      return { id, type: 'data', data: { label, op: toJson ? 'xmlParse' : 'xmlBuild', input: `{{${jsonBase}}}` } } as FlowNode
     }
     default: {
       // MAIN-chain vector store nodes: a query ("load") is a Knowledge search;

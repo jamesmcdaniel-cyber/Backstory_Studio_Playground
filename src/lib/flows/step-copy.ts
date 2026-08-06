@@ -26,6 +26,15 @@ export const DATA_OP_INPUT_PLACEHOLDER: Record<DataOp, string> = {
   removeDuplicates: 'The list to de-duplicate',
   aggregate: 'The list to collapse into one value',
   summarize: 'The list of records to summarize',
+  formatDate: 'The date to format',
+  dateShift: 'The date to shift',
+  dateDiff: 'The start date',
+  datePart: 'The date to read from',
+  renameKeys: 'The record (or list of records) to rename fields on',
+  markdownToHtml: 'The Markdown text to convert',
+  htmlToMarkdown: 'The HTML to convert',
+  xmlParse: 'The XML text to parse',
+  xmlBuild: 'The record to turn into XML',
 }
 
 /** One-line helper under each data operation's fields. */
@@ -48,6 +57,15 @@ export const DATA_OP_HELPER: Record<DataOp, string> = {
   removeDuplicates: 'Drops repeated items, keeping the first of each. Match on one field, or on the whole record.',
   aggregate: 'Collapses the list into a single value — one field’s values, or the whole list as one item.',
   summarize: 'Groups the records by a field and calculates totals, averages, counts, or extremes for each group.',
+  formatDate: 'Writes the date in the pattern you choose (YYYY, MM, DD, HH, mm, ss tokens). All dates are read and written in UTC.',
+  dateShift: 'Adds the amount of time to the date — a negative amount subtracts. All math happens in UTC.',
+  dateDiff: 'Counts the time between the input date and the end date, in the unit you choose.',
+  datePart: 'Picks one part of the date — year, month, day, hour, minute, second, weekday, date, or time.',
+  renameKeys: 'Renames fields on the record — or on every record in a list — leaving other fields untouched.',
+  markdownToHtml: 'Converts Markdown text into HTML.',
+  htmlToMarkdown: 'Converts HTML into Markdown text.',
+  xmlParse: 'Turns XML text into structured data so later steps can map its fields.',
+  xmlBuild: 'Builds an XML document from a record — field names become the tags.',
 }
 
 /** Placeholder for a variable step's value field, per operation. */
@@ -66,10 +84,16 @@ export function variableValueOptional(op: VariableOp): boolean {
 }
 
 /** Plain-English names for the summarize calculations — the UI shows these, never the op key. */
-export const SUMMARIZE_OP_LABELS: Record<'sum' | 'avg' | 'count' | 'min' | 'max', string> = {
+export const SUMMARIZE_OP_LABELS: Record<'sum' | 'avg' | 'count' | 'min' | 'max' | 'countUnique' | 'concat' | 'append', string> = {
   sum: 'Total',
   avg: 'Average',
   count: 'Count',
   min: 'Lowest',
   max: 'Highest',
+  countUnique: 'Unique count',
+  concat: 'Join as text',
+  append: 'Collect as list',
 }
+
+/** Every summarize calculation, in display order. */
+export const SUMMARIZE_OPS = ['sum', 'avg', 'count', 'countUnique', 'min', 'max', 'concat', 'append'] as const

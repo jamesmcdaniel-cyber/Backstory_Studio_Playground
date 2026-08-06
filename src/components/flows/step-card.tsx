@@ -2271,6 +2271,18 @@ function DataBody({
       )}
       {op === 'filterArray' && (
         <div className="grid gap-2">
+          <label className={labelClass}>Keep items where</label>
+          <select
+            value={node.data.match === 'any' ? 'any' : 'all'}
+            onChange={(event) => update({ ...node, data: { ...node.data, match: event.target.value === 'any' ? 'any' : undefined } })}
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            className={controlClass}
+            aria-label="How conditions combine"
+          >
+            <option value="all">Every condition passes</option>
+            <option value="any">Any condition passes</option>
+          </select>
           <label className={labelClass}>Conditions <span className="text-red-500">*</span></label>
           {(clauses.length ? clauses : [{ left: '', op: 'contains' as ConditionOp, right: '' }]).map((clause, index, list) => (
             <div key={index} className="grid gap-2 sm:grid-cols-[1fr_130px_1fr_36px]">
@@ -2325,9 +2337,127 @@ function DataBody({
           </button>
         </div>
       )}
-      {(op === 'select' || op === 'compose') && (
+      {op === 'flatten' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Fields <span className="text-red-500">*</span></label>
+          <label className={labelClass}>Field holding the list <span className="font-normal normal-case text-slate-400">(optional)</span></label>
+          <input
+            value={node.data.by ?? ''}
+            onChange={(event) => update({ ...node, data: { ...node.data, by: event.target.value || undefined } })}
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            className={controlClass}
+            placeholder="Leave empty to unnest lists inside lists"
+            aria-label="Field holding the list"
+          />
+        </div>
+      )}
+      {op === 'formatDate' && (
+        <div className="grid gap-2">
+          <label className={labelClass}>Pattern</label>
+          <input
+            value={node.data.format ?? ''}
+            onChange={(event) => update({ ...node, data: { ...node.data, format: event.target.value || undefined } })}
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            className={controlClass}
+            placeholder="YYYY-MM-DD — tokens: YYYY, MM, DD, HH, mm, ss"
+            aria-label="Date pattern"
+          />
+        </div>
+      )}
+      {op === 'dateShift' && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <label className={labelClass}>Amount <span className="text-red-500">*</span></label>
+            <input
+              value={node.data.amount ?? ''}
+              onChange={(event) => update({ ...node, data: { ...node.data, amount: event.target.value || undefined } })}
+              onFocus={blockActive}
+              onBlur={unblockActive}
+              className={controlClass}
+              placeholder="3 — negative subtracts"
+              aria-label="Amount"
+            />
+          </div>
+          <div className="grid gap-2">
+            <label className={labelClass}>Unit</label>
+            <select
+              value={node.data.unit ?? 'days'}
+              onChange={(event) => update({ ...node, data: { ...node.data, unit: event.target.value } })}
+              onFocus={blockActive}
+              onBlur={unblockActive}
+              className={controlClass}
+              aria-label="Time unit"
+            >
+              {['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years'].map((unit) => (
+                <option key={unit} value={unit}>{unit}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+      {op === 'dateDiff' && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <label className={labelClass}>End date <span className="text-red-500">*</span></label>
+            <TokenTextEditor
+              ref={registerEditor('data.to')}
+              value={node.data.to ?? ''}
+              labelCtx={labelCtx}
+              onFocus={focusEditor('data.to')}
+              onChange={(to) => update({ ...node, data: { ...node.data, to: to || undefined } })}
+              className={cn(tokenControlClass, 'min-w-0')}
+              placeholder="The date to count up to"
+              ariaLabel="End date"
+            />
+          </div>
+          <div className="grid gap-2">
+            <label className={labelClass}>Count in</label>
+            <select
+              value={node.data.unit ?? 'days'}
+              onChange={(event) => update({ ...node, data: { ...node.data, unit: event.target.value } })}
+              onFocus={blockActive}
+              onBlur={unblockActive}
+              className={controlClass}
+              aria-label="Time unit"
+            >
+              {['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years'].map((unit) => (
+                <option key={unit} value={unit}>{unit}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+      {op === 'datePart' && (
+        <div className="grid gap-2">
+          <label className={labelClass}>Part to pick</label>
+          <select
+            value={node.data.part ?? 'date'}
+            onChange={(event) => update({ ...node, data: { ...node.data, part: event.target.value } })}
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            className={controlClass}
+            aria-label="Date part"
+          >
+            {[
+              ['date', 'Calendar date (YYYY-MM-DD)'],
+              ['time', 'Time of day (HH:MM)'],
+              ['year', 'Year'],
+              ['month', 'Month (1–12)'],
+              ['day', 'Day of month'],
+              ['weekday', 'Weekday name'],
+              ['hour', 'Hour'],
+              ['minute', 'Minute'],
+              ['second', 'Second'],
+            ].map(([value, text]) => (
+              <option key={value} value={value}>{text}</option>
+            ))}
+          </select>
+        </div>
+      )}
+      {(op === 'select' || op === 'compose' || op === 'renameKeys') && (
+        <div className="grid gap-2">
+          <label className={labelClass}>{op === 'renameKeys' ? 'Renames' : 'Fields'} <span className="text-red-500">*</span></label>
           {(fields.length ? fields : [{ name: '', value: '' }]).map((field, index, list) => (
             <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_36px]">
               <input
@@ -2336,24 +2466,36 @@ function DataBody({
                 onFocus={blockActive}
                 onBlur={unblockActive}
                 className={controlClass}
-                placeholder="Output field"
+                placeholder={op === 'renameKeys' ? 'Current field name' : 'Output field'}
               />
-              <TokenTextEditor
-                ref={registerEditor(`data.field.${index}.value`)}
-                value={field.value}
-                labelCtx={labelCtx}
-                onFocus={focusEditor(`data.field.${index}.value`)}
-                onChange={(value) => setFields(list.map((entry, j) => (j === index ? { ...entry, value } : entry)))}
-                className={cn(tokenControlClass, 'min-w-0')}
-                placeholder="Value for this field"
-                ariaLabel={`Value for field ${field.name || index + 1}`}
-              />
+              {op === 'renameKeys' ? (
+                <input
+                  value={field.value}
+                  onChange={(event) => setFields(list.map((entry, j) => (j === index ? { ...entry, value: event.target.value } : entry)))}
+                  onFocus={blockActive}
+                  onBlur={unblockActive}
+                  className={controlClass}
+                  placeholder="New field name"
+                  aria-label={`New name for ${field.name || `rename ${index + 1}`}`}
+                />
+              ) : (
+                <TokenTextEditor
+                  ref={registerEditor(`data.field.${index}.value`)}
+                  value={field.value}
+                  labelCtx={labelCtx}
+                  onFocus={focusEditor(`data.field.${index}.value`)}
+                  onChange={(value) => setFields(list.map((entry, j) => (j === index ? { ...entry, value } : entry)))}
+                  className={cn(tokenControlClass, 'min-w-0')}
+                  placeholder="Value for this field"
+                  ariaLabel={`Value for field ${field.name || index + 1}`}
+                />
+              )}
               <button
                 type="button"
                 onClick={() => setFields(list.filter((_, j) => j !== index))}
                 disabled={list.length === 1}
                 className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Remove field"
+                aria-label={op === 'renameKeys' ? 'Remove rename' : 'Remove field'}
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -2364,7 +2506,7 @@ function DataBody({
             onClick={() => setFields([...(fields.length ? fields : [{ name: '', value: '' }]), { name: '', value: '' }])}
             className="text-left text-sm font-semibold text-blue-700 hover:text-blue-900"
           >
-            Add field
+            {op === 'renameKeys' ? 'Add rename' : 'Add field'}
           </button>
         </div>
       )}

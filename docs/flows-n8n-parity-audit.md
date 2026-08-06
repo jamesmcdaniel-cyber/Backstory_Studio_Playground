@@ -505,3 +505,37 @@ rejects an unscoped read).
 - **No agent-execution E2E in this pass.** The model provider's free tier was
   exhausted mid-session, so agent steps 403'd. The dispatch path was still
   verified (execution rows created, failures recorded, nothing stranded).
+
+## 15. Data-transformation closing pass (2026-08-06)
+
+The full n8n "Data transformation" palette is now covered, and the ops we
+already had were hardened to their n8n node's behavior:
+
+**New `DATA_OPS`** (all pure/sync, dependency-free, in both step editors and
+mapped by the n8n importer):
+
+| n8n node | Landed as |
+|---|---|
+| Date & Time | `formatDate` (YYYY/MM/DD/HH/mm/ss pattern), `dateShift` (add/subtract, month math clamps), `dateDiff` (whole units, calendar-aware months), `datePart` — all UTC for determinism |
+| Rename Keys | `renameKeys` — pairs of current → new name, over a record or a list |
+| Markdown | `markdownToHtml` / `htmlToMarkdown` — escape-first GFM subset; raw HTML never passes through, script URLs refused |
+| XML | `xmlParse` / `xmlBuild` — attributes as `@keys`, text as `#text`, repeats as arrays; round-trips |
+| Split Out | `flatten` grew a field setting: each element becomes its own item carrying the record's other fields (importer maps `fieldToSplitOut`) |
+
+**Hardened to n8n behavior:**
+
+- `sort` / `removeDuplicates` / `summarize` group-by accept SEVERAL
+  comma-separated fields; `aggregate` with several fields returns
+  `{ field: [values] }` per field.
+- `summarize` gained `countUnique` / `concat` / `append` aggregations.
+- `filterArray` gained `match: any` (OR) alongside the default AND.
+- `compose` / `select` dotted field names build nested objects (n8n Set).
+- The interpreter now passes `by` / `descending` / `aggregations` through to
+  the op runner — previously those settings were silently dropped at run time
+  (pinned by an interpreter-level test).
+
+**Deliberately deferred** (binary plane / heavy deps; revisit on demand):
+Compression, Edit Image, Convert to File / Extract from File as dedicated
+steps (file references + HTTP `responseType: 'file'` + text-op auto-extract
+cover the common path), Crypto, and HTML CSS-selector extraction (the AI
+extract step covers it in plain English).

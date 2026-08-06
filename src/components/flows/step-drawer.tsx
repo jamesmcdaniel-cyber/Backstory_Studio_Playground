@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
-import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
+import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, SUMMARIZE_OPS, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { DataTree } from '@/components/flows/data-tree'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
@@ -2458,7 +2458,7 @@ function DataEditor({
     // Ops with required list config start with one empty row so the editor
     // opens ready to fill in.
     const nextClauses = next === 'filterArray' && !(node.data.clauses ?? []).length ? [{ left: '', op: 'contains' as ConditionOp, right: '' }] : node.data.clauses
-    const nextFields = (next === 'select' || next === 'compose') && !(node.data.fields ?? []).length ? [{ name: '', value: '' }] : node.data.fields
+    const nextFields = (next === 'select' || next === 'compose' || next === 'renameKeys') && !(node.data.fields ?? []).length ? [{ name: '', value: '' }] : node.data.fields
     onChange({ ...node, data: { ...node.data, op: next, clauses: nextClauses, fields: nextFields } })
   }
   const setClauses = (next: ConditionClause[]) => onChange({ ...node, data: { ...node.data, clauses: next } })
@@ -2589,6 +2589,18 @@ function DataEditor({
       )}
       {op === 'filterArray' && (
         <div className="space-y-3">
+          <div>
+            <label className={labelClass}>Keep items where</label>
+            <select
+              className={fieldClass}
+              value={node.data.match === 'any' ? 'any' : 'all'}
+              onChange={(e) => onChange({ ...node, data: { ...node.data, match: e.target.value === 'any' ? 'any' : undefined } })}
+              aria-label="How conditions combine"
+            >
+              <option value="all">Every condition passes</option>
+              <option value="any">Any condition passes</option>
+            </select>
+          </div>
           <label className={labelClass}>Conditions</label>
           {clauses.map((clause, i) => (
             <div key={i} className="space-y-1.5 rounded-lg border border-border/70 p-2">
@@ -2635,20 +2647,131 @@ function DataEditor({
           >
             <Plus className="h-3.5 w-3.5" /> Add condition
           </button>
-          <p className="text-[11px] text-muted-foreground">Every condition checks one item of the list at a time; only items where all conditions pass are kept.</p>
+          <p className="text-[11px] text-muted-foreground">Each condition checks one item of the list at a time.</p>
         </div>
       )}
       {(op === 'sort' || op === 'removeDuplicates' || op === 'summarize') && (
         <div>
-          <label className={labelClass}>{op === 'summarize' ? 'Group by field' : 'Field'}</label>
+          <label className={labelClass}>{op === 'summarize' ? 'Group by field(s)' : 'Field(s)'}</label>
           <input
             className={fieldClass}
             value={node.data.by ?? ''}
-            placeholder={op === 'summarize' ? 'Leave empty to summarize the whole list' : 'Leave empty to use the whole item'}
+            placeholder={op === 'summarize' ? 'Leave empty to summarize the whole list — several fields separate with commas' : 'Leave empty to use the whole item — several fields separate with commas'}
             onFocus={blockActive}
             onBlur={unblockActive}
             onChange={(e) => onChange({ ...node, data: { ...node.data, by: e.target.value } })}
           />
+        </div>
+      )}
+      {op === 'flatten' && (
+        <div>
+          <label className={labelClass}>Field holding the list (optional)</label>
+          <input
+            className={fieldClass}
+            value={node.data.by ?? ''}
+            placeholder="Leave empty to unnest lists inside lists"
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            onChange={(e) => onChange({ ...node, data: { ...node.data, by: e.target.value || undefined } })}
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">With a field, each of its entries becomes its own item, carrying the record&apos;s other fields along.</p>
+        </div>
+      )}
+      {op === 'formatDate' && (
+        <div>
+          <label className={labelClass}>Pattern</label>
+          <input
+            className={fieldClass}
+            value={node.data.format ?? ''}
+            placeholder="YYYY-MM-DD — tokens: YYYY, MM, DD, HH, mm, ss"
+            onFocus={blockActive}
+            onBlur={unblockActive}
+            onChange={(e) => onChange({ ...node, data: { ...node.data, format: e.target.value || undefined } })}
+            aria-label="Date pattern"
+          />
+        </div>
+      )}
+      {op === 'dateShift' && (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className={labelClass}>Amount</label>
+            <input
+              className={fieldClass}
+              value={node.data.amount ?? ''}
+              placeholder="3 — negative subtracts"
+              onFocus={blockActive}
+              onBlur={unblockActive}
+              onChange={(e) => onChange({ ...node, data: { ...node.data, amount: e.target.value || undefined } })}
+              aria-label="Amount"
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Unit</label>
+            <select
+              className={fieldClass}
+              value={node.data.unit ?? 'days'}
+              onChange={(e) => onChange({ ...node, data: { ...node.data, unit: e.target.value } })}
+              aria-label="Time unit"
+            >
+              {['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years'].map((unit) => (
+                <option key={unit} value={unit}>{unit}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+      {op === 'dateDiff' && (
+        <>
+          <div>
+            <label className={labelClass}>End date</label>
+            <TokenTextEditor
+              ref={registerEditor('data.to')}
+              value={node.data.to ?? ''}
+              labelCtx={labelCtx}
+              placeholder="The date to count up to"
+              onFocus={focusEditor('data.to')}
+              onChange={(to) => onChange({ ...node, data: { ...node.data, to: to || undefined } })}
+              ariaLabel="End date"
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Count in</label>
+            <select
+              className={fieldClass}
+              value={node.data.unit ?? 'days'}
+              onChange={(e) => onChange({ ...node, data: { ...node.data, unit: e.target.value } })}
+              aria-label="Time unit"
+            >
+              {['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years'].map((unit) => (
+                <option key={unit} value={unit}>{unit}</option>
+              ))}
+            </select>
+          </div>
+        </>
+      )}
+      {op === 'datePart' && (
+        <div>
+          <label className={labelClass}>Part to pick</label>
+          <select
+            className={fieldClass}
+            value={node.data.part ?? 'date'}
+            onChange={(e) => onChange({ ...node, data: { ...node.data, part: e.target.value } })}
+            aria-label="Date part"
+          >
+            {[
+              ['date', 'Calendar date (YYYY-MM-DD)'],
+              ['time', 'Time of day (HH:MM)'],
+              ['year', 'Year'],
+              ['month', 'Month (1–12)'],
+              ['day', 'Day of month'],
+              ['weekday', 'Weekday name'],
+              ['hour', 'Hour'],
+              ['minute', 'Minute'],
+              ['second', 'Second'],
+            ].map(([value, text]) => (
+              <option key={value} value={value}>{text}</option>
+            ))}
+          </select>
         </div>
       )}
       {op === 'sort' && (
@@ -2710,7 +2833,7 @@ function DataEditor({
                   value={entry.op}
                   onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, op: e.target.value as typeof r.op } : r)))}
                 >
-                  {(['sum', 'avg', 'count', 'min', 'max'] as const).map((o) => (
+                  {SUMMARIZE_OPS.map((o) => (
                     <option key={o} value={o}>{SUMMARIZE_OP_LABELS[o]}</option>
                   ))}
                 </select>
@@ -2739,36 +2862,48 @@ function DataEditor({
           </button>
         </div>
       )}
-      {(op === 'select' || op === 'compose') && (
+      {(op === 'select' || op === 'compose' || op === 'renameKeys') && (
         <div className="space-y-3">
-          <label className={labelClass}>Fields</label>
+          <label className={labelClass}>{op === 'renameKeys' ? 'Renames' : 'Fields'}</label>
           {fields.map((field, i) => (
             <div key={i} className="space-y-1.5 rounded-lg border border-border/70 p-2">
               <div className="flex gap-1.5">
                 <input
                   className={`${smallField} flex-1`}
                   value={field.name}
-                  placeholder="Output field"
+                  placeholder={op === 'renameKeys' ? 'Current field name' : 'Output field'}
                   onFocus={blockActive}
                   onBlur={unblockActive}
                   onChange={(e) => setFields(fields.map((f, j) => (j === i ? { ...f, name: e.target.value } : f)))}
                 />
                 {fields.length > 1 && (
-                  <button type="button" onClick={() => setFields(fields.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove field">
+                  <button type="button" onClick={() => setFields(fields.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label={op === 'renameKeys' ? 'Remove rename' : 'Remove field'}>
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}
               </div>
-              <TokenTextEditor
-                ref={registerEditor(`data.field.${i}.value`)}
-                className="px-2 py-1.5"
-                value={field.value}
-                labelCtx={labelCtx}
-                placeholder="Value for this field"
-                onFocus={focusEditor(`data.field.${i}.value`)}
-                onChange={(value) => setFields(fields.map((f, j) => (j === i ? { ...f, value } : f)))}
-                ariaLabel={`Value for field ${field.name || i + 1}`}
-              />
+              {op === 'renameKeys' ? (
+                <input
+                  className={`${smallField} w-full`}
+                  value={field.value}
+                  placeholder="New field name"
+                  onFocus={blockActive}
+                  onBlur={unblockActive}
+                  onChange={(e) => setFields(fields.map((f, j) => (j === i ? { ...f, value: e.target.value } : f)))}
+                  aria-label={`New name for ${field.name || `rename ${i + 1}`}`}
+                />
+              ) : (
+                <TokenTextEditor
+                  ref={registerEditor(`data.field.${i}.value`)}
+                  className="px-2 py-1.5"
+                  value={field.value}
+                  labelCtx={labelCtx}
+                  placeholder="Value for this field"
+                  onFocus={focusEditor(`data.field.${i}.value`)}
+                  onChange={(value) => setFields(fields.map((f, j) => (j === i ? { ...f, value } : f)))}
+                  ariaLabel={`Value for field ${field.name || i + 1}`}
+                />
+              )}
             </div>
           ))}
           <button
@@ -2776,7 +2911,7 @@ function DataEditor({
             onClick={() => setFields([...fields, { name: '', value: '' }])}
             className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
           >
-            <Plus className="h-3.5 w-3.5" /> Add field
+            <Plus className="h-3.5 w-3.5" /> {op === 'renameKeys' ? 'Add rename' : 'Add field'}
           </button>
         </div>
       )}

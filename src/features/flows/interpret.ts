@@ -845,6 +845,16 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         index: node.data.index === undefined ? undefined : resolveTemplate(node.data.index, ctx),
         count: node.data.count === undefined ? undefined : resolveTemplate(node.data.count, ctx),
         fromEnd: node.data.fromEnd,
+        by: node.data.by,
+        descending: node.data.descending,
+        aggregations: node.data.aggregations,
+        match: node.data.match,
+        // Date fields: the pattern/amount/end-date may reference flow data.
+        format: node.data.format === undefined ? undefined : resolveTemplate(node.data.format, ctx),
+        unit: node.data.unit,
+        amount: node.data.amount === undefined ? undefined : resolveTemplate(node.data.amount, ctx),
+        part: node.data.part,
+        to: node.data.to === undefined ? undefined : resolveTemplate(node.data.to, ctx),
       })
       if ('error' in res) {
         emit({ nodeId: node.id, status: 'failed', input: { op: node.data.op, input }, error: res.error })

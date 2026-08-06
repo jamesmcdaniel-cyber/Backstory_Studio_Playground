@@ -20,7 +20,7 @@ import {
   type OnSelectionChangeParams,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Hand, LayoutGrid, Maximize2, MousePointer2, ZoomIn, ZoomOut } from 'lucide-react'
+import { Hand, LayoutGrid, Maximize2, MousePointer2, Plus, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { FlowGraph, FlowNode } from '@/lib/flows/graph'
 import type { StepType } from '@/lib/flows/mutate'
@@ -99,6 +99,9 @@ export type GraphCanvasProps = {
     seed?: FlowInsertSeed,
   ) => void
   onInsertOnEdge: (edgeId: string, position: NodePosition, type: StepType, seed?: FlowInsertSeed) => void
+  /** Create a step at a free canvas position wired to NOTHING — the top-right
+   *  "+" button. The user connects it (or leaves it parked) afterwards. */
+  onInsertStandalone?: (position: NodePosition, type: StepType, seed?: FlowInsertSeed) => void
   onTidyUp: () => void
   onCopySelection: () => void
   onPasteAt: (position: NodePosition) => void
@@ -117,7 +120,10 @@ const edgeTypes = { step: StepEdge }
 type PickerState = {
   screen: { x: number; y: number }
   position: NodePosition
-  target: { kind: 'handle'; sourceId: string; branch?: string } | { kind: 'edge'; edgeId: string }
+  target:
+    | { kind: 'handle'; sourceId: string; branch?: string }
+    | { kind: 'edge'; edgeId: string }
+    | { kind: 'standalone' }
 }
 
 const MINIMAP_COLOR: Record<string, string> = {
@@ -154,6 +160,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     onDeleteEdge,
     onInsertFromHandle,
     onInsertOnEdge,
+    onInsertStandalone,
     onTidyUp,
     onCopySelection,
     onPasteAt,
@@ -390,13 +397,24 @@ function GraphCanvasInner(props: GraphCanvasProps) {
       if (!picker) return
       if (picker.target.kind === 'handle') {
         onInsertFromHandle(picker.target.sourceId, picker.target.branch, picker.position, type, seed)
-      } else {
+      } else if (picker.target.kind === 'edge') {
         onInsertOnEdge(picker.target.edgeId, picker.position, type, seed)
+      } else {
+        onInsertStandalone?.(picker.position, type, seed)
       }
       setPicker(null)
     },
-    [picker, onInsertFromHandle, onInsertOnEdge],
+    [picker, onInsertFromHandle, onInsertOnEdge, onInsertStandalone],
   )
+
+  /** Top-right "+": drop an unconnected step at the center of the viewport. */
+  const handleAddStandalone = useCallback(() => {
+    const wrapper = wrapperRef.current?.getBoundingClientRect()
+    const position = wrapper
+      ? screenToFlowPosition({ x: wrapper.left + wrapper.width / 2, y: wrapper.top + wrapper.height / 2 })
+      : { x: 0, y: 0 }
+    openPicker({ x: Math.round(position.x), y: Math.round(position.y) }, { kind: 'standalone' })
+  }, [openPicker, screenToFlowPosition])
 
   // Branding for the agent sub-node "Tool" port menu (grantable connections).
   const toolConnections = useMemo(
@@ -578,6 +596,20 @@ function GraphCanvasInner(props: GraphCanvasProps) {
             className="!bottom-6 !right-4 !h-24 !w-40 rounded-lg border border-slate-200 !bg-white/90"
             nodeColor={(node) => MINIMAP_COLOR[String((node.data as { status?: string }).status ?? '')] ?? '#cbd5e1'}
           />
+
+          {!readOnly && onInsertStandalone && (
+            <Panel position="top-right" className="!right-4 !top-4 !m-0">
+              <button
+                type="button"
+                onClick={handleAddStandalone}
+                aria-label="Add step"
+                title="Add step — place a new step without connecting it"
+                className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-[0_8px_24px_rgba(15,23,42,0.12)] transition-colors hover:bg-slate-50 hover:text-slate-900"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </Panel>
+          )}
 
           <Panel position="bottom-left" className="!bottom-6 !left-4 !m-0">
             <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.12)]">

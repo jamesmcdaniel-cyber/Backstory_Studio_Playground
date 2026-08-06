@@ -4,7 +4,7 @@ import { isFileReference } from '@/lib/flows/file-ref'
 
 /** Ops that read a value as TEXT — for these, a file reference resolves to its
  *  extracted content so "download a file → parse it" works with no extra step. */
-const TEXT_INPUT_OPS = new Set<DataOp>(['parseJson', 'parseCsv', 'split', 'replace'])
+const TEXT_INPUT_OPS = new Set<DataOp>(['parseJson', 'parseCsv', 'split', 'replace', 'markdownToHtml', 'htmlToMarkdown', 'xmlParse'])
 
 /**
  * Pure data-operation transforms for the `data` node family (MS Data Operation
@@ -26,6 +26,8 @@ export type DataOpConfig = {
   schema?: string
   /** filterArray: every clause must pass for an item to be kept (AND). */
   clauses?: ConditionClause[]
+  /** filterArray: combine clauses with 'all' (AND, default) or 'any' (OR). */
+  match?: 'all' | 'any'
   /** select: per-item output fields; `value` supports `{{item.*}}` tokens. */
   fields?: { name: string; value: string }[]
   /**
@@ -46,7 +48,17 @@ export type DataOpConfig = {
   /** sort: descending instead of ascending. */
   descending?: boolean
   /** summarize: what to compute per group. */
-  aggregations?: { field: string; op: 'sum' | 'avg' | 'count' | 'min' | 'max'; name?: string }[]
+  aggregations?: { field: string; op: 'sum' | 'avg' | 'count' | 'min' | 'max' | 'countUnique' | 'concat' | 'append'; name?: string }[]
+  /** formatDate: the output pattern (YYYY, MM, DD, HH, mm, ss). */
+  format?: string
+  /** dateShift / dateDiff: the time unit. */
+  unit?: string
+  /** dateShift: how much to add — negative subtracts. Already resolved. */
+  amount?: string
+  /** datePart: which part to pick. */
+  part?: string
+  /** dateDiff: the end date (input is the start). Already resolved. */
+  to?: string
 }
 
 export type DataOpResult = { output: unknown } | { error: string }
@@ -71,6 +83,15 @@ export const DATA_OP_LABELS: Record<DataOp, string> = {
   removeDuplicates: 'Remove duplicates',
   aggregate: 'Aggregate',
   summarize: 'Summarize',
+  formatDate: 'Format a date',
+  dateShift: 'Add or subtract time',
+  dateDiff: 'Time between dates',
+  datePart: 'Pick a date part',
+  renameKeys: 'Rename fields',
+  markdownToHtml: 'Markdown to HTML',
+  htmlToMarkdown: 'HTML to Markdown',
+  xmlParse: 'Parse XML',
+  xmlBuild: 'Create XML',
 }
 
 /** RFC 4180 CSV: quoted fields may hold commas, newlines, and doubled quotes. */
@@ -192,7 +213,8 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
       const exact = field.value.trim().match(/^\{\{\s*([^{}]+?)\s*\}\}$/)
       // An exact token keeps the source value's structure (an object stays an
       // object); mixed text resolves to a string. Same rule as `select`.
-      record[field.name.trim()] = exact ? readPath(ctx, exact[1]) ?? null : resolveTemplate(field.value, ctx)
+      // Dotted names build nested objects (n8n Set parity).
+      assignField(record, field.name.trim(), exact ? readPath(ctx, exact[1]) ?? null : resolveTemplate(field.value, ctx))
     }
     return { output: record }
   }
@@ -236,9 +258,10 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
     if (!clauses.length) return { error: `${label} needs at least one condition.` }
     const list = asList(config.input)
     if (!list) return { error: `${label} needs a list to filter — the input wasn't a list.` }
+    // n8n Filter parity: conditions combine with AND (default) or OR.
     const output = list.filter((item) => {
       const ctx = itemContext(item, config.ctx)
-      return clauses.every((clause) => evalClause(clause, ctx))
+      return config.match === 'any' ? clauses.some((clause) => evalClause(clause, ctx)) : clauses.every((clause) => evalClause(clause, ctx))
     })
     return { output }
   }
@@ -289,7 +312,22 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
   if (op === 'flatten') {
     const list = asList(config.input)
     if (!list) return { error: `${label} needs a list to flatten — the input wasn't a list.` }
-    return { output: list.flat(Infinity) }
+    const field = (config.by ?? '').trim()
+    if (!field) return { output: list.flat(Infinity) }
+    // n8n Split Out parity: each element of `field`'s list becomes its own
+    // item, carrying the record's other TOP-LEVEL fields alongside it. A
+    // nested path (a.b) splits out the elements themselves — there is no
+    // sensible single home for the parent fields in that shape.
+    const output: unknown[] = []
+    for (const item of list) {
+      const value = readPath(itemContext(item, config.ctx), `item.${field}`)
+      const elements = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value]
+      const nested = field.includes('.')
+      const parent = !nested && item && typeof item === 'object' && !Array.isArray(item) ? { ...(item as Record<string, unknown>) } : null
+      if (parent) delete parent[field]
+      for (const element of elements) output.push(parent ? { ...parent, [field]: element } : element)
+    }
+    return { output }
   }
 
   if (op === 'trim') {
@@ -306,14 +344,22 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
   if (op === 'sort' || op === 'limit' || op === 'removeDuplicates' || op === 'aggregate' || op === 'summarize') {
     const list = asList(config.input)
     if (!list) return { error: `${label} needs a list to work on — the input wasn't a list.` }
-    const key = (config.by ?? '').trim()
-    const valueOf = (item: unknown) => (key ? readPath(itemContext(item, config.ctx), `item.${key}`) : item)
+    // n8n parity: each of these accepts SEVERAL fields, comma-separated.
+    const keys = (config.by ?? '').split(',').map((entry) => entry.trim()).filter(Boolean)
+    const valueOf = (item: unknown, field: string) => readPath(itemContext(item, config.ctx), `item.${field}`)
 
     if (op === 'sort') {
       // Stable by construction: decorate with the original index and fall back
-      // to it, so equal keys keep input order across engines.
-      const decorated = list.map((item, index) => ({ item, index, key: valueOf(item) }))
-      decorated.sort((a, b) => compareValues(a.key, b.key) || a.index - b.index)
+      // to it, so equal keys keep input order across engines. Several fields
+      // compare in order, like n8n's multi-field sort.
+      const decorated = list.map((item, index) => ({ item, index, keys: keys.length ? keys.map((field) => valueOf(item, field)) : [item] }))
+      decorated.sort((a, b) => {
+        for (let k = 0; k < a.keys.length; k++) {
+          const order = compareValues(a.keys[k], b.keys[k])
+          if (order !== 0) return order
+        }
+        return a.index - b.index
+      })
       if (config.descending) decorated.reverse()
       return { output: decorated.map((entry) => entry.item) }
     }
@@ -328,9 +374,9 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
     if (op === 'removeDuplicates') {
       const seen = new Set<string>()
       const output = list.filter((item) => {
-        // Key on a field when given, else on the whole item's JSON — so
+        // Key on the given field(s), else on the whole item's JSON — so
         // structurally identical records collapse without naming a field.
-        const identity = key ? JSON.stringify(valueOf(item) ?? null) : JSON.stringify(item ?? null)
+        const identity = JSON.stringify(keys.length ? keys.map((field) => valueOf(item, field) ?? null) : item ?? null)
         if (seen.has(identity)) return false
         seen.add(identity)
         return true
@@ -339,24 +385,31 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
     }
 
     if (op === 'aggregate') {
-      // Collapse the list into ONE value: the named field's values when a field
-      // is given, else the list itself as a single item.
-      return { output: key ? list.map(valueOf) : list }
+      // Collapse the list into ONE value: a single field gives its values as a
+      // list (back-compat); several fields give { field: [values] } per field
+      // (n8n's aggregate-individual-fields); none gives the list as one item.
+      if (!keys.length) return { output: list }
+      if (keys.length === 1) return { output: list.map((item) => valueOf(item, keys[0])) }
+      return { output: Object.fromEntries(keys.map((field) => [field, list.map((item) => valueOf(item, field))])) }
     }
 
-    // summarize — group by a field (or the whole list as one group) and compute
-    // the requested aggregations per group.
+    // summarize — group by the given field(s) (or the whole list as one group)
+    // and compute the requested aggregations per group.
     const aggregations = (config.aggregations ?? []).filter((entry) => entry.op)
     if (!aggregations.length) return { error: `${label} needs at least one thing to calculate.` }
     const groups = new Map<string, unknown[]>()
     for (const item of list) {
-      const groupKey = key ? String(valueOf(item) ?? '') : ''
+      const groupKey = keys.length ? JSON.stringify(keys.map((field) => valueOf(item, field) ?? '')) : ''
       const bucket = groups.get(groupKey)
       if (bucket) bucket.push(item)
       else groups.set(groupKey, [item])
     }
     const output = [...groups.entries()].map(([groupKey, items]) => {
-      const row: Record<string, unknown> = key ? { [key]: groupKey } : {}
+      const row: Record<string, unknown> = {}
+      if (keys.length) {
+        const values = JSON.parse(groupKey) as unknown[]
+        keys.forEach((field, index) => { row[field] = values[index] })
+      }
       for (const entry of aggregations) {
         const name = (entry.name ?? `${entry.op}_${entry.field || 'items'}`).trim()
         row[name] = summarizeValues(entry.op, items, entry.field, config.ctx)
@@ -364,6 +417,84 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
       return row
     })
     return { output }
+  }
+
+  // ---- Date & Time (n8n's dedicated node) — all math and formatting in UTC,
+  // so a flow computes the same date on every machine and every re-run. ----
+
+  if (op === 'formatDate' || op === 'dateShift' || op === 'dateDiff' || op === 'datePart') {
+    const date = parseDateInput(config.input)
+    if (!date) return { error: `${label} needs a date to work with — "${itemText(config.input)}" couldn't be read as one.` }
+
+    if (op === 'formatDate') {
+      return { output: formatUtcDate(date, (config.format ?? '').trim() || 'YYYY-MM-DD') }
+    }
+
+    if (op === 'dateShift') {
+      const raw = (config.amount ?? '').trim()
+      const amount = Number(raw)
+      if (raw === '' || !Number.isFinite(amount)) {
+        return { error: `${label} needs the amount to add — a number; negative subtracts.` }
+      }
+      const unit = normalizeDateUnit(config.unit)
+      if (!unit) return { error: `${label} needs a time unit — seconds, minutes, hours, days, weeks, months, or years.` }
+      return { output: shiftUtcDate(date, amount, unit).toISOString() }
+    }
+
+    if (op === 'dateDiff') {
+      const end = parseDateInput(config.to)
+      if (!end) return { error: `${label} needs the end date — "${itemText(config.to)}" couldn't be read as one.` }
+      const unit = normalizeDateUnit(config.unit) ?? 'days'
+      return { output: dateDifference(date, end, unit) }
+    }
+
+    // datePart
+    const part = (config.part ?? '').trim() || 'date'
+    const value = datePartValue(date, part)
+    if (value === undefined) {
+      return { error: `${label} doesn't know the part "${part}" — pick year, month, day, hour, minute, second, weekday, date, or time.` }
+    }
+    return { output: value }
+  }
+
+  if (op === 'renameKeys') {
+    const pairs = (config.fields ?? []).filter((field) => field.name.trim() && field.value.trim())
+    if (!pairs.length) return { error: `${label} needs at least one rename — the current field name and its new name.` }
+    const rename = (item: unknown): unknown => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return item
+      const source = item as Record<string, unknown>
+      const byOld = new Map(pairs.map((pair) => [pair.name.trim(), pair.value.trim()]))
+      return Object.fromEntries(Object.entries(source).map(([key, value]) => [byOld.get(key) ?? key, value]))
+    }
+    const structured = asStructured(config.input)
+    return { output: Array.isArray(structured) ? structured.map(rename) : rename(structured) }
+  }
+
+  if (op === 'markdownToHtml') {
+    const text = typeof config.input === 'string' ? config.input : itemText(config.input)
+    return { output: markdownToHtml(text) }
+  }
+
+  if (op === 'htmlToMarkdown') {
+    const text = typeof config.input === 'string' ? config.input : itemText(config.input)
+    return { output: htmlToMarkdown(text) }
+  }
+
+  if (op === 'xmlParse') {
+    const text = typeof config.input === 'string' ? config.input : itemText(config.input)
+    try {
+      return { output: parseXml(text) }
+    } catch (error) {
+      return { error: `${label} needs well-formed XML — ${error instanceof Error ? error.message : 'the content could not be parsed'}.` }
+    }
+  }
+
+  if (op === 'xmlBuild') {
+    const structured = asStructured(config.input)
+    if (!structured || typeof structured !== 'object' || Array.isArray(structured)) {
+      return { error: `${label} needs an object to turn into XML — field names become the tags.` }
+    }
+    return { output: buildXmlDocument(structured as Record<string, unknown>) }
   }
 
   // select
@@ -378,7 +509,8 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
       const exact = field.value.trim().match(/^\{\{\s*([^{}]+?)\s*\}\}$/)
       // An exact token keeps the source value's structure; a missing source
       // field maps to null (never a crash). Mixed text resolves as a string.
-      record[field.name.trim()] = exact ? readPath(ctx, exact[1]) ?? null : resolveTemplate(field.value, ctx)
+      // Dotted names build nested objects (n8n Set parity).
+      assignField(record, field.name.trim(), exact ? readPath(ctx, exact[1]) ?? null : resolveTemplate(field.value, ctx))
     }
     return record
   })
@@ -396,19 +528,40 @@ function compareValues(a: unknown, b: unknown): number {
 
 /** One aggregation over a group's items. */
 function summarizeValues(
-  op: 'sum' | 'avg' | 'count' | 'min' | 'max',
+  op: 'sum' | 'avg' | 'count' | 'min' | 'max' | 'countUnique' | 'concat' | 'append',
   items: unknown[],
   field: string,
   ctx: FlowContext | undefined,
-): number {
+): unknown {
   if (op === 'count') return items.length
-  const numbers = items
-    .map((item) => Number(field ? readPath(itemContext(item, ctx), `item.${field}`) : item))
-    .filter((value) => !Number.isNaN(value))
+  const rawValues = items.map((item) => (field ? readPath(itemContext(item, ctx), `item.${field}`) : item))
+  // n8n Summarize parity: countUnique / concatenate / append work on the raw
+  // values; the numeric ops coerce and skip what isn't a number.
+  if (op === 'countUnique') return new Set(rawValues.map((value) => JSON.stringify(value ?? null))).size
+  if (op === 'concat') return rawValues.filter((value) => value !== undefined && value !== null).map(itemText).join(', ')
+  if (op === 'append') return rawValues.filter((value) => value !== undefined)
+  const numbers = rawValues.map(Number).filter((value) => !Number.isNaN(value))
   if (!numbers.length) return 0
   if (op === 'sum') return numbers.reduce((total, value) => total + value, 0)
   if (op === 'avg') return numbers.reduce((total, value) => total + value, 0) / numbers.length
   return op === 'min' ? Math.min(...numbers) : Math.max(...numbers)
+}
+
+/** Assign `record[name] = value`, where a dotted name builds nested objects —
+ *  so a Set-style field "billing.city" reads back as {{step.x.output.billing.city}}. */
+function assignField(record: Record<string, unknown>, name: string, value: unknown) {
+  const parts = name.split('.').map((part) => part.trim()).filter(Boolean)
+  if (parts.length <= 1) {
+    record[name] = value
+    return
+  }
+  let cursor = record
+  for (const part of parts.slice(0, -1)) {
+    const next = cursor[part]
+    if (!next || typeof next !== 'object' || Array.isArray(next)) cursor[part] = {}
+    cursor = cursor[part] as Record<string, unknown>
+  }
+  cursor[parts[parts.length - 1]] = value
 }
 
 /** Split a list into consecutive groups of at most `size` (loop batch size). */
@@ -417,6 +570,353 @@ export function chunkItems(items: unknown[], size: number): unknown[][] {
   const chunks: unknown[][] = []
   for (let i = 0; i < items.length; i += step) chunks.push(items.slice(i, i + step))
   return chunks
+}
+
+// ── Date & Time helpers (all UTC — deterministic across machines/re-runs) ────
+
+/** Read a date from a Date, ISO/parsable string, or epoch (seconds or millis). */
+function parseDateInput(input: unknown): Date | null {
+  if (input instanceof Date) return Number.isNaN(input.getTime()) ? null : input
+  if (typeof input === 'number' && Number.isFinite(input)) {
+    // Under ~Sep 33658 as millis ⇒ a value below 1e12 is epoch SECONDS.
+    const date = new Date(Math.abs(input) < 1e12 ? input * 1000 : input)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+  if (typeof input === 'string') {
+    const text = input.trim()
+    if (!text) return null
+    if (/^-?\d+(\.\d+)?$/.test(text)) return parseDateInput(Number(text))
+    const date = new Date(text)
+    return Number.isNaN(date.getTime()) ? null : date
+  }
+  return null
+}
+
+const pad = (value: number, width = 2) => String(value).padStart(width, '0')
+
+/** Render `date` through a pattern of YYYY/MM/DD/HH/mm/ss tokens (UTC). */
+function formatUtcDate(date: Date, pattern: string): string {
+  return pattern
+    .replace(/YYYY/g, pad(date.getUTCFullYear(), 4))
+    .replace(/MM/g, pad(date.getUTCMonth() + 1))
+    .replace(/DD/g, pad(date.getUTCDate()))
+    .replace(/HH/g, pad(date.getUTCHours()))
+    .replace(/mm/g, pad(date.getUTCMinutes()))
+    .replace(/ss/g, pad(date.getUTCSeconds()))
+}
+
+type DateUnit = 'seconds' | 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years'
+
+function normalizeDateUnit(raw: string | undefined): DateUnit | null {
+  const unit = (raw ?? '').trim().toLowerCase().replace(/s$/, '')
+  const map: Record<string, DateUnit> = {
+    second: 'seconds', minute: 'minutes', hour: 'hours', day: 'days', week: 'weeks', month: 'months', year: 'years',
+  }
+  return map[unit] ?? null
+}
+
+const UNIT_MS: Record<Exclude<DateUnit, 'months' | 'years'>, number> = {
+  seconds: 1000,
+  minutes: 60_000,
+  hours: 3_600_000,
+  days: 86_400_000,
+  weeks: 604_800_000,
+}
+
+/** Add `amount` of `unit` (negative subtracts). Month/year math clamps the day
+ *  (Jan 31 + 1 month = Feb 28/29), matching calendar expectations, not rollover. */
+function shiftUtcDate(date: Date, amount: number, unit: DateUnit): Date {
+  if (unit !== 'months' && unit !== 'years') {
+    return new Date(date.getTime() + amount * UNIT_MS[unit])
+  }
+  const months = unit === 'years' ? amount * 12 : amount
+  const next = new Date(date.getTime())
+  const day = next.getUTCDate()
+  next.setUTCDate(1)
+  next.setUTCMonth(next.getUTCMonth() + Math.trunc(months))
+  const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate()
+  next.setUTCDate(Math.min(day, lastDay))
+  return next
+}
+
+/** Whole units between two dates, truncated toward zero; negative when end < start. */
+function dateDifference(start: Date, end: Date, unit: DateUnit): number {
+  if (unit !== 'months' && unit !== 'years') {
+    return Math.trunc((end.getTime() - start.getTime()) / UNIT_MS[unit])
+  }
+  let months = (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth())
+  // A partial month doesn't count: 31 Jan → 28 Feb is 0 months, not 1.
+  if (months > 0 && end.getUTCDate() < start.getUTCDate()) months -= 1
+  if (months < 0 && end.getUTCDate() > start.getUTCDate()) months += 1
+  return unit === 'years' ? Math.trunc(months / 12) : months
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+function datePartValue(date: Date, part: string): string | number | undefined {
+  switch (part) {
+    case 'year': return date.getUTCFullYear()
+    case 'month': return date.getUTCMonth() + 1
+    case 'day': return date.getUTCDate()
+    case 'hour': return date.getUTCHours()
+    case 'minute': return date.getUTCMinutes()
+    case 'second': return date.getUTCSeconds()
+    case 'weekday': return WEEKDAYS[date.getUTCDay()]
+    case 'date': return formatUtcDate(date, 'YYYY-MM-DD')
+    case 'time': return formatUtcDate(date, 'HH:mm')
+    default: return undefined
+  }
+}
+
+// ── Markdown ⇄ HTML (dependency-free GFM subset, escape-first for safety) ────
+
+/** Only link targets that can't smuggle script execute as links. */
+const SAFE_URL_RE = /^(https?:|mailto:|#|\/)/i
+
+/** Inline markdown → HTML for one already-ESCAPED text run. */
+function inlineMarkdown(escaped: string): string {
+  // Protect inline code spans first so nothing inside them is transformed.
+  const codeSpans: string[] = []
+  let text = escaped.replace(/`([^`]+)`/g, (_m, code: string) => {
+    codeSpans.push(`<code>${code}</code>`)
+    return ` ${codeSpans.length - 1} `
+  })
+  text = text
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt: string, url: string) => (SAFE_URL_RE.test(url) ? `<img src="${url}" alt="${alt}">` : m))
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label: string, url: string) => (SAFE_URL_RE.test(url) ? `<a href="${url}">${label}</a>` : m))
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/(^|[^_\w])_([^_\n]+)_/g, '$1<em>$2</em>')
+  return text.replace(/ (\d+) /g, (_m, index: string) => codeSpans[Number(index)])
+}
+
+function markdownTable(lines: string[]): string | null {
+  if (lines.length < 2) return null
+  const isRow = (line: string) => line.trim().startsWith('|') || line.includes('|')
+  if (!isRow(lines[0]) || !/^\s*\|?[\s:|-]+\|?\s*$/.test(lines[1]) || !lines[1].includes('-')) return null
+  const cells = (line: string) => line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((cell) => inlineMarkdown(cell.trim()))
+  const head = `<tr>${cells(lines[0]).map((cell) => `<th>${cell}</th>`).join('')}</tr>`
+  const body = lines.slice(2).filter(isRow).map((line) => `<tr>${cells(line).map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')
+  return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`
+}
+
+/** Markdown → HTML: headings, lists, quotes, fences, tables, inline marks.
+ *  Raw HTML in the source is escaped, never passed through — the output is safe
+ *  to drop into an email body or page. */
+function markdownToHtml(markdown: string): string {
+  const source = markdown.replace(/\r\n/g, '\n')
+  // Pull fenced code blocks out before any other processing.
+  const fences: string[] = []
+  const withoutFences = source.replace(/```[^\n]*\n([\s\S]*?)```/g, (_m, code: string) => {
+    fences.push(`<pre><code>${htmlEscape(code.replace(/\n$/, ''))}</code></pre>`)
+    return `${fences.length - 1}`
+  })
+  const blocks = withoutFences.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean)
+  const html = blocks.map((block) => {
+    const fence = block.match(/^(\d+)$/)
+    if (fence) return fences[Number(fence[1])]
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(block)) return '<hr>'
+    const lines = block.split('\n')
+    const escapedLines = lines.map((line) => htmlEscape(line))
+    const heading = block.match(/^(#{1,6})\s+(.*)$/s)
+    if (heading && !block.includes('\n')) {
+      const level = heading[1].length
+      return `<h${level}>${inlineMarkdown(htmlEscape(heading[2].trim()))}</h${level}>`
+    }
+    if (lines.every((line) => line.trim().startsWith('>'))) {
+      const inner = lines.map((line) => inlineMarkdown(htmlEscape(line.replace(/^\s*>\s?/, '')))).join('<br>')
+      return `<blockquote>${inner}</blockquote>`
+    }
+    const table = markdownTable(lines)
+    if (table) return table
+    if (lines.every((line) => /^\s*[-*+]\s+/.test(line))) {
+      const items = lines.map((line) => `<li>${inlineMarkdown(htmlEscape(line.replace(/^\s*[-*+]\s+/, '')))}</li>`).join('')
+      return `<ul>${items}</ul>`
+    }
+    if (lines.every((line) => /^\s*\d+\.\s+/.test(line))) {
+      const items = lines.map((line) => `<li>${inlineMarkdown(htmlEscape(line.replace(/^\s*\d+\.\s+/, '')))}</li>`).join('')
+      return `<ol>${items}</ol>`
+    }
+    return `<p>${escapedLines.map((line) => inlineMarkdown(line)).join('<br>')}</p>`
+  })
+  return html.join('\n')
+}
+
+/** Decode the entities the converter (and common HTML) emits. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#(\d+);/g, (_m, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+/** HTML → Markdown: the common structural tags; anything unknown is stripped. */
+function htmlToMarkdown(html: string): string {
+  let text = html
+    .replace(/\r\n/g, '\n')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+    .replace(/<pre[^>]*>\s*(?:<code[^>]*>)?([\s\S]*?)(?:<\/code>)?\s*<\/pre>/gi, (_m, code: string) => `\n\n\`\`\`\n${decodeEntities(code).trim()}\n\`\`\`\n\n`)
+    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_m, level: string, inner: string) => `\n\n${'#'.repeat(Number(level))} ${inner.trim()}\n\n`)
+    .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
+    .replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*')
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+    .replace(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)')
+    .replace(/<img\b[^>]*alt="([^"]*)"[^>]*src="([^"]*)"[^>]*>/gi, '![$1]($2)')
+    .replace(/<img\b[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*>/gi, '![$2]($1)')
+    .replace(/<img\b[^>]*src="([^"]*)"[^>]*>/gi, '![]($1)')
+    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_m, inner: string) => `\n\n${inner.trim().split('\n').map((line: string) => `> ${line.trim()}`).join('\n')}\n\n`)
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m, inner: string) => `\n- ${inner.trim()}`)
+    .replace(/<\/(ul|ol|table)>/gi, '\n\n')
+    .replace(/<(th|td)[^>]*>([\s\S]*?)<\/\1>/gi, '$2 | ')
+    .replace(/<\/tr>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div)>/gi, '\n\n')
+    .replace(/<hr\s*\/?>/gi, '\n\n---\n\n')
+    .replace(/<[^>]+>/g, '')
+  text = decodeEntities(text)
+  return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// ── XML ⇄ JSON (dependency-free, non-validating) ─────────────────────────────
+
+type XmlValue = string | XmlObject | XmlValue[]
+type XmlObject = { [key: string]: XmlValue }
+
+/** Merge a child under `name`: repeated sibling names collapse into an array. */
+function addXmlChild(parent: XmlObject, name: string, value: XmlValue) {
+  const existing = parent[name]
+  if (existing === undefined) parent[name] = value
+  else if (Array.isArray(existing) && !(name in { '@': 1 })) (existing as XmlValue[]).push(value)
+  else parent[name] = [existing as XmlValue, value]
+}
+
+/**
+ * XML text → plain JSON: element children become keys (repeats become arrays),
+ * attributes keep an `@` prefix, and an element with only text collapses to a
+ * string (`#text` holds the text when attributes/children sit alongside it).
+ */
+function parseXml(xml: string): XmlObject {
+  let i = 0
+  const text = xml.trim()
+  const fail = (message: string): never => { throw new Error(message) }
+
+  const skipMisc = () => {
+    for (;;) {
+      if (text.startsWith('<?', i)) {
+        const end = text.indexOf('?>', i)
+        if (end === -1) fail('an XML declaration never closes')
+        i = end + 2
+      } else if (text.startsWith('<!--', i)) {
+        const end = text.indexOf('-->', i)
+        if (end === -1) fail('a comment never closes')
+        i = end + 3
+      } else if (text.startsWith('<!DOCTYPE', i) || text.startsWith('<!doctype', i)) {
+        const end = text.indexOf('>', i)
+        if (end === -1) fail('the DOCTYPE never closes')
+        i = end + 1
+      } else if (/\s/.test(text[i] ?? '')) {
+        i += 1
+      } else {
+        return
+      }
+    }
+  }
+
+  const parseElement = (): { name: string; value: XmlValue } => {
+    if (text[i] !== '<') fail('expected an element')
+    const open = text.slice(i).match(/^<([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/)
+    if (!open) fail(`malformed tag near "${text.slice(i, i + 40)}"`)
+    const [matched, name, attrText, selfClose] = open!
+    i += matched.length
+    const node: XmlObject = {}
+    for (const attr of attrText.matchAll(/([\w.:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+      node[`@${attr[1]}`] = decodeEntities(attr[2] ?? attr[3] ?? '')
+    }
+    if (selfClose) return { name, value: Object.keys(node).length ? node : '' }
+    let textContent = ''
+    let hasChildren = false
+    for (;;) {
+      if (i >= text.length) fail(`<${name}> never closes`)
+      if (text.startsWith(`</`, i)) {
+        const close = text.slice(i).match(/^<\/\s*([\w.:-]+)\s*>/)
+        if (!close || close[1] !== name) fail(`<${name}> is closed by </${close?.[1] ?? '?'}>`)
+        i += close![0].length
+        break
+      }
+      if (text.startsWith('<![CDATA[', i)) {
+        const end = text.indexOf(']]>', i)
+        if (end === -1) fail('a CDATA section never closes')
+        textContent += text.slice(i + 9, end)
+        i = end + 3
+        continue
+      }
+      if (text.startsWith('<!--', i)) {
+        const end = text.indexOf('-->', i)
+        if (end === -1) fail('a comment never closes')
+        i = end + 3
+        continue
+      }
+      if (text[i] === '<') {
+        hasChildren = true
+        const child = parseElement()
+        addXmlChild(node, child.name, child.value)
+        continue
+      }
+      const next = text.indexOf('<', i)
+      const chunk = next === -1 ? text.slice(i) : text.slice(i, next)
+      textContent += chunk
+      i += chunk.length
+    }
+    const trimmed = decodeEntities(textContent).trim()
+    const hasAttrs = Object.keys(node).some((key) => key.startsWith('@'))
+    if (!hasChildren && !hasAttrs) return { name, value: trimmed }
+    if (trimmed) node['#text'] = trimmed
+    return { name, value: node }
+  }
+
+  skipMisc()
+  if (i >= text.length) fail('the content is empty')
+  const root = parseElement()
+  skipMisc()
+  if (i < text.length) fail('content continues after the root element closes')
+  return { [root.name]: root.value }
+}
+
+const xmlEscape = (value: string): string =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** A JSON value → XML element(s). `@keys` become attributes, `#text` the text. */
+function buildXmlElement(name: string, value: unknown): string {
+  if (Array.isArray(value)) return value.map((entry) => buildXmlElement(name, entry)).join('')
+  if (value === null || value === undefined) return `<${name}/>`
+  if (typeof value !== 'object') return `<${name}>${xmlEscape(String(value))}</${name}>`
+  const record = value as Record<string, unknown>
+  const attrs = Object.entries(record)
+    .filter(([key]) => key.startsWith('@'))
+    .map(([key, attr]) => ` ${key.slice(1)}="${xmlEscape(String(attr ?? ''))}"`)
+    .join('')
+  const children = Object.entries(record)
+    .filter(([key]) => !key.startsWith('@') && key !== '#text')
+    .map(([key, child]) => buildXmlElement(key, child))
+    .join('')
+  const textContent = record['#text'] === undefined ? '' : xmlEscape(String(record['#text']))
+  const inner = `${textContent}${children}`
+  return inner ? `<${name}${attrs}>${inner}</${name}>` : `<${name}${attrs}/>`
+}
+
+/** An object → an XML document: a single key becomes the root, else <root> wraps. */
+function buildXmlDocument(value: Record<string, unknown>): string {
+  const keys = Object.keys(value)
+  const body = keys.length === 1 && !keys[0].startsWith('@') && keys[0] !== '#text'
+    ? buildXmlElement(keys[0], value[keys[0]])
+    : buildXmlElement('root', value)
+  return `<?xml version="1.0" encoding="UTF-8"?>${body}`
 }
 
 /**

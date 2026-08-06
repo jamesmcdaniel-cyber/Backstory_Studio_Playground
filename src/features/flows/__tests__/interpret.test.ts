@@ -2823,3 +2823,32 @@ test('{{input}} inside a per-item step is the current item, matching {{item}}', 
   assert.equal(result.status, 'succeeded')
   assert.deepEqual(bodies, ['v=a', 'v=b'])
 })
+
+test('a data step passes its full op settings through the interpreter (by/descending/aggregations/match)', async () => {
+  // Pins a real gap: the interpreter once forwarded only the shared fields, so
+  // sort-by-field and summarize settings were silently ignored in live runs.
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'sorted', type: 'data', data: { op: 'sort', input: '{{trigger.input}}', by: 'amount', descending: true } },
+      { id: 'totals', type: 'data', data: { op: 'summarize', input: '{{trigger.input}}', by: 'owner', aggregations: [{ field: 'amount', op: 'sum', name: 'total' }] } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'sorted' },
+      { id: 'e2', source: 'sorted', target: 'totals' },
+    ],
+  }
+  const input = [
+    { owner: 'ana', amount: 100 },
+    { owner: 'bo', amount: 300 },
+    { owner: 'ana', amount: 200 },
+  ]
+  const result = await interpretFlow(graph, input, { runAgent: stub({}) })
+  assert.equal(result.status, 'succeeded')
+  const sorted = result.steps.find((s) => s.nodeId === 'sorted')?.output as { amount: number }[]
+  assert.deepEqual(sorted.map((row) => row.amount), [300, 200, 100])
+  assert.deepEqual(result.output, [
+    { owner: 'ana', total: 300 },
+    { owner: 'bo', total: 300 },
+  ])
+})

@@ -30,7 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { emptyGraph, type FlowGraph, type FlowNode, type OutputField } from '@/lib/flows/graph'
-import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, deleteNodes, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter, addEdge, removeEdge, setNodePositions, insertNodeFromHandle, insertNodeOnEdge, copySelection, pasteSelectionAt, type StepType } from '@/lib/flows/mutate'
+import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, deleteNodes, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter, addEdge, removeEdge, setNodePositions, insertNodeFromHandle, insertNodeOnEdge, insertNodeAt, copySelection, pasteSelectionAt, type StepType } from '@/lib/flows/mutate'
 import { layoutGraph, type NodePosition } from '@/lib/flows/layout'
 import { stepOrder } from '@/lib/flows/step-order'
 import { writeFlowClipboard, readFlowClipboard, writeFlowSelection, readFlowSelection } from '@/lib/flows/clipboard'
@@ -929,6 +929,16 @@ function FlowBuilder() {
       const agentId = type === 'agent' ? seed?.agentId ?? agents[0]?.id ?? '' : undefined
       const { graph: inserted, nodeId } = insertNodeOnEdge(graph, edgeId, type, position, agentId)
       if (!nodeId) return
+      commitGraph(applyInsertSeed(inserted, nodeId, seed))
+      setSelectedId(nodeId)
+      setOpenNodeId(nodeId)
+    },
+    [graph, agents, commitGraph, applyInsertSeed],
+  )
+  const canvasInsertStandalone = useCallback(
+    (position: NodePosition, type: StepType, seed?: FlowInsertSeed) => {
+      const agentId = type === 'agent' ? seed?.agentId ?? agents[0]?.id ?? '' : undefined
+      const { graph: inserted, nodeId } = insertNodeAt(graph, type, position, agentId)
       commitGraph(applyInsertSeed(inserted, nodeId, seed))
       setSelectedId(nodeId)
       setOpenNodeId(nodeId)
@@ -2328,6 +2338,7 @@ function FlowBuilder() {
               onDeleteEdge={canvasDeleteEdge}
               onInsertFromHandle={canvasInsertFromHandle}
               onInsertOnEdge={canvasInsertOnEdge}
+              onInsertStandalone={canvasInsertStandalone}
               onTidyUp={canvasTidyUp}
               onCopySelection={canvasCopy}
               onPasteAt={canvasPaste}

@@ -429,6 +429,9 @@ export const DATA_OPS = [
   'split', 'replace', 'getItem', 'flatten', 'trim', 'parseCsv',
   // Item-shaping ops that n8n ships as dedicated core nodes.
   'sort', 'limit', 'removeDuplicates', 'aggregate', 'summarize',
+  // Date & Time (n8n's dedicated node), field renames, and format conversions.
+  'formatDate', 'dateShift', 'dateDiff', 'datePart', 'renameKeys',
+  'markdownToHtml', 'htmlToMarkdown', 'xmlParse', 'xmlBuild',
 ] as const
 export type DataOp = (typeof DATA_OPS)[number]
 // Deterministic data-shaping step between other steps: no LLM, no I/O. `input`
@@ -449,6 +452,8 @@ const dataNode = z.object({
     separator: z.string().optional(),
     schema: z.string().optional(),
     clauses: z.array(conditionClauseSchema).optional(),
+    /** filterArray: combine clauses with 'all' (AND, default) or 'any' (OR). */
+    match: z.enum(['all', 'any']).optional(),
     fields: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
     /** replace: the text to find (required) and its replacement (default ''). */
     find: z.string().optional(),
@@ -462,9 +467,19 @@ const dataNode = z.object({
     by: z.string().optional(),
     /** sort: descending instead of ascending. */
     descending: z.boolean().optional(),
+    /** formatDate: output pattern (YYYY, MM, DD, HH, mm, ss tokens). */
+    format: z.string().optional(),
+    /** dateShift / dateDiff: the time unit. */
+    unit: z.string().optional(),
+    /** dateShift: how much to add — negative subtracts. Templated. */
+    amount: z.string().optional(),
+    /** datePart: which part of the date to pick. */
+    part: z.string().optional(),
+    /** dateDiff: the end date (input is the start). Templated. */
+    to: z.string().optional(),
     /** summarize: what to compute per group. */
     aggregations: z
-      .array(z.object({ field: z.string(), op: z.enum(['sum', 'avg', 'count', 'min', 'max']), name: z.string().optional() }))
+      .array(z.object({ field: z.string(), op: z.enum(['sum', 'avg', 'count', 'min', 'max', 'countUnique', 'concat', 'append']), name: z.string().optional() }))
       .optional(),
     perItem: perItemSchema.optional(),
   }),

@@ -887,3 +887,41 @@ test('a Backstory MCP client call binds to the platform Sales AI plane', () => {
   assert.equal(tool.data.connectionId, 'people_ai:backstory')
   assert.equal(tool.data.toolName, 'top_records')
 })
+
+test('the data-transformation node family imports as native data ops with settings intact', () => {
+  const workflow = {
+    name: 'Transforms',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Shift', 'n8n-nodes-base.dateTime', { operation: 'subtractFromDate', date: '={{ $json.closeDate }}', duration: '7', timeUnit: 'days' }),
+      n8nNode('Between', 'n8n-nodes-base.dateTime', { operation: 'getTimeBetweenDates', startDate: '={{ $json.start }}', endDate: '={{ $json.end }}', units: 'hours' }),
+      n8nNode('Rename', 'n8n-nodes-base.renameKeys', { keys: { key: [{ currentKey: 'acct_nm', newKey: 'account_name' }] } }),
+      n8nNode('To HTML', 'n8n-nodes-base.markdown', { mode: 'markdownToHtml', markdown: '={{ $json.report }}' }),
+      n8nNode('To JSON', 'n8n-nodes-base.xml', { mode: 'xmlToJson' }),
+      n8nNode('Split', 'n8n-nodes-base.splitOut', { fieldToSplitOut: 'contacts' }),
+    ],
+    connections: chain('Start', 'Shift', 'Between', 'Rename', 'To HTML', 'To JSON', 'Split'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const dataOps = Object.fromEntries(
+    graph.nodes.filter((node) => node.type === 'data').map((node) => [node.id, node.data]),
+  ) as Record<string, { op: string; amount?: string; unit?: string; to?: string; fields?: { name: string; value: string }[]; by?: string; input?: string }>
+
+  assert.equal(dataOps['id-Shift'].op, 'dateShift')
+  assert.equal(dataOps['id-Shift'].amount, '-7')
+  assert.equal(dataOps['id-Shift'].unit, 'days')
+  assert.equal(dataOps['id-Between'].op, 'dateDiff')
+  assert.equal(dataOps['id-Between'].unit, 'hours')
+  assert.match(dataOps['id-Between'].to ?? '', /end/)
+  assert.equal(dataOps['id-Rename'].op, 'renameKeys')
+  assert.deepEqual(dataOps['id-Rename'].fields, [{ name: 'acct_nm', value: 'account_name' }])
+  assert.equal(dataOps['id-To HTML'].op, 'markdownToHtml')
+  assert.equal(dataOps['id-To JSON'].op, 'xmlParse')
+  assert.equal(dataOps['id-Split'].op, 'flatten')
+  assert.equal(dataOps['id-Split'].by, 'contacts')
+
+  // The whole converted graph still validates as runnable.
+  const issues = validateFlowGraph(graph).issues.filter((issue) => issue.severity === 'error')
+  assert.deepEqual(issues, [])
+})

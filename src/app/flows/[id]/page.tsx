@@ -1753,7 +1753,6 @@ function FlowBuilder() {
       return
     }
     setRunning(true)
-    setShowRuns(true)
     setStatusByNode({})
     // A fresh run should be followed — drop any pin on an older run.
     pinnedRunId.current = null
@@ -1771,7 +1770,11 @@ function FlowBuilder() {
         // history) even if you leave this page. pollRuns follows it live and
         // toasts the outcome when it settles.
         if (data.run?.flowRunId) watchedRun.current = { id: data.run.flowRunId, status: 'running' }
-        toast.success('Run started — it keeps going even if you leave this page.')
+        // The runs panel does NOT auto-open (it was closed constantly) — the
+        // canvas shows live step status; the panel is one click away here.
+        toast.success('Run started — it keeps going even if you leave this page.', {
+          action: { label: 'Watch', onClick: () => setShowRuns(true) },
+        })
       }
       pollRuns()
     } finally {

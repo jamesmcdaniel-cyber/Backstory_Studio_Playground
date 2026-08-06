@@ -4,6 +4,7 @@ import { flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
 import { BUILTIN_CONNECTORS } from '@/lib/connectors/registry'
+import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
 import { flowTemplateNotesIssues, flowTemplateNotesSchema, flowTemplateBindingSchema } from '@/lib/flows/templates/types'
 
 /**
@@ -110,7 +111,14 @@ test('every agent binding names an agent template a workspace can actually deplo
  * name like "Backstory MCP" would read as permanently unconnected.
  */
 test('declared integrations use connector keys the workspace can match', () => {
-  const known = new Set(BUILTIN_CONNECTORS.map((connector) => connector.key.toLowerCase()))
+  // Built-in planes plus the Nango provider keys — both are what
+  // summarizeConnectedIntegrations reports as a connected provider's key
+  // (fromNangoProviderKey normalizes config keys to exactly these), so either
+  // kind matches the "Requires" chips and the missing-integration setup items.
+  const known = new Set([
+    ...BUILTIN_CONNECTORS.map((connector) => connector.key.toLowerCase()),
+    ...NANGO_PROVIDERS.map((provider) => provider.toLowerCase()),
+  ])
   for (const template of BUILTIN_FLOW_TEMPLATES) {
     for (const integration of template.integrations) {
       assert.ok(

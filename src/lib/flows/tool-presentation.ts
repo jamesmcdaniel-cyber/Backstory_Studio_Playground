@@ -60,51 +60,27 @@ export function matchBrandHint(hint: string): ToolBrand | null {
 }
 
 /**
- * Brand for a step that has NO resolvable catalog connection — an imported
- * tool step awaiting its connection pick, or an HTTP step aimed at a known
- * provider's API. Company logos on the canvas beat generic wrench/globe
- * icons: the flow reads as "Slack → Snowflake → Gmail" at a glance.
+ * Brand for a tool step BOUND to an integration whose connection the loaded
+ * catalog doesn't carry (a fresh import bound to `nango:slack` before the org
+ * connects Slack, the People.ai plane, an MCP row from another workspace).
+ *
+ * Deliberately narrow: only steps backed by a real integration binding get a
+ * company logo. An unbound tool step and an HTTP step are API-request nodes —
+ * they keep their generic tile so the canvas reads the difference between
+ * "runs through the connected integration" and "calls the API directly".
  */
 export function stepBrandFallback(node: {
   type: string
   data: Record<string, unknown>
 }): ToolBrand | null {
-  if (node.type === 'tool') {
-    const hint = `${String(node.data.toolName ?? '')} ${String(node.data.label ?? '')} ${String(node.data.note ?? '')}`
-    const brand = matchBrandHint(hint)
-    // 'http' matching a tool name like "http_request" is not a brand worth
-    // showing over the tool tile; only real providers upgrade the icon.
-    return brand && brand.key !== 'http' ? brand : null
-  }
-  if (node.type === 'http') {
-    const url = String(node.data.url ?? '')
-    const host = url.match(/^[a-z]+:\/\/([^/?#]+)/i)?.[1]?.toLowerCase() ?? ''
-    if (!host) return null
-    const HOST_BRANDS: { match: RegExp; hint: string }[] = [
-      { match: /(^|\.)slack\.com$/, hint: 'slack' },
-      { match: /\.snowflakecomputing\.com$/, hint: 'snowflake' },
-      { match: /^gmail\.googleapis\.com$/, hint: 'gmail' },
-      { match: /^sheets\.googleapis\.com$/, hint: 'google sheets' },
-      { match: /^(www\.)?googleapis\.com$/, hint: url.includes('/drive') ? 'google drive' : url.includes('/gmail') ? 'gmail' : url.includes('/spreadsheets') ? 'google sheets' : '' },
-      { match: /(^|\.)github\.com$/, hint: 'github' },
-      { match: /\.atlassian\.net$/, hint: url.includes('/wiki') ? 'confluence' : 'jira' },
-      { match: /(^|\.)notion\.com$|(^|\.)notion\.so$/, hint: 'notion' },
-      { match: /(^|\.)linear\.app$/, hint: 'linear' },
-      { match: /(^|\.)airtable\.com$/, hint: 'airtable' },
-      { match: /(^|\.)hubapi\.com$/, hint: 'hubspot' },
-      { match: /\.zendesk\.com$/, hint: 'zendesk' },
-      { match: /\.salesforce\.com$|\.force\.com$/, hint: 'salesforce' },
-      { match: /(^|\.)figma\.com$/, hint: 'figma' },
-      { match: /(^|\.)asana\.com$/, hint: 'asana' },
-      { match: /(^|\.)monday\.com$/, hint: 'monday' },
-      { match: /(^|\.)resend\.com$/, hint: 'email' },
-      { match: /(^|\.)people\.ai$/, hint: 'people.ai' },
-      { match: /(^|\.)granola\.ai$/, hint: 'granola' },
-    ]
-    const entry = HOST_BRANDS.find((candidate) => candidate.match.test(host))
-    return entry?.hint ? matchBrandHint(entry.hint) : null
-  }
-  return null
+  if (node.type !== 'tool') return null
+  const connectionId = String(node.data.connectionId ?? '')
+  if (!connectionId) return null
+  const hint = `${connectionId} ${String(node.data.toolName ?? '')} ${String(node.data.label ?? '')} ${String(node.data.note ?? '')}`
+  const brand = matchBrandHint(hint)
+  // 'http' matching a tool name like "http_request" is not a brand worth
+  // showing over the tool tile; only real providers upgrade the icon.
+  return brand && brand.key !== 'http' ? brand : null
 }
 
 /**

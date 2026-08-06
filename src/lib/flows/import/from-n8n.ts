@@ -1063,29 +1063,62 @@ ${body}`,
         } as FlowNode
       }
       if (binding && 'missing' in binding) {
-        const app = type.split('.').pop() ?? type
-        const operation = typeof parameters.operation === 'string' && parameters.operation ? `.${parameters.operation}` : ''
+        // No integration covers this capability — import it as a direct API
+        // REQUEST to the provider instead: an http step with the endpoint
+        // prefilled, configured like any API call (method/url/body/auth), and
+        // visually distinct from integration-backed steps (no company logo).
+        const trAny = (value: unknown) => {
+          const text = String(value ?? '')
+          return tr(text.startsWith('=') || !text.includes('{{') ? text : `=${text}`)
+        }
+        const skeleton = ((): { method: 'GET' | 'POST'; url: string; body?: string; bodyMode?: 'json' | 'text'; hint: string } => {
+          if (type === 'n8n-nodes-base.snowflake') {
+            return {
+              method: 'POST',
+              url: 'https://YOUR_ACCOUNT.snowflakecomputing.com/api/v2/statements',
+              body: JSON.stringify({ statement: trAny(parameters.query), timeout: 60 }),
+              hint: 'set your account host and add a key-pair JWT or OAuth token under Auth',
+            }
+          }
+          if (type === 'n8n-nodes-base.googleDrive') {
+            return {
+              method: 'POST',
+              url: 'https://www.googleapis.com/upload/drive/v3/files?uploadType=media',
+              body: `{{${jsonBase}.content}}`,
+              bodyMode: 'text',
+              hint: 'add a Google OAuth token under Auth; media upload sends the content only — set the filename/folder with a follow-up PATCH to /drive/v3/files/{id}, or use the multipart endpoint',
+            }
+          }
+          const API_BASES: Record<string, string> = {
+            'n8n-nodes-base.slack': 'https://slack.com/api/',
+            'n8n-nodes-base.gmail': 'https://gmail.googleapis.com/gmail/v1/users/me/',
+            'n8n-nodes-base.googleSheets': 'https://sheets.googleapis.com/v4/spreadsheets',
+            'n8n-nodes-base.salesforce': 'https://YOUR_DOMAIN.my.salesforce.com/services/data/v61.0/',
+          }
+          const params = Object.fromEntries(
+            Object.entries(parameters)
+              .filter(([key]) => key !== 'options' && key !== 'authentication' && key !== 'genericAuthType')
+              .map(([key, value]) => [key, typeof value === 'string' ? trAny(value) : value]),
+          )
+          return {
+            method: 'POST',
+            url: API_BASES[type] ?? 'https://',
+            body: JSON.stringify(params),
+            hint: 'finish the endpoint path and add authentication; the original n8n parameters are in the body',
+          }
+        })()
         warn(
-          `“${name}”: the platform has no integration capability for ${binding.missing} yet — imported as an unbound Tool step; add that capability (or pick an MCP connection) to run it natively.`,
+          `“${name}”: the platform's integrations don't cover ${binding.missing} — imported as a direct API request (${skeleton.hint}).`,
         )
         return {
           id,
-          type: 'tool',
+          type: 'http',
           data: {
             label,
-            connectionId: '',
-            toolName: `${app}${operation}`,
-            args: JSON.stringify(
-              Object.fromEntries(
-                Object.entries(parameters)
-                  .filter(([key]) => key !== 'options' && key !== 'authentication' && key !== 'genericAuthType')
-                  .map(([key, value]) => [
-                    key,
-                    typeof value === 'string' ? tr(value.startsWith('=') || !value.includes('{{') ? value : `=${value}`) : value,
-                  ]),
-              ),
-            ),
-            note: `Imported from n8n (${type}). The platform doesn't cover ${binding.missing} yet — the original parameters are in Args.`,
+            method: skeleton.method,
+            url: skeleton.url,
+            ...(skeleton.body !== undefined ? { bodyMode: skeleton.bodyMode ?? ('json' as const), body: skeleton.body } : {}),
+            note: `Imported from n8n (${type}) as a direct API request — the platform's integrations don't cover ${binding.missing} yet.`,
           },
         } as FlowNode
       }

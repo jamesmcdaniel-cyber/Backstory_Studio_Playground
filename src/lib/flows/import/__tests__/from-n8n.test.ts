@@ -283,7 +283,7 @@ test('imported code steps get the n8n compatibility shim and run against our san
   assert.deepEqual(result.output, [{ accountName: 'crowdstrike' }, { accountName: ' seismic' }])
 })
 
-test('credentialed app nodes bind to platform integrations; uncovered capabilities stay unbound and named', () => {
+test('credentialed app nodes bind to platform integrations; uncovered capabilities become direct API requests', () => {
   const workflow = {
     name: 'App nodes',
     nodes: [
@@ -306,20 +306,21 @@ test('credentialed app nodes bind to platform integrations; uncovered capabiliti
   }
   const result = n8nToFlow(workflow)
   const graph = flowGraphSchema.parse(result.graph)
-  const tools = graph.nodes.filter((n) => n.type === 'tool') as any[]
-  assert.equal(tools.length, 2)
   // Email delivery is a capability the platform OWNS — the step arrives bound.
-  const email = tools.find((t) => t.data.label === 'Send Report Email')
+  const email = graph.nodes.find((n: any) => n.data?.label === 'Send Report Email') as any
+  assert.equal(email.type, 'tool')
   assert.equal(email.data.connectionId, 'native:email')
   assert.equal(email.data.toolName, 'send')
   const args = JSON.parse(email.data.args)
   assert.equal(args.to, 'a@b.c')
   assert.equal(args.subject, '{{step.id-Prep.output.subject}}', 'args carried over with translated references')
   // Drive UPLOAD is not covered (the Drive integration is read-only) — the
-  // step stays unbound and the warning names the missing capability.
-  const upload = tools.find((t) => t.data.label === 'Upload file')
-  assert.equal(upload.data.connectionId, '')
-  assert.ok(result.warnings.some((w) => /Upload file/.test(w) && /no integration capability/i.test(w)))
+  // step becomes a DIRECT API REQUEST with the endpoint prefilled, and the
+  // warning names the missing capability.
+  const upload = graph.nodes.find((n: any) => n.data?.label === 'Upload file') as any
+  assert.equal(upload.type, 'http')
+  assert.match(upload.data.url, /googleapis\.com\/upload\/drive/)
+  assert.ok(result.warnings.some((w) => /Upload file/.test(w) && /direct API request/i.test(w)))
 })
 
 test('utility nodes map to native data ops; credential-less leftovers become passthrough code stubs', () => {

@@ -31,7 +31,7 @@ import {
   type FlowNode,
 } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
-import { selectedToolPresentation, type PresentableConnection } from '@/lib/flows/tool-presentation'
+import { selectedToolPresentation, stepBrandFallback, type PresentableConnection } from '@/lib/flows/tool-presentation'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 
 /**
@@ -203,13 +203,17 @@ export function subtitleFor(node: FlowNode, ctx: PresentationContext): string | 
       return `${node.data.branches.length} branch${node.data.branches.length === 1 ? '' : 'es'}`
     case 'stop':
       return node.data.reason || undefined
-    case 'tool':
-      return (
+    case 'tool': {
+      // Native configuration reads as the integration it runs through; an
+      // unbound step reads as the pick it still needs. API-request nodes
+      // (http) carry their own distinct subtitle below.
+      const label =
         selectedToolPresentation(ctx.toolCatalog, node.data.connectionId, node.data.toolName).brand?.label ||
-        'Choose a connected app and action'
-      )
+        stepBrandFallback(node as { type: string; data: Record<string, unknown> })?.label
+      return label ? `via ${label} integration` : 'Choose a connected app and action'
+    }
     case 'http':
-      return node.data.url ? `${node.data.method} ${node.data.url}` : 'Configure an API request'
+      return node.data.url ? `API request · ${node.data.method} ${node.data.url}` : 'Configure an API request'
     case 'transform':
       return `${node.data.fields.length} field${node.data.fields.length === 1 ? '' : 's'}`
     case 'filter':

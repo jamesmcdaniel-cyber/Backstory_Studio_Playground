@@ -824,10 +824,6 @@ export function StepDrawer({
                   <Play className="mr-1.5 h-4 w-4" /> Execute previous nodes
                 </Button>
               )}
-              <div>
-                <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Insert a value</p>
-                <DataTree fields={dataFields} onInsert={insertToken} title="Available input data" />
-              </div>
             </div>
           </aside>
         )}

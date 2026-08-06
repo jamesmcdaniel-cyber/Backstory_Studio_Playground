@@ -200,7 +200,9 @@ test('workspace node configuration uses the three-pane input, parameters, and ou
   )
 
   assert.ok(container.querySelector('[data-node-configuration="workspace"]'))
-  assert.match(container.textContent ?? '', /Available input data/)
+  // The Input panel shows the run's raw data only — the old "Available input
+  // data" insert tree was removed (tokens are inserted from the field editors).
+  assert.doesNotMatch(container.textContent ?? '', /Available input data/)
   assert.match(container.textContent ?? '', /"customerId": "cus_123"/)
   assert.match(container.textContent ?? '', /"status": 200/)
   assert.match(container.textContent ?? '', /Authentication/)

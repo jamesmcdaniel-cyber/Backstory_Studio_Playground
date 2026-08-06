@@ -20,6 +20,8 @@ import {
   type HttpCredentialSummary,
 } from '@/components/flows/http-credential-dialog'
 import { KnowledgePanel } from '@/app/agents/knowledge-panel'
+import { AgentHttpEndpointDialog } from '@/components/agents/http-endpoint-dialog'
+import { endpointParams, endpointToolName, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { cn } from '@/lib/utils'
 
 /**
@@ -84,6 +86,107 @@ const MEMORY_KIND_LABEL: Record<string, string> = {
  * copy. Credentials saved here are encrypted, host-locked, verified once, and
  * attached by the runtime automatically when the agent calls that host.
  */
+/**
+ * The agent's configured API endpoints — each one a named tool the agent can
+ * call, configured through the same options as the flow HTTP step.
+ */
+function HttpEndpointsSection({
+  endpoints,
+  onChange,
+  connections,
+}: {
+  endpoints: AgentHttpEndpoint[]
+  onChange: (endpoints: AgentHttpEndpoint[]) => void
+  connections: { id: string; name: string }[]
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editing, setEditing] = useState<AgentHttpEndpoint | null>(null)
+
+  return (
+    <div className="mt-3 rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Label>API endpoints</Label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Requests this agent can make, each exposed as a tool it calls by name — method, URL, query, headers, body
+            and auth, exactly like a flow&apos;s HTTP step.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={() => {
+            setEditing(null)
+            setDialogOpen(true)
+          }}
+        >
+          <Plus className="mr-1.5 h-3.5 w-3.5" /> Add
+        </Button>
+      </div>
+
+      {endpoints.length === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          No endpoints yet. Add one to let this agent call a specific API on demand.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {endpoints.map((endpoint) => {
+            const params = endpointParams(endpoint)
+            return (
+              <li key={endpoint.id} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2">
+                <Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => {
+                    setEditing(endpoint)
+                    setDialogOpen(true)
+                  }}
+                >
+                  <p className="truncate text-xs font-medium">
+                    {endpoint.name}
+                    <span className="ml-1.5 font-normal text-muted-foreground">({endpointToolName(endpoint)})</span>
+                  </p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {endpoint.method} {endpoint.url}
+                    {params.length ? ` · inputs: ${params.join(', ')}` : ''}
+                  </p>
+                </button>
+                {(endpoint.credentialId || endpoint.connectionId) && (
+                  <Badge variant="outline" className="shrink-0 text-[10px]">Authenticated</Badge>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                  aria-label={`Remove ${endpoint.name}`}
+                  onClick={() => onChange(endpoints.filter((entry) => entry.id !== endpoint.id))}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      <AgentHttpEndpointDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        endpoint={editing}
+        connections={connections}
+        onSave={(saved) => {
+          const exists = endpoints.some((entry) => entry.id === saved.id)
+          onChange(exists ? endpoints.map((entry) => (entry.id === saved.id ? saved : entry)) : [...endpoints, saved])
+        }}
+      />
+    </div>
+  )
+}
+
 function HttpCredentialsPanel({ active }: { active: boolean }) {
   const [credentials, setCredentials] = useState<HttpCredentialSummary[] | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -253,6 +356,8 @@ export type AgentDraft = {
   /** When true, every run starts with an explicit numbered plan before any tool call. */
   alwaysStrategize?: boolean
   requireApproval?: boolean
+  /** Configured API endpoints (HTTP API tool) — each becomes a named agent tool. */
+  httpEndpoints?: AgentHttpEndpoint[]
   schedule: {
     type: 'manual' | 'hourly' | 'daily' | 'weekly' | 'cron' | 'once'
     time?: string
@@ -306,6 +411,7 @@ const emptyDraft: AgentDraft = {
   autoAnswerFromMemory: false,
   alwaysStrategize: false,
   requireApproval: false,
+  httpEndpoints: [],
   schedule: { type: 'manual', time: '09:00', timezone: 'UTC', isActive: false },
 }
 
@@ -608,6 +714,7 @@ export function AgentConfigForm({
       autoAnswerFromMemory: source.autoAnswerFromMemory === true,
       alwaysStrategize: source.alwaysStrategize === true,
       requireApproval: source.requireApproval === true,
+      httpEndpoints: Array.isArray(source.httpEndpoints) ? source.httpEndpoints : [],
       schedule: normalizeSchedule({ ...emptyDraft.schedule, ...(source.schedule || {}) }),
     } : {
       ...emptyDraft,
@@ -910,8 +1017,15 @@ export function AgentConfigForm({
             </p>
 
             {/* HTTP API is the one attachable tool that needs its own per-API
-                credentials, so its setup lives inline with the chip rather than
-                on a separate settings page. */}
+                setup (endpoints + credentials), so it lives inline with the
+                chip rather than on a separate settings page. */}
+            {httpAttached && (
+              <HttpEndpointsSection
+                endpoints={draft.httpEndpoints ?? []}
+                onChange={(endpoints) => setDraft({ ...draft, httpEndpoints: endpoints })}
+                connections={availableIntegrations.connections}
+              />
+            )}
             {httpAttached && <HttpCredentialsPanel active={active} />}
             <div className="flex items-center gap-2">
               <Link

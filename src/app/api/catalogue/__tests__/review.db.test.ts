@@ -89,6 +89,26 @@ if (TEST_DB) {
     assert.equal(row.publishedEntryId, null)
   })
 
+  test('a rejection stores the reason and notifies the author with rejection copy', async () => {
+    installTestAuth(backstory.auth)
+    const id = await openSubmission()
+    const { POST } = await import('../review/[id]/route')
+    const response = await POST(...decide(id, { decision: 'rejected', note: 'Duplicates an existing template.' }))
+    assert.equal(response.status, 200)
+    const row = await prisma.catalogueSubmission.findFirst({ where: { id, organizationId: partner.organizationId } })
+    assert.equal(row.status, 'rejected')
+    assert.equal(row.reviewNote, 'Duplicates an existing template.')
+    assert.equal(row.publishedEntryId, null)
+    // The author hears the actual outcome — rejected, not "needs changes".
+    const notification = await prisma.notification.findFirst({
+      where: { organizationId: partner.organizationId, userId: partner.userId, type: 'catalogue.decision' },
+      orderBy: { createdAt: 'desc' },
+    })
+    assert.match(notification.title, /was not accepted to the catalogue/)
+    assert.equal(notification.level, 'error')
+    assert.equal(notification.body, 'Duplicates an existing template.')
+  })
+
   test('requesting changes without a note is refused', async () => {
     installTestAuth(backstory.auth)
     const id = await openSubmission()

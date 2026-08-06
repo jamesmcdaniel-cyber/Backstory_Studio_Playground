@@ -227,6 +227,24 @@ model PlatformAllowedDomain {
   @@map("platform_allowed_domains")
 }
 
+/// A super-admin grant addressed to an EMAIL rather than an existing user, so
+/// reviewers can be added before their first sign-in. Existing accounts are
+/// promoted directly (users.platformRole); a row here is claimed — and stamped,
+/// not deleted, to keep the audit trail — when an account with this email is
+/// provisioned. Platform table: no tenant owns it, RLS denies the tenant role.
+model PlatformStaffEmail {
+  id              String    @id @default(cuid())
+  /// Lowercased, exact match.
+  email           String    @unique
+  addedByUserId   String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(6)
+  /// Stamped when a newly provisioned account consumed this grant.
+  claimedAt       DateTime? @db.Timestamptz(6)
+  claimedByUserId String?
+
+  @@map("platform_staff_emails")
+}
+
 /// Bearer credentials accepted by the SCIM 2.0 provisioning surface. Only a
 /// SHA-256 digest is stored; plaintext is shown once at mint time.
 model ScimToken {

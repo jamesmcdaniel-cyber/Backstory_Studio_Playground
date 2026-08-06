@@ -10,7 +10,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'queue', label: 'Queue' },
   { id: 'published', label: 'Published' },
   { id: 'legacy', label: 'Legacy' },
-  { id: 'staff', label: 'Staff' },
+  { id: 'staff', label: 'Super admins' },
 ]
 
 const KIND_LABELS: Record<string, string> = {
@@ -22,6 +22,7 @@ const KIND_LABELS: Record<string, string> = {
 type Entry = { id: string; name: string; kind: string; organizationId: string; updatedAt: string }
 type StaffOrg = { id: string; name: string; slug: string; kind: string }
 type StaffUser = { id: string; email: string | null; name: string | null; platformRole: string | null; organizationId: string }
+type PendingStaff = { id: string; email: string; createdAt: string }
 
 export default function CatalogueAdminPage() {
   const [tab, setTab] = useState<Tab>('queue')
@@ -29,9 +30,9 @@ export default function CatalogueAdminPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">Catalogue</h1>
+        <h1 className="text-xl font-semibold">Reviews</h1>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-          Review what workspaces propose, and manage what the shared catalogue serves.
+          Review submitted templates, decide what the shared catalogue serves, and manage who can approve.
         </p>
       </header>
 
@@ -163,8 +164,12 @@ function EntriesTab({ status }: { status: 'published' | 'legacy_published' }) {
 function StaffTab() {
   const [organizations, setOrganizations] = useState<StaffOrg[]>([])
   const [users, setUsers] = useState<StaffUser[]>([])
+  const [pendingStaff, setPendingStaff] = useState<PendingStaff[]>([])
+  const [newEmail, setNewEmail] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -172,31 +177,102 @@ function StaffTab() {
     const body = await response.json().catch(() => ({}))
     setOrganizations(body.success ? body.organizations : [])
     setUsers(body.success ? body.users : [])
+    setPendingStaff(body.success ? body.pendingStaff ?? [] : [])
     setLoading(false)
   }, [])
 
   useEffect(() => { void load() }, [load])
 
-  async function patch(payload: Record<string, unknown>) {
+  async function patch(payload: Record<string, unknown>): Promise<Record<string, unknown> | null> {
     setError(null)
+    setNotice(null)
     const response = await fetch('/api/catalogue/staff', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
+    const body = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}))
       setError(body.error ?? 'That change could not be saved. Try again.')
-      return
+      return null
     }
     void load()
+    return body
   }
 
-  if (loading) return <p className="p-6 text-sm text-neutral-500">Loading staff…</p>
+  async function addSuperAdmin() {
+    const email = newEmail.trim()
+    if (!email) return
+    setSaving(true)
+    const body = await patch({ email, platformRole: 'reviewer' })
+    setSaving(false)
+    if (!body) return
+    setNewEmail('')
+    if (typeof body.warning === 'string' && body.warning) {
+      setNotice(body.warning)
+    } else if (body.grant === 'pending') {
+      setNotice(`${email} will become a super admin the first time they sign in.`)
+    } else {
+      setNotice(`${email} is now a super admin.`)
+    }
+  }
+
+  if (loading) return <p className="p-6 text-sm text-neutral-500">Loading super admins…</p>
 
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-red-600">{error}</p>}
+      {notice && <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">{notice}</p>}
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium">Add a super admin</h2>
+        <p className="text-xs text-neutral-500">
+          Super admins can review submissions, approve or reject them, and add other super admins. If the address
+          has no account yet, the grant applies on their first sign-in.
+        </p>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void addSuperAdmin()
+          }}
+        >
+          <input
+            type="email"
+            required
+            value={newEmail}
+            onChange={(event) => setNewEmail(event.target.value)}
+            placeholder="colleague@people.ai"
+            className="w-72 rounded-md border px-3 py-1.5 text-sm"
+          />
+          <button
+            type="submit"
+            disabled={saving || !newEmail.trim()}
+            className="rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          >
+            {saving ? 'Adding…' : 'Add super admin'}
+          </button>
+        </form>
+        {pendingStaff.length > 0 && (
+          <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+            {pendingStaff.map((entry) => (
+              <li key={entry.id} className="flex items-center justify-between px-4 py-2.5">
+                <div>
+                  <span className="block text-sm">{entry.email}</span>
+                  <span className="text-xs text-neutral-500">Waiting on first sign-in</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void patch({ email: entry.email, platformRole: null })}
+                  className="text-xs text-neutral-500 underline"
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Workspaces</h2>

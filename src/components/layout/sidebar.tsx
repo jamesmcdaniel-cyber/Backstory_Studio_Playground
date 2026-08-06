@@ -75,6 +75,11 @@ const navigation = [
   { name: 'Integrations', href: '/integrations', icon: Plug },
 ]
 
+// Super admins only. Customer workspaces never resolve catalogue.review (the
+// org-kind double-gate in resolvePermissions), so the entry is absent there
+// rather than shown-and-refused — one check covers both edition and role.
+const reviewsNavItem = { name: 'Reviews', href: '/admin/catalogue', icon: ShieldCheck }
+
 function planLabel(plan: string) {
   const lower = plan.toLowerCase()
   return lower.charAt(0).toUpperCase() + lower.slice(1)
@@ -470,7 +475,7 @@ export function Sidebar() {
         {/* Nav + agent tree */}
         <div className="flex-1 overflow-y-auto px-2 py-2">
           <nav className="mb-2 space-y-0.5">
-            {navigation.map((item) => {
+            {(can('catalogue.review') ? [...navigation, reviewsNavItem] : navigation).map((item) => {
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
               return (
                 <Link
@@ -571,22 +576,6 @@ export function Sidebar() {
                 </div>
               )}
             </div>
-          )}
-          {/* Reviewers only. Customer workspaces never resolve this permission,
-              so the entry is absent rather than shown-and-refused. */}
-          {can('catalogue.review') && (
-            <Link
-              href="/admin/catalogue"
-              className={cn(
-                'mb-1 flex items-center gap-2 rounded-lg px-1 py-1 text-sm text-gray-500 transition-colors duration-fast hover:bg-gray-100',
-                desktopCollapsed && 'lg:justify-center lg:px-0',
-              )}
-              title="Catalogue review"
-              aria-label={desktopCollapsed ? 'Catalogue review' : undefined}
-            >
-              <ShieldCheck className="h-4 w-4 shrink-0 text-gray-400" />
-              <span className={cn('truncate', desktopCollapsed && 'lg:hidden')}>Catalogue review</span>
-            </Link>
           )}
           <Link
             href="/settings"

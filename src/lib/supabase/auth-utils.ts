@@ -2,6 +2,7 @@ import type { User } from '@supabase/supabase-js'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
 import { allowedDomainOrg } from '@/lib/auth/allowed-domain'
+import { normalizeStaffEmail, staffBootstrapAllowlist } from '@/lib/catalogue/staff-emails'
 import { isCustomerEdition } from '@/lib/edition'
 
 function findDbUser(supabaseId: string) {
@@ -33,12 +34,13 @@ type DbUserRow = Awaited<ReturnType<typeof findDbUser>>
  */
 
 /**
- * Recovery path for platform staff: addresses listed in PLATFORM_STAFF_EMAILS
- * are promoted to reviewer on sign-in, and their workspace is marked internal.
- * Idempotent, and a no-op for everyone else. Once one reviewer exists, further
- * grants happen in /admin/catalogue — this env var only has to solve the
- * bootstrap problem of granting the FIRST one, since nobody can grant review
- * rights before a reviewer exists.
+ * Recovery path for platform staff: addresses in the bootstrap allowlist
+ * (hardcoded platform-admin defaults ∪ PLATFORM_STAFF_EMAILS) are promoted to
+ * reviewer on sign-in, and their workspace is marked internal. Idempotent, and
+ * a no-op for everyone else. Once one reviewer exists, further grants happen
+ * in the Reviews console — this allowlist only has to solve the bootstrap
+ * problem of granting the FIRST one, since nobody can grant review rights
+ * before a reviewer exists.
  */
 export async function applyStaffBootstrap(dbUser: NonNullable<DbUserRow>): Promise<NonNullable<DbUserRow>> {
   // The customer edition has no platform staff. This is a hard no-op rather
@@ -49,12 +51,8 @@ export async function applyStaffBootstrap(dbUser: NonNullable<DbUserRow>): Promi
   // mistake away in a customer deploy.
   if (isCustomerEdition()) return dbUser
 
-  const allowlist = (process.env.PLATFORM_STAFF_EMAILS ?? '')
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean)
-  const email = dbUser.email?.trim().toLowerCase()
-  if (!email || !allowlist.includes(email)) return dbUser
+  const email = normalizeStaffEmail(dbUser.email)
+  if (!email || !staffBootstrapAllowlist().has(email)) return dbUser
   if (dbUser.platformRole === 'reviewer' && dbUser.organization?.kind === 'internal') return dbUser
 
   const updated = await prisma.user.update({
@@ -130,6 +128,32 @@ async function provisionUser(user: User) {
           where: { id: invite.id, organizationId: invite.organizationId },
           data: { status: 'ACCEPTED', acceptedByUserId: created.id, acceptedAt: new Date() },
         })
+      }
+
+      // A super-admin grant addressed to this email (added in the Reviews
+      // console before the person ever signed in) is claimed here: the account
+      // starts as reviewer. A fresh solo workspace is marked internal so the
+      // rights resolve immediately; a workspace they JOINED (invite or domain
+      // rule) keeps its kind — flipping a whole existing org's tier is a
+      // decision for the console, not a signup side effect.
+      if (inviteEmail && !isCustomerEdition()) {
+        const staffGrant = await tx.platformStaffEmail.findUnique({ where: { email: inviteEmail } })
+        if (staffGrant && !staffGrant.claimedAt) {
+          const promoted = await tx.user.update({
+            where: { id: created.id },
+            data: { platformRole: 'reviewer' },
+            include: { organization: true },
+          })
+          await tx.platformStaffEmail.update({
+            where: { id: staffGrant.id },
+            data: { claimedAt: new Date(), claimedByUserId: created.id },
+          })
+          if (!invite && !domainOrgId && promoted.organization && promoted.organization.kind !== 'internal') {
+            await tx.organization.update({ where: { id: organizationId }, data: { kind: 'internal' } })
+            return { ...promoted, organization: { ...promoted.organization, kind: 'internal' } }
+          }
+          return promoted
+        }
       }
       return created
     })

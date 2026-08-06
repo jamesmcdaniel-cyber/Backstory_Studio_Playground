@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { toast } from 'sonner'
@@ -12,6 +12,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
 import { FlowGraphPreview } from '@/components/flows/flow-graph-preview'
+import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
+import { useAuth } from '@/hooks/use-auth'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { cn } from '@/lib/utils'
 
@@ -66,6 +68,28 @@ export default function FlowTemplateDetails() {
   const [connectOpen, setConnectOpen] = useState(false)
   const [versions, setVersions] = useState<TemplateVersion[]>([])
   const [restoring, setRestoring] = useState<number | null>(null)
+  const [submission, setSubmission] = useState<SubmissionStatus | null>(null)
+  const { can } = useAuth()
+  const canSubmit = can('template.submit')
+
+  // Where this template stands with the catalogue reviewers, if this workspace
+  // may submit at all. Best-effort: a failure just hides the status, never the
+  // page. Built-ins have no workspace row to snapshot, so they never offer it.
+  const loadSubmission = useCallback(() => {
+    if (!canSubmit) return
+    fetch('/api/catalogue/submissions', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!data?.success) return
+        const match = data.submissions.find(
+          (row: { sourceId: string | null; status: string }) => row.sourceId === id && row.status !== 'withdrawn',
+        )
+        setSubmission(match ?? null)
+      })
+      .catch(() => {})
+  }, [canSubmit, id])
+
+  useEffect(() => { loadSubmission() }, [loadSubmission])
 
   useEffect(() => {
     let cancelled = false
@@ -207,6 +231,16 @@ export default function FlowTemplateDetails() {
               <Badge key={tag} variant="outline" className="text-xs text-muted-foreground">{tag}</Badge>
             ))}
           </div>
+          {template.custom && (
+            <div className="mt-3">
+              <SubmitToCatalogue
+                item={{ id: template.id, kind: 'flow_template', name: template.name }}
+                canSubmit={canSubmit}
+                submission={submission}
+                onSubmitted={loadSubmission}
+              />
+            </div>
+          )}
         </div>
         <Button onClick={useTemplate} loading={using} className="shrink-0">
           <Play className="mr-1.5 h-4 w-4" />

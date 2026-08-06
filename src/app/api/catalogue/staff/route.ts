@@ -2,17 +2,24 @@ import { z } from 'zod'
 import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
+import { DEFAULT_PLATFORM_STAFF_EMAILS, normalizeStaffEmail } from '@/lib/catalogue/staff-emails'
 
 const patchSchema = z
   .object({
     userId: z.string().min(1).optional(),
+    /** Grant/revoke by address instead of userId — works pre-first-sign-in. */
+    email: z.string().trim().email().max(320).optional(),
     /** null clears the flag; 'staff' marks an employee; 'reviewer' grants review. */
     platformRole: z.enum(['staff', 'reviewer']).nullable().optional(),
     organizationId: z.string().uuid().optional(),
     orgKind: z.enum(['internal', 'partner', 'customer']).optional(),
   })
-  .refine((value) => (value.userId ? value.platformRole !== undefined : true), {
+  .refine((value) => (value.userId || value.email ? value.platformRole !== undefined : true), {
     message: 'Say which platform role to set for that user.',
+    path: ['platformRole'],
+  })
+  .refine((value) => (value.email ? value.platformRole !== 'staff' : true), {
+    message: 'Email grants are for super admins — use the person list for the staff marker.',
     path: ['platformRole'],
   })
   .refine((value) => (value.organizationId ? value.orgKind !== undefined : true), {
@@ -35,11 +42,69 @@ export const GET = withAuthenticatedApi(async () => {
     orderBy: { email: 'asc' },
     take: 500,
   })
-  return { success: true, organizations, users }
+  // Grants waiting on a first sign-in. Claimed rows are history, not state.
+  const pendingStaff = await systemPrisma.platformStaffEmail.findMany({
+    where: { claimedAt: null },
+    select: { id: true, email: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  return { success: true, organizations, users, pendingStaff }
 }, { permission: 'catalogue.review', internalOnly: true })
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const data = patchSchema.parse(await request.json())
+
+  if (data.email) {
+    const email = normalizeStaffEmail(data.email)!
+    let warning: string | null = null
+
+    if (!data.platformRole && DEFAULT_PLATFORM_STAFF_EMAILS.includes(email)) {
+      // The hardcoded platform admin is re-promoted on every sign-in, so a
+      // revoke here would silently undo itself. Refuse instead of pretending.
+      throw new ApiError('That address is the built-in platform admin and cannot be revoked here.', 409, 'BUILTIN_STAFF')
+    }
+
+    const existing = await systemPrisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' }, isActive: true },
+      select: { id: true, organization: { select: { kind: true } } },
+    })
+
+    let grant: 'updated' | 'pending' | 'removed'
+    if (existing) {
+      await systemPrisma.user.update({
+        where: { id: existing.id },
+        data: { platformRole: data.platformRole ?? null },
+        select: { id: true },
+      })
+      // A pending row for an account that now exists is stale either way.
+      await systemPrisma.platformStaffEmail.deleteMany({ where: { email, claimedAt: null } })
+      grant = data.platformRole ? 'updated' : 'removed'
+      if (data.platformRole === 'reviewer' && existing.organization && !['internal', 'partner'].includes(existing.organization.kind)) {
+        warning =
+          'Granted, but dormant: their workspace is a customer workspace. Review rights activate once the workspace is marked internal or partner below.'
+      }
+    } else if (data.platformRole) {
+      await systemPrisma.platformStaffEmail.upsert({
+        where: { email },
+        update: { addedByUserId: auth.dbUser.id, claimedAt: null, claimedByUserId: null },
+        create: { email, addedByUserId: auth.dbUser.id },
+      })
+      grant = 'pending'
+    } else {
+      await systemPrisma.platformStaffEmail.deleteMany({ where: { email } })
+      grant = 'removed'
+    }
+
+    await recordAudit({
+      organizationId: auth.organizationId,
+      action: 'catalogue.platform_role_set',
+      actorUserId: auth.dbUser.id,
+      resourceType: 'staff_email',
+      resourceId: existing?.id ?? email,
+      detail: { email, platformRole: data.platformRole ?? null, grant },
+    })
+    return { success: true, grant, warning }
+  }
 
   if (data.userId) {
     await systemPrisma.user.update({

@@ -4,6 +4,8 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { publishSubmission, resolveInternalOrgId } from '@/lib/catalogue/publish'
 import { recordAudit } from '@/lib/audit'
 import { notify } from '@/lib/notifications/service'
+import { sendEmail } from '@/lib/integrations/email'
+import { buildDecisionEmail } from '@/lib/catalogue/decision-email'
 import type { NextRequest } from 'next/server'
 
 type Context = { params: Promise<{ id: string }> }
@@ -68,18 +70,42 @@ export const POST = withAuthenticatedApi(async (request: NextRequest, auth, cont
   })
 
   if (submission) {
+    const titles: Record<typeof data.decision, string> = {
+      approved: `"${submission.title}" is published to the catalogue`,
+      changes_requested: `"${submission.title}" needs changes`,
+      rejected: `"${submission.title}" was not accepted to the catalogue`,
+    }
     await notify({
       organizationId: submission.organizationId,
       userId: submission.submittedByUserId,
       type: 'catalogue.decision',
-      level: 'info',
-      title:
-        data.decision === 'approved'
-          ? `"${submission.title}" is published to the catalogue`
-          : `"${submission.title}" needs changes`,
+      level: data.decision === 'approved' ? 'success' : data.decision === 'rejected' ? 'error' : 'action',
+      title: titles[data.decision],
       body: data.note ?? 'Your submission was approved and is now in the shared catalogue.',
       link: '/templates',
     })
+
+    // Best-effort: the decision stands whether or not the email lands.
+    if (submission.submittedByUserId) {
+      try {
+        const author = await systemPrisma.user.findUnique({
+          where: { id: submission.submittedByUserId },
+          select: { email: true, isActive: true },
+        })
+        if (author?.isActive && author.email) {
+          const appUrl = (process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin).replace(/\/$/, '')
+          const email = buildDecisionEmail({
+            decision: data.decision,
+            title: submission.title,
+            note: data.note,
+            appUrl,
+          })
+          await sendEmail({ to: author.email, ...email })
+        }
+      } catch {
+        // Email delivery failed — the in-app notification above still lands.
+      }
+    }
   }
 
   return { success: true, status: data.decision, publishedEntryId }

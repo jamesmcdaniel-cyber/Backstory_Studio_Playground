@@ -111,7 +111,7 @@ test('code, wait, and merge nodes convert to their native equivalents', () => {
   assert.equal(join.data.mode, 'append')
 })
 
-test('LLM nodes become native ai steps; unknown app nodes become notes with a warning', () => {
+test('LLM nodes become native ai steps; credential-less app nodes become runnable passthrough stubs', () => {
   const workflow = {
     name: 'AI + Slack',
     nodes: [
@@ -126,8 +126,11 @@ test('LLM nodes become native ai steps; unknown app nodes become notes with a wa
   const ai = graph.nodes.find((n) => n.type === 'ai') as any
   assert.equal(ai.data.aiOp, 'ask')
   assert.match(ai.data.instructions ?? '', /Summarize/)
-  const note = graph.nodes.find((n) => n.type === 'note') as any
-  assert.match(note.data.text, /slack/i)
+  // Without a credential binding we can't infer the integration — but the
+  // chain must keep RUNNING: a passthrough stub, not a dead note.
+  const stub = graph.nodes.find((n) => n.type === 'code' && (n as any).data.label === 'Notify') as any
+  assert.ok(stub)
+  assert.match(stub.data.code, /return input/)
   assert.ok(result.warnings.some((w) => /Notify/.test(w)), 'the unconverted step is named in the warnings')
 })
 
@@ -250,6 +253,61 @@ test('imported code steps get the n8n compatibility shim and run against our san
     context: { steps: { 'id-Params': { output: { names: 'crowdstrike, seismic' } } } },
   })
   assert.deepEqual(result.output, [{ accountName: 'crowdstrike' }, { accountName: ' seismic' }])
+})
+
+test('credentialed app nodes become UNBOUND TOOL STEPS with translated args — not dead notes', () => {
+  const workflow = {
+    name: 'App nodes',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Prep', 'n8n-nodes-base.set', { assignments: { assignments: [{ name: 'subject', value: 'Hi' }] } }),
+      n8nNode(
+        'Send Report Email',
+        'n8n-nodes-base.emailSend',
+        { fromEmail: 'a@b.c', toEmail: 'a@b.c', subject: '={{ $json.subject }}' },
+        { credentials: { smtp: { id: '1', name: 'SMTP' } } },
+      ),
+      n8nNode(
+        'Upload file',
+        'n8n-nodes-base.googleDrive',
+        { operation: 'upload', name: 'report.html' },
+        { credentials: { googleDriveOAuth2Api: { id: '2', name: 'GD' } } },
+      ),
+    ],
+    connections: chain('Start', 'Prep', 'Send Report Email', 'Upload file'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const tools = graph.nodes.filter((n) => n.type === 'tool') as any[]
+  assert.equal(tools.length, 2)
+  const email = tools.find((t) => t.data.label === 'Send Report Email')
+  assert.equal(email.data.connectionId, '', 'unbound — the builder guides the connection pick')
+  assert.match(email.data.toolName, /email/i)
+  const args = JSON.parse(email.data.args)
+  assert.equal(args.subject, '{{step.id-Prep.output.subject}}', 'args carried over with translated references')
+  assert.ok(result.warnings.some((w) => /Send Report Email/.test(w) && /connection/i.test(w)))
+})
+
+test('utility nodes map to native data ops; credential-less leftovers become passthrough code stubs', () => {
+  const workflow = {
+    name: 'Utilities',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Dedupe', 'n8n-nodes-base.removeDuplicates', {}),
+      n8nNode('Cap', 'n8n-nodes-base.limit', { maxItems: 5 }),
+      n8nNode('To File', 'n8n-nodes-base.convertToFile', { operation: 'toText' }),
+    ],
+    connections: chain('Start', 'Dedupe', 'Cap', 'To File'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const ops = graph.nodes.filter((n) => n.type === 'data') as any[]
+  assert.deepEqual(ops.map((o) => o.data.op).sort(), ['limit', 'removeDuplicates'])
+  assert.ok(ops.every((o) => typeof o.data.input === 'string' && o.data.input.startsWith('{{')), 'data ops read their upstream')
+  const stub = graph.nodes.find((n) => n.type === 'code' && (n as any).data.label === 'To File') as any
+  assert.ok(stub, 'convertToFile becomes a runnable passthrough stub, not a dead note')
+  assert.match(stub.data.code, /return input/)
+  assert.ok(result.warnings.some((w) => /To File/.test(w)))
 })
 
 test('a workflow with no trigger gets a manual trigger wired to its roots', () => {

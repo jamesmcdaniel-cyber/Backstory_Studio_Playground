@@ -44,7 +44,7 @@ if (TEST_DB) {
       assert.equal(flow.status, 'DRAFT')
       const graph = flow.graph as { nodes: { id: string; type: string }[] }
       assert.ok(graph.nodes.some((n) => n.type === 'trigger' && n.id === 'trigger'))
-      assert.ok(graph.nodes.some((n) => n.type === 'note'), 'slack imports as a note placeholder')
+      assert.ok(graph.nodes.some((n) => n.type === 'code'), 'the credential-less slack node imports as a runnable passthrough stub')
     } finally {
       await s.cleanup()
       await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})

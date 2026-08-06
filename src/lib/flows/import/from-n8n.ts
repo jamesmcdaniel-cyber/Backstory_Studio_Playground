@@ -21,6 +21,9 @@ type N8nNodeIn = {
   position?: [number, number]
   notes?: string
   disabled?: boolean
+  /** n8n app/action nodes carry their credential bindings here — the signal
+   * that a node talks to an external service and should import as a Tool step. */
+  credentials?: Record<string, unknown>
 }
 
 type N8nWorkflowIn = {
@@ -196,6 +199,7 @@ function mapNode(
   tr: (v: string) => string,
   warn: (msg: string) => void,
   labelToId: Map<string, string>,
+  jsonBase: string,
 ): FlowNode | null {
   const type = node.type ?? ''
   const parameters = node.parameters ?? {}
@@ -295,13 +299,61 @@ function mapNode(
     case 'n8n-nodes-base.splitInBatches':
       warn(`“${name}”: n8n loops (Loop Over Items) don’t import — rebuild it as a Backstory Loop step; its looping connection was dropped.`)
       return { id, type: 'note', data: { text: noteText(node) } } as FlowNode
+    // Pure data utilities → native data ops (config differs, so each warns to
+    // review its settings; `input` reads the upstream so the op has data).
+    case 'n8n-nodes-base.sort':
+    case 'n8n-nodes-base.limit':
+    case 'n8n-nodes-base.removeDuplicates':
+    case 'n8n-nodes-base.aggregate':
+    case 'n8n-nodes-base.summarize':
+    case 'n8n-nodes-base.splitOut': {
+      const op = type === 'n8n-nodes-base.splitOut' ? 'flatten' : (type.split('.').pop() as 'sort' | 'limit' | 'removeDuplicates' | 'aggregate' | 'summarize')
+      warn(`“${name}”: imported as a native “${op}” data step — its settings don't transfer 1:1; review them.`)
+      return { id, type: 'data', data: { label, op, input: `{{${jsonBase}}}` } } as FlowNode
+    }
     default: {
       if (isLlmType(type)) {
         warn(`“${name}”: imported as a native AI step running on Backstory models — review its instructions.`)
         return { id, type: 'ai', data: { label, aiOp: 'ask', instructions: llmInstructions(parameters, tr) } } as FlowNode
       }
-      warn(`“${name}” (${type}) has no native equivalent — imported as a note; replace it with a Tool or HTTP step.`)
-      return { id, type: 'note', data: { text: noteText(node) } } as FlowNode
+      // App/action node (talks to an external service — n8n stores its
+      // credential binding on the node): import as an UNBOUND Tool step so the
+      // canvas keeps a real, configurable step in place — the builder guides
+      // the connection pick, and the translated parameters ride along as args.
+      if (node.credentials && Object.keys(node.credentials).length > 0) {
+        const app = type.split('.').pop() ?? type
+        const operation = typeof parameters.operation === 'string' && parameters.operation ? `.${parameters.operation}` : ''
+        const translatedParams = Object.fromEntries(
+          Object.entries(parameters)
+            .filter(([key]) => key !== 'options' && key !== 'authentication' && key !== 'genericAuthType')
+            .map(([key, value]) => [key, typeof value === 'string' ? tr(value) : value]),
+        )
+        warn(`“${name}” (${app}) imported as a Tool step without a connection — open it and pick the matching integration; its n8n parameters are preserved in Args.`)
+        return {
+          id,
+          type: 'tool',
+          data: {
+            label,
+            connectionId: '',
+            toolName: `${app}${operation}`,
+            args: JSON.stringify(translatedParams),
+            note: `Imported from n8n (${type}). Pick your connected integration and the matching tool; the original parameters are in Args.`,
+          },
+        } as FlowNode
+      }
+      // Credential-less utility with no mapping: a runnable passthrough stub
+      // keeps the chain executing end-to-end (a dead note would not).
+      warn(`“${name}” (${type}) has no native equivalent — imported as a passthrough Code step (it currently just forwards its input); implement or replace it.`)
+      return {
+        id,
+        type: 'code',
+        data: {
+          label,
+          language: 'javascript',
+          mode: 'all',
+          code: `// TODO (imported from n8n ${type}): this step is a PASSTHROUGH stub.\n// Original parameters:\n// ${JSON.stringify(parameters).slice(0, 1500)}\nreturn input`,
+        },
+      } as FlowNode
     }
   }
 }
@@ -432,7 +484,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         },
       } as FlowNode
     } else {
-      mapped = mapNode(node, id, trFor(node.name), warn, idByName)
+      mapped = mapNode(node, id, trFor(node.name), warn, idByName, jsonBaseFor(node.name))
     }
     if (mapped) nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
   }

@@ -33,7 +33,7 @@ import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIE
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
-import { groupToolConnections, selectedToolPresentation, toolActionChoices } from '@/lib/flows/tool-presentation'
+import { groupToolConnections, selectedToolPresentation, stepBrandFallback, toolActionChoices } from '@/lib/flows/tool-presentation'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
 import { orgMemberLabel, type OrgMember, type ToolCatalog } from './step-drawer'
@@ -240,10 +240,18 @@ export function StepCard({
   onDragEndNode?: () => void
 }) {
   const Icon = NODE_ICON[node.type]
-  const toolPresentation =
+  const catalogPresentation =
     node.type === 'tool'
       ? selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName)
       : null
+  // Fall back to the step's own signals (tool name, note, URL host) so unbound
+  // imported tool steps and branded API calls still show the company logo.
+  const fallbackBrand = catalogPresentation?.brand ? null : stepBrandFallback(node as { type: string; data: Record<string, unknown> })
+  const toolPresentation = catalogPresentation?.brand
+    ? catalogPresentation
+    : fallbackBrand
+      ? { ...(catalogPresentation ?? { connection: undefined, tool: undefined, actionLabel: '' }), brand: fallbackBrand }
+      : catalogPresentation
   // Read-only surfaces never show raw {{token}} syntax: humanize any node data
   // echoed in the collapsed summary or tooltips. Storage keeps canonical tokens.
   const humanize = (value: string) => (labelCtx ? humanizeTokens(value, labelCtx) : value)

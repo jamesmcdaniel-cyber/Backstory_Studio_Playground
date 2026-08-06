@@ -132,6 +132,26 @@ const agentNode = z.object({
     // true → always; false → never; undefined → auto (append only when the
     // input doesn't already reference step data).
     includeUpstreamContext: z.boolean().optional(),
+    // ── Agent configuration attachments (n8n-style sub-node parity) ──
+    // Chat model override for THIS step's runs; unset inherits the agent's own
+    // model.
+    model: z.string().max(100).optional(),
+    // Conversation memory across this step's runs. `store` records the
+    // author's chosen backend (n8n imports carry postgres/redis/mongodb/xata);
+    // all stores currently persist in Backstory's own Postgres. `sessionKey`
+    // is a template — e.g. {{item.accountName}} keeps one thread per account;
+    // unset scopes the thread to this flow step.
+    memory: z
+      .object({
+        store: z.enum(['postgres', 'redis', 'mongodb', 'xata']).default('postgres'),
+        sessionKey: z.string().max(500).optional(),
+        /** How many past exchanges to replay into the prompt (default 6). */
+        window: z.number().int().min(1).max(20).optional(),
+      })
+      .optional(),
+    // Extra tool connections granted to the agent for THIS step's runs, on top
+    // of the tools the agent already owns (flow tool-catalog connection ids).
+    toolConnectionIds: z.array(z.string().max(200)).max(20).optional(),
     // Run this agent once per item of a list, collecting the outputs (see perItemSchema).
     perItem: perItemSchema.optional(),
   }),

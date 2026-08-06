@@ -29,7 +29,21 @@ export type StepOutcome = {
   error?: string
 }
 export type RunAgentResult = { output?: unknown; error?: string; waiting?: { status: string; question?: string } }
-export type RunAgentFn = (node: { id: string; agentId: string; input: string; resume?: boolean }) => Promise<RunAgentResult>
+/** Per-step agent configuration (n8n-style sub-node parity): a chat-model
+ * override, conversation memory for this step's runs (sessionKey already
+ * template-resolved), and extra tool connections granted for the run. */
+export type AgentStepOverrides = {
+  model?: string
+  memory?: { store: 'postgres' | 'redis' | 'mongodb' | 'xata'; sessionKey: string; window?: number }
+  toolConnectionIds?: string[]
+}
+export type RunAgentFn = (node: {
+  id: string
+  agentId: string
+  input: string
+  resume?: boolean
+  overrides?: AgentStepOverrides
+}) => Promise<RunAgentResult>
 // Deterministic (non-agent) steps: tool calls, HTTP requests, and single-turn
 // AI ops (ask/extract/categorize/summarize/score). `config` arrives with every
 // templated field already resolved against the flow context — for 'ai' that's
@@ -386,13 +400,14 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     node: Extract<FlowNode, { type: 'agent' }>,
     resolvedInput: string,
     stepKey: string,
+    overrides?: AgentStepOverrides,
   ): Promise<RunAgentResult> => {
     const retries = node.data.retries ?? 0
     const timeoutMs = node.data.timeoutMs
     const resume = opts.resumeNodeId === stepKey
     let attempt = 0
     for (;;) {
-      const call = opts.runAgent({ id: stepKey, agentId: node.data.agentId, input: resolvedInput, resume })
+      const call = opts.runAgent({ id: stepKey, agentId: node.data.agentId, input: resolvedInput, resume, ...(overrides ? { overrides } : {}) })
       const raced = timeoutMs ? await raceTimeout(call, timeoutMs) : await call
       // A timeout only ABANDONS the live agent execution — Promise.race cannot
       // cancel it, so it may still be running (and spending tokens / performing
@@ -1036,7 +1051,29 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       if (structured) resolved = `${resolved}\n\n${structuredResponseInstruction(outputFields)}`
       const broken = missingTokenFailure(resolved)
       if (broken) return broken
-      const res = await runAgentWithReliability(node, resolved, stepKey)
+      // Step-level agent configuration (model / memory / extra tools). The
+      // memory session key is a template — resolving it here lets one step
+      // keep separate threads per item ({{item.accountName}}).
+      const memory = node.data.memory
+      const overrides: AgentStepOverrides | undefined =
+        node.data.model || memory || node.data.toolConnectionIds?.length
+          ? {
+              ...(node.data.model ? { model: node.data.model } : {}),
+              ...(memory
+                ? {
+                    memory: {
+                      store: memory.store ?? 'postgres',
+                      sessionKey: memory.sessionKey?.trim()
+                        ? resolveTemplate(memory.sessionKey, ctx)
+                        : `flow-step:${node.id}`,
+                      ...(memory.window ? { window: memory.window } : {}),
+                    },
+                  }
+                : {}),
+              ...(node.data.toolConnectionIds?.length ? { toolConnectionIds: node.data.toolConnectionIds } : {}),
+            }
+          : undefined
+      const res = await runAgentWithReliability(node, resolved, stepKey, overrides)
       if (res.waiting) {
         if (node.data.humanAssistance === false) {
           const error = 'The agent asked for help, but human assistance is turned off for this step.'

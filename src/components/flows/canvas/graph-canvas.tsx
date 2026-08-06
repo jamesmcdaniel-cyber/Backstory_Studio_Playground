@@ -36,7 +36,7 @@ import {
   sourceHandlesFor,
 } from '@/lib/flows/canvas-model'
 import { subtitleFor, titleFor, type StepStatus } from '@/lib/flows/node-presentation'
-import { selectedToolPresentation } from '@/lib/flows/tool-presentation'
+import { selectedToolPresentation, stepBrandFallback } from '@/lib/flows/tool-presentation'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 import type { RemoteCursor } from '@/lib/flows/cursor-store'
 import type { DragPreview } from '@/lib/flows/drag-preview'
@@ -207,10 +207,13 @@ function GraphCanvasInner(props: GraphCanvasProps) {
       connectedHandles.set(edge.source, handles)
     }
     return outerNodes(graph).map((node: FlowNode) => {
+      // Catalog identity first (a bound connection knows its provider); fall
+      // back to the step's own signals (tool name, note, URL host) so unbound
+      // imports and branded API calls still show the company logo.
       const brand =
-        node.type === 'tool'
+        (node.type === 'tool'
           ? selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName).brand
-          : undefined
+          : undefined) ?? stepBrandFallback(node as { type: string; data: Record<string, unknown> })
       return {
         id: node.id,
         type: 'step' as const,

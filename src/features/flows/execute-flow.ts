@@ -760,7 +760,16 @@ export async function runFlowExecution(
       const result = (await runAgentExecution(
         resumeThis
           ? { agentId: node.agentId, organizationId: job.organizationId, userId: job.userId, executionId: resumeExecutionId, resume: true, reply: job.reply, onExecutionCreated }
-          : { agentId: node.agentId, organizationId: job.organizationId, userId: job.userId, input: node.input, onExecutionCreated },
+          : {
+              agentId: node.agentId,
+              organizationId: job.organizationId,
+              userId: job.userId,
+              input: node.input,
+              onExecutionCreated,
+              // Step-level agent configuration from the flow node (model /
+              // memory / extra tool connections) — n8n-style sub-node parity.
+              ...(node.overrides ? { stepOverrides: node.overrides } : {}),
+            },
       )) as { summary?: string; status?: string; question?: string; executionId?: string }
 
       if (typeof result?.status === 'string' && result.status.startsWith('waiting')) {

@@ -55,6 +55,15 @@ export type AgentExecutionJob = {
   // ancestor agent ids, used to bound recursion and prevent cycles.
   depth?: number
   ancestorAgentIds?: string[]
+  // Flow-step agent configuration (n8n-style sub-node parity): a chat-model
+  // override for this run, conversation memory replayed/persisted per
+  // sessionKey, and extra tool-plane connections granted for the run.
+  // Plain JSON — safe for queue serialization.
+  stepOverrides?: {
+    model?: string
+    memory?: { store: 'postgres' | 'redis' | 'mongodb' | 'xata'; sessionKey: string; window?: number }
+    toolConnectionIds?: string[]
+  }
 }
 
 // Sub-agent handoff bounds. Kept conservative: sub-runs execute inline within
@@ -98,6 +107,77 @@ export function fenceRetrievedContext(blocks: string[]): string {
     body,
     '</retrieved_context>',
   ].join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// Flow-step conversation memory (n8n chat-memory parity)
+//
+// A flow's agent step can opt into conversation memory: each run replays the
+// session's recent exchanges and appends its own. Rows live in AgentMemory
+// (kind 'flow_session', title = sessionKey) — the platform's own Postgres —
+// whatever store the step declares; the declared store rides along for future
+// external adapters. No new tables, no external credentials.
+// ---------------------------------------------------------------------------
+
+const FLOW_SESSION_KIND = 'flow_session'
+const FLOW_SESSION_DEFAULT_WINDOW = 6
+const FLOW_SESSION_MAX_ROWS = 40
+
+type FlowSessionMemoryConfig = { store: string; sessionKey: string; window?: number }
+
+async function loadFlowSessionMemory(
+  organizationId: string,
+  agentId: string,
+  memory: FlowSessionMemoryConfig,
+): Promise<string> {
+  try {
+    const rows = await prisma.agentMemory.findMany({
+      where: { organizationId, agentId, kind: FLOW_SESSION_KIND, title: memory.sessionKey.slice(0, 500), status: 'open' },
+      orderBy: { createdAt: 'desc' },
+      take: memory.window ?? FLOW_SESSION_DEFAULT_WINDOW,
+      select: { content: true },
+    })
+    return rows
+      .reverse()
+      .map((row) => {
+        try {
+          const exchange = JSON.parse(row.content) as { input?: string; output?: string }
+          return `User: ${exchange.input ?? ''}\nAgent: ${exchange.output ?? ''}`
+        } catch {
+          return row.content
+        }
+      })
+      .join('\n\n')
+  } catch {
+    return '' // memory is best-effort; a read failure must not fail the run
+  }
+}
+
+async function persistFlowSessionMemory(
+  organizationId: string,
+  agentId: string,
+  memory: FlowSessionMemoryConfig,
+  exchange: { input: string; output: string; executionId: string },
+): Promise<void> {
+  const sessionKey = memory.sessionKey.slice(0, 500)
+  await prisma.agentMemory.create({
+    data: {
+      organizationId,
+      agentId,
+      kind: FLOW_SESSION_KIND,
+      title: sessionKey,
+      content: JSON.stringify({ input: exchange.input.slice(0, 4000), output: exchange.output.slice(0, 8000) }),
+      sourceExecutionId: exchange.executionId,
+    },
+  })
+  // Bound the session: keep the newest rows, drop the tail.
+  const stale = await prisma.agentMemory.findMany({
+    where: { organizationId, agentId, kind: FLOW_SESSION_KIND, title: sessionKey },
+    orderBy: { createdAt: 'desc' },
+    skip: FLOW_SESSION_MAX_ROWS,
+    select: { id: true },
+  })
+  if (stale.length) await prisma.agentMemory.deleteMany({ where: { id: { in: stale.map((row) => row.id) } } })
 }
 
 type PendingQuestion = {
@@ -438,8 +518,24 @@ export async function runAgentExecution(
   if (!agent) throw new Error('Agent not found or inactive')
 
   const agentMetadata = metadataOf(agent.metadata)
-  const model = agentMetadata.model || DEFAULT_AGENT_MODEL
+  // A flow step may pin the chat model for its runs; the agent's own model is
+  // the default, exactly like n8n's per-node Chat Model attachment.
+  const model = data.stepOverrides?.model || agentMetadata.model || DEFAULT_AGENT_MODEL
   const runner = createModelRunner(model)
+
+  // Flow-step conversation memory: replay the session's recent exchanges into
+  // the prompt, and persist this run's exchange afterwards. Backed by the
+  // platform's own Postgres (AgentMemory kind 'flow_session') regardless of
+  // the declared store — the store choice is preserved for future adapters.
+  const stepMemory = data.stepOverrides?.memory
+  // The exchange persisted afterwards records the ORIGINAL step input — never
+  // the transcript-wrapped prompt, which would nest transcripts run over run.
+  const memoryUserInput = data.input ?? ''
+  const memoryTranscript = stepMemory ? await loadFlowSessionMemory(organizationId, agentId, stepMemory) : ''
+  if (memoryTranscript) {
+    const fenced = fenceRetrievedContext([`Previous interactions in this conversation (oldest first):\n\n${memoryTranscript}`])
+    data.input = data.input ? `${fenced}\n\n${data.input}` : fenced
+  }
 
   // Tree-wide token counter, shared across the ENTIRE sub-agent run tree.
   // Sub-agent runs execute inline, each with its OWN fresh per-run cap, so a
@@ -651,7 +747,17 @@ export async function runAgentExecution(
 
     // Typed connector bindings gate tool loading; falls back to
     // metadata.integrations for agents created before the FK existed.
+    // A flow step may grant EXTRA tool connections for this run: native/nango
+    // catalog ids contribute their provider key (mcp/people_ai connections
+    // already load for every run).
     const providers = await resolveAgentConnectorKeys(agent.id, agentMetadata)
+    for (const connectionId of data.stepOverrides?.toolConnectionIds ?? []) {
+      const sep = connectionId.indexOf(':')
+      if (sep <= 0) continue
+      const plane = connectionId.slice(0, sep)
+      const ref = connectionId.slice(sep + 1)
+      if ((plane === 'native' || plane === 'nango') && ref && !providers.includes(ref)) providers.push(ref)
+    }
     const skillIds = Array.isArray(agentMetadata.skills) ? agentMetadata.skills.map(String) : []
     const toolQuery = [agent.objective, data.input].filter(Boolean).join('\n')
     // Configured API endpoints (agent setup → HTTP API) become named tools.
@@ -1337,6 +1443,15 @@ export async function runAgentExecution(
 
     const summary = finalText || 'Agent reached the maximum number of tool-call turns.'
     const output = { summary }
+    // Flow-step conversation memory: persist this exchange so the session's
+    // next run replays it. Best-effort — memory must never fail a finished run.
+    if (stepMemory) {
+      await persistFlowSessionMemory(organizationId, agentId, stepMemory, {
+        input: memoryUserInput,
+        output: summary,
+        executionId: execution.id,
+      }).catch(() => undefined)
+    }
     const headline = await generateHeadline(summary, { organizationId, agentExecutionId: execution.id })
 
     await prisma.executionMessage.create({

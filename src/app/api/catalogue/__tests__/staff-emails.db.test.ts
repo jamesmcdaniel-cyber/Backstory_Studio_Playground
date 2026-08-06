@@ -30,7 +30,11 @@ if (TEST_DB) {
     const testAuth = await import('@/lib/server/__tests__/test-auth')
     installTestAuth = testAuth.installTestAuth
     partner = await testAuth.seedTestOrg(prisma, { orgKind: 'partner' })
-    backstory = await testAuth.seedTestOrg(prisma, { orgKind: 'internal', platformRole: 'reviewer' })
+    // Reviewer in a PARTNER org on purpose: review rights resolve identically
+    // (internal|partner × reviewer), and seeding another internal org here
+    // would race review.db.test's resolveInternalOrgId (oldest internal wins)
+    // when test files run concurrently.
+    backstory = await testAuth.seedTestOrg(prisma, { orgKind: 'partner', platformRole: 'reviewer' })
     await prisma.user.update({ where: { id: partner.userId }, data: { email: 'author@people.ai' } })
   })
 

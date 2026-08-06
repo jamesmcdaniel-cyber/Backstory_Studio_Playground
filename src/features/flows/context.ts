@@ -7,6 +7,12 @@ import type { ConditionOp } from '@/lib/flows/graph'
 export type FlowContext = {
   trigger: { input: unknown }
   step: Record<string, { output: unknown }>
+  // The data flowing INTO the node currently resolving its templates — what
+  // `{{input}}` reads. Set per node by the interpreter's walker (per branch,
+  // not a run-global), so the reference follows re-wiring: on the first step
+  // it is the trigger input; mid-chain the nearest upstream DATA output
+  // (branch decisions pass through); inside a per-item step, the current item.
+  incoming?: unknown
   item?: unknown
   // Present inside a loop body: `{{loop.index}}` (0-based) + total count.
   loop?: { index: number; count: number }
@@ -190,6 +196,13 @@ export function resolveContextPath(ctx: FlowContext, path: string): { found: boo
   // `var.<name>` roots into the variables map; deeper parts walk the value.
   if (parts[0] === 'var') {
     return { found: true, value: walkValue(ctx.variables ?? {}, parts.slice(1)) }
+  }
+  // `input` — the plain-English "incoming data" reference: whatever the walker
+  // carried into the current node (see FlowContext.incoming). An HTTP upstream
+  // collapses to its response body, same as the `{{steps}}` aggregate — the
+  // chip means the payload, not the transport envelope.
+  if (parts[0] === 'input') {
+    return { found: true, value: walkValue(unwrapStepOutput(ctx.incoming), parts.slice(1)) }
   }
   // `now.*` reads the run's frozen clock; bare `{{now}}` is the ISO timestamp.
   // Unknown subpaths read as undefined (→ '' when templated) — never crash.

@@ -1,4 +1,5 @@
 import type { OutputField } from '@/lib/flows/graph'
+import { unwrapStepOutput } from '@/features/flows/context'
 
 /** A node in the datatree field picker: a mappable value + its child fields. */
 export type DataField = {
@@ -155,6 +156,21 @@ export function buildDataTree(source: DataTreeSource): DataField[] {
       token: '{{loop.index}}',
       type: 'number',
       description: 'Zero-based position of the current item in the list.',
+    })
+  }
+  // The "incoming data" root: whatever the previous step passes into this one,
+  // resolved per branch at run time — so it keeps meaning the right thing when
+  // steps are inserted or re-wired. Absent on the first step, where the
+  // incoming data IS the run input and that root already exists above.
+  if (source.upstream.length >= 1) {
+    const direct = source.upstream[source.upstream.length - 1]
+    const observed = unwrapStepOutput(source.lastOutputs?.[direct.id])
+    roots.push({
+      label: 'Incoming data',
+      token: '{{input}}',
+      type: observed === undefined ? 'any' : typeOf(observed),
+      description: `What the previous step (${direct.label}) passes into this one — follows re-wiring automatically.`,
+      children: inferFields(observed, 'input'),
     })
   }
   // Aggregate root: one chip that feeds EVERYTHING earlier steps captured

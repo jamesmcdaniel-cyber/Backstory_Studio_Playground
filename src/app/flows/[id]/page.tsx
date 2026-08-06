@@ -1225,8 +1225,12 @@ function FlowBuilder() {
       const alias = normalizeStepAlias(label)
       if (alias && stepAliases[alias] === undefined) stepAliases[alias] = id
     }
-    return { trigger: { input: triggerInput }, step, variables, stepAliases, stepLabels }
-  }, [selectedRun, testInput, graph, agents])
+    // {{input}} previews as the direct upstream's recorded output (or the run
+    // input on the first step) — the same value the walker would carry in.
+    const directUpstreamId = upstreamIds[upstreamIds.length - 1]
+    const incoming = directUpstreamId !== undefined ? step[directUpstreamId]?.output : triggerInput
+    return { trigger: { input: triggerInput }, step, incoming, variables, stepAliases, stepLabels }
+  }, [selectedRun, testInput, graph, agents, upstreamIds])
 
   const selectedNodeRawInput = useMemo(() => {
     if (!selectedNode) return undefined

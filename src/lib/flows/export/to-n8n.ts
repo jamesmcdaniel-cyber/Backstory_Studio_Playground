@@ -62,6 +62,12 @@ export function translateTokens(value: string, names: Map<string, string>): stri
   if (!value || !value.includes('{{')) return value
   const expr = value.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, path: string) => {
     const parts = path.split('.')
+    // Our "incoming data" reference and n8n's $json mean the same thing: the
+    // value entering the node.
+    if (parts[0] === 'input') {
+      const rest = parts.slice(1).join('.')
+      return `{{ $json${rest ? '.' + rest : ''} }}`
+    }
     if (parts[0] === 'trigger' && parts[1] === 'input') {
       const rest = parts.slice(2).join('.')
       return `{{ $json${rest ? '.' + rest : ''} }}`

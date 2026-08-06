@@ -79,3 +79,9 @@ test('flowToN8n without credentials keeps the plain webhook note (no secrets)', 
   const trigger = wf.nodes.find((n) => n.name === 'Trigger')!
   assert.ok(!trigger.notes?.includes('x-trigger-secret'))
 })
+
+test('translateTokens maps the incoming-data reference to $json', () => {
+  const names = new Map<string, string>()
+  assert.equal(translateTokens('{{input}}', names), '={{ $json }}')
+  assert.equal(translateTokens('{{input.query.opportunityId}}', names), '={{ $json.query.opportunityId }}')
+})

@@ -595,7 +595,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       if (broken) return broken
       const policy = perItem.itemError ?? 'fail'
       const childResults = await mapLimit(items, perItem.concurrency ?? 1, (item, index) => {
-        const itemCtx: FlowContext = { ...ctx, item, step: { ...ctx.step }, loop: { index, count: items.length } }
+        // Inside a per-item fan-out the incoming data IS the current item —
+        // {{input}} and {{item}} agree, matching what an imported $json meant.
+        const itemCtx: FlowContext = { ...ctx, item, incoming: item, step: { ...ctx.step }, loop: { index, count: items.length } }
         return execNode(node, itemCtx, `${indexKey}#${index}`, true)
       })
       const outputs: unknown[] = []
@@ -1126,7 +1128,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const iterations = await mapLimit(items, node.data.concurrency ?? 1, async (item, index) => {
         // `variables` is shared by reference: writes inside the body persist
         // past the loop (one flow-global symbol table, MS parity).
-        const itemCtx: FlowContext = { trigger: ctx.trigger, step: { ...ctx.step }, item, loop: { index, count: items.length }, variables: ctx.variables, now: ctx.now, run: ctx.run, stepAliases: ctx.stepAliases, stepLabels: ctx.stepLabels }
+        const itemCtx: FlowContext = { trigger: ctx.trigger, step: { ...ctx.step }, item, incoming: item, loop: { index, count: items.length }, variables: ctx.variables, now: ctx.now, run: ctx.run, stepAliases: ctx.stepAliases, stepLabels: ctx.stepLabels }
         // Each iteration's body persists/resumes under `#<index>` (nested loops
         // append their own suffix) so a mid-loop pause never re-runs a prior
         // iteration's side effects on resume.
@@ -1175,7 +1177,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     if (node.type === 'parallel') {
       const results = await Promise.all(
         node.data.branches.map(async (branch) => {
-          const branchCtx: FlowContext = { trigger: ctx.trigger, step: { ...ctx.step }, item: ctx.item, loop: ctx.loop, variables: ctx.variables, now: ctx.now, run: ctx.run, stepAliases: ctx.stepAliases, stepLabels: ctx.stepLabels }
+          const branchCtx: FlowContext = { trigger: ctx.trigger, step: { ...ctx.step }, item: ctx.item, incoming: ctx.incoming, loop: ctx.loop, variables: ctx.variables, now: ctx.now, run: ctx.run, stepAliases: ctx.stepAliases, stepLabels: ctx.stepLabels }
           // Branch node ids are already unique, so parallel just propagates the
           // ambient `indexKey` (a parallel nested in a loop keeps the loop's
           // iteration suffix; a top-level parallel keeps bare ids).
@@ -1209,11 +1211,14 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
   // Execute an ordered list of node ids (a loop body / parallel branch) as a
   // sequence, threading outputs. Stops on the first control signal.
   const execBody = async (nodeIds: string[], ctx: FlowContext, indexKey = ''): Promise<{ output: unknown; control?: NodeResult }> => {
-    let last: unknown = ctx.item
+    // Body chains thread the incoming value step to step: the loop's current
+    // item (or the container's own incoming, for parallel branches) into the
+    // first body node, then each data-producing step's output onward.
+    let last: unknown = ctx.item !== undefined ? ctx.item : ctx.incoming
     for (const id of nodeIds) {
       const node = byId.get(id)
       if (!node) continue
-      const res = await execNode(node, ctx, indexKey)
+      const res = await execNode(node, { ...ctx, incoming: last }, indexKey)
       // A container body is a flat list with no branch edges, so a route-on-error
       // failure can't follow an 'error' edge here — it behaves like 'continue',
       // threading the `{ error, input }` object to the next step in the body.
@@ -1337,9 +1342,16 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
   let terminal: InterpretResult | null = null
   let lastOutput: unknown = input // filter-drop / no-sink back-compat output
 
+  // What `{{input}}` means per node: the value carried into it along its own
+  // path. Tracked per node (unlike the global lastOutput) so parallel branches
+  // each read their own upstream. A node that produces no chained data (a
+  // branch decision, a passing filter) carries its own incoming value onward.
+  const carriedInto = new Map<string, unknown>()
+
   const runOne = async (node: FlowNode): Promise<void> => {
     nodeState.set(node.id, 'running')
-    const res = await execNode(node, ctx)
+    const nodeIncoming = carriedInto.has(node.id) ? carriedInto.get(node.id) : input
+    const res = await execNode(node, { ...ctx, incoming: nodeIncoming })
     if (terminal) return // a sibling already ended the run; ignore late results
     if (res.kind === 'fail') { terminal = done({ status: 'failed', steps, output: lastOutput, error: res.error }); return }
     if (res.kind === 'pause') { terminal = done({ status: 'waiting', steps, output: lastOutput, waiting: { nodeId: res.nodeId, question: res.question, ...(res.resumeAt ? { resumeAt: res.resumeAt } : {}), ...(res.waitKind ? { waitKind: res.waitKind } : {}) } }); return }
@@ -1349,6 +1361,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // { error, input } object; an `ok` with an undefined output (a passing
     // filter, an empty output node) must NOT clobber the last real value.
     if (res.kind === 'route' || (res.kind === 'ok' && res.output !== undefined)) lastOutput = res.output
+    // Same produced-chained-data rule as lastOutput above, but per path: seed
+    // every downstream target before its edges resolve. Dead-branch targets
+    // never run, so a value seeded toward them is inert.
+    const carriedOut = res.kind === 'route' || (res.kind === 'ok' && res.output !== undefined) ? res.output : nodeIncoming
+    for (const edge of outEdges.get(node.id) ?? []) carriedInto.set(edge.target, carriedOut)
     nodeState.set(node.id, 'done')
     resolveEdges(node.id, res.kind === 'branch' ? { branch: res.branch } : res.kind === 'route' ? 'route' : res.kind === 'skip' ? 'skip' : 'ok')
     // Partial execution: stop the walk the moment the requested node finishes,

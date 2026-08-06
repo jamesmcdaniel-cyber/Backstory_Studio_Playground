@@ -98,3 +98,24 @@ test('buildDataTree lists upstream initialized variables as typed {{var.*}} root
   assert.equal(variable?.description, 'Variable set earlier in this flow.')
   assert.equal(tree.filter((root) => root.token.startsWith('{{var.')).length, 1)
 })
+
+test('buildDataTree offers the Incoming data root when a step has upstream data, with fields from the direct upstream', () => {
+  const tree = buildDataTree({
+    upstream: [
+      { id: 'n1', label: 'Fetch accounts' },
+      { id: 'n2', label: 'Latest call' },
+    ],
+    // The direct upstream is the LAST entry; its observed output (an HTTP
+    // envelope) feeds the children, unwrapped to the body like {{input}} reads.
+    lastOutputs: { n2: { ok: true, status: 200, headers: {}, body: { userId: 7 }, bodyText: '{"userId":7}' } },
+  })
+  const incoming = tree.find((root) => root.token === '{{input}}')
+  assert.ok(incoming, 'the Incoming data root exists')
+  assert.equal(incoming?.label, 'Incoming data')
+  assert.ok(incoming?.children?.some((child) => child.token === '{{input.userId}}'))
+})
+
+test('buildDataTree omits the Incoming data root on the first step', () => {
+  const tree = buildDataTree({ upstream: [] })
+  assert.equal(tree.find((root) => root.token === '{{input}}'), undefined)
+})

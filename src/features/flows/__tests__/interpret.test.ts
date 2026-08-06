@@ -2726,3 +2726,100 @@ test('a broken data reference on an adapter step names the step and reports a fa
   // record a step row even though the adapter never started.
   assert.ok(failed?.input !== undefined, 'failed outcome must carry the resolved input')
 })
+
+// ——— {{input}}: the plain-English "incoming data" reference ———
+
+test('{{input}} reads the run input on the first step and the upstream output mid-chain, skipping branch decisions', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'first', type: 'http', data: { method: 'POST', url: 'https://x.test/start', body: 'city={{input.city}}' } },
+      { id: 'shape', type: 'transform', data: { fields: [{ name: 'greeting', value: 'hi {{trigger.input.name}}' }] } },
+      { id: 'cond', type: 'condition', data: { clauses: [{ left: 'a', op: 'eq', right: 'a' }] } },
+      { id: 'sink', type: 'http', data: { method: 'POST', url: 'https://x.test/end', body: 'msg={{input.greeting}}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'first' },
+      { id: 'e2', source: 'first', target: 'shape' },
+      { id: 'e3', source: 'shape', target: 'cond' },
+      { id: 'e4', source: 'cond', target: 'sink', branch: 'true' },
+    ],
+  }
+  const bodies: Record<string, unknown> = {}
+  const runAction: RunActionFn = async (node) => {
+    bodies[node.id] = node.config.body
+    return { output: { ok: true } }
+  }
+  const result = await interpretFlow(graph, { city: 'Oslo', name: 'Ada' }, { runAgent: stub({}), runAction })
+  assert.equal(result.status, 'succeeded')
+  // First step: nothing upstream yet, so incoming data IS the run input.
+  assert.equal(bodies.first, 'city=Oslo')
+  // Past the condition: the branch decision (true/false) is not data — the
+  // incoming value is still the transform's output.
+  assert.equal(bodies.sink, 'msg=hi Ada')
+})
+
+test('{{input}} is tracked per branch in a parallel fan-out, not as one global last-output', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a1', type: 'transform', data: { fields: [{ name: 'from', value: 'A' }] } },
+      { id: 'b1', type: 'transform', data: { fields: [{ name: 'from', value: 'B' }] } },
+      { id: 'a2', type: 'http', data: { method: 'POST', url: 'https://x.test/a', body: '{{input.from}}' } },
+      { id: 'b2', type: 'http', data: { method: 'POST', url: 'https://x.test/b', body: '{{input.from}}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'a1' },
+      { id: 'e2', source: 'trigger', target: 'b1' },
+      { id: 'e3', source: 'a1', target: 'a2' },
+      { id: 'e4', source: 'b1', target: 'b2' },
+    ],
+  }
+  const bodies: Record<string, unknown> = {}
+  const runAction: RunActionFn = async (node) => {
+    bodies[node.id] = node.config.body
+    return { output: { ok: true } }
+  }
+  const result = await interpretFlow(graph, '', { runAgent: stub({}), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.equal(bodies.a2, 'A')
+  assert.equal(bodies.b2, 'B')
+})
+
+test('{{input}} on an HTTP upstream reads the response body, not the transport envelope', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'api', type: 'http', data: { method: 'GET', url: 'https://x.test/user' } },
+      { id: 'read', type: 'transform', data: { fields: [{ name: 'id', value: 'id={{input.userId}}' }] } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'api' },
+      { id: 'e2', source: 'api', target: 'read' },
+    ],
+  }
+  const runAction: RunActionFn = async () => ({
+    output: { ok: true, status: 200, headers: {}, body: { userId: 7 }, bodyText: '{"userId":7}' },
+  })
+  const result = await interpretFlow(graph, '', { runAgent: stub({}), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, { id: 'id=7' })
+})
+
+test('{{input}} inside a per-item step is the current item, matching {{item}}', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'call', type: 'http', data: { method: 'POST', url: 'https://x.test/send', body: 'v={{input}}', perItem: { over: '{{trigger.input}}' } } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'call' }],
+  }
+  const bodies: unknown[] = []
+  const runAction: RunActionFn = async (node) => {
+    bodies.push(node.config.body)
+    return { output: { ok: true } }
+  }
+  const result = await interpretFlow(graph, ['a', 'b'], { runAgent: stub({}), runAction })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(bodies, ['v=a', 'v=b'])
+})

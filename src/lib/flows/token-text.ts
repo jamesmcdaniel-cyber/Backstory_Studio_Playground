@@ -70,6 +70,7 @@ const CONTEXT_TOKEN_LABELS: Record<string, string> = {
 export function friendlyTokenLabel(path: string, ctx: TokenLabelContext): string {
   if (CONTEXT_TOKEN_LABELS[path]) return CONTEXT_TOKEN_LABELS[path]
   const parts = path.split('.')
+  if (parts[0] === 'input') return joinParts('Incoming data', parts.slice(1))
   if (parts[0] === 'trigger' && parts[1] === 'input') return joinParts('Run input', parts.slice(2))
   if (parts[0] === 'step' && parts[1] && parts[2] === 'output') {
     const stepLabel = ctx.stepLabels[parts[1]] || `Step ${parts[1]}`

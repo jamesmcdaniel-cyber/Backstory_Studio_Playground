@@ -71,3 +71,9 @@ test('friendlyTokenLabel maps now / run / flow context tokens', () => {
   assert.equal(friendlyTokenLabel('flow.id', ctx), 'This flow › id')
   assert.equal(friendlyTokenLabel('flow.name', ctx), 'This flow › name')
 })
+
+test('friendlyTokenLabel renders {{input}} as Incoming data', () => {
+  const ctx = { stepLabels: {} }
+  assert.equal(friendlyTokenLabel('input', ctx), 'Incoming data')
+  assert.equal(friendlyTokenLabel('input.userId', ctx), 'Incoming data › userId')
+})

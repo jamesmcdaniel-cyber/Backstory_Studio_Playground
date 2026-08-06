@@ -88,14 +88,23 @@ export function fromN8nExpression(
 ): string {
   if (typeof value !== 'string' || !value.startsWith('=')) return value
   const body = value.slice(1)
+  // A PLAIN data path (a.b.c, a[0], a["key"]) — anything else (a ternary, &&,
+  // a Math/Date call) is real JS, which must fall through to onUntranslatable
+  // instead of silently mistranslating into a garbage token.
+  const isPlainPath = (path: string | undefined): boolean =>
+    path === undefined || /^[\w$]+(?:\.[\w$]+|\[(?:\d+|"[^"]*"|'[^']*')\])*$/.test(path)
   const translated = body.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, expr: string) => {
     // $json.path → the node's incoming item
     const jsonMatch = expr.match(/^\$json(?:\.(.+))?$/)
-    if (jsonMatch) return `{{${jsonBase}${jsonMatch[1] ? '.' + jsonMatch[1] : ''}}}`
+    if (jsonMatch && isPlainPath(jsonMatch[1])) return `{{${jsonBase}${jsonMatch[1] ? '.' + jsonMatch[1] : ''}}}`
     // $node["Name"].json.path  |  $('Name').item.json.path  |  $('Name').json.path
     const nodeMatch =
       expr.match(/^\$node\[(?:"|')(.+?)(?:"|')\]\.json(?:\.(.+))?$/) ??
       expr.match(/^\$\((?:"|')(.+?)(?:"|')\)(?:\.(?:item|first\(\)))?\.json(?:\.(.+))?$/)
+    if (nodeMatch && !isPlainPath(nodeMatch[2])) {
+      onUntranslatable?.(expr)
+      return `{{${expr}}}`
+    }
     if (nodeMatch) {
       const id = names.get(nodeMatch[1]) ?? nodeMatch[1]
       return `{{step.${id}.output${nodeMatch[2] ? '.' + nodeMatch[2] : ''}}}`
@@ -149,6 +158,80 @@ const __n8nUnwrap = (r) =>
 return __n8nUnwrap(await (async () => {
 ${code}
 })());`
+}
+
+/** True when an n8n `=…` value contains an expression our templates can't
+ * evaluate (a ternary, a Math/Date call — real JS, not a plain data path). */
+function hasUntranslatableJs(value: unknown, names: Map<string, string>, jsonBase: string): boolean {
+  if (typeof value !== 'string' || !value.startsWith('=')) return false
+  let found = false
+  fromN8nExpression(value, names, jsonBase, () => {
+    found = true
+  })
+  return found
+}
+
+/** Escape literal text destined for a JS template literal. */
+function escapeForTemplateLiteral(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
+}
+
+/**
+ * An n8n assignment value as a JS expression for the code sandbox (where the
+ * n8n runtime shim makes $json / $('Node') work verbatim): `={{ expr }}` is
+ * the expression itself, `=text {{ expr }}` a template literal, and a plain
+ * value a literal coerced by its declared n8n type.
+ */
+function n8nValueToJs(value: unknown, declaredType?: string): string {
+  if (typeof value === 'string' && value.startsWith('=')) {
+    const body = value.slice(1)
+    const single = body.trim().match(/^\{\{([\s\S]+)\}\}$/)
+    if (single && !single[1].includes('}}')) return `(${single[1].trim()})`
+    const parts: string[] = []
+    let last = 0
+    for (const match of body.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+      parts.push(escapeForTemplateLiteral(body.slice(last, match.index)))
+      parts.push('${' + match[1].trim() + '}')
+      last = match.index + match[0].length
+    }
+    parts.push(escapeForTemplateLiteral(body.slice(last)))
+    return '`' + parts.join('') + '`'
+  }
+  if (declaredType === 'number') {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? String(numeric) : JSON.stringify(String(value ?? ''))
+  }
+  if (declaredType === 'boolean') return String(value === true || value === 'true')
+  if (declaredType === 'array' || declaredType === 'object') {
+    if (typeof value === 'string') {
+      try {
+        return JSON.stringify(JSON.parse(value))
+      } catch {
+        return JSON.stringify(value)
+      }
+    }
+    return JSON.stringify(value ?? null)
+  }
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value)
+  return JSON.stringify(value === undefined || value === null ? '' : String(value))
+}
+
+/**
+ * Rewrite every raw (untranslatable-JS) `{{ expr }}` token in a translated
+ * template to `{{step.<computeId>.output.<key>}}`, collecting the expressions
+ * in `exprs` (expr → key, deduplicated) for an inserted compute code step.
+ * Flow tokens (trigger./step./item) pass through untouched.
+ */
+function hoistRawExpressions(value: string, computeId: string, exprs: Map<string, string>): string {
+  return value.replace(/\{\{\s*([\s\S]*?)\s*\}\}/g, (full, expr: string) => {
+    if (/^(?:trigger\.|step\.|item\b)/.test(expr)) return full
+    let key = exprs.get(expr)
+    if (!key) {
+      key = `expr${exprs.size}`
+      exprs.set(expr, key)
+    }
+    return `{{step.${computeId}.output.${key}}}`
+  })
 }
 
 const OPERATION_TO_OP: Record<string, ConditionOp> = {
@@ -330,7 +413,20 @@ function mapNode(
     case 'n8n-nodes-base.stickyNote':
       return { id, type: 'note', data: { text: String(parameters.content ?? '').slice(0, 5000) } } as FlowNode
     case 'n8n-nodes-base.noOp':
-      return { id, type: 'note', data: { text: (node.notes ?? 'No-op step from n8n.').slice(0, 5000) } } as FlowNode
+      // n8n's No-Op passes items through mid-chain — a note would run as
+      // output-less annotation and break downstream references to this step
+      // ({{step.<id>.output.…}} resolves to nothing). A passthrough code step
+      // keeps the data flowing under the same id.
+      return {
+        id,
+        type: 'code',
+        data: {
+          label,
+          language: 'javascript',
+          mode: 'all',
+          code: `// Imported from n8n No-Op${node.notes ? ` — ${String(node.notes).slice(0, 500).replace(/\n/g, ' ')}` : ''}: passes its input through unchanged.\nreturn input`,
+        },
+      } as FlowNode
     case 'n8n-nodes-base.httpRequest': {
       const sendBody = parameters.sendBody === true || typeof parameters.jsonBody === 'string'
       const pairs = (source: unknown): Record<string, string> =>
@@ -385,10 +481,30 @@ function mapNode(
     }
     case 'n8n-nodes-base.set': {
       const assignments =
-        ((parameters.assignments as { assignments?: Array<{ name?: string; value?: unknown }> })?.assignments ?? [])
-      const fields = assignments
-        .filter((a) => typeof a.name === 'string' && a.name)
-        .map((a) => ({ name: String(a.name), value: tr(String(a.value ?? '')) }))
+        ((parameters.assignments as { assignments?: Array<{ name?: string; value?: unknown; type?: string }> })?.assignments ?? [])
+      const entries = assignments.filter((a) => typeof a.name === 'string' && a.name)
+      // Assignments carrying real JS ({{ a ? b : c }}, Date.now()) can't run
+      // as template fields — but the code sandbox shim executes the ORIGINAL
+      // n8n expressions verbatim, so such a Set imports as a Code step.
+      if (entries.some((a) => hasUntranslatableJs(a.value, labelToId, jsonBase))) {
+        const body = `return {\n${entries.map((a) => `  ${JSON.stringify(String(a.name))}: ${n8nValueToJs(a.value, a.type)},`).join('\n')}\n}`
+        warn(`“${name}”: its assignments use JS expressions — imported as a Code step that evaluates the original n8n expressions.`)
+        return {
+          id,
+          type: 'code',
+          data: {
+            label,
+            language: 'javascript',
+            mode: 'all',
+            input: `{{${jsonBase}}}`,
+            code: withN8nCodeShim(
+              `// Imported from n8n Set — its assignment expressions run as real JS here.\n${body}`,
+              Object.fromEntries(labelToId),
+            ),
+          },
+        } as FlowNode
+      }
+      const fields = entries.map((a) => ({ name: String(a.name), value: tr(String(a.value ?? '')) }))
       return { id, type: 'transform', data: { label, fields } } as FlowNode
     }
     case 'n8n-nodes-base.code': {
@@ -844,6 +960,10 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   // agents skip this and import as plain ai steps (cheaper, same behavior).
   const agentClusters = new Map<string, N8nAgentSpec>()
   const agentOutputFields = new Map<string, OutputField[]>()
+  // An n8n system message computed per run ({{step.…}} after translation)
+  // can't live in the created agent's static instructions — flow tokens don't
+  // resolve there. It rides on the agent STEP's input instead.
+  const dynamicSystemByAgent = new Map<string, string>()
   for (const [index, node] of sourceNodes.entries()) {
     if (node.type !== AGENT_NODE_TYPE || node === firstTrigger || !node.name) continue
     const subs = subsByTarget.get(node.name) ?? []
@@ -895,9 +1015,16 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       warn(`Agent “${name}”: its n8n conversation memory (${memorySub.node.type}) doesn't transfer — Backstory agents keep their own durable memory instead.`)
     }
     const systemMessage = tr(String((node.parameters?.options as { systemMessage?: unknown } | undefined)?.systemMessage ?? '')).trim()
+    const dynamicSystem = /\{\{/.test(systemMessage)
+    if (dynamicSystem) {
+      dynamicSystemByAgent.set(name, systemMessage)
+      warn(
+        `Agent “${name}”: its n8n system message is computed per run — it now travels on the Agent step's input (the created agent carries generic instructions).`,
+      )
+    }
     const toolLines = tools.map((t) => `- ${t.name}: ${t.description}`)
     const instructions = [
-      systemMessage || `You are “${name}”, an agent imported from an n8n workflow. Complete the task given in the input.`,
+      (!dynamicSystem && systemMessage) || `You are “${name}”, an agent imported from an n8n workflow. Complete the task given in the input.`,
       toolLines.length ? `Use your connected tools to do the work:\n${toolLines.join('\n')}` : '',
     ]
       .filter(Boolean)
@@ -920,6 +1047,9 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   // answer step): outgoing edges re-source from the companion, and the internal
   // hop is added as an extra edge.
   const edgeSourceOverride = new Map<string, string>()
+  // Prepended companions (an HTTP node's expression-compute step): incoming
+  // edges re-target to the companion, which then feeds the real node.
+  const edgeTargetOverride = new Map<string, string>()
   const synthEdges: Array<{ source: string; target: string }> = []
   let triggerId: string | null = null
   for (const [index, node] of sourceNodes.entries()) {
@@ -971,13 +1101,15 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       const spec = agentClusters.get(node.name)!
       const text = node.parameters?.text
       const outputFields = agentOutputFields.get(node.name)
+      const baseInput = typeof text === 'string' && text.trim() ? trFor(node.name)(text) : `{{${jsonBaseFor(node.name)}}}`
+      const dynamicSystem = dynamicSystemByAgent.get(node.name)
       mapped = {
         id,
         type: 'agent',
         data: {
           agentId: spec.placeholderId,
           label: node.name,
-          input: typeof text === 'string' && text.trim() ? trFor(node.name)(text) : `{{${jsonBaseFor(node.name)}}}`,
+          input: dynamicSystem ? `${dynamicSystem}\n\n${baseInput}` : baseInput,
           ...(outputFields?.length ? { responseFormat: 'structured' as const, outputFields } : {}),
         },
       } as FlowNode
@@ -1056,6 +1188,72 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           continue
         }
       }
+      // An HTTP node whose url/query/headers/body kept raw n8n JS expressions
+      // ({{ Math.floor(Date.now()/1000) }}) would hard-fail at run time — the
+      // template resolver treats them as unknown references. Hoist each
+      // expression into a prepended compute Code step (where the n8n shim runs
+      // them as real JS) and reference its results from the request instead.
+      if (mapped && mapped.type === 'http' && node.name && !bodyMemberNames.has(node.name)) {
+        let computeId = `${id}-expr`
+        while (usedIds.has(computeId)) computeId = `${computeId}-x`
+        const exprs = new Map<string, string>()
+        const data = mapped.data as { url: string; query?: string; headers?: string; body?: string }
+        const hoistJsonMap = (raw: string): string => {
+          try {
+            const parsed = JSON.parse(raw) as Record<string, unknown>
+            return JSON.stringify(
+              Object.fromEntries(
+                Object.entries(parsed).map(([key, value]) => [key, typeof value === 'string' ? hoistRawExpressions(value, computeId, exprs) : value]),
+              ),
+            )
+          } catch {
+            return hoistRawExpressions(raw, computeId, exprs)
+          }
+        }
+        const url = hoistRawExpressions(data.url, computeId, exprs)
+        const query = data.query === undefined ? undefined : hoistJsonMap(data.query)
+        const headers = data.headers === undefined ? undefined : hoistJsonMap(data.headers)
+        const body = data.body === undefined ? undefined : hoistRawExpressions(data.body, computeId, exprs)
+        if (exprs.size > 0) {
+          usedIds.add(computeId)
+          mapped = {
+            ...mapped,
+            data: {
+              ...mapped.data,
+              url,
+              ...(query !== undefined ? { query } : {}),
+              ...(headers !== undefined ? { headers } : {}),
+              ...(body !== undefined ? { body } : {}),
+            },
+          } as FlowNode
+          const lines = [...exprs.entries()].map(([expr, key]) => `  ${key}: (${expr}),`)
+          const compute = {
+            id: computeId,
+            type: 'code',
+            data: {
+              label: `${node.name} — expressions`,
+              language: 'javascript',
+              mode: 'all',
+              input: `{{${jsonBaseFor(node.name)}}}`,
+              code: withN8nCodeShim(
+                `// Imported from n8n: evaluates the JS expressions “${node.name}” used in its\n// request parameters; the HTTP step references the results.\nreturn {\n${lines.join('\n')}\n}`,
+                Object.fromEntries(idByName),
+              ),
+            },
+          } as FlowNode
+          const computePosition = position ? { x: position.x - 220, y: position.y } : undefined
+          nodes.push(computePosition ? ({ ...compute, position: computePosition } as FlowNode) : compute)
+          edgeTargetOverride.set(node.name, computeId)
+          synthEdges.push({ source: computeId, target: id })
+          // The per-node "JS expression kept as-is" warning no longer applies —
+          // the expressions now run in the inserted compute step.
+          const stale = warnings.findIndex((w) => w.startsWith(`“${node.name}”: an n8n JS expression`))
+          if (stale !== -1) warnings.splice(stale, 1)
+          warn(
+            `“${node.name}”: its n8n JS expressions were moved into an inserted Code step (“${node.name} — expressions”) that computes them before the request.`,
+          )
+        }
+      }
     }
     if (mapped) nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
   }
@@ -1109,7 +1307,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       // only the "done" output (0) continues the flow.
       if (isLoopSource && outIdx !== 0) continue
       for (const target of targets ?? []) {
-        const targetId = target?.node ? idByName.get(target.node) : undefined
+        const targetId = target?.node ? edgeTargetOverride.get(target.node) ?? idByName.get(target.node) : undefined
         if (!targetId || !nodeIds.has(targetId) || bodyMemberIds.has(targetId)) continue
         if (reaches(targetId, sourceId)) {
           warn(`Dropped the looping connection ${sourceName} → ${target.node} (our flows are one-way; rebuild n8n loops as a Loop step).`)

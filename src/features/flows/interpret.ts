@@ -1305,6 +1305,27 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       nodeState.get(id) === 'pending' && (id === entryId || (incomingResolved(id) && hasActiveIncoming(id))),
     )
 
+  // A node the entry can't reach never runs (orphans idle) — but if it has
+  // out-edges into the live graph (an import can leave a demoted trigger stub
+  // wired to the first real step), those edges would sit 'unresolved' forever
+  // and freeze every downstream join waiting on them. Resolve the whole
+  // unreachable region to skipped/dead up front so reachable joins see a
+  // terminal edge state, not a forever-pending one.
+  {
+    const reachableFromEntry = new Set<string>([entryId])
+    const queue = [entryId]
+    while (queue.length) {
+      const current = queue.shift()!
+      for (const edge of outEdges.get(current) ?? []) {
+        if (!reachableFromEntry.has(edge.target)) {
+          reachableFromEntry.add(edge.target)
+          queue.push(edge.target)
+        }
+      }
+    }
+    for (const id of dagNodeIds) if (!reachableFromEntry.has(id)) markSkipped(id)
+  }
+
   propagateSkips()
   while (!terminal) {
     // Cooperative cancellation: checked once per tick before scheduling more

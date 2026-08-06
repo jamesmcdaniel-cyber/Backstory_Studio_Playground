@@ -70,6 +70,8 @@ function nodeLabel(node: FlowNode | undefined) {
       return node.data.language === 'python' ? 'Python' : 'JavaScript'
     case 'humanReview':
       return 'Request information'
+    case 'note':
+      return 'Note'
     case 'wait':
       return 'Wait'
     case 'output':

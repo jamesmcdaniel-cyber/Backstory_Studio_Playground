@@ -16,5 +16,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (isCustomerEdition()) notFound()
   const auth = await requireAuthContext().catch(() => null)
   if (!auth?.can('catalogue.review')) redirect('/dashboard')
-  return <div className="mx-auto max-w-6xl px-6 py-8">{children}</div>
+  // No container here: /admin is in AppShell's APP_PREFIXES, so the shell
+  // already applies PAGE_CONTAINER around these pages like every other route.
+  return <>{children}</>
 }

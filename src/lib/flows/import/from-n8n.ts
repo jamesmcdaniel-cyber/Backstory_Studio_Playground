@@ -44,26 +44,79 @@ export function looksLikeN8nWorkflow(json: unknown): boolean {
 /**
  * Translate n8n expressions back into flow tokens (reverse of
  * export/to-n8n.ts translateTokens). `names` maps n8n node NAME → flow node id.
+ * `jsonBase` is what `$json` means FOR THIS NODE: in n8n it is the incoming
+ * item — the direct upstream's output — not the trigger input (except for the
+ * first step, where they coincide).
  */
-export function fromN8nExpression(value: string, names: Map<string, string>): string {
+export function fromN8nExpression(
+  value: string,
+  names: Map<string, string>,
+  jsonBase = 'trigger.input',
+  onUntranslatable?: (expr: string) => void,
+): string {
   if (typeof value !== 'string' || !value.startsWith('=')) return value
   const body = value.slice(1)
   const translated = body.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, expr: string) => {
-    // $json.path → trigger input
+    // $json.path → the node's incoming item
     const jsonMatch = expr.match(/^\$json(?:\.(.+))?$/)
-    if (jsonMatch) return `{{trigger.input${jsonMatch[1] ? '.' + jsonMatch[1] : ''}}}`
+    if (jsonMatch) return `{{${jsonBase}${jsonMatch[1] ? '.' + jsonMatch[1] : ''}}}`
     // $node["Name"].json.path  |  $('Name').item.json.path  |  $('Name').json.path
     const nodeMatch =
       expr.match(/^\$node\[(?:"|')(.+?)(?:"|')\]\.json(?:\.(.+))?$/) ??
-      expr.match(/^\$\((?:"|')(.+?)(?:"|')\)(?:\.item)?\.json(?:\.(.+))?$/)
+      expr.match(/^\$\((?:"|')(.+?)(?:"|')\)(?:\.(?:item|first\(\)))?\.json(?:\.(.+))?$/)
     if (nodeMatch) {
       const id = names.get(nodeMatch[1]) ?? nodeMatch[1]
       return `{{step.${id}.output${nodeMatch[2] ? '.' + nodeMatch[2] : ''}}}`
     }
-    // Unknown expression: keep it visible as text for the user to fix.
+    // Unknown expression — kept visible as text for the user to fix; a JS
+    // call (Date.now(), Math.*) will NOT evaluate in our templates.
+    onUntranslatable?.(expr)
     return `{{${expr}}}`
   })
   return translated
+}
+
+/**
+ * n8n Code-node compatibility shim, prepended to imported code so the n8n
+ * runtime API works inside our sandbox (which exposes `input`, `context`,
+ * `console`): `$('Node Name')` reads context.steps via the embedded
+ * label→id map, `$input`/`$json` wrap the incoming value in n8n's item shape,
+ * and a returned array of {json} items unwraps to the plain values downstream
+ * Backstory steps consume.
+ */
+export function withN8nCodeShim(code: string, labelToId: Record<string, string>): string {
+  return `/* n8n compatibility shim (added on import — the original code is below, unchanged) */
+const __n8nLabelToId = ${JSON.stringify(labelToId)};
+const __n8nItems = (v) => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
+const __n8nWrap = (v) => __n8nItems(v).map((json) => ({ json }));
+const $ = (name) => {
+  const id = __n8nLabelToId[name] ?? name;
+  const out = context && context.steps && context.steps[id] ? context.steps[id].output : undefined;
+  const items = __n8nWrap(out);
+  return {
+    first: () => items[0],
+    last: () => items[items.length - 1],
+    all: () => items,
+    item: items[0],
+    json: items[0] ? items[0].json : undefined,
+  };
+};
+const $input = {
+  all: () => __n8nWrap(input),
+  first: () => __n8nWrap(input)[0],
+  last: () => { const a = __n8nWrap(input); return a[a.length - 1]; },
+  item: __n8nWrap(input)[0],
+};
+const $json = ($input.first() || {}).json;
+const __n8nUnwrap = (r) =>
+  Array.isArray(r)
+    ? r.map((x) => (x && typeof x === 'object' && 'json' in x ? x.json : x))
+    : r && typeof r === 'object' && 'json' in r
+      ? r.json
+      : r;
+return __n8nUnwrap(await (async () => {
+${code}
+})());`
 }
 
 const OPERATION_TO_OP: Record<string, ConditionOp> = {
@@ -137,7 +190,13 @@ function llmInstructions(parameters: Record<string, unknown>, tr: (v: string) =>
 }
 
 /** Map one non-trigger n8n node to a flow node (or null to skip entirely). */
-function mapNode(node: N8nNodeIn, id: string, tr: (v: string) => string, warn: (msg: string) => void): FlowNode | null {
+function mapNode(
+  node: N8nNodeIn,
+  id: string,
+  tr: (v: string) => string,
+  warn: (msg: string) => void,
+  labelToId: Map<string, string>,
+): FlowNode | null {
   const type = node.type ?? ''
   const parameters = node.parameters ?? {}
   const label = node.name?.trim() || undefined
@@ -197,6 +256,10 @@ function mapNode(node: N8nNodeIn, id: string, tr: (v: string) => string, warn: (
     }
     case 'n8n-nodes-base.code': {
       const python = String(parameters.language ?? '').toLowerCase().includes('python')
+      const original = String((python ? parameters.pythonCode : parameters.jsCode) ?? parameters.jsCode ?? parameters.pythonCode ?? '')
+      if (python && /\$input|\$json|_\(/.test(original)) {
+        warn(`“${name}”: Python code using the n8n runtime API imported as-is — review it (the JS compatibility shim doesn’t apply to Python).`)
+      }
       return {
         id,
         type: 'code',
@@ -204,7 +267,9 @@ function mapNode(node: N8nNodeIn, id: string, tr: (v: string) => string, warn: (
           label,
           language: python ? 'python' : 'javascript',
           mode: parameters.mode === 'runOnceForEachItem' ? 'each' : 'all',
-          code: String((python ? parameters.pythonCode : parameters.jsCode) ?? parameters.jsCode ?? parameters.pythonCode ?? ''),
+          // JS gets the n8n runtime shim so $('Node'), $input, $json and
+          // [{json}] returns work unchanged in our sandbox.
+          code: python ? original : withN8nCodeShim(original, Object.fromEntries(labelToId)),
         },
       } as FlowNode
     }
@@ -296,13 +361,51 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   }
   const idOf = (node: N8nNodeIn, index: number) =>
     node === firstTrigger ? 'trigger' : (node.name && idByName.get(node.name)) || node.id || `n8n-${index}`
-  const tr = (v: string) => fromN8nExpression(v, idByName)
+
+  // LangChain SUB-nodes (chat models, tool/memory/parser providers) hang off
+  // the agent via non-`main` connection types (ai_languageModel, ai_tool, …).
+  // They are the agent's CONFIGURATION, not steps — importing them as steps
+  // produced floating empty nodes wired to the trigger. Absorb them instead.
+  const subNodeNames = new Set<string>()
+  for (const [sourceName, conn] of Object.entries(workflow.connections ?? {})) {
+    const types = Object.keys(conn ?? {})
+    if (types.length > 0 && types.every((t) => t !== 'main')) subNodeNames.add(sourceName)
+  }
+
+  // What `$json` means per node: the direct upstream on the MAIN chain.
+  const parentByName = new Map<string, string>()
+  for (const [sourceName, conn] of Object.entries(workflow.connections ?? {})) {
+    for (const targets of conn?.main ?? []) {
+      for (const target of targets ?? []) {
+        if (target?.node && !parentByName.has(target.node)) parentByName.set(target.node, sourceName)
+      }
+    }
+  }
+  const triggerNames = new Set(sourceNodes.filter((n) => TRIGGER_TYPES[n.type ?? '']).map((n) => n.name ?? ''))
+  const jsonBaseFor = (nodeName: string | undefined): string => {
+    const parent = nodeName ? parentByName.get(nodeName) : undefined
+    if (!parent || triggerNames.has(parent)) return 'trigger.input'
+    const parentId = idByName.get(parent)
+    return parentId ? `step.${parentId}.output` : 'trigger.input'
+  }
+  const warnedExprNodes = new Set<string>()
+  const trFor = (nodeName: string | undefined) => (v: string) =>
+    fromN8nExpression(v, idByName, jsonBaseFor(nodeName), (expr) => {
+      const key = nodeName ?? '?'
+      if (warnedExprNodes.has(key) || !/[($]/.test(expr)) return
+      warnedExprNodes.add(key)
+      warn(`“${key}”: an n8n JS expression ({{ ${expr.slice(0, 60)} }}) was kept as-is — our templates can't evaluate JavaScript; compute it in a Code step instead.`)
+    })
 
   // First recognized trigger becomes THE trigger; extra triggers become notes.
   const nodes: FlowNode[] = []
   let triggerId: string | null = null
   for (const [index, node] of sourceNodes.entries()) {
     const id = idOf(node, index)
+    if (node.name && subNodeNames.has(node.name)) {
+      warn(`“${node.name}” (${node.type}) configures the agent it points at (model/tool provider) — absorbed; the imported AI step runs on Backstory models and tools.`)
+      continue
+    }
     const position = Array.isArray(node.position) ? { x: Number(node.position[0]) || 0, y: Number(node.position[1]) || 0 } : undefined
     const triggerType = TRIGGER_TYPES[node.type ?? '']
     let mapped: FlowNode | null
@@ -320,10 +423,16 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       } as FlowNode
       if (triggerType === 'schedule') warn(`“${node.name ?? 'Trigger'}”: schedule imported as daily (paused) — set the cadence you want.`)
     } else if (triggerType) {
-      warn(`“${node.name ?? node.type}”: a flow has one trigger — this extra trigger was imported as a note.`)
-      mapped = { id, type: 'note', data: { text: noteText(node) } } as FlowNode
+      warn(`“${node.name ?? node.type}”: a flow has one trigger — this extra ${TRIGGER_TYPES[node.type ?? '']} trigger became a note; switch the flow's trigger type in the builder if you want this one instead.`)
+      mapped = {
+        id,
+        type: 'note',
+        data: {
+          text: `Extra n8n trigger “${node.name ?? node.type}” (${node.type}) — a flow has ONE trigger, and the first one in the file won. To use this one instead, change the trigger type on the trigger card.${node.parameters && Object.keys(node.parameters).length ? `\n\nOriginal parameters:\n${JSON.stringify(node.parameters, null, 2).slice(0, 2000)}` : ''}`.slice(0, 5000),
+        },
+      } as FlowNode
     } else {
-      mapped = mapNode(node, id, tr, warn)
+      mapped = mapNode(node, id, trFor(node.name), warn, idByName)
     }
     if (mapped) nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
   }
@@ -388,6 +497,16 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       edges.push({ id: `e-${edgeIndex++}`, source: triggerId, target: node.id })
       hasIncoming.add(node.id)
     }
+  }
+
+  // n8n executes every node once per ITEM flowing through it; Backstory runs
+  // each step once with the whole value. Imported code steps handle this via
+  // the shim (arrays in, arrays out) — but steps consuming a LIST from a code
+  // step (an HTTP call per item, an AI step per item) need per-item turned on.
+  if (nodes.some((n) => n.type === 'code')) {
+    warn(
+      'n8n runs each step once per item; Backstory runs a step once with the whole list. Steps that should repeat per item (an HTTP request or AI step fed by a list) need “For each item” enabled in their settings.',
+    )
   }
 
   return {

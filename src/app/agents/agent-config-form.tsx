@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
+import { ChevronDown, Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -580,6 +580,7 @@ export function AgentConfigForm({
   const [orgAgents, setOrgAgents] = useState<{ id: string; title: string }[]>([])
   // Published flows for the "Call flows" picker (published = runnable by agents).
   const [orgFlows, setOrgFlows] = useState<{ id: string; name: string }[]>([])
+  const [showMoreConfig, setShowMoreConfig] = useState(false)
 
   useEffect(() => {
     if (!active) return
@@ -1044,50 +1045,6 @@ export function AgentConfigForm({
         )}
       </div>
 
-      {/* ── Memory + strategy toggles ───────────────────────────────── */}
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <Label>Answer from memory automatically</Label>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              When a question closely matches one you&apos;ve answered before, the agent reuses your answer instead of pausing.
-            </p>
-          </div>
-          <Switch
-            checked={draft.autoAnswerFromMemory === true}
-            onCheckedChange={(on) => setDraft({ ...draft, autoAnswerFromMemory: on })}
-          />
-        </div>
-      </div>
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <Label>Always strategize</Label>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Every run starts with an explicit numbered plan before any tool call.
-            </p>
-          </div>
-          <Switch
-            checked={draft.alwaysStrategize === true}
-            onCheckedChange={(on) => setDraft({ ...draft, alwaysStrategize: on })}
-          />
-        </div>
-      </div>
-      <div className="rounded-lg border p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <Label>Approve messages before they send</Label>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Slack messages, emails, and Salesforce records wait for a teammate to approve them instead of going out during the run. Reading is never held up.
-            </p>
-          </div>
-          <Switch
-            checked={draft.requireApproval === true}
-            onCheckedChange={(on) => setDraft({ ...draft, requireApproval: on })}
-          />
-        </div>
-      </div>
-
       {/* ── Multi-agent handoff ─────────────────────────────────────── */}
       <div className="rounded-lg border p-3">
         <div className="flex items-center justify-between gap-3">
@@ -1291,6 +1248,68 @@ export function AgentConfigForm({
             </div>
 
             {scheduleSummary && <p className="text-xs text-muted-foreground">{scheduleSummary}</p>}
+          </div>
+        )}
+      </div>
+
+      {/* ── More configurations (collapsed by default) ──────────────── */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowMoreConfig((v) => !v)}
+          aria-expanded={showMoreConfig}
+          className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground"
+        >
+          <ChevronDown
+            className={cn('h-4 w-4 transition-transform duration-150', !showMoreConfig && '-rotate-90')}
+          />
+          {showMoreConfig ? 'Hide extra configurations' : 'View more configurations'}
+        </button>
+
+        {showMoreConfig && (
+          <div className="mt-3 space-y-3">
+            <div className="rounded-lg border p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label>Answer from memory automatically</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    When a question closely matches one you&apos;ve answered before, the agent reuses your answer instead of pausing.
+                  </p>
+                </div>
+                <Switch
+                  checked={draft.autoAnswerFromMemory === true}
+                  onCheckedChange={(on) => setDraft({ ...draft, autoAnswerFromMemory: on })}
+                />
+              </div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label>Always strategize</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Every run starts with an explicit numbered plan before any tool call.
+                  </p>
+                </div>
+                <Switch
+                  checked={draft.alwaysStrategize === true}
+                  onCheckedChange={(on) => setDraft({ ...draft, alwaysStrategize: on })}
+                />
+              </div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label>Approve messages before they send</Label>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Slack messages, emails, and Salesforce records wait for a teammate to approve them instead of going out during the run. Reading is never held up.
+                  </p>
+                </div>
+                <Switch
+                  checked={draft.requireApproval === true}
+                  onCheckedChange={(on) => setDraft({ ...draft, requireApproval: on })}
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>

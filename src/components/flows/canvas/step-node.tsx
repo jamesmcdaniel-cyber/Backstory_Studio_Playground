@@ -50,6 +50,8 @@ export type CanvasActions = {
   onChangeNode?: (node: FlowNode) => void
   /** Connections an agent step can be granted as tools, with display branding. */
   toolConnections?: { id: string; name: string; slug: string }[]
+  /** Step-label context for token chips edited inside sub-node config panels. */
+  labelCtx?: { stepLabels: Record<string, string> }
 }
 
 export const CanvasActionsContext = createContext<CanvasActions>({

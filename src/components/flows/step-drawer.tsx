@@ -651,8 +651,6 @@ export function StepDrawer({
       .filter((connection) => parseFlowToolConnectionId(connection.id).plane === 'mcp'),
     [toolCatalog],
   )
-  // Provider-grouped connections for the agent step's "extra tools" grants.
-  const providerGroupsForAgent = useMemo(() => groupToolConnections(toolCatalog), [toolCatalog])
   const isTrigger = node.type === 'trigger'
   const trigger = ((node.type === 'trigger' ? node.data.trigger : undefined) as TriggerData | undefined) ?? { type: 'manual' }
   // Chip-editor handles keyed by field, so a datatree click inserts a token
@@ -988,99 +986,14 @@ export function StepDrawer({
                 agent&apos;s context automatically — so it has everything it needs without wiring each token.
               </p>
             </div>
-            {/* n8n-style agent attachments, collapsed so the default view stays
-                minimal: agent + message is all a simple step needs. */}
-            <details className="rounded-lg border border-border/70 p-2" open={Boolean(node.data.model || node.data.memory || node.data.toolConnectionIds?.length)}>
-              <summary className="cursor-pointer text-sm font-medium">Model, memory &amp; tools for this step</summary>
-              <div className="mt-3 space-y-3">
-                <div>
-                  <label className={labelClass}>Chat model</label>
-                  <select
-                    className={fieldClass}
-                    value={node.data.model ?? ''}
-                    onChange={(e) => onChange({ ...node, data: { ...node.data, model: e.target.value || undefined } })}
-                  >
-                    <option value="">Agent default</option>
-                    {(node.data.model && !AGENT_STEP_MODELS.includes(node.data.model) ? [node.data.model, ...AGENT_STEP_MODELS] : AGENT_STEP_MODELS).map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className={labelClass}>Memory</label>
-                  <select
-                    className={fieldClass}
-                    value={node.data.memory ? node.data.memory.store ?? 'postgres' : ''}
-                    onChange={(e) => {
-                      const value = e.target.value
-                      onChange({
-                        ...node,
-                        data: {
-                          ...node.data,
-                          memory: value ? { ...(node.data.memory ?? {}), store: value as NonNullable<typeof node.data.memory>['store'] } : undefined,
-                        },
-                      })
-                    }}
-                  >
-                    <option value="">Off — each run starts fresh</option>
-                    <option value="postgres">Remember past runs (built-in)</option>
-                    <option value="redis">Remember past runs (Redis)</option>
-                    <option value="mongodb">Remember past runs (MongoDB)</option>
-                    <option value="xata">Remember past runs (Xata)</option>
-                  </select>
-                  {node.data.memory && (
-                    <div className="mt-2">
-                      <TokenTextEditor
-                        ref={registerEditor('agent.memory.sessionKey')}
-                        value={node.data.memory.sessionKey ?? ''}
-                        labelCtx={labelCtx}
-                        placeholder="Session key (optional) — e.g. one thread per account"
-                        onFocus={focusEditor('agent.memory.sessionKey')}
-                        onChange={(sessionKey) => onChange({ ...node, data: { ...node.data, memory: { ...node.data.memory!, sessionKey: sessionKey || undefined } } })}
-                        ariaLabel="Memory session key"
-                      />
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className={labelClass}>Extra tools for this step</label>
-                  {providerGroupsForAgent.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">No tool connections yet — connect apps under Integrations.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {providerGroupsForAgent.flatMap((group) =>
-                        group.connections.map((connection) => {
-                          const attached = node.data.toolConnectionIds ?? []
-                          const active = attached.includes(connection.id)
-                          return (
-                            <button
-                              key={connection.id}
-                              type="button"
-                              aria-pressed={active}
-                              onClick={() => {
-                                const next = active ? attached.filter((id) => id !== connection.id) : [...attached, connection.id]
-                                onChange({ ...node, data: { ...node.data, toolConnectionIds: next.length ? next : undefined } })
-                              }}
-                              className={cn(
-                                'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors',
-                                active ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground hover:border-foreground/30',
-                              )}
-                              title={active ? 'Granted for this step — click to remove' : 'Grant to the agent for this step'}
-                            >
-                              <IntegrationLogo slug={group.brand.slug} name={group.brand.label} className="h-4 w-4 rounded-sm" />
-                              {connection.name || group.brand.label}
-                            </button>
-                          )
-                        }),
-                      )}
-                    </div>
-                  )}
-                  <p className="mt-1.5 text-xs text-muted-foreground">On top of the tools the agent already owns.</p>
-                </div>
-              </div>
-            </details>
+            {/* Chat model, memory, and tool grants are n8n-style sub-nodes ON
+                THE CANVAS, under the step — each opens its own config panel.
+                Keeping them out of this drawer keeps agent + message the whole
+                story here, and gives every attachment one obvious home. */}
+            <p className="rounded-lg border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
+              Chat model, memory, and extra tools attach <span className="font-medium text-foreground">under this step on the canvas</span> — click an
+              attachment there to configure it.
+            </p>
             <AdvancedParamsSection node={node} onChange={onChange} />
             <div>
               <label className={labelClass}>Human assistance</label>

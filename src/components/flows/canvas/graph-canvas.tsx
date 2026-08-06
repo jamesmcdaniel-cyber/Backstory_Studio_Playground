@@ -405,8 +405,8 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   )
 
   const actions = useMemo(
-    () => ({ onAddFrom: handleAddFrom, onInsertOnEdge: handleInsertOnEdge, onDeleteEdge, readOnly, onChangeNode, toolConnections }),
-    [handleAddFrom, handleInsertOnEdge, onDeleteEdge, readOnly, onChangeNode, toolConnections],
+    () => ({ onAddFrom: handleAddFrom, onInsertOnEdge: handleInsertOnEdge, onDeleteEdge, readOnly, onChangeNode, toolConnections, labelCtx }),
+    [handleAddFrom, handleInsertOnEdge, onDeleteEdge, readOnly, onChangeNode, toolConnections, labelCtx],
   )
 
   // ── React Flow handlers ─────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { NODE_ICON, NODE_TONE, STATUS_DOT, type StepStatus } from '@/lib/flows/node-presentation'
 import type { SourceHandle } from '@/lib/flows/canvas-model'
 import type { FlowNode } from '@/lib/flows/graph'
+import { AgentSubNodes } from './agent-sub-nodes'
 
 /**
  * The compact canvas chip — an n8n-style widget, ~200×64. It shows WHAT a step
@@ -45,6 +46,10 @@ export type CanvasActions = {
   onInsertOnEdge: (edgeId: string) => void
   onDeleteEdge: (edgeId: string) => void
   readOnly?: boolean
+  /** Commit a field-level edit made by canvas sub-node controls (agent chat model / memory / tools). */
+  onChangeNode?: (node: FlowNode) => void
+  /** Connections an agent step can be granted as tools, with display branding. */
+  toolConnections?: { id: string; name: string; slug: string }[]
 }
 
 export const CanvasActionsContext = createContext<CanvasActions>({
@@ -82,6 +87,10 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
         </span>
       )}
 
+      {/* Card + side handles live in their own positioning context, so the
+          %-based handle offsets keep resolving against the 64px card even when
+          agent sub-node ports extend the node downward. */}
+      <div className="relative">
       {hasTarget && (
         <Handle
           type="target"
@@ -193,6 +202,9 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
           </span>
         )
       })}
+      </div>
+
+      {node.type === 'agent' && <AgentSubNodes node={node} />}
     </div>
   )
 }

@@ -36,7 +36,7 @@ import {
   sourceHandlesFor,
 } from '@/lib/flows/canvas-model'
 import { subtitleFor, titleFor, type StepStatus } from '@/lib/flows/node-presentation'
-import { selectedToolPresentation, stepBrandFallback } from '@/lib/flows/tool-presentation'
+import { selectedToolPresentation, stepBrandFallback, toolConnectionBrand } from '@/lib/flows/tool-presentation'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 import type { RemoteCursor } from '@/lib/flows/cursor-store'
 import type { DragPreview } from '@/lib/flows/drag-preview'
@@ -106,6 +106,8 @@ export type GraphCanvasProps = {
   /** Fires continuously while a node is dragged, then once with `done` on
    *  release, so teammates see the move instead of a teleport. */
   onNodeDrag?: (nodeId: string, position: NodePosition, done: boolean) => void
+  /** Commit a field edit from canvas sub-node controls (agent chat model / memory / tools). */
+  onChangeNode?: (node: FlowNode) => void
 }
 
 const nodeTypes = { step: StepNode }
@@ -157,6 +159,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     onPasteAt,
     onCursorMove,
     onNodeDrag,
+    onChangeNode,
     dragPreview,
   } = props
 
@@ -395,9 +398,15 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     [picker, onInsertFromHandle, onInsertOnEdge],
   )
 
+  // Branding for the agent sub-node "Tool" port menu (grantable connections).
+  const toolConnections = useMemo(
+    () => toolCatalog.map((connection) => ({ id: connection.id, name: connection.name || connection.id, slug: toolConnectionBrand(connection).slug })),
+    [toolCatalog],
+  )
+
   const actions = useMemo(
-    () => ({ onAddFrom: handleAddFrom, onInsertOnEdge: handleInsertOnEdge, onDeleteEdge, readOnly }),
-    [handleAddFrom, handleInsertOnEdge, onDeleteEdge, readOnly],
+    () => ({ onAddFrom: handleAddFrom, onInsertOnEdge: handleInsertOnEdge, onDeleteEdge, readOnly, onChangeNode, toolConnections }),
+    [handleAddFrom, handleInsertOnEdge, onDeleteEdge, readOnly, onChangeNode, toolConnections],
   )
 
   // ── React Flow handlers ─────────────────────────────────────────────────────

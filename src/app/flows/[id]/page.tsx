@@ -2329,6 +2329,7 @@ function FlowBuilder() {
               onPasteAt={canvasPaste}
               onCursorMove={(position) => sendCursor(position.x, position.y, 'canvas')}
               onNodeDrag={sendNodeDrag}
+              onChangeNode={commitFieldEdit}
             />
           </div>
         )}

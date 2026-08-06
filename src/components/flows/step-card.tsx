@@ -716,7 +716,7 @@ function renderNodeBody({
     case 'trigger':
       return <TriggerBody node={node} update={update} flowId={flowId} published={published} toolCatalog={toolCatalog} onFlowPersisted={onFlowPersisted} />
     case 'agent':
-      return <AgentBody node={node} agents={agents} update={update} onRefreshAgents={onRefreshAgents} tokenWiring={tokenWiring} showErrors={showErrors} />
+      return <AgentBody node={node} agents={agents} toolCatalog={toolCatalog} update={update} onRefreshAgents={onRefreshAgents} tokenWiring={tokenWiring} showErrors={showErrors} />
     case 'ai':
       return <AiBody node={node} update={update} tokenWiring={tokenWiring} showErrors={showErrors} />
     case 'subflow':
@@ -1284,6 +1284,7 @@ function AiBody({
 function AgentBody({
   node,
   agents,
+  toolCatalog,
   update,
   onRefreshAgents,
   tokenWiring,
@@ -1291,6 +1292,7 @@ function AgentBody({
 }: {
   node: Extract<FlowNode, { type: 'agent' }>
   agents: Agent[]
+  toolCatalog: ToolCatalog
   update: (node: FlowNode) => void
   onRefreshAgents?: () => void
   tokenWiring: TokenEditorWiring
@@ -1442,7 +1444,136 @@ function AgentBody({
           </div>
         )}
       </div>
+      <AgentConfigSection node={node} toolCatalog={toolCatalog} update={update} tokenWiring={tokenWiring} />
       <AdvancedParamsSection node={node} onChange={update} />
+    </div>
+  )
+}
+
+/** Curated chat models for the per-step override; free-typed values persist. */
+const AGENT_STEP_MODELS = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5']
+
+/**
+ * n8n-style agent attachments: the chat model that runs this step, memory so
+ * the agent remembers past runs of this step, and extra tools granted for the
+ * run — all step-scoped, layered over what the agent itself already owns.
+ */
+function AgentConfigSection({
+  node,
+  toolCatalog,
+  update,
+  tokenWiring,
+}: {
+  node: Extract<FlowNode, { type: 'agent' }>
+  toolCatalog: ToolCatalog
+  update: (node: FlowNode) => void
+  tokenWiring: TokenEditorWiring
+}) {
+  const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const memory = node.data.memory
+  const attached = node.data.toolConnectionIds ?? []
+  const providerGroups = groupToolConnections(toolCatalog)
+  const modelChoices = node.data.model && !AGENT_STEP_MODELS.includes(node.data.model)
+    ? [node.data.model, ...AGENT_STEP_MODELS]
+    : AGENT_STEP_MODELS
+  const setMemory = (next: Extract<FlowNode, { type: 'agent' }>['data']['memory']) =>
+    update({ ...node, data: { ...node.data, memory: next } })
+  const toggleConnection = (connectionId: string) => {
+    const next = attached.includes(connectionId)
+      ? attached.filter((id) => id !== connectionId)
+      : [...attached, connectionId]
+    update({ ...node, data: { ...node.data, toolConnectionIds: next.length ? next : undefined } })
+  }
+  return (
+    <div className="space-y-3 rounded-lg border border-slate-200 p-3">
+      <p className="text-sm font-semibold text-slate-900">Agent configuration for this step</p>
+      <div className="grid gap-2">
+        <label className={labelClass}>Chat model</label>
+        <select
+          value={node.data.model ?? ''}
+          onChange={(event) => update({ ...node, data: { ...node.data, model: event.target.value || undefined } })}
+          className={controlClass}
+        >
+          <option value="">Agent default</option>
+          {modelChoices.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between">
+          <label className={labelClass}>Memory</label>
+          <select
+            value={memory ? memory.store ?? 'postgres' : ''}
+            onChange={(event) => {
+              const value = event.target.value
+              if (!value) return setMemory(undefined)
+              setMemory({ ...(memory ?? {}), store: value as NonNullable<typeof memory>['store'] })
+            }}
+            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none"
+          >
+            <option value="">Off</option>
+            <option value="postgres">Postgres (built-in)</option>
+            <option value="redis">Redis</option>
+            <option value="mongodb">MongoDB</option>
+            <option value="xata">Xata</option>
+          </select>
+        </div>
+        <p className="text-xs text-slate-500">
+          {memory
+            ? 'The agent remembers this step’s past runs and can reference them. All stores currently persist in Backstory’s own Postgres.'
+            : 'Off: each run starts fresh. Turn on to let the agent remember and reference past runs of this step.'}
+        </p>
+        {memory && (
+          <TokenTextEditor
+            ref={registerEditor('agent.memory.sessionKey')}
+            value={memory.sessionKey ?? ''}
+            labelCtx={labelCtx}
+            onFocus={focusEditor('agent.memory.sessionKey')}
+            onChange={(sessionKey) => setMemory({ ...memory, sessionKey: sessionKey || undefined })}
+            className={tokenControlClass}
+            placeholder="Session key — e.g. one thread per account. Empty keeps one thread for this step."
+            ariaLabel="Memory session key"
+          />
+        )}
+      </div>
+      <div className="grid gap-2">
+        <label className={labelClass}>Tools granted for this step</label>
+        {providerGroups.length === 0 ? (
+          <p className="text-xs text-slate-500">No tool connections available yet — connect apps under Integrations.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {providerGroups.flatMap((group) =>
+              group.connections.map((connection) => {
+                const active = attached.includes(connection.id)
+                return (
+                  <button
+                    key={connection.id}
+                    type="button"
+                    onClick={() => toggleConnection(connection.id)}
+                    aria-pressed={active}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors',
+                      active
+                        ? 'border-blue-500 bg-blue-50 text-blue-800'
+                        : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400',
+                    )}
+                    title={active ? 'Granted for this step — click to remove' : 'Grant to the agent for this step'}
+                  >
+                    <IntegrationLogo slug={group.brand.slug} name={group.brand.label} className="h-4 w-4 rounded-sm" />
+                    {connection.name || group.brand.label}
+                  </button>
+                )
+              }),
+            )}
+          </div>
+        )}
+        <p className="text-xs text-slate-500">
+          On top of the tools the agent already owns; open the agent to change its permanent toolset.
+        </p>
+      </div>
     </div>
   )
 }

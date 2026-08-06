@@ -44,7 +44,12 @@ if (TEST_DB) {
       assert.equal(flow.status, 'DRAFT')
       const graph = flow.graph as { nodes: { id: string; type: string }[] }
       assert.ok(graph.nodes.some((n) => n.type === 'trigger' && n.id === 'trigger'))
-      assert.ok(graph.nodes.some((n) => n.type === 'code'), 'the credential-less slack node imports as a runnable passthrough stub')
+      assert.ok(
+        graph.nodes.some(
+          (n) => n.type === 'tool' && (n as { data?: { connectionId?: string } }).data?.connectionId === 'nango:slack',
+        ),
+        'the slack node binds to the platform Slack integration',
+      )
     } finally {
       await s.cleanup()
       await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})

@@ -128,12 +128,14 @@ test('a tool-less AI Agent becomes a native ai step; credential-less app nodes b
   assert.match(ai.data.input ?? '', /Summarize/, 'the agent prompt is the step input')
   assert.match(ai.data.instructions ?? '', /Be terse/, 'the system message steers the step')
   assert.equal(result.agents.length, 0, 'no tools, no memory — nothing to create an agent for')
-  // Without a credential binding we can't infer the integration — but the
-  // chain must keep RUNNING: a passthrough stub, not a dead note.
-  const stub = graph.nodes.find((n) => n.type === 'code' && (n as any).data.label === 'Notify') as any
-  assert.ok(stub)
-  assert.match(stub.data.code, /return input/)
-  assert.ok(result.warnings.some((w) => /Notify/.test(w)), 'the unconverted step is named in the warnings')
+  // A known app node binds to the platform's OWN integration capability — the
+  // step arrives runnable through the connected Slack account.
+  const notify = graph.nodes.find((n) => n.type === 'tool' && (n as any).data.label === 'Notify') as any
+  assert.ok(notify)
+  assert.equal(notify.data.connectionId, 'nango:slack')
+  assert.equal(notify.data.toolName, 'slack_post_message')
+  assert.deepEqual(JSON.parse(notify.data.args), { channel: '#deals', text: 'done' })
+  assert.ok(result.warnings.some((w) => /Notify/.test(w) && /Slack integration/.test(w)))
 })
 
 test('looping connections (Loop Over Items) are dropped so the graph stays acyclic', () => {
@@ -281,7 +283,7 @@ test('imported code steps get the n8n compatibility shim and run against our san
   assert.deepEqual(result.output, [{ accountName: 'crowdstrike' }, { accountName: ' seismic' }])
 })
 
-test('credentialed app nodes become UNBOUND TOOL STEPS with translated args — not dead notes', () => {
+test('credentialed app nodes bind to platform integrations; uncovered capabilities stay unbound and named', () => {
   const workflow = {
     name: 'App nodes',
     nodes: [
@@ -306,12 +308,18 @@ test('credentialed app nodes become UNBOUND TOOL STEPS with translated args — 
   const graph = flowGraphSchema.parse(result.graph)
   const tools = graph.nodes.filter((n) => n.type === 'tool') as any[]
   assert.equal(tools.length, 2)
+  // Email delivery is a capability the platform OWNS — the step arrives bound.
   const email = tools.find((t) => t.data.label === 'Send Report Email')
-  assert.equal(email.data.connectionId, '', 'unbound — the builder guides the connection pick')
-  assert.match(email.data.toolName, /email/i)
+  assert.equal(email.data.connectionId, 'native:email')
+  assert.equal(email.data.toolName, 'send')
   const args = JSON.parse(email.data.args)
+  assert.equal(args.to, 'a@b.c')
   assert.equal(args.subject, '{{step.id-Prep.output.subject}}', 'args carried over with translated references')
-  assert.ok(result.warnings.some((w) => /Send Report Email/.test(w) && /connection/i.test(w)))
+  // Drive UPLOAD is not covered (the Drive integration is read-only) — the
+  // step stays unbound and the warning names the missing capability.
+  const upload = tools.find((t) => t.data.label === 'Upload file')
+  assert.equal(upload.data.connectionId, '')
+  assert.ok(result.warnings.some((w) => /Upload file/.test(w) && /no integration capability/i.test(w)))
 })
 
 test('utility nodes map to native data ops; credential-less leftovers become passthrough code stubs', () => {
@@ -811,4 +819,70 @@ test('a per-run agent system message rides on the agent step input, not the crea
   const spec = result.agents[0]
   assert.ok(!spec.instructions.includes('{{'), 'created agent instructions carry no flow tokens')
   assert.ok(spec.instructions.includes('imported from an n8n workflow'))
+})
+
+test('a raw Slack API HTTP call binds to the Slack integration read tool', () => {
+  const workflow = {
+    name: 'Slack read',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Fan', 'n8n-nodes-base.code', { jsCode: 'return [{ json: { ch: "C1" } }]' }),
+      n8nNode(
+        'Read Channel',
+        'n8n-nodes-base.httpRequest',
+        { method: 'GET', url: '=https://slack.com/api/conversations.history?channel={{ $json.ch }}&oldest={{ Math.floor(Date.now()/1000) }}&limit=100' },
+        { credentials: { httpHeaderAuth: { id: '1', name: 'Slack token' } } },
+      ),
+    ],
+    connections: chain('Start', 'Fan', 'Read Channel'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const read = graph.nodes.find((n) => n.type === 'tool') as any
+  assert.equal(read.data.connectionId, 'nango:slack')
+  assert.equal(read.data.toolName, 'slack_read_messages')
+  assert.deepEqual(JSON.parse(read.data.args), { channel: '{{item.ch}}', limit: 100 })
+  assert.deepEqual(read.data.perItem, { over: '{{step.id-Fan.output}}' })
+  assert.ok(result.warnings.some((w) => /oldest/.test(w)), 'the unsupported time-window param is called out')
+})
+
+test('n8n memory and model sub-nodes become the agent STEP configuration', () => {
+  const workflow = {
+    name: 'Remembering agent',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Agent', '@n8n/n8n-nodes-langchain.agent', { text: 'hi', options: {} }),
+      n8nNode('Model', '@n8n/n8n-nodes-langchain.lmChatAnthropic', { model: 'claude-sonnet-5' }, { credentials: { anthropicApi: {} } }),
+      n8nNode('Memory', '@n8n/n8n-nodes-langchain.memoryPostgresChat', { sessionKey: '={{ $json.account }}', contextWindowLength: 8 }),
+    ],
+    connections: {
+      ...chain('Start', 'Agent'),
+      Model: { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel' as const, index: 0 }]] },
+      Memory: { ai_memory: [[{ node: 'Agent', type: 'ai_memory' as const, index: 0 }]] },
+    } as any,
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const agent = graph.nodes.find((n) => n.type === 'agent') as any
+  assert.equal(agent.data.model, 'claude-sonnet-5', 'the chat-model attachment pins the step model')
+  assert.equal(agent.data.memory.store, 'postgres')
+  assert.equal(agent.data.memory.sessionKey, '{{trigger.input.account}}')
+  assert.equal(agent.data.memory.window, 8)
+  assert.equal(result.agents[0].hasMemory, true)
+  assert.ok(result.warnings.some((w) => /imported as step memory/.test(w)))
+})
+
+test('a Backstory MCP client call binds to the platform Sales AI plane', () => {
+  const workflow = {
+    name: 'MCP',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Top', 'n8n-nodes-base.mcpClient', { endpointUrl: 'https://mcp.backstory.ai/mcp', tool: { value: 'top_records' } }),
+    ],
+    connections: chain('Start', 'Top'),
+  }
+  const graph = flowGraphSchema.parse(n8nToFlow(workflow).graph)
+  const tool = graph.nodes.find((n) => n.type === 'tool') as any
+  assert.equal(tool.data.connectionId, 'people_ai:backstory')
+  assert.equal(tool.data.toolName, 'top_records')
 })

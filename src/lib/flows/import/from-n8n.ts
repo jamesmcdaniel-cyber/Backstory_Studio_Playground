@@ -246,6 +246,205 @@ function hoistRawExpressions(value: string, computeId: string, exprs: Map<string
   })
 }
 
+/** n8n resourceLocator values ({ mode, value }) or plain strings → the string. */
+function locatorValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object') {
+    const inner = (value as { value?: unknown }).value
+    if (typeof inner === 'string') return inner
+  }
+  return ''
+}
+
+/**
+ * A binding onto one of the platform's OWN integration tools. Imported app
+ * nodes prefer these over raw API/tool stubs: the step arrives bound to the
+ * capability (`nango:slack`, `native:email`, …) instead of asking the user to
+ * rebuild the call. `missing` names a capability the platform doesn't cover
+ * yet — the step stays an unbound tool step and the warning says exactly what
+ * to add.
+ */
+type IntegrationBinding =
+  | { connectionId: string; toolName: string; args: Record<string, unknown>; label: string }
+  | { missing: string }
+  | null
+
+/** Map an n8n APP node (slack, gmail, drive, …) onto a platform integration tool. */
+function integrationBindingFor(type: string, parameters: Record<string, unknown>, tr: (v: string) => string): IntegrationBinding {
+  const operation = String(parameters.operation ?? '')
+  const resource = String(parameters.resource ?? '')
+  const trs = (value: unknown) => tr(String(value ?? ''))
+  switch (type) {
+    case 'n8n-nodes-base.slack': {
+      if (!resource || resource === 'message') {
+        if (!operation || operation === 'post') {
+          return {
+            connectionId: 'nango:slack',
+            toolName: 'slack_post_message',
+            label: 'Slack',
+            args: { channel: trs(locatorValue(parameters.channelId ?? parameters.channel)), text: trs(parameters.text) },
+          }
+        }
+        if (operation === 'getAll' || operation === 'history') {
+          return {
+            connectionId: 'nango:slack',
+            toolName: 'slack_read_messages',
+            label: 'Slack',
+            args: { channel: trs(locatorValue(parameters.channelId ?? parameters.channel)), limit: Number(parameters.limit ?? 30) || 30 },
+          }
+        }
+      }
+      if (resource === 'channel' && (operation === 'getAll' || operation === 'list')) {
+        return { connectionId: 'nango:slack', toolName: 'slack_list_channels', label: 'Slack', args: {} }
+      }
+      return { missing: `Slack ${resource || 'message'}.${operation || 'post'}` }
+    }
+    case 'n8n-nodes-base.gmail': {
+      if (!resource || resource === 'message') {
+        if (!operation || operation === 'send') {
+          return {
+            connectionId: 'nango:gmail',
+            toolName: 'gmail_send_email',
+            label: 'Gmail',
+            args: { to: trs(parameters.sendTo ?? parameters.to), subject: trs(parameters.subject), body: trs(parameters.message ?? parameters.body) },
+          }
+        }
+        if (operation === 'getAll' || operation === 'list') {
+          return { connectionId: 'nango:gmail', toolName: 'gmail_list_messages', label: 'Gmail', args: { q: trs((parameters.filters as { q?: unknown } | undefined)?.q ?? parameters.q) } }
+        }
+        if (operation === 'get') {
+          return { connectionId: 'nango:gmail', toolName: 'gmail_read_message', label: 'Gmail', args: { id: trs(parameters.messageId) } }
+        }
+      }
+      return { missing: `Gmail ${resource || 'message'}.${operation || 'send'}` }
+    }
+    case 'n8n-nodes-base.emailSend':
+      return {
+        connectionId: 'native:email',
+        toolName: 'send',
+        label: 'Email',
+        args: { to: trs(parameters.toEmail), subject: trs(parameters.subject), body: trs(parameters.html ?? parameters.text) },
+      }
+    case 'n8n-nodes-base.googleDrive': {
+      if (operation === 'list' || operation === 'search') {
+        return { connectionId: 'nango:google_drive', toolName: 'google_drive_list_files', label: 'Google Drive', args: { q: trs(parameters.queryString ?? parameters.query) } }
+      }
+      if (operation === 'download' || operation === 'get') {
+        return { connectionId: 'nango:google_drive', toolName: 'google_drive_read_file', label: 'Google Drive', args: { fileId: trs(locatorValue(parameters.fileId)) } }
+      }
+      // upload / update / share… — Drive is connected read-only today.
+      return { missing: `Google Drive ${operation || 'upload'} (the Drive integration is read-only — list/read files)` }
+    }
+    case 'n8n-nodes-base.googleSheets': {
+      const spreadsheetId = trs(locatorValue(parameters.documentId ?? parameters.sheetId))
+      const range = trs(locatorValue(parameters.range ?? parameters.sheetName))
+      if (!operation || operation === 'read' || operation === 'readRows' || operation === 'getAll' || operation === 'lookup') {
+        return { connectionId: 'nango:google_sheets', toolName: 'google_sheets_read_range', label: 'Google Sheets', args: { spreadsheetId, range } }
+      }
+      if (operation === 'append' || operation === 'appendOrUpdate') {
+        return { connectionId: 'nango:google_sheets', toolName: 'google_sheets_append_row', label: 'Google Sheets', args: { spreadsheetId, range, values: [] } }
+      }
+      if (operation === 'update') {
+        return { connectionId: 'nango:google_sheets', toolName: 'google_sheets_update_range', label: 'Google Sheets', args: { spreadsheetId, range, values: [] } }
+      }
+      return { missing: `Google Sheets ${operation}` }
+    }
+    case 'n8n-nodes-base.salesforce': {
+      if (operation === 'query' || operation === 'search') {
+        return { connectionId: 'nango:salesforce', toolName: 'salesforce_query', label: 'Salesforce', args: { soql: trs(parameters.query) } }
+      }
+      if (operation === 'create') {
+        return { connectionId: 'nango:salesforce', toolName: 'salesforce_create_record', label: 'Salesforce', args: { sobject: trs(parameters.resource ?? resource), fields: {} } }
+      }
+      if (operation === 'update') {
+        return {
+          connectionId: 'nango:salesforce',
+          toolName: 'salesforce_update_record',
+          label: 'Salesforce',
+          args: { sobject: trs(parameters.resource ?? resource), id: trs(locatorValue(parameters.recordId)), fields: {} },
+        }
+      }
+      if (operation === 'get') {
+        return {
+          connectionId: 'nango:salesforce',
+          toolName: 'salesforce_get_record',
+          label: 'Salesforce',
+          args: { sobject: trs(parameters.resource ?? resource), id: trs(locatorValue(parameters.recordId)) },
+        }
+      }
+      return { missing: `Salesforce ${operation}` }
+    }
+    case 'n8n-nodes-base.snowflake':
+      return { missing: 'Snowflake (no Snowflake integration exists yet)' }
+    default:
+      return null
+  }
+}
+
+/**
+ * Map a raw HTTP node aimed at a known provider API onto a platform
+ * integration tool — a Slack conversations.history call becomes the Slack
+ * integration's read-messages tool instead of a hand-authed HTTP request.
+ * `url` and `body` arrive TRANSLATED (flow tokens, not n8n expressions).
+ */
+function httpIntegrationBindingFor(
+  method: string,
+  url: string,
+  body: string | undefined,
+  warn: (msg: string) => void,
+  nodeName: string,
+): Extract<IntegrationBinding, { connectionId: string }> | null {
+  const slack = url.match(/^https:\/\/slack\.com\/api\/([a-zA-Z.]+)(\?([^#]*))?/)
+  if (!slack) return null
+  const endpoint = slack[1]
+  const query = new Map(
+    (slack[3] ?? '')
+      .split('&')
+      .filter(Boolean)
+      .map((pair) => {
+        const eq = pair.indexOf('=')
+        return eq === -1 ? [pair, ''] : ([pair.slice(0, eq), pair.slice(eq + 1)] as [string, string])
+      }),
+  )
+  const decoded = (key: string) => {
+    const raw = query.get(key)
+    if (raw === undefined) return undefined
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return raw
+    }
+  }
+  if (endpoint === 'conversations.history') {
+    const dropped = ['oldest', 'latest', 'inclusive', 'cursor'].filter((key) => query.has(key))
+    if (dropped.length) {
+      warn(
+        `“${nodeName}”: bound to the Slack integration's read-messages tool — it reads the newest messages only, so the ${dropped.join('/')} parameter(s) were dropped (add a time-window option to slack_read_messages to keep them).`,
+      )
+    }
+    return {
+      connectionId: 'nango:slack',
+      toolName: 'slack_read_messages',
+      label: 'Slack',
+      args: { channel: decoded('channel') ?? '', limit: Number(decoded('limit') ?? 30) || 30 },
+    }
+  }
+  if (endpoint === 'conversations.list') {
+    return { connectionId: 'nango:slack', toolName: 'slack_list_channels', label: 'Slack', args: {} }
+  }
+  if (endpoint === 'chat.postMessage' && method.toUpperCase() === 'POST') {
+    try {
+      const parsed = JSON.parse(body ?? '') as { channel?: unknown; text?: unknown }
+      if (typeof parsed.channel === 'string' && typeof parsed.text === 'string') {
+        return { connectionId: 'nango:slack', toolName: 'slack_post_message', label: 'Slack', args: { channel: parsed.channel, text: parsed.text } }
+      }
+    } catch {
+      /* body isn't simple JSON — keep the HTTP step */
+    }
+  }
+  return null
+}
+
 const OPERATION_TO_OP: Record<string, ConditionOp> = {
   equals: 'eq',
   notEquals: 'neq',
@@ -447,6 +646,27 @@ function mapNode(
             .filter((p) => typeof p.name === 'string' && p.name)
             .map((p) => [String(p.name), tr(String(p.value ?? ''))])),
         )
+      const method = typeof parameters.method === 'string' ? parameters.method : 'GET'
+      const url = tr(String(parameters.url ?? ''))
+      const body = sendBody && typeof parameters.jsonBody === 'string' ? tr(parameters.jsonBody) : undefined
+      // A raw call to a known provider API binds to the platform's OWN
+      // integration tool instead — connection-managed auth beats a hand-pasted
+      // header, and the step gets the provider's identity on the canvas.
+      const bound = httpIntegrationBindingFor(method, url, body, warn, name)
+      if (bound) {
+        warn(`“${name}”: bound to the platform's ${bound.label} integration (${bound.toolName}) — its n8n credential is replaced by your connected ${bound.label} account.`)
+        return {
+          id,
+          type: 'tool',
+          data: {
+            label,
+            connectionId: bound.connectionId,
+            toolName: bound.toolName,
+            args: JSON.stringify(bound.args),
+            note: `Imported from an n8n HTTP call to ${url.split('?')[0]}; now runs through the connected ${bound.label} integration.`,
+          },
+        } as FlowNode
+      }
       const query = parameters.sendQuery === true ? pairs(parameters.queryParameters) : {}
       const headers = parameters.sendHeaders === true ? pairs(parameters.headerParameters) : {}
       if (parameters.authentication || node.credentials) {
@@ -457,11 +677,11 @@ function mapNode(
         type: 'http',
         data: {
           label,
-          method: typeof parameters.method === 'string' ? parameters.method : 'GET',
-          url: tr(String(parameters.url ?? '')),
+          method,
+          url,
           ...(Object.keys(query).length ? { query: JSON.stringify(query) } : {}),
           ...(Object.keys(headers).length ? { headers: JSON.stringify(headers) } : {}),
-          ...(sendBody && typeof parameters.jsonBody === 'string' ? { bodyMode: 'json', body: tr(parameters.jsonBody) } : {}),
+          ...(body !== undefined ? { bodyMode: 'json', body } : {}),
         },
       } as FlowNode
     }
@@ -798,22 +1018,76 @@ ${body}`,
       // invokes), not an LLM — it must win over the generic LangChain check.
       if (type.endsWith('.mcpClient')) {
         const toolName = String((parameters.tool as { value?: unknown })?.value ?? 'mcp-tool')
-        warn(`“${name}”: imported as a Tool step calling “${toolName}” — open it and pick your MCP connection.`)
+        const endpoint = String(parameters.endpointUrl ?? '')
+        // The platform's OWN MCP plane (Backstory / People.ai Sales AI) needs
+        // no per-org connection pick — bind it outright.
+        const isBackstory = /(^|\.)(people\.ai|backstory\.ai)\//.test(`${endpoint}/`) || /mcp\.(people|backstory)\./.test(endpoint)
+        if (isBackstory) {
+          warn(`“${name}”: bound to the platform's Backstory (Sales AI) tools — calls “${toolName}” natively.`)
+        } else {
+          warn(`“${name}”: imported as a Tool step calling “${toolName}” — open it and pick your MCP connection.`)
+        }
         return {
           id,
           type: 'tool',
           data: {
             label,
-            connectionId: '',
+            connectionId: isBackstory ? 'people_ai:backstory' : '',
             toolName,
             args: JSON.stringify((parameters.parameters as { value?: unknown })?.value ?? {}),
-            note: `Imported from n8n MCP client (endpoint ${String(parameters.endpointUrl ?? 'unknown')}). Pick the matching MCP connection.`,
+            note: isBackstory
+              ? `Imported from n8n MCP client (${endpoint}); runs on the platform's own Sales AI tools.`
+              : `Imported from n8n MCP client (endpoint ${endpoint || 'unknown'}). Pick the matching MCP connection.`,
           },
         } as FlowNode
       }
       if (isLlmType(type)) {
         warn(`“${name}”: imported as a native AI step running on Backstory models — review its instructions.`)
         return { id, type: 'ai', data: { label, aiOp: 'ask', instructions: llmInstructions(parameters, tr) } } as FlowNode
+      }
+      // Known app node → prefer the platform's OWN integration capability over
+      // an unbound stub: the step arrives bound and runnable.
+      const binding = integrationBindingFor(type, parameters, tr)
+      if (binding && 'connectionId' in binding) {
+        warn(`“${name}”: bound to the platform's ${binding.label} integration (${binding.toolName}) — confirm the ${binding.label} connection under Integrations.`)
+        return {
+          id,
+          type: 'tool',
+          data: {
+            label,
+            connectionId: binding.connectionId,
+            toolName: binding.toolName,
+            args: JSON.stringify(binding.args),
+            note: `Imported from n8n (${type}); runs through the connected ${binding.label} integration.`,
+          },
+        } as FlowNode
+      }
+      if (binding && 'missing' in binding) {
+        const app = type.split('.').pop() ?? type
+        const operation = typeof parameters.operation === 'string' && parameters.operation ? `.${parameters.operation}` : ''
+        warn(
+          `“${name}”: the platform has no integration capability for ${binding.missing} yet — imported as an unbound Tool step; add that capability (or pick an MCP connection) to run it natively.`,
+        )
+        return {
+          id,
+          type: 'tool',
+          data: {
+            label,
+            connectionId: '',
+            toolName: `${app}${operation}`,
+            args: JSON.stringify(
+              Object.fromEntries(
+                Object.entries(parameters)
+                  .filter(([key]) => key !== 'options' && key !== 'authentication' && key !== 'genericAuthType')
+                  .map(([key, value]) => [
+                    key,
+                    typeof value === 'string' ? tr(value.startsWith('=') || !value.includes('{{') ? value : `=${value}`) : value,
+                  ]),
+              ),
+            ),
+            note: `Imported from n8n (${type}). The platform doesn't cover ${binding.missing} yet — the original parameters are in Args.`,
+          },
+        } as FlowNode
       }
       // App/action node (talks to an external service — n8n stores its
       // credential binding on the node): import as an UNBOUND Tool step so the
@@ -1077,6 +1351,10 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   // can't live in the created agent's static instructions — flow tokens don't
   // resolve there. It rides on the agent STEP's input instead.
   const dynamicSystemByAgent = new Map<string, string>()
+  // n8n memory sub-nodes (Postgres/Redis/Mongo/Xata chat memory, buffer
+  // window) become the agent STEP's memory config — same n8n shape: the step
+  // remembers its past runs per session key.
+  const memoryByAgent = new Map<string, { store: 'postgres' | 'redis' | 'mongodb' | 'xata'; sessionKey?: string; window?: number }>()
   for (const [index, node] of sourceNodes.entries()) {
     if (node.type !== AGENT_NODE_TYPE || node === firstTrigger || !node.name) continue
     const subs = subsByTarget.get(node.name) ?? []
@@ -1125,7 +1403,19 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     const parserFields = parserSub ? fieldsFromOutputParser(parserSub.node.parameters ?? {}) : []
     if (parserFields.length) agentOutputFields.set(name, parserFields)
     if (memorySub) {
-      warn(`Agent “${name}”: its n8n conversation memory (${memorySub.node.type}) doesn't transfer — Backstory agents keep their own durable memory instead.`)
+      const memoryType = memorySub.node.type ?? ''
+      const store = /postgres/i.test(memoryType) ? 'postgres' : /redis/i.test(memoryType) ? 'redis' : /mongo/i.test(memoryType) ? 'mongodb' : /xata/i.test(memoryType) ? 'xata' : 'postgres'
+      const memoryParams = memorySub.node.parameters ?? {}
+      const sessionKey = typeof memoryParams.sessionKey === 'string' && memoryParams.sessionKey.trim() ? tr(memoryParams.sessionKey) : undefined
+      const windowRaw = Number(memoryParams.contextWindowLength ?? NaN)
+      memoryByAgent.set(name, {
+        store: store as 'postgres',
+        ...(sessionKey ? { sessionKey } : {}),
+        ...(Number.isFinite(windowRaw) && windowRaw >= 1 ? { window: Math.min(20, Math.floor(windowRaw)) } : {}),
+      })
+      warn(
+        `Agent “${name}”: its n8n conversation memory (${memoryType}) imported as step memory — the step remembers past runs${store !== 'postgres' ? ` (the ${store} store persists in Backstory's own Postgres today)` : ''}.`,
+      )
     }
     const systemMessage = tr(String((node.parameters?.options as { systemMessage?: unknown } | undefined)?.systemMessage ?? '')).trim()
     const dynamicSystem = /\{\{/.test(systemMessage)
@@ -1216,6 +1506,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       const outputFields = agentOutputFields.get(node.name)
       const baseInput = typeof text === 'string' && text.trim() ? trFor(node.name)(text) : `{{${jsonBaseFor(node.name)}}}`
       const dynamicSystem = dynamicSystemByAgent.get(node.name)
+      const stepMemory = memoryByAgent.get(node.name)
       mapped = {
         id,
         type: 'agent',
@@ -1223,6 +1514,10 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           agentId: spec.placeholderId,
           label: node.name,
           input: dynamicSystem ? `${dynamicSystem}\n\n${baseInput}` : baseInput,
+          // The n8n sub-node attachments live on the STEP too (model + memory)
+          // so the imported step mirrors the n8n agent-configuration node.
+          ...(spec.model ? { model: spec.model } : {}),
+          ...(stepMemory ? { memory: stepMemory } : {}),
           ...(outputFields?.length ? { responseFormat: 'structured' as const, outputFields } : {}),
         },
       } as FlowNode

@@ -1,16 +1,17 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, ChevronDown, FileText, Layers, Upload } from 'lucide-react'
+import { Workflow, Plus, FileText, Layers, Upload } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/ui/page-header'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { useFlowImport } from '@/components/flows/use-flow-import'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -20,8 +21,8 @@ import { cn } from '@/lib/utils'
 const PAGE_SIZE = 9
 
 /**
- * Templates offered on this page — in the "Start from a template" row and the
- * New-flow menu. The rest live in the gallery.
+ * Templates offered on this page's "Start from a template" row. The rest live
+ * in the gallery. The New-flow button itself always creates a blank draft.
  */
 const MENU_TEMPLATE_LIMIT = 6
 
@@ -62,7 +63,7 @@ export default function FlowsPage() {
   // Which template card is mid-instantiate, so only that card spins.
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null)
   const [folderFilter, setFolderFilter] = useState<string | null>(null)
-  const importInput = useRef<HTMLInputElement>(null)
+  const flowImport = useFlowImport()
 
   const folders = Array.from(new Set(flows.map((flow) => flow.folder?.trim() || ''))).filter(Boolean).sort()
   const visibleFlows = folderFilter === null ? flows : flows.filter((flow) => (flow.folder?.trim() || '') === folderFilter)
@@ -159,80 +160,12 @@ export default function FlowsPage() {
       setPendingTemplateId(null)
     }
   }
-  const finishImport = (response: Response, data: { flow?: { id?: string }; warnings?: string[]; source?: string; error?: string }) => {
-    if (!response.ok || !data.flow?.id) {
-      toast.error(data.error || 'That is not a valid Backstory flow package or n8n workflow.')
-      return
-    }
-    const warnings = Array.isArray(data.warnings) ? data.warnings : []
-    if (data.source === 'n8n') {
-      toast.success(
-        warnings.length > 0
-          ? `Imported from n8n as a draft — ${warnings.length} step${warnings.length === 1 ? '' : 's'} need${warnings.length === 1 ? 's' : ''} attention (see the notes on the canvas).`
-          : 'Imported from n8n as a draft, ready to run.',
-        { duration: 8000 },
-      )
-    } else {
-      toast.success('Flow imported as a draft.')
-    }
-    router.push(`/flows/${data.flow.id}`)
-  }
-
-  const importFlow = async (file: File) => {
-    if (file.size > 5_000_000) return toast.error('Flow packages must be under 5 MB.')
-    try {
-      const payload = JSON.parse(await file.text())
-      const response = await fetch('/api/flows/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      const data = await response.json().catch(() => ({}))
-      finishImport(response, data)
-    } catch { toast.error('Could not read that JSON file.') }
-  }
-
-  // URL import (n8n parity): paste an n8n.io template page URL or any link to
-  // raw workflow JSON — the server fetches it (browser CORS can't) and
-  // converts it the same way as a file import.
-  const importFromUrl = async () => {
-    const url = window.prompt('Paste an n8n.io template URL, or a link to a workflow/flow JSON file:')?.trim()
-    if (!url) return
-    try {
-      const response = await fetch('/api/flows/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
-      const data = await response.json().catch(() => ({}))
-      finishImport(response, data)
-    } catch { toast.error('Could not import from that URL.') }
-  }
+  // New flow goes straight to a blank draft — templates live in the
+  // "Start from a template" strip below and the gallery, not behind this button.
   const newFlowButton = (
-    <div className="flex">
-      <Button onClick={() => createFlow()} loading={creating} className="rounded-r-none">
-        <Plus className="mr-1.5 h-4 w-4" /> New flow
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="default" className="rounded-l-none border-l border-white/20 px-2" aria-label="Start from a template" disabled={creating}>
-            <ChevronDown className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-72">
-          <DropdownMenuItem onSelect={() => createFlow()}>
-            <Plus className="h-4 w-4" /> Blank flow
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>Start from a template</DropdownMenuLabel>
-          {flowTemplates.map((template) => (
-            <DropdownMenuItem key={template.id} onSelect={() => createFromTemplate(template)} className="flex-col items-start gap-0.5">
-              <span className="flex items-center gap-1.5 font-medium"><FileText className="h-3.5 w-3.5" /> {template.name}</span>
-              <span className="pl-5 text-xs text-muted-foreground">{template.description}</span>
-              <span className="pl-5 text-[11px] text-muted-foreground/80">
-                {template.stepCount} steps · {template.setupCount === 0 ? 'ready to run' : `${template.setupCount} to set up`}
-              </span>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem asChild>
-            <Link href="/agents?view=templates">Browse all flow templates…</Link>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+    <Button onClick={() => createFlow()} loading={creating}>
+      <Plus className="mr-1.5 h-4 w-4" /> New flow
+    </Button>
   )
 
   const { pageItems, pageCount, page: current } = paginate(visibleFlows, page, PAGE_SIZE)
@@ -247,11 +180,11 @@ export default function FlowsPage() {
               <Button variant="outline"><Upload className="mr-1.5 h-4 w-4" /> Import</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => importInput.current?.click()}>From a JSON file (Backstory or n8n)</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void importFromUrl()}>From a URL (n8n.io template or raw JSON)</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => flowImport.pickFile()}>From a JSON file (Backstory or n8n)</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>From a URL (n8n.io template or raw JSON)</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <input ref={importInput} className="hidden" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void importFlow(file) }} />
+          {flowImport.fileInput}
           {newFlowButton}
         </div>
       </div>

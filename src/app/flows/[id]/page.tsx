@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Trash2, FlaskConical, History, ScrollText, Users, FileText, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, FlaskConical, History, ScrollText, Users, FileText, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
@@ -22,6 +22,7 @@ import { useHuddleCapture } from '@/lib/flows/use-huddle-capture'
 import { CursorLayer } from '@/components/flows/cursor-layer'
 import { flowToN8n } from '@/lib/flows/export/to-n8n'
 import { flowToInstructions } from '@/lib/flows/export/to-instructions'
+import { useFlowImport } from '@/components/flows/use-flow-import'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
@@ -220,6 +221,9 @@ function FlowBuilder() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const searchParams = useSearchParams()
+  // Importing always creates a NEW draft flow and navigates there — it never
+  // touches the flow that is open in this builder.
+  const flowImport = useFlowImport()
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -2048,6 +2052,14 @@ function FlowBuilder() {
             <DropdownMenuItem onSelect={exportInstructions}>
               <FileText className="h-4 w-4" /> As instructions (Markdown)
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Import</DropdownMenuLabel>
+            <DropdownMenuItem onSelect={() => flowImport.pickFile()}>
+              <Upload className="h-4 w-4" /> From a JSON file (Backstory or n8n)
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>
+              <Upload className="h-4 w-4" /> From a URL (n8n.io template or raw JSON)
+            </DropdownMenuItem>
             {canEdit && !external && (
               <>
                 <DropdownMenuSeparator />
@@ -2077,6 +2089,7 @@ function FlowBuilder() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        {flowImport.fileInput}
         {/* Builder view: the inline chain, or the free-form DAG canvas. */}
         <div className="flex items-center rounded-lg border border-border p-0.5" role="tablist" aria-label="Builder view">
           {(['inline', 'canvas'] as const).map((option) => (

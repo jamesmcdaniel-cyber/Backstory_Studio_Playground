@@ -1,11 +1,14 @@
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import type { AuthContext } from '@/lib/server/auth'
 import { nativeFlowPackageSchema } from '@/lib/flows/native-package'
-import { flowGraphSchema } from '@/lib/flows/graph'
-import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload } from '@/lib/flows/import/from-n8n'
+import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
+import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { serializeFlow } from '@/lib/flows/serialize'
+import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
+import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 
 const URL_IMPORT_MAX_BYTES = 5_000_000
 
@@ -39,6 +42,84 @@ async function fetchImportUrl(raw: string): Promise<unknown> {
   }
 }
 
+/** Loose match: same host is a match; an exact URL match wins over it. */
+function matchesMcpEndpoint(serverUrl: string, endpoint: string): 'exact' | 'host' | null {
+  try {
+    const a = new URL(serverUrl)
+    const b = new URL(endpoint)
+    if (a.host !== b.host) return null
+    return a.pathname.replace(/\/$/, '') === b.pathname.replace(/\/$/, '') ? 'exact' : 'host'
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Create a real agent per imported n8n AI Agent cluster and swap its id into
+ * the graph's agent steps. MCP tool sub-nodes bind to the org connection whose
+ * server URL matches the n8n endpoint; app tools bind by integration key.
+ */
+async function materializeImportedAgents(
+  specs: N8nAgentSpec[],
+  graph: FlowGraph,
+  auth: AuthContext,
+  warnings: string[],
+): Promise<FlowGraph> {
+  if (specs.length === 0) return graph
+  const connections = await prisma.mcpConnection.findMany({
+    where: { organizationId: auth.organizationId, isActive: true },
+    select: { id: true, name: true, serverUrl: true },
+  })
+  const idByPlaceholder = new Map<string, string>()
+  for (const spec of specs) {
+    const integrations = [...spec.integrations]
+    for (const endpoint of spec.mcpEndpoints) {
+      const exact = connections.find((c) => matchesMcpEndpoint(c.serverUrl, endpoint) === 'exact')
+      const match = exact ?? connections.find((c) => matchesMcpEndpoint(c.serverUrl, endpoint) !== null)
+      if (match) {
+        integrations.push(match.name)
+      } else {
+        warnings.push(
+          `Agent “${spec.name}”: no connected MCP server matches ${endpoint} — add it under Connections, then attach it to the agent.`,
+        )
+      }
+    }
+    const agent = await prisma.agentTask.create({
+      data: {
+        type: 'agent',
+        agentType: 'CUSTOM',
+        priority: 'MEDIUM',
+        description: `Imported from n8n${spec.model ? ` (originally ran on ${spec.model})` : ''}.`,
+        objective: spec.instructions,
+        context: {},
+        schedule: { type: 'manual', timezone: 'UTC', isActive: false },
+        status: 'ACTIVE',
+        visibility: 'shared',
+        organizationId: auth.organizationId,
+        userId: auth.dbUser.id,
+        metadata: {
+          title: spec.name,
+          description: `Imported from n8n${spec.model ? ` (originally ran on ${spec.model})` : ''}.`,
+          model: DEFAULT_AGENT_MODEL,
+          integrations,
+          skills: [],
+          icon: '',
+        },
+      },
+    })
+    await syncAgentConnectors(agent.id, auth.organizationId, integrations)
+    idByPlaceholder.set(spec.placeholderId, agent.id)
+  }
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.type === 'agent' && idByPlaceholder.has(node.data.agentId)
+        ? { ...node, data: { ...node.data, agentId: idByPlaceholder.get(node.data.agentId)! } }
+        : node,
+    ),
+  }
+}
+
 // POST /api/flows/import — accepts, in one endpoint:
 //   { url }                    → fetch (SSRF-guarded) then treat as below
 //   an n8n workflow export     → converted via n8nToFlow (warnings returned)
@@ -53,7 +134,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   if (looksLikeN8nWorkflow(payload)) {
     const converted = n8nToFlow(payload)
-    const graph = flowGraphSchema.parse(converted.graph)
+    const warnings = [...converted.warnings]
+    const graph = await materializeImportedAgents(converted.agents, flowGraphSchema.parse(converted.graph), auth, warnings)
     const flow = await prisma.flow.create({
       data: {
         organizationId: auth.organizationId,
@@ -64,7 +146,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         trigger: JSON.parse(JSON.stringify(triggerFromGraph(graph))),
       },
     })
-    return { success: true, flow: serializeFlow(flow), warnings: converted.warnings, source: 'n8n' }
+    return { success: true, flow: serializeFlow(flow), warnings, source: 'n8n' }
   }
 
   const parsed = nativeFlowPackageSchema.safeParse(payload)

@@ -1,12 +1,15 @@
-import type { FlowGraph, FlowNode, ConditionOp } from '@/lib/flows/graph'
+import type { FlowGraph, FlowNode, ConditionOp, OutputField } from '@/lib/flows/graph'
 
 /**
  * Import an n8n workflow JSON (Workflows → Download) as a Backstory flow —
  * the reverse of export/to-n8n.ts. Structural nodes (trigger, HTTP, IF,
  * Switch, Filter, Set, Code, Merge, Wait) convert to native steps and run
- * immediately; LLM nodes become native `ai` steps (they run on our models);
- * app nodes with no native equivalent import as canvas notes carrying the
- * original name/type/parameters so the user swaps in a tool/HTTP step.
+ * immediately; LLM chains become native `ai` steps shaped by op (extract /
+ * categorize / summarize / ask — they run on our models); an n8n AI Agent
+ * with tool or memory sub-nodes becomes a real Agent step, and the returned
+ * `agents` specs carry its instructions, model and tool bindings so the
+ * import route can create the actual agent; app nodes with no native
+ * equivalent import as unbound Tool steps or runnable passthrough stubs.
  *
  * n8n connections are keyed by node NAME; node ids are kept as-is. n8n loops
  * (Loop Over Items) are back-edges — our graph is a DAG, so any connection
@@ -26,13 +29,39 @@ type N8nNodeIn = {
   credentials?: Record<string, unknown>
 }
 
+/** One node's outgoing ports: `main` plus AI cluster types (ai_tool, ai_languageModel, …). */
+type N8nConnectionPorts = { main?: Array<Array<{ node?: string; index?: number }>> } & Record<
+  string,
+  Array<Array<{ node?: string; index?: number }>> | undefined
+>
+
 type N8nWorkflowIn = {
   name?: string
   nodes?: N8nNodeIn[]
-  connections?: Record<string, { main?: Array<Array<{ node?: string; index?: number }>> }>
+  connections?: Record<string, N8nConnectionPorts>
 }
 
-export type N8nImportResult = { name: string; graph: FlowGraph; warnings: string[] }
+/**
+ * Everything the import route needs to CREATE a real agent for an imported
+ * n8n AI Agent cluster. The graph's agent step carries `placeholderId` as its
+ * agentId; the route swaps in the created agent's real id.
+ */
+export type N8nAgentSpec = {
+  placeholderId: string
+  name: string
+  /** Composed objective: the n8n system message plus a tool inventory brief. */
+  instructions: string
+  /** The n8n model id (informational — the created agent runs on our models). */
+  model?: string
+  /** Integration keys guessed from app-tool sub-nodes (gmail, slack, …). */
+  integrations: string[]
+  /** MCP server URLs from mcpClientTool sub-nodes — matched to org connections by the route. */
+  mcpEndpoints: string[]
+  tools: Array<{ name: string; kind: 'mcp' | 'integration' | 'http' | 'code' | 'subworkflow' | 'utility'; description: string }>
+  hasMemory: boolean
+}
+
+export type N8nImportResult = { name: string; graph: FlowGraph; warnings: string[]; agents: N8nAgentSpec[] }
 
 /** n8n export shape: a nodes array where entries carry an n8n-style `type`. */
 export function looksLikeN8nWorkflow(json: unknown): boolean {
@@ -189,10 +218,89 @@ const TRIGGER_TYPES: Record<string, 'manual' | 'webhook' | 'schedule'> = {
   'n8n-nodes-base.webhook': 'webhook',
   'n8n-nodes-base.scheduleTrigger': 'schedule',
   'n8n-nodes-base.cron': 'schedule',
+  // A chat trigger is a webhook wearing a chat UI: callers POST { chatInput }.
+  '@n8n/n8n-nodes-langchain.chatTrigger': 'webhook',
+  // A form trigger is a webhook fed by the submitted fields.
+  'n8n-nodes-base.formTrigger': 'webhook',
+  // "When executed by another workflow" — a subflow entry point; runs on demand.
+  'n8n-nodes-base.executeWorkflowTrigger': 'manual',
 }
+
+/**
+ * Any *Trigger node not declared above (whatsAppTrigger, telegramTrigger,
+ * gmailTrigger, errorTrigger, …) is a provider event source — the closest
+ * native shape is a webhook trigger the provider's automation posts to.
+ */
+function n8nTriggerType(type: string | undefined): 'manual' | 'webhook' | 'schedule' | undefined {
+  if (!type) return undefined
+  return TRIGGER_TYPES[type] ?? (/Trigger$/.test(type) ? 'webhook' : undefined)
+}
+
+/** The n8n AI Agent node — with tool/memory sub-nodes it imports as a real Agent step. */
+const AGENT_NODE_TYPE = '@n8n/n8n-nodes-langchain.agent'
+/** LangChain classifier chains: one main OUTPUT per category — needs a routing switch. */
+const CLASSIFIER_TYPES = new Set(['@n8n/n8n-nodes-langchain.textClassifier', '@n8n/n8n-nodes-langchain.sentimentAnalysis'])
 
 function isLlmType(type: string): boolean {
   return type.startsWith('@n8n/n8n-nodes-langchain.') || /openai|anthropic|chatmodel|\.ai\b/i.test(type)
+}
+
+/** n8n `model` parameter: a plain id or a resourceLocator { mode, value }. */
+function rawModelName(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (value && typeof value === 'object') {
+    const inner = (value as { value?: unknown }).value
+    if (typeof inner === 'string' && inner.trim()) return inner.trim()
+  }
+  return undefined
+}
+
+/** googleSheets → "google sheets" — the shape connector keys match on. */
+function deCamel(value: string): string {
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
+}
+
+function fieldTypeOf(value: unknown): OutputField['type'] {
+  if (typeof value === 'string') return 'string'
+  if (typeof value === 'number') return 'number'
+  if (typeof value === 'boolean') return 'boolean'
+  if (Array.isArray(value)) return 'array'
+  if (value && typeof value === 'object') return 'object'
+  return 'any'
+}
+
+/** Output fields from a structured-parser JSON example ({"state": "CA"} → state:string). */
+function fieldsFromJsonExample(example: unknown): OutputField[] {
+  if (typeof example !== 'string' || !example.trim()) return []
+  try {
+    const parsed = JSON.parse(example) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return []
+    return Object.entries(parsed as Record<string, unknown>).map(([name, value]) => ({ name, type: fieldTypeOf(value) }))
+  } catch {
+    return []
+  }
+}
+
+/** Output fields from a manual JSON Schema's top-level properties. */
+function fieldsFromJsonSchema(schema: unknown): OutputField[] {
+  if (typeof schema !== 'string' || !schema.trim()) return []
+  try {
+    const parsed = JSON.parse(schema) as { properties?: Record<string, { type?: unknown; description?: unknown }> }
+    if (!parsed?.properties || typeof parsed.properties !== 'object') return []
+    return Object.entries(parsed.properties).map(([name, def]) => ({
+      name,
+      type: (['string', 'number', 'boolean', 'object', 'array'] as const).includes(def?.type as 'string') ? (def.type as OutputField['type']) : 'any',
+      ...(typeof def?.description === 'string' && def.description ? { description: def.description } : {}),
+    }))
+  } catch {
+    return []
+  }
+}
+
+/** Output fields declared by an ai_outputParser sub-node (structured output parser). */
+function fieldsFromOutputParser(parameters: Record<string, unknown>): OutputField[] {
+  if (parameters.schemaType === 'manual') return fieldsFromJsonSchema(parameters.inputSchema)
+  return fieldsFromJsonExample(parameters.jsonSchemaExample)
 }
 
 /** Extract the most prompt-shaped string an LLM node carries. */
@@ -344,6 +452,73 @@ function mapNode(
     case 'n8n-nodes-base.splitInBatches':
       warn(`“${name}”: n8n loops (Loop Over Items) don’t import — rebuild it as a Backstory Loop step; its looping connection was dropped.`)
       return { id, type: 'note', data: { text: noteText(node) } } as FlowNode
+    case 'n8n-nodes-base.stopAndError': {
+      const reason =
+        parameters.errorType === 'errorObject'
+          ? String(parameters.errorObject ?? 'Stopped with an error (imported from n8n).')
+          : String(parameters.errorMessage ?? 'Stopped with an error (imported from n8n).')
+      return { id, type: 'stop', data: { label, reason: tr(reason) } } as FlowNode
+    }
+    case 'n8n-nodes-base.executeWorkflow': {
+      warn(`“${name}”: calls another n8n workflow — import that workflow as a flow too, then pick it on this Subflow step.`)
+      return { id, type: 'subflow', data: { flowId: '', input: `{{${jsonBase}}}` } } as FlowNode
+    }
+    // ——— LangChain chains → native ai steps shaped by op ———
+    case '@n8n/n8n-nodes-langchain.chainLlm': {
+      const messages = ((parameters.messages as { messageValues?: Array<{ message?: unknown }> })?.messageValues ?? [])
+        .map((m) => tr(String(m.message ?? '')).trim())
+        .filter(Boolean)
+        .join('\n\n')
+      const text = typeof parameters.text === 'string' && parameters.text.trim() ? tr(parameters.text) : `{{${jsonBase}}}`
+      return { id, type: 'ai', data: { label, aiOp: 'ask', input: text, ...(messages ? { instructions: messages } : {}) } } as FlowNode
+    }
+    case '@n8n/n8n-nodes-langchain.chainSummarization':
+      return { id, type: 'ai', data: { label, aiOp: 'summarize', input: `{{${jsonBase}}}` } } as FlowNode
+    case '@n8n/n8n-nodes-langchain.informationExtractor': {
+      const attributes = ((parameters.attributes as { attributes?: Array<{ name?: string; type?: string; description?: string }> })?.attributes ?? [])
+        .filter((a) => typeof a.name === 'string' && a.name)
+        .map((a) => ({
+          name: String(a.name),
+          // n8n attribute types are string/number/boolean/date — date has no
+          // slot in our field types, so it reads back as a string.
+          type: (['string', 'number', 'boolean'] as const).includes(a.type as 'string') ? (a.type as OutputField['type']) : 'string',
+          ...(a.description ? { description: a.description } : {}),
+        }))
+      const outputFields = attributes.length ? attributes : fieldsFromOutputParser(parameters)
+      const input = typeof parameters.text === 'string' && parameters.text.trim() ? tr(parameters.text) : `{{${jsonBase}}}`
+      return { id, type: 'ai', data: { label, aiOp: 'extract', input, ...(outputFields.length ? { outputFields } : {}) } } as FlowNode
+    }
+    case '@n8n/n8n-nodes-langchain.textClassifier': {
+      const categories = ((parameters.categories as { categories?: Array<{ category?: string; description?: string }> })?.categories ?? [])
+        .filter((c) => typeof c.category === 'string' && c.category)
+      const input = typeof parameters.inputText === 'string' && parameters.inputText.trim() ? tr(parameters.inputText) : `{{${jsonBase}}}`
+      const guidance = categories
+        .filter((c) => c.description)
+        .map((c) => `${c.category}: ${c.description}`)
+        .join('\n')
+      if ((parameters.options as { multiClass?: unknown })?.multiClass === true) {
+        warn(`“${name}”: n8n allowed multiple classes per item — the imported step picks exactly one category.`)
+      }
+      return {
+        id,
+        type: 'ai',
+        data: { label, aiOp: 'categorize', input, categories: categories.map((c) => String(c.category)), ...(guidance ? { instructions: guidance } : {}) },
+      } as FlowNode
+    }
+    case '@n8n/n8n-nodes-langchain.sentimentAnalysis': {
+      const raw = String((parameters.options as { categories?: unknown })?.categories ?? 'Positive, Neutral, Negative')
+      const categories = raw.split(',').map((c) => c.trim()).filter(Boolean)
+      const input = typeof parameters.inputText === 'string' && parameters.inputText.trim() ? tr(parameters.inputText) : `{{${jsonBase}}}`
+      return { id, type: 'ai', data: { label, aiOp: 'categorize', input, categories } } as FlowNode
+    }
+    // A model-only Agent (no tool/memory sub-nodes — those import as real
+    // Agent steps upstream of this switch) is just an LLM call.
+    case AGENT_NODE_TYPE: {
+      const systemMessage = String((parameters.options as { systemMessage?: unknown })?.systemMessage ?? '').trim()
+      const input = typeof parameters.text === 'string' && parameters.text.trim() ? tr(parameters.text) : `{{${jsonBase}}}`
+      warn(`“${name}”: an AI Agent with no tools imported as a native AI step running on Backstory models — review its instructions.`)
+      return { id, type: 'ai', data: { label, aiOp: 'ask', input, ...(systemMessage ? { instructions: tr(systemMessage) } : {}) } } as FlowNode
+    }
     // Pure data utilities → native data ops (config differs, so each warns to
     // review its settings; `input` reads the upstream so the op has data).
     case 'n8n-nodes-base.sort':
@@ -460,7 +635,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   // Name → id map for connections and expression translation. The FIRST
   // trigger-typed node must get the literal id "trigger" — flow validation
   // requires exactly that id — so reserve it up front.
-  const firstTrigger = sourceNodes.find((node) => TRIGGER_TYPES[node.type ?? ''])
+  const firstTrigger = sourceNodes.find((node) => n8nTriggerType(node.type))
   const usedIds = new Set<string>(['trigger'])
   const idByName = new Map<string, string>()
   for (const [index, node] of sourceNodes.entries()) {
@@ -486,6 +661,28 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     if (types.length > 0 && types.every((t) => t !== 'main')) subNodeNames.add(sourceName)
   }
 
+  // Who consumes each sub-node, and over which port (ai_tool, ai_languageModel,
+  // ai_memory, ai_outputParser) — the raw material for agent-cluster specs.
+  const nodeByName = new Map(sourceNodes.filter((n) => n.name).map((n) => [n.name as string, n]))
+  const subsByTarget = new Map<string, Array<{ node: N8nNodeIn; connType: string }>>()
+  const subTargetOf = new Map<string, string>()
+  for (const [sourceName, conn] of Object.entries(workflow.connections ?? {})) {
+    for (const [connType, outputs] of Object.entries(conn ?? {})) {
+      if (connType === 'main') continue
+      const sub = nodeByName.get(sourceName)
+      if (!sub) continue
+      for (const targets of outputs ?? []) {
+        for (const target of targets ?? []) {
+          if (!target?.node) continue
+          const list = subsByTarget.get(target.node) ?? []
+          list.push({ node: sub, connType })
+          subsByTarget.set(target.node, list)
+          if (!subTargetOf.has(sourceName)) subTargetOf.set(sourceName, target.node)
+        }
+      }
+    }
+  }
+
   // What `$json` means per node: the direct upstream on the MAIN chain.
   const parentByName = new Map<string, string>()
   for (const [sourceName, conn] of Object.entries(workflow.connections ?? {})) {
@@ -495,7 +692,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       }
     }
   }
-  const triggerNames = new Set(sourceNodes.filter((n) => TRIGGER_TYPES[n.type ?? '']).map((n) => n.name ?? ''))
+  const triggerNames = new Set(sourceNodes.filter((n) => n8nTriggerType(n.type)).map((n) => n.name ?? ''))
   const jsonBaseFor = (nodeName: string | undefined): string => {
     const parent = nodeName ? parentByName.get(nodeName) : undefined
     if (!parent || triggerNames.has(parent)) return 'trigger.input'
@@ -511,17 +708,95 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       warn(`“${key}”: an n8n JS expression ({{ ${expr.slice(0, 60)} }}) was kept as-is — our templates can't evaluate JavaScript; compute it in a Code step instead.`)
     })
 
+  // An n8n AI Agent WITH tool or memory sub-nodes is a real agent, not a bare
+  // LLM call — build the spec the import route uses to create it. Model-only
+  // agents skip this and import as plain ai steps (cheaper, same behavior).
+  const agentClusters = new Map<string, N8nAgentSpec>()
+  const agentOutputFields = new Map<string, OutputField[]>()
+  for (const [index, node] of sourceNodes.entries()) {
+    if (node.type !== AGENT_NODE_TYPE || node === firstTrigger || !node.name) continue
+    const subs = subsByTarget.get(node.name) ?? []
+    const toolSubs = subs.filter((s) => s.connType === 'ai_tool')
+    const memorySub = subs.find((s) => s.connType === 'ai_memory')
+    if (toolSubs.length === 0 && !memorySub) continue
+    const tr = trFor(node.name)
+    const name = node.name
+    const integrations: string[] = []
+    const mcpEndpoints: string[] = []
+    const tools: N8nAgentSpec['tools'] = []
+    for (const { node: sub } of toolSubs) {
+      const subType = sub.type ?? ''
+      const subName = sub.name ?? subType
+      const p = sub.parameters ?? {}
+      const described = typeof p.toolDescription === 'string' && p.toolDescription.trim() ? p.toolDescription.trim() : ''
+      if (subType.endsWith('.mcpClientTool')) {
+        const endpoint = String(p.endpointUrl ?? p.sseEndpoint ?? '').trim()
+        if (endpoint) mcpEndpoints.push(endpoint)
+        const included = Array.isArray(p.includeTools) && p.includeTools.length ? ` (tools: ${(p.includeTools as unknown[]).join(', ')})` : ''
+        tools.push({ name: subName, kind: 'mcp', description: `${described || `MCP server${endpoint ? ` at ${endpoint}` : ''}`}${included}` })
+      } else if (subType.endsWith('.toolWorkflow')) {
+        tools.push({ name: subName, kind: 'subworkflow', description: described || 'calls another n8n workflow' })
+        warn(`Agent “${name}”: its tool “${subName}” calls another n8n workflow — import that workflow as a flow, then grant it to the agent (Agent → Flows).`)
+      } else if (subType.endsWith('.toolHttpRequest')) {
+        tools.push({ name: subName, kind: 'http', description: described || `HTTP ${String(p.method ?? 'GET')} ${String(p.url ?? '')}`.trim() })
+      } else if (subType.endsWith('.toolCode')) {
+        tools.push({ name: subName, kind: 'code', description: described || 'custom code tool' })
+      } else if (/Tool$/.test(subType) && !subType.startsWith('@n8n/n8n-nodes-langchain.tool')) {
+        // App node exposed as a tool (gmailTool, slackTool, googleSheetsTool…)
+        // — the strongest integration signal an n8n export carries.
+        const app = deCamel((subType.split('.').pop() ?? '').replace(/Tool$/, ''))
+        integrations.push(app)
+        const operation = typeof p.operation === 'string' && p.operation ? ` — ${p.operation}` : ''
+        tools.push({ name: subName, kind: 'integration', description: described || `${app}${operation}` })
+      } else {
+        tools.push({ name: subName, kind: 'utility', description: described || deCamel((subType.split('.').pop() ?? subType).replace(/^tool/, '')) })
+      }
+    }
+    const modelSub = subs.find((s) => s.connType === 'ai_languageModel')
+    const model = modelSub ? rawModelName(modelSub.node.parameters?.model) : undefined
+    const parserSub = subs.find((s) => s.connType === 'ai_outputParser')
+    const parserFields = parserSub ? fieldsFromOutputParser(parserSub.node.parameters ?? {}) : []
+    if (parserFields.length) agentOutputFields.set(name, parserFields)
+    if (memorySub) {
+      warn(`Agent “${name}”: its n8n conversation memory (${memorySub.node.type}) doesn't transfer — Backstory agents keep their own durable memory instead.`)
+    }
+    const systemMessage = tr(String((node.parameters?.options as { systemMessage?: unknown } | undefined)?.systemMessage ?? '')).trim()
+    const toolLines = tools.map((t) => `- ${t.name}: ${t.description}`)
+    const instructions = [
+      systemMessage || `You are “${name}”, an agent imported from an n8n workflow. Complete the task given in the input.`,
+      toolLines.length ? `Use your connected tools to do the work:\n${toolLines.join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    agentClusters.set(name, {
+      placeholderId: `n8n-agent-pending:${idOf(node, index)}`,
+      name,
+      instructions,
+      ...(model ? { model } : {}),
+      integrations: Array.from(new Set(integrations)),
+      mcpEndpoints: Array.from(new Set(mcpEndpoints)),
+      tools,
+      hasMemory: Boolean(memorySub),
+    })
+  }
+
   // First recognized trigger becomes THE trigger; extra triggers become notes.
   const nodes: FlowNode[] = []
+  const routersByName = new Map<string, { aiId: string; switchId: string; cases: Array<{ id: string }> }>()
   let triggerId: string | null = null
   for (const [index, node] of sourceNodes.entries()) {
     const id = idOf(node, index)
     if (node.name && subNodeNames.has(node.name)) {
-      warn(`“${node.name}” (${node.type}) configures the agent it points at (model/tool provider) — absorbed; the imported AI step runs on Backstory models and tools.`)
+      const target = subTargetOf.get(node.name)
+      if (target && agentClusters.has(target)) {
+        warn(`“${node.name}” (${node.type}) was folded into the imported agent “${target}” — its model/tool binding lives on that agent now.`)
+      } else {
+        warn(`“${node.name}” (${node.type}) configures the step it points at (model/tool provider) — absorbed; the imported AI step runs on Backstory models and tools.`)
+      }
       continue
     }
     const position = Array.isArray(node.position) ? { x: Number(node.position[0]) || 0, y: Number(node.position[1]) || 0 } : undefined
-    const triggerType = TRIGGER_TYPES[node.type ?? '']
+    const triggerType = n8nTriggerType(node.type)
     let mapped: FlowNode | null
     if (triggerType && !triggerId) {
       triggerId = id
@@ -536,8 +811,17 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         },
       } as FlowNode
       if (triggerType === 'schedule') warn(`“${node.name ?? 'Trigger'}”: schedule imported PAUSED — review the cadence, then activate it.`)
+      if (node.type === '@n8n/n8n-nodes-langchain.chatTrigger') {
+        warn(`“${node.name ?? 'Chat trigger'}”: imported as a webhook trigger — POST { "chatInput": "…" } to it (references to $json.chatInput already point there).`)
+      }
+      if (node.type === 'n8n-nodes-base.formTrigger') {
+        warn(`“${node.name ?? 'Form trigger'}”: imported as a webhook trigger — the form UI doesn't transfer; POST the form fields as JSON instead.`)
+      }
+      if (!TRIGGER_TYPES[node.type ?? '']) {
+        warn(`“${node.name ?? node.type}” (${node.type}): a provider event trigger imported as a webhook trigger — point the provider's webhook/automation at this flow's URL.`)
+      }
     } else if (triggerType) {
-      warn(`“${node.name ?? node.type}”: a flow has one trigger — this extra ${TRIGGER_TYPES[node.type ?? '']} trigger became a note; switch the flow's trigger type in the builder if you want this one instead.`)
+      warn(`“${node.name ?? node.type}”: a flow has one trigger — this extra ${n8nTriggerType(node.type)} trigger became a note; switch the flow's trigger type in the builder if you want this one instead.`)
       mapped = {
         id,
         type: 'note',
@@ -545,8 +829,48 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           text: `Extra n8n trigger “${node.name ?? node.type}” (${node.type}) — a flow has ONE trigger, and the first one in the file won. To use this one instead, change the trigger type on the trigger card.${node.parameters && Object.keys(node.parameters).length ? `\n\nOriginal parameters:\n${JSON.stringify(node.parameters, null, 2).slice(0, 2000)}` : ''}`.slice(0, 5000),
         },
       } as FlowNode
+    } else if (node.name && agentClusters.has(node.name)) {
+      const spec = agentClusters.get(node.name)!
+      const text = node.parameters?.text
+      const outputFields = agentOutputFields.get(node.name)
+      mapped = {
+        id,
+        type: 'agent',
+        data: {
+          agentId: spec.placeholderId,
+          label: node.name,
+          input: typeof text === 'string' && text.trim() ? trFor(node.name)(text) : `{{${jsonBaseFor(node.name)}}}`,
+          ...(outputFields?.length ? { responseFormat: 'structured' as const, outputFields } : {}),
+        },
+      } as FlowNode
+      warn(
+        `“${node.name}”: imported as a real Agent step — a new agent carries its instructions and ${spec.tools.length} tool${spec.tools.length === 1 ? '' : 's'}; open the agent to confirm its connections before running.`,
+      )
     } else {
       mapped = mapNode(node, id, trFor(node.name), warn, idByName, jsonBaseFor(node.name))
+      // Classifiers route each item down ONE category output in n8n — mirror
+      // that with a synthesized switch reading the categorize step's result.
+      if (mapped && mapped.type === 'ai' && CLASSIFIER_TYPES.has(node.type ?? '') && node.name) {
+        const categories = (mapped.data as { categories?: string[] }).categories ?? []
+        if (categories.length) {
+          let switchId = `${id}-routes`
+          while (usedIds.has(switchId)) switchId = `${switchId}-x`
+          usedIds.add(switchId)
+          const cases = categories.map((category, caseIndex) => ({
+            id: `case-${caseIndex}`,
+            label: category,
+            left: `{{step.${id}.output.category}}`,
+            op: 'eq' as ConditionOp,
+            right: category,
+          }))
+          routersByName.set(node.name, { aiId: id, switchId, cases })
+          nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
+          const routerPosition = position ? { x: position.x + 220, y: position.y } : undefined
+          const router = { id: switchId, type: 'switch', data: { label: `${node.name} routes`, cases } } as FlowNode
+          nodes.push(routerPosition ? ({ ...router, position: routerPosition } as FlowNode) : router)
+          continue
+        }
+      }
     }
     if (mapped) nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
   }
@@ -573,9 +897,18 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   const typeById = new Map(nodes.map((n) => [n.id, n.type]))
   const casesById = new Map(nodes.filter((n) => n.type === 'switch').map((n) => [n.id, (n as Extract<FlowNode, { type: 'switch' }>).data.cases]))
   let edgeIndex = 0
+  // Classifier → its routing switch: the categorize result feeds the switch,
+  // and the n8n per-category outputs re-source from the switch below.
+  for (const router of routersByName.values()) {
+    edges.push({ id: `e-${edgeIndex++}`, source: router.aiId, target: router.switchId })
+    if (!adjacency.has(router.aiId)) adjacency.set(router.aiId, new Set())
+    adjacency.get(router.aiId)!.add(router.switchId)
+  }
   for (const [sourceName, conn] of Object.entries(workflow.connections ?? {})) {
-    const sourceId = idByName.get(sourceName)
-    if (!sourceId || !nodeIds.has(sourceId)) continue
+    const mappedSourceId = idByName.get(sourceName)
+    if (!mappedSourceId || !nodeIds.has(mappedSourceId)) continue
+    const router = routersByName.get(sourceName)
+    const sourceId = router ? router.switchId : mappedSourceId
     const outputs = Array.isArray(conn?.main) ? conn.main : []
     for (const [outIdx, targets] of outputs.entries()) {
       for (const target of targets ?? []) {
@@ -627,5 +960,6 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     name: workflow.name?.trim() || 'Imported from n8n',
     graph: { nodes, edges },
     warnings,
+    agents: Array.from(agentClusters.values()),
   }
 }

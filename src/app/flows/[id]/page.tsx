@@ -2339,6 +2339,7 @@ function FlowBuilder() {
               onInsertFromHandle={canvasInsertFromHandle}
               onInsertOnEdge={canvasInsertOnEdge}
               onInsertStandalone={canvasInsertStandalone}
+              onOpenCopilot={canEdit ? () => setShowCopilot(true) : undefined}
               onTidyUp={canvasTidyUp}
               onCopySelection={canvasCopy}
               onPasteAt={canvasPaste}
@@ -2453,7 +2454,9 @@ function FlowBuilder() {
         </div>
 
         {selectedIds.length > 1 && !viewingVersion && (
-          <div className="pointer-events-auto fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background/95 px-4 py-2 shadow-lg backdrop-blur">
+          {/* animate-fade-in only: the -up variant animates `transform`, which would
+              stomp this bar's centering -translate-x-1/2 mid-animation. */}
+          <div className="pointer-events-auto fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 animate-fade-in items-center gap-2 rounded-full border border-border bg-background/95 px-4 py-2 shadow-3 backdrop-blur">
             <span className="text-sm font-medium">{selectedIds.length} steps selected</span>
             <Button size="sm" variant="outline" onClick={bulkDuplicate}>Duplicate</Button>
             <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={bulkDelete}>Delete</Button>
@@ -2476,12 +2479,12 @@ function FlowBuilder() {
 
         {drawerNode && !viewingVersion && (
           <div
-            className="fixed inset-0 z-50 bg-slate-950/55 p-2 backdrop-blur-sm md:p-3"
+            className="fixed inset-0 z-50 animate-fade-in bg-slate-950/55 p-2 backdrop-blur-sm md:p-3"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) setSelectedId(null)
             }}
           >
-            <div className="mx-auto h-full w-full max-w-[1800px]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mx-auto h-full w-full max-w-[1800px] animate-scale-in" onMouseDown={(event) => event.stopPropagation()}>
               <StepDrawer
                 layout="workspace"
                 node={drawerNode}

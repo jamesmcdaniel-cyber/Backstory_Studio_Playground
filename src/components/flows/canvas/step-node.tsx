@@ -106,10 +106,11 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
 
       <div
         className={cn(
-          'flex h-16 items-center gap-2.5 rounded-xl border bg-white px-3 shadow-sm transition-shadow',
+          'flex h-16 items-center gap-2.5 rounded-xl border bg-white px-3 shadow-sm',
+          'transition-[transform,box-shadow,border-color] duration-fast ease-out-quart hover:-translate-y-0.5 hover:shadow-2',
           'dark:border-slate-700 dark:bg-slate-900',
-          selected ? 'border-blue-500 shadow-[0_0_0_2px_rgba(59,130,246,0.35)]' : 'border-slate-200',
-          highlighted && !selected && 'border-indigo-400 shadow-[0_0_0_2px_rgba(129,140,248,0.35)]',
+          selected ? 'border-blue-500 ring-2 ring-blue-500/35' : 'border-slate-200 hover:border-slate-300',
+          highlighted && !selected && 'border-indigo-400 ring-2 ring-indigo-400/35',
           errorCount > 0 && 'border-red-400',
           node.disabled && 'opacity-55',
         )}
@@ -199,7 +200,7 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
                   onAddFrom(node.id, handle.branch)
                 }}
                 className={cn(
-                  'nodrag absolute flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-dashed bg-white text-slate-400 transition-colors hover:border-blue-400 hover:text-blue-600',
+                  'nodrag absolute flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-dashed bg-white text-slate-400 transition-[color,border-color,transform] duration-fast hover:scale-110 hover:border-blue-400 hover:text-blue-600',
                   isError ? 'border-amber-300' : 'border-slate-300',
                 )}
                 style={{ top: offsets[index], left: 'calc(100% + 10px)' }}

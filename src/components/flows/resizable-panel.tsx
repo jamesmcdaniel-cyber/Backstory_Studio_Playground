@@ -58,7 +58,7 @@ export function ResizablePanel({
   )
 
   return (
-    <div className="relative shrink-0" style={{ width }}>
+    <div className="relative shrink-0 animate-slide-in-right" style={{ width }}>
       <div
         role="separator"
         aria-orientation="vertical"

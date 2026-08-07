@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { ChevronRight, Download, Pencil, RotateCcw, X } from 'lucide-react'
+import { ChevronRight, Download, Pencil, Play, RotateCcw, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Markdown } from '@/components/ui/markdown'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 import { StructuredValueView } from '@/components/flows/structured-value-view'
@@ -401,7 +402,12 @@ export function RunPanel({
       </div>
       <div className="flex-1 overflow-y-auto">
         {!selected ? (
-          <p className="p-4 text-sm text-muted-foreground">Run the flow to see step-by-step results here.</p>
+          <EmptyState
+            icon={Play}
+            title="No runs yet"
+            description="Run the flow and every step's input, output, and timing shows up here."
+            className="m-3 py-10"
+          />
         ) : (
           <>
             <div className="border-b border-border px-3 py-2">

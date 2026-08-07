@@ -20,8 +20,11 @@ import {
   type OnSelectionChangeParams,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Hand, LayoutGrid, Maximize2, MousePointer2, Plus, ZoomIn, ZoomOut } from 'lucide-react'
+import { Hand, LayoutGrid, Maximize2, MousePointer2, Plus, Sparkles, Workflow, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Aurora } from '@/components/ui/motion-primitives'
+import { Button } from '@/components/ui/button'
+import { NON_EXECUTABLE_NODE_TYPES } from '@/lib/flows/graph'
 import type { FlowGraph, FlowNode } from '@/lib/flows/graph'
 import type { StepType } from '@/lib/flows/mutate'
 import { canConnect } from '@/lib/flows/mutate'
@@ -102,6 +105,9 @@ export type GraphCanvasProps = {
   /** Create a step at a free canvas position wired to NOTHING — the top-right
    *  "+" button. The user connects it (or leaves it parked) afterwards. */
   onInsertStandalone?: (position: NodePosition, type: StepType, seed?: FlowInsertSeed) => void
+  /** Open the Copilot panel — the empty canvas offers it as the "describe it
+   *  instead" path to a first draft. */
+  onOpenCopilot?: () => void
   onTidyUp: () => void
   onCopySelection: () => void
   onPasteAt: (position: NodePosition) => void
@@ -161,6 +167,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     onInsertFromHandle,
     onInsertOnEdge,
     onInsertStandalone,
+    onOpenCopilot,
     onTidyUp,
     onCopySelection,
     onPasteAt,
@@ -176,6 +183,10 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   const { zoom } = useViewport()
   const [picker, setPicker] = useState<PickerState | null>(null)
   const pickerElRef = useRef<HTMLDivElement>(null)
+
+  // No executable steps yet — the canvas is a dot grid plus a trigger, so the
+  // first-run invitation below is the only visible next action.
+  const emptyGraph = graph.nodes.every((node) => NON_EXECUTABLE_NODE_TYPES.has(node.type))
 
   // Keep the insert picker fully on screen: clamp its position to the wrapper
   // using its MEASURED size (the initial inline style only knows the click
@@ -554,6 +565,9 @@ function GraphCanvasInner(props: GraphCanvasProps) {
       className={cn('relative h-full w-full', holdPanning && '[&_.react-flow__pane]:!cursor-grabbing')}
       onPointerMove={handlePointerMove}
     >
+      {/* Ambient depth behind the first-run invitation; sits under the (transparent)
+          React Flow pane so the dot grid draws over it. */}
+      {emptyGraph && !readOnly && <Aurora intensity={0.55} />}
       <CanvasActionsContext.Provider value={actions}>
         <ReactFlow<StepFlowNode, StepFlowEdge>
           nodes={rfNodes}
@@ -694,6 +708,42 @@ function GraphCanvasInner(props: GraphCanvasProps) {
           )}
         </ReactFlow>
       </CanvasActionsContext.Provider>
+
+      {/* First-run invitation: sits below the trigger chip (which fitView centers)
+          and disappears the moment a real step exists or the picker opens. */}
+      {emptyGraph && !readOnly && !picker && (
+        <div className="pointer-events-none absolute inset-x-0 top-1/2 z-20 flex justify-center px-4 pt-16 animate-fade-in-up">
+          <div className="pointer-events-auto flex max-w-md flex-col items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/85 px-8 py-6 text-center shadow-2 backdrop-blur">
+            <div className="relative">
+              <div aria-hidden="true" className="absolute inset-0 -z-10 scale-[1.8] rounded-full bg-horizon-200/50 blur-2xl" />
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-horizon-50 text-horizon-600 ring-1 ring-horizon-100">
+                <Workflow className="h-5 w-5" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-foreground">Add your first step</p>
+              <p className="text-sm text-muted-foreground">
+                Every flow starts at the trigger above. Add a step to build it yourself
+                {onOpenCopilot ? ', or describe the flow and Copilot drafts it for you.' : '.'}
+              </p>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+              {onInsertStandalone && (
+                <Button size="sm" onClick={handleAddStandalone}>
+                  <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  Add a step
+                </Button>
+              )}
+              {onOpenCopilot && (
+                <Button size="sm" variant="outline" onClick={onOpenCopilot}>
+                  <Sparkles className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  Ask Copilot
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {picker && (
         <>

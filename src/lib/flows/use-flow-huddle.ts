@@ -77,6 +77,10 @@ export function useFlowHuddle(
   // deliberate gesture) so short-lived credentials cannot go stale in a
   // long-lived tab. Any failure falls back to baked-in STUN.
   const iceServersRef = useRef<RTCIceServer[] | null>(null)
+  // Whether the ICE config includes a TURN relay. null = never fetched. When
+  // false, a peer that can't connect is probably behind a NAT that STUN alone
+  // can't traverse — the panel uses this to explain the failure.
+  const [relayAvailable, setRelayAvailable] = useState<boolean | null>(null)
 
   const send = useCallback((signal: Omit<HuddleSignal, 'from'>) => {
     bus.send('huddle', { ...signal, from: selfClientId })
@@ -270,6 +274,12 @@ export function useFlowHuddle(
         }
       } catch { /* keep whatever we had; createPeer falls back to STUN */ }
       iceServersRef.current ??= (RTC_CONFIG.iceServers as RTCIceServer[] | undefined) ?? null
+      // Derived from the servers actually in use, so a failed fetch (→ STUN
+      // fallback) reports honestly rather than echoing the server's claim.
+      setRelayAvailable(
+        (iceServersRef.current ?? []).some((server) =>
+          (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) => /^turns?:/.test(url))),
+      )
       localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true })
       localAnalyser.current = attachAnalyser(localStream.current)
       joinedRef.current = true
@@ -452,7 +462,7 @@ export function useFlowHuddle(
   useEffect(() => () => { if (joinedRef.current) leaveRef.current() }, [])
 
   return {
-    joined, connecting, muted, speakingIds, error, peerStates,
+    joined, connecting, muted, speakingIds, error, peerStates, relayAvailable,
     pttEnabled, transmitting, peerAudio,
     devices, inputDeviceId, outputDeviceId, canSelectOutput,
     join, leave, toggleMute, setPttEnabled, setPeerAudio, clearError,

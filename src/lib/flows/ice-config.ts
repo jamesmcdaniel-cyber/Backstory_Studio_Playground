@@ -44,6 +44,13 @@ export function iceServersFromEnv(env: {
   return servers
 }
 
+/** Which credential tier resolveIceServers landed on. 'stun-only' means no
+ *  relay: peers behind strict/symmetric NATs will fail to connect, and the
+ *  client uses this to say so instead of showing a bare "connection lost". */
+export type IceProvider = 'cloudflare' | 'turn-ephemeral' | 'turn-static' | 'stun-only'
+
+export type IceConfig = { iceServers: IceServer[]; provider: IceProvider }
+
 export type IceEnv = {
   CLOUDFLARE_TURN_KEY_ID?: string
   CLOUDFLARE_TURN_API_TOKEN?: string
@@ -88,7 +95,7 @@ export function parseCloudflareIceServers(body: unknown): IceServer[] | null {
 export async function resolveIceServers(
   env: IceEnv,
   options: { customIdentifier?: string; fetchImpl?: typeof fetch; nowMs?: number } = {},
-): Promise<IceServer[]> {
+): Promise<IceConfig> {
   const keyId = env.CLOUDFLARE_TURN_KEY_ID
   const token = env.CLOUDFLARE_TURN_API_TOKEN
   if (keyId && token) {
@@ -109,7 +116,7 @@ export async function resolveIceServers(
       if (!response.ok) throw new Error(`Cloudflare TURN responded ${response.status}`)
       const parsed = parseCloudflareIceServers(await response.json())
       if (!parsed) throw new Error('Cloudflare TURN returned no usable iceServers')
-      return parsed
+      return { iceServers: parsed, provider: 'cloudflare' }
     } catch (error) {
       // Never include the response body — it carries the credential.
       captureError(error, { scope: 'flows.huddle.ice', provider: 'cloudflare' })
@@ -123,10 +130,14 @@ export async function resolveIceServers(
     const { username, credential } = turnRestCredentials(env.TURN_SECRET, options.nowMs ?? Date.now(), {
       identifier: options.customIdentifier,
     })
-    return [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls, username, credential },
-    ]
+    return {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls, username, credential },
+      ],
+      provider: 'turn-ephemeral',
+    }
   }
-  return iceServersFromEnv(env)
+  const iceServers = iceServersFromEnv(env)
+  return { iceServers, provider: iceServers.length > 1 ? 'turn-static' : 'stun-only' }
 }

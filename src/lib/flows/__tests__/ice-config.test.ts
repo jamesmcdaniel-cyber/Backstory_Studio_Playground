@@ -51,11 +51,12 @@ test('parseCloudflareIceServers keeps well-formed entries and rejects junk', () 
 
 test('Cloudflare config is used and the request carries key, token, ttl and identifier', async () => {
   const calls: unknown[] = []
-  const servers = await resolveIceServers(CF_ENV, {
+  const { iceServers, provider } = await resolveIceServers(CF_ENV, {
     customIdentifier: 'org-42',
     fetchImpl: okFetch(CF_BODY, calls),
   })
-  assert.deepEqual(servers, CF_BODY.iceServers)
+  assert.deepEqual(iceServers, CF_BODY.iceServers)
+  assert.equal(provider, 'cloudflare')
   const call = calls[0] as { url: string; init: { headers: Record<string, string>; body: string } }
   assert.match(call.url, /\/v1\/turn\/keys\/key-1\/credentials\/generate-ice-servers$/)
   assert.equal(call.init.headers.Authorization, 'Bearer token-1')
@@ -68,32 +69,35 @@ test('Cloudflare config is used and the request carries key, token, ttl and iden
 test('a failing Cloudflare call falls through to static TURN env', async () => {
   setErrorReporter(() => {})
   const failing = (async () => ({ ok: false, status: 500, json: async () => ({}) }) as unknown as Response) as unknown as typeof fetch
-  const servers = await resolveIceServers(
+  const { iceServers, provider } = await resolveIceServers(
     { ...CF_ENV, TURN_URL: 'turn:relay.example.com:3478', TURN_USERNAME: 'u', TURN_CREDENTIAL: 'c' },
     { fetchImpl: failing },
   )
-  assert.deepEqual(servers, [
+  assert.deepEqual(iceServers, [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'turn:relay.example.com:3478', username: 'u', credential: 'c' },
   ])
+  assert.equal(provider, 'turn-static')
   resetErrorReporter()
 })
 
 test('a throwing Cloudflare call with no static env degrades to STUN-only', async () => {
   setErrorReporter(() => {})
   const throwing = (async () => { throw new Error('network down') }) as unknown as typeof fetch
-  assert.deepEqual(await resolveIceServers(CF_ENV, { fetchImpl: throwing }), [
-    { urls: 'stun:stun.l.google.com:19302' },
-  ])
+  assert.deepEqual(await resolveIceServers(CF_ENV, { fetchImpl: throwing }), {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    provider: 'stun-only',
+  })
   resetErrorReporter()
 })
 
 test('without Cloudflare env the relay is never called', async () => {
   let called = false
   const spy = (async () => { called = true; return {} as Response }) as unknown as typeof fetch
-  const servers = await resolveIceServers({}, { fetchImpl: spy })
+  const { iceServers, provider } = await resolveIceServers({}, { fetchImpl: spy })
   assert.equal(called, false)
-  assert.deepEqual(servers, [{ urls: 'stun:stun.l.google.com:19302' }])
+  assert.deepEqual(iceServers, [{ urls: 'stun:stun.l.google.com:19302' }])
+  assert.equal(provider, 'stun-only')
 })
 
 test('turnRestCredentials: coturn use-auth-secret shape — expiry username, HMAC-SHA1 base64 credential', async () => {
@@ -110,18 +114,22 @@ test('turnRestCredentials: coturn use-auth-secret shape — expiry username, HMA
 test('TURN_URL + TURN_SECRET mints ephemeral creds and beats the static pair', async () => {
   const { resolveIceServers, turnRestCredentials } = await import('@/lib/flows/ice-config')
   const nowMs = 1_700_000_000_000
-  const servers = await resolveIceServers(
+  const { iceServers, provider } = await resolveIceServers(
     { TURN_URL: 'turn:relay.example.com:3478', TURN_SECRET: 'shh', TURN_USERNAME: 'static-u', TURN_CREDENTIAL: 'static-c' },
     { customIdentifier: 'org-9', nowMs },
   )
   const expected = turnRestCredentials('shh', nowMs, { identifier: 'org-9' })
-  assert.deepEqual(servers, [
+  assert.deepEqual(iceServers, [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'turn:relay.example.com:3478', username: expected.username, credential: expected.credential },
   ])
+  assert.equal(provider, 'turn-ephemeral')
 })
 
 test('TURN_SECRET without TURN_URL changes nothing (half-configured relay is ignored)', async () => {
   const { resolveIceServers } = await import('@/lib/flows/ice-config')
-  assert.deepEqual(await resolveIceServers({ TURN_SECRET: 'shh' }), [{ urls: 'stun:stun.l.google.com:19302' }])
+  assert.deepEqual(await resolveIceServers({ TURN_SECRET: 'shh' }), {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    provider: 'stun-only',
+  })
 })

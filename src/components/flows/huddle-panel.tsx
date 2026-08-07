@@ -35,8 +35,12 @@ export function HuddlePanel({
   /** Whether transcription is configured server-side. */
   captureAvailable?: boolean
 }) {
-  const { joined, connecting, muted, pttEnabled, transmitting, error, speakingIds, peerStates, peerAudio } = huddle
+  const { joined, connecting, muted, pttEnabled, transmitting, error, speakingIds, peerStates, peerAudio, relayAvailable } = huddle
   const live = members.length > 0
+  // A lost peer with no TURN relay in play is almost always a strict NAT that
+  // STUN can't traverse — say so, or "connection lost" reads as a random bug.
+  const lostWithoutRelay = joined && relayAvailable === false
+    && Array.from(peerStates.values()).some((state) => state === 'lost')
 
   return (
     <div className="space-y-2">
@@ -143,6 +147,18 @@ export function HuddlePanel({
             </p>
           )}
         </div>
+      )}
+
+      {lostWithoutRelay && (
+        <p role="alert" className="flex items-start gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50/60 px-2.5 py-2 text-[11px] text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
+          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>
+            Couldn’t connect to someone in this huddle. Voice runs directly between
+            computers, and this workspace has no relay for networks that block that —
+            office networks and VPNs often do. An admin can fix this by connecting a
+            voice relay (TURN).
+          </span>
+        </p>
       )}
 
       {error && (

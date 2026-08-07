@@ -178,9 +178,11 @@ export default function FlowsPage() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
-    // The template menu reads the live catalogue, so a template the workspace
-    // saved or was recommended shows up here too — not just the built-ins.
-    fetch(`/api/flow-templates?limit=${MENU_TEMPLATE_LIMIT}`, { cache: 'no-store' })
+    // builtin=1: the strip always shows the curated flow templates. Without it
+    // the catalogue ranks the workspace's stored/AI-generated rows first and
+    // they crowd the curated set out of these six slots; the full mixed
+    // catalogue stays one click away behind "Browse all templates".
+    fetch(`/api/flow-templates?limit=${MENU_TEMPLATE_LIMIT}&builtin=1`, { cache: 'no-store' })
       .then((response) => response.json())
       .then((data) => {
         if (cancelled || !data.success) return

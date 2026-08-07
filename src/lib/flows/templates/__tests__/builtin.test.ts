@@ -146,6 +146,18 @@ test('a template that calls a connection or an agent declares what it needs', ()
   }
 })
 
+/**
+ * The Flows page's "Start from a template" strip is the first six of this list
+ * (served via ?builtin=1&limit=6), so the catalogue's opening order IS that
+ * strip. Pinned so a reorder can't silently swap the flagship pipelines out.
+ */
+test('the catalogue opens with the six templates the Flows-page strip shows', () => {
+  assert.deepEqual(
+    BUILTIN_FLOW_TEMPLATES.slice(0, 6).map((template) => template.id),
+    ['pipeline-digest', 'upsell-motion', 'account-plan', 'churn-risk-scorecard', 'renewal-brief', 'webhook-triage'],
+  )
+})
+
 test('starter templates need no setup at all', () => {
   for (const id of ['summarize-extract', 'score-each-item', 'scheduled-wait']) {
     const template = BUILTIN_FLOW_TEMPLATES.find((entry) => entry.id === id)

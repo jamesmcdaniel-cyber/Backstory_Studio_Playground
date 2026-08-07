@@ -5,7 +5,8 @@ import { flowGraphSchema } from '@/lib/flows/graph'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { createFlowTemplate } from '@/lib/flows/templates/create'
 import { updateFlowTemplateVersioned } from '@/lib/flows/templates/versions'
-import { listFlowTemplateCatalogue, serializeFlowTemplate } from '@/lib/flows/templates/catalogue'
+import { listFlowTemplateCatalogue, serializeBuiltinFlowTemplate, serializeFlowTemplate } from '@/lib/flows/templates/catalogue'
+import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
 import {
   flowTemplateBindingSchema,
   flowTemplateNotesIssues,
@@ -26,7 +27,14 @@ const templateSchema = z.object({
 })
 
 export const GET = withAuthenticatedApi(async (request, auth) => {
-  const templates = await listFlowTemplateCatalogue(auth.organizationId)
+  // ?builtin=1 serves the curated built-in catalogue alone. The full catalogue
+  // ranks stored rows (own + community) first, so any surface that takes the
+  // top N — like the Flows page's template strip — would show whatever the
+  // workspace last saved instead of the curated set.
+  const builtinOnly = request.nextUrl.searchParams.get('builtin') === '1'
+  const templates = builtinOnly
+    ? BUILTIN_FLOW_TEMPLATES.map(serializeBuiltinFlowTemplate)
+    : await listFlowTemplateCatalogue(auth.organizationId)
   const limit = Number(request.nextUrl.searchParams.get('limit'))
   return { success: true, templates: limit > 0 ? templates.slice(0, limit) : templates }
 }, { permission: 'flow.read' })

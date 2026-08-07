@@ -64,6 +64,7 @@ export async function buildCopilotGrounding(
 ): Promise<{
   roster: { id: string; name: string }[]
   toolCatalog: FlowToolCatalogConnection[]
+  httpCredentials: { id: string; name: string; allowedHost: string }[]
   contextBlock: string
   graphRules: string
 }> {
@@ -73,15 +74,20 @@ export async function buildCopilotGrounding(
       '',
       'Tools:\n- None available on this flow — do not add tool steps. Use http, ai, data, code, condition and the other generic steps instead.',
     ].join('\n')
-    return { roster: [], toolCatalog: [], contextBlock, graphRules }
+    return { roster: [], toolCatalog: [], httpCredentials: [], contextBlock, graphRules }
   }
-  const [agents, toolCatalog] = await Promise.all([
+  const [agents, toolCatalog, httpCredentials] = await Promise.all([
     prisma.agentTask.findMany({
       where: { organizationId, status: 'ACTIVE', ...agentVisibilityScope(userId) },
       select: { id: true, description: true, metadata: true },
       take: 100,
     }),
     loadFlowToolCatalog(organizationId, { userId, takeConnections: 25, takeTools: 100 }),
+    prisma.httpCredential.findMany({
+      where: { organizationId, status: 'verified' },
+      select: { id: true, name: true, allowedHost: true },
+      take: 50,
+    }),
   ])
   const roster = agents
     .map((agent) => ({ id: agent.id, name: readAgentMetadata(agent.metadata).title || agent.description }))
@@ -100,6 +106,8 @@ export async function buildCopilotGrounding(
     `Agents:\n${roster.map((entry) => `- ${entry.name} (id: ${entry.id})`).join('\n') || '- None available'}`,
     '',
     `Tools:\n${tools.map((tool) => `- ${tool.connectionName}: ${tool.name} (connectionId: ${tool.connectionId})${tool.inputHint ? ` args: ${tool.inputHint}` : ''}${tool.outputHint ? ` outputs: ${tool.outputHint}` : ''}${tool.description ? ` — ${tool.description}` : ''}`).join('\n') || '- None available'}`,
+    '',
+    `HTTP credentials (verified; bind one to an http step with data.credentialId — each works only for its host):\n${httpCredentials.map((credential) => `- ${credential.name} (credentialId: ${credential.id}, host: ${credential.allowedHost})`).join('\n') || '- None available — to authenticate an http step the user must create a credential under Integrations → HTTP credentials, or you can bind an MCP connection via data.connectionId.'}`,
   ].join('\n')
-  return { roster, toolCatalog, contextBlock, graphRules }
+  return { roster, toolCatalog, httpCredentials, contextBlock, graphRules }
 }

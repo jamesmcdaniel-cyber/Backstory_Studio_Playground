@@ -4,6 +4,7 @@ import type { AuthContext } from '@/lib/server/auth'
 import { nativeFlowPackageSchema } from '@/lib/flows/native-package'
 import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
 import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
+import { bindImportedHttpAuth, dropStaleAuthWarnings } from '@/lib/flows/import/bind-imported-auth'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { serializeFlow } from '@/lib/flows/serialize'
@@ -134,8 +135,24 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   if (looksLikeN8nWorkflow(payload)) {
     const converted = n8nToFlow(payload)
-    const warnings = [...converted.warnings]
-    const graph = await materializeImportedAgents(converted.agents, flowGraphSchema.parse(converted.graph), auth, warnings)
+    let warnings = [...converted.warnings]
+    let graph = await materializeImportedAgents(converted.agents, flowGraphSchema.parse(converted.graph), auth, warnings)
+    // An n8n export never carries secrets (only {id, name} references into the
+    // source instance), so instead of importing every external call red, bind
+    // each unauthenticated http step to auth this org already has.
+    const [mcpConnections, httpCredentials] = await Promise.all([
+      prisma.mcpConnection.findMany({
+        where: { organizationId: auth.organizationId, isActive: true },
+        select: { id: true, name: true },
+      }),
+      prisma.httpCredential.findMany({
+        where: { organizationId: auth.organizationId, status: 'verified' },
+        select: { id: true, name: true, allowedHost: true },
+      }),
+    ])
+    const bound = bindImportedHttpAuth(graph, { mcpConnections, httpCredentials })
+    graph = bound.graph
+    warnings = [...dropStaleAuthWarnings(warnings, bound.boundLabels), ...bound.notes]
     const flow = await prisma.flow.create({
       data: {
         organizationId: auth.organizationId,

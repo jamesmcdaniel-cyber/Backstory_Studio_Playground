@@ -42,6 +42,10 @@ const OPS_CONTRACT = [
   'Prefer minimal targeted ops over replace. Use replace ONLY when building a brand-new flow or when the user explicitly asks for a full redesign.',
   'When the request is ambiguous or impossible with these operations, return opsJson "[]" and ask ONE clarifying question in message.',
   'Always explain what you did or what you need in message, mentioning node labels.',
+  'FIXING BLOCKERS',
+  'When the current flow has validation issues (listed with the graph), treat fixing them as part of your job: fix what a targeted op can fix without being asked twice, and when the user asks to run, publish, or unblock the flow, fix the blockers first.',
+  'An http step "without authentication" is fixed with an update op setting data.credentialId to a listed HTTP credential whose host matches the step URL (or data.connectionId to a listed MCP connection for that provider — never set both). If the credential list has no match, do not invent one: say exactly what to do — connect the provider under Integrations, or create an HTTP credential for that host from the step\'s Auth settings.',
+  'A step "not connected to the trigger" is fixed with a move op (or by adding the missing edge via the graph rules) so the step sits on a path from the trigger.',
 ].join('\n')
 
 const requestSchema = z.object({
@@ -66,7 +70,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const { messages, graph: rawGraph, external } = requestSchema.parse(await request.json())
   // Gate before any model spend: provider, per-user rate limit, monthly ceiling.
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `flow-copilot-chat:${auth.dbUser.id}`, limit: 20 })
-  const { roster, toolCatalog, contextBlock, graphRules } = await buildCopilotGrounding(auth.organizationId, auth.dbUser.id, {
+  const { roster, toolCatalog, httpCredentials, contextBlock, graphRules } = await buildCopilotGrounding(auth.organizationId, auth.dbUser.id, {
     structureOnly: external === true,
   })
 
@@ -74,11 +78,24 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const parsedGraph = flowGraphSchema.safeParse(rawGraph)
   const graph = parsedGraph.success ? parsedGraph.data : emptyGraph()
 
+  const validationContext = {
+    agents: roster.map((agent) => ({ id: agent.id, title: agent.name })),
+    toolCatalog,
+    httpCredentials,
+  }
+  // The copilot sees what the checker sees: current issues ride along with the
+  // graph so it can offer (and apply) fixes instead of editing blind.
+  const currentIssues = graph.nodes.length > 1 ? validateFlowGraph(graph, validationContext).issues : []
+  const issueLines = currentIssues
+    .slice(0, 20)
+    .map((issue) => `- [${issue.level}] ${issue.code}${issue.nodeId ? ` at node ${issue.nodeId}` : ''}: ${issue.message}`)
+
   const system = [graphRules, '', OPS_CONTRACT, '', contextBlock].join('\n')
   const transcript = messages.map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}`).join('\n\n')
   const user = [
     `Current flow graph JSON:\n${JSON.stringify(graph)}`,
     '',
+    ...(issueLines.length ? [`Current validation issues:\n${issueLines.join('\n')}`, ''] : []),
     `Conversation so far:\n${transcript}`,
     '',
     'Respond to the latest user message.',
@@ -109,8 +126,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       message += ` (${applied.skipped.length} change${applied.skipped.length === 1 ? '' : 's'} could not be applied.)`
     }
     const validation = validateFlowGraph(applied.graph, {
-      agents: roster.map((agent) => ({ id: agent.id, title: agent.name })),
-      toolCatalog,
+      ...validationContext,
       requireRunnable: applied.graph.nodes.length > 1,
     })
     const needsAttention = [...validation.errors, ...validation.warnings].map((issue) => ({ nodeId: issue.nodeId, message: issue.message }))

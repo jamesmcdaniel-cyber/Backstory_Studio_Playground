@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { Bot, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -68,6 +69,7 @@ export function AgentInlineCreate({
         aria-label="New agent name"
       />
       <textarea
+        onKeyDown={indentOnTab}
         value={instructions}
         onChange={(event) => setInstructions(event.target.value)}
         rows={4}

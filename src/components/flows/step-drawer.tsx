@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -904,6 +905,7 @@ export function StepDrawer({
                     <textarea
                       rows={2}
                       className={fieldClass}
+                      onKeyDown={indentOnTab}
                       value={(node.data as { note?: string }).note ?? ''}
                       placeholder="Why this step exists, gotchas, links…"
                       onFocus={blockActive}
@@ -2055,6 +2057,7 @@ export function StepDrawer({
               <textarea
                 rows={6}
                 className={areaClass}
+                onKeyDown={indentOnTab}
                 value={node.data.text}
                 placeholder="Document this part of the flow — what it does, gotchas, links…"
                 onFocus={blockActive}
@@ -2258,6 +2261,7 @@ export function StepDrawer({
                     className="min-h-40 w-full resize-y rounded-lg border border-amber-500/40 bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100 outline-none"
                     value={mockDraft}
                     spellCheck={false}
+                    onKeyDown={indentOnTab}
                     onFocus={blockActive}
                     onBlur={() => {
                       unblockActive()
@@ -2587,6 +2591,7 @@ function DataEditor({
           <textarea
             rows={4}
             className={`${areaClass} font-mono text-xs`}
+            onKeyDown={indentOnTab}
             value={node.data.schema ?? ''}
             placeholder="A JSON Schema describing the parsed shape"
             onFocus={blockActive}

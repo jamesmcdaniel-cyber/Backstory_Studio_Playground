@@ -54,6 +54,15 @@ describe('buildAgentSystemPrompt', () => {
     assert.ok(/Otherwise, format the final response as clean Markdown/.test(prompt), 'Markdown stays the non-report default')
   })
 
+  it('themes reports per artifact family and keeps drafts/advice/Q&A conversational', () => {
+    const prompt = buildAgentSystemPrompt('Do the work.', [])
+    assert.ok(prompt.includes('REPORT THEME'), 'expected the per-family theme rule')
+    assert.ok(prompt.includes('theme-account') && prompt.includes('theme-cockpit'), 'expected named theme classes')
+    assert.ok(prompt.includes('REPORT DELIVERABLES vs CONVERSATION'), 'expected the artifact-vs-conversation gate')
+    assert.ok(/draft-and-approve/.test(prompt), 'draft loops must stay Markdown')
+    assert.ok(prompt.includes('DYNAMIC ELEMENTS'), 'expected the dynamic module guidance')
+  })
+
   it('makes the report document the whole final response, even when it was also delivered elsewhere', () => {
     const prompt = buildAgentSystemPrompt('Do the work.', [])
     assert.ok(/never inside a code fence/i.test(prompt), 'expected the no-code-fence rule')

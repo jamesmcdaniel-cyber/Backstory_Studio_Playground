@@ -1,4 +1,4 @@
-import { reportDocument } from '@/features/agents/report-format'
+import { reportDocument, themeForKind, type ReportTheme } from '@/features/agents/report-format'
 
 /**
  * Builders for the templates gallery's illustrative outputs. Every built-in
@@ -28,6 +28,8 @@ export const dim = (v: string): Cell => ({ v, c: 'muted' })
 export type ReportSpec = {
   /** Uppercase report kind, e.g. "Pipeline intelligence report". */
   eyebrow: string
+  /** Color identity. Defaults to the family `themeForKind` derives from the eyebrow. */
+  theme?: ReportTheme
   title: string
   /** One sentence describing what the run did. */
   sub: string
@@ -67,6 +69,9 @@ const tableSection = (s: Extract<Section, { kind: 'table' }>) =>
 const noteSection = (s: Extract<Section, { kind: 'note' }>) =>
   `<div class="card summary"><h2>${s.heading}</h2><p>${s.body}</p></div>`
 
+/** The color identity a spec renders (and contracts) with. */
+export const specTheme = (spec: ReportSpec): ReportTheme => spec.theme ?? themeForKind(spec.eyebrow)
+
 /** Renders a spec into the self-contained house HTML document. */
 export function report(spec: ReportSpec): string {
   const hero =
@@ -85,7 +90,7 @@ export function report(spec: ReportSpec): string {
       .map(([name, what, when]) => `<div class="mini"><b>${name}</b><p>${what}</p><small>↻ ${when}</small></div>`)
       .join('')}</div></div>`
   const banner = `<div class="banner">${spec.banner}</div>`
-  return reportDocument([hero, stats, summary, sections, evidence, banner].join('\n'))
+  return reportDocument([hero, stats, summary, sections, evidence, banner].join('\n'), specTheme(spec))
 }
 
 /**
@@ -152,6 +157,7 @@ export function outputContract(spec: ReportSpec): string {
     ...numbered.map((line, i) => `${i + 1}. ${line}`),
     '',
     'Rules for this template:',
+    `- Color identity: this template renders with the "${specTheme(spec)}" theme — set the wrapper to <div class="${specTheme(spec) === 'revenue' ? 'report' : `report theme-${specTheme(spec)}`}"> exactly as the gallery example does.`,
     "- Every quoted value above is illustrative, taken from a different run. Mirror the SHAPE and wording style; never reuse the example's numbers, account names, people, or dates.",
     '- The HTML document IS the entire final response. Do not wrap it in a code fence, do not precede it with a Markdown recap, and do not summarise it afterwards.',
     '- When you also email or post the report, that message body is the same document rendered email-safe (inline CSS, no <style> block) — the final response still carries the full document.',

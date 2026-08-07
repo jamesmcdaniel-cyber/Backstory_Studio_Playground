@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
 import {
@@ -818,6 +819,7 @@ function CodeBody({
         className="w-full resize-y rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none focus:border-amber-500"
         value={node.data.code}
         spellCheck={false}
+        onKeyDown={indentOnTab}
         onFocus={tokenWiring.blockActive}
         onBlur={tokenWiring.unblockActive}
         onChange={(e) => update({ ...node, data: { ...node.data, code: e.target.value } })}
@@ -2277,6 +2279,7 @@ function DataBody({
           <label className={labelClass}>Schema <span className="font-normal normal-case text-slate-400">(optional)</span></label>
           <textarea
             rows={4}
+            onKeyDown={indentOnTab}
             value={node.data.schema ?? ''}
             onChange={(event) => update({ ...node, data: { ...node.data, schema: event.target.value || undefined } })}
             onFocus={blockActive}

@@ -65,6 +65,14 @@ describe('outputContract', () => {
     assert.ok(contract.includes('NOW · Seismic · 91'), 'expected a sample row so column semantics are unambiguous')
   })
 
+  it('pins the color identity so the live run matches the gallery example', () => {
+    assert.ok(contract.includes('"revenue" theme'), 'expected the theme to be named')
+    assert.ok(contract.includes('<div class="report">'), 'revenue keeps the plain wrapper')
+    const themed = outputContract({ ...spec, eyebrow: 'Account plan' })
+    assert.ok(themed.includes('"account" theme'), 'non-default families derive from the report kind')
+    assert.ok(themed.includes('<div class="report theme-account">'), 'non-default families pin their wrapper class')
+  })
+
   it('decodes entities so the instruction reads as prose, not markup', () => {
     assert.ok(contract.includes('MONITOR < 50'), 'expected &lt; decoded in the caption')
     assert.ok(!contract.includes('&lt;'), 'no HTML entities should survive into the instruction')
@@ -119,5 +127,16 @@ describe('every built-in template', () => {
       assert.ok(contract.includes(EXAMPLE_SPECS[id].title), `${id}: contract omits the report title`)
       assert.ok(contract.includes('🧾 Evidence trail'), `${id}: contract omits the evidence trail`)
     }
+  })
+
+  it('renders its example with the exact wrapper class its contract pins (no theme drift)', () => {
+    const themes = new Set<string>()
+    for (const id of ids) {
+      const wrapper = EXAMPLE_REPORTS[id].match(/<div class="(report[^"]*)">/)
+      assert.ok(wrapper, `${id}: report wrapper missing`)
+      assert.ok(EXAMPLE_OUTPUT_CONTRACTS[id].includes(`<div class="${wrapper![1]}">`), `${id}: contract pins a different theme than the example renders`)
+      themes.add(wrapper![1])
+    }
+    assert.ok(themes.size >= 4, `expected the catalogue to span several color families, got ${[...themes].join(', ')}`)
   })
 })

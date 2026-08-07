@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 
 export interface SubmissionStatus {
   id: string
@@ -90,6 +91,7 @@ export function SubmitToCatalogue({
       ) : (
         <div className="space-y-2">
           <textarea
+            onKeyDown={indentOnTab}
             value={summary}
             onChange={(event) => setSummary(event.target.value)}
             placeholder="What does this do, and who is it for?"

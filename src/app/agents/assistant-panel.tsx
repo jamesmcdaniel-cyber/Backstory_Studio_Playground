@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { ArrowRight, Check, Clock, Loader2, MessageSquare, Plus, Send, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -559,7 +560,7 @@ export function AssistantPanel({
           <Input
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => event.key === 'Enter' && send()}
+            onKeyDown={(event) => (event.key === 'Enter' ? send() : indentOnTab(event))}
             placeholder={agent ? `Ask about ${agent.title}...` : 'Select an agent to start chatting…'}
             disabled={!agent || sending}
           />

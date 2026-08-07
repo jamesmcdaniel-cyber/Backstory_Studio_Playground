@@ -1,6 +1,7 @@
 'use client'
 
 import { Play, X } from 'lucide-react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
@@ -92,6 +93,7 @@ export function TestPanel({
                 <label className={labelClass}>Raw payload</label>
                 <textarea
                   rows={6}
+                  onKeyDown={indentOnTab}
                   className={`${fieldClass} min-h-[120px] resize-y font-mono text-xs`}
                   value={value}
                   placeholder='{"account":"Acme","priority":"high"}'
@@ -105,6 +107,7 @@ export function TestPanel({
               <label className={labelClass}>Run input</label>
               <textarea
                 rows={6}
+                onKeyDown={indentOnTab}
                 className={`${fieldClass} min-h-[120px] resize-y font-mono text-xs`}
                 value={value}
                 placeholder="Text, JSON, or a list"

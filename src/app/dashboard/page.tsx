@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, RotateCcw, Sparkles, Workflow } from 'lucide-react'
@@ -136,7 +137,7 @@ export default function AssistantHome() {
             value={input}
             rows={1}
             onChange={(e) => { setInput(e.target.value); grow(e.target) }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input) } }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input) } else indentOnTab(e) }}
             placeholder="Ask the Assistant about the library, setup, or a goal…"
             aria-label="Ask the Assistant"
             className="min-h-[3.5rem] w-full resize-none bg-transparent text-xl leading-8 text-gray-900 outline-none placeholder:text-gray-400"

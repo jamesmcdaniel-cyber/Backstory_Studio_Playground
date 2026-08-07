@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { Code2, ListTree, List } from 'lucide-react'
 import { DataTree } from '@/components/flows/data-tree'
 import type { DataField } from '@/lib/flows/datatree'
@@ -260,6 +261,7 @@ export function ToolArgsEditor({
           <textarea
             ref={rawElRef}
             rows={5}
+            onKeyDown={indentOnTab}
             className={`${fieldClass} min-h-[120px] resize-y font-mono text-xs`}
             value={args ?? '{}'}
             placeholder={'{"query": "Use a value from Available data"}'}

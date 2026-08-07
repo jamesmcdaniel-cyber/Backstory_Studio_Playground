@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { ChevronRight, RefreshCw, ScrollText } from 'lucide-react'
@@ -110,6 +111,7 @@ function WaitingBanner({
           {/* Neutral fallback: input pauses come from agent questions AND humanReview steps. */}
           <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">{waiting.question || 'This flow is waiting on information from you.'}</p>
           <textarea
+            onKeyDown={indentOnTab}
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={3}

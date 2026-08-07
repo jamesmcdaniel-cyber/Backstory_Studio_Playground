@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import type { QueuedSubmission } from './submission-queue'
 
 type Decision = 'approved' | 'changes_requested' | 'rejected'
@@ -88,6 +89,7 @@ export function SubmissionDetail({
 
       {pending && NOTE_REQUIRED[pending] && (
         <textarea
+          onKeyDown={indentOnTab}
           value={note}
           onChange={(event) => setNote(event.target.value)}
           placeholder="What does the author need to change?"

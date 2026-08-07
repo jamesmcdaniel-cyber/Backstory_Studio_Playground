@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { Sparkles, Send, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -252,7 +253,10 @@ export function CopilotPanel({
               setInput(e.target.value)
               resizeInput()
             }}
-            onKeyDown={onInputKeyDown}
+            onKeyDown={(e) => {
+              onInputKeyDown(e)
+              indentOnTab(e)
+            }}
             placeholder={emptyCanvas ? 'e.g. Score my in-segment accounts and post the top 20 to #sales.' : 'Ask for a change…'}
             className="max-h-[140px] min-h-[38px] w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300"
             aria-label="Message the copilot"

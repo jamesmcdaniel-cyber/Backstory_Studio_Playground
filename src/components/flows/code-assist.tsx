@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -52,6 +53,7 @@ export function CodeAssist({
       <div className="mt-2 space-y-2">
         <textarea
           rows={2}
+          onKeyDown={indentOnTab}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="Describe what this code should do — e.g. 'return only items where amount > 100, sorted by date'"

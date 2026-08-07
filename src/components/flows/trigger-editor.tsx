@@ -1,6 +1,7 @@
 'use client'
 
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { indentOnTab } from '@/components/ui/textarea'
 import { Link2, RefreshCw, Copy, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CONDITION_OPS, CONDITION_OP_LABELS, type ConditionOp, type ConditionClause, type TriggerInputField } from '@/lib/flows/graph'
@@ -274,7 +275,7 @@ export function TriggerEditor({
           </div>
           <div>
             <label className={label}>Run input for scheduled runs (optional)</label>
-            <textarea rows={2} className={field} value={trigger.input ?? ''} placeholder="Text or JSON passed to the flow each time it runs" onChange={(e) => onChange({ ...trigger, input: e.target.value || undefined })} />
+            <textarea rows={2} onKeyDown={indentOnTab} className={field} value={trigger.input ?? ''} placeholder="Text or JSON passed to the flow each time it runs" onChange={(e) => onChange({ ...trigger, input: e.target.value || undefined })} />
           </div>
           <p className="text-xs text-muted-foreground">
             {schedule.type === 'cron' ? `Next run: per cron "${schedule.cron ?? ''}"` : `Next run: ${nextRunLabel}`}

@@ -1,6 +1,7 @@
 'use client'
 
 import type { TriggerInputField } from '@/lib/flows/graph'
+import { indentOnTab } from '@/components/ui/textarea'
 import { fieldValuesFromFlowInput, flowInputFromFieldValues } from '@/lib/flows/test-input'
 
 export const fieldClass =
@@ -83,6 +84,7 @@ export function inputForField({
     return (
       <textarea
         rows={field.type === 'any' ? 2 : 4}
+        onKeyDown={indentOnTab}
         className={`${fieldClass} min-h-[76px] resize-y font-mono text-xs`}
         value={value}
         placeholder={field.type === 'array' ? '["item one", "item two"]' : field.type === 'object' ? '{"account":"Acme"}' : 'Text, JSON, or a list'}
@@ -152,6 +154,7 @@ export function TestInputPanel({
           <label className={labelClass}>Raw payload</label>
           <textarea
             rows={8}
+            onKeyDown={indentOnTab}
             className={`${fieldClass} min-h-[160px] resize-y font-mono text-xs`}
             value={value}
             placeholder='{"account":"Acme","priority":"high"}'

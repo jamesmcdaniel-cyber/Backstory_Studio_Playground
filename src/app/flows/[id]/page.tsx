@@ -22,6 +22,8 @@ import { useHuddleCapture } from '@/lib/flows/use-huddle-capture'
 import { CursorLayer } from '@/components/flows/cursor-layer'
 import { flowToN8n } from '@/lib/flows/export/to-n8n'
 import { flowToInstructions } from '@/lib/flows/export/to-instructions'
+import { flowToDebugPackage } from '@/lib/flows/export/to-debug'
+import { nativeFlowPackageSchema } from '@/lib/flows/native-package'
 import { useFlowImport } from '@/components/flows/use-flow-import'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -29,7 +31,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { emptyGraph, type FlowGraph, type FlowNode, type OutputField } from '@/lib/flows/graph'
+import { emptyGraph, flowGraphSchema, type FlowGraph, type FlowNode, type OutputField } from '@/lib/flows/graph'
 import { insertNodeAfter, appendToBranch, duplicateNode, updateNode, deleteNode, deleteNodes, changeNodeType, addContainerStep, moveNodeAfter, moveContainerStep, pasteNodeAfter, addEdge, removeEdge, setNodePositions, insertNodeFromHandle, insertNodeOnEdge, insertNodeAt, copySelection, pasteSelectionAt, type StepType } from '@/lib/flows/mutate'
 import { layoutGraph, type NodePosition } from '@/lib/flows/layout'
 import { stepOrder } from '@/lib/flows/step-order'
@@ -1894,6 +1896,57 @@ function FlowBuilder() {
     downloadBlob(await response.text(), 'application/json', `${filenameSlug(flowName)}.backstory.json`)
   }, [id, name])
 
+  // Debug export: the CURRENT builder graph (unsaved edits included — unlike
+  // the server export above) plus the checker's findings, packaged so an LLM
+  // can fix the flow and the result imports straight back via "Replace…".
+  const exportDebugJson = useCallback(() => {
+    const flowName = name.trim() || 'Untitled flow'
+    const pkg = flowToDebugPackage({ name: flowName, description, folder, visibility, graph }, validation)
+    downloadBlob(JSON.stringify(pkg, null, 2), 'application/json', `${filenameSlug(flowName)}.debug.backstory.json`)
+    toast.success(
+      validation.issues.length > 0
+        ? 'Exported with the checker’s findings — hand it to Claude to fix, then use Import → Replace this flow to load the corrected file.'
+        : 'Exported — the checker found no problems, but the file still round-trips through Import → Replace this flow.',
+      { duration: 8000 },
+    )
+  }, [name, description, folder, visibility, graph, validation])
+
+  // Replace-in-place import: unlike `useFlowImport` (which always creates a
+  // NEW draft), this swaps the OPEN flow's graph — the return leg of the
+  // debug-export round trip. Accepts a native package (any extra `debug`
+  // block is stripped by the schema) or a bare { nodes, edges } graph.
+  const replaceInputRef = useRef<HTMLInputElement>(null)
+  const replaceFromJson = useCallback(async (file: File) => {
+    if (!canEdit) return void toast.error('This flow is view-only — ask its owner to make changes.')
+    if (viewingVersion) return void toast.error('Close the version view before replacing the flow.')
+    if (file.size > 5_000_000) return void toast.error('Flow packages must be under 5 MB.')
+    let payload: unknown
+    try {
+      payload = JSON.parse(await file.text())
+    } catch {
+      return void toast.error('Could not read that JSON file.')
+    }
+    const asPackage = nativeFlowPackageSchema.safeParse(payload)
+    let nextGraph: FlowGraph
+    if (asPackage.success) {
+      nextGraph = asPackage.data.flow.graph
+    } else {
+      const asGraph = flowGraphSchema.safeParse(payload)
+      if (!asGraph.success) {
+        return void toast.error('That is not a valid Backstory flow package or flow graph JSON.')
+      }
+      nextGraph = asGraph.data
+    }
+    commitGraph(nextGraph)
+    setSelectedId(null)
+    const check = validateFlowGraph(nextGraph, { agents, toolCatalog, flowId: id })
+    if (check.errors.length > 0) {
+      toast.warning(`Flow replaced — ${check.errors.length} error${check.errors.length === 1 ? '' : 's'} still need${check.errors.length === 1 ? 's' : ''} attention.`)
+    } else {
+      toast.success('Flow replaced — the checker found no errors.')
+    }
+  }, [canEdit, viewingVersion, commitGraph, agents, toolCatalog, id])
+
   // Webhook-trigger flows export with WORKING credentials when that costs
   // nothing: a flow with NO secret yet gets one minted and embedded. A flow
   // whose secret already exists exports WITHOUT credentials — the old
@@ -2081,6 +2134,9 @@ function FlowBuilder() {
             <DropdownMenuItem onSelect={downloadFlow}>
               <Download className="h-4 w-4" /> Backstory JSON
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={exportDebugJson}>
+              <Download className="h-4 w-4" /> For debugging (JSON + checker findings)
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={exportN8n}>
               <Download className="h-4 w-4" /> For n8n (importable JSON)
             </DropdownMenuItem>
@@ -2090,8 +2146,13 @@ function FlowBuilder() {
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Import</DropdownMenuLabel>
             <DropdownMenuItem onSelect={() => flowImport.pickFile()}>
-              <Upload className="h-4 w-4" /> From a JSON file
+              <Upload className="h-4 w-4" /> From a JSON file (new flow)
             </DropdownMenuItem>
+            {canEdit && (
+              <DropdownMenuItem onSelect={() => replaceInputRef.current?.click()}>
+                <Upload className="h-4 w-4" /> Replace this flow from JSON…
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>
               <Upload className="h-4 w-4" /> From a URL
             </DropdownMenuItem>
@@ -2125,6 +2186,18 @@ function FlowBuilder() {
           </DropdownMenuContent>
         </DropdownMenu>
         {flowImport.fileInput}
+        <input
+          ref={replaceInputRef}
+          className="hidden"
+          type="file"
+          accept="application/json,.json"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            event.target.value = ''
+            if (file) void replaceFromJson(file)
+          }}
+        />
+
         {/* Builder view: the inline chain, or the free-form DAG canvas. */}
         <div className="flex items-center rounded-lg border border-border p-0.5" role="tablist" aria-label="Builder view">
           {(['inline', 'canvas'] as const).map((option) => (
@@ -2635,6 +2708,7 @@ function FlowBuilder() {
               fixing={fixing}
               onFixWithCopilot={fixWithCopilot}
               canFix={canEdit && !external}
+              onDownloadDebug={exportDebugJson}
               onClose={() => setShowChecker(false)}
               onJump={jumpToNode}
             />

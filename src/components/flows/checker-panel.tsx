@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronRight, CheckCircle2, Sparkles, X } from 'lucide-react'
+import { ChevronRight, CheckCircle2, Download, Sparkles, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import type { FlowValidationIssue, FlowValidationResult } from '@/lib/flows/validate'
@@ -34,6 +34,7 @@ export function CheckerPanel({
   onFixWithCopilot,
   fixing,
   canFix = true,
+  onDownloadDebug,
   onClose,
 }: {
   validation: FlowValidationResult
@@ -42,6 +43,8 @@ export function CheckerPanel({
   fixing: boolean
   /** Copilot fixes edit the flow — hidden for view-only + external guests. */
   canFix?: boolean
+  /** Downloads the flow JSON with these findings embedded, for external debugging. */
+  onDownloadDebug?: () => void
   onClose: () => void
 }) {
   const hasIssues = validation.errors.length > 0 || validation.warnings.length > 0
@@ -88,11 +91,18 @@ export function CheckerPanel({
           </>
         )}
       </div>
-      {hasIssues && canFix && (
-        <div className="border-t border-border p-3">
-          <Button variant="outline" size="sm" className="w-full" onClick={onFixWithCopilot} loading={fixing} disabled={fixing}>
-            <Sparkles className="mr-1.5 h-4 w-4" /> Fix with Copilot
-          </Button>
+      {hasIssues && (canFix || onDownloadDebug) && (
+        <div className="space-y-2 border-t border-border p-3">
+          {canFix && (
+            <Button variant="outline" size="sm" className="w-full" onClick={onFixWithCopilot} loading={fixing} disabled={fixing}>
+              <Sparkles className="mr-1.5 h-4 w-4" /> Fix with Copilot
+            </Button>
+          )}
+          {onDownloadDebug && (
+            <Button variant="ghost" size="sm" className="w-full" onClick={onDownloadDebug}>
+              <Download className="mr-1.5 h-4 w-4" /> Download JSON with findings
+            </Button>
+          )}
         </div>
       )}
     </div>

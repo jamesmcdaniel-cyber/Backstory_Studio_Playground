@@ -7,6 +7,17 @@ import { toast } from 'sonner'
 import { CONDITION_OPS, CONDITION_OP_LABELS, type ConditionOp, type ConditionClause, type TriggerInputField } from '@/lib/flows/graph'
 import { KNOWN_SIGNALS, KNOWN_SIGNAL_LABELS } from '@/lib/flows/trigger'
 import { nextOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
+import {
+  DAY_LABELS,
+  cadenceOf,
+  cronToTime,
+  daysFromCron,
+  dowCron,
+  isPickerCron,
+  scheduleForCadence,
+  todayKey,
+  type Cadence,
+} from '@/lib/scheduling/cadence'
 import { DataTree } from '@/components/flows/data-tree'
 import { buildDataTree } from '@/lib/flows/datatree'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
@@ -43,14 +54,17 @@ export type TriggerEditorClasses = { field: string; label: string; smallField: s
 // own input — not other steps' output — hence an empty step-label map.
 const TRIGGER_LABEL_CTX: TokenLabelContext = { stepLabels: {} }
 
-/** Frequencies the schedule editor offers (matches AgentSchedule types). */
-const FREQUENCIES = [
+/** Plain-English cadences the schedule editor offers — raw cron is never
+ *  shown or accepted; day-of-week and sub-hourly cadences are stored as crons
+ *  invisibly (src/lib/scheduling/cadence.ts). */
+const CADENCES: { value: Cadence; label: string }[] = [
+  { value: 'every15min', label: 'Every 15 minutes' },
+  { value: 'every30min', label: 'Every 30 minutes' },
   { value: 'hourly', label: 'Hourly' },
   { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'cron', label: 'Cron expression' },
-  { value: 'once', label: 'Once' },
-] as const
+  { value: 'daysofweek', label: 'Days of week' },
+  { value: 'once', label: 'Once (specific date)' },
+]
 
 // Defaults for the classes prop — copied from the drawer's local class
 // strings (not imported, so this component has no compile-time dependency on
@@ -60,6 +74,24 @@ const fieldClass =
 const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground'
 const smallFieldDefault =
   'rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300'
+
+/** Weekday toggle chip for the "days of week" cadence. */
+function DayToggle({ label, on, onToggle }: { label: string; on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onToggle}
+      className={
+        on
+          ? 'h-8 w-10 rounded-md border border-indigo-500 bg-indigo-500 text-xs font-medium text-white transition-colors'
+          : 'h-8 w-10 rounded-md border border-border bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:border-indigo-400 hover:text-foreground'
+      }
+    >
+      {label}
+    </button>
+  )
+}
 
 function clausesOf(data: { clauses?: ConditionClause[]; left?: string; op?: ConditionOp; right?: string }): ConditionClause[] {
   if (data.clauses && data.clauses.length) return data.clauses
@@ -156,16 +188,43 @@ export function TriggerEditor({
   const updateConditionClauses = (next: ConditionClause[]) =>
     onChange({ ...trigger, condition: { ...trigger.condition, clauses: next } })
 
+  // Keep the trigger's own type: the poll editor shares this schedule state,
+  // and forcing 'schedule' here silently converted a poll into a plain
+  // scheduled trigger the moment its cadence was edited.
   const setSchedule = (patch: Partial<NonNullable<TriggerData['schedule']>>) =>
-    onChange({ ...trigger, type: 'schedule', schedule: { ...schedule, ...patch, isActive: true } })
+    onChange({ ...trigger, type: type === 'poll' ? 'poll' : 'schedule', schedule: { ...schedule, ...patch, isActive: true } })
+
+  // Plain-English cadence view over the stored schedule (cron never surfaces).
+  const cadence = cadenceOf(schedule)
+  const scheduleTime = schedule.type === 'cron' ? cronToTime(schedule.cron ?? '') : (schedule.time ?? '09:00')
+  const selectedDays = cadence === 'daysofweek' ? daysFromCron(schedule.cron) : []
+
+  const setCadence = (next: Cadence) =>
+    setSchedule(
+      scheduleForCadence(next, schedule, {
+        time: scheduleTime,
+        timezone: schedule.timezone || 'UTC',
+        runAt: todayKey(),
+        days: selectedDays,
+      }),
+    )
+
+  const setTime = (time: string) =>
+    cadence === 'daysofweek' ? setSchedule({ time, cron: dowCron(time, selectedDays) }) : setSchedule({ time })
+
+  const toggleDay = (day: number) => {
+    const next = selectedDays.includes(day) ? selectedDays.filter((d) => d !== day) : [...selectedDays, day]
+    // Never allow zero days — keep at least the toggled one.
+    setSchedule({ type: 'cron', cron: dowCron(scheduleTime, next.length ? next : [day]) })
+  }
 
   // "Next run" preview for the schedule editor. IMPORTANT: nextOccurrence's cron
-  // path does a minute-by-minute scan and has measured up to ~13s worst case —
-  // far too slow to call on every render/keystroke. So this memo only ever
-  // calls nextOccurrence for the fast schedule types (hourly/daily/weekly/once);
-  // cron gets a static, non-computed label below instead.
+  // path does a minute-by-minute scan and has measured up to ~13s worst case on
+  // arbitrary crons — so it only runs for the fast schedule types and for the
+  // cron shapes our pickers generate (bounded within days); a legacy arbitrary
+  // cron gets a static label below instead.
   const nextRunLabel = useMemo(() => {
-    if (schedule.type === 'cron') return null
+    if (schedule.type === 'cron' && !isPickerCron(schedule.cron)) return null
     const merged: AgentSchedule = {
       type: (schedule.type as AgentSchedule['type']) ?? 'daily',
       time: schedule.time ?? '09:00',
@@ -243,30 +302,34 @@ export function TriggerEditor({
         <div className="space-y-3">
           <div>
             <label className={label}>Frequency</label>
-            <select className={field} value={schedule.type ?? 'daily'} onChange={(e) => setSchedule({ type: e.target.value })}>
-              {FREQUENCIES.map((f) => (
+            <select className={field} value={cadence} onChange={(e) => setCadence(e.target.value as Cadence)}>
+              {CADENCES.map((f) => (
                 <option key={f.value} value={f.value}>
                   {f.label}
                 </option>
               ))}
             </select>
           </div>
-          {['daily', 'weekly', 'once'].includes(schedule.type ?? 'daily') && (
+          {cadence === 'daysofweek' && (
             <div>
-              <label className={label}>Time (HH:MM)</label>
-              <input className={field} value={schedule.time ?? '09:00'} placeholder="09:00" onChange={(e) => setSchedule({ time: e.target.value })} />
+              <label className={label}>Repeat on</label>
+              <div className="flex flex-wrap gap-1.5">
+                {DAY_LABELS.map((dayLabel, day) => (
+                  <DayToggle key={day} label={dayLabel} on={selectedDays.includes(day)} onToggle={() => toggleDay(day)} />
+                ))}
+              </div>
             </div>
           )}
-          {schedule.type === 'once' && (
+          {['daily', 'daysofweek', 'once'].includes(cadence) && (
+            <div>
+              <label className={label}>Time (HH:MM)</label>
+              <input className={field} value={scheduleTime} placeholder="09:00" onChange={(e) => setTime(e.target.value)} />
+            </div>
+          )}
+          {cadence === 'once' && (
             <div>
               <label className={label}>Date (YYYY-MM-DD)</label>
               <input className={field} value={schedule.runAt ?? ''} placeholder="2026-07-15" onChange={(e) => setSchedule({ runAt: e.target.value })} />
-            </div>
-          )}
-          {schedule.type === 'cron' && (
-            <div>
-              <label className={label}>Cron expression</label>
-              <input className={`${field} font-mono`} value={schedule.cron ?? ''} placeholder="0 9 * * 1-5" onChange={(e) => setSchedule({ cron: e.target.value })} />
             </div>
           )}
           <div>
@@ -278,7 +341,7 @@ export function TriggerEditor({
             <textarea rows={2} onKeyDown={indentOnTab} className={field} value={trigger.input ?? ''} placeholder="Text or JSON passed to the flow each time it runs" onChange={(e) => onChange({ ...trigger, input: e.target.value || undefined })} />
           </div>
           <p className="text-xs text-muted-foreground">
-            {schedule.type === 'cron' ? `Next run: per cron "${schedule.cron ?? ''}"` : `Next run: ${nextRunLabel}`}
+            {nextRunLabel ? `Next run: ${nextRunLabel}` : 'Next run: on this flow’s saved custom schedule'}
           </p>
           <p className="text-xs text-muted-foreground">Scheduled runs execute the <strong>published</strong> version — publish the flow to arm the schedule.</p>
         </div>
@@ -333,22 +396,27 @@ export function TriggerEditor({
           </div>
           <div>
             <label className={label}>Check every</label>
-            <select className={field} value={schedule.type ?? 'hourly'} onChange={(e) => setSchedule({ type: e.target.value })}>
-              {FREQUENCIES.filter((f) => f.value !== 'once').map((f) => (
+            {/* A one-time check makes no sense for a poll, so 'once' is omitted. */}
+            <select className={field} value={cadence === 'once' ? 'hourly' : cadence} onChange={(e) => setCadence(e.target.value as Cadence)}>
+              {CADENCES.filter((f) => f.value !== 'once').map((f) => (
                 <option key={f.value} value={f.value}>{f.label}</option>
               ))}
             </select>
           </div>
-          {['daily', 'weekly'].includes(schedule.type ?? 'hourly') && (
+          {cadence === 'daysofweek' && (
             <div>
-              <label className={label}>Time (HH:MM)</label>
-              <input className={field} value={schedule.time ?? '09:00'} placeholder="09:00" onChange={(e) => setSchedule({ time: e.target.value })} />
+              <label className={label}>Check on</label>
+              <div className="flex flex-wrap gap-1.5">
+                {DAY_LABELS.map((dayLabel, day) => (
+                  <DayToggle key={day} label={dayLabel} on={selectedDays.includes(day)} onToggle={() => toggleDay(day)} />
+                ))}
+              </div>
             </div>
           )}
-          {schedule.type === 'cron' && (
+          {['daily', 'daysofweek'].includes(cadence) && (
             <div>
-              <label className={label}>Cron expression</label>
-              <input className={`${field} font-mono`} value={schedule.cron ?? ''} placeholder="*/15 * * * *" onChange={(e) => setSchedule({ cron: e.target.value })} />
+              <label className={label}>Time (HH:MM)</label>
+              <input className={field} value={scheduleTime} placeholder="09:00" onChange={(e) => setTime(e.target.value)} />
             </div>
           )}
           <p className="text-xs text-muted-foreground">Polls the <strong>published</strong> version. The first check just learns what already exists; new items after that start the flow.</p>

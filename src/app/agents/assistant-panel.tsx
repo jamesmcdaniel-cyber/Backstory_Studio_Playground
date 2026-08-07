@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
+import { describeSchedule } from '@/lib/scheduling/cadence'
 import { toast } from 'sonner'
 import { ArrowRight, Check, Clock, Loader2, MessageSquare, Plus, Send, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -84,11 +85,11 @@ function relativeTime(iso: string): string {
   return `${Math.floor(days / 30)}mo`
 }
 
+/** Plain English only — a proposal must never show raw cron syntax. */
 function scheduleLabel(schedule: ProposalSchedule): string {
   if (schedule.type === 'manual') return 'manual'
-  if (schedule.type === 'hourly') return `hourly${schedule.isActive ? '' : ' (paused)'}`
-  if (schedule.type === 'cron') return `cron ${schedule.cron || ''} (${schedule.timezone})${schedule.isActive ? '' : ' (paused)'}`
-  return `${schedule.type}${schedule.time ? ` at ${schedule.time}` : ''} (${schedule.timezone})${schedule.isActive ? '' : ' (paused)'}`
+  const described = describeSchedule(schedule as Parameters<typeof describeSchedule>[0])
+  return `${described} (${schedule.timezone})${schedule.isActive ? '' : ' (paused)'}`
 }
 
 function proposalRows(proposal: AssistantProposal): Array<{ label: string; value: string }> {

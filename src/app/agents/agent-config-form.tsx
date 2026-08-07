@@ -23,6 +23,7 @@ import { KnowledgePanel } from '@/app/agents/knowledge-panel'
 import { AgentHttpEndpointDialog } from '@/components/agents/http-endpoint-dialog'
 import { endpointParams, endpointToolName, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { cn } from '@/lib/utils'
+import { DAY_LABELS, cadenceOf, cronToTime, daysFromCron, dowCron } from '@/lib/scheduling/cadence'
 
 /**
  * The agent configuration form, shared by the config dialog and the dashboard's
@@ -437,57 +438,22 @@ function ModelOption({ provider, label }: { provider: 'anthropic' | 'qwen'; labe
 
 // ── Schedule cadence (visual UI concept mapped onto the backend schedule) ────
 // Backend supports type manual|hourly|daily|weekly|cron|once (see due.ts). The
-// UI offers only friendly visual cadences and never exposes raw cron.
-type Cadence = 'hourly' | 'daily' | 'daysofweek' | 'once'
+// UI offers only friendly visual cadences and never exposes raw cron — the
+// classification/serialization helpers are shared with the flow trigger editor
+// (src/lib/scheduling/cadence.ts). Agents deliberately offer hourly as the
+// fastest cadence; a legacy sub-hourly cron displays as Hourly and converts on
+// its next save.
+type AgentCadence = 'hourly' | 'daily' | 'daysofweek' | 'once'
 
-const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'] as const
-
-function cadenceOf(schedule: AgentDraft['schedule']): Cadence {
-  if (schedule.type === 'once') return 'once'
-  if (schedule.type === 'daily') return 'daily'
-  if (schedule.type === 'hourly') return 'hourly'
-  // An every-hour cron (hour field '*', no day restriction) is the Hourly
-  // preset round-tripping through its cron representation.
-  if (schedule.type === 'cron') {
-    const [, hourF, , , dowF] = (schedule.cron || '').trim().split(/\s+/)
-    if (hourF === '*' && (dowF === '*' || dowF === undefined)) return 'hourly'
-  }
-  // Everything else recurring — day-of-week crons plus legacy weekly /
-  // every-other-day / arbitrary crons — surfaces as the flexible "days of week"
-  // picker; a legacy schedule converts to a clean cron on its next save.
-  return 'daysofweek'
-}
-
-/** HH:MM + selected weekdays → a `mm hh * * d,d` cron. */
-function dowCron(time: string, days: number[]): string {
-  const [hh, mm] = (time || '09:00').split(':').map((n) => parseInt(n, 10))
-  const list = days.length ? [...days].sort((a, b) => a - b).join(',') : '1'
-  return `${Number.isNaN(mm) ? 0 : mm} ${Number.isNaN(hh) ? 9 : hh} * * ${list}`
-}
-
-/** Parse the selected weekdays out of a cron's 5th field, defaulting to
- *  weekdays when the field is absent or not a plain day list (e.g. a legacy
- *  arbitrary cron) so the "days of week" picker always has a sane selection. */
-function daysFromCron(cron: string | undefined): number[] {
-  const dow = (cron || '').trim().split(/\s+/)[4]
-  if (!dow) return [1, 2, 3, 4, 5]
-  const parsed = dow.split(',').map((n) => parseInt(n, 10)).filter((n) => n >= 0 && n <= 6)
-  return parsed.length ? parsed : [1, 2, 3, 4, 5]
+function agentCadenceOf(schedule: AgentDraft['schedule']): AgentCadence {
+  const cadence = cadenceOf(schedule)
+  return cadence === 'every15min' || cadence === 'every30min' ? 'hourly' : cadence
 }
 
 /** Today as YYYY-MM-DD in local time — the earliest selectable one-time date. */
 function todayKey(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-/** Pull HH:MM out of a cron's minute+hour fields for the time input. */
-function cronToTime(cron: string): string {
-  const [minF, hourF] = (cron || '').trim().split(/\s+/)
-  const mm = parseInt(minF, 10)
-  const hh = parseInt(hourF, 10)
-  if (Number.isNaN(mm) || Number.isNaN(hh)) return '09:00'
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
 }
 
 /** Legacy 'hourly' ≡ cron '0 * * * *'; represent it as cron so the Hourly
@@ -826,7 +792,7 @@ export function AgentConfigForm({
   }
 
   // ── Schedule (visual cadence UI ↔ backend schedule) ───────────────────────
-  const cadence = cadenceOf(draft.schedule)
+  const cadence = agentCadenceOf(draft.schedule)
   // The time shown in the time picker: cron-backed cadences carry it in the cron
   // fields, the rest in `time`.
   const scheduleTime = (draft.schedule.type === 'cron')
@@ -848,7 +814,7 @@ export function AgentConfigForm({
     setDraft({ ...draft, schedule: { ...base, isActive: true } })
   }
 
-  const setCadence = (next: Cadence) => {
+  const setCadence = (next: AgentCadence) => {
     const time = scheduleTime
     const timezone = draft.schedule.timezone || browserTimezone()
     const schedule: AgentDraft['schedule'] =
@@ -1183,7 +1149,7 @@ export function AgentConfigForm({
           <div className="space-y-3 border-t pt-3">
             <div>
               <Label>Cadence</Label>
-              <Select value={cadence} onValueChange={(value) => setCadence(value as Cadence)}>
+              <Select value={cadence} onValueChange={(value) => setCadence(value as AgentCadence)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="hourly">Hourly</SelectItem>

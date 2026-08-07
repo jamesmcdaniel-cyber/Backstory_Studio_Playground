@@ -9,7 +9,6 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Aurora } from '@/components/ui/motion-primitives'
 
 type LibrarianResult = {
   /** `doc` is a help-centre article (an external link); the rest are workspace items. */
@@ -106,14 +105,11 @@ export default function AssistantHome() {
     <div
       className={cn(
         // Width + gutters come from the shell's PAGE_CONTAINER; this only sets
-        // the vertical rhythm the two states need. `isolate` keeps the Aurora
-        // layer's negative z-index inside this element, behind the content.
-        'relative isolate flex w-full flex-col pb-24',
+        // the vertical rhythm the two states need.
+        'relative flex w-full flex-col pb-24',
         started ? 'pt-4 sm:pt-8' : 'min-h-[68dvh] justify-center',
       )}
     >
-      {/* Ambient depth behind the landing state; gone once a conversation starts. */}
-      {!started && <Aurora intensity={0.5} className="-z-10" />}
       <div className="mb-8 flex items-center justify-between gap-4">
         <p className="font-mono text-xs tracking-[0.2em] text-gray-500">
           <span className="text-horizon-500">{'///'}</span> {hello}

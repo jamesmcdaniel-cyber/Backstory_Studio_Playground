@@ -9,6 +9,7 @@ import { serializeAgent } from '@/lib/agents/serialize'
 import { indexAgent, removeAgentFromGraph } from '@/lib/rag/indexer'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
 import { AGENT_HTTP_ENDPOINT_LIMIT, agentHttpEndpointSchema } from '@/lib/integrations/http-endpoints'
+import { anchorSchedule } from '@/lib/scheduling/due'
 
 /** Best-effort graph-RAG indexing of an agent node (gated on embeddings). */
 function indexAgentRow(agent: { id: string; organizationId: string; objective: string; description: string; metadata: unknown; userId?: string | null; visibility?: string }): Promise<void> {
@@ -160,7 +161,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       description: data.description || data.title,
       objective: data.instructions,
       context: {},
-      schedule: data.schedule,
+      schedule: anchorSchedule(data.schedule),
       status: 'ACTIVE',
       folder: data.folder || null,
       visibility: data.visibility,
@@ -205,7 +206,9 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
       ...(body.description !== undefined && { description: body.description || body.title || existing.description }),
       ...(body.instructions !== undefined && { objective: body.instructions }),
       ...(body.priority !== undefined && { priority: body.priority.toUpperCase() }),
-      ...(body.schedule !== undefined && { schedule: body.schedule }),
+      // Anchored so a saved schedule fires on its NEXT occurrence, not
+      // instantly as a catch-up of today's already-passed time.
+      ...(body.schedule !== undefined && { schedule: anchorSchedule(body.schedule, existing.schedule) }),
       ...(body.folder !== undefined && { folder: body.folder || null }),
       ...(body.visibility !== undefined && { visibility: body.visibility }),
       ...(body.goal !== undefined && { goal: body.goal?.trim() ? body.goal.trim() : null }),

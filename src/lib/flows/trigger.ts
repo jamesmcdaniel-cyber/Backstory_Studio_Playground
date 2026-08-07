@@ -1,4 +1,5 @@
 import { FIELD_TYPES, type FlowGraph, type TriggerInputField } from '@/lib/flows/graph'
+import { anchorSchedule } from '@/lib/scheduling/due'
 
 export const FLOW_TRIGGER_TYPES = ['manual', 'schedule', 'webhook', 'signal', 'poll'] as const
 export type FlowTriggerType = (typeof FLOW_TRIGGER_TYPES)[number]
@@ -44,6 +45,19 @@ export function triggerFromGraph(graph: FlowGraph, fallback?: unknown): FlowTrig
   const node = graph.nodes.find((candidate) => candidate.type === 'trigger')
   const trigger = node?.type === 'trigger' ? node.data.trigger : undefined
   return normalizeFlowTrigger(trigger, fallback)
+}
+
+/**
+ * Maintains trigger.schedule's anchor across saves (see anchorSchedule): a new
+ * or changed schedule is anchored at now so it fires on its next real
+ * occurrence instead of instantly catching up; an unchanged one keeps its
+ * anchor. Pass `existing` = the stored trigger (or null to force a fresh
+ * anchor, e.g. when publishing first arms the schedule).
+ */
+export function anchorTriggerSchedule(next: FlowTrigger, existing?: unknown): FlowTrigger {
+  if (!isRecord(next.schedule)) return next
+  const prev = isRecord(existing) && isRecord(existing.schedule) ? existing.schedule : null
+  return { ...next, schedule: anchorSchedule(next.schedule as { type?: string; isActive?: boolean }, prev) }
 }
 
 export function preserveWebhookSecretHash(next: unknown, existing: unknown): FlowTrigger {

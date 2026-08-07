@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
 import { summarizeConnectedIntegrations } from '@/lib/integrations/integration-count'
+import { anchorSchedule } from '@/lib/scheduling/due'
 
 /**
  * Turning an accepted recommendation into a LIVE, ready-to-run artifact — the
@@ -69,7 +70,7 @@ export async function provisionAgentFromConfig(
       description: str(config.description, title),
       objective: str(config.instructions, title),
       context: {},
-      schedule: scheduleFromCadence(config.schedule),
+      schedule: anchorSchedule(scheduleFromCadence(config.schedule)),
       status: 'ACTIVE',
       visibility: 'shared',
       organizationId,

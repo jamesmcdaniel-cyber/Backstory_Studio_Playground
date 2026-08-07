@@ -14,6 +14,60 @@ export type AgentSchedule = {
   /** YYYY-MM-DD calendar date – used only by type === 'once' (with `time`). */
   runAt?: string
   isActive: boolean
+  /**
+   * ISO timestamp of when this schedule was configured (stamped by
+   * `anchorSchedule` at save time). Occurrences from before the anchor are
+   * never owed — without it, saving "daily at 09:00" at 15:00 fired instantly
+   * as a catch-up run instead of waiting for tomorrow's 09:00. Absent on
+   * schedules saved before anchoring existed, which keep catch-up behavior.
+   */
+  anchor?: string
+}
+
+/** The schedule's anchor as a Date, or null when absent/unparseable. */
+function anchorDate(schedule: AgentSchedule): Date | null {
+  if (!schedule.anchor) return null
+  const parsed = new Date(schedule.anchor)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+/**
+ * lastExecutedAt floored by the anchor: for dueness, the schedule owes nothing
+ * from before it was configured, so a fresh schedule behaves as if it "ran"
+ * at save time and the first real run lands on the next occurrence.
+ */
+function effectiveLast(schedule: AgentSchedule, lastExecutedAt: Date | null): Date | null {
+  const anchor = anchorDate(schedule)
+  if (!anchor) return lastExecutedAt
+  return lastExecutedAt && lastExecutedAt > anchor ? lastExecutedAt : anchor
+}
+
+/**
+ * Returns `next` with its anchor maintained: a new schedule — or one whose
+ * scheduling-relevant fields changed, including reactivation — gets a fresh
+ * anchor at now; an unchanged schedule keeps the previous anchor so unrelated
+ * edits never shift the cadence. Every path that writes a schedule must pass
+ * it through here.
+ */
+export function anchorSchedule<T extends { type?: string; isActive?: boolean }>(
+  next: T,
+  previous?: unknown,
+): T & { anchor?: string } {
+  const prev =
+    previous && typeof previous === 'object' && !Array.isArray(previous)
+      ? (previous as Record<string, unknown>)
+      : null
+  const n = next as Record<string, unknown>
+  const unchanged =
+    prev !== null &&
+    prev.type === n.type &&
+    (prev.time ?? '') === (n.time ?? '') &&
+    (prev.cron ?? '') === (n.cron ?? '') &&
+    (prev.timezone ?? 'UTC') === (n.timezone ?? 'UTC') &&
+    (prev.runAt ?? '') === (n.runAt ?? '') &&
+    prev.isActive === n.isActive
+  const anchor = unchanged ? (typeof prev.anchor === 'string' ? prev.anchor : undefined) : new Date().toISOString()
+  return { ...next, anchor }
 }
 
 // ---------------------------------------------------------------------------
@@ -139,25 +193,32 @@ export function isDue(
       if (!y || !mo || !d) return false
       const target = instantForDate(y, mo, d, schedule.time || '09:00', schedule.timezone || 'UTC')
       if (now < target) return false
+      // A target that had already passed when the schedule was saved is stale
+      // configuration, not a missed run — never fire it.
+      const anchor = anchorDate(schedule)
+      if (anchor && anchor > target) return false
       return lastExecutedAt === null
     }
 
     case 'hourly': {
-      if (lastExecutedAt === null) return true
-      return now.getTime() - lastExecutedAt.getTime() >= 60 * 60_000
+      const last = effectiveLast(schedule, lastExecutedAt)
+      if (last === null) return true
+      return now.getTime() - last.getTime() >= 60 * 60_000
     }
 
     case 'daily': {
       const scheduled = todayInstant(schedule.time || '00:00', schedule.timezone || 'UTC', now)
       if (now < scheduled) return false
-      if (lastExecutedAt === null) return true
-      return lastExecutedAt < scheduled
+      const last = effectiveLast(schedule, lastExecutedAt)
+      if (last === null) return true
+      return last < scheduled
     }
 
     case 'weekly': {
-      if (lastExecutedAt !== null) {
+      const last = effectiveLast(schedule, lastExecutedAt)
+      if (last !== null) {
         const sevenDaysMs = 7 * 24 * 60 * 60_000
-        if (now.getTime() - lastExecutedAt.getTime() < sevenDaysMs) return false
+        if (now.getTime() - last.getTime() < sevenDaysMs) return false
       }
       // Also require that now is past today's scheduled time
       const scheduled = todayInstant(schedule.time || '00:00', schedule.timezone || 'UTC', now)
@@ -179,7 +240,8 @@ export function isDue(
       const DEFAULT_LOOKBACK_MS = 25 * 60 * 60 * 1000 // 25h
       const MAX_LOOKBACK_MS = 400 * 24 * 60 * 60 * 1000 // 400 days
 
-      const sinceMs = lastExecutedAt ? lastExecutedAt.getTime() : now.getTime() - DEFAULT_LOOKBACK_MS
+      const last = effectiveLast(schedule, lastExecutedAt)
+      const sinceMs = last ? last.getTime() : now.getTime() - DEFAULT_LOOKBACK_MS
       const flooredSince = Math.max(sinceMs, now.getTime() - MAX_LOOKBACK_MS)
 
       // Iterate minute-by-minute from `now` backward to (but not including)
@@ -223,6 +285,9 @@ export function nextOccurrence(schedule: AgentSchedule, from: Date): Date | null
       const [y, mo, d] = schedule.runAt.split('-').map(Number)
       if (!y || !mo || !d) return null
       const target = instantForDate(y, mo, d, schedule.time || '09:00', schedule.timezone || 'UTC')
+      // Mirror isDue: a target already passed at save time never fires.
+      const anchor = anchorDate(schedule)
+      if (anchor && anchor > target) return null
       return target > from ? target : null
     }
 

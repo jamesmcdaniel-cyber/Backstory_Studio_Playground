@@ -1,6 +1,6 @@
 import { describe, it, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isDue, nextOccurrence, type AgentSchedule } from '../due.js'
+import { anchorSchedule, isDue, nextOccurrence, type AgentSchedule } from '../due.js'
 
 // --- helpers -----------------------------------------------------------------
 
@@ -372,4 +372,94 @@ test('nextOccurrence: weekly returns this week’s instant when still ahead, els
   assert.equal(before?.toISOString(), '2026-07-09T09:00:00.000Z')
   const after = nextOccurrence(schedule, new Date('2026-07-09T10:00:00Z'))
   assert.equal(after?.toISOString(), '2026-07-16T09:00:00.000Z')
+})
+
+// ---------------------------------------------------------------------------
+// Anchored schedules — a just-saved schedule must not fire instantly.
+//
+// Without an anchor, isDue treats the entire past as missed occurrences: a
+// never-run hourly agent is due immediately, a daily agent saved at 15:00 for
+// 09:00 fires at save time, and a fresh cron looks back 25 hours. The anchor
+// (stamped at save time by anchorSchedule) floors the catch-up window so the
+// first run lands on the next real occurrence after the save.
+// ---------------------------------------------------------------------------
+
+describe('anchored schedules', () => {
+  it('hourly: not due until 60 minutes after the anchor, even when never run', () => {
+    const fresh = { type: 'hourly', time: '', cron: '', timezone: 'UTC', isActive: true, anchor: minutesAgo(1).toISOString() } as AgentSchedule
+    assert.equal(isDue(fresh, null, new Date()), false)
+    const hourOld = { ...fresh, anchor: minutesAgo(61).toISOString() } as AgentSchedule
+    assert.equal(isDue(hourOld, null, new Date()), true)
+  })
+
+  it('daily: saved after today’s time already passed → waits for tomorrow', () => {
+    const now = new Date('2026-08-07T15:00:00Z')
+    const schedule = { type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: true, anchor: '2026-08-07T14:00:00Z' } as AgentSchedule
+    assert.equal(isDue(schedule, null, now), false)
+    // Anchored before today's occurrence → today's 09:00 still fires.
+    const savedYesterday = { ...schedule, anchor: '2026-08-06T18:00:00Z' } as AgentSchedule
+    assert.equal(isDue(savedYesterday, null, now), true)
+    // A run after the anchor still gates the next one as before.
+    assert.equal(isDue(savedYesterday, new Date('2026-08-07T09:01:00Z'), now), false)
+  })
+
+  it('weekly: a fresh anchor starts the 7-day clock at save time', () => {
+    const now = new Date('2026-08-07T15:00:00Z')
+    const schedule = { type: 'weekly', time: '09:00', cron: '', timezone: 'UTC', isActive: true, anchor: '2026-08-06T10:00:00Z' } as AgentSchedule
+    assert.equal(isDue(schedule, null, now), false)
+    const weekOld = { ...schedule, anchor: '2026-07-30T10:00:00Z' } as AgentSchedule
+    assert.equal(isDue(weekOld, null, now), true)
+  })
+
+  it('cron: owes nothing from before the anchor', () => {
+    const now = new Date('2026-08-07T15:00:00Z')
+    const schedule = { type: 'cron', time: '', cron: '0 9 * * *', timezone: 'UTC', isActive: true, anchor: '2026-08-07T14:00:00Z' } as AgentSchedule
+    assert.equal(isDue(schedule, null, now), false)
+    const beforeNine = { ...schedule, anchor: '2026-08-07T08:00:00Z' } as AgentSchedule
+    assert.equal(isDue(beforeNine, null, now), true)
+  })
+
+  it('once: a target that had already passed when the schedule was saved never fires', () => {
+    const now = new Date('2026-08-07T15:00:00Z')
+    const stale = { type: 'once', time: '09:00', cron: '', timezone: 'UTC', isActive: true, runAt: '2026-08-07', anchor: '2026-08-07T14:00:00Z' } as AgentSchedule
+    assert.equal(isDue(stale, null, now), false)
+    assert.equal(nextOccurrence(stale, new Date('2026-08-07T08:00:00Z')), null)
+    // Saved before the target → fires once the target passes, as before.
+    const ahead = { ...stale, anchor: '2026-08-07T08:00:00Z' } as AgentSchedule
+    assert.equal(isDue(ahead, null, now), true)
+  })
+
+  it('legacy schedules without an anchor keep catch-up behavior', () => {
+    const now = new Date('2026-08-07T15:00:00Z')
+    const daily = { type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: true } as AgentSchedule
+    assert.equal(isDue(daily, null, now), true)
+  })
+
+  it('an invalid anchor string is ignored rather than wedging the schedule', () => {
+    const now = new Date('2026-08-07T15:00:00Z')
+    const daily = { type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: true, anchor: 'not-a-date' } as AgentSchedule
+    assert.equal(isDue(daily, null, now), true)
+  })
+})
+
+describe('anchorSchedule', () => {
+  it('stamps a fresh anchor on a new or changed schedule', () => {
+    const next = { type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: true } as AgentSchedule
+    const stamped = anchorSchedule(next)
+    assert.ok(stamped.anchor && !Number.isNaN(new Date(stamped.anchor).getTime()))
+    const changed = anchorSchedule({ ...next, time: '10:00' }, stamped)
+    assert.ok(changed.anchor && changed.anchor >= stamped.anchor!)
+  })
+
+  it('preserves the previous anchor when scheduling fields are unchanged', () => {
+    const prev = { type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: true, anchor: '2026-08-01T00:00:00.000Z' } as AgentSchedule
+    const saved = anchorSchedule({ type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: true } as AgentSchedule, prev)
+    assert.equal(saved.anchor, '2026-08-01T00:00:00.000Z')
+  })
+
+  it('re-stamps when a paused schedule is reactivated', () => {
+    const prev = { type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: false, anchor: '2026-08-01T00:00:00.000Z' } as AgentSchedule
+    const saved = anchorSchedule({ type: 'daily', time: '09:00', cron: '', timezone: 'UTC', isActive: true } as AgentSchedule, prev)
+    assert.notEqual(saved.anchor, '2026-08-01T00:00:00.000Z')
+  })
 })

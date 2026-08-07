@@ -7,7 +7,7 @@ import { assertFlowEditable } from '@/lib/flows/access'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph, validationErrorMessage } from '@/lib/flows/validate'
-import { preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
+import { anchorTriggerSchedule, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
 import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
 import { recordAudit } from '@/lib/audit'
 
@@ -100,7 +100,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     select: { version: true },
   })
   const nextVersion = (latestSnapshot?.version ?? 0) + 1
-  const trigger = jsonValue(preserveWebhookSecretHash(triggerFromGraph(graph, existing.trigger), existing.trigger))
+  // Publishing is what ARMS a schedule (only ACTIVE published flows are
+  // scanned), so a first publish anchors it fresh at now — otherwise a
+  // schedule configured days earlier would instantly "catch up" the moment it
+  // went live. A republish keeps the anchor unless the schedule changed.
+  const trigger = jsonValue(
+    anchorTriggerSchedule(
+      preserveWebhookSecretHash(triggerFromGraph(graph, existing.trigger), existing.trigger),
+      existing.publishedGraph == null ? null : existing.trigger,
+    ),
+  )
   const flow = await tenantTransaction(auth.organizationId, async (tx) => {
     const updated = await tx.flow.update({
       where: { id, organizationId: auth.organizationId },

@@ -309,13 +309,14 @@ export function Sidebar() {
         {agent.icon || agent.title.trim().charAt(0) || 'A'}
       </span>
       <button
-        className="flex-1 truncate text-left text-sm"
+        className="flex-1 truncate rounded text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         title={agent.description || agent.title}
         onClick={() => router.push(`/agents?agent=${agent.id}`)}
       >
         {agent.title}
       </button>
-      <div className="hidden gap-0.5 group-hover:flex">
+      {/* group-focus-within keeps Run/Delete reachable when tabbing, not just on hover. */}
+      <div className="hidden gap-0.5 group-focus-within:flex group-hover:flex">
         <Button size="icon" variant="ghost" className="h-6 w-6" disabled={runningId === agent.id} onClick={() => runAgent(agent)} aria-label="Run agent">
           {runningId === agent.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
         </Button>
@@ -333,7 +334,7 @@ export function Sidebar() {
       )}
 
       <div className="fixed left-4 top-4 z-50 lg:hidden">
-        <Button variant="outline" size="icon" onClick={() => setMobileOpen(true)} className="bg-white shadow-md" aria-label="Open navigation">
+        <Button variant="outline" size="icon" onClick={() => setMobileOpen(true)} className="bg-white shadow-2" aria-label="Open navigation">
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
@@ -353,7 +354,7 @@ export function Sidebar() {
             <button
               ref={orgButtonRef}
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-gray-100',
+                'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 desktopCollapsed && 'lg:w-full lg:flex-none lg:justify-center lg:px-0',
               )}
               onClick={() => setOrgMenuOpen((open) => !open)}
@@ -457,7 +458,7 @@ export function Sidebar() {
           <div className={cn('mt-2 flex items-center gap-2', desktopCollapsed && 'lg:flex-col')}>
             <button
               className={cn(
-                'flex flex-1 items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-sm text-gray-400 transition-colors duration-fast hover:border-graphite-300 hover:text-gray-600',
+                'flex flex-1 items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-sm text-gray-400 transition-colors duration-fast hover:border-graphite-300 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 desktopCollapsed && 'lg:h-9 lg:w-9 lg:flex-none lg:justify-center lg:px-0',
               )}
               onClick={() => setPaletteOpen(true)}
@@ -485,8 +486,11 @@ export function Sidebar() {
                   aria-label={desktopCollapsed ? item.name : undefined}
                   className={cn(
                     'group relative flex items-center gap-2.5 overflow-hidden rounded-lg px-2 py-2 text-sm font-medium transition-colors duration-fast',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     desktopCollapsed && 'lg:justify-center lg:px-0 lg:py-2',
-                    isActive ? 'text-horizon-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
+                    // The active item needs its own surface: rail + text color alone
+                    // lose to a hovered sibling's bg-gray-100.
+                    isActive ? 'bg-horizon-50/80 text-horizon-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
                   )}
                 >
                   {isActive && (
@@ -531,7 +535,7 @@ export function Sidebar() {
                 <div key={key} className="mb-0.5">
                   <button
                     className={cn(
-                      'flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100',
+                      'flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       dragOver === key && 'bg-indigo-50',
                     )}
                     onClick={() => setFolderCollapsed((current) => ({ ...current, [key]: !current[key] }))}
@@ -580,7 +584,7 @@ export function Sidebar() {
           <Link
             href="/settings"
             className={cn(
-              'flex items-center gap-2 rounded-lg px-1 py-1 transition-colors duration-fast hover:bg-gray-100',
+              'flex items-center gap-2 rounded-lg px-1 py-1 transition-colors duration-fast hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               desktopCollapsed && 'lg:justify-center lg:px-0',
             )}
             title="Settings"

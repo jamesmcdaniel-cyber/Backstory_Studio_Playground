@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, Sparkles, Workflow } from 'lucide-react'
+import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, RotateCcw, Sparkles, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Aurora } from '@/components/ui/motion-primitives'
 
 type LibrarianResult = {
   /** `doc` is a help-centre article (an external link); the rest are workspace items. */
@@ -39,6 +42,8 @@ export default function AssistantHome() {
   const [input, setInput] = useState('')
   const [thread, setThread] = useState<Turn[]>([])
   const [busy, setBusy] = useState(false)
+  // A failed question stays on screen with a retry, instead of vanishing into a toast.
+  const [failure, setFailure] = useState<{ question: string; message: string } | null>(null)
   const [hello, setHello] = useState('GOOD MORNING')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const threadEndRef = useRef<HTMLDivElement>(null)
@@ -60,6 +65,7 @@ export default function AssistantHome() {
     const seq = threadSeq.current
     setInput('')
     resetComposer()
+    setFailure(null)
     setBusy(true)
     try {
       const res = await fetch('/api/librarian', {
@@ -69,10 +75,10 @@ export default function AssistantHome() {
       })
       const data = await res.json().catch(() => ({}))
       if (seq !== threadSeq.current) return // the user started a new chat meanwhile
-      if (!res.ok) { toast.error(data.error || 'The Assistant couldn’t answer that.'); return }
+      if (!res.ok) { setFailure({ question: q, message: data.error || 'The Assistant couldn’t answer that.' }); return }
       setThread((prev) => [...prev, { question: q, answer: data.answer ?? '', results: data.results ?? [], sources: data.sources ?? [] }])
     } catch {
-      if (seq === threadSeq.current) toast.error('Could not reach the Assistant.')
+      if (seq === threadSeq.current) setFailure({ question: q, message: 'Could not reach the Assistant. Check your connection and try again.' })
     } finally {
       if (seq === threadSeq.current) setBusy(false)
     }
@@ -83,6 +89,7 @@ export default function AssistantHome() {
     setThread([])
     setInput('')
     setBusy(false)
+    setFailure(null)
     resetComposer()
     textareaRef.current?.focus()
   }
@@ -92,17 +99,20 @@ export default function AssistantHome() {
   // the middle of the screen rather than pinned under the header with the rest
   // of the viewport empty. Once a conversation exists the content has to grow
   // downward, so it goes back to top-aligned.
-  const started = thread.length > 0 || busy
+  const started = thread.length > 0 || busy || failure !== null
 
   return (
     <div
       className={cn(
         // Width + gutters come from the shell's PAGE_CONTAINER; this only sets
-        // the vertical rhythm the two states need.
-        'flex w-full flex-col pb-24',
+        // the vertical rhythm the two states need. `isolate` keeps the Aurora
+        // layer's negative z-index inside this element, behind the content.
+        'relative isolate flex w-full flex-col pb-24',
         started ? 'pt-4 sm:pt-8' : 'min-h-[68dvh] justify-center',
       )}
     >
+      {/* Ambient depth behind the landing state; gone once a conversation starts. */}
+      {!started && <Aurora intensity={0.5} className="-z-10" />}
       <div className="mb-8 flex items-center justify-between gap-4">
         <p className="font-mono text-xs tracking-[0.2em] text-gray-500">
           <span className="text-horizon-500">{'///'}</span> {hello}
@@ -119,7 +129,7 @@ export default function AssistantHome() {
       </div>
 
       {/* Composer — prompt, attach, send */}
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-2 transition-[border-color,box-shadow,transform] duration-base focus-within:-translate-y-0.5 focus-within:border-horizon-400 focus-within:shadow-4 focus-within:ring-4 focus-within:ring-horizon-500/10">
+      <div className="rounded-xl border border-gray-200 bg-white shadow-2 transition-[border-color,box-shadow,transform] duration-base focus-within:-translate-y-0.5 focus-within:border-horizon-400 focus-within:shadow-4 focus-within:ring-4 focus-within:ring-horizon-500/10">
         <div className="px-6 pt-6">
           <textarea
             ref={textareaRef}
@@ -183,7 +193,7 @@ export default function AssistantHome() {
           {thread.map((turn, i) => (
             <div key={i} className="space-y-3">
               <p className="text-right text-sm font-medium text-gray-900">{turn.question}</p>
-              <div className="rounded-2xl border bg-white p-4 shadow-2 animate-fade-in-up">
+              <div className="rounded-xl border bg-white p-4 shadow-2 animate-fade-in-up">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-horizon-600">
                   <Sparkles className="h-3.5 w-3.5" /> Assistant
                 </div>
@@ -254,9 +264,29 @@ export default function AssistantHome() {
               </div>
             </div>
           ))}
+          {failure && !busy && (
+            <div className="space-y-3 animate-fade-in">
+              <p className="text-right text-sm font-medium text-gray-900">{failure.question}</p>
+              <div className="rounded-xl border border-red-200 bg-red-50/60 p-4">
+                <p className="text-sm font-medium text-red-800">{failure.message}</p>
+                <Button size="sm" variant="outline" className="mt-3 bg-white" onClick={() => void ask(failure.question)}>
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Try again
+                </Button>
+              </div>
+            </div>
+          )}
           {busy && (
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <Loader2 className="h-4 w-4 animate-spin" /> Searching your library…
+            // Shaped like the answer card it becomes, so the reply lands without a jump.
+            <div className="rounded-xl border bg-white p-4 shadow-2 animate-fade-in-up">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-horizon-600">
+                <Sparkles className="h-3.5 w-3.5" /> Assistant
+              </div>
+              <p className="mt-2 text-sm text-gray-400">Searching your library…</p>
+              <div className="mt-3 space-y-2">
+                <Skeleton className="h-3.5 w-full rounded" />
+                <Skeleton className="h-3.5 w-11/12 rounded" />
+                <Skeleton className="h-3.5 w-3/5 rounded" />
+              </div>
             </div>
           )}
           <div ref={threadEndRef} />

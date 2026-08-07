@@ -421,7 +421,11 @@ export function RunPanel({
               <WaitingBanner key={selected.id} waiting={selected.waiting} runId={selected.id} onReply={onReply} />
             )}
             {selected.steps.length === 0 ? (
-              <p className="p-4 text-sm text-muted-foreground">No steps recorded.</p>
+              <EmptyState
+                title="No steps recorded"
+                description="This run ended before any step executed."
+                className="m-3 py-8"
+              />
             ) : (
               selected.steps.map((step, i) => (
                 <StepRow

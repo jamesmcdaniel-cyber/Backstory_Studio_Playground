@@ -290,7 +290,7 @@ export default function FlowsPage() {
           <div className="stagger-children grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {pageItems.map((flow) => (
               <Link key={flow.id} href={`/flows/${flow.id}`} className="block">
-                <Card className="group relative h-full overflow-hidden border-border/60 transition-[transform,box-shadow,border-color] duration-300 ease-out-quart hover:-translate-y-1 hover:shadow-4 hover:ring-1 hover:ring-indigo-300/70 dark:hover:ring-indigo-500/40">
+                <Card variant="interactive" className="group relative h-full overflow-hidden border-border/60">
                   <div className="absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r from-indigo-500 to-blue-400 opacity-80 transition-opacity group-hover:opacity-100" />
                   <CardHeader className="space-y-2.5 pt-5">
                     <div className="flex items-center justify-between">
@@ -377,7 +377,7 @@ export default function FlowsPage() {
           <div className="stagger-children grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {flowTemplates.map((template) => (
               <Link key={template.id} href={`/flow-templates/${template.id}`} className="block">
-                <Card className="group relative flex h-full flex-col overflow-hidden border-border/60 transition-[transform,box-shadow,border-color] duration-300 ease-out-quart hover:-translate-y-1 hover:shadow-4 hover:ring-1 hover:ring-indigo-300/70 dark:hover:ring-indigo-500/40">
+                <Card variant="interactive" className="group relative flex h-full flex-col overflow-hidden border-border/60">
                   <CardHeader className="space-y-2.5 pt-5">
                     <div className="flex items-start gap-2.5">
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-base text-indigo-600 transition-transform group-hover:scale-105 dark:bg-indigo-500/15 dark:text-indigo-300">

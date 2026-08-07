@@ -1968,13 +1968,34 @@ function FlowBuilder() {
   }, [])
 
   if (loading) {
+    // Shaped like the ready state — toolbar strip, dot-grid canvas, node-chip
+    // placeholders — so load → ready swaps in place instead of reflowing.
     return (
       <div className="flex h-full flex-col">
-        <div className="border-b border-border p-3">
-          <Skeleton className="h-8 w-64 rounded-lg" />
+        <div className="flex items-center justify-between gap-4 border-b border-border px-3 py-2.5">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-8 w-8 rounded-lg" />
+            <Skeleton className="h-6 w-48 rounded-md" />
+          </div>
+          <div className="hidden items-center gap-2 md:flex">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <Skeleton key={index} className="h-8 w-20 rounded-lg" />
+            ))}
+            <Skeleton className="h-8 w-24 rounded-lg" />
+          </div>
         </div>
-        <div className="flex-1 p-8">
-          <Skeleton className="mx-auto h-96 max-w-xl rounded-xl" />
+        <div
+          className="relative flex-1 overflow-hidden bg-white"
+          style={{
+            backgroundImage: 'radial-gradient(circle, rgba(15, 23, 42, 0.16) 1px, transparent 1px)',
+            backgroundSize: '28px 28px',
+          }}
+        >
+          <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-10">
+            <Skeleton className="h-16 w-[200px] rounded-xl" />
+            <Skeleton className="hidden h-16 w-[200px] rounded-xl sm:block" />
+            <Skeleton className="hidden h-16 w-[200px] rounded-xl lg:block" />
+          </div>
         </div>
       </div>
     )
@@ -2454,8 +2475,8 @@ function FlowBuilder() {
         </div>
 
         {selectedIds.length > 1 && !viewingVersion && (
-          {/* animate-fade-in only: the -up variant animates `transform`, which would
-              stomp this bar's centering -translate-x-1/2 mid-animation. */}
+          // animate-fade-in only: the -up variant animates `transform`, which would
+          // stomp this bar's centering -translate-x-1/2 mid-animation.
           <div className="pointer-events-auto fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 animate-fade-in items-center gap-2 rounded-full border border-border bg-background/95 px-4 py-2 shadow-3 backdrop-blur">
             <span className="text-sm font-medium">{selectedIds.length} steps selected</span>
             <Button size="sm" variant="outline" onClick={bulkDuplicate}>Duplicate</Button>

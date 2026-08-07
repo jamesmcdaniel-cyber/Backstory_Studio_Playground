@@ -18,6 +18,7 @@ import {
   Repeat,
   Rows3,
   Search,
+  SearchX,
   SlidersHorizontal,
   Sparkles,
   Split,
@@ -31,6 +32,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { EmptyState } from '@/components/ui/empty-state'
 import { cn } from '@/lib/utils'
 import type { StepType } from '@/lib/flows/mutate'
 import {
@@ -379,7 +381,12 @@ export function FlowPicker({
             ))}
           </div>
         ) : (
-          <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">Nothing here yet.</p>
+          <EmptyState
+            icon={Search}
+            title="Nothing here yet"
+            description="Connect this integration's tools and they appear here."
+            className="py-8"
+          />
         )}
       </>
     )
@@ -389,7 +396,9 @@ export function FlowPicker({
       <>
         <RowSection title="Favorites" rows={favoriteRows} favorites={favorites} onToggleFavorite={toggleFavorite} />
         <RowSection title="Triggers" rows={triggerRows} favorites={favorites} onToggleFavorite={toggleFavorite} />
-        {favoriteRows.length + triggerRows.length === 0 && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">No matching triggers found.</p>}
+        {favoriteRows.length + triggerRows.length === 0 && (
+          <EmptyState icon={SearchX} title="No matching triggers" description="Try a different search term." className="py-8" />
+        )}
       </>
     )
   } else {
@@ -462,7 +471,9 @@ export function FlowPicker({
             </div>
           )}
         </section>
-        {totalRows === 0 && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">No matching actions found.</p>}
+        {totalRows === 0 && (
+          <EmptyState icon={SearchX} title="No matching actions" description="Try a different search term." className="py-8" />
+        )}
       </>
     )
   }

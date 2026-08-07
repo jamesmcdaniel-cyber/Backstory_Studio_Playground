@@ -346,7 +346,7 @@ export default function FlowActivityPage() {
                     <TableRow className="hover:bg-transparent">
                       <TableCell colSpan={6} className="bg-muted/30 p-0">
                         {run.steps.length === 0 ? (
-                          <p className="px-6 py-3 text-sm text-muted-foreground">No steps recorded for this run.</p>
+                          <p className="px-6 py-3 text-sm text-muted-foreground">This run ended before any step executed.</p>
                         ) : (
                           <div className="divide-y divide-border/60 px-2 py-2">
                             {run.steps.map((step, i) => {

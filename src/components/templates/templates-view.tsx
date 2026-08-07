@@ -584,9 +584,8 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                   const Icon = categoryIcon(t.category)
                   return (
                     <Link key={t.id} href={`/templates/${t.id}`} className="block">
-                      <Card className={cn(
-                        'group relative h-full overflow-hidden border-border/60 transition-[transform,box-shadow,border-color] duration-300 ease-out-quart',
-                        'hover:-translate-y-1 hover:shadow-4 hover:ring-1',
+                      <Card variant="interactive" className={cn(
+                        'group relative h-full overflow-hidden border-border/60 hover:ring-1',
                         accent.ring,
                       )}>
                         {/* colored accent bar that brightens on hover */}

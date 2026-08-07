@@ -26,6 +26,7 @@ if (TEST_DB) {
 
   after(async () => {
     await prisma.flow.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.httpCredential.deleteMany({ where: { organizationId: ids.org } })
     await prisma.organization.delete({ where: { id: ids.org } })
   })
 
@@ -108,17 +109,36 @@ if (TEST_DB) {
   })
 
   test('a resolution failure on an adapter step persists a failed row naming the node — never a failed run with zero steps', async () => {
-    // The bad reference fails during input resolution, BEFORE the http adapter
-    // runs — so the adapter writes no row. Without the interpreter-side
-    // fallback the run fails with "No steps recorded" and nothing names the
-    // offending node (the bug this test pins).
+    // HTTP steps never run unauthenticated (validation rejects them up front),
+    // so the step carries a real verified credential. The bad reference still
+    // fails during input resolution, BEFORE the http adapter runs — so the
+    // adapter writes no row. Without the interpreter-side fallback the run
+    // fails with "No steps recorded" and nothing names the offending node
+    // (the bug this test pins).
+    const { encryptSecret } = await import('@/lib/crypto/secrets')
+    const credential = await prisma.httpCredential.create({
+      data: {
+        organizationId: ids.org,
+        name: 'api.example.com bearer',
+        authType: 'bearer',
+        allowedHost: 'api.example.com',
+        secretConfig: encryptSecret(JSON.stringify({ token: 'test-token' })),
+        status: 'verified',
+        lastVerifiedAt: new Date(),
+      },
+    })
     const graph = {
       nodes: [
         { id: 'trigger', type: 'trigger', data: {} },
         {
           id: 'h1',
           type: 'http',
-          data: { label: 'Find Opportunity', method: 'GET', url: 'https://api.example.com/{{$json.query.opportunityId}}' },
+          data: {
+            label: 'Find Opportunity',
+            method: 'GET',
+            url: 'https://api.example.com/{{$json.query.opportunityId}}',
+            credentialId: credential.id,
+          },
         },
       ],
       edges: [{ id: 'e1', source: 'trigger', target: 'h1' }],

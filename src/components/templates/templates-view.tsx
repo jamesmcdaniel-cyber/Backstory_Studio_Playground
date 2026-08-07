@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import type { WorkspaceConnections } from '@/components/integrations/integration-match'
 import { FlowTemplateCard, type FlowTemplateItem } from '@/components/templates/flow-template-card'
 import { cn } from '@/lib/utils'
@@ -154,7 +155,12 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   // The platform's attachable tools, for the dialog's integration picker.
   // Fetched lazily the first time a dialog opens; null until then.
   const [availableIntegrations, setAvailableIntegrations] = useState<WorkspaceConnections | null>(null)
+  // Write/Preview toggle for the dialog's example-output field. Reset whenever
+  // a different asset is opened so a stale preview never greets a new draft.
+  const [previewExample, setPreviewExample] = useState(false)
   const aiRequestSeq = useRef(0)
+
+  useEffect(() => { setPreviewExample(false) }, [dialog?.id, dialog?.kind])
 
   useEffect(() => {
     if (dialog === null || availableIntegrations !== null) return
@@ -939,8 +945,38 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
               </div>
               {dialog.kind === 'template' && (
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Example output (optional)</label>
-                  <Textarea rows={3} value={dialog.exampleOutput} onChange={(e) => setDialog({ ...dialog, exampleOutput: e.target.value })} placeholder="Illustrative output shown on the detail page" />
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-xs font-medium text-muted-foreground">Example output (optional)</label>
+                    {dialog.exampleOutput.trim() !== '' && (
+                      <div className="flex rounded-md border border-border p-0.5">
+                        {(['Write', 'Preview'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setPreviewExample(mode === 'Preview')}
+                            className={cn(
+                              'rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
+                              (mode === 'Preview') === previewExample
+                                ? 'bg-muted text-foreground'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            {mode}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {previewExample && dialog.exampleOutput.trim() !== '' ? (
+                    looksLikeHtml(unwrapHtmlFence(dialog.exampleOutput)) ? (
+                      <HtmlPreview html={unwrapHtmlFence(dialog.exampleOutput)} />
+                    ) : (
+                      <p className="whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 text-sm leading-relaxed text-muted-foreground">{dialog.exampleOutput}</p>
+                    )
+                  ) : (
+                    <Textarea rows={5} value={dialog.exampleOutput} onChange={(e) => setDialog({ ...dialog, exampleOutput: e.target.value })} placeholder="Illustrative output shown on the detail page — paste HTML to show a formatted report" />
+                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">HTML is supported: it renders as the formatted report on the template&apos;s detail page.</p>
                 </div>
               )}
               <p className="text-xs text-muted-foreground">Saved to your workspace. To offer it to every workspace, send it to Backstory for review from its card.</p>

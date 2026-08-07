@@ -11,7 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
 import { unmetRequirements, type WorkspaceConnections } from '@/components/integrations/integration-match'
-import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
+import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { createAgentFromTemplate } from '@/lib/client/agent-from-template'
@@ -249,8 +249,8 @@ export default function TemplateDetails() {
                   <span className="text-xs text-muted-foreground">Illustrative</span>
                 </div>
                 {template.exampleOutput ? (
-                  looksLikeHtml(template.exampleOutput) ? (
-                    <HtmlPreview html={template.exampleOutput} />
+                  looksLikeHtml(unwrapHtmlFence(template.exampleOutput)) ? (
+                    <HtmlPreview html={unwrapHtmlFence(template.exampleOutput)} />
                   ) : (
                     <div className="rounded-lg border border-border/60 bg-muted/30 p-4">
                       <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">{template.exampleOutput}</p>

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, FileText, Layers, Upload } from 'lucide-react'
+import { Workflow, Plus, FileText, Layers, Upload, MoreHorizontal, Copy, Download, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -83,6 +83,61 @@ export default function FlowsPage() {
     }
     setFlows((prev) => prev.map((entry) => (entry.id === flow.id ? { ...entry, folder } : entry)))
     toast.success(folder ? `Moved to "${folder}".` : 'Removed from its folder.')
+  }
+
+  // Card-menu actions. Duplicate round-trips through the single-flow endpoint
+  // because the list payload's graph may be stale relative to a jam autosave.
+  const duplicateFlow = async (flow: FlowItem) => {
+    const detail = await fetch(`/api/flows/${flow.id}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
+    if (!detail?.success) {
+      toast.error('Could not load the flow to duplicate.')
+      return
+    }
+    const source = detail.flow
+    const response = await fetch('/api/flows', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `${source.name} (copy)`,
+        description: source.description || '',
+        graph: source.graph,
+        trigger: source.trigger,
+        folder: source.folder || undefined,
+      }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.flow) {
+      toast.error(data.error || 'Could not duplicate the flow.')
+      return
+    }
+    setFlows((prev) => [data.flow, ...prev])
+    toast.success(`Duplicated as "${data.flow.name}".`)
+  }
+
+  const downloadFlow = (flow: FlowItem) => {
+    // The export route sets content-disposition, so a plain navigation downloads.
+    const anchor = document.createElement('a')
+    anchor.href = `/api/flows/${flow.id}/export`
+    anchor.download = ''
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  }
+
+  const deleteFlow = async (flow: FlowItem) => {
+    if (!window.confirm(`Delete "${flow.name}"? This cannot be undone.`)) return
+    const response = await fetch('/api/flows', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: flow.id }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      toast.error(data.error || 'Could not delete the flow.')
+      return
+    }
+    setFlows((prev) => prev.filter((entry) => entry.id !== flow.id))
+    toast.success('Flow deleted.')
   }
 
   useEffect(() => {
@@ -239,13 +294,42 @@ export default function FlowsPage() {
                   <div className="absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r from-indigo-500 to-blue-400 opacity-80 transition-opacity group-hover:opacity-100" />
                   <CardHeader className="space-y-2.5 pt-5">
                     <div className="flex items-center justify-between">
-                      {/* Published is the state that matters — it is what arms
-                          triggers and what a run executes. A flow can be ACTIVE
-                          and unpublished (never armed), so show both rather than
-                          collapsing them into one word. */}
-                      <Badge variant="outline" className={cn('text-[11px] font-medium capitalize', flow.published ? STATUS_STYLE.active : STATUS_STYLE[flow.status] || STATUS_STYLE.draft)}>
-                        {flow.published ? 'Published' : flow.status}
-                      </Badge>
+                      <span className="flex items-center gap-1.5">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={(event) => { event.preventDefault(); event.stopPropagation() }}
+                              className="flex h-6 w-6 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                              title="Flow actions"
+                              aria-label={`Actions for ${flow.name}`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start">
+                            <DropdownMenuItem onSelect={() => void duplicateFlow(flow)}>
+                              <Copy className="mr-2 h-4 w-4" /> Duplicate
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => downloadFlow(flow)}>
+                              <Download className="mr-2 h-4 w-4" /> Download JSON
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => void deleteFlow(flow)}
+                              className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                        {/* Published is the state that matters — it is what arms
+                            triggers and what a run executes. A flow can be ACTIVE
+                            and unpublished (never armed), so show both rather than
+                            collapsing them into one word. */}
+                        <Badge variant="outline" className={cn('text-[11px] font-medium capitalize', flow.published ? STATUS_STYLE.active : STATUS_STYLE[flow.status] || STATUS_STYLE.draft)}>
+                          {flow.published ? 'Published' : flow.status}
+                        </Badge>
+                      </span>
                       <span className="flex items-center gap-2 text-xs text-muted-foreground">
                         {flow.stepCount} step{flow.stepCount === 1 ? '' : 's'}
                         <button

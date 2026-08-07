@@ -633,16 +633,12 @@ export function StepDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.id])
 
-  // HTTP auth: n8n's three-way selector (None / Predefined / Generic). The mode
-  // is derived from what the node already binds, with a local override so a user
-  // can pick "Generic" and see the auth-type sub-select before a credential
-  // exists. Reset when the selected node changes.
-  const [httpAuthMode, setHttpAuthMode] = useState<'none' | 'predefined' | 'generic'>('none')
-  useEffect(() => {
-    if (node.type !== 'http') return
-    setHttpAuthMode(node.data.connectionId ? 'predefined' : node.data.credentialId ? 'generic' : 'none')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.id])
+  // HTTP auth: a two-way selector (Predefined / Generic) — zero-auth requests
+  // are not offered; every HTTP step authenticates. The mode is derived from
+  // what the node already binds, with a local override so a user can pick
+  // "Generic" and see the auth-type sub-select before a credential exists.
+  // Reset when the selected node changes.
+  const [httpAuthMode, setHttpAuthMode] = useState<'predefined' | 'generic'>('generic')
   // Predefined credentials reuse connected integrations. Only MCP-plane
   // connections carry a token the HTTP executor can inject, so filter to those.
   const predefinedConnections = useMemo(
@@ -651,6 +647,18 @@ export function StepDrawer({
       .filter((connection) => parseFlowToolConnectionId(connection.id).plane === 'mcp'),
     [toolCatalog],
   )
+  useEffect(() => {
+    if (node.type !== 'http') return
+    // An unbound step starts on whichever mode can actually finish here:
+    // reuse a connected integration when one exists, otherwise set up a
+    // credential for the host.
+    setHttpAuthMode(
+      node.data.connectionId ? 'predefined'
+        : node.data.credentialId ? 'generic'
+          : predefinedConnections.length ? 'predefined' : 'generic',
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id])
   const isTrigger = node.type === 'trigger'
   const trigger = ((node.type === 'trigger' ? node.data.trigger : undefined) as TriggerData | undefined) ?? { type: 'manual' }
   // Chip-editor handles keyed by field, so a datatree click inserts a token
@@ -1375,23 +1383,25 @@ export function StepDrawer({
                 className={fieldClass}
                 value={httpAuthMode}
                 onChange={(event) => {
-                  const mode = event.target.value as 'none' | 'predefined' | 'generic'
+                  const mode = event.target.value as 'predefined' | 'generic'
                   setHttpAuthMode(mode)
                   if (mode !== 'predefined' && node.data.connectionId) onChange({ ...node, data: { ...node.data, connectionId: undefined } })
                   if (mode !== 'generic' && node.data.credentialId) onChange({ ...node, data: { ...node.data, credentialId: undefined } })
                 }}
               >
-                <option value="none">None</option>
                 <option value="predefined">Predefined Credential Type</option>
                 <option value="generic">Generic Credential Type</option>
               </select>
               <p className="mt-1 text-xs text-muted-foreground">
                 {httpAuthMode === 'predefined'
                   ? 'Reuse a connected integration for authentication.'
-                  : httpAuthMode === 'generic'
-                    ? 'Choose an auth method, then set up a reusable credential for this host.'
-                    : 'No authentication is sent with the request.'}
+                  : 'Choose an auth method, then set up a reusable credential for this host.'}
               </p>
+              {!node.data.connectionId && !node.data.credentialId && (
+                <p className="mt-1 text-xs text-amber-700">
+                  This request needs authentication before the flow can run — pick a connected integration or set up a credential.
+                </p>
+              )}
             </div>
 
             {httpAuthMode === 'predefined' && (

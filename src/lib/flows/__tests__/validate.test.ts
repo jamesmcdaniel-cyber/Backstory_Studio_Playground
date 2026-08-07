@@ -111,6 +111,37 @@ test('validateFlowGraph checks HTTP request configuration', () => {
   assert.ok(result.warnings.some((issue) => issue.code === 'HTTP_BODY_IGNORED'))
 })
 
+test('an http step with no authentication is an error — zero-auth requests are never allowed', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'h1', type: 'http', data: { method: 'POST', url: 'https://api.example.com/v1/thing' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'h1' }],
+  }
+  const result = validateFlowGraph(graph)
+  assert.equal(result.ok, false)
+  const issue = result.errors.find((entry) => entry.code === 'HTTP_NO_AUTH')
+  assert.equal(issue?.nodeId, 'h1')
+  assert.match(issue?.message ?? '', /without authentication/)
+})
+
+test('the no-auth error names the provider and whether it is connected', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'h1', type: 'http', data: { method: 'POST', url: 'https://acct.snowflakecomputing.com/api/v2/statements' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'h1' }],
+  }
+  // Provider recognized from the host, not connected on the platform yet.
+  const unconnected = validateFlowGraph(graph)
+  assert.match(unconnected.errors.find((entry) => entry.code === 'HTTP_NO_AUTH')?.message ?? '', /connect Snowflake in Integrations/)
+  // Same host with a connected Snowflake integration: steer to reusing it.
+  const connected = validateFlowGraph(graph, { toolCatalog: [{ id: 'mcp-snowflake-1', name: 'Snowflake', tools: [] }] })
+  assert.match(connected.errors.find((entry) => entry.code === 'HTTP_NO_AUTH')?.message ?? '', /reuse your connected Snowflake integration/)
+})
+
 test('validateFlowGraph blocks an http step that authenticates with an unavailable connection', () => {
   const graph: FlowGraph = {
     nodes: [
@@ -134,7 +165,7 @@ test('mixed webhook, HTTP, agent, integration, and MCP flow has every runnable d
     nodes: [
       { id: 'trigger', type: 'trigger', data: { trigger: { type: 'webhook' } } },
       { id: 'agent', type: 'agent', data: { agentId: 'agent-1', input: 'Triage {{trigger.input}}' } },
-      { id: 'webhook', type: 'http', data: { label: 'Webhook', method: 'POST', url: 'https://hooks.example.com/events', body: '{"summary":"{{step.agent.output}}"}', bodyMode: 'json' } },
+      { id: 'webhook', type: 'http', data: { label: 'Webhook', method: 'POST', url: 'https://hooks.example.com/events', body: '{"summary":"{{step.agent.output}}"}', bodyMode: 'json', credentialId: 'http-credential-1' } },
       { id: 'http', type: 'http', data: { method: 'GET', url: 'https://api.example.com/status', credentialId: 'http-credential-1' } },
       { id: 'integration', type: 'tool', data: { connectionId: 'native:http', toolName: 'http_request', args: '{"url":"https://api.example.com/finalize"}' } },
       { id: 'mcp', type: 'tool', data: { connectionId: 'mcp-connection-1', toolName: 'lookup_record', args: '{"id":"{{trigger.input.id}}"}' } },
@@ -314,7 +345,10 @@ test('no field-ref warning for structured agents or whole-output references', ()
   assert.equal(result.warnings.some((w) => w.code === 'TEXT_AGENT_FIELD_REF'), false)
 })
 
-test('blocks an approval-gated (nango) tool inside a loop body', () => {
+// Flow steps no longer pause on approvals — a delivery-plane (nango) write
+// runs inline anywhere in the graph, including loop bodies and parallel
+// branches, so the flow executes end to end.
+test('allows an approval-free (nango) tool inside a loop body', () => {
   const graph = {
     nodes: [
       { id: 'trigger', type: 'trigger', data: {} },
@@ -324,26 +358,23 @@ test('blocks an approval-gated (nango) tool inside a loop body', () => {
     edges: [{ id: 'e1', source: 'trigger', target: 'loop' }],
   } as FlowGraph
   const result = validateFlowGraph(graph)
-  assert.equal(result.ok, false)
-  const issue = result.errors.find((entry) => entry.code === 'APPROVAL_IN_CONTAINER')
-  assert.ok(issue)
-  assert.equal(issue?.nodeId, 'send')
-  assert.match(issue?.message ?? '', /Post message needs an approval to send/)
-  assert.match(issue?.message ?? '', /Move it after the loop/)
+  assert.equal(result.errors.some((entry) => entry.code === 'APPROVAL_IN_CONTAINER'), false)
+  assert.equal(result.ok, true, JSON.stringify(result.issues))
 })
 
-test('blocks an approval-gated (nango) tool inside a parallel branch', () => {
+test('allows a nango tool inside a parallel branch', () => {
   const graph = {
     nodes: [
       { id: 'trigger', type: 'trigger', data: {} },
       { id: 'par', type: 'parallel', data: { branches: [['send'], ['other']] } },
       { id: 'send', type: 'tool', data: { connectionId: 'nango:gmail', toolName: 'gmail_send_email', args: '{}' } },
-      { id: 'other', type: 'http', data: { method: 'GET', url: 'https://example.test' } },
+      { id: 'other', type: 'tool', data: { connectionId: 'mcp-row-2', toolName: 'search_things', args: '{}' } },
     ],
     edges: [{ id: 'e1', source: 'trigger', target: 'par' }],
   } as FlowGraph
   const result = validateFlowGraph(graph)
-  assert.ok(result.errors.some((entry) => entry.code === 'APPROVAL_IN_CONTAINER' && entry.nodeId === 'send'))
+  assert.equal(result.errors.some((entry) => entry.code === 'APPROVAL_IN_CONTAINER'), false)
+  assert.equal(result.ok, true, JSON.stringify(result.issues))
 })
 
 test('allows the same nango tool on the spine, outside any container', () => {
@@ -911,7 +942,7 @@ test('a perItem step with a list source is valid', () => {
   assert.ok(result.ok, JSON.stringify(result.issues))
 })
 
-test('an approval-gated nango tool cannot fan out per item', () => {
+test('a nango tool fans out per item without an approval gate', () => {
   const graph: FlowGraph = {
     nodes: [
       { id: 'trigger', type: 'trigger', data: {} },
@@ -920,5 +951,6 @@ test('an approval-gated nango tool cannot fan out per item', () => {
     edges: [{ id: 'e0', source: 'trigger', target: 't' }],
   }
   const result = validateFlowGraph(graph)
-  assert.ok(result.errors.some((issue) => issue.code === 'APPROVAL_IN_PERITEM'))
+  assert.equal(result.errors.some((issue) => issue.code === 'APPROVAL_IN_PERITEM'), false)
+  assert.equal(result.ok, true, JSON.stringify(result.issues))
 })

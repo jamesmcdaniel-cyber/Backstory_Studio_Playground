@@ -82,9 +82,12 @@ test('a webhook → http → if workflow converts to a runnable graph with real 
   const falseEdge = graph.edges.find((e) => e.source === cond.id && e.branch === 'false')
   assert.ok(trueEdge && falseEdge, 'IF outputs 0/1 map to true/false branches')
 
-  // Immediately usable: the imported graph passes flow validation.
+  // Immediately editable: the only thing standing between the import and a run
+  // is authentication — HTTP steps never run credential-less, and an import
+  // can't carry the source workspace's secrets, so the no-auth error is the
+  // expected (and only) gap the user fills after importing.
   const validation = validateFlowGraph(graph)
-  assert.deepEqual(validation.errors ?? [], [])
+  assert.deepEqual((validation.errors ?? []).map((error) => error.code), ['HTTP_NO_AUTH'])
 })
 
 test('code, wait, and merge nodes convert to their native equivalents', () => {
@@ -922,6 +925,6 @@ test('the data-transformation node family imports as native data ops with settin
   assert.equal(dataOps['id-Split'].by, 'contacts')
 
   // The whole converted graph still validates as runnable.
-  const issues = validateFlowGraph(graph).issues.filter((issue) => issue.severity === 'error')
+  const issues = validateFlowGraph(graph).issues.filter((issue) => issue.level === 'error')
   assert.deepEqual(issues, [])
 })

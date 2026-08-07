@@ -118,7 +118,7 @@ export function AgentHttpEndpointDialog({
   const [headers, setHeaders] = useState<Pair[]>([])
   const [bodyMode, setBodyMode] = useState<'none' | 'json'>('none')
   const [body, setBody] = useState('')
-  const [authMode, setAuthMode] = useState<'none' | 'predefined' | 'generic'>('none')
+  const [authMode, setAuthMode] = useState<'predefined' | 'generic'>('generic')
   const [connectionId, setConnectionId] = useState('')
   const [credentialId, setCredentialId] = useState('')
   const [credentials, setCredentials] = useState<HttpCredentialSummary[]>([])
@@ -139,7 +139,11 @@ export function AgentHttpEndpointDialog({
     setBody(endpoint?.body ?? '')
     setConnectionId(endpoint?.connectionId ?? '')
     setCredentialId(endpoint?.credentialId ?? '')
-    setAuthMode(endpoint?.credentialId ? 'generic' : endpoint?.connectionId ? 'predefined' : 'none')
+    // Zero-auth is never the default: an unbound endpoint starts on whichever
+    // mode can finish here — a connected integration when one exists,
+    // otherwise a credential for the host.
+    setAuthMode(endpoint?.credentialId ? 'generic' : endpoint?.connectionId ? 'predefined' : connections.length ? 'predefined' : 'generic')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, endpoint])
 
   useEffect(() => {
@@ -177,6 +181,16 @@ export function AgentHttpEndpointDialog({
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('bad protocol')
     } catch {
       toast.error('Enter an absolute URL (https://api.example.com/…).')
+      return
+    }
+    // External calls never go out unauthenticated — the endpoint must bind a
+    // connected integration or a stored credential before it can be saved.
+    if (authMode === 'predefined' && !connectionId) {
+      toast.error('Pick a connected integration to authenticate with — or switch to a generic credential.')
+      return
+    }
+    if (authMode === 'generic' && !credentialId) {
+      toast.error('Set up a credential for this host — requests are never sent unauthenticated.')
       return
     }
     onSave({
@@ -262,22 +276,19 @@ export function AgentHttpEndpointDialog({
               className={fieldClass}
               value={authMode}
               onChange={(event) => {
-                const mode = event.target.value as 'none' | 'predefined' | 'generic'
+                const mode = event.target.value as 'predefined' | 'generic'
                 setAuthMode(mode)
                 if (mode !== 'predefined') setConnectionId('')
                 if (mode !== 'generic') setCredentialId('')
               }}
             >
-              <option value="none">None</option>
               <option value="predefined">Predefined Credential Type</option>
               <option value="generic">Generic Credential Type</option>
             </select>
             <p className="mt-1 text-xs text-muted-foreground">
               {authMode === 'predefined'
                 ? 'Reuse a connected integration for authentication.'
-                : authMode === 'generic'
-                  ? 'Choose an auth method, then set up a reusable credential for this host.'
-                  : 'No authentication is sent — a saved workspace credential for the host still applies automatically.'}
+                : 'Choose an auth method, then set up a reusable credential for this host.'}
             </p>
           </div>
 

@@ -11,7 +11,6 @@ import { validateFlowGraph, validationErrorMessage } from '@/lib/flows/validate'
 import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { resolveFlowToolExecutor } from '@/features/agents/tool-planes'
-import { createApproval, capabilityFromProvider } from '@/lib/agents/approval'
 import { parseApprovalDecision, shouldConsumeApprovalDecision } from '@/lib/flows/approval-decision'
 import { notify } from '@/lib/notifications/service'
 import { apiLogger } from '@/lib/logger'
@@ -900,42 +899,12 @@ export async function runFlowExecution(
           toolName,
         })
 
-        // Approval gate — the same semantics as agent tool calls: an outbound
-        // WRITE on a delivery plane is queued for approval instead of executed,
-        // and the run pauses `waiting` (kind 'approval'). The decision resumes
-        // this run via the approvals route. The isWrite check is essential:
-        // without it the delivery planes' READ tools (salesforce_query,
-        // slack_read_messages, gmail_list_messages) were queued and then dropped
-        // (decideApproval has no spec to run for a read).
-        if (executor.isWrite && capabilityFromProvider(executor.provider)) {
-          const approval = await createApproval({
-            organizationId: job.organizationId,
-            executionId: run.id,
-            userId: job.userId,
-            provider: executor.provider,
-            tool: toolName,
-            args,
-          })
-          const question = `Approve ${toolName}?`
-          await finish({ status: 'waiting', output: { waiting: { kind: 'approval', approvalId: approval.id, question } } })
-          // Mirror the agent path: surface the pending approval to the user
-          // (in-app + push). notify never throws into the run. Flow
-          // notifications carry the FLOW id (the bell and push deep-link to
-          // the flow's activity page — a flow RUN id is not resolvable by the
-          // dashboard); the run id still rides in the body for reference.
-          await notify({
-            organizationId: job.organizationId,
-            userId: job.userId,
-            type: 'flow.needs_approval',
-            level: 'action',
-            title: `Flow "${flow.name}" needs approval`,
-            body: `Approve or reject: ${toolName} (run ${run.id})`,
-            executionId: flow.id,
-            link: `/flows/${flow.id}/activity`,
-          })
-          return { waiting: { status: 'waiting_for_approval', question } }
-        }
-
+        // Flow steps never pause on approvals: a flow is expected to run end to
+        // end, so delivery-plane writes execute inline like every other tool
+        // call (every write is still audited below). Agents keep their own
+        // opt-in `requireApproval` gate — that's an agent-runtime concern. The
+        // decision-consume block above stays so runs paused on an approval
+        // BEFORE this change still resume cleanly.
         const retries = flowActionRetries(node.config.retries)
         const retryDelayMs = typeof node.config.retryDelayMs === 'number' ? node.config.retryDelayMs : undefined
         const timeoutMs = flowActionTimeoutMs(node.config.timeoutMs)

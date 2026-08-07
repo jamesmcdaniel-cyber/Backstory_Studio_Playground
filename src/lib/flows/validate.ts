@@ -2,6 +2,7 @@ import { AI_OP_LABELS, FIELD_TYPES, type FlowGraph, type FlowNode } from '@/lib/
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { FLOW_TRIGGER_TYPES } from '@/lib/flows/trigger'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
+import { matchBrandHint, type ToolBrand } from '@/lib/flows/tool-presentation'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
 
 export type FlowValidationIssue = {
@@ -127,6 +128,18 @@ function validateHttpUrl(issues: FlowValidationIssue[], value: string, nodeId: s
     }
   } catch {
     add(issues, 'error', 'INVALID_HTTP_URL', 'HTTP request URL is not valid.', nodeId)
+  }
+}
+
+/** The provider a URL's host points at (…snowflakecomputing.com → Snowflake), or
+ *  null for unknown hosts and templated URLs whose host isn't literal. */
+function httpUrlBrand(url: string): ToolBrand | null {
+  if (!url.trim() || hasTemplate(url)) return null
+  try {
+    const brand = matchBrandHint(new URL(url).hostname)
+    return brand && brand.key !== 'http' ? brand : null
+  } catch {
+    return null
   }
 }
 
@@ -416,6 +429,21 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
 
     if (node.type === 'http') {
       validateHttpUrl(issues, node.data.url, node.id)
+      // No zero-auth requests: every HTTP step must authenticate, either by
+      // reusing a connected integration or with a stored credential. When the
+      // URL points at a provider we recognize, the message says whether that
+      // integration is already connected on the platform or still needs to be.
+      if (!node.data.connectionId && !node.data.credentialId) {
+        const brand = httpUrlBrand(node.data.url)
+        const connected =
+          brand && (context.toolCatalog ?? []).some((connection) => matchBrandHint(connection.name ?? '')?.key === brand.key)
+        const message = brand
+          ? connected
+            ? `${nodeLabel(node)} calls ${brand.label} without authentication — reuse your connected ${brand.label} integration or set up a credential for this host.`
+            : `${nodeLabel(node)} calls ${brand.label} without authentication — connect ${brand.label} in Integrations or set up a credential for this host.`
+          : `${nodeLabel(node)} sends its request without authentication — reuse a connected integration or set up a credential for this host.`
+        add(issues, 'error', 'HTTP_NO_AUTH', message, node.id)
+      }
       if (node.data.connectionId && node.data.credentialId) {
         add(issues, 'error', 'AMBIGUOUS_HTTP_AUTH', `${nodeLabel(node)} has two authentication methods selected — keep either a predefined connection or a generic credential.`, node.id)
       }
@@ -626,17 +654,12 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
   }
 
   // Per-item fan-out (the list-aware step contract): a step marked perItem needs
-  // a list to run over. Approval-gated writes (the Nango delivery plane) can't
-  // fan out — the resume machinery pauses on one approval at a time, same reason
-  // they're blocked inside loops (APPROVAL_IN_CONTAINER).
+  // a list to run over.
   for (const node of graph.nodes) {
     const perItem = (node.data as { perItem?: { over?: string } }).perItem
     if (!perItem) continue
     if (!perItem.over?.trim()) {
       add(issues, 'error', 'MISSING_PERITEM_SOURCE', `${nodeLabel(node)} runs once per item but has no list to process.`, node.id)
-    }
-    if (node.type === 'tool' && node.data.connectionId && parseFlowToolConnectionId(node.data.connectionId).plane === 'nango') {
-      add(issues, 'error', 'APPROVAL_IN_PERITEM', `${nodeLabel(node)} needs an approval to send — that isn't supported when running once per item. Send it once, or collect approvals first.`, node.id)
     }
   }
 
@@ -675,23 +698,9 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     }
   }
 
-  // Approval-gated writes (the Nango delivery plane) pause the whole run on
-  // ONE approval at a time. Inside a loop/parallel every item needs its own
-  // decision, and the resume machinery can't yet keep N in-flight approvals
-  // straight (one item's decision could be misattributed to another), so a
-  // graph that nests one in a container is blocked outright.
   for (const memberId of containerMemberIds) {
     const member = byId.get(memberId)
     if (!member) continue
-    if (member.type === 'tool' && member.data.connectionId && parseFlowToolConnectionId(member.data.connectionId).plane === 'nango') {
-      add(
-        issues,
-        'error',
-        'APPROVAL_IN_CONTAINER',
-        `${nodeLabel(member)} needs an approval to send — approvals aren't supported inside loops or parallel branches yet. Move it after the loop.`,
-        member.id,
-      )
-    }
     // Warning (not an error): a review inside a loop now resumes per-iteration
     // (no longer re-asks already-answered items), but every iteration pauses at
     // once and each reply resolves one iteration at a time.

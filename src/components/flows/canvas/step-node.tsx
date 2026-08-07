@@ -34,6 +34,8 @@ export type StepNodeData = {
   editors?: { name: string; color: string }[]
   /** Brand logo for a configured tool step. */
   brand?: { slug: string; label: string }
+  /** The bound agent's emoji — replaces the generic robot tile on agent steps. */
+  emoji?: string
   highlighted?: boolean
 }
 
@@ -70,7 +72,7 @@ function handleOffsets(count: number): string[] {
 
 function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
   const { onAddFrom, readOnly } = useContext(CanvasActionsContext)
-  const { node, title, subtitle, status, issues, handles, hasTarget, connected, bodyCount, editors, brand, highlighted } = data
+  const { node, title, subtitle, status, issues, handles, hasTarget, connected, bodyCount, editors, brand, emoji, highlighted } = data
   const Icon = NODE_ICON[node.type]
   const offsets = handleOffsets(handles.length)
   const connectedSet = new Set(connected)
@@ -113,7 +115,11 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
         )}
         style={ring ? { boxShadow: `0 0 0 2px ${ring}` } : undefined}
       >
-        {brand ? (
+        {emoji ? (
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[22px] leading-none dark:bg-slate-800">
+            {emoji}
+          </span>
+        ) : brand ? (
           <IntegrationLogo
             slug={brand.slug}
             name={brand.label}

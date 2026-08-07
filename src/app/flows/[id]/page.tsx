@@ -60,7 +60,7 @@ import { VersionsPanel } from '@/components/flows/versions-panel'
 import type { StepStatus } from '@/lib/flows/node-presentation'
 import { cn } from '@/lib/utils'
 
-type Agent = { id: string; title: string }
+type Agent = { id: string; title: string; icon?: string }
 
 /** Ordered main-chain ids from the trigger, for upstream-token help. */
 function spineIds(graph: FlowGraph): string[] {
@@ -393,7 +393,7 @@ function FlowBuilder() {
           // rather than a blank builder that would autosave over the real flow.
           setLoadError(joinFailure ?? 'NOT_FOUND')
         }
-        setAgents(agentsData.success ? agentsData.agents.map((a: Agent) => ({ id: a.id, title: a.title })) : [])
+        setAgents(agentsData.success ? agentsData.agents.map((a: Agent) => ({ id: a.id, title: a.title, icon: a.icon })) : [])
       })
       .catch(() => {
         // Network/parse failure loading the flow — same guard: never render an
@@ -1964,7 +1964,7 @@ function FlowBuilder() {
 
   const refreshAgents = useCallback(async () => {
     const data = await fetch('/api/agents', { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
-    if (data?.success) setAgents(data.agents.map((a: Agent) => ({ id: a.id, title: a.title })))
+    if (data?.success) setAgents(data.agents.map((a: Agent) => ({ id: a.id, title: a.title, icon: a.icon })))
   }, [])
 
   if (loading) {

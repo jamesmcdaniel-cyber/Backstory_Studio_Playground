@@ -59,7 +59,7 @@ import { useHoldToPan } from './use-hold-to-pan'
  * and the jam broadcast working unchanged.
  */
 
-type Agent = { id: string; title: string }
+type Agent = { id: string; title: string; icon?: string }
 
 export type GraphCanvasProps = {
   graph: FlowGraph
@@ -277,6 +277,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
                 : undefined,
           editors: remoteSelections?.[node.id],
           brand: brand ? { slug: brand.slug, label: brand.label } : undefined,
+          emoji: node.type === 'agent' ? agents.find((agent) => agent.id === node.data.agentId)?.icon || undefined : undefined,
           highlighted: highlightIds?.includes(node.id),
         },
       }
@@ -291,6 +292,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     highlightIds,
     remoteSelections,
     toolCatalog,
+    agents,
   ])
 
   const buildEdges = useCallback((): StepFlowEdge[] => {

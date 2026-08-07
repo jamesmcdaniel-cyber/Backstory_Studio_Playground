@@ -15,7 +15,7 @@ import type { StepStatus } from '@/lib/flows/node-presentation'
 import { FlowPicker } from './flow-picker'
 import type { OrgMember, ToolCatalog } from './step-drawer'
 
-type Agent = { id: string; title: string }
+type Agent = { id: string; title: string; icon?: string }
 
 export type FlowInsertSeed = {
   agentId?: string

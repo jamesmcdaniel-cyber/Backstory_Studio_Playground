@@ -54,7 +54,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 
-type Agent = { id: string; title: string }
+type Agent = { id: string; title: string; icon?: string }
 type InputKind = 'text' | 'yesno' | 'file' | 'email' | 'number' | 'date'
 
 const INPUT_TYPES: {
@@ -241,6 +241,8 @@ export function StepCard({
   onDragEndNode?: () => void
 }) {
   const Icon = NODE_ICON[node.type]
+  // The bound agent's emoji replaces the generic robot tile on agent steps.
+  const agentEmoji = node.type === 'agent' ? agents.find((agent) => agent.id === node.data.agentId)?.icon || undefined : undefined
   const catalogPresentation =
     node.type === 'tool'
       ? selectedToolPresentation(toolCatalog, node.data.connectionId, node.data.toolName)
@@ -426,7 +428,24 @@ export function StepCard({
       )}
     >
       <div className="flex items-center gap-5 px-5 py-5">
-        {toolPresentation?.brand ? (
+        {agentEmoji ? (
+          <span
+            draggable={draggable}
+            onDragStart={(event) => {
+              event.dataTransfer.setData('text/flow-node-id', node.id)
+              event.dataTransfer.effectAllowed = 'move'
+              onDragStartNode?.(node.id)
+            }}
+            onDragEnd={() => onDragEndNode?.()}
+            title="Drag to reorder"
+            className={cn(
+              'flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[30px] leading-none dark:bg-slate-800',
+              draggable && 'cursor-grab active:cursor-grabbing',
+            )}
+          >
+            {agentEmoji}
+          </span>
+        ) : toolPresentation?.brand ? (
           <span
             draggable={draggable}
             onDragStart={(event) => {

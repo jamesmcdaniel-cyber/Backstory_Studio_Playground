@@ -64,6 +64,10 @@ export type AgentExecutionJob = {
     memory?: { store: 'postgres' | 'redis' | 'mongodb' | 'xata'; sessionKey: string; window?: number }
     toolConnectionIds?: string[]
   }
+  // Flow-invoked runs: a flow executes end to end, so the agent's own
+  // `requireApproval` gate is bypassed — nothing inside a flow pauses on an
+  // approval. Interactive (chat) runs never set this. Plain JSON — queue-safe.
+  skipApprovalGate?: boolean
 }
 
 // Sub-agent handoff bounds. Kept conservative: sub-runs execute inline within
@@ -849,6 +853,8 @@ export async function runAgentExecution(
               input: subInput,
               depth: depth + 1,
               ancestorAgentIds: chain,
+              // A flow-invoked tree stays approval-free all the way down.
+              ...(data.skipApprovalGate ? { skipApprovalGate: true } : {}),
               // Share the counter so the sub-run's spend counts against the same
               // tree-wide ceiling and can't reset its own budget.
               treeTokens,
@@ -1207,7 +1213,7 @@ export async function runAgentExecution(
           // decideApproval executes the write and resumes this run with its
           // result injected, so the agent acts on the real outcome (rather than
           // continuing blind on a "queued" placeholder).
-          if (requiresApproval(agentMetadata, binding.provider, binding.isWrite)) {
+          if (!data.skipApprovalGate && requiresApproval(agentMetadata, binding.provider, binding.isWrite)) {
             // Only ONE suspension per turn: if a question or another approval is
             // already pending, defer this one with a covering result (and do NOT
             // create an approval row, so nothing is orphaned) — the model

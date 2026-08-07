@@ -784,13 +784,16 @@ export async function runFlowExecution(
       const resumeThis = node.resume && resumeNodeId === node.id && resumeExecutionId
       const result = (await runAgentExecution(
         resumeThis
-          ? { agentId: node.agentId, organizationId: job.organizationId, userId: job.userId, executionId: resumeExecutionId, resume: true, reply: job.reply, onExecutionCreated }
+          ? { agentId: node.agentId, organizationId: job.organizationId, userId: job.userId, executionId: resumeExecutionId, resume: true, reply: job.reply, onExecutionCreated, skipApprovalGate: true }
           : {
               agentId: node.agentId,
               organizationId: job.organizationId,
               userId: job.userId,
               input: node.input,
               onExecutionCreated,
+              // Flows run end to end: the agent's own `requireApproval` gate
+              // never pauses a flow run.
+              skipApprovalGate: true,
               // Step-level agent configuration from the flow node (model /
               // memory / extra tool connections) — n8n-style sub-node parity.
               ...(node.overrides ? { stepOverrides: node.overrides } : {}),

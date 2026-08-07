@@ -2090,10 +2090,10 @@ function FlowBuilder() {
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Import</DropdownMenuLabel>
             <DropdownMenuItem onSelect={() => flowImport.pickFile()}>
-              <Upload className="h-4 w-4" /> From a JSON file (Backstory or n8n)
+              <Upload className="h-4 w-4" /> From a JSON file
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>
-              <Upload className="h-4 w-4" /> From a URL (n8n.io template or raw JSON)
+              <Upload className="h-4 w-4" /> From a URL
             </DropdownMenuItem>
             {canEdit && !external && (
               <>

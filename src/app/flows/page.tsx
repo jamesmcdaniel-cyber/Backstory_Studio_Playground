@@ -262,8 +262,8 @@ export default function FlowsPage() {
               <Button variant="outline"><Upload className="mr-1.5 h-4 w-4" /> Import</Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => flowImport.pickFile()}>From a JSON file (Backstory or n8n)</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>From a URL (n8n.io template or raw JSON)</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => flowImport.pickFile()}>From a JSON file</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>From a URL</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           {flowImport.fileInput}

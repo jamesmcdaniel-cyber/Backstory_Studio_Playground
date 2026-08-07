@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Check, Copy, Link2, Mic, RefreshCw, Send, UserPlus, Users } from 'lucide-react'
+import { Check, Copy, Link2, Lock, Mic, RefreshCw, Send, UserPlus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,13 @@ const OPTIONS: { value: Visibility; label: string; hint: string }[] = [
   { value: 'shared', label: 'Everyone can edit', hint: 'Anyone in your workspace can jam on and run this flow.' },
   { value: 'view', label: 'Everyone can view, only you edit', hint: 'Your workspace can open and run it; only you make changes.' },
   { value: 'private', label: 'Only you', hint: 'Just you can see this flow.' },
+]
+
+/** One state of the share link, selectable as a chip: who the link works for. */
+const AUDIENCES: { key: 'workspace' | 'anyone-view' | 'anyone-edit'; label: string }[] = [
+  { key: 'workspace', label: 'Workspace only' },
+  { key: 'anyone-view', label: 'Anyone can view' },
+  { key: 'anyone-edit', label: 'Anyone can edit' },
 ]
 
 /**
@@ -251,7 +258,7 @@ export function JamDialog({
       )
       if (revokeCollaborators) setGuests([])
       toast.success(!enabled
-        ? 'Share link turned off.'
+        ? 'Share link now works for your workspace only.'
         : revokeCollaborators
           ? 'Link rotated — old links stopped working and everyone who joined by link was removed.'
           : rotate
@@ -312,35 +319,57 @@ export function JamDialog({
     }
   }
 
+  // The link's current audience, as one value the chip row can render.
+  const audience: (typeof AUDIENCES)[number]['key'] = !shareToken
+    ? 'workspace'
+    : (shareRole ?? 'view') === 'edit'
+      ? 'anyone-edit'
+      : 'anyone-view'
+  const setAudience = (next: (typeof AUDIENCES)[number]['key']) => {
+    if (next === audience) return
+    if (next === 'workspace') void updateShare(false, shareRole ?? 'view')
+    else void updateShare(true, next === 'anyone-edit' ? 'edit' : 'view')
+  }
+
+  const chipClass = (active: boolean) =>
+    cn(
+      'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50',
+      active
+        ? 'border-indigo-300 bg-indigo-50/60 text-indigo-800 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-200'
+        : 'border-border/70 text-muted-foreground hover:bg-accent',
+    )
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="max-h-[88vh] gap-0 overflow-y-auto p-0">
+        {/* min-w-0: without it this grid item's min-content width is the full
+            unwrapped title, which widens the track and pushes every section
+            past the card edge. */}
+        <DialogHeader className="min-w-0 border-b border-border/60 px-6 pb-4 pt-5 pr-12">
           <DialogTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-indigo-600" />
+            <Users className="h-5 w-5 shrink-0 text-indigo-600" />
             <span className="min-w-0 truncate">Jam on “{flowName || 'this flow'}”</span>
           </DialogTitle>
         </DialogHeader>
 
         {/* min-w-0: DialogContent is a grid, so without it the unbroken mono
             invite URL sets this item's min-content width and pushes every row
-            past the card edge. */}
-        <div className="min-w-0 space-y-5">
+            past the card edge. Sections are full-bleed and hairline-divided so
+            the dialog reads as a few distinct rooms, not one long form. */}
+        <div className="min-w-0 divide-y divide-border/60">
           {here.length > 0 && (
-            <div className="rounded-xl border border-indigo-200/70 bg-indigo-50/50 p-3 dark:border-indigo-500/25 dark:bg-indigo-500/10">
-              <div className="flex items-center justify-between gap-2">
-                <p className="flex items-center gap-1.5 text-xs font-semibold text-indigo-800 dark:text-indigo-200">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                  </span>
-                  In this jam now
-                </p>
-              </div>
+            <section className="bg-indigo-50/40 px-6 py-4 dark:bg-indigo-500/[0.06]">
+              <p className="flex items-center gap-2 text-sm font-medium text-indigo-900 dark:text-indigo-200">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                In this jam now
+              </p>
               {/* Every huddle control lives here — there is no separate huddle
                   bar over the canvas. Only mute is mirrored into the header. */}
               {huddle && (
-                <div className="mt-2 border-t border-indigo-200/60 pt-2 dark:border-indigo-500/20">
+                <div className="mt-2.5 border-t border-indigo-200/60 pt-2.5 dark:border-indigo-500/20">
                   <HuddlePanel
                     huddle={huddle}
                     members={huddleMembers ?? []}
@@ -350,7 +379,7 @@ export function JamDialog({
                   />
                 </div>
               )}
-              <div className="mt-2 flex flex-wrap gap-2">
+              <div className="mt-2.5 flex flex-wrap gap-2">
                 {here.map((p) => (
                   <span key={p.id} className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card px-2.5 py-1 text-xs">
                     <span
@@ -373,13 +402,13 @@ export function JamDialog({
                   </span>
                 ))}
               </div>
-            </div>
+            </section>
           )}
 
           {visibleNotes.length > 0 && (
-            <div className="space-y-2">
-              <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <NotebookPen className="h-3.5 w-3.5" /> Huddle notes
+            <section className="space-y-2 px-6 py-4">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <NotebookPen className="h-4 w-4 text-muted-foreground" /> Huddle notes
               </p>
               <div className="max-h-48 space-y-2 overflow-y-auto">
                 {visibleNotes.map((note) => (
@@ -396,149 +425,50 @@ export function JamDialog({
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
           )}
 
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">Invite link</p>
-            <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 py-1 pl-3 pr-1">
-              <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate font-mono text-xs">{inviteLink}</span>
-              <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={copy}>
-                {copied ? <Check className="mr-1 h-3.5 w-3.5 text-green-600" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
-                {copied ? 'Copied' : 'Copy'}
-              </Button>
-            </div>
-            {shareToken ? (
-              <p className="text-xs text-muted-foreground">
-                Anyone with this link can sign in and {shareRole === 'edit' ? 'edit' : 'view and run'} this flow.
+          {shareable && (
+            <section className="space-y-2.5 px-6 py-4">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <Link2 className="h-4 w-4 text-muted-foreground" /> Share link
               </p>
-            ) : (
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground">
-                  Right now only people in your workspace can open this link — anyone else gets “not found”.
-                </p>
-                {canEdit && shareable && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 rounded-full text-xs"
-                    disabled={shareBusy}
-                    onClick={() => void updateShare(true, 'edit')}
-                  >
-                    Make this link work for anyone I send it to
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {canInvite && isAdmin && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">Invite someone new</p>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(event) => setInviteEmail(event.target.value)}
-                  placeholder="teammate@company.com"
-                  className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
-                />
-                <Button size="sm" onClick={() => void inviteByEmail()} loading={inviting} disabled={!inviteEmail.trim()}>
-                  <UserPlus className="mr-1.5 h-4 w-4" /> Invite
+              <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 py-1 pl-3 pr-1">
+                <span className="min-w-0 flex-1 truncate font-mono text-xs">{inviteLink}</span>
+                <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={copy}>
+                  {copied ? <Check className="mr-1 h-3.5 w-3.5 text-green-600" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+                  {copied ? 'Copied' : 'Copy'}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                They join your workspace and land straight on this flow.
-              </p>
-              {workspaceLink && (
-                <p className="break-all rounded-lg border border-border/60 bg-muted/40 p-2 font-mono text-[11px]">{workspaceLink}</p>
-              )}
-            </div>
-          )}
-          {canInvite && !isAdmin && (
-            <p className="rounded-lg border border-border/70 bg-muted/40 p-3 text-xs text-muted-foreground">
-              Only an admin can add people to your workspace. To bring in someone else, turn on the
-              share link below and send them that.
-            </p>
-          )}
-
-          {canInvite && members.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">{huddle?.joined ? 'Ring teammates' : 'Invite teammates'}</p>
-              <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-border/60 p-1">
-                {members.map((m) => {
-                  const label = m.name || m.email || 'Teammate'
-                  const checked = selected.has(m.id)
-                  return (
+              {canEdit && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {AUDIENCES.map((option) => (
                     <button
-                      key={m.id}
+                      key={option.key}
                       type="button"
-                      onClick={() => toggle(m.id)}
-                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                      disabled={shareBusy}
+                      aria-pressed={audience === option.key}
+                      onClick={() => setAudience(option.key)}
+                      className={chipClass(audience === option.key)}
                     >
-                      <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border', checked ? 'border-indigo-500 bg-indigo-500' : 'border-muted-foreground/40')}>
-                        {checked && <Check className="h-3 w-3 text-white" />}
-                      </span>
-                      <span className="truncate">{label}</span>
+                      {option.label}
                     </button>
-                  )
-                })}
-              </div>
-              <Button size="sm" className="w-full" onClick={sendInvites} loading={sending} disabled={selected.size === 0}>
-                <Send className="mr-1.5 h-4 w-4" />
-                {selected.size === 0
-                  ? (huddle?.joined ? 'Select teammates to ring' : 'Select teammates to invite')
-                  : huddle?.joined
-                    ? `Ring ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'} to the huddle`
-                    : `Send invite to ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'}`}
-              </Button>
-            </div>
-          )}
-          {canEdit && !shareable && (
-            <p className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
-              This flow is private. Set it to “Everyone can view” or “edit” below to invite teammates.
-            </p>
-          )}
-
-          {canEdit && shareable && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground">Anyone with the link</p>
-                <Switch
-                  checked={Boolean(shareToken)}
-                  disabled={shareBusy}
-                  onCheckedChange={(on) => void updateShare(on, shareRole ?? 'view')}
-                  aria-label="Share with people outside your workspace"
-                />
-              </div>
-              {shareToken ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5">
-                    {(['view', 'edit'] as const).map((r) => (
-                      <button
-                        key={r}
-                        type="button"
-                        disabled={shareBusy}
-                        onClick={() => void updateShare(true, r)}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                          (shareRole ?? 'view') === r
-                            ? 'border-indigo-300 bg-indigo-50/60 text-indigo-800 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-200'
-                            : 'border-border/70 text-muted-foreground hover:bg-accent',
-                        )}
-                      >
-                        {r === 'view' ? 'Can view' : 'Can edit'}
-                      </button>
-                    ))}
+                  ))}
+                  {shareToken && (
                     <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs" disabled={shareBusy} onClick={() => void updateShare(true, shareRole ?? 'view', true)}>
                       <RefreshCw className="mr-1 h-3 w-3" /> Rotate
                     </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    People outside your workspace can open this flow with the link above after signing in.
-                    Rotating makes old links stop working; people who already accepted keep access unless you remove them below.
-                  </p>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {shareToken
+                  ? `Anyone with this link can sign in and ${shareRole === 'edit' ? 'edit' : 'view and run'} this flow. Rotating makes old links stop working; people who already accepted keep access until you remove them.`
+                  : 'Only people in your workspace can open this link.'}
+              </p>
+
+              {canEdit && shareToken && (
+                <>
                   <div className="space-y-1.5 rounded-lg border border-border/60 p-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-medium">Open without signing in</p>
@@ -566,7 +496,7 @@ export function JamDialog({
                           {anonymousViews
                             ? `Opened ${anonymousViews} time${anonymousViews === 1 ? '' : 's'} without signing in.`
                             : 'Not opened yet.'}{' '}
-                          Rotating the link (or turning sharing off) stops it working and resets the count.
+                          Rotating the link (or going back to workspace only) stops it working and resets the count.
                         </p>
                       </>
                     ) : (
@@ -608,15 +538,92 @@ export function JamDialog({
                       </button>
                     </div>
                   )}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">Off — only your workspace can open this flow.</p>
+                </>
               )}
-            </div>
+            </section>
           )}
 
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-muted-foreground">Who can access</p>
+          {canInvite && (
+            <section className="space-y-2.5 px-6 py-4">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <UserPlus className="h-4 w-4 text-muted-foreground" />
+                {huddle?.joined ? 'Ring teammates' : 'Invite teammates'}
+              </p>
+              {members.length > 0 && (
+                <div className="space-y-2">
+                  <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-border/60 p-1">
+                    {members.map((m) => {
+                      const label = m.name || m.email || 'Teammate'
+                      const checked = selected.has(m.id)
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => toggle(m.id)}
+                          className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                        >
+                          <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border', checked ? 'border-indigo-500 bg-indigo-500' : 'border-muted-foreground/40')}>
+                            {checked && <Check className="h-3 w-3 text-white" />}
+                          </span>
+                          <span className="truncate">{label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <Button size="sm" className="w-full" onClick={sendInvites} loading={sending} disabled={selected.size === 0}>
+                    <Send className="mr-1.5 h-4 w-4" />
+                    {selected.size === 0
+                      ? (huddle?.joined ? 'Select teammates to ring' : 'Select teammates to invite')
+                      : huddle?.joined
+                        ? `Ring ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'} to the huddle`
+                        : `Send invite to ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'}`}
+                  </Button>
+                </div>
+              )}
+              {isAdmin ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Someone new</p>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(event) => setInviteEmail(event.target.value)}
+                      placeholder="teammate@company.com"
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
+                    />
+                    <Button size="sm" onClick={() => void inviteByEmail()} loading={inviting} disabled={!inviteEmail.trim()}>
+                      <UserPlus className="mr-1.5 h-4 w-4" /> Invite
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    They join your workspace and land straight on this flow.
+                  </p>
+                  {workspaceLink && (
+                    <p className="break-all rounded-lg border border-border/60 bg-muted/40 p-2 font-mono text-[11px]">{workspaceLink}</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Only an admin can add people to your workspace. To bring in someone outside it,
+                  set the share link above to “anyone” and send them that.
+                </p>
+              )}
+            </section>
+          )}
+
+          {canEdit && !shareable && (
+            <section className="px-6 py-4">
+              <p className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
+                This flow is private, so there is nothing to share yet. Choose “Everyone can view” or
+                “Everyone can edit” below to invite teammates.
+              </p>
+            </section>
+          )}
+
+          <section className="space-y-2.5 px-6 py-4">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <Lock className="h-4 w-4 text-muted-foreground" /> Workspace access
+            </p>
             {canEdit ? (
               <div className="space-y-1.5">
                 {OPTIONS.map((option) => {
@@ -628,7 +635,7 @@ export function JamDialog({
                       onClick={() => onChangeVisibility(option.value)}
                       aria-pressed={active}
                       className={cn(
-                        'flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                        'flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors',
                         active
                           ? 'border-indigo-300 bg-indigo-50/60 dark:border-indigo-500/40 dark:bg-indigo-500/10'
                           : 'border-border/70 hover:bg-accent',
@@ -650,7 +657,7 @@ export function JamDialog({
                 {OPTIONS.find((o) => o.value === visibility)?.hint ?? 'Only the owner can change who can access this flow.'}
               </p>
             )}
-          </div>
+          </section>
         </div>
       </DialogContent>
     </Dialog>

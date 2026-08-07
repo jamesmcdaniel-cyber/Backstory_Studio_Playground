@@ -82,12 +82,14 @@ test('inviting by email posts the flow as the destination so acceptance lands he
   cleanup()
 })
 
-test('without a share token the link row says so and offers one-click sharing', async () => {
+test('without a share token the link is workspace-only and one chip opens it up', async () => {
   stubMembers('ADMIN')
   render(<JamDialog {...baseProps} shareToken={null} />)
   await flush()
   assert.ok(screen.getByText(/only people in your workspace can open this link/i))
-  assert.ok(screen.getByRole('button', { name: /make this link work for anyone/i }))
+  const workspaceChip = screen.getByRole('button', { name: /^workspace only$/i })
+  assert.equal(workspaceChip.getAttribute('aria-pressed'), 'true')
+  assert.ok(screen.getByRole('button', { name: /^anyone can edit$/i }), 'one click widens the link')
   cleanup()
 })
 

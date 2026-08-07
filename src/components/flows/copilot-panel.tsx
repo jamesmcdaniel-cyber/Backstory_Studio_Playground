@@ -26,6 +26,7 @@ export function CopilotPanel({
   onOps,
   onJump,
   onNeedsAttention,
+  blockers = [],
   external = false,
 }: {
   graph: FlowGraph
@@ -33,6 +34,8 @@ export function CopilotPanel({
   onOps: (ops: CopilotOp[]) => { applied: number; skipped: { reason: string }[] }
   onJump: (nodeId: string) => void
   onNeedsAttention?: (issues: NeedsAttentionItem[]) => void
+  /** Current validation errors on the canvas — surfaced as a one-click fix offer. */
+  blockers?: NeedsAttentionItem[]
   /** Cross-workspace guest: chat goes structure-only (no roster/tools) and the
    *  whole-flow generate path is hidden — generation grounds on the caller's
    *  workspace, which is the wrong org for a shared flow. */
@@ -98,14 +101,14 @@ export function CopilotPanel({
     }
   }
 
-  const send = async () => {
-    const content = input.trim()
+  const send = async (preset?: string) => {
+    const content = (preset ?? input).trim()
     if (!content || loading) return
     // Error bubbles stay in the thread for the user, but must not replay to
     // the model as genuine assistant turns.
     const history = [...messages.filter((message) => !message.error).map(({ role, content: text }) => ({ role, content: text })), { role: 'user' as const, content }].slice(-HISTORY_CAP)
     setMessages((prev) => [...prev, { role: 'user', content }])
-    setInput('')
+    if (!preset) setInput('')
     setLoading(true)
     try {
       const response = await fetch('/api/flows/copilot/chat', {
@@ -218,6 +221,23 @@ export function CopilotPanel({
       </div>
 
       <div className="space-y-2 border-t border-border p-3">
+        {blockers.length > 0 && !external && (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 dark:border-amber-900/40 dark:bg-amber-950/40">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <p className="min-w-0 flex-1 text-[11px] text-amber-800 dark:text-amber-200">
+              {blockers.length === 1 ? '1 blocker is stopping this flow from running.' : `${blockers.length} blockers are stopping this flow from running.`}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 shrink-0 border-amber-300 px-2 text-[11px] text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/60"
+              disabled={loading}
+              onClick={() => send('Fix the blockers stopping this flow from running.')}
+            >
+              Fix these
+            </Button>
+          </div>
+        )}
         {emptyCanvas && (
           <Button variant="outline" size="sm" className="w-full" onClick={generate} disabled={loading || !input.trim()}>
             <Sparkles className="mr-1.5 h-4 w-4 text-indigo-500" /> Generate a flow
@@ -237,7 +257,7 @@ export function CopilotPanel({
             className="max-h-[140px] min-h-[38px] w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300"
             aria-label="Message the copilot"
           />
-          <Button size="icon" onClick={send} loading={loading} disabled={!input.trim()} aria-label="Send message">
+          <Button size="icon" onClick={() => send()} loading={loading} disabled={!input.trim()} aria-label="Send message">
             {!loading && <Send className="h-4 w-4" />}
           </Button>
         </div>

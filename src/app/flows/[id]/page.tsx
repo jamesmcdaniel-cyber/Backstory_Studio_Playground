@@ -2545,6 +2545,7 @@ function FlowBuilder() {
             <CopilotPanel
               graph={graph}
               external={external}
+              blockers={validation.errors}
               onOps={onCopilotOps}
               onJump={jumpToNode}
               onGraph={(next) => {

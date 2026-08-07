@@ -12,7 +12,6 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AGENTS_CHANGED_EVENT, notifyAgentsChanged } from '@/components/layout/sidebar'
-import { useAuth } from '@/hooks/use-auth'
 import { getSnapshot, SnapshotError } from '@/lib/client/snapshot'
 import { TemplatesView } from '@/components/templates/templates-view'
 import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
@@ -47,7 +46,6 @@ function isConfigured(agent: Agent) {
 }
 
 function AgentHQ() {
-  const { user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [agents, setAgents] = useState<Agent[]>([])
@@ -269,21 +267,6 @@ function AgentHQ() {
   const showSetup = creatingNew || Boolean(selectedAgent && (!isConfigured(selectedAgent) || configureOpen))
   const editingAgent = showSetup && selectedAgent && selectedAgentId !== NEW_AGENT ? selectedAgent : null
 
-  const greeting = useMemo(() => {
-    if (!selectedAgent) return agents.length ? 'Select an agent to see its activity.' : 'Describe what you need and Backstory builds the agent.'
-    const counts: Record<string, number> = {}
-    for (const activity of agentActivities) {
-      const status = activity.status.toLowerCase()
-      counts[status] = (counts[status] || 0) + 1
-    }
-    const parts: string[] = []
-    if (counts.completed) parts.push(`${counts.completed} completed`)
-    if (counts.waiting_for_input) parts.push(`${counts.waiting_for_input} need your input`)
-    if (counts.failed) parts.push(`${counts.failed} hit errors`)
-    if (counts.running) parts.push(`${counts.running} running`)
-    return parts.length ? `${parts.join(', ')}.` : 'Ready for the first run.'
-  }, [selectedAgent, agents.length, agentActivities])
-
   const selectAgent = (id: string) => {
     setSelectedAgentId(id)
     setConfigureOpen(false)
@@ -442,9 +425,6 @@ function AgentHQ() {
                 ) : (
                   <h1 className="text-xl font-semibold">{loading ? 'Loading…' : 'Create your first agent'}</h1>
                 )}
-                <p className="mt-1 truncate text-sm text-gray-500" aria-live="polite">
-                  Hey, {user?.firstName || 'there'}. {greeting}
-                </p>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 {selectedAgent && isConfigured(selectedAgent) && (

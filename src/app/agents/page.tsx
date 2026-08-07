@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertCircle, FileText, List, Loader2, Play, Plus, Settings2, Sparkles, X } from 'lucide-react'
+import { AlertCircle, Bot, FileText, List, Loader2, Play, Plus, Settings2, Sparkles, X } from 'lucide-react'
 import { AgentActivityPane, resultText } from './agent-activity-pane'
 import { AgentConfigForm, type AgentDraft } from './agent-config-form'
 import { AssistantPanel } from './assistant-panel'
@@ -58,6 +58,9 @@ function AgentHQ() {
   const [selectedRun, setSelectedRun] = useState<Activity | null>(null)
   const [describe, setDescribe] = useState('')
   const [building, setBuilding] = useState(false)
+  // New-agent setup starts as a flows-style choice (Copilot vs. manual fields)
+  // instead of dumping the full form; 'choice' until the user picks a path.
+  const [setupMode, setSetupMode] = useState<'choice' | 'copilot' | 'manual'>('choice')
   const [runningId, setRunningId] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [authStatus, setAuthStatus] = useState<number | null>(null)
@@ -257,8 +260,10 @@ function AgentHQ() {
   }, [selectedRun])
 
   // A different agent's runs are unrelated — clear the shown output on switch.
+  // Switching agents (including into "new") also restarts setup at the choice.
   useEffect(() => {
     setSelectedRun(null)
+    setSetupMode('choice')
   }, [selectedAgentId])
 
   // Setup opens only when creating a new agent, editing an incomplete agent,
@@ -453,7 +458,7 @@ function AgentHQ() {
                 )}
                 <Button
                   variant="outline"
-                  onClick={() => { setSelectedAgentId(NEW_AGENT); setConfigureOpen(false); setFocusRunId(null) }}
+                  onClick={() => { setSelectedAgentId(NEW_AGENT); setSetupMode('choice'); setConfigureOpen(false); setFocusRunId(null) }}
                 >
                   <Plus className="mr-1.5 h-4 w-4" /> New agent
                 </Button>
@@ -505,8 +510,36 @@ function AgentHQ() {
 
           {!loading && showSetup && (
             <div className="space-y-4 p-4">
-              {!editingAgent && (
-                <div>
+              {/* Flows-parity first screen: pick a path before any fields show. */}
+              {!editingAgent && setupMode === 'choice' && (
+                <div className="flex animate-fade-in-up flex-col items-center gap-3 rounded-2xl border bg-white px-8 py-10 text-center shadow-1">
+                  <div className="relative">
+                    <div aria-hidden="true" className="absolute inset-0 -z-10 scale-[1.8] rounded-full bg-indigo-200/50 blur-2xl" />
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
+                      <Bot className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-foreground">Create your agent</p>
+                    <p className="max-w-md text-sm text-muted-foreground">
+                      Describe what it should do and Copilot drafts it for you, or set up the fields yourself.
+                    </p>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+                    <Button size="sm" onClick={() => setSetupMode('copilot')}>
+                      <Sparkles className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                      Ask Copilot
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setSetupMode('manual')}>
+                      <Settings2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                      Set up manually
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {!editingAgent && setupMode === 'copilot' && (
+                <div className="animate-fade-in-up">
                   {/* Den-style: describe an agent in plain language and build it. */}
                   <div className="flex items-center gap-2 rounded-xl border bg-gray-50 px-3 py-2 transition-shadow duration-150 focus-within:ring-2 focus-within:ring-indigo-200">
                     <Sparkles className="h-4 w-4 shrink-0 text-indigo-500" />
@@ -515,6 +548,7 @@ function AgentHQ() {
                       placeholder={"Describe an agent to build — e.g. “Every Monday, summarize last week’s GitHub activity and post it to Slack”"}
                       value={describe}
                       disabled={building}
+                      autoFocus
                       onChange={(event) => setDescribe(event.target.value)}
                       onKeyDown={(event) => event.key === 'Enter' && buildFromDescription()}
                     />
@@ -570,6 +604,17 @@ function AgentHQ() {
                       ))}
                     </div>
                   )}
+                  <div className="mt-2 flex justify-center">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSetupMode('manual')}
+                      className="gap-1.5 text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      Set up manually instead
+                    </Button>
+                  </div>
                 </div>
               )}
 
@@ -579,8 +624,22 @@ function AgentHQ() {
                 </p>
               )}
 
+              {(editingAgent || setupMode === 'manual') && (
               <div className="animate-fade-in-up rounded-lg border bg-white p-4 shadow-1">
-                <p className="eyebrow mb-3">{editingAgent ? 'Agent setup' : 'Set up manually'}</p>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="eyebrow">{editingAgent ? 'Agent setup' : 'Set up manually'}</p>
+                  {!editingAgent && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSetupMode('copilot')}
+                      className="gap-1.5 text-xs text-indigo-600 hover:text-indigo-700"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+                      Ask Copilot instead
+                    </Button>
+                  )}
+                </div>
                 <AgentConfigForm
                   key={editingAgent?.id || NEW_AGENT}
                   editingAgent={editingAgent}
@@ -590,6 +649,7 @@ function AgentHQ() {
                   onOpenRun={(runId) => { setConfigureOpen(false); setFocusRunId(runId) }}
                 />
               </div>
+              )}
             </div>
           )}
 

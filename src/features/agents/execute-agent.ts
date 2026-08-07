@@ -201,7 +201,7 @@ const ASK_USER_TOOL: ToolDefinition = {
       question: {
         type: 'string',
         description:
-          'The question to show the user — brief and scannable, formatted as Markdown. At most ONE short sentence of context, then the choices as a tight bulleted list ("- **Pick option A** — why"), ending with what happens once they answer. Never recap the conversation, restate your instructions, or repeat information the user already has.',
+          'The question to show the user, in EXACTLY this Markdown shape and nothing more: line 1 is the question itself as one short sentence (no preamble, no context recap — the user can already see the run state); then, if there are choices, each on its own bullet as "- **Choice label** — consequence in ≤6 words". Hard cap: 40 words total. Never write a paragraph, never inline options as (a)/(b)/(c), never restate instructions or summarize what has happened so far.',
       },
     },
     required: ['question'],

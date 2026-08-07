@@ -150,6 +150,35 @@ test('google_sheets_append_row wraps a single row and sets valueInputOption', as
   assert.deepEqual((c.data as { values: unknown[][] }).values, [['a', 'b']])
 })
 
+test('slack_search_messages → GET /search.messages with query and count', async () => {
+  const c = await run('slack_search_messages', { query: 'deploy in:#eng', count: 5 })
+  assert.equal(c.method, 'GET')
+  assert.equal(c.endpoint, '/search.messages')
+  assert.deepEqual(c.params, { query: 'deploy in:#eng', count: 5 })
+})
+
+test('slack_add_reaction → POST /reactions.add, emoji colons stripped', async () => {
+  const c = await run('slack_add_reaction', { channel: 'C1', timestamp: '123.456', name: ':thumbsup:' })
+  assert.equal(c.method, 'POST')
+  assert.equal(c.endpoint, '/reactions.add')
+  assert.deepEqual(c.data, { channel: 'C1', timestamp: '123.456', name: 'thumbsup' })
+})
+
+test('slack_send_direct_message opens the IM conversation, then posts into it', async () => {
+  const spec = NANGO_PROVIDER_TOOLS.find((t) => t.name === 'slack_send_direct_message')!
+  const calls: NangoProxyArgs[] = []
+  const proxy = async (args: NangoProxyArgs) => {
+    calls.push(args)
+    return args.endpoint === '/conversations.open' ? { data: { channel: { id: 'D42' } } } : { data: { ok: true } }
+  }
+  await spec.run(conn, { user: 'U777', text: 'hello' }, proxy)
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].endpoint, '/conversations.open')
+  assert.deepEqual(calls[0].data, { users: 'U777' })
+  assert.equal(calls[1].endpoint, '/chat.postMessage')
+  assert.deepEqual(calls[1].data, { channel: 'D42', text: 'hello' })
+})
+
 test('salesforce_query → GET /query with the SOQL in q', async () => {
   const c = await run('salesforce_query', { soql: 'SELECT Id FROM Account' })
   assert.equal(c.method, 'GET')

@@ -501,9 +501,12 @@ const ZENDESK_TOOLS: NangoToolSpec[] = [
   },
 ]
 
-// ── Slack read tools (the write send lives in delivery.ts) ────────────────────
+// ── Slack tools (the channel-post write lives in delivery.ts) ─────────────────
+// Kept at parity with the actions enabled on the Nango Slack integration:
+// add-reaction, get-conversation-history (read messages), post-message
+// (delivery.ts), search-messages, send-message (direct message).
 
-const SLACK_READ_TOOLS: NangoToolSpec[] = [
+const SLACK_TOOLS: NangoToolSpec[] = [
   {
     provider: 'slack', name: 'slack_list_channels', isWrite: false,
     description: 'List Slack channels the connected account can access.',
@@ -515,6 +518,31 @@ const SLACK_READ_TOOLS: NangoToolSpec[] = [
     description: 'Read recent messages from a Slack channel.',
     inputSchema: { type: 'object', properties: { channel: { type: 'string', description: 'Channel id.' }, limit: { type: 'number' } }, required: ['channel'] },
     run: (c, a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/conversations.history', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { channel: str(a.channel), limit: num(a.limit, 30) } }).then((r) => r.data),
+  },
+  {
+    provider: 'slack', name: 'slack_search_messages', isWrite: false,
+    description: 'Search messages across the connected Slack workspace.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Slack search query, e.g. "deploy in:#eng after:2026-08-01".' }, count: { type: 'number', description: 'Max results (default 20).' } }, required: ['query'] },
+    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/search.messages', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { query: str(a.query), count: num(a.count, 20) } }).then((r) => r.data),
+  },
+  {
+    provider: 'slack', name: 'slack_add_reaction', isWrite: true,
+    description: 'Add an emoji reaction to a Slack message.',
+    inputSchema: { type: 'object', properties: { channel: { type: 'string', description: 'Channel id of the message.' }, timestamp: { type: 'string', description: 'Message timestamp (ts).' }, name: { type: 'string', description: 'Emoji name without colons, e.g. thumbsup.' } }, required: ['channel', 'timestamp', 'name'] },
+    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'POST', endpoint: '/reactions.add', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { channel: str(a.channel), timestamp: str(a.timestamp), name: str(a.name).replace(/:/g, '') } }).then((r) => r.data),
+  },
+  {
+    provider: 'slack', name: 'slack_send_direct_message', isWrite: true,
+    description: 'Send a direct message to a Slack user.',
+    inputSchema: { type: 'object', properties: { user: { type: 'string', description: 'The user id to message (e.g. U0123456).' }, text: { type: 'string' } }, required: ['user', 'text'] },
+    run: async (c, a, proxy = defaultProxy()) => {
+      // A DM posts into the user's IM conversation, which must be opened (or
+      // re-opened) first — conversations.open is idempotent for an existing IM.
+      const opened = await proxy({ method: 'POST', endpoint: '/conversations.open', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { users: str(a.user) } })
+      const channel = (opened.data as { channel?: { id?: string } })?.channel?.id
+      if (!channel) throw new Error('Slack did not open a direct-message conversation for that user id.')
+      return proxy({ method: 'POST', endpoint: '/chat.postMessage', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { channel, text: str(a.text) } }).then((r) => r.data)
+    },
   },
 ]
 
@@ -766,7 +794,7 @@ export const NANGO_PROVIDER_TOOLS: NangoToolSpec[] = [
   ...GSHEETS_TOOLS,
   ...MONDAY_TOOLS,
   ...ZENDESK_TOOLS,
-  ...SLACK_READ_TOOLS,
+  ...SLACK_TOOLS,
   ...SALESFORCE_TOOLS,
   ...GMAIL_READ_TOOLS,
   ...AIRTABLE_TOOLS,

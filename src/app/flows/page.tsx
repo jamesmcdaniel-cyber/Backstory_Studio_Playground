@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, FileText, Layers, Upload, MoreHorizontal, Copy, Download, Trash2 } from 'lucide-react'
+import { Workflow, Plus, FileText, Layers, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -141,6 +141,29 @@ export default function FlowsPage() {
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
+  }
+
+  // Publish/unpublish from the card menu hits the same endpoint as the editor's
+  // Publish button, so server-side validation (missing agents, revoked
+  // connections) surfaces here too — its message is the toast.
+  const togglePublish = async (flow: FlowItem) => {
+    const unpublish = Boolean(flow.published)
+    const response = await fetch(`/api/flows/${flow.id}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unpublish }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.flow) {
+      toast.error(data.error || (unpublish ? 'Could not unpublish the flow.' : 'Could not publish the flow.'))
+      return
+    }
+    setFlows((prev) => prev.map((entry) => (
+      entry.id === flow.id
+        ? { ...entry, published: Boolean(data.flow.published), status: data.flow.status || entry.status }
+        : entry
+    )))
+    toast.success(unpublish ? 'Unpublished — the flow will no longer run.' : `Published v${data.flow.version}.`)
   }
 
   const deleteFlow = (flow: FlowItem) => setDeleteTarget(flow)
@@ -340,6 +363,11 @@ export default function FlowsPage() {
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start">
+                            <DropdownMenuItem onSelect={() => void togglePublish(flow)}>
+                              {flow.published
+                                ? <><CircleOff className="mr-2 h-4 w-4" /> Unpublish</>
+                                : <><Rocket className="mr-2 h-4 w-4" /> Publish</>}
+                            </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => void duplicateFlow(flow)}>
                               <Copy className="mr-2 h-4 w-4" /> Duplicate
                             </DropdownMenuItem>

@@ -27,6 +27,13 @@ export type StepOutcome = {
   input?: unknown
   output?: unknown
   error?: string
+  /**
+   * Degraded-success notes: the step succeeded, but something the user would
+   * want to know about happened along the way — items dropped by an itemError
+   * policy, an empty result where data was expected. Persisted per step row;
+   * a succeeded run with any step warnings renders as degraded in the UI.
+   */
+  warnings?: string[]
 }
 export type RunAgentResult = { output?: unknown; error?: string; waiting?: { status: string; question?: string } }
 /** Per-step agent configuration (n8n-style sub-node parity): a chat-model
@@ -204,6 +211,37 @@ function loopItems(value: unknown): unknown[] {
 /** The per-item fan-out config a node carries, if any (only action nodes do). */
 function nodePerItem(node: FlowNode): PerItemConfig | undefined {
   return 'perItem' in node.data ? (node.data as { perItem?: PerItemConfig }).perItem : undefined
+}
+
+// ── Step warnings: degraded success made visible ────────────────────────────
+
+const LOOPABLE_KEYS = ['items', 'records', 'results', 'result', 'data']
+
+/**
+ * A data-producing step that succeeded with nothing in it — the silent-empty
+ * failure mode (typically a masked upstream stub or a filter that matched
+ * nothing). Flags an empty array, or a record whose list-shaped keys are all
+ * present-but-empty ({items: [], total: 0}). A record with no list keys is
+ * left alone — plain command responses ({ok: true}) aren't "no items".
+ */
+function emptyResultWarning(output: unknown): string | undefined {
+  const message = 'This step succeeded but returned no items.'
+  if (Array.isArray(output)) return output.length === 0 ? message : undefined
+  if (output && typeof output === 'object') {
+    const record = output as Record<string, unknown>
+    const listKeys = LOOPABLE_KEYS.filter((key) => Array.isArray(record[key]))
+    if (listKeys.length && listKeys.every((key) => (record[key] as unknown[]).length === 0)) return message
+  }
+  return undefined
+}
+
+/** Warning for items dropped or error-collected by an itemError policy. */
+function itemPolicyWarning(policy: 'fail' | 'skip' | 'collect', failed: number, total: number): string | undefined {
+  if (failed === 0 || policy === 'fail') return undefined
+  const verb = policy === 'skip'
+    ? failed === 1 ? 'was skipped' : 'were skipped'
+    : failed === 1 ? 'was recorded as an error' : 'were recorded as errors'
+  return `${failed} of ${total} items failed and ${verb}.`
 }
 
 // ── Variable steps: a typed symbol table shared across the whole run ────────
@@ -620,7 +658,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         return control
       }
       ctx.step[node.id] = { output: outputs }
-      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output: outputs })
+      const failedItems = childResults.filter((res) => res.kind === 'fail').length
+      const aggregateWarning = itemPolicyWarning(policy, failedItems, items.length)
+      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output: outputs, ...(aggregateWarning ? { warnings: [aggregateWarning] } : {}) })
       return { kind: 'ok', output: outputs }
     }
 
@@ -968,7 +1008,13 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       }
       const output = asStructured(res.output)
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', output })
+      // Empty-result visibility: for http the payload is the envelope's body;
+      // for tools the output itself. A succeeded-but-empty read is the classic
+      // masked-upstream-stub bug — surface it instead of letting downstream
+      // fail-soft paths hide it.
+      const emptyTarget = node.type === 'http' && output && typeof output === 'object' && !Array.isArray(output) ? (output as Record<string, unknown>).body : output
+      const emptyWarning = emptyResultWarning(emptyTarget)
+      emit({ nodeId: node.id, status: 'succeeded', output, ...(emptyWarning ? { warnings: [emptyWarning] } : {}) })
       return { kind: 'ok', output }
     }
 
@@ -1051,7 +1097,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       }
       const output = asStructured(res.output)
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', output })
+      // Knowledge retrieval is best-effort (empty on any failure), which makes
+      // a zero-hit result doubly worth flagging — it may be a real "nothing
+      // matched" or a swallowed backend failure.
+      const emptyWarning = emptyResultWarning(output)
+      emit({ nodeId: node.id, status: 'succeeded', output, ...(emptyWarning ? { warnings: [emptyWarning] } : {}) })
       return { kind: 'ok', output }
     }
 
@@ -1180,7 +1230,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         .filter((r) => !(policy === 'skip' && r.control?.kind === 'fail'))
         .map((r) => (policy === 'collect' && r.control?.kind === 'fail' ? { error: r.control.error } : r.output))
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output })
+      const failedIterations = iterations.filter((r) => r.control?.kind === 'fail').length
+      const loopWarning = itemPolicyWarning(policy, failedIterations, items.length)
+      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output, ...(loopWarning ? { warnings: [loopWarning] } : {}) })
       return { kind: 'ok', output }
     }
 

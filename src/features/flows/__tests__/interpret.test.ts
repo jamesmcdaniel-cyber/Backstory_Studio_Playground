@@ -2852,3 +2852,136 @@ test('a data step passes its full op settings through the interpreter (by/descen
     { owner: 'bo', total: 300 },
   ])
 })
+
+// ── Step warnings: skipped items, collected errors, empty results ───────────
+
+test('perItem itemError:skip attaches a warning counting the dropped items', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'enrich', args: '{"n":"{{item}}"}', perItem: { over: '{{trigger.input}}', itemError: 'skip' } } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 't1' }],
+  }
+  const runAction: RunActionFn = async (node) => ((node.config.args as { n: string }).n === 'B' ? { error: 'bad B' } : { output: `ok:${(node.config.args as { n: string }).n}` })
+  const result = await interpretFlow(graph, ['A', 'B', 'C'], { runAgent: async () => ({ output: '' }), runAction })
+  assert.equal(result.status, 'succeeded')
+  const aggregate = result.steps.find((s) => s.nodeId === 't1' && s.iterationKey === 't1')
+  assert.deepEqual(aggregate?.warnings, ['1 of 3 items failed and was skipped.'])
+})
+
+test('perItem itemError:collect attaches a warning counting the collected errors', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'enrich', args: '{"n":"{{item}}"}', perItem: { over: '{{trigger.input}}', itemError: 'collect' } } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 't1' }],
+  }
+  const runAction: RunActionFn = async (node) => (['B', 'C'].includes((node.config.args as { n: string }).n) ? { error: 'bad' } : { output: 'ok' })
+  const result = await interpretFlow(graph, ['A', 'B', 'C'], { runAgent: async () => ({ output: '' }), runAction })
+  assert.equal(result.status, 'succeeded')
+  const aggregate = result.steps.find((s) => s.nodeId === 't1' && s.iterationKey === 't1')
+  assert.deepEqual(aggregate?.warnings, ['2 of 3 items failed and were recorded as errors.'])
+})
+
+test('perItem with no failures attaches no warnings', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'enrich', args: '{"n":"{{item}}"}', perItem: { over: '{{trigger.input}}', itemError: 'skip' } } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 't1' }],
+  }
+  const result = await interpretFlow(graph, ['A', 'B'], { runAgent: async () => ({ output: '' }), runAction: async () => ({ output: 'ok' }) })
+  const aggregate = result.steps.find((s) => s.nodeId === 't1' && s.iterationKey === 't1')
+  assert.equal(aggregate?.warnings, undefined)
+})
+
+test('loop itemError:skip and collect attach warnings counting failed iterations', async () => {
+  const skipGraph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'loop', type: 'loop', data: { over: '{{trigger.input}}', itemError: 'skip', body: ['a'] } },
+      { id: 'a', type: 'tool', data: { connectionId: 'c1', toolName: 'x', args: '{"n":"{{item}}"}' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'loop' }],
+  }
+  const runAction: RunActionFn = async (node) => ((node.config.args as { n: string }).n === 'B' ? { error: 'bad' } : { output: 'ok' })
+  const skipResult = await interpretFlow(skipGraph, ['A', 'B', 'C'], { runAgent: async () => ({ output: '' }), runAction })
+  const skipStep = skipResult.steps.find((s) => s.nodeId === 'loop')
+  assert.deepEqual(skipStep?.warnings, ['1 of 3 items failed and was skipped.'])
+
+  const collectGraph: FlowGraph = {
+    ...skipGraph,
+    nodes: skipGraph.nodes.map((n) => (n.id === 'loop' ? { ...n, data: { ...n.data, itemError: 'collect' } } : n)) as FlowGraph['nodes'],
+  }
+  const collectResult = await interpretFlow(collectGraph, ['A', 'B', 'C'], { runAgent: async () => ({ output: '' }), runAction })
+  const collectStep = collectResult.steps.find((s) => s.nodeId === 'loop')
+  assert.deepEqual(collectStep?.warnings, ['1 of 3 items failed and was recorded as an error.'])
+})
+
+test('a tool step that succeeds with an empty list gets an empty-result warning', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'search', args: '{}' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 't1' }],
+  }
+  const result = await interpretFlow(graph, '', { runAgent: async () => ({ output: '' }), runAction: async () => ({ output: [] }) })
+  const step = result.steps.find((s) => s.nodeId === 't1')
+  assert.deepEqual(step?.warnings, ['This step succeeded but returned no items.'])
+})
+
+test('a tool step whose response has only empty list keys gets the warning; populated lists do not', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'search', args: '{}' } },
+      { id: 't2', type: 'tool', data: { connectionId: 'c1', toolName: 'search2', args: '{}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 't1' },
+      { id: 'e2', source: 't1', target: 't2' },
+    ],
+  }
+  const runAction: RunActionFn = async (node) =>
+    node.id === 't1' ? { output: { items: [], total: 0 } } : { output: { items: [{ id: 1 }] } }
+  const result = await interpretFlow(graph, '', { runAgent: async () => ({ output: '' }), runAction })
+  assert.deepEqual(result.steps.find((s) => s.nodeId === 't1')?.warnings, ['This step succeeded but returned no items.'])
+  assert.equal(result.steps.find((s) => s.nodeId === 't2')?.warnings, undefined)
+})
+
+test('an http step with an empty-list body gets the warning; a plain object body does not', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'h1', type: 'http', data: { method: 'GET', url: 'https://api.example.com/rows' } },
+      { id: 'h2', type: 'http', data: { method: 'POST', url: 'https://api.example.com/ack' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'h1' },
+      { id: 'e2', source: 'h1', target: 'h2' },
+    ],
+  }
+  const runAction: RunActionFn = async (node) =>
+    node.id === 'h1'
+      ? { output: { ok: true, status: 200, body: [] } }
+      : { output: { ok: true, status: 200, body: {} } }
+  const result = await interpretFlow(graph, '', { runAgent: async () => ({ output: '' }), runAction })
+  assert.deepEqual(result.steps.find((s) => s.nodeId === 'h1')?.warnings, ['This step succeeded but returned no items.'])
+  assert.equal(result.steps.find((s) => s.nodeId === 'h2')?.warnings, undefined)
+})
+
+test('a knowledge step with zero hits gets the empty-result warning', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'k1', type: 'knowledge', data: { query: 'anything' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'k1' }],
+  }
+  const result = await interpretFlow(graph, '', { runAgent: async () => ({ output: '' }), runAction: async () => ({ output: [] }) })
+  assert.deepEqual(result.steps.find((s) => s.nodeId === 'k1')?.warnings, ['This step succeeded but returned no items.'])
+})

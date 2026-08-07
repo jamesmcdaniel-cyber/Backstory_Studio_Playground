@@ -19,6 +19,8 @@ import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
+import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import type { WorkspaceConnections } from '@/components/integrations/integration-match'
 import { FlowTemplateCard, type FlowTemplateItem } from '@/components/templates/flow-template-card'
 import { cn } from '@/lib/utils'
 
@@ -63,13 +65,13 @@ type AssetDraft = {
   description: string
   instructions: string
   tags: string
-  integrations: string
+  integrations: string[]
   exampleOutput: string
 }
 
 const emptyAsset = (kind: 'template' | 'skill'): AssetDraft => ({
   kind, name: '', category: kind === 'template' ? 'Custom' : 'Community',
-  description: '', instructions: '', tags: '', integrations: '', exampleOutput: '',
+  description: '', instructions: '', tags: '', integrations: [], exampleOutput: '',
 })
 
 const csv = (value: string) => value.split(',').map((s) => s.trim()).filter(Boolean)
@@ -149,19 +151,43 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   // Create/edit dialog for community templates + skills.
   const [dialog, setDialog] = useState<AssetDraft | null>(null)
   const [savingAsset, setSavingAsset] = useState(false)
+  // The platform's attachable tools, for the dialog's integration picker.
+  // Fetched lazily the first time a dialog opens; null until then.
+  const [availableIntegrations, setAvailableIntegrations] = useState<WorkspaceConnections | null>(null)
   const aiRequestSeq = useRef(0)
+
+  useEffect(() => {
+    if (dialog === null || availableIntegrations !== null) return
+    let cancelled = false
+    fetch('/api/integrations/available', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled || !data.success) return
+        setAvailableIntegrations({ tools: data.tools ?? [], connections: data.connections ?? [] })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [dialog, availableIntegrations])
+
+  const toggleDialogIntegration = (value: string) => {
+    if (!dialog) return
+    const next = dialog.integrations.includes(value)
+      ? dialog.integrations.filter((i) => i !== value)
+      : [...dialog.integrations, value]
+    setDialog({ ...dialog, integrations: next })
+  }
 
   const openCreate = (kind: 'template' | 'skill') => setDialog(emptyAsset(kind))
   const openEditTemplate = (t: TemplateItem) =>
     setDialog({
       id: t.id, kind: 'template', name: t.name, category: t.category, description: t.description,
-      instructions: t.instructions ?? '', tags: (t.tags ?? []).join(', '), integrations: (t.integrations ?? []).join(', '),
+      instructions: t.instructions ?? '', tags: (t.tags ?? []).join(', '), integrations: t.integrations ?? [],
       exampleOutput: t.exampleOutput ?? '',
     })
   const openEditSkill = (s: SkillItem) =>
     setDialog({
       id: s.id, kind: 'skill', name: s.name, category: s.category, description: s.description,
-      instructions: s.instructions ?? '', tags: (s.tags ?? []).join(', '), integrations: (s.integrations ?? []).join(', '),
+      instructions: s.instructions ?? '', tags: (s.tags ?? []).join(', '), integrations: s.integrations ?? [],
       exampleOutput: '',
     })
 
@@ -174,8 +200,8 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
     const url = dialog.kind === 'template' ? '/api/agent-templates' : '/api/skills'
     const payload =
       dialog.kind === 'template'
-        ? { name: dialog.name, category: dialog.category, description: dialog.description, instructions: dialog.instructions, tags: csv(dialog.tags), integrations: csv(dialog.integrations), exampleOutput: dialog.exampleOutput || undefined }
-        : { name: dialog.name, category: dialog.category, description: dialog.description, instructions: dialog.instructions, tags: csv(dialog.tags), integrations: csv(dialog.integrations) }
+        ? { name: dialog.name, category: dialog.category, description: dialog.description, instructions: dialog.instructions, tags: csv(dialog.tags), integrations: dialog.integrations, exampleOutput: dialog.exampleOutput || undefined }
+        : { name: dialog.name, category: dialog.category, description: dialog.description, instructions: dialog.instructions, tags: csv(dialog.tags), integrations: dialog.integrations }
     try {
       const res = await fetch(url, {
         method: dialog.id ? 'PUT' : 'POST',
@@ -816,7 +842,9 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
             </DialogTitle>
           </DialogHeader>
           {dialog && (
-            <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+            /* Negative margin + matching padding gives input focus rings room
+               to render inside the scroll clip instead of being cut at its edges. */
+            <div className="-mx-1 max-h-[65vh] space-y-3 overflow-y-auto px-1 py-1">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">Name</label>
@@ -837,15 +865,77 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                 </label>
                 <Textarea rows={8} value={dialog.instructions} onChange={(e) => setDialog({ ...dialog, instructions: e.target.value })} placeholder="What the agent should do…" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Tags (comma-separated)</label>
-                  <Input value={dialog.tags} onChange={(e) => setDialog({ ...dialog, tags: e.target.value })} placeholder="sales, email" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Integrations (comma-separated)</label>
-                  <Input value={dialog.integrations} onChange={(e) => setDialog({ ...dialog, integrations: e.target.value })} placeholder="Slack, Backstory MCP" />
-                </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Tags (comma-separated)</label>
+                <Input value={dialog.tags} onChange={(e) => setDialog({ ...dialog, tags: e.target.value })} placeholder="sales, email" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Integrations</label>
+                {availableIntegrations ? (
+                  <div className="flex flex-wrap gap-2">
+                    {availableIntegrations.tools.map((t) => {
+                      const selected = dialog.integrations.includes(t.key)
+                      return (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => toggleDialogIntegration(t.key)}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-full border py-1 pl-1.5 pr-3 text-xs transition-colors duration-150',
+                            selected
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-transparent text-muted-foreground hover:border-primary hover:text-foreground',
+                          )}
+                        >
+                          <IntegrationLogo slug={t.slug} name={t.label} className="h-4 w-4 bg-white/70" />
+                          {t.label}
+                        </button>
+                      )
+                    })}
+                    {availableIntegrations.connections.map((c) => {
+                      const selected = dialog.integrations.includes(c.name)
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleDialogIntegration(c.name)}
+                          className={cn(
+                            'flex items-center gap-1.5 rounded-full border py-1 pl-1.5 pr-3 text-xs transition-colors duration-150',
+                            selected
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-transparent text-muted-foreground hover:border-primary hover:text-foreground',
+                          )}
+                        >
+                          <IntegrationLogo slug={c.name.toLowerCase().replace(/[^a-z0-9]+/g, '')} name={c.name} className="h-4 w-4 bg-white/70" />
+                          {c.name}
+                        </button>
+                      )
+                    })}
+                    {/* Integrations saved before the picker existed (or from a
+                        removed tool) stay visible so they can be deselected. */}
+                    {dialog.integrations
+                      .filter((name) =>
+                        !availableIntegrations.tools.some((t) => t.key === name) &&
+                        !availableIntegrations.connections.some((c) => c.name === name))
+                      .map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => toggleDialogIntegration(name)}
+                          className="flex items-center gap-1.5 rounded-full border border-primary bg-primary py-1 pl-3 pr-2 text-xs text-primary-foreground transition-colors duration-150"
+                        >
+                          {name}
+                          <X className="h-3 w-3" />
+                        </button>
+                      ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <Skeleton className="h-7 w-24 rounded-full" />
+                    <Skeleton className="h-7 w-20 rounded-full" />
+                    <Skeleton className="h-7 w-28 rounded-full" />
+                  </div>
+                )}
               </div>
               {dialog.kind === 'template' && (
                 <div>

@@ -132,7 +132,7 @@ export function JamDialog({
       .then((data) => {
         if (cancelled || !data.success) return
         const all = (data.members ?? []) as Member[]
-        setIsAdmin(all.some((m) => m.id === data.selfId && m.role === 'ADMIN'))
+        setIsAdmin(all.some((m) => m.id === data.selfId && (m.role === 'ADMIN' || m.role === 'OWNER')))
         // You can't invite yourself — drop the caller from the list.
         setMembers(all.filter((m) => m.id !== data.selfId))
       })

@@ -3,6 +3,7 @@ import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
 import { DEFAULT_PLATFORM_STAFF_EMAILS, normalizeStaffEmail } from '@/lib/catalogue/staff-emails'
+import { isPlatformOwnerEmail, OWNER_PROTECTED_CODE, OWNER_PROTECTED_MESSAGE } from '@/lib/authz/platform-owner'
 
 const patchSchema = z
   .object({
@@ -58,7 +59,7 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     const email = normalizeStaffEmail(data.email)!
     let warning: string | null = null
 
-    if (!data.platformRole && DEFAULT_PLATFORM_STAFF_EMAILS.includes(email)) {
+    if (!data.platformRole && (DEFAULT_PLATFORM_STAFF_EMAILS.includes(email) || isPlatformOwnerEmail(email))) {
       // The hardcoded platform admin is re-promoted on every sign-in, so a
       // revoke here would silently undo itself. Refuse instead of pretending.
       throw new ApiError('That address is the built-in platform admin and cannot be revoked here.', 409, 'BUILTIN_STAFF')
@@ -107,6 +108,12 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   }
 
   if (data.userId) {
+    const target = await systemPrisma.user.findUnique({ where: { id: data.userId }, select: { email: true } })
+    // The owner's platform tier is part of the protected identity: nobody
+    // edits the owner's settings, including this flag.
+    if (target && isPlatformOwnerEmail(target.email) && data.platformRole !== 'reviewer') {
+      throw new ApiError(OWNER_PROTECTED_MESSAGE, 403, OWNER_PROTECTED_CODE)
+    }
     await systemPrisma.user.update({
       where: { id: data.userId },
       data: { platformRole: data.platformRole ?? null },

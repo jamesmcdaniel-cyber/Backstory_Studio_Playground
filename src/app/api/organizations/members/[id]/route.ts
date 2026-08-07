@@ -2,6 +2,13 @@ import type { NextRequest } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import {
+  isPlatformOwnerEmail,
+  OWNER_PROTECTED_CODE,
+  OWNER_PROTECTED_MESSAGE,
+  OWNER_RESERVED_CODE,
+  OWNER_RESERVED_MESSAGE,
+} from '@/lib/authz/platform-owner'
 
 function memberId(request: NextRequest) {
   const id = request.nextUrl.pathname.split('/').at(-1)
@@ -42,9 +49,16 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const { role } = roleSchema.parse(await request.json())
   const target = await prisma.user.findFirst({
     where: { id, organizationId: auth.organizationId, isActive: true },
-    select: { id: true, role: true },
+    select: { id: true, role: true, email: true },
   })
   if (!target) throw new ApiError('Member not found', 404, 'NOT_FOUND')
+  // The platform owner's role is immutable — for everyone, including other
+  // admins and the owner themself. OWNER itself is only grantable to the
+  // platform owner identities. (A users-table trigger backstops both rules.)
+  if (isPlatformOwnerEmail(target.email)) throw new ApiError(OWNER_PROTECTED_MESSAGE, 403, OWNER_PROTECTED_CODE)
+  if (role === 'OWNER' && !isPlatformOwnerEmail(target.email)) {
+    throw new ApiError(OWNER_RESERVED_MESSAGE, 403, OWNER_RESERVED_CODE)
+  }
   if (administrative(target.role) && !administrative(role)) {
     await assertNotLastAdmin(auth.organizationId, target.id)
   }
@@ -63,9 +77,11 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   if (id === auth.dbUser.id) throw new ApiError('You can’t remove yourself.', 400, 'SELF_REMOVE')
   const target = await prisma.user.findFirst({
     where: { id, organizationId: auth.organizationId, isActive: true },
-    select: { id: true, role: true },
+    select: { id: true, role: true, email: true },
   })
   if (!target) throw new ApiError('Member not found', 404, 'NOT_FOUND')
+  // The platform owner cannot be removed from a workspace by anyone.
+  if (isPlatformOwnerEmail(target.email)) throw new ApiError(OWNER_PROTECTED_MESSAGE, 403, OWNER_PROTECTED_CODE)
   if (administrative(target.role)) await assertNotLastAdmin(auth.organizationId, target.id)
   await prisma.user.update({ where: { id: target.id }, data: { isActive: false } })
   return { success: true }

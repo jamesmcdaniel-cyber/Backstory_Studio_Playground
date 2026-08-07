@@ -41,7 +41,7 @@ const DEFAULT_MONTHLY_TOKEN_LIMIT = 100_000_000
 
 // Accounts exempt from the monthly token ceiling (internal admins). The default
 // covers the platform admin; add more via USAGE_EXEMPT_EMAILS (comma-separated).
-const DEFAULT_EXEMPT_EMAILS = ['james.mcdaniel@people.ai']
+const DEFAULT_EXEMPT_EMAILS = ['james.mcdaniel@people.ai', 'james.mcdaniel@backstory.ai']
 
 /** True when this email should never be blocked by the usage ceiling. */
 export function isUsageExemptEmail(email: string | null | undefined): boolean {

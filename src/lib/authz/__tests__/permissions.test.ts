@@ -32,8 +32,28 @@ test('role bundles are cumulative', () => {
   assert.ok(o.has('members.manage') && o.has('org.manage'))
 })
 
+test('OWNER is the root tier: every permission, in every org kind', () => {
+  for (const org of [customer, partner, internal]) {
+    const p = resolvePermissions({ role: 'OWNER', platformRole: null }, org)
+    for (const permission of PERMISSIONS) assert.ok(p.has(permission), `${permission} in ${org.kind}`)
+  }
+})
+
+test('the platform owner email resolves every permission regardless of stored role', () => {
+  // Identity-based: even a tampered role column cannot strip the owner.
+  for (const email of ['james.mcdaniel@people.ai', 'James.McDaniel@Backstory.ai']) {
+    const p = resolvePermissions({ role: 'VIEWER', platformRole: null, email }, customer)
+    for (const permission of PERMISSIONS) assert.ok(p.has(permission), `${permission} for ${email}`)
+  }
+  // Any other identity gains nothing from the email field.
+  const stranger = resolvePermissions({ role: 'VIEWER', platformRole: null, email: 'foe@example.com' }, customer)
+  assert.ok(!stranger.has('members.manage'))
+})
+
 test('a customer admin can never submit or review, whatever their org role', () => {
-  for (const role of ['VIEWER', 'USER', 'ADMIN', 'OWNER'] as const) {
+  // OWNER is excluded: it is the platform root tier, held only by the
+  // platform owner identities, and holds everything by design.
+  for (const role of ['VIEWER', 'USER', 'ADMIN'] as const) {
     const p = resolvePermissions({ role, platformRole: null }, customer)
     assert.ok(!p.has('template.submit'), role)
     assert.ok(!p.has('catalogue.review'), role)

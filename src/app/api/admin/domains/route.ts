@@ -3,6 +3,7 @@ import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
 import { normalizeDomain, isPublicEmailProvider, COMPANY_EMAIL_DOMAINS } from '@/lib/auth/company-domain'
+import { PLATFORM_OWNER_EMAILS } from '@/lib/authz/platform-owner'
 
 const postSchema = z.object({
   domain: z.string().min(1),
@@ -118,7 +119,14 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   let deactivated = 0
   if (data.disabled && data.deactivateUsers) {
     const result = await systemPrisma.user.updateMany({
-      where: { organizationId: row.organizationId, email: { endsWith: `@${row.domain}` }, isActive: true },
+      where: {
+        organizationId: row.organizationId,
+        email: { endsWith: `@${row.domain}` },
+        isActive: true,
+        // The platform owner is never swept up in a bulk deactivation — and the
+        // users-table trigger would abort the whole updateMany if it were.
+        NOT: { email: { in: [...PLATFORM_OWNER_EMAILS], mode: 'insensitive' } },
+      },
       data: { isActive: false },
     })
     deactivated = result.count

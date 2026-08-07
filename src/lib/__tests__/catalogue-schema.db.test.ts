@@ -38,13 +38,16 @@ if (TEST_DB) {
     assert.equal(user.platformRole, null)
   })
 
-  test('UserRole accepts the two new values', async () => {
+  test('UserRole accepts VIEWER; OWNER is reserved for the platform owner identity', async () => {
     const viewer = await prisma.user.create({
       data: { supabaseId: crypto.randomUUID(), organizationId: ids.org, isActive: true, role: 'VIEWER' },
     })
     assert.equal(viewer.role, 'VIEWER')
-    const owner = await prisma.user.update({ where: { id: viewer.id }, data: { role: 'OWNER' } })
-    assert.equal(owner.role, 'OWNER')
+    // The users-table trigger refuses OWNER for any other identity.
+    await assert.rejects(
+      () => prisma.user.update({ where: { id: viewer.id }, data: { role: 'OWNER' } }),
+      /OWNER_RESERVED/,
+    )
   })
 
   test('templates and skills default to catalogueStatus=none and skills to org visibility', async () => {

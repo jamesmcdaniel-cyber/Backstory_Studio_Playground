@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { systemPrisma } from '@/lib/prisma'
 import { authenticateScim, roleOf, SCIM_LIST_SCHEMA, scimError, scimJson, scimUser, supabaseAdmin } from '@/lib/scim/server'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 
 const createSchema = z.object({
   externalId: z.string().max(255).optional(),
@@ -34,6 +35,11 @@ export async function POST(request: Request) {
   const parsed = createSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) return scimError('Invalid SCIM user payload.', 400)
   const input = parsed.data
+  // SCIM provisioning can never create the platform owner identity or an
+  // OWNER-tier account — those exist only via first-party sign-in.
+  if (isPlatformOwnerEmail(input.userName) || roleOf(input.roles?.[0]?.value) === 'OWNER') {
+    return scimError('That identity is reserved for the platform owner.', 403)
+  }
   const existing = await systemPrisma.user.findFirst({ where: { organizationId: auth.organizationId, email: input.userName } })
   if (existing) return scimError('A user with that userName already exists.', 409)
   let authUserId: string

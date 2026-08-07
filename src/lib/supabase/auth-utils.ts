@@ -3,6 +3,7 @@ import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
 import { allowedDomainOrg } from '@/lib/auth/allowed-domain'
 import { normalizeStaffEmail, staffBootstrapAllowlist } from '@/lib/catalogue/staff-emails'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { isCustomerEdition } from '@/lib/edition'
 
 function findDbUser(supabaseId: string) {
@@ -71,6 +72,38 @@ export async function applyStaffBootstrap(dbUser: NonNullable<DbUserRow>): Promi
   return updated
 }
 
+/**
+ * Platform owner bootstrap: the owner identities (src/lib/authz/platform-owner)
+ * always resolve to an active OWNER with a workspace, in EVERY edition. This
+ * runs on the sign-in path so no database edit, sync job, or admin action can
+ * leave the owner locked out: the role self-heals on the next request. If the
+ * owner's workspace was deleted (their user row survives — the users-table
+ * trigger forbids deleting it, so teardown detaches it instead), a fresh one
+ * is attached here.
+ */
+async function applyOwnerBootstrap(dbUser: NonNullable<DbUserRow>): Promise<NonNullable<DbUserRow>> {
+  if (!isPlatformOwnerEmail(dbUser.email)) return dbUser
+  const needsRole = dbUser.role !== 'OWNER'
+  const needsOrg = !dbUser.organizationId
+  if (!needsRole && !needsOrg) return dbUser
+
+  // systemPrisma: pre-request identity repair — there is no tenant context yet
+  // when the owner's workspace is being (re)attached.
+  const organizationId = needsOrg
+    ? (await systemPrisma.organization.upsert({
+        where: { slug: `org-${dbUser.supabaseId}` },
+        update: {},
+        create: { name: dbUser.name ?? 'Owner workspace', slug: `org-${dbUser.supabaseId}`, kind: 'internal' },
+      })).id
+    : dbUser.organizationId
+
+  return systemPrisma.user.update({
+    where: { id: dbUser.id },
+    data: { role: 'OWNER', isActive: true, organizationId },
+    include: { organization: true },
+  })
+}
+
 // Self-healing bootstrap: the handle_new_user Postgres trigger is optional
 // infra that may never be installed, so provision the app user + organization
 // on first authenticated request when they don't exist yet.
@@ -116,8 +149,11 @@ async function provisionUser(user: User) {
           name,
           // Fresh solo workspaces make their founder ADMIN. Joining an EXISTING
           // workspace — by invite or by domain rule — must not, or the first
-          // customer to sign in would own the shared org.
-          role: invite ? (invite.role === 'ADMIN' ? 'ADMIN' : 'USER') : domainOrgId ? 'USER' : 'ADMIN',
+          // customer to sign in would own the shared org. The platform owner
+          // identity always lands as OWNER regardless of how they arrive.
+          role: isPlatformOwnerEmail(inviteEmail)
+            ? 'OWNER'
+            : invite ? (invite.role === 'ADMIN' ? 'ADMIN' : 'USER') : domainOrgId ? 'USER' : 'ADMIN',
           organizationId,
         },
         include: { organization: true },
@@ -213,7 +249,8 @@ export async function getAuthWithUser() {
   }
 
   const resolved = (await findDbUser(user.id)) ?? (await provisionUser(user))
-  const dbUser = resolved ? await applyStaffBootstrap(resolved) : resolved
+  const bootstrapped = resolved ? await applyOwnerBootstrap(resolved) : resolved
+  const dbUser = bootstrapped ? await applyStaffBootstrap(bootstrapped) : bootstrapped
 
   return {
     user,

@@ -2,10 +2,16 @@ import { systemPrisma } from '@/lib/prisma'
 import { teardownOrganization } from '@/lib/org-teardown'
 import { getGraphRagStore } from '@/lib/rag/get-store'
 import { supabaseAdmin } from '@/lib/scim/server'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 
 export class DeleteConflictError extends Error {}
 
 export async function deleteUserAccount(params: { userId: string; supabaseId: string; organizationId: string; email: string | null; role: string }) {
+  // The platform owner account is permanent — even a self-serve deletion
+  // request is refused (the users-table trigger would abort it anyway).
+  if (isPlatformOwnerEmail(params.email)) {
+    throw new DeleteConflictError('The platform owner account cannot be deleted.')
+  }
   // Resolve credentials before making the irreversible database change.
   const admin = supabaseAdmin()
   const members = await systemPrisma.user.count({ where: { organizationId: params.organizationId, isActive: true } })

@@ -3,6 +3,7 @@ import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { hashToken } from '@/lib/crypto/secrets'
 import { transferUserToOrganization } from '@/lib/org-transfer'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import type { UserRole } from '@prisma/client'
 
 const schema = z.object({ token: z.string().min(1) })
@@ -30,7 +31,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // Invitation.role is free text (the table predates the enum), so an unknown
   // value falls back to the member tier rather than failing the join.
   const INVITABLE_ROLES = ['ADMIN', 'USER', 'OWNER', 'VIEWER']
-  const role = (INVITABLE_ROLES.includes(invite.role) ? invite.role : 'USER') as UserRole
+  let role = (INVITABLE_ROLES.includes(invite.role) ? invite.role : 'USER') as UserRole
+  // OWNER is bound to the platform owner identities: an invite can't grant it
+  // to anyone else, and accepting one never demotes the owner below OWNER.
+  if (isPlatformOwnerEmail(auth.dbUser.email)) role = 'OWNER'
+  else if (role === 'OWNER') role = 'USER'
   // Deliberately privileged: accepting a membership moves data from the
   // caller's old tenant into the invitation's tenant in one transaction.
   await systemPrisma.$transaction(async (tx) => {

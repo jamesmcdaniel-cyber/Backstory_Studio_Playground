@@ -7,6 +7,7 @@
  */
 
 import { systemPrisma } from '@/lib/prisma'
+import { PLATFORM_OWNER_EMAILS } from '@/lib/authz/platform-owner'
 import { captureError } from '@/lib/observability/sentry'
 import { graphRagPersistent, getGraphRagStore } from '@/lib/rag/get-store'
 import { deleteStoredFile } from '@/lib/files/storage'
@@ -62,6 +63,14 @@ export async function teardownOrganization(organizationId: string): Promise<{ na
     if (await deleteStoredFile(file.id, organizationId)) filesDeleted += 1
   }
 
+  // The platform owner account survives workspace deletion: the org delete
+  // cascades to users, and the users-table trigger refuses to delete an owner
+  // row (aborting the whole teardown). Detach the owner first — membership is
+  // a nullable FK — and sign-in re-provisions them a fresh workspace.
+  await systemPrisma.user.updateMany({
+    where: { organizationId, email: { in: [...PLATFORM_OWNER_EMAILS], mode: 'insensitive' } },
+    data: { organizationId: null },
+  })
   await systemPrisma.organization.delete({ where: { id: organizationId } })
   return { nango, graphCleared, filesDeleted }
 }

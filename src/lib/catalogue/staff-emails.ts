@@ -9,7 +9,7 @@
  *    people who have not signed in yet, claimed at provisioning.
  */
 
-export const DEFAULT_PLATFORM_STAFF_EMAILS = ['james.mcdaniel@people.ai']
+export const DEFAULT_PLATFORM_STAFF_EMAILS = ['james.mcdaniel@people.ai', 'james.mcdaniel@backstory.ai']
 
 export function normalizeStaffEmail(email: string | null | undefined): string | null {
   const normalized = email?.trim().toLowerCase()

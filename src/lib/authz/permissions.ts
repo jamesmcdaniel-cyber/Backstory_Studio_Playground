@@ -16,6 +16,7 @@
  * left out (see the spec's non-goals).
  */
 import type { UserRole } from '@prisma/client'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 
 export const PERMISSIONS = [
   'flow.read', 'flow.write', 'flow.run',
@@ -28,7 +29,7 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number]
 
-export type PermissionUser = { role: UserRole; platformRole: string | null }
+export type PermissionUser = { role: UserRole; platformRole: string | null; email?: string | null }
 export type PermissionOrg = { kind: string }
 
 /** Org kinds whose members may propose entries to the shared catalogue. */
@@ -50,9 +51,11 @@ const BY_ROLE: Record<UserRole, Permission[]> = {
   VIEWER: VIEWER_PERMISSIONS,
   USER: MEMBER_PERMISSIONS,
   ADMIN: ADMIN_PERMISSIONS,
-  // OWNER is ADMIN today. It exists so billing and workspace deletion have a
-  // tier to land on without another enum migration.
-  OWNER: [...ADMIN_PERMISSIONS, 'workspace.delete'],
+  // OWNER is the platform root tier: every permission, everywhere. The role is
+  // only assignable to the platform owner identities (src/lib/authz/
+  // platform-owner.ts), enforced at every write path and by a users-table
+  // trigger, so the full grant cannot leak to anyone else.
+  OWNER: [...PERMISSIONS],
 }
 
 /**
@@ -62,6 +65,12 @@ const BY_ROLE: Record<UserRole, Permission[]> = {
  * is therefore unit-testable without a database.
  */
 export function resolvePermissions(user: PermissionUser, org: PermissionOrg): ReadonlySet<Permission> {
+  // The platform owner holds everything by IDENTITY, not by stored role: even
+  // if the role column were tampered with out-of-band, the grant stands (and
+  // the sign-in bootstrap restores the column). Still pure — the allowlist is
+  // a hardcoded constant, not env or DB state.
+  if (isPlatformOwnerEmail(user.email)) return new Set<Permission>(PERMISSIONS)
+
   const granted = new Set<Permission>(BY_ROLE[user.role] ?? VIEWER_PERMISSIONS)
 
   // Platform overlay. Both checks are gated on the ORG kind as well as the

@@ -7,6 +7,7 @@
 
 import crypto from 'node:crypto'
 import { prisma } from '@/lib/prisma'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { encryptSecret } from '@/lib/crypto/secrets'
 import { revalidateEntitlement } from '@/lib/entitlement'
 import { captureError } from '@/lib/observability/sentry'
@@ -145,10 +146,13 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Peop
       const memberCount = await prisma.user.count({ where: { organizationId: input.organizationId } })
       if (memberCount > 1) throw new TeamMismatchError()
 
-      // Join the team workspace as a regular member.
+      // Join the team workspace as a regular member — except the platform
+      // owner, whose OWNER role is immutable (the users-table trigger would
+      // reject the demotion and fail the whole connect).
+      const joiner = await prisma.user.findUnique({ where: { id: input.userId }, select: { email: true } })
       await prisma.user.update({
         where: { id: input.userId },
-        data: { organizationId: teamOrg.id, role: 'USER' },
+        data: { organizationId: teamOrg.id, role: isPlatformOwnerEmail(joiner?.email) ? 'OWNER' : 'USER' },
       })
       organizationId = teamOrg.id
 

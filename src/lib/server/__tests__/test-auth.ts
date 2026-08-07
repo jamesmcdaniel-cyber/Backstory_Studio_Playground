@@ -29,6 +29,9 @@ export async function seedTestOrg(
       // admin-tier permissions those routes now declare.
       role: overrides.role ?? 'ADMIN',
       platformRole: overrides.platformRole ?? null,
+      // OWNER is reserved for the platform owner identities — the users-table
+      // trigger rejects the row otherwise, so an OWNER fixture must carry one.
+      ...(overrides.role === 'OWNER' ? { email: 'james.mcdaniel@people.ai' } : {}),
     },
   })
   const permissions = resolvePermissions(
@@ -45,6 +48,9 @@ export async function seedTestOrg(
   }
   const cleanup = async () => {
     setTestAuthContext(null)
+    // Owner rows can never be deleted (trigger), and the org delete cascades to
+    // its users — detach them first so teardown doesn't abort.
+    await prisma.user.updateMany({ where: { organizationId: org.id, role: 'OWNER' }, data: { organizationId: null } }).catch(() => {})
     await prisma.organization.delete({ where: { id: org.id } }).catch(() => {})
   }
   return { organizationId: org.id, userId: user.id, auth, cleanup }

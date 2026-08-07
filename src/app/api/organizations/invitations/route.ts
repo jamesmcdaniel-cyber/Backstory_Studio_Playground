@@ -5,6 +5,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { hashToken } from '@/lib/crypto/secrets'
 import { sendEmail } from '@/lib/integrations/email'
 import { buildInviteLink } from '@/lib/auth/invite-link'
+import { isPlatformOwnerEmail, OWNER_RESERVED_CODE, OWNER_RESERVED_MESSAGE } from '@/lib/authz/platform-owner'
 
 const INVITE_TTL_DAYS = 14
 
@@ -31,6 +32,12 @@ const createSchema = z.object({
 // the link so the admin can copy it regardless. Admin-only.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const { email, role, next } = createSchema.parse(await request.json())
+
+  // OWNER is the platform root tier and only the platform owner identities may
+  // hold it — an invite can't mint one for anyone else.
+  if (role === 'OWNER' && !isPlatformOwnerEmail(email)) {
+    throw new ApiError(OWNER_RESERVED_MESSAGE, 403, OWNER_RESERVED_CODE)
+  }
 
   // Already a member of this workspace? No invite needed.
   const existing = await prisma.user.findFirst({

@@ -141,7 +141,7 @@ export async function requireAuthContext(
   // `getAuthWithUser` already includes the organization on dbUser, so resolving
   // permissions costs no extra query.
   const permissions = resolvePermissions(
-    { role: auth.dbUser.role, platformRole: auth.dbUser.platformRole },
+    { role: auth.dbUser.role, platformRole: auth.dbUser.platformRole, email: auth.dbUser.email },
     { kind: organization?.kind ?? 'customer' },
   )
 

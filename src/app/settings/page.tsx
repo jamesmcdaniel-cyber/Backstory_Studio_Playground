@@ -13,7 +13,9 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 
 type Organization = { id: string; name: string; slug: string; plan: string; logoUrl?: string | null }
-type Member = { id: string; name: string | null; email: string | null; role: 'ADMIN' | 'USER' }
+type Member = { id: string; name: string | null; email: string | null; role: 'ADMIN' | 'USER' | 'OWNER' | 'VIEWER' }
+
+const ROLE_LABEL: Record<Member['role'], string> = { OWNER: 'Owner', ADMIN: 'Admin', USER: 'Member', VIEWER: 'Viewer' }
 
 const PLAN_LABEL: Record<string, string> = {
   TRIAL: 'Trial',
@@ -423,7 +425,7 @@ function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string 
                 </div>
                 {member.name && member.email && <div className="truncate text-xs text-gray-400">{member.email}</div>}
               </div>
-              {isAdmin && member.id !== selfId ? (
+              {isAdmin && member.id !== selfId && member.role !== 'OWNER' ? (
                 <>
                   <select
                     value={member.role}
@@ -445,7 +447,7 @@ function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string 
                   </button>
                 </>
               ) : (
-                <Badge variant={member.role === 'ADMIN' ? 'secondary' : 'outline'}>{member.role === 'ADMIN' ? 'Admin' : 'Member'}</Badge>
+                <Badge variant={member.role === 'ADMIN' || member.role === 'OWNER' ? 'secondary' : 'outline'}>{ROLE_LABEL[member.role] ?? 'Member'}</Badge>
               )}
             </li>
           ))}

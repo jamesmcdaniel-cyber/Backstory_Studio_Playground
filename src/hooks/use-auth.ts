@@ -58,7 +58,7 @@ export function useAuth() {
       // return to it; the bfcache guard covers any earlier protected pages.
       window.location.replace('/auth/login')
     },
-    isAdmin: context?.role === 'ADMIN',
+    isAdmin: context?.role === 'ADMIN' || context?.role === 'OWNER',
     role: context?.role || null,
     permissions: context?.permissions ?? [],
     // Which affordances render. Cosmetic only — every gated call is re-checked

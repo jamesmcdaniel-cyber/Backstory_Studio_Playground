@@ -17,6 +17,9 @@ import { agentExecChannel } from '@/lib/flows/run-stream'
 import { STATUS_TEXT as SHARED_STATUS_TEXT } from '@/lib/flows/node-presentation'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { buildProcessTimeline, processFeedRows, type ProcessFeedRow } from '@/lib/agents/process-feed'
+import type { TriggerInputField } from '@/lib/flows/graph'
+import { fieldValuesFromFlowInput, flowInputFromFieldValues } from '@/lib/flows/test-input'
+import { fieldClass, inputForField, labelClass } from './test-input-panel'
 import type { StepStatus } from './step-card'
 
 export type RunStep = {
@@ -357,6 +360,77 @@ function WaitingBanner({
   )
 }
 
+/** The run-input surface, folded into the Runs panel. An unpublished flow IS
+ *  test mode (every run is internal until publish), so there is one Run
+ *  surface — no separate Test panel. */
+function RunInputSection({
+  fields,
+  value,
+  onChange,
+  onRun,
+  starting,
+}: {
+  fields: TriggerInputField[]
+  value: string
+  onChange: (value: string) => void
+  onRun: () => void
+  starting: boolean
+}) {
+  const usableFields = fields.filter((field) => field.name.trim())
+  const values = fieldValuesFromFlowInput(value, usableFields)
+  const setField = (name: string, nextValue: string) => {
+    onChange(flowInputFromFieldValues(usableFields, { ...values, [name]: nextValue }))
+  }
+  return (
+    <div className="space-y-3 border-b border-border p-3">
+      {usableFields.length > 0 ? (
+        <>
+          {usableFields.map((field) => {
+            const name = field.name.trim()
+            return (
+              <div key={name}>
+                <label className={labelClass}>
+                  <span className="font-mono">{name}</span>
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase text-muted-foreground">{field.type}</span>
+                  {field.required && <span className="text-red-500" title="Required">*</span>}
+                </label>
+                {field.description && <p className="mb-1.5 text-[11px] leading-4 text-muted-foreground">{field.description}</p>}
+                {inputForField({ field, value: values[name] ?? '', onChange: (next) => setField(name, next) })}
+              </div>
+            )
+          })}
+          <details>
+            <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground hover:text-foreground">Edit the raw JSON payload</summary>
+            <textarea
+              rows={5}
+              onKeyDown={indentOnTab}
+              className={`${fieldClass} mt-1.5 min-h-[100px] resize-y font-mono text-xs`}
+              value={value}
+              placeholder='{"account":"Acme","priority":"high"}'
+              onChange={(event) => onChange(event.target.value)}
+            />
+          </details>
+        </>
+      ) : (
+        <div>
+          <label className={labelClass}>Run input</label>
+          <textarea
+            rows={4}
+            onKeyDown={indentOnTab}
+            className={`${fieldClass} min-h-[80px] resize-y font-mono text-xs`}
+            value={value}
+            placeholder="Text, JSON, or a list"
+            onChange={(event) => onChange(event.target.value)}
+          />
+        </div>
+      )}
+      <Button size="sm" className="w-full" onClick={onRun} loading={starting} disabled={starting}>
+        <Play className="mr-1.5 h-4 w-4" /> Run
+      </Button>
+    </div>
+  )
+}
+
 export function RunPanel({
   runs,
   selected,
@@ -366,6 +440,11 @@ export function RunPanel({
   onReply,
   onRerunFrom,
   onForkWithEdits,
+  inputFields,
+  inputValue,
+  onInputChange,
+  onRun,
+  starting,
 }: {
   runs: { id: string; status: string; startedAt?: string }[]
   selected: FlowRunDetail | null
@@ -375,6 +454,11 @@ export function RunPanel({
   onReply?: (flowRunId: string, reply: string) => Promise<void>
   onRerunFrom?: (runId: string, nodeId: string) => void
   onForkWithEdits?: (runId: string, nodeId: string, recordedOutput: unknown, runFailed: boolean) => void
+  inputFields?: TriggerInputField[]
+  inputValue?: string
+  onInputChange?: (value: string) => void
+  onRun?: () => void
+  starting?: boolean
 }) {
   return (
     <div className="flex h-full w-full flex-col border-l border-border bg-card">
@@ -384,6 +468,15 @@ export function RunPanel({
           <X className="h-4 w-4" />
         </button>
       </div>
+      {onRun && onInputChange && (
+        <RunInputSection
+          fields={inputFields ?? []}
+          value={inputValue ?? ''}
+          onChange={onInputChange}
+          onRun={onRun}
+          starting={Boolean(starting)}
+        />
+      )}
       {/* Radix Select forbids empty item values, and with zero runs the panel
           body already shows the designed empty state — so no runs, no selector. */}
       {runs.length > 0 && (

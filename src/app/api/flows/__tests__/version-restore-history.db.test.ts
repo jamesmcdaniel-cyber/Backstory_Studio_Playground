@@ -74,6 +74,7 @@ if (TEST_DB) {
 
       const before = await (await history(flow.id)).json()
       assert.equal(before.versions.length, 2, 'both publishes are snapshotted')
+      assert.ok(before.versions[0].summary?.changed?.count, 'a published version records what it changed')
 
       const restored = await restore(flow.id, 1)
       assert.equal(restored.status, 200)
@@ -88,6 +89,55 @@ if (TEST_DB) {
         'the restore adds an edit-history entry',
       )
       assert.equal(after.recentEdits[0].detail?.restoredFromVersion, 1, 'and names the version it came from')
+    } finally {
+      await seeded.cleanup()
+      await prisma.organization.delete({ where: { id: seeded.organizationId } }).catch(() => {})
+    }
+  })
+
+  test('each canvas save snapshots the draft — recent edits are viewable and restorable', async () => {
+    const seeded = await seedTestOrg(prisma)
+    try {
+      installTestAuth(seeded.auth)
+      const flow = await prisma.flow.create({
+        data: {
+          organizationId: seeded.organizationId,
+          userId: seeded.userId,
+          name: 'Edit snapshots',
+          graph: graphWith('first'),
+          trigger: { type: 'manual' },
+        },
+      })
+
+      assert.equal((await put({ id: flow.id, graph: graphWith('second') })).status, 200)
+      assert.equal((await put({ id: flow.id, graph: graphWith('third') })).status, 200)
+
+      const timeline = await (await history(flow.id)).json()
+      const [latest, prior] = timeline.recentEdits
+      assert.ok(latest.detail?.snapshotId, 'an edit row carries its snapshot id')
+      assert.ok(latest.detail?.summary?.changed?.count, 'and a computed what-changed summary')
+
+      // Viewing an OLDER edit returns the draft exactly as of that save.
+      const viewed = await versionsRoute.GET(
+        new NextRequest(new URL(`http://test/api/flows/${flow.id}/versions?edit=${prior.detail.snapshotId}`)),
+      )
+      assert.equal(viewed.status, 200)
+      const edit = (await viewed.json()).edit
+      assert.equal(edit.graph.nodes.find((n: any) => n.id === 'note').data.text, 'second')
+
+      // Restoring by editId rewrites the draft to that snapshot.
+      const restored = await versionsRoute.POST(new NextRequest(new URL(`http://test/api/flows/${flow.id}/versions`), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ editId: prior.detail.snapshotId, action: 'restore' }),
+      }))
+      assert.equal(restored.status, 200)
+      const restoredGraph = (await restored.json()).flow.graph
+      assert.equal(restoredGraph.nodes.find((n: any) => n.id === 'note').data.text, 'second', 'draft is back on the older edit')
+
+      const after = await (await history(flow.id)).json()
+      assert.ok(after.recentEdits[0].detail?.restoredFromEditAt, 'the restore row names the edit it came from')
+      assert.ok(after.recentEdits[0].detail?.snapshotId, 'and is itself snapshotted')
     } finally {
       await seeded.cleanup()
       await prisma.organization.delete({ where: { id: seeded.organizationId } }).catch(() => {})

@@ -10,6 +10,7 @@ import { validateFlowGraph, validationErrorMessage } from '@/lib/flows/validate'
 import { anchorTriggerSchedule, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
 import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
 import { recordAudit } from '@/lib/audit'
+import { summarizeGraphChange } from '@/lib/flows/edit-summary'
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
@@ -97,9 +98,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const latestSnapshot = await prisma.flowVersion.findFirst({
     where: { flowId: id, organizationId: auth.organizationId },
     orderBy: { version: 'desc' },
-    select: { version: true },
+    select: { version: true, graph: true },
   })
   const nextVersion = (latestSnapshot?.version ?? 0) + 1
+  // What this version changes vs the previous published one (v1 diffs against
+  // an empty graph — "added N steps" is the honest first-publish story).
+  const versionSummary = summarizeGraphChange(latestSnapshot?.graph ?? { nodes: [], edges: [] }, existing.graph ?? {})
   // Publishing is what ARMS a schedule (only ACTIVE published flows are
   // scanned), so a first publish anchors it fresh at now — otherwise a
   // schedule configured days earlier would instantly "catch up" the moment it
@@ -129,6 +133,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         version: nextVersion,
         graph: jsonValue(existing.graph ?? {}),
         trigger,
+        ...(versionSummary ? { summary: jsonValue(versionSummary) } : {}),
         publishedBy: auth.dbUser.id,
       },
     })

@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, FlaskConical, History, ScrollText, Users, FileText, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, Users, FileText, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
@@ -57,7 +57,6 @@ import { CheckerPanel } from '@/components/flows/checker-panel'
 import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
 import { useCanvasPan } from '@/components/flows/use-canvas-pan'
-import { TestPanel } from '@/components/flows/test-panel'
 import { VersionsPanel } from '@/components/flows/versions-panel'
 import type { StepStatus } from '@/lib/flows/node-presentation'
 import { cn } from '@/lib/utils'
@@ -275,10 +274,15 @@ function FlowBuilder() {
   const [showCopilot, setShowCopilot] = useState(false)
   const [showRuns, setShowRuns] = useState(false)
   const [showChecker, setShowChecker] = useState(false)
-  const [showTest, setShowTest] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [showJam, setShowJam] = useState(false)
-  const [viewingVersion, setViewingVersion] = useState<{ version: number; graph: FlowGraph } | null>(null)
+  // Read-only History overlay: a published version (vN) or a recent-edit
+  // snapshot, rendered on the same canvas with all mutations gated off.
+  const [viewingVersion, setViewingVersion] = useState<{
+    label: string
+    graph: FlowGraph
+    source: { type: 'version'; version: number } | { type: 'edit'; editId: string; at: string }
+  } | null>(null)
   // Which builder the user is in. Inline is the original vertical chain;
   // Canvas is the free-form DAG editor. Persisted per browser so a user who
   // works on canvas lands there next time.
@@ -1734,9 +1738,28 @@ function FlowBuilder() {
         .catch(() => null)
       if (data?.success && data.version?.graph) {
         setSelectedId(null)
-        setViewingVersion({ version: v, graph: data.version.graph })
+        setViewingVersion({ label: `v${v}`, graph: data.version.graph, source: { type: 'version', version: v } })
       } else {
         toast.error('Could not load that version.')
+      }
+    },
+    [id],
+  )
+
+  const viewEdit = useCallback(
+    async (editId: string, at: string) => {
+      const data = await fetch(`/api/flows/${id}/versions?edit=${encodeURIComponent(editId)}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .catch(() => null)
+      if (data?.success && data.edit?.graph) {
+        setSelectedId(null)
+        setViewingVersion({
+          label: `the canvas as of ${new Date(at).toLocaleString()}`,
+          graph: data.edit.graph,
+          source: { type: 'edit', editId, at },
+        })
+      } else {
+        toast.error('Could not load that edit.')
       }
     },
     [id],
@@ -1763,6 +1786,27 @@ function FlowBuilder() {
     [id, commitGraph, name, description],
   )
 
+  const restoreEdit = useCallback(
+    async (editId: string, at: string) => {
+      const response = await fetch(`/api/flows/${id}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editId, action: 'restore' }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (response.ok && data.flow?.graph) {
+        commitGraph(data.flow.graph)
+        setSavedSnapshot(JSON.stringify({ name, description, graph: data.flow.graph }))
+        setUnpublishedChanges(true)
+        setViewingVersion(null)
+        toast.success(`Restored the canvas from ${new Date(at).toLocaleString()} into the draft.`)
+      } else {
+        toast.error(data.error || 'Could not restore that edit.')
+      }
+    },
+    [id, commitGraph, name, description],
+  )
+
   const run = useCallback(async () => {
     if (viewingVersion) {
       toast.error('Close the version view before running.')
@@ -1775,7 +1819,7 @@ function FlowBuilder() {
     const missing = missingRequiredInputFields(inputFields, parseFlowInput(testInput))
     if (missing.length) {
       toast.error(`Fill the required input field${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}`)
-      setShowTest(true)
+      setShowRuns(true)
       return
     }
     setRunning(true)
@@ -2220,9 +2264,6 @@ function FlowBuilder() {
         <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
           {!external && (
             <>
-              <Button variant="ghost" size="sm" aria-pressed={showTest} onClick={() => setShowTest((v) => !v)} className={cn('h-7 px-2.5', showTest && 'bg-muted text-foreground')}>
-                <FlaskConical className="mr-1.5 h-4 w-4" /> Test
-              </Button>
               <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => setShowRuns((v) => !v)} className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
                 <ListChecks className="mr-1.5 h-4 w-4" /> Runs
               </Button>
@@ -2378,10 +2419,18 @@ function FlowBuilder() {
 
       {viewingVersion && (
         <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
-          <span>Viewing v{viewingVersion.version} — read-only</span>
+          <span>Viewing {viewingVersion.label} — read-only</span>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => restoreVersion(viewingVersion.version)}>
-              Restore this version
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                viewingVersion.source.type === 'version'
+                  ? restoreVersion(viewingVersion.source.version)
+                  : restoreEdit(viewingVersion.source.editId, viewingVersion.source.at)
+              }
+            >
+              {viewingVersion.source.type === 'version' ? 'Restore this version' : 'Restore this edit'}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setViewingVersion(null)}>
               Close
@@ -2670,22 +2719,6 @@ function FlowBuilder() {
           </ResizablePanel>
         )}
 
-        {showTest && (
-          <ResizablePanel storageKey="flow.testWidth">
-            <TestPanel
-              fields={inputFields}
-              value={testInput}
-              onChange={setTestInput}
-              onRun={run}
-              running={running}
-              steps={(selectedRun?.steps ?? []).map((s) => ({ nodeId: s.nodeId, status: s.status }))}
-              labelForNode={labelForNode}
-              onInspect={() => setShowRuns(true)}
-              onClose={() => setShowTest(false)}
-            />
-          </ResizablePanel>
-        )}
-
         {showRuns && (
           <ResizablePanel storageKey="flow.runsWidth">
             <RunPanel
@@ -2693,6 +2726,11 @@ function FlowBuilder() {
               selected={selectedRun}
               onSelectRun={selectRun}
               onClose={() => setShowRuns(false)}
+              inputFields={inputFields}
+              inputValue={testInput}
+              onInputChange={setTestInput}
+              onRun={() => void run()}
+              starting={running}
               labelForNode={labelForNode}
               onReply={replyToRun}
               onRerunFrom={(runId, nodeId) => void rerunFromStep(runId, nodeId)}
@@ -2723,6 +2761,7 @@ function FlowBuilder() {
               flowId={id}
               currentVersion={version}
               onView={viewVersion}
+              onViewEdit={viewEdit}
               onRestore={restoreVersion}
               onClose={() => setShowVersions(false)}
             />

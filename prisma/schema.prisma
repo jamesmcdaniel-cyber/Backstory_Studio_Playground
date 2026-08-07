@@ -64,6 +64,7 @@ model Organization {
   approvalRequests     ApprovalRequest[]
   agentMemories        AgentMemory[]
   flowVersions         FlowVersion[]
+  flowEditSnapshots    FlowEditSnapshot[]
   flowTemplateVersions FlowTemplateVersion[]
   flows                Flow[]
   storedFiles          StoredFile[]
@@ -898,6 +899,7 @@ model Flow {
   organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   runs            FlowRun[]
   versions        FlowVersion[]
+  editSnapshots   FlowEditSnapshot[]
   collaborators   FlowCollaborator[]
   huddleSegments  HuddleSegment[]
   huddleNotes     HuddleNote[]
@@ -1018,6 +1020,10 @@ model FlowVersion {
   graph          Json
   trigger        Json
   note           String?
+  // What changed vs the previous published version — computed at publish time
+  // ({ added/removed/changed: labels, moved, edgesAdded, edgesRemoved }) so the
+  // History panel can say WHAT a version changed, not just when.
+  summary        Json?
   publishedAt    DateTime @default(now())
   publishedBy    String?
 
@@ -1027,6 +1033,27 @@ model FlowVersion {
   @@unique([flowId, version])
   @@index([organizationId, flowId])
   @@map("flow_versions")
+}
+
+/// The full draft graph AFTER each recorded edit (one row per History
+/// "recent edit" entry), so any edit in the timeline can be viewed read-only
+/// and restored — not just published versions. Rows are pruned to the newest
+/// per flow on write; the matching audit event carries this row's id.
+model FlowEditSnapshot {
+  id             String   @id @default(cuid())
+  flowId         String
+  organizationId String   @db.Uuid
+  graph          Json
+  // Same shape as FlowVersion.summary, vs the previous draft state.
+  summary        Json?
+  editedBy       String?
+  createdAt      DateTime @default(now())
+
+  flow         Flow         @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, flowId, createdAt])
+  @@map("flow_edit_snapshots")
 }
 
 /// Transient working state for huddle notes: one row per uploaded audio chunk,

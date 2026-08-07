@@ -5,6 +5,7 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 import { assertFlowEditable } from '@/lib/flows/access'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { recordAudit } from '@/lib/audit'
+import { summarizeGraphChange } from '@/lib/flows/edit-summary'
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
@@ -34,11 +35,23 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     return { success: true, version: row }
   }
 
+  // ?edit=<snapshotId> — one recent-edit snapshot with its graph, for the
+  // read-only view overlay (the edit-row analogue of ?version=N).
+  const editParam = request.nextUrl.searchParams.get('edit')
+  if (editParam != null) {
+    const row = await prisma.flowEditSnapshot.findFirst({
+      where: { id: editParam, flowId: id, organizationId: auth.organizationId },
+      select: { id: true, graph: true, summary: true, createdAt: true },
+    })
+    if (!row) throw new ApiError('Edit snapshot not found', 404, 'NOT_FOUND')
+    return { success: true, edit: row }
+  }
+
   const versions = await prisma.flowVersion.findMany({
     where: { flowId: id, organizationId: auth.organizationId },
     orderBy: { version: 'desc' },
     take: 50,
-    select: { id: true, version: true, note: true, publishedAt: true, publishedBy: true },
+    select: { id: true, version: true, note: true, summary: true, publishedAt: true, publishedBy: true },
   })
   // Resolve publisher ids → display names so the History panel can show WHO
   // shipped each version (a collaborator's changes at a glance). One batched
@@ -67,7 +80,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     id: e.id,
     at: e.createdAt,
     by: e.actorUserId ? editorNameById.get(e.actorUserId) ?? 'A teammate' : 'A teammate',
-    detail: e.detail as { fields?: string[]; nodes?: number; edges?: number } | null,
+    detail: e.detail as { fields?: string[]; nodes?: number; edges?: number; snapshotId?: string; summary?: unknown; restoredFromVersion?: number; restoredFromEditAt?: string } | null,
   }))
 
   return {
@@ -77,7 +90,13 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   }
 }, { permission: 'flow.read' })
 
-const restoreSchema = z.object({ version: z.number().int().positive(), action: z.literal('restore') })
+const restoreSchema = z
+  .object({
+    action: z.literal('restore'),
+    version: z.number().int().positive().optional(),
+    editId: z.string().min(1).optional(),
+  })
+  .refine((v) => (v.version != null) !== (v.editId != null), { message: 'Pass exactly one of version or editId' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-2)
@@ -85,23 +104,54 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const flow = await prisma.flow.findFirst({
     where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
-    select: { id: true, visibility: true, userId: true },
+    select: { id: true, visibility: true, userId: true, graph: true },
   })
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   assertFlowEditable(flow, auth.dbUser.id)
 
-  const { version } = restoreSchema.parse(await request.json())
-  const row = await prisma.flowVersion.findFirst({
-    where: { flowId: id, organizationId: auth.organizationId, version },
-  })
-  if (!row) throw new ApiError('Version not found', 404, 'NOT_FOUND')
+  const { version, editId } = restoreSchema.parse(await request.json())
+  let graph: unknown
+  let restoredFrom: Record<string, unknown>
+  if (version != null) {
+    const row = await prisma.flowVersion.findFirst({
+      where: { flowId: id, organizationId: auth.organizationId, version },
+    })
+    if (!row) throw new ApiError('Version not found', 404, 'NOT_FOUND')
+    graph = row.graph
+    restoredFrom = { restoredFromVersion: version }
+  } else {
+    const row = await prisma.flowEditSnapshot.findFirst({
+      where: { id: editId, flowId: id, organizationId: auth.organizationId },
+      select: { graph: true, createdAt: true },
+    })
+    if (!row) throw new ApiError('Edit snapshot not found', 404, 'NOT_FOUND')
+    graph = row.graph
+    restoredFrom = { restoredFromEditAt: row.createdAt.toISOString() }
+  }
 
-  const updated = await prisma.flow.update({ where: { id, organizationId: auth.organizationId }, data: { graph: jsonValue(row.graph) } })
+  // What the restore changes vs the current draft — same summary a manual
+  // save gets, so the timeline row explains itself.
+  const summary = summarizeGraphChange(flow.graph, graph)
+  const updated = await prisma.flow.update({ where: { id, organizationId: auth.organizationId }, data: { graph: jsonValue(graph) } })
+  // The restore is itself an edit: snapshot the resulting draft so its own
+  // timeline row is viewable/restorable like any other. Best-effort.
+  const snapshot = await prisma.flowEditSnapshot
+    .create({
+      data: {
+        flowId: id,
+        organizationId: auth.organizationId,
+        graph: jsonValue(graph),
+        ...(summary ? { summary: jsonValue(summary) } : {}),
+        editedBy: auth.dbUser.id,
+      },
+      select: { id: true },
+    })
+    .catch(() => null)
   // A restore rewrites the draft canvas exactly as a manual save does, so it
   // belongs in the same timeline — without this the History panel showed the
   // draft silently changing with no entry explaining it. Awaited: fire-and-forget
   // work can be cut off when a serverless request ends.
-  const restoredGraph = row.graph as { nodes?: unknown[]; edges?: unknown[] } | null
+  const restoredGraph = graph as { nodes?: unknown[]; edges?: unknown[] } | null
   await recordAudit({
     organizationId: auth.organizationId,
     actorUserId: auth.dbUser.id,
@@ -110,9 +160,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     resourceId: id,
     detail: {
       fields: ['graph'],
-      restoredFromVersion: version,
+      ...restoredFrom,
       ...(Array.isArray(restoredGraph?.nodes) ? { nodes: restoredGraph.nodes.length } : {}),
       ...(Array.isArray(restoredGraph?.edges) ? { edges: restoredGraph.edges.length } : {}),
+      ...(snapshot ? { snapshotId: snapshot.id } : {}),
+      ...(summary ? { summary: jsonValue(summary) } : {}),
     },
   }).catch(() => undefined)
   return { success: true, flow: serializeFlow(updated) }

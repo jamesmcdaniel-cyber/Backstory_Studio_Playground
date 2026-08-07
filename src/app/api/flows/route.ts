@@ -7,6 +7,11 @@ import { serializeFlow } from '@/lib/flows/serialize'
 import { anchorTriggerSchedule, normalizeFlowTrigger, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
 import { assertFlowEditable, resolveFlowRole } from '@/lib/flows/access'
 import { recordAudit } from '@/lib/audit'
+import { summarizeGraphChange } from '@/lib/flows/edit-summary'
+
+/** Newest per-edit snapshots kept per flow — enough to cover the History panel's
+ *  edit timeline (30 rows) with headroom. */
+const MAX_EDIT_SNAPSHOTS = 40
 
 // Strip undefined + narrow to plain JSON so Prisma's InputJsonValue accepts the
 // zod-inferred shapes (passthrough trigger / discriminated-union graph).
@@ -176,6 +181,44 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   ].filter((field): field is string => Boolean(field))
   const settingsChanged = changedFields.some((field) => field !== 'graph')
   if (changedFields.length > 0 && (!body.suppressAudit || settingsChanged)) {
+    // Canvas edits snapshot the full graph AFTER the change (one snapshot per
+    // recorded timeline row), so History's "recent edits" can be viewed and
+    // restored — and carry a computed what-changed summary. Best-effort: a
+    // snapshot failure must not fail the save; the row just isn't clickable.
+    let snapshotId: string | undefined
+    let summary: ReturnType<typeof summarizeGraphChange> = null
+    if (body.graph !== undefined && changedFields.includes('graph')) {
+      summary = summarizeGraphChange(existing.graph, body.graph)
+      const snapshot = await prisma.flowEditSnapshot
+        .create({
+          data: {
+            flowId: body.id,
+            organizationId: existing.organizationId,
+            graph: jsonValue(body.graph),
+            ...(summary ? { summary: jsonValue(summary) } : {}),
+            editedBy: auth.dbUser.id,
+          },
+          select: { id: true },
+        })
+        .catch(() => null)
+      snapshotId = snapshot?.id
+      if (snapshotId) {
+        // Retention: keep the newest N snapshots per flow.
+        await prisma.flowEditSnapshot
+          .findMany({
+            where: { flowId: body.id, organizationId: existing.organizationId },
+            orderBy: { createdAt: 'desc' },
+            skip: MAX_EDIT_SNAPSHOTS,
+            select: { id: true },
+          })
+          .then((stale) =>
+            stale.length
+              ? prisma.flowEditSnapshot.deleteMany({ where: { id: { in: stale.map((s) => s.id) }, organizationId: existing.organizationId } })
+              : undefined,
+          )
+          .catch(() => undefined)
+      }
+    }
     // Await the durable write. Fire-and-forget work can be cut off when a
     // serverless request finishes, leaving a successful save absent from the
     // edit timeline.
@@ -191,6 +234,8 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(body.graph !== undefined && changedFields.includes('graph')
           ? { nodes: body.graph.nodes.length, edges: body.graph.edges.length }
           : {}),
+        ...(snapshotId ? { snapshotId } : {}),
+        ...(summary ? { summary: jsonValue(summary) } : {}),
       },
     }).catch(() => undefined)
   }

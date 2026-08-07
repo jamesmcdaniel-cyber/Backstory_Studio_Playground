@@ -5,18 +5,26 @@ import { Brain, Plus, Sparkles, Wrench, X } from 'lucide-react'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { TokenTextEditor } from '@/components/flows/token-text-editor'
 import { AGENT_STEP_MODELS } from '@/components/flows/step-drawer'
+import { modelProviderBrand } from '@/lib/llm/provider-brand'
 import type { FlowNode } from '@/lib/flows/graph'
 import { CanvasActionsContext } from './step-node'
 
 type AgentNode = Extract<FlowNode, { type: 'agent' }>
 type MemoryStore = NonNullable<AgentNode['data']['memory']>['store']
 
-const MEMORY_STORES: { value: MemoryStore; label: string }[] = [
-  { value: 'postgres', label: 'Built-in' },
-  { value: 'redis', label: 'Redis' },
-  { value: 'mongodb', label: 'MongoDB' },
-  { value: 'xata', label: 'Xata' },
+/** Built-in memory carries the Backstory mark; external stores their own logo. */
+const MEMORY_STORES: { value: MemoryStore; label: string; slug: string }[] = [
+  { value: 'postgres', label: 'Built-in', slug: 'backstory' },
+  { value: 'redis', label: 'Redis', slug: 'redis' },
+  { value: 'mongodb', label: 'MongoDB', slug: 'mongodb' },
+  { value: 'xata', label: 'Xata', slug: 'xata' },
 ]
+
+/** Provider logo for a model id (or the store logo for a memory pick); generic icon when unknown. */
+const modelIcon = (model: string, className: string, fallback: React.ReactNode) => {
+  const brand = modelProviderBrand(model)
+  return brand ? <IntegrationLogo slug={brand.slug} name={brand.name} className={className} /> : fallback
+}
 
 const memoryLabel = (store: MemoryStore | undefined) =>
   MEMORY_STORES.find((entry) => entry.value === (store ?? 'postgres'))?.label ?? 'Built-in'
@@ -157,7 +165,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
               key: 'model',
               caption: node.data.model,
               title: `Chat model: ${node.data.model}`,
-              icon: <Sparkles className="h-4 w-4 text-indigo-500" />,
+              icon: modelIcon(node.data.model, 'h-5 w-5', <Sparkles className="h-4 w-4 text-indigo-500" />),
               onRemove: () => update({ model: undefined }),
               panelBody: (
                 <div>
@@ -196,7 +204,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
                         setPanel(null)
                       }}
                     >
-                      <Sparkles className="h-3 w-3 shrink-0 text-indigo-500" /> {model}
+                      {modelIcon(model, 'h-3.5 w-3.5 shrink-0', <Sparkles className="h-3 w-3 shrink-0 text-indigo-500" />)} {model}
                     </button>
                   ))}
                 </>,
@@ -209,7 +217,14 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
               key: 'memory',
               caption: memoryLabel(memory.store),
               title: `Memory: ${memoryLabel(memory.store)}`,
-              icon: <Brain className="h-4 w-4 text-rose-500" />,
+              icon: (() => {
+                const store = MEMORY_STORES.find((entry) => entry.value === (memory.store ?? 'postgres'))
+                return store ? (
+                  <IntegrationLogo slug={store.slug} name={store.label} className="h-5 w-5" />
+                ) : (
+                  <Brain className="h-4 w-4 text-rose-500" />
+                )
+              })(),
               onRemove: () => update({ memory: undefined }),
               panelBody: (
                 <div className="space-y-2">
@@ -279,7 +294,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
                         setPanel('memory')
                       }}
                     >
-                      <Brain className="h-3 w-3 shrink-0 text-rose-500" /> {store.label}
+                      <IntegrationLogo slug={store.slug} name={store.label} className="h-3.5 w-3.5 shrink-0" /> {store.label}
                     </button>
                   ))}
                 </>,

@@ -80,7 +80,7 @@ export async function provisionAgentFromConfig(
         model: str(config.model, DEFAULT_AGENT_MODEL),
         integrations,
         skills: [],
-        icon: '',
+        icon: str(config.icon),
         ...(templateId ? { templateId } : {}),
       },
     },

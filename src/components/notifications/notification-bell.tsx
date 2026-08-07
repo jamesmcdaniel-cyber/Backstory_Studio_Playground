@@ -3,13 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
-import { AlertCircle, Bell, Check, CheckCircle2, HelpCircle, Info, Sparkles, X } from 'lucide-react'
+import { AlertCircle, Bell, CheckCircle2, HelpCircle, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { getSnapshot } from '@/lib/client/snapshot'
 import { notificationHref } from '@/lib/notifications/href'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
-import { useProposals } from '@/components/providers/proposals-provider'
-import { KIND_LABEL, proposalSummary } from '@/components/onboarding/proposal-shared'
 import { cn } from '@/lib/utils'
 
 type NotificationItem = {
@@ -62,11 +60,9 @@ export function NotificationBell() {
   const [items, setItems] = useState<NotificationItem[]>([])
   const [unread, setUnread] = useState(0)
   const [pushState, setPushState] = useState<PushState>('unknown')
-  // AI recommendations share state with the home surface, so accepting there
-  // clears them here too.
-  const { proposals, busyId, accept, dismiss, openDetail } = useProposals()
-  // The dot counts unread notifications plus pending recommendations.
-  const badge = unread + proposals.length
+  // AI recommendations live on the Agents home surface only — the bell counts
+  // and shows just real notifications.
+  const badge = unread
 
   const load = useCallback(async () => {
     // Shared app-shell snapshot (deduped with the dashboard + sidebar) rather
@@ -206,64 +202,7 @@ export function NotificationBell() {
               {pushState === 'enabled' && <span className="text-xs text-gray-400">Push on</span>}
             </div>
             <div className="max-h-96 overflow-y-auto">
-              {proposals.length > 0 && (
-                <div className="border-b bg-indigo-50/30">
-                  <div className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-700">
-                    <Sparkles className="h-3.5 w-3.5" /> Recommended for you
-                  </div>
-                  {/* A recommendation is a decision, not a link: two short
-                      lines (what it does, why it's being suggested) and the
-                      two answers, so it can be resolved without leaving the
-                      panel. Details stays available for the full preview. */}
-                  {proposals.map((p) => {
-                    const summary = proposalSummary(p)
-                    const busy = busyId === p.id
-                    return (
-                      <div key={p.id} className="border-t border-indigo-100/60 px-3 py-2.5">
-                        <div className="flex gap-2">
-                          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium leading-5">{p.title}</div>
-                            <div className="text-[11px] text-gray-500">{KIND_LABEL[p.kind] ?? 'Suggestion'}</div>
-                            {summary && <p className="mt-1 line-clamp-2 text-xs leading-4 text-gray-600">{summary}</p>}
-                            {p.rationale && (
-                              <p className="mt-1 line-clamp-2 text-xs leading-4 text-gray-500">
-                                <span className="font-medium text-gray-600">Why: </span>{p.rationale}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="mt-2 flex items-center gap-2 pl-6">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void accept(p)}
-                            className="inline-flex items-center gap-1 rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
-                          >
-                            <Check className="h-3.5 w-3.5" /> {p.kind === 'process_improvement' ? 'Open' : 'Apply'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void dismiss(p)}
-                            className="inline-flex items-center gap-1 rounded-lg border bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                          >
-                            <X className="h-3.5 w-3.5" /> Deny
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { openDetail(p); setOpen(false) }}
-                            className="ml-auto text-xs font-medium text-indigo-600 hover:underline"
-                          >
-                            Details
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              {items.length === 0 && proposals.length === 0 && <p className="px-3 py-6 text-center text-sm text-gray-400">No notifications yet.</p>}
+              {items.length === 0 && <p className="px-3 py-6 text-center text-sm text-gray-400">No notifications yet.</p>}
               {items.map((n) => (
                 <Link
                   key={n.id}

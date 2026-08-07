@@ -5,6 +5,7 @@ import { ChevronRight, Download, Pencil, Play, RotateCcw, X } from 'lucide-react
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Markdown } from '@/components/ui/markdown'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 import { StructuredValueView } from '@/components/flows/structured-value-view'
@@ -386,20 +387,24 @@ export function RunPanel({
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="border-b border-border p-2">
-        <select
-          className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs outline-none"
-          value={selected?.id ?? ''}
-          onChange={(e) => onSelectRun(e.target.value)}
-        >
-          {runs.length === 0 && <option value="">No runs yet</option>}
-          {runs.map((run) => (
-            <option key={run.id} value={run.id}>
-              {run.status} · {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.slice(0, 8)}
-            </option>
-          ))}
-        </select>
-      </div>
+      {/* Radix Select forbids empty item values, and with zero runs the panel
+          body already shows the designed empty state — so no runs, no selector. */}
+      {runs.length > 0 && (
+        <div className="border-b border-border p-2">
+          <Select value={selected?.id} onValueChange={onSelectRun}>
+            <SelectTrigger className="h-8 w-full text-xs" aria-label="Select a run">
+              <SelectValue placeholder="Select a run" />
+            </SelectTrigger>
+            <SelectContent>
+              {runs.map((run) => (
+                <SelectItem key={run.id} value={run.id} className="text-xs">
+                  {run.status} · {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.slice(0, 8)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto">
         {!selected ? (
           <EmptyState

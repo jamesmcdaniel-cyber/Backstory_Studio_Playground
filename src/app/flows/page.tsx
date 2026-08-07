@@ -15,6 +15,7 @@ import { useFlowImport } from '@/components/flows/use-flow-import'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
+import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
 import { cn } from '@/lib/utils'
 
 /** Cards per page on the Flows grid. */
@@ -287,9 +288,12 @@ export default function FlowsPage() {
               </button>
             </div>
           )}
-          <div className="stagger-children grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {/* StaggerReveal over the CSS ladder: viewport-triggered, spring-eased,
+              reduced-motion aware, and not capped at 12 children. */}
+          <StaggerReveal className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {pageItems.map((flow) => (
-              <Link key={flow.id} href={`/flows/${flow.id}`} className="block">
+              <StaggerItem key={flow.id}>
+              <Link href={`/flows/${flow.id}`} className="block h-full">
                 <Card variant="interactive" className="group relative h-full overflow-hidden border-border/60">
                   <div className="absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r from-indigo-500 to-blue-400 opacity-80 transition-opacity group-hover:opacity-100" />
                   <CardHeader className="space-y-2.5 pt-5">
@@ -354,8 +358,9 @@ export default function FlowsPage() {
                   </CardContent>
                 </Card>
               </Link>
+              </StaggerItem>
             ))}
-          </div>
+          </StaggerReveal>
           <Pagination page={current} pageCount={pageCount} onPageChange={setPage} />
         </>
       )}
@@ -374,9 +379,10 @@ export default function FlowsPage() {
               Browse all templates →
             </Link>
           </div>
-          <div className="stagger-children grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <StaggerReveal className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {flowTemplates.map((template) => (
-              <Link key={template.id} href={`/flow-templates/${template.id}`} className="block">
+              <StaggerItem key={template.id}>
+              <Link href={`/flow-templates/${template.id}`} className="block h-full">
                 <Card variant="interactive" className="group relative flex h-full flex-col overflow-hidden border-border/60">
                   <CardHeader className="space-y-2.5 pt-5">
                     <div className="flex items-start gap-2.5">
@@ -410,8 +416,9 @@ export default function FlowsPage() {
                   </CardContent>
                 </Card>
               </Link>
+              </StaggerItem>
             ))}
-          </div>
+          </StaggerReveal>
         </section>
       )}
     </div>

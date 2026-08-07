@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/ui/page-header'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { FlowGraph } from '@/lib/flows/graph'
@@ -258,19 +259,19 @@ export default function FlowActivityPage() {
           </Button>
         ))}
         <span className="mx-1 h-5 w-px bg-border" />
-        <select
-          value={triggerFilter}
-          onChange={(e) => setTriggerFilter(e.target.value)}
-          className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-indigo-400"
-          aria-label="Filter by trigger"
-        >
-          <option value="all">All triggers</option>
-          <option value="manual">Manual</option>
-          <option value="schedule">Schedule</option>
-          <option value="poll">Poll</option>
-          <option value="webhook">Webhook</option>
-          <option value="signal">Signal</option>
-        </select>
+        <Select value={triggerFilter} onValueChange={setTriggerFilter}>
+          <SelectTrigger className="h-9 w-[150px]" aria-label="Filter by trigger">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All triggers</SelectItem>
+            <SelectItem value="manual">Manual</SelectItem>
+            <SelectItem value="schedule">Schedule</SelectItem>
+            <SelectItem value="poll">Poll</SelectItem>
+            <SelectItem value="webhook">Webhook</SelectItem>
+            <SelectItem value="signal">Signal</SelectItem>
+          </SelectContent>
+        </Select>
         <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-indigo-400" aria-label="From date" />
         <span className="text-xs text-muted-foreground">to</span>
         <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-indigo-400" aria-label="To date" />

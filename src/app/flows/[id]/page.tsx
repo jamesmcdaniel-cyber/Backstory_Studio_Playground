@@ -2142,18 +2142,41 @@ function FlowBuilder() {
             </button>
           ))}
         </div>
+        {/* Panel toggles — one cluster, and the open panel reads as pressed,
+            so the toolbar says which workspace surfaces are showing. */}
+        <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
+          {!external && (
+            <>
+              <Button variant="ghost" size="sm" aria-pressed={showTest} onClick={() => setShowTest((v) => !v)} className={cn('h-7 px-2.5', showTest && 'bg-muted text-foreground')}>
+                <FlaskConical className="mr-1.5 h-4 w-4" /> Test
+              </Button>
+              <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => setShowRuns((v) => !v)} className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
+                <ListChecks className="mr-1.5 h-4 w-4" /> Runs
+              </Button>
+              <Button variant="ghost" size="sm" aria-pressed={showVersions} onClick={() => setShowVersions((v) => !v)} className={cn('h-7 px-2.5', showVersions && 'bg-muted text-foreground')}>
+                <History className="mr-1.5 h-4 w-4" /> History
+              </Button>
+            </>
+          )}
+          {canEdit && (
+            <Button variant="ghost" size="sm" aria-pressed={showCopilot} onClick={() => setShowCopilot((v) => !v)} className={cn('h-7 px-2.5', showCopilot && 'bg-muted text-foreground')}>
+              <Sparkles className="mr-1.5 h-4 w-4" /> Copilot
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" aria-pressed={showChecker} onClick={() => setShowChecker((v) => !v)} className={cn('h-7 px-2.5', showChecker && 'bg-muted text-foreground')}>
+            <ShieldCheck className="mr-1.5 h-4 w-4" /> Checker
+            {validation.errors.length > 0 && (
+              <Badge variant="risk" className="ml-1.5">{validation.errors.length}</Badge>
+            )}
+            {validation.errors.length === 0 && validation.warnings.length > 0 && (
+              <Badge variant="warn" className="ml-1.5">{validation.warnings.length}</Badge>
+            )}
+          </Button>
+        </div>
         {!external && (
-          <>
-            <Button variant="outline" size="sm" onClick={() => setShowTest((v) => !v)}>
-              <FlaskConical className="mr-1.5 h-4 w-4" /> Test
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowRuns((v) => !v)}>
-              <ListChecks className="mr-1.5 h-4 w-4" /> Runs
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => router.push(`/flows/${id}/activity`)}>
-              <ScrollText className="mr-1.5 h-4 w-4" /> Activity
-            </Button>
-          </>
+          <Button variant="ghost" size="sm" onClick={() => router.push(`/flows/${id}/activity`)}>
+            <ScrollText className="mr-1.5 h-4 w-4" /> Activity
+          </Button>
         )}
         {others.length > 0 && (
           <div className="flex items-center -space-x-1.5" title={`${others.map((p) => p.name).join(', ')} here now`}>
@@ -2239,26 +2262,8 @@ function FlowBuilder() {
           )
         )}
         {!external && (
-          <Button variant="outline" size="sm" onClick={() => setShowVersions((v) => !v)}>
-            <History className="mr-1.5 h-4 w-4" /> History
-          </Button>
-        )}
-        {canEdit && (
-          <Button variant="outline" size="sm" onClick={() => setShowCopilot((v) => !v)}>
-            <Sparkles className="mr-1.5 h-4 w-4" /> Copilot
-          </Button>
-        )}
-        <Button variant="outline" size="sm" onClick={() => setShowChecker((v) => !v)}>
-          <ShieldCheck className="mr-1.5 h-4 w-4" /> Checker
-          {validation.errors.length > 0 && (
-            <Badge variant="risk" className="ml-1.5">{validation.errors.length}</Badge>
-          )}
-          {validation.errors.length === 0 && validation.warnings.length > 0 && (
-            <Badge variant="warn" className="ml-1.5">{validation.warnings.length}</Badge>
-          )}
-        </Button>
-        {!external && (
           <>
+            <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
             <Button variant="outline" size="sm" onClick={save} loading={saving} className="relative">
               <Save className="mr-1.5 h-4 w-4" /> Save
               {dirty && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400" title="Unsaved changes" />}

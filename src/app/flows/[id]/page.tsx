@@ -2270,42 +2270,44 @@ function FlowBuilder() {
             )}
           </div>
         )}
-        {/* Queue-plane health. Silent when the backend is consuming — the
-            point is that a Run which would strand says so BEFORE (banner) and
-            shortly after (stall pill) instead of "Thinking…" forever. */}
-        {queueAlert && (
+        {/* Flow + jam health as one dot on the Jam button. Green = runs
+            dispatch and the live channel is up; amber = live channel
+            reconnecting; red = execution backend offline, a run stranded, or
+            the channel refused. The specifics live in the tooltip — the old
+            per-condition pills shouted the details at everyone all the time. */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowJam(true)}
+          title={[
+            `Flows: ${queueAlert ?? (pickupStalledRunId ? NEVER_PICKED_UP_ERROR : 'online — runs will start')}`,
+            `Jam: ${
+              jamStatus === 'live'
+                ? 'live'
+                : jamStatus === 'error'
+                  ? 'unavailable — the live channel refused the connection. Your edits still save; teammates just won’t see them live.'
+                  : jamStatus === 'connecting'
+                    ? 'connecting…'
+                    : 'reconnecting…'
+            }`,
+          ].join('\n')}
+        >
           <span
-            title={queueAlert}
-            className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300"
-          >
-            Execution backend offline
-          </span>
-        )}
-        {!queueAlert && pickupStalledRunId && (
-          <span
-            title={NEVER_PICKED_UP_ERROR}
-            className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300"
-          >
-            Run was never picked up
-          </span>
-        )}
-        {/* Realtime health. Silent when live — the point is that a jam which
-            can't connect says so instead of looking like an empty room. */}
-        {jamStatus !== 'live' && (
-          <span
-            title={jamStatus === 'error'
-              ? 'The live channel refused the connection. Your edits still save; teammates just won’t see them live.'
-              : 'Reconnecting to the live channel…'}
-            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-              jamStatus === 'error'
-                ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
-                : 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200'
-            }`}
-          >
-            {jamStatus === 'connecting' ? 'Connecting…' : jamStatus === 'degraded' ? 'Reconnecting…' : 'Live editing unavailable'}
-          </span>
-        )}
-        <Button variant="outline" size="sm" onClick={() => setShowJam(true)}>
+            role="status"
+            aria-label={queueAlert || pickupStalledRunId || jamStatus === 'error'
+              ? 'Flow or jam health degraded'
+              : jamStatus !== 'live'
+                ? 'Jam reconnecting'
+                : 'Flows and jam healthy'}
+            className={cn(
+              'mr-1.5 h-2 w-2 rounded-full',
+              queueAlert || pickupStalledRunId || jamStatus === 'error'
+                ? 'bg-red-500'
+                : jamStatus !== 'live'
+                  ? 'bg-amber-500'
+                  : 'bg-emerald-500',
+            )}
+          />
           <Users className="mr-1.5 h-4 w-4" /> Jam
           {others.length > 0 && <span className="ml-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">{others.length}</span>}
           {huddleMembers.length > 0 && <Mic className="ml-1.5 h-3.5 w-3.5 text-emerald-600" />}

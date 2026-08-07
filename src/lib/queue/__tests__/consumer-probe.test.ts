@@ -36,6 +36,24 @@ test('no reports (probe could not read the queues) → not ok', () => {
   assert.equal(consumerVerdict([]).ok, false)
 })
 
+test('fresh heartbeat overrides a zero worker count — CLIENT LIST on managed Redis proxies reports 0 while the fleet is draining fine', () => {
+  const verdict = consumerVerdict(
+    [report('agent-execution', 0, 0), report('flow-execution', 0, 1)],
+    true,
+  )
+  assert.equal(verdict.ok, true)
+  assert.deepEqual(verdict.stranded, [], 'a live worker picks up waiting jobs — nothing is stranded')
+})
+
+test('fresh heartbeat does not rescue an unreadable probe (no reports)', () => {
+  assert.equal(consumerVerdict([], true).ok, false)
+})
+
+test('stale heartbeat falls back to the registered-consumer verdict', () => {
+  assert.equal(consumerVerdict([report('flow-execution', 0, 0)], false).ok, false)
+  assert.equal(consumerVerdict([report('flow-execution', 1, 0)], false).ok, true)
+})
+
 test('dead-letter verdict totals waiting jobs across DLQs and names the non-empty ones', () => {
   const verdict = deadLetterVerdict([
     { queue: 'agent-dead-letter', waiting: 0 },

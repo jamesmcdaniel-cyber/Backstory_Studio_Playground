@@ -57,14 +57,23 @@ export interface QueueConsumerCheck {
 }
 
 /**
- * Pure verdict over the per-queue reports: every critical queue must have at
- * least one registered consumer. `stranded` narrows to the acute case — jobs
- * already waiting with nobody to take them. Zero consumers on an EMPTY queue
- * still fails the verdict: the next run enqueued there would hang, and health
- * should say so before a user finds out.
+ * Pure verdict over the per-queue reports: a fresh worker heartbeat OR a
+ * registered consumer on every critical queue counts as consumed — the same
+ * two-signal resolution the dispatch gate uses (consumerAliveVerdict). The
+ * heartbeat matters because `getWorkers()` is a CLIENT LIST scan, and managed
+ * Redis proxies (Upstash) report zero registered workers while the fleet is
+ * demonstrably draining queues — that mismatch kept /api/health at 503 and the
+ * builder banner red for two days while every run executed fine. `stranded`
+ * narrows to the acute case — jobs already waiting with nobody to take them.
+ * Zero consumers on an EMPTY queue still fails the verdict: the next run
+ * enqueued there would hang, and health should say so before a user finds out.
  */
-export function consumerVerdict(reports: QueueConsumerReport[]): { ok: boolean; stranded: string[] } {
+export function consumerVerdict(
+  reports: QueueConsumerReport[],
+  heartbeatFresh = false,
+): { ok: boolean; stranded: string[] } {
   if (reports.length === 0) return { ok: false, stranded: [] }
+  if (heartbeatFresh) return { ok: true, stranded: [] }
   return {
     ok: reports.every((r) => r.workers > 0),
     stranded: reports.filter((r) => r.workers === 0 && r.waiting > 0).map((r) => r.queue),
@@ -138,14 +147,15 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
         workerHeartbeatAgeMs(),
       ]),
     )
+    const heartbeatFresh = heartbeatAge !== null && heartbeatAge <= WORKER_HEARTBEAT_STALE_MS
     return {
       configured: true,
-      ...consumerVerdict(reports),
+      ...consumerVerdict(reports, heartbeatFresh),
       reports,
       deadLetters: deadLetterVerdict(deadLetterCounts),
       heartbeat: {
         ageMs: heartbeatAge,
-        fresh: heartbeatAge !== null && heartbeatAge <= WORKER_HEARTBEAT_STALE_MS,
+        fresh: heartbeatFresh,
       },
     }
   } catch (error) {

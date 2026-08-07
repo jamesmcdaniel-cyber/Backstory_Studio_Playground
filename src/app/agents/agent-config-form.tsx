@@ -438,14 +438,21 @@ function ModelOption({ provider, label }: { provider: 'anthropic' | 'qwen'; labe
 // ── Schedule cadence (visual UI concept mapped onto the backend schedule) ────
 // Backend supports type manual|hourly|daily|weekly|cron|once (see due.ts). The
 // UI offers only friendly visual cadences and never exposes raw cron.
-type Cadence = 'daily' | 'daysofweek' | 'once'
+type Cadence = 'hourly' | 'daily' | 'daysofweek' | 'once'
 
 const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'] as const
 
 function cadenceOf(schedule: AgentDraft['schedule']): Cadence {
   if (schedule.type === 'once') return 'once'
   if (schedule.type === 'daily') return 'daily'
-  // Everything else recurring — day-of-week crons plus legacy weekly / hourly /
+  if (schedule.type === 'hourly') return 'hourly'
+  // An every-hour cron (hour field '*', no day restriction) is the Hourly
+  // preset round-tripping through its cron representation.
+  if (schedule.type === 'cron') {
+    const [, hourF, , , dowF] = (schedule.cron || '').trim().split(/\s+/)
+    if (hourF === '*' && (dowF === '*' || dowF === undefined)) return 'hourly'
+  }
+  // Everything else recurring — day-of-week crons plus legacy weekly /
   // every-other-day / arbitrary crons — surfaces as the flexible "days of week"
   // picker; a legacy schedule converts to a clean cron on its next save.
   return 'daysofweek'
@@ -483,8 +490,8 @@ function cronToTime(cron: string): string {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
 }
 
-/** Legacy 'hourly' ≡ cron '0 * * * *'; represent it as cron so the cadence UI
- *  (which has no Hourly preset) round-trips it losslessly via "Advanced". */
+/** Legacy 'hourly' ≡ cron '0 * * * *'; represent it as cron so the Hourly
+ *  preset round-trips losslessly (cadenceOf maps every-hour crons back). */
 function normalizeSchedule(schedule: AgentDraft['schedule']): AgentDraft['schedule'] {
   if (schedule.type === 'hourly') return { ...schedule, type: 'cron', cron: schedule.cron || '0 * * * *' }
   return schedule
@@ -847,6 +854,7 @@ export function AgentConfigForm({
     const schedule: AgentDraft['schedule'] =
       next === 'daily' ? { type: 'daily', time, timezone, isActive: true }
       : next === 'once' ? { type: 'once', runAt: draft.schedule.runAt || todayKey(), time, timezone, isActive: true }
+      : next === 'hourly' ? { type: 'cron', cron: '0 * * * *', time, timezone, isActive: true }
       : { type: 'cron', cron: dowCron(time, selectedDays.length ? selectedDays : [1, 2, 3, 4, 5]), time, timezone, isActive: true }
     setDraft({ ...draft, schedule })
   }
@@ -876,6 +884,7 @@ export function AgentConfigForm({
   // Plain-language confirmation of what the current schedule does.
   const scheduleSummary = (() => {
     const tz = draft.schedule.timezone || 'UTC'
+    if (cadence === 'hourly') return `Runs every hour, on the hour (${tz}).`
     if (cadence === 'daily') return `Runs every day at ${scheduleTime} (${tz}).`
     if (cadence === 'daysofweek') {
       const names = [...selectedDays].sort((a, b) => a - b).map((d) => DAY_LABELS[d]).join(', ')
@@ -1177,6 +1186,7 @@ export function AgentConfigForm({
               <Select value={cadence} onValueChange={(value) => setCadence(value as Cadence)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="hourly">Hourly</SelectItem>
                   <SelectItem value="daily">Daily</SelectItem>
                   <SelectItem value="daysofweek">Days of week</SelectItem>
                   <SelectItem value="once">Once (specific date)</SelectItem>
@@ -1223,10 +1233,13 @@ export function AgentConfigForm({
             )}
 
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Time</Label>
-                <Input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
-              </div>
+              {/* Hourly has no time-of-day — it fires on the hour, every hour. */}
+              {cadence !== 'hourly' && (
+                <div>
+                  <Label>Time</Label>
+                  <Input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
+                </div>
+              )}
               <div>
                 <Label>Timezone</Label>
                 <Select

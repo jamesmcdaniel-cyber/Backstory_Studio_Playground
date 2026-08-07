@@ -333,7 +333,9 @@ function WaitingBanner({
           <>
             <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for your reply</p>
             {/* Neutral fallback: input pauses come from agent questions AND humanReview steps. */}
-            <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">{waiting.question || 'This flow is waiting on information from you.'}</p>
+            <Markdown className="mt-1 space-y-2 text-xs text-blue-800 dark:text-blue-300 [&_li]:marker:text-blue-600 [&_strong]:text-blue-900 dark:[&_strong]:text-blue-200">
+              {waiting.question || 'This flow is waiting on information from you.'}
+            </Markdown>
             <textarea
               onKeyDown={indentOnTab}
               value={text}

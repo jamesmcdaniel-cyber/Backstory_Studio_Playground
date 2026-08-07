@@ -198,7 +198,11 @@ const ASK_USER_TOOL: ToolDefinition = {
   inputSchema: {
     type: 'object',
     properties: {
-      question: { type: 'string', description: 'The question to show the user.' },
+      question: {
+        type: 'string',
+        description:
+          'The question to show the user — brief and scannable, formatted as Markdown. At most ONE short sentence of context, then the choices as a tight bulleted list ("- **Pick option A** — why"), ending with what happens once they answer. Never recap the conversation, restate your instructions, or repeat information the user already has.',
+      },
     },
     required: ['question'],
   },

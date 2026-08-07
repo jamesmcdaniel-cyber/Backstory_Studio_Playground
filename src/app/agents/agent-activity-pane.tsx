@@ -633,7 +633,9 @@ function RunRow({
           {status === 'waiting_for_input' && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
               <h4 className="mb-1 flex items-center gap-2 text-sm font-semibold text-amber-900"><HelpCircle className="h-4 w-4" /> Agent needs your input</h4>
-              <p className="mb-3 whitespace-pre-wrap text-sm text-amber-900">{activity.metadata?.pendingQuestion?.question || 'The agent asked a question.'}</p>
+              <Markdown className="mb-3 space-y-2 text-amber-900 [&_li]:marker:text-amber-700 [&_strong]:text-amber-950">
+                {activity.metadata?.pendingQuestion?.question || 'The agent asked a question.'}
+              </Markdown>
               <div className="flex gap-2">
                 <Input
                   value={reply}

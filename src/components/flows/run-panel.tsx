@@ -13,6 +13,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
 import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { agentExecChannel } from '@/lib/flows/run-stream'
+import { STATUS_TEXT as SHARED_STATUS_TEXT } from '@/lib/flows/node-presentation'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { buildProcessTimeline, processFeedRows, type ProcessFeedRow } from '@/lib/agents/process-feed'
 import type { StepStatus } from './step-card'
@@ -55,16 +56,8 @@ function reusedInputOf(trigger: unknown): boolean {
   )
 }
 
-const STATUS_TEXT: Record<string, string> = {
-  succeeded: 'text-emerald-600',
-  failed: 'text-red-600',
-  waiting: 'text-blue-600',
-  running: 'text-amber-600',
-  skipped: 'text-gray-400',
-  stopped: 'text-slate-500',
-  queued: 'text-gray-400',
-  resumed: 'text-gray-400',
-}
+// Loosened to string keys at the edge: run statuses arrive as plain strings.
+const STATUS_TEXT: Record<string, string> = SHARED_STATUS_TEXT
 
 function preview(value: unknown): string {
   if (value == null) return '—'

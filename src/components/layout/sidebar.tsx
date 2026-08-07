@@ -303,7 +303,7 @@ export function Sidebar() {
       key={agent.id}
       draggable
       onDragStart={(event) => event.dataTransfer.setData('text/agent-id', agent.id)}
-      className="group flex cursor-grab items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-gray-100 active:cursor-grabbing"
+      className="group flex cursor-grab items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-graphite-100 active:cursor-grabbing"
     >
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-graphite-100 text-[11px] font-semibold uppercase leading-none text-graphite-700">
         {agent.icon || agent.title.trim().charAt(0) || 'A'}
@@ -330,7 +330,7 @@ export function Sidebar() {
   return (
     <TooltipProvider delayDuration={250}>
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden" onClick={() => setMobileOpen(false)} />
+        <div className="fixed inset-0 z-40 bg-graphite-900/40 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} />
       )}
 
       <div className="fixed left-4 top-4 z-50 lg:hidden">
@@ -354,7 +354,7 @@ export function Sidebar() {
             <button
               ref={orgButtonRef}
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-graphite-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 desktopCollapsed && 'lg:w-full lg:flex-none lg:justify-center lg:px-0',
               )}
               onClick={() => setOrgMenuOpen((open) => !open)}
@@ -370,7 +370,7 @@ export function Sidebar() {
               <span className={cn('flex-1 truncate text-left text-sm font-semibold', desktopCollapsed && 'lg:hidden')}>
                 {activeOrg?.name || 'Workspace'}
               </span>
-              <ChevronsUpDown className={cn('h-4 w-4 text-gray-400', desktopCollapsed && 'lg:hidden')} />
+              <ChevronsUpDown className={cn('h-4 w-4 text-graphite-400', desktopCollapsed && 'lg:hidden')} />
             </button>
 
             <Tooltip>
@@ -405,19 +405,19 @@ export function Sidebar() {
                 {organizations.map((org) => (
                   <button
                     key={org.id}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-graphite-100"
                     onClick={() => setOrgMenuOpen(false)}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={org.logoUrl || DEFAULT_ORG_LOGO} alt="" className="h-5 w-5 rounded object-cover" />
                     <span className="flex-1 truncate text-left">{org.name}</span>
-                    <span className="text-xs text-gray-400">{planLabel(org.plan)}</span>
-                    {org.id === activeOrg?.id && <Check className="h-4 w-4 text-indigo-600" />}
+                    <span className="text-xs text-graphite-400">{planLabel(org.plan)}</span>
+                    {org.id === activeOrg?.id && <Check className="h-4 w-4 text-horizon-600" />}
                   </button>
                 ))}
                 <div className="my-1 border-t" />
                 <button
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-graphite-700 hover:bg-graphite-100 disabled:opacity-50"
                   disabled={uploadingLogo}
                   onClick={() => logoInputRef.current?.click()}
                 >
@@ -426,7 +426,7 @@ export function Sidebar() {
                 </button>
                 {activeOrg?.logoUrl && (
                   <button
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-graphite-700 hover:bg-graphite-100 disabled:opacity-50"
                     disabled={uploadingLogo}
                     onClick={() => saveOrgLogo(null)}
                   >
@@ -445,9 +445,9 @@ export function Sidebar() {
                   }}
                 />
                 <div className="my-1 border-t" />
-                <div className="truncate px-2 py-1 text-xs text-gray-400">{user?.emailAddress}</div>
+                <div className="truncate px-2 py-1 text-xs text-graphite-400">{user?.emailAddress}</div>
                 <button
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-graphite-700 hover:bg-graphite-100"
                   onClick={signOut}
                 >
                   <LogOut className="h-3.5 w-3.5" /> Sign out
@@ -458,7 +458,7 @@ export function Sidebar() {
           <div className={cn('mt-2 flex items-center gap-2', desktopCollapsed && 'lg:flex-col')}>
             <button
               className={cn(
-                'flex flex-1 items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-sm text-gray-400 transition-colors duration-fast hover:border-graphite-300 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                'flex flex-1 items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-sm text-graphite-400 transition-colors duration-fast hover:border-graphite-300 hover:text-graphite-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 desktopCollapsed && 'lg:h-9 lg:w-9 lg:flex-none lg:justify-center lg:px-0',
               )}
               onClick={() => setPaletteOpen(true)}
@@ -467,7 +467,7 @@ export function Sidebar() {
             >
               <Search className="h-3.5 w-3.5" />
               <span className={cn('flex-1 text-left', desktopCollapsed && 'lg:hidden')}>Search</span>
-              <kbd className={cn('rounded border bg-gray-50 px-1.5 py-0.5 text-[10px]', desktopCollapsed && 'lg:hidden')}>⌘K</kbd>
+              <kbd className={cn('rounded border bg-graphite-50 px-1.5 py-0.5 text-[10px]', desktopCollapsed && 'lg:hidden')}>⌘K</kbd>
             </button>
             <NotificationBell />
           </div>
@@ -489,8 +489,8 @@ export function Sidebar() {
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     desktopCollapsed && 'lg:justify-center lg:px-0 lg:py-2',
                     // The active item needs its own surface: rail + text color alone
-                    // lose to a hovered sibling's bg-gray-100.
-                    isActive ? 'bg-horizon-50/80 text-horizon-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
+                    // lose to a hovered sibling's bg-graphite-100.
+                    isActive ? 'bg-horizon-50/80 text-horizon-700' : 'text-graphite-700 hover:bg-graphite-100 hover:text-graphite-900',
                   )}
                 >
                   {isActive && (
@@ -501,7 +501,7 @@ export function Sidebar() {
                       aria-hidden="true"
                     />
                   )}
-                  <item.icon className={cn('relative z-10 h-4 w-4 transition-transform duration-base group-hover:scale-110', desktopCollapsed && 'lg:h-5 lg:w-5', isActive ? 'text-horizon-600' : 'text-gray-400')} />
+                  <item.icon className={cn('relative z-10 h-4 w-4 transition-transform duration-base group-hover:scale-110', desktopCollapsed && 'lg:h-5 lg:w-5', isActive ? 'text-horizon-600' : 'text-graphite-400')} />
                   <span className={cn('relative z-10', desktopCollapsed && 'lg:hidden')}>{item.name}</span>
                 </Link>
               )
@@ -512,11 +512,11 @@ export function Sidebar() {
             <div
               className={cn(
                 'flex items-center justify-between rounded-lg px-2 pb-1 pt-3',
-                dragOver === 'workspace' && 'bg-indigo-50',
+                dragOver === 'workspace' && 'bg-horizon-50',
               )}
               {...dropProps('workspace', { folder: null, visibility: 'shared' })}
             >
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Workspace</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-graphite-400">Workspace</span>
               <Button
                 size="icon"
                 variant="ghost"
@@ -535,16 +535,16 @@ export function Sidebar() {
                 <div key={key} className="mb-0.5">
                   <button
                     className={cn(
-                      'flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      dragOver === key && 'bg-indigo-50',
+                      'flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-graphite-700 hover:bg-graphite-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      dragOver === key && 'bg-horizon-50',
                     )}
                     onClick={() => setFolderCollapsed((current) => ({ ...current, [key]: !current[key] }))}
                     {...dropProps(key, { folder: isGeneral ? null : folder, visibility: 'shared' })}
                   >
                     {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                    <Folder className="h-3.5 w-3.5 text-gray-400" />
+                    <Folder className="h-3.5 w-3.5 text-graphite-400" />
                     <span className="flex-1 truncate text-left">{folder}</span>
-                    <span className="text-xs text-gray-400">{folderAgents.length}</span>
+                    <span className="text-xs text-graphite-400">{folderAgents.length}</span>
                   </button>
                   {!isCollapsed && <div className="ml-3 border-l pl-1">{folderAgents.map(renderAgent)}</div>}
                 </div>
@@ -553,8 +553,8 @@ export function Sidebar() {
 
             <div
               className={cn(
-                'flex items-center gap-1.5 rounded-lg px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-gray-400',
-                dragOver === 'private' && 'bg-indigo-50',
+                'flex items-center gap-1.5 rounded-lg px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-graphite-400',
+                dragOver === 'private' && 'bg-horizon-50',
               )}
               {...dropProps('private', { folder: null, visibility: 'private' })}
             >
@@ -562,7 +562,7 @@ export function Sidebar() {
             </div>
             {sections.private.length > 0
               ? <div className="ml-3 border-l pl-1">{sections.private.map(renderAgent)}</div>
-              : <p className="px-2 py-1 text-xs text-gray-400">Drag agents here to make them private.</p>}
+              : <p className="px-2 py-1 text-xs text-graphite-400">Drag agents here to make them private.</p>}
           </div>
         </div>
 
@@ -570,13 +570,13 @@ export function Sidebar() {
         <div className={cn('border-t p-3', desktopCollapsed && 'lg:px-2')}>
           {usage && (
             <div className={cn('mb-2 px-1', desktopCollapsed && 'lg:hidden')}>
-              <div className="mb-1 flex justify-between text-xs text-gray-500">
+              <div className="mb-1 flex justify-between text-xs text-graphite-500">
                 <span>Usage this month</span>
                 <span>{usage.exempt ? 'Unlimited' : `${creditPct}% of credits`}</span>
               </div>
               {!usage.exempt && (
-                <div className="h-1.5 overflow-hidden rounded-full bg-gray-200">
-                  <div className="h-full rounded-full bg-indigo-500 transition-[width] duration-slow ease-out-quart" style={{ width: `${creditPct}%` }} />
+                <div className="h-1.5 overflow-hidden rounded-full bg-graphite-200">
+                  <div className="h-full rounded-full bg-horizon-500 transition-[width] duration-slow ease-out-quart" style={{ width: `${creditPct}%` }} />
                 </div>
               )}
             </div>
@@ -584,21 +584,21 @@ export function Sidebar() {
           <Link
             href="/settings"
             className={cn(
-              'flex items-center gap-2 rounded-lg px-1 py-1 transition-colors duration-fast hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'flex items-center gap-2 rounded-lg px-1 py-1 transition-colors duration-fast hover:bg-graphite-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               desktopCollapsed && 'lg:justify-center lg:px-0',
             )}
             title="Settings"
             aria-label={desktopCollapsed ? 'Settings' : undefined}
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-600">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-graphite-200 text-xs font-semibold text-graphite-600">
               {(user?.firstName || 'U').charAt(0).toUpperCase()}
             </div>
             <div className={cn('min-w-0 flex-1', desktopCollapsed && 'lg:hidden')}>
               <div className="truncate text-sm font-medium">{user?.firstName || 'Account'}</div>
-              <div className="truncate text-xs text-gray-400">{user?.emailAddress}</div>
+              <div className="truncate text-xs text-graphite-400">{user?.emailAddress}</div>
             </div>
             {activeOrg && (
-              <span className={cn('rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-600', desktopCollapsed && 'lg:hidden')}>
+              <span className={cn('rounded-full bg-graphite-200 px-2 py-0.5 text-xs text-graphite-600', desktopCollapsed && 'lg:hidden')}>
                 {planLabel(activeOrg.plan)}
               </span>
             )}

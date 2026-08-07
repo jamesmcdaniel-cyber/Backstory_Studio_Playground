@@ -22,23 +22,25 @@ export default function GlobalError({
 
   return (
     <html lang="en">
-      <body style={{ margin: 0, fontFamily: 'system-ui, sans-serif', background: '#f8fafc', color: '#0f172a' }}>
+      {/* Inline hexes are required here (no stylesheet loads when the root layout
+          fails); the values are the graphite tokens from backstory-design.css. */}
+      <body style={{ margin: 0, fontFamily: 'system-ui, sans-serif', background: '#FAFAFA', color: '#171721' }}>
         <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <div style={{ maxWidth: 420, textAlign: 'center' }}>
             <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Something went wrong</h1>
-            <p style={{ fontSize: 14, color: '#64748b', marginBottom: 20 }}>
+            <p style={{ fontSize: 14, color: '#8E8E92', marginBottom: 20 }}>
               An unexpected error occurred. It’s been logged — please try again.
             </p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
               <button
                 onClick={() => reset()}
-                style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#0f172a', color: '#fff', fontSize: 14, cursor: 'pointer' }}
+                style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#171721', color: '#fff', fontSize: 14, cursor: 'pointer' }}
               >
                 Try again
               </button>
               <button
                 onClick={() => { window.location.href = '/dashboard' }}
-                style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a', fontSize: 14, cursor: 'pointer' }}
+                style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #C7C7C8', background: '#fff', color: '#171721', fontSize: 14, cursor: 'pointer' }}
               >
                 Go to dashboard
               </button>

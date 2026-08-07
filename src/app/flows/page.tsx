@@ -10,7 +10,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/ui/page-header'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { useFlowImport } from '@/components/flows/use-flow-import'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
@@ -48,10 +50,12 @@ type FlowItem = {
   updatedAt: string
 }
 
-const STATUS_STYLE: Record<string, string> = {
-  active: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
-  draft: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-  disabled: 'border-border bg-muted text-muted-foreground',
+// Status → the tokenized Badge variants, same vocabulary as every other status
+// chip instead of a page-local emerald/amber recipe.
+const STATUS_VARIANT: Record<string, 'good' | 'warn' | 'secondary'> = {
+  active: 'good',
+  draft: 'warn',
+  disabled: 'secondary',
 }
 
 export default function FlowsPage() {
@@ -69,21 +73,35 @@ export default function FlowsPage() {
   const folders = Array.from(new Set(flows.map((flow) => flow.folder?.trim() || ''))).filter(Boolean).sort()
   const visibleFlows = folderFilter === null ? flows : flows.filter((flow) => (flow.folder?.trim() || '') === folderFilter)
 
-  const moveToFolder = async (flow: FlowItem) => {
-    const next = window.prompt(`Folder for "${flow.name}" (leave empty for none):`, flow.folder ?? '')
-    if (next === null) return
-    const folder = next.trim().slice(0, 60)
-    const response = await fetch('/api/flows', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: flow.id, folder }),
-    })
-    if (!response.ok) {
-      toast.error('Could not move the flow.')
-      return
+  // Folder move + delete run through real dialogs, not window.prompt/confirm —
+  // the only two browser-chrome interruptions left in the app.
+  const [folderDialog, setFolderDialog] = useState<{ flow: FlowItem; value: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<FlowItem | null>(null)
+  const [mutating, setMutating] = useState(false)
+
+  const moveToFolder = (flow: FlowItem) => setFolderDialog({ flow, value: flow.folder?.trim() ?? '' })
+
+  const commitFolder = async () => {
+    if (!folderDialog || mutating) return
+    const { flow } = folderDialog
+    const folder = folderDialog.value.trim().slice(0, 60)
+    setMutating(true)
+    try {
+      const response = await fetch('/api/flows', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: flow.id, folder }),
+      })
+      if (!response.ok) {
+        toast.error('Could not move the flow.')
+        return
+      }
+      setFlows((prev) => prev.map((entry) => (entry.id === flow.id ? { ...entry, folder } : entry)))
+      toast.success(folder ? `Moved to "${folder}".` : 'Removed from its folder.')
+      setFolderDialog(null)
+    } finally {
+      setMutating(false)
     }
-    setFlows((prev) => prev.map((entry) => (entry.id === flow.id ? { ...entry, folder } : entry)))
-    toast.success(folder ? `Moved to "${folder}".` : 'Removed from its folder.')
   }
 
   // Card-menu actions. Duplicate round-trips through the single-flow endpoint
@@ -125,20 +143,28 @@ export default function FlowsPage() {
     anchor.remove()
   }
 
-  const deleteFlow = async (flow: FlowItem) => {
-    if (!window.confirm(`Delete "${flow.name}"? This cannot be undone.`)) return
-    const response = await fetch('/api/flows', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: flow.id }),
-    })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) {
-      toast.error(data.error || 'Could not delete the flow.')
-      return
+  const deleteFlow = (flow: FlowItem) => setDeleteTarget(flow)
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || mutating) return
+    setMutating(true)
+    try {
+      const response = await fetch('/api/flows', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: deleteTarget.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        toast.error(data.error || 'Could not delete the flow.')
+        return
+      }
+      setFlows((prev) => prev.filter((entry) => entry.id !== deleteTarget.id))
+      toast.success('Flow deleted.')
+      setDeleteTarget(null)
+    } finally {
+      setMutating(false)
     }
-    setFlows((prev) => prev.filter((entry) => entry.id !== flow.id))
-    toast.success('Flow deleted.')
   }
 
   useEffect(() => {
@@ -330,7 +356,7 @@ export default function FlowsPage() {
                             triggers and what a run executes. A flow can be ACTIVE
                             and unpublished (never armed), so show both rather than
                             collapsing them into one word. */}
-                        <Badge variant="outline" className={cn('text-[11px] font-medium capitalize', flow.published ? STATUS_STYLE.active : STATUS_STYLE[flow.status] || STATUS_STYLE.draft)}>
+                        <Badge variant={flow.published ? 'good' : STATUS_VARIANT[flow.status] || 'warn'} className="text-[11px] font-medium capitalize">
                           {flow.published ? 'Published' : flow.status}
                         </Badge>
                       </span>
@@ -421,6 +447,58 @@ export default function FlowsPage() {
           </StaggerReveal>
         </section>
       )}
+
+      <Dialog open={folderDialog !== null} onOpenChange={(open) => { if (!open) setFolderDialog(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Move to a folder</DialogTitle>
+            <DialogDescription>
+              Folders group flows on this page. Leave the name empty to take “{folderDialog?.flow.name}” out of its folder.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={folderDialog?.value ?? ''}
+            onChange={(event) => setFolderDialog((current) => (current ? { ...current, value: event.target.value } : current))}
+            onKeyDown={(event) => { if (event.key === 'Enter') void commitFolder() }}
+            placeholder="Folder name"
+            maxLength={60}
+            autoFocus
+          />
+          {folders.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {folders.map((folder) => (
+                <button
+                  key={folder}
+                  type="button"
+                  onClick={() => setFolderDialog((current) => (current ? { ...current, value: folder } : current))}
+                  className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  {folder}
+                </button>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFolderDialog(null)}>Cancel</Button>
+            <Button onClick={() => void commitFolder()} loading={mutating}>Move</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete this flow?</DialogTitle>
+            <DialogDescription>
+              “{deleteTarget?.name}” and its run history will be deleted. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => void confirmDelete()} loading={mutating}>Delete flow</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

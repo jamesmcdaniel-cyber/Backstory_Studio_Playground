@@ -103,6 +103,19 @@ export const STATUS_DOT: Record<StepStatus, string> = {
   resumed: 'bg-gray-300',
 }
 
+/** Status → text color. The one map behind the run panel and activity views,
+ *  so a status reads the same color everywhere it appears. */
+export const STATUS_TEXT: Record<StepStatus, string> = {
+  queued: 'text-gray-400',
+  running: 'text-amber-600',
+  succeeded: 'text-emerald-600',
+  failed: 'text-red-600',
+  waiting: 'text-blue-600',
+  skipped: 'text-gray-400',
+  stopped: 'text-slate-500',
+  resumed: 'text-gray-400',
+}
+
 /** Everything the label functions need that isn't on the node itself. */
 export type PresentationContext = {
   /** Resolve an agent id to its title; '' when unknown. */

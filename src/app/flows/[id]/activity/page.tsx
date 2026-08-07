@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { FlowGraph } from '@/lib/flows/graph'
+import { STATUS_DOT, STATUS_TEXT } from '@/lib/flows/node-presentation'
 import { cn } from '@/lib/utils'
 
 type RunStepSummary = { nodeId: string; status: string; order: number; error?: string | null }
@@ -45,25 +46,9 @@ const STATUS_BADGE: Record<string, 'good' | 'risk' | 'warn' | 'info' | 'outline'
   waiting: 'warn',
 }
 
-const STEP_DOT: Record<string, string> = {
-  succeeded: 'bg-emerald-500',
-  failed: 'bg-red-500',
-  waiting: 'bg-blue-500',
-  running: 'bg-amber-500',
-  skipped: 'bg-gray-300',
-  queued: 'bg-gray-300',
-  resumed: 'bg-gray-300',
-}
-
-const STEP_TEXT: Record<string, string> = {
-  succeeded: 'text-emerald-600',
-  failed: 'text-red-600',
-  waiting: 'text-blue-600',
-  running: 'text-amber-600',
-  skipped: 'text-gray-400',
-  queued: 'text-gray-400',
-  resumed: 'text-gray-400',
-}
+// Loosened to string keys at the edge: run steps arrive with `status: string`.
+const STEP_DOT: Record<string, string> = STATUS_DOT
+const STEP_TEXT: Record<string, string> = STATUS_TEXT
 
 /** Node label for a run step: the agent's own label, else the step type,
  *  title-cased. Falls back to the raw id while the flow graph hasn't loaded. */

@@ -68,6 +68,21 @@ export const proposalSchema = z
   })
   .nullish()
 
+export const runIntentSchema = z
+  .object({
+    task: z.string().default(''),
+  })
+  .nullish()
+
+/** A run request as the chat route executes it: one complete instruction. */
+export type NormalizedRunIntent = { task: string }
+
+/** Drop empty/whitespace tasks; returns null when there is nothing to run. */
+export function normalizeRunIntent(raw: z.infer<typeof runIntentSchema>): NormalizedRunIntent | null {
+  const task = raw?.task?.trim()
+  return task ? { task } : null
+}
+
 /** A proposal as the client receives it: a summary, a destination, the changes. */
 export type NormalizedProposal = {
   summary: string

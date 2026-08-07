@@ -5,30 +5,42 @@ import { generateStructured } from '@/lib/llm/model-runner'
 import { qwenConfigured } from '@/lib/llm/qwen'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { buildAssistantContext } from '@/features/agents/assistant-context'
+import { runAgentExecution } from '@/features/agents/execute-agent'
+import { inlineExecution } from '@/lib/queue/execution-mode'
+import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
+import { rateLimit } from '@/lib/ratelimit'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
 import {
   agentIdFromRequest,
   requireAgent,
   deriveTitle,
   normalizeProposal,
+  normalizeRunIntent,
   proposalSchema,
+  runIntentSchema,
   LEGACY_SESSION_ID,
   type NormalizedProposal,
+  type NormalizedRunIntent,
 } from './shared'
 
 export const runtime = 'nodejs'
-export const maxDuration = 120
+// Matches the execute route: a chat-triggered run executes inline here, so the
+// request needs the same headroom as a manual run, not just a model call.
+export const maxDuration = 800
 
 /**
  * Agent-scoped assistant chat. Extends the per-execution follow-up chat
  * (/api/chat) to a persistent per-agent thread: GET returns the thread,
  * POST answers with server-assembled run context and may return a config
- * proposal, PATCH marks a proposal as applied (the client applies it via the
- * existing PUT /api/agents after an explicit confirm).
+ * proposal — or, when the user asks the agent to do something, executes the
+ * agent with its own tools and returns the run's output as the reply. PATCH
+ * marks a proposal as applied (the client applies it via the existing
+ * PUT /api/agents after an explicit confirm).
  */
 
 const SYSTEM_PROMPT = [
-  "You are the Backstory assistant for a single agent. You answer questions about the agent's recent runs, help debug failures, and turn natural-language requests into configuration changes.",
+  "You are the Backstory assistant for a single agent. You answer questions about the agent's recent runs, help debug failures, turn natural-language requests into configuration changes, and run the agent on the user's behalf.",
+  "When the user asks the agent to actually DO something now — run its job, execute a command, look something up, or draft/send/post something using its connected tools — set run.task to one complete, self-contained instruction for that run, folding in every specific from the conversation. Set proposal to null when run is set. Write reply as one short sentence saying what the run will do; the run's output is delivered with it. Use run only for action requests: questions about past runs, capabilities, or configuration are answered directly, and requests to permanently change how the agent works are proposals, not runs.",
   'Ground every statement in the provided context (agent config, recent runs, tool calls, errors). If the context does not contain the answer, say so plainly.',
   'When the user asks to change the agent — its instructions/objective, schedule, skills, connected tools/integrations, model, name, or description — fill in the proposal object with only the fields that should change and set every other proposal field to null. The instructions field must contain the complete updated instructions text, not a diff. Never claim a change was applied; the user reviews and confirms it in the interface.',
   'Set proposal.target to "update" when the request changes how THIS agent does the job it already has. Set it to "new" when the request describes a DIFFERENT job — a task, lookup, or report this agent was not built for, or when the user asks for instructions for an agent to run. A "new" proposal must include title, description, and complete instructions, and must leave model, integrations and skills null: the new agent inherits this agent\'s tools, skills and model automatically.',
@@ -78,8 +90,21 @@ const RESPONSE_SCHEMA = {
       },
       required: ['summary', 'target', 'title', 'description', 'instructions', 'model', 'integrations', 'skills', 'schedule'],
     },
+    run: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      description:
+        'Set when the user asks the agent to perform work now using its connected tools; the run starts immediately after this reply. Null otherwise, and always null when proposal is set.',
+      properties: {
+        task: {
+          type: 'string',
+          description: 'One complete, self-contained instruction for this run, folding in the specifics from the conversation.',
+        },
+      },
+      required: ['task'],
+    },
   },
-  required: ['reply', 'proposal'],
+  required: ['reply', 'proposal', 'run'],
 } as const
 
 function serializeMessage(message: AgentChatMessage) {
@@ -94,6 +119,9 @@ function serializeMessage(message: AgentChatMessage) {
     createdAt: message.createdAt,
     proposal: metadata.proposal ?? null,
     appliedAt: metadata.appliedAt ?? null,
+    // Set when this reply came from (or started) an agent run: the task that
+    // ran, the execution id, and how it ended.
+    run: metadata.run ?? null,
     // Set when applying the proposal created a separate agent rather than
     // updating this one, so the card can still link to it after a reload.
     createdAgentId: metadata.createdAgentId ?? null,
@@ -189,6 +217,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   let reply = ''
   let proposal: NormalizedProposal | null = null
+  let runIntent: NormalizedRunIntent | null = null
   try {
     const text = await generateStructured({
       schemaName: 'assistant_reply',
@@ -200,15 +229,103 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       // and turns a valid answer into a parse failure.
       maxTokens: 8192,
     })
-    const parsed = JSON.parse(text || '{}') as { reply?: unknown; proposal?: unknown }
+    const parsed = JSON.parse(text || '{}') as { reply?: unknown; proposal?: unknown; run?: unknown }
     reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : ''
     proposal = normalizeProposal(proposalSchema.catch(null).parse(parsed.proposal ?? null))
+    runIntent = normalizeRunIntent(runIntentSchema.catch(null).parse(parsed.run ?? null))
+    // Run and proposal are mutually exclusive; an action request wins over a
+    // config card so "do X" never stalls behind a confirm button.
+    if (runIntent) proposal = null
   } catch (error) {
     // Preserve the real cause so the 5xx handler logs/reports it — a bare catch
     // made this failure invisible in logs and Sentry.
     throw new ApiError('The assistant could not respond. Try again.', 502, 'ASSISTANT_FAILED', error)
   }
-  if (!reply) reply = proposal ? 'Here is the proposed configuration change.' : 'No answer returned.'
+  if (!reply) reply = proposal ? 'Here is the proposed configuration change.' : runIntent ? 'Running the agent.' : 'No answer returned.'
+
+  // A run intent executes the agent right here — the chat is the agent's front
+  // end, so "do X" runs it with its own tools and skills (same engine as the
+  // Run button) and the outcome becomes the reply. Failures land in the thread
+  // as messages rather than 5xxs so the conversation can continue.
+  let runMeta: { task: string; executionId?: string; status: string } | null = null
+  if (runIntent) {
+    // Same per-workspace cap as the manual execute route — chat must not be a
+    // side door around it.
+    const limited = await rateLimit(`agent-run:${auth.organizationId}`, { limit: 30, windowMs: 60_000 })
+    if (!limited.ok) {
+      reply = 'Too many agent runs started in the last minute — wait a moment and ask again.'
+    } else {
+      const execution = await prisma.agentExecution.create({
+        data: {
+          agentType: agent.agentType,
+          agentTaskId: agent.id,
+          status: 'pending',
+          input: { prompt: runIntent.task },
+          trigger: { type: 'manual', source: 'assistant' },
+          metadata: { title: (agent.metadata as { title?: string } | null)?.title || agent.description },
+          userId: auth.dbUser.id,
+          organizationId: auth.organizationId,
+        },
+      })
+      runMeta = { task: runIntent.task, executionId: execution.id, status: 'pending' }
+      const markFailed = (detail: string) =>
+        prisma.agentExecution
+          .update({
+            where: { id: execution.id, organizationId: auth.organizationId },
+            data: { status: 'failed', error: detail.slice(0, 300), completedAt: new Date() },
+          })
+          .catch(() => undefined)
+      if (inlineExecution) {
+        try {
+          const result = await runAgentExecution({
+            executionId: execution.id,
+            agentId: agent.id,
+            organizationId: auth.organizationId,
+            userId: auth.dbUser.id,
+            input: runIntent.task,
+          })
+          const paused = result as { status?: string; question?: string }
+          if (paused.status === 'waiting_for_input') {
+            runMeta.status = 'waiting_for_input'
+            reply = `The run paused with a question:\n\n> ${paused.question || 'It needs more input.'}\n\nOpen the run in the activity feed to answer it.`
+          } else if (paused.status === 'waiting_for_approval') {
+            runMeta.status = 'waiting_for_approval'
+            reply = 'The run paused for an approval. Review it in the approvals queue to continue.'
+          } else {
+            runMeta.status = 'completed'
+            const summary = (result as { summary?: string }).summary
+            reply = summary?.trim() || 'The run finished but produced no output.'
+          }
+        } catch (error) {
+          // The executor marks its own failures once the run is underway; this
+          // also covers pre-run throws (e.g. a paused agent) that leave the row
+          // pending.
+          runMeta.status = 'failed'
+          const detail = error instanceof Error ? error.message : String(error)
+          reply = `The run failed: ${detail}`
+          await markFailed(detail)
+        }
+      } else if (workersEnabled) {
+        try {
+          const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
+          await queue.add(
+            'execute-agent',
+            { executionId: execution.id, agentId: agent.id, organizationId: auth.organizationId, userId: auth.dbUser.id, input: runIntent.task },
+            { jobId: execution.id },
+          )
+          reply = `${reply}\n\nThe run has started — its output will appear in the activity feed when it finishes.`
+        } catch {
+          runMeta.status = 'failed'
+          reply = 'The run could not be queued — try again in a moment.'
+          await markFailed('Unable to queue agent execution')
+        }
+      } else {
+        runMeta.status = 'failed'
+        reply = 'Runs are unavailable right now — the agent worker is disabled.'
+        await markFailed('Agent worker is disabled')
+      }
+    }
+  }
 
   // Persist only after the model answered, so a failed call leaves no
   // half-thread behind (the client restores the input for a retry).
@@ -229,6 +346,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       content: message,
     },
   })
+  const assistantMetadata: Record<string, unknown> = {}
+  if (proposal) assistantMetadata.proposal = proposal
+  if (runMeta) assistantMetadata.run = runMeta
   const assistantMessage = await prisma.agentChatMessage.create({
     data: {
       agentTaskId: agentId,
@@ -237,7 +357,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       sessionId: session.id,
       role: 'assistant',
       content: reply,
-      ...(proposal ? { metadata: { proposal } as unknown as Prisma.InputJsonValue } : {}),
+      ...(Object.keys(assistantMetadata).length
+        ? { metadata: assistantMetadata as unknown as Prisma.InputJsonValue }
+        : {}),
     },
   })
   // Bump the session so it sorts to the top of history (and set its title on the

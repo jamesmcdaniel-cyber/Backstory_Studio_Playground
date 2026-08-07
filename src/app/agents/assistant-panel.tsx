@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { describeSchedule } from '@/lib/scheduling/cadence'
 import { toast } from 'sonner'
-import { ArrowRight, Check, Clock, Loader2, MessageSquare, Plus, Send, Sparkles, Square } from 'lucide-react'
+import { ArrowRight, Check, Clock, Loader2, MessageSquare, Play, Plus, Send, Sparkles, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
@@ -58,6 +58,8 @@ type ChatMessage = {
   appliedAt?: string | null
   /** Set when applying this proposal created a separate agent. */
   createdAgentId?: string | null
+  /** Set when this reply came from (or started) an agent run. */
+  run?: { task?: string; executionId?: string; status?: string } | null
 }
 
 type SessionSummary = {
@@ -363,13 +365,16 @@ export function AssistantPanel({
         setInput(content)
         return
       }
+      const returned: ChatMessage[] = Array.isArray(data.messages) ? data.messages : []
       setMessages((previous) => [
         ...previous.filter((message) => message.id !== localId),
-        ...(Array.isArray(data.messages) ? data.messages : []),
+        ...returned,
       ])
       if (typeof data.sessionId === 'string') setSessionId(data.sessionId)
       // Refresh history so a new chat appears / its title + ordering update.
       void loadSessions(targetAgentId)
+      // A reply that ran the agent added a run — refresh the activity list too.
+      if (returned.some((message) => message.run)) onAgentUpdated()
     } catch (error) {
       if (agentIdRef.current !== targetAgentId) return
       // Stopped by the user (or the network dropped): withdraw the optimistic
@@ -427,10 +432,11 @@ export function AssistantPanel({
     }
   }
 
-  // Task-oriented starters that reflect what these agents do (research,
+  // Task-oriented starters that reflect what these agents do (run it, research,
   // briefing) plus quick config — not just "what did the last run do".
   const suggestions = agent
     ? [
+        'Run this agent now',
         'Summarize the key findings from the latest run',
         ...(hasFailedRun
           ? ['Why did the last run fail?']
@@ -508,8 +514,8 @@ export function AssistantPanel({
         </div>
         <p className="mt-1 text-xs text-gray-500">
           {agent
-            ? 'Ask about run output, debug errors, or change configuration in plain language.'
-            : 'Pick an agent to ask about its runs, debug errors, or change its configuration.'}
+            ? 'Ask about runs, change configuration, or tell the agent what to do — it runs with its connected tools.'
+            : 'Pick an agent to ask about its runs, change its configuration, or put it to work.'}
         </p>
       </div>
 
@@ -533,7 +539,7 @@ export function AssistantPanel({
             <div className="w-full max-w-sm text-center">
               <MessageSquare className="mx-auto h-6 w-6 text-gray-300" />
               <p className="mt-2 text-sm text-gray-500">
-                Backstory grounds answers in this agent&apos;s configuration and recent runs.
+                Backstory grounds answers in this agent&apos;s configuration and recent runs — and runs the agent for you when you ask.
               </p>
               <div className="mt-4 space-y-2">
                 {suggestions.map((suggestion) => (
@@ -573,6 +579,17 @@ export function AssistantPanel({
                   message.role === 'user' ? 'ml-8 bg-indigo-50' : 'mr-8 border bg-gray-50',
                 )}
               >
+                {message.role !== 'user' && message.run && (
+                  <p className="eyebrow mb-2 flex items-center gap-1.5">
+                    <Play className="h-3 w-3" />
+                    Agent run
+                    {message.run.status === 'failed' && <span className="text-red-600">— failed</span>}
+                    {message.run.status === 'pending' && <span className="text-gray-500">— running</span>}
+                    {(message.run.status === 'waiting_for_input' || message.run.status === 'waiting_for_approval') && (
+                      <span className="text-amber-600">— waiting</span>
+                    )}
+                  </p>
+                )}
                 {message.role === 'user'
                   ? <p className="whitespace-pre-wrap">{message.content}</p>
                   : <AgentOutput text={message.content} />}
@@ -589,7 +606,7 @@ export function AssistantPanel({
             ))}
             {sending && (
               <div className="mr-8 flex items-center gap-2 rounded-lg border bg-gray-50 p-3 text-sm text-gray-500">
-                <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
+                <Loader2 className="h-4 w-4 animate-spin" /> Working — a live run can take a few minutes…
               </div>
             )}
           </div>

@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import { Sparkles, Send, AlertTriangle } from 'lucide-react'
+import { Sparkles, Send, Square, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -47,6 +47,9 @@ export function CopilotPanel({
   const [loading, setLoading] = useState(false)
   const threadRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  // The in-flight request, so the stop button can cancel it.
+  const abortRef = useRef<AbortController | null>(null)
   // The graph prop (and the page's onOps closure over it) changes on every
   // edit; refs keep the async send handler reading the latest canvas instead
   // of the render it was created in — otherwise a mid-request manual edit
@@ -62,12 +65,25 @@ export function CopilotPanel({
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, loading])
 
-  const resizeInput = () => {
+  // The composer grows with its content up to a quarter of the panel's height,
+  // then scrolls internally so a long prompt stays fully reviewable.
+  const resizeInput = useCallback(() => {
     const el = inputRef.current
     if (!el) return
+    const cap = Math.max(96, Math.floor((panelRef.current?.clientHeight ?? 560) / 4))
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 140)}px`
-  }
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`
+    el.style.overflowY = el.scrollHeight > cap ? 'auto' : 'hidden'
+  }, [])
+
+  useEffect(() => {
+    resizeInput()
+  }, [input, resizeInput])
+
+  useEffect(() => {
+    window.addEventListener('resize', resizeInput)
+    return () => window.removeEventListener('resize', resizeInput)
+  }, [resizeInput])
 
   // The one-shot generate path: drafts a whole flow from a description and
   // replaces the canvas. Kept as the empty-canvas quick action.
@@ -75,11 +91,14 @@ export function CopilotPanel({
     const description = input.trim()
     if (!description || loading) return
     setLoading(true)
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
       const response = await fetch('/api/flows/copilot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description }),
+        signal: controller.signal,
       })
       const data = await response.json()
       if (response.ok && data.success && data.graph) {
@@ -96,9 +115,14 @@ export function CopilotPanel({
       } else {
         toast.error(data.error || 'Could not generate a flow.')
       }
+    } catch (error) {
+      // A user stop is silent — the description stays in the box for a retry.
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        toast.error('Could not reach the copilot — check your connection and try again.')
+      }
     } finally {
+      if (abortRef.current === controller) abortRef.current = null
       setLoading(false)
-      requestAnimationFrame(resizeInput)
     }
   }
 
@@ -111,11 +135,14 @@ export function CopilotPanel({
     setMessages((prev) => [...prev, { role: 'user', content }])
     if (!preset) setInput('')
     setLoading(true)
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
       const response = await fetch('/api/flows/copilot/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history, graph: graphRef.current, ...(external ? { external: true } : {}) }),
+        signal: controller.signal,
       })
       const data = await response.json()
       if (response.ok && data.success) {
@@ -137,11 +164,18 @@ export function CopilotPanel({
       } else {
         setMessages((prev) => [...prev, { role: 'assistant', content: data.error || 'Could not apply that change — try again.', error: true }])
       }
-    } catch {
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Could not reach the copilot — check your connection and try again.', error: true }])
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        // Stopped by the user: withdraw the pending message, and put the text
+        // back for editing unless something new has been typed meanwhile.
+        setMessages((prev) => prev.slice(0, -1))
+        if (!preset) setInput((current) => current || content)
+      } else {
+        setMessages((prev) => [...prev, { role: 'assistant', content: 'Could not reach the copilot — check your connection and try again.', error: true }])
+      }
     } finally {
+      if (abortRef.current === controller) abortRef.current = null
       setLoading(false)
-      requestAnimationFrame(resizeInput)
     }
   }
 
@@ -155,7 +189,7 @@ export function CopilotPanel({
   }
 
   return (
-    <div className="flex h-full w-full flex-col border-l border-border bg-card">
+    <div ref={panelRef} className="flex h-full w-full flex-col border-l border-border bg-card">
       <div className="flex items-center gap-2 border-b border-border px-4 py-3">
         <Sparkles className="h-4 w-4 text-indigo-500" />
         <h2 className="text-sm font-semibold">Copilot</h2>
@@ -249,21 +283,24 @@ export function CopilotPanel({
             ref={inputRef}
             rows={1}
             value={input}
-            onChange={(e) => {
-              setInput(e.target.value)
-              resizeInput()
-            }}
+            onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               onInputKeyDown(e)
               indentOnTab(e)
             }}
             placeholder={emptyCanvas ? 'e.g. Score my in-segment accounts and post the top 20 to #sales.' : 'Ask for a change…'}
-            className="max-h-[140px] min-h-[38px] w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300"
+            className="min-h-[38px] w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300"
             aria-label="Message the copilot"
           />
-          <Button size="icon" onClick={() => send()} loading={loading} disabled={!input.trim()} aria-label="Send message">
-            {!loading && <Send className="h-4 w-4" />}
-          </Button>
+          {loading ? (
+            <Button size="icon" onClick={() => abortRef.current?.abort()} aria-label="Stop response" title="Stop">
+              <Square className="h-3.5 w-3.5 fill-current" />
+            </Button>
+          ) : (
+            <Button size="icon" onClick={() => send()} disabled={!input.trim()} aria-label="Send message">
+              <Send className="h-4 w-4" />
+            </Button>
+          )}
         </div>
         <p className="text-[11px] text-muted-foreground">
           {emptyCanvas ? 'AI-generated — Generate replaces the canvas. Review before running.' : 'AI edits apply directly to the canvas — ⌘Z to undo.'}

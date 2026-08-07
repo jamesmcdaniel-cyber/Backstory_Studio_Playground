@@ -4,10 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { describeSchedule } from '@/lib/scheduling/cadence'
 import { toast } from 'sonner'
-import { ArrowRight, Check, Clock, Loader2, MessageSquare, Plus, Send, Sparkles } from 'lucide-react'
+import { ArrowRight, Check, Clock, Loader2, MessageSquare, Plus, Send, Sparkles, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { Markdown } from '@/components/ui/markdown'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
@@ -229,6 +228,10 @@ export function AssistantPanel({
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const historyRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  // The in-flight ask, so the stop button (and an agent switch) can cancel it.
+  const abortRef = useRef<AbortController | null>(null)
   const agentId = agent?.id
   // Tracks the currently-targeted agent so in-flight async completions can
   // detect an agent switch and avoid mutating another agent's thread.
@@ -250,6 +253,10 @@ export function AssistantPanel({
   useEffect(() => {
     agentIdRef.current = agentId
     setHistoryOpen(false)
+    // Abandon any in-flight ask — its response belongs to the previous agent's
+    // thread — and re-enable the composer for the newly selected one.
+    abortRef.current?.abort()
+    setSending(false)
     // Start every agent on a FRESH chat rather than auto-restoring its most
     // recent conversation. Prior chats aren't lost — they're saved per agent +
     // per rep and reachable from the history (clock) dropdown — they're just
@@ -303,12 +310,34 @@ export function AssistantPanel({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [messages, sending])
 
+  // The composer grows with its content up to a quarter of the panel's height,
+  // then scrolls internally so a long prompt stays fully reviewable.
+  const resizeComposer = useCallback(() => {
+    const el = composerRef.current
+    if (!el) return
+    const cap = Math.max(96, Math.floor((panelRef.current?.clientHeight ?? 600) / 4))
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, cap)}px`
+    el.style.overflowY = el.scrollHeight > cap ? 'auto' : 'hidden'
+  }, [])
+
+  useEffect(() => {
+    resizeComposer()
+  }, [input, resizeComposer])
+
+  useEffect(() => {
+    window.addEventListener('resize', resizeComposer)
+    return () => window.removeEventListener('resize', resizeComposer)
+  }, [resizeComposer])
+
   const send = async (preset?: string) => {
     const content = (preset ?? input).trim()
     if (!agentId || !content || sending) return
     const targetAgentId = agentId
     setInput('')
     setSending(true)
+    const controller = new AbortController()
+    abortRef.current = controller
     const localId = `local-${Date.now()}`
     setMessages((previous) => [
       ...previous,
@@ -322,6 +351,7 @@ export function AssistantPanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: content, ...(targetSessionId ? { sessionId: targetSessionId } : {}) }),
+        signal: controller.signal,
       })
       const data = await response.json().catch(() => ({}))
       // The user switched agents while the request was in flight; this
@@ -340,7 +370,17 @@ export function AssistantPanel({
       if (typeof data.sessionId === 'string') setSessionId(data.sessionId)
       // Refresh history so a new chat appears / its title + ordering update.
       void loadSessions(targetAgentId)
+    } catch (error) {
+      if (agentIdRef.current !== targetAgentId) return
+      // Stopped by the user (or the network dropped): withdraw the optimistic
+      // message and put the text back so it can be edited and resent.
+      setMessages((previous) => previous.filter((message) => message.id !== localId))
+      setInput(content)
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        toast.error('Could not reach the assistant — check your connection and try again.')
+      }
     } finally {
+      if (abortRef.current === controller) abortRef.current = null
       if (agentIdRef.current === targetAgentId) setSending(false)
     }
   }
@@ -404,7 +444,7 @@ export function AssistantPanel({
   // bottom. Before an agent is picked the composer stays visible but disabled so
   // the pane reads as a chat surface rather than an empty placeholder.
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={panelRef} className="flex h-full min-h-0 flex-col">
       <div className="border-b p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -557,17 +597,35 @@ export function AssistantPanel({
       </div>
 
       <div className="border-t p-4">
-        <div className="flex gap-2">
-          <Input
+        <div className="flex items-end gap-2">
+          <textarea
+            ref={composerRef}
+            rows={1}
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => (event.key === 'Enter' ? send() : indentOnTab(event))}
+            onKeyDown={(event) => {
+              // Enter sends (except mid-IME composition); Shift+Enter breaks the line.
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                send()
+              } else {
+                indentOnTab(event)
+              }
+            }}
             placeholder={agent ? `Ask about ${agent.title}...` : 'Select an agent to start chatting…'}
             disabled={!agent || sending}
+            aria-label="Message the assistant"
+            className="min-h-9 w-full flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-colors duration-fast placeholder:text-muted-foreground hover:border-graphite-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           />
-          <Button size="icon" disabled={!agent || sending || !input.trim()} onClick={() => send()} aria-label="Send message">
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
+          {sending ? (
+            <Button size="icon" onClick={() => abortRef.current?.abort()} aria-label="Stop response" title="Stop">
+              <Square className="h-3.5 w-3.5 fill-current" />
+            </Button>
+          ) : (
+            <Button size="icon" disabled={!agent || !input.trim()} onClick={() => send()} aria-label="Send message">
+              <Send className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
     </div>

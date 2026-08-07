@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import { Workflow, Plus, FileText, Layers, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -17,7 +17,7 @@ import { useFlowImport } from '@/components/flows/use-flow-import'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
-import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
+import { StaggerItem, StaggerReveal, TiltCard } from '@/components/ui/motion-primitives'
 import { cn } from '@/lib/utils'
 
 /** Cards per page on the Flows grid. */
@@ -56,6 +56,56 @@ const STATUS_VARIANT: Record<string, 'good' | 'warn' | 'secondary'> = {
   active: 'good',
   draft: 'warn',
   disabled: 'secondary',
+}
+
+// Decorative accent recipes for the cards: gradient top bar, tinted icon chip,
+// accent hover border, and a soft corner glow. Full literal class strings —
+// Tailwind's JIT only sees statically analyzable names, so no interpolation.
+const CARD_ACCENTS = [
+  {
+    bar: 'from-indigo-500 to-blue-400',
+    chip: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300',
+    border: 'hover:border-indigo-300/70 dark:hover:border-indigo-500/40',
+    glow: 'bg-indigo-400/25',
+  },
+  {
+    bar: 'from-sky-500 to-cyan-400',
+    chip: 'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300',
+    border: 'hover:border-sky-300/70 dark:hover:border-sky-500/40',
+    glow: 'bg-sky-400/25',
+  },
+  {
+    bar: 'from-violet-500 to-purple-400',
+    chip: 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300',
+    border: 'hover:border-violet-300/70 dark:hover:border-violet-500/40',
+    glow: 'bg-violet-400/25',
+  },
+  {
+    bar: 'from-emerald-500 to-teal-400',
+    chip: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300',
+    border: 'hover:border-emerald-300/70 dark:hover:border-emerald-500/40',
+    glow: 'bg-emerald-400/25',
+  },
+  {
+    bar: 'from-fuchsia-500 to-pink-400',
+    chip: 'bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-500/15 dark:text-fuchsia-300',
+    border: 'hover:border-fuchsia-300/70 dark:hover:border-fuchsia-500/40',
+    glow: 'bg-fuchsia-400/25',
+  },
+  {
+    bar: 'from-amber-500 to-orange-400',
+    chip: 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300',
+    border: 'hover:border-amber-300/70 dark:hover:border-amber-500/40',
+    glow: 'bg-amber-400/25',
+  },
+]
+
+// Keyed by a stable hash of the id, not render order, so a card keeps its
+// color across visits, pagination, and folder filtering.
+function cardAccent(id: string) {
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0
+  return CARD_ACCENTS[hash % CARD_ACCENTS.length]
 }
 
 export default function FlowsPage() {
@@ -342,11 +392,14 @@ export default function FlowsPage() {
           {/* StaggerReveal over the CSS ladder: viewport-triggered, spring-eased,
               reduced-motion aware, and not capped at 12 children. */}
           <StaggerReveal className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {pageItems.map((flow) => (
+            {pageItems.map((flow) => {
+              const accent = cardAccent(flow.id)
+              return (
               <StaggerItem key={flow.id}>
               <Link href={`/flows/${flow.id}`} className="block h-full">
-                <Card variant="interactive" className="group relative h-full overflow-hidden border-border/60">
-                  <div className="absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r from-indigo-500 to-blue-400 opacity-80 transition-opacity group-hover:opacity-100" />
+                <TiltCard className={cn('group h-full overflow-hidden border-border/60 transition-[box-shadow,border-color]', accent.border)}>
+                  <div className={cn('absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r opacity-80 transition-opacity group-hover:opacity-100', accent.bar)} />
+                  <div aria-hidden="true" className={cn('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-60 blur-2xl transition-opacity duration-base group-hover:opacity-100', accent.glow)} />
                   <CardHeader className="space-y-2.5 pt-5">
                     <div className="flex items-center justify-between">
                       <span className="flex items-center gap-1.5">
@@ -403,7 +456,7 @@ export default function FlowsPage() {
                       </span>
                     </div>
                     <div className="flex items-start gap-2.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600 transition-transform group-hover:scale-105 dark:bg-indigo-500/15 dark:text-indigo-300">
+                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105', accent.chip)}>
                         <Workflow className="h-[18px] w-[18px]" />
                       </span>
                       <CardTitle className="min-w-0 text-base leading-snug">{flow.name}</CardTitle>
@@ -412,10 +465,11 @@ export default function FlowsPage() {
                   <CardContent>
                     <p className="line-clamp-2 text-sm text-muted-foreground">{flow.description || 'No description yet.'}</p>
                   </CardContent>
-                </Card>
+                </TiltCard>
               </Link>
               </StaggerItem>
-            ))}
+              )
+            })}
           </StaggerReveal>
           <Pagination page={current} pageCount={pageCount} onPageChange={setPage} />
         </>
@@ -436,13 +490,16 @@ export default function FlowsPage() {
             </Link>
           </div>
           <StaggerReveal className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {flowTemplates.map((template) => (
+            {flowTemplates.map((template) => {
+              const accent = cardAccent(template.id)
+              return (
               <StaggerItem key={template.id}>
               <Link href={`/flow-templates/${template.id}`} className="block h-full">
-                <Card variant="interactive" className="group relative flex h-full flex-col overflow-hidden border-border/60">
+                <TiltCard className={cn('group flex h-full flex-col overflow-hidden border-border/60 transition-[box-shadow,border-color]', accent.border)}>
+                  <div aria-hidden="true" className={cn('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-60 blur-2xl transition-opacity duration-base group-hover:opacity-100', accent.glow)} />
                   <CardHeader className="space-y-2.5 pt-5">
                     <div className="flex items-start gap-2.5">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-base text-indigo-600 transition-transform group-hover:scale-105 dark:bg-indigo-500/15 dark:text-indigo-300">
+                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-base transition-transform group-hover:scale-105', accent.chip)}>
                         {template.icon ? <span aria-hidden>{template.icon}</span> : <FileText className="h-[18px] w-[18px]" />}
                       </span>
                       <CardTitle className="min-w-0 text-base leading-snug">{template.name}</CardTitle>
@@ -470,10 +527,11 @@ export default function FlowsPage() {
                       Use this template
                     </Button>
                   </CardContent>
-                </Card>
+                </TiltCard>
               </Link>
               </StaggerItem>
-            ))}
+              )
+            })}
           </StaggerReveal>
         </section>
       )}

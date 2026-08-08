@@ -35,6 +35,24 @@ test('workspace key inputs opt out of saved-credential autofill', () => {
   )
 })
 
+test('the credentials page is the full management surface', () => {
+  // /credentials replaced the read-mostly bank on /flows: workspace keys render
+  // inline (the panel's inputs already carry the autofill guard), and both
+  // OAuth and HTTP rows expose rotation for exposed/leaked credentials.
+  const page = read('src/app/credentials/page.tsx')
+  assert.match(page, /WorkspaceCredentialsPanel/, 'workspace keys must be manageable from /credentials')
+  assert.match(page, /rotateCredential/, 'HTTP credential rotation must be wired into /credentials')
+  assert.match(page, /kind: 'rotate'/, 'OAuth token rotation (revoke + reconnect) must be wired into /credentials')
+})
+
+test('the flows page links to the credentials page', () => {
+  // The bank left /flows for its own page; the header button is the remaining
+  // one-click path from flow building to credential management.
+  const page = read('src/app/flows/page.tsx')
+  assert.match(page, /href="\/credentials"/, 'the Flows header must keep a link to /credentials')
+  assert.doesNotMatch(page, /CredentialsBank/, 'the inline bank was replaced by the dedicated page')
+})
+
 test('the step-drawer predefined-credential empty state does not deny connected integrations', () => {
   const drawer = read('src/components/flows/step-drawer.tsx')
   assert.doesNotMatch(

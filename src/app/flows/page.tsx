@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search } from 'lucide-react'
+import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound } from 'lucide-react'
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,7 +15,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useFlowImport } from '@/components/flows/use-flow-import'
-import { CredentialsBank } from '@/components/flows/credentials-bank'
 import { FlowIconInput } from '@/components/flows/flow-icon-input'
 import { FlowTemplateGallery } from '@/components/flows/flow-template-gallery'
 import type { FlowGraph } from '@/lib/flows/graph'
@@ -319,6 +318,11 @@ export default function FlowsPage() {
       <div className="flex items-start justify-between gap-4">
         <PageHeader eyebrow="Pipelines" title="Flows" description="Wire your agents into deterministic multi-step pipelines." />
         <div className="flex items-center gap-2">
+          {/* The credentials bank grew into its own page — connect once there,
+              every flow reuses it; expired or leaked credentials rotate there too. */}
+          <Button asChild variant="outline">
+            <Link href="/credentials"><KeyRound className="mr-1.5 h-4 w-4" /> Credentials</Link>
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline"><Upload className="mr-1.5 h-4 w-4" /> Import</Button>
@@ -332,8 +336,6 @@ export default function FlowsPage() {
           {newFlowButton}
         </div>
       </div>
-
-      <CredentialsBank />
 
       {loading ? (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">

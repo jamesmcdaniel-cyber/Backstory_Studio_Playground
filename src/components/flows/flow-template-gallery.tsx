@@ -136,8 +136,7 @@ export function FlowTemplateGallery() {
         </div>
       )}
 
-      {/* Keyed by category so switching chips re-runs the reveal on the fresh grid. */}
-      <StaggerReveal key={category} className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <StaggerReveal className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {pageItems.map((template) => (
           <StaggerItem key={template.id}>
             <FlowTemplateCard

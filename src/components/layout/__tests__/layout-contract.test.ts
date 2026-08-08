@@ -21,7 +21,7 @@ import path from 'node:path'
 const APP_DIR = path.join(process.cwd(), 'src/app')
 
 // Route prefixes rendered inside <AppShell> (mirrors APP_PREFIXES there).
-const SHELL_PREFIXES = ['dashboard', 'agents', 'integrations', 'connections', 'templates', 'flows', 'approvals', 'settings', 'admin']
+const SHELL_PREFIXES = ['dashboard', 'agents', 'integrations', 'connections', 'credentials', 'templates', 'flows', 'approvals', 'settings', 'admin']
 
 /**
  * Class names live in JSX, and so do the comments explaining why a class is NOT

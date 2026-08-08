@@ -12,6 +12,7 @@ import {
   ChevronsUpDown,
   Folder,
   ImagePlus,
+  KeyRound,
   Loader2,
   Lock,
   LogOut,
@@ -73,6 +74,7 @@ const navigation = [
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Flows', href: '/flows', icon: Workflow },
   { name: 'Integrations', href: '/integrations', icon: Plug },
+  { name: 'Credentials', href: '/credentials', icon: KeyRound },
 ]
 
 // Super admins only. Customer workspaces never resolve catalogue.review (the

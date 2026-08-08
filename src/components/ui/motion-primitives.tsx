@@ -56,6 +56,14 @@ export function Reveal({
   )
 }
 
+/**
+ * True once the surrounding StaggerReveal has fired its one-shot reveal.
+ * Items that mount later (pagination, filtering) would otherwise inherit the
+ * container's `hidden` variant forever — the reveal never re-fires — and
+ * render invisible at opacity 0.
+ */
+const StaggerRevealedContext = React.createContext(false)
+
 /** Container that reveals its direct children in sequence on scroll-in. */
 export function StaggerReveal({
   children,
@@ -68,27 +76,40 @@ export function StaggerReveal({
   stagger?: number
 } & HTMLMotionProps<'div'>) {
   const reduced = useReducedMotion()
+  const [revealed, setRevealed] = React.useState(false)
   if (reduced) return <div className={className}>{children}</div>
   return (
-    <motion.div
-      className={className}
-      variants={staggerContainer(stagger)}
-      initial="hidden"
-      whileInView="show"
-      viewport={{ once: true, margin: '-60px' }}
-      {...props}
-    >
-      {children}
-    </motion.div>
+    <StaggerRevealedContext.Provider value={revealed}>
+      <motion.div
+        className={className}
+        variants={staggerContainer(stagger)}
+        initial="hidden"
+        whileInView="show"
+        viewport={{ once: true, margin: '-60px' }}
+        onViewportEnter={() => setRevealed(true)}
+        {...props}
+      >
+        {children}
+      </motion.div>
+    </StaggerRevealedContext.Provider>
   )
 }
 
 /** A single item inside a <StaggerReveal>. */
 export function StaggerItem({ children, className }: { children: React.ReactNode; className?: string }) {
   const reduced = useReducedMotion()
+  const revealed = React.useContext(StaggerRevealedContext)
+  // Captured once at mount: items in the initial batch stay driven by the
+  // container's staggered reveal; items mounted after it (a page flip, a
+  // search) animate themselves in, since the container won't re-fire.
+  const [selfDriven] = React.useState(revealed)
   if (reduced) return <div className={className}>{children}</div>
   return (
-    <motion.div className={className} variants={fadeInUp}>
+    <motion.div
+      className={className}
+      variants={fadeInUp}
+      {...(selfDriven ? { initial: 'hidden', animate: 'show' } : {})}
+    >
       {children}
     </motion.div>
   )

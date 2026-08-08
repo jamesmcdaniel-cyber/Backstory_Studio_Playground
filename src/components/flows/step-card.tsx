@@ -34,6 +34,7 @@ import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIE
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
+import { writeFlowClipboard } from '@/lib/flows/clipboard'
 import { groupToolConnections, selectedToolPresentation, stepBrandFallback, toolActionChoices } from '@/lib/flows/tool-presentation'
 import { useWorkspaceFlows } from './use-workspace-flows'
 import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
@@ -274,6 +275,13 @@ export function StepCard({
     } catch {
       toast.error('Could not copy to the clipboard.')
     }
+  }
+  // The real cross-flow copy: the pasted step keeps its configuration,
+  // including credential/connection references, which resolve anywhere in the
+  // same workspace.
+  const copyStep = () => {
+    writeFlowClipboard(node)
+    toast.success('Step copied — paste with ⌘V, here or in another flow.')
   }
   const onRootKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return
@@ -585,9 +593,14 @@ export function StepCard({
                 <DropdownMenuSeparator />
               </>
             )}
+            {!isTrigger && (
+              <DropdownMenuItem onSelect={copyStep}>
+                <Copy className="h-4 w-4" /> Copy step
+                <span className="ml-auto pl-4 text-xs text-slate-400">⌘C</span>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={copyNodeJson}>
               <ClipboardCopy className="h-4 w-4" /> {isTrigger ? 'Copy trigger JSON' : 'Copy step JSON'}
-              <span className="ml-auto pl-4 text-xs text-slate-400">⌘C</span>
             </DropdownMenuItem>
             {!isTrigger && (
               <DropdownMenuItem onSelect={() => setRenaming(true)}>

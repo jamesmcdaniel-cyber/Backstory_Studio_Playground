@@ -18,7 +18,7 @@ export type StepEdgeData = {
   /** Amber styling for an `onError: route` connection. */
   isError?: boolean
   /** Scheduler outcome for this connection during the displayed run. */
-  state?: 'idle' | 'active' | 'dead'
+  state?: 'idle' | 'running' | 'succeeded' | 'failed' | 'dead'
 }
 
 export type StepFlowEdge = Edge<StepEdgeData, 'step'>
@@ -47,24 +47,39 @@ function StepEdgeComponent({
 
   const isError = data?.isError
   const state = data?.state ?? 'idle'
+  // Run-state colors use the brand semantic scale (backstory-design.css
+  // green/red-500), deliberately saturated so success and failure read at a
+  // glance across a large canvas. Selection still wins so a selected edge
+  // never disappears into the run coloring.
   const stroke = selected
     ? '#3b82f6'
     : state === 'dead'
       ? '#cbd5e1'
-      : isError
-        ? '#f59e0b'
-        : state === 'active'
-          ? '#10b981'
-          : '#94a3b8'
+      : state === 'failed'
+        ? '#e53935'
+        : state === 'succeeded'
+          ? '#008859'
+          : state === 'running'
+            ? '#f59e0b'
+            : isError
+              ? '#f59e0b'
+              : '#94a3b8'
+  const emphasized = state === 'succeeded' || state === 'failed' || state === 'running'
 
   return (
     <>
+      {/* Soft halo under a run-colored edge: SVG has no box-shadow, so a wide
+          low-opacity twin path is what makes green/red pop against the grid. */}
+      {emphasized && !selected && (
+        <path d={path} fill="none" stroke={stroke} strokeWidth={9} strokeOpacity={0.16} />
+      )}
       <BaseEdge
         id={id}
         path={path}
+        className={state === 'running' ? 'flow-edge-running' : undefined}
         style={{
           stroke,
-          strokeWidth: selected || state === 'active' ? 2.5 : 1.75,
+          strokeWidth: selected || emphasized ? 3 : 1.75,
           strokeDasharray: state === 'dead' ? '4 4' : undefined,
           opacity: state === 'dead' ? 0.6 : 1,
         }}

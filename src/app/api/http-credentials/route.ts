@@ -62,13 +62,17 @@ function safeError(error: unknown) {
     .slice(0, 500)
 }
 
+// Listing is readable by anyone who can read flows: the response is redacted
+// (never the secret), and flow authors need the picker, the editor's
+// UNKNOWN_HTTP_CREDENTIAL validation, and the credentials bank to work without
+// admin rights. Create/re-verify/delete stay admin-gated below.
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   const credentials = await prisma.httpCredential.findMany({
     where: { organizationId: auth.organizationId },
     orderBy: [{ name: 'asc' }, { createdAt: 'desc' }],
   })
   return { success: true, credentials: credentials.map(redactedCredential) }
-}, { permission: 'integration.manage' })
+}, { permission: 'flow.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const payload = payloadSchema.parse(await request.json())

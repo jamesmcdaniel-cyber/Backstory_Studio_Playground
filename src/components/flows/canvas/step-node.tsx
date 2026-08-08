@@ -111,7 +111,12 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
           'dark:border-slate-700 dark:bg-slate-900',
           selected ? 'border-blue-500 ring-2 ring-blue-500/35' : 'border-slate-200 hover:border-slate-300',
           highlighted && !selected && 'border-indigo-400 ring-2 ring-indigo-400/35',
-          errorCount > 0 && 'border-red-400',
+          // During a run the whole card takes the outcome, not just the dot —
+          // a failed step is the one thing the canvas must make impossible to miss.
+          !selected && status === 'failed' && 'border-red-500 ring-2 ring-red-500/30',
+          !selected && status === 'succeeded' && 'border-emerald-500/70 ring-1 ring-emerald-500/20',
+          !selected && status === 'running' && 'border-amber-400 ring-2 ring-amber-400/30',
+          errorCount > 0 && !status && 'border-red-400',
           node.disabled && 'opacity-55',
         )}
         style={ring ? { boxShadow: `0 0 0 2px ${ring}` } : undefined}

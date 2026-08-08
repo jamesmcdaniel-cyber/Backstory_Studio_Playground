@@ -338,6 +338,11 @@ function FlowBuilder() {
   const [runs, setRuns] = useState<{ id: string; status: string; startedAt?: string }[]>([])
   const [selectedRun, setSelectedRun] = useState<FlowRunDetail | null>(null)
   const [toolCatalog, setToolCatalog] = useState<ToolCatalog>([])
+  // Loaded so validation can flag a credentialId that no longer resolves in
+  // this workspace (deleted, or pasted in from another workspace). Stays
+  // undefined until the list actually loads — validate.ts only checks ids when
+  // the context carries the list, so a failed fetch never causes false errors.
+  const [httpCredentials, setHttpCredentials] = useState<{ id: string }[] | undefined>(undefined)
   // Serialized snapshot of the last-saved state, for the unsaved-changes dot.
   const [savedSnapshot, setSavedSnapshot] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -425,6 +430,12 @@ function FlowBuilder() {
       .then((r) => r.json())
       .then((data) => {
         if (!cancelled && data.success) setToolCatalog(data.connections)
+      })
+      .catch(() => undefined)
+    fetch('/api/http-credentials', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled && data.success) setHttpCredentials(data.credentials)
       })
       .catch(() => undefined)
     // The workspace roster also loads separately — it only feeds the
@@ -1333,8 +1344,8 @@ function FlowBuilder() {
   }, [selectedNode, selectedRun])
 
   const validation = useMemo(
-    () => validateFlowGraph(graph, { agents, toolCatalog, flowId: id }),
-    [graph, agents, toolCatalog, id],
+    () => validateFlowGraph(graph, { agents, toolCatalog, httpCredentials, flowId: id }),
+    [graph, agents, toolCatalog, httpCredentials, id],
   )
 
   const issuesByNode = useMemo(() => {

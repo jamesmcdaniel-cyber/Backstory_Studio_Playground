@@ -119,12 +119,18 @@ export function unreachableInlineIds(graph: FlowGraph): string[] {
 }
 
 /** What a run did with a connection, for edge styling. */
-export type EdgeRunState = 'idle' | 'active' | 'dead'
+export type EdgeRunState = 'idle' | 'running' | 'succeeded' | 'failed' | 'dead'
+
+/** Statuses that mean a step is still in flight (or about to be). */
+const IN_FLIGHT = new Set(['running', 'queued', 'waiting', 'resumed'])
 
 /**
  * Derive per-edge run state from the per-node statuses the run stream already
  * publishes — no engine change needed. A connection into a skipped step is the
- * dead branch; a connection between two steps that both ran carried the value.
+ * dead branch. A connection whose target failed is where the run broke —
+ * distinct from the succeeded path so green and red never blur together. A
+ * plain edge out of a failed step never carried a value (only the `error`
+ * branch is taken on failure), so it goes dead rather than lighting up.
  */
 export function edgeRunStates(
   graph: FlowGraph,
@@ -132,13 +138,26 @@ export function edgeRunStates(
 ): Map<string, EdgeRunState> {
   const states = new Map<string, EdgeRunState>()
   for (const edge of outerEdges(graph)) {
-    const source = statusByNode[edge.source]
-    const target = statusByNode[edge.target]
-    if (target === 'skipped') states.set(edge.id, 'dead')
-    else if (source && target) states.set(edge.id, 'active')
-    else states.set(edge.id, 'idle')
+    states.set(edge.id, edgeRunState(edge, statusByNode[edge.source], statusByNode[edge.target]))
   }
   return states
+}
+
+function edgeRunState(edge: FlowEdge, source?: string, target?: string): EdgeRunState {
+  if (target === 'skipped') return 'dead'
+  if (!source) return 'idle'
+  if (edge.branch === 'error') {
+    // The error route is taken only when its source failed; while the source
+    // is still in flight the route's fate is unknown.
+    if (IN_FLIGHT.has(source)) return 'idle'
+    if (source !== 'failed') return 'dead'
+  } else if (source === 'failed') {
+    return 'dead'
+  }
+  if (!target) return 'idle'
+  if (target === 'failed') return 'failed'
+  if (IN_FLIGHT.has(target)) return 'running'
+  return 'succeeded'
 }
 
 /** Layout footprint of a canvas chip. Kept in step with `layout.ts` so drag

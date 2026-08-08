@@ -129,12 +129,45 @@ test('a branch head is reachable inline — branches render as their own columns
   assert.equal(isLinearRenderable(branching), true)
 })
 
-test('run state marks the taken path active and the untaken branch dead', () => {
+test('run state marks the taken path succeeded and the untaken branch dead', () => {
   const states = edgeRunStates(diamond, { trigger: 'succeeded', a: 'succeeded', b: 'succeeded', c: 'skipped' })
-  assert.equal(states.get('a->b'), 'active')
+  assert.equal(states.get('a->b'), 'succeeded')
   assert.equal(states.get('a->c'), 'dead')
   // d never ran, so nothing downstream is claimed to have carried a value.
   assert.equal(states.get('b->d'), 'idle')
+})
+
+test('the edge into a failed step goes red, and paths out of it go dead', () => {
+  const states = edgeRunStates(diamond, { trigger: 'succeeded', a: 'succeeded', b: 'failed', c: 'skipped' })
+  assert.equal(states.get('a->b'), 'failed')
+  assert.equal(states.get('a->c'), 'dead')
+  // b never delivered a value downstream, so its outgoing edge is a cut path,
+  // not an idle one — the canvas shows exactly where the run stopped.
+  assert.equal(states.get('b->d'), 'dead')
+})
+
+test('an edge into an in-flight step animates as running', () => {
+  const states = edgeRunStates(diamond, { trigger: 'succeeded', a: 'succeeded', b: 'running' })
+  assert.equal(states.get('a->b'), 'running')
+  assert.equal(states.get('b->d'), 'idle')
+})
+
+test('an error route lights up only when its source actually failed', () => {
+  const routed: FlowGraph = {
+    nodes: [trigger, agent('a'), agent('rescue'), agent('next')],
+    edges: [edge('trigger', 'a'), edge('a', 'rescue', 'error'), edge('a', 'next')],
+  }
+  const taken = edgeRunStates(routed, { trigger: 'succeeded', a: 'failed', rescue: 'succeeded' })
+  assert.equal(taken.get('a->rescue:error'), 'succeeded')
+  assert.equal(taken.get('a->next'), 'dead')
+
+  const untaken = edgeRunStates(routed, { trigger: 'succeeded', a: 'succeeded', next: 'succeeded' })
+  assert.equal(untaken.get('a->rescue:error'), 'dead')
+  assert.equal(untaken.get('a->next'), 'succeeded')
+
+  // While the source is still in flight the route's fate is unknown.
+  const inFlight = edgeRunStates(routed, { trigger: 'succeeded', a: 'running' })
+  assert.equal(inFlight.get('a->rescue:error'), 'idle')
 })
 
 test('a new step is nudged clear of whatever already occupies the spot', () => {

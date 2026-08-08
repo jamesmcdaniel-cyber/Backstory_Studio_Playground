@@ -147,6 +147,16 @@ html:root > body > .app-shell-root {
 .stagger-children > *:nth-child(11) { animation-delay: 400ms; }
 .stagger-children > *:nth-child(12) { animation-delay: 440ms; }
 
+/* Marching dashes on a canvas edge whose target step is still running.
+   Killed automatically by the reduced-motion block below. */
+@keyframes flow-edge-march {
+  to { stroke-dashoffset: -20; }
+}
+.flow-edge-running {
+  stroke-dasharray: 6 4;
+  animation: flow-edge-march 0.6s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

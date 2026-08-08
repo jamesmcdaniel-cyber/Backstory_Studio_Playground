@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useFlowImport } from '@/components/flows/use-flow-import'
+import { CredentialsBank } from '@/components/flows/credentials-bank'
 import { FlowIconInput } from '@/components/flows/flow-icon-input'
 import { FlowTemplateGallery } from '@/components/flows/flow-template-gallery'
 import type { FlowGraph } from '@/lib/flows/graph'
@@ -331,6 +332,8 @@ export default function FlowsPage() {
           {newFlowButton}
         </div>
       </div>
+
+      <CredentialsBank />
 
       {loading ? (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">

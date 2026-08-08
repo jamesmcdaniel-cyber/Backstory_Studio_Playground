@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Input } from '@/components/ui/input'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
 import { FlowTemplateCard, type FlowTemplateItem } from '@/components/templates/flow-template-card'
@@ -26,6 +29,7 @@ export function FlowTemplateGallery() {
   const router = useRouter()
   const [templates, setTemplates] = useState<FlowTemplateItem[]>([])
   const [category, setCategory] = useState('All')
+  const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   // Which template card is mid-instantiate, so only that card spins.
   const [pendingId, setPendingId] = useState<string | null>(null)
@@ -104,7 +108,23 @@ export function FlowTemplateGallery() {
   // Category chips are derived from the catalogue's real categories (sorted,
   // deduped) — so they always reflect what's actually in the library.
   const categories = ['All', ...Array.from(new Set(templates.map((t) => t.category).filter(Boolean))).sort()]
-  const visible = category === 'All' ? templates : templates.filter((t) => t.category === category)
+  // Substring search across everything a user might remember a template by —
+  // name, description, category, tags, and required integrations — so nobody
+  // pages through the library hunting for "renewal" or "slack".
+  const q = search.trim().toLowerCase()
+  const visible = templates.filter(
+    (t) =>
+      (category === 'All' || t.category === category) &&
+      (!q ||
+        [t.name, t.description, t.category, ...(t.tags ?? []), ...(t.integrations ?? [])]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)),
+  )
+  const onSearch = (value: string) => {
+    setSearch(value)
+    setPage(1)
+  }
   const { pageItems, pageCount, page: current } = paginate(visible, page, PAGE_SIZE)
 
   return (
@@ -114,6 +134,33 @@ export function FlowTemplateGallery() {
         <p className="text-sm text-muted-foreground">
           Complete pipelines, wired and explained step by step. Use one and it lands as a draft you can read before it runs.
         </p>
+      </div>
+
+      <div className="relative max-w-md">
+        <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          // type/name/autoComplete: without these, browser autofill treats a
+          // bare text input as an identity field and pre-fills the user's
+          // saved email — which silently filters the gallery to nothing.
+          type="search"
+          name="flow-template-search"
+          autoComplete="off"
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          placeholder="Search templates…"
+          aria-label="Search flow templates"
+          className="h-10 w-full pl-9 pr-9 [&::-webkit-search-cancel-button]:hidden"
+        />
+        {search && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => onSearch('')}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {categories.length > 2 && (
@@ -134,6 +181,13 @@ export function FlowTemplateGallery() {
             </button>
           ))}
         </div>
+      )}
+
+      {visible.length === 0 && (
+        <EmptyState
+          title="No templates match your search"
+          description={category === 'All' ? 'Try a different name, tag, or integration.' : 'Try a different search, or switch back to All categories.'}
+        />
       )}
 
       <StaggerReveal className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">

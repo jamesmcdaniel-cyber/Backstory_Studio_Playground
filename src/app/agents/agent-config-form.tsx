@@ -7,6 +7,7 @@ import { ChevronDown, Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-reac
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -333,6 +334,35 @@ const MEMORY_KIND_VARIANT: Record<string, 'info' | 'good' | 'warn'> = {
   suggestion: 'warn',
 }
 
+/** One learned memory — shared by the config panel's two-row preview and the full-log dialog. */
+function MemoryRow({ memory, onDelete }: { memory: AgentMemory; onDelete: (id: string) => void }) {
+  return (
+    <li className="group flex items-start gap-3 px-3 py-2 text-sm">
+      <div className="min-w-0 flex-1">
+        <div className="mb-0.5 flex items-center gap-2">
+          <Badge variant={MEMORY_KIND_VARIANT[memory.kind] ?? 'secondary'}>
+            {MEMORY_KIND_LABEL[memory.kind] ?? memory.kind}
+          </Badge>
+          <span className="truncate font-semibold text-gray-700" title={memory.title}>{memory.title}</span>
+        </div>
+        {memory.question && <p className="italic text-gray-500">{memory.question}</p>}
+        <p className="line-clamp-2 text-gray-500">{memory.content}</p>
+        {memory.lastUsedAt && (
+          <p className="mt-0.5 text-xs text-gray-400">Last used {new Date(memory.lastUsedAt).toLocaleDateString()}</p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={() => onDelete(memory.id)}
+        className="shrink-0 text-gray-400 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
+        aria-label={`Remove memory ${memory.title}`}
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </li>
+  )
+}
+
 export type AgentDraft = {
   title: string
   description: string
@@ -563,6 +593,9 @@ export function AgentConfigForm({
   const [runsLoading, setRunsLoading] = useState(false)
   const [memories, setMemories] = useState<AgentMemory[]>([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
+  // Full memory log lives in a dialog — the panel shows only the two newest
+  // entries, so a long-lived agent's memory can't crowd out the form.
+  const [showMemoryLog, setShowMemoryLog] = useState(false)
   // Other agents in the workspace, offered as run_agent targets.
   const [orgAgents, setOrgAgents] = useState<{ id: string; title: string }[]>([])
   // Published flows for the "Call flows" picker (published = runnable by agents).
@@ -1397,14 +1430,8 @@ export function AgentConfigForm({
           <div className="mb-2 flex items-center justify-between">
             <p className="eyebrow">Memory</p>
             {memories.length > 0 && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={clearAllMemory}
-                className="text-red-600 hover:text-red-700"
-              >
-                Clear all memory
+              <Button type="button" variant="ghost" size="sm" onClick={() => setShowMemoryLog(true)}>
+                View all ({memories.length})
               </Button>
             )}
           </div>
@@ -1415,34 +1442,49 @@ export function AgentConfigForm({
               Nothing learned yet — memories appear after runs complete.
             </p>
           ) : (
+            // Newest two only — the full log (and Clear all) lives in the
+            // dialog, so a long-lived agent's memory can't push the Save
+            // button out of reach.
             <ul className="divide-y rounded-lg border">
-              {memories.map((memory) => (
-                <li key={memory.id} className="group flex items-start gap-3 px-3 py-2 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-0.5 flex items-center gap-2">
-                      <Badge variant={MEMORY_KIND_VARIANT[memory.kind] ?? 'secondary'}>
-                        {MEMORY_KIND_LABEL[memory.kind] ?? memory.kind}
-                      </Badge>
-                      <span className="truncate font-semibold text-gray-700" title={memory.title}>{memory.title}</span>
-                    </div>
-                    {memory.question && <p className="italic text-gray-500">{memory.question}</p>}
-                    <p className="line-clamp-2 text-gray-500">{memory.content}</p>
-                    {memory.lastUsedAt && (
-                      <p className="mt-0.5 text-xs text-gray-400">Last used {new Date(memory.lastUsedAt).toLocaleDateString()}</p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => deleteMemory(memory.id)}
-                    className="shrink-0 text-gray-400 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
-                    aria-label={`Remove memory ${memory.title}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </li>
+              {memories.slice(0, 2).map((memory) => (
+                <MemoryRow key={memory.id} memory={memory} onDelete={deleteMemory} />
               ))}
             </ul>
           )}
+          <Dialog open={showMemoryLog} onOpenChange={setShowMemoryLog}>
+            <DialogContent className="flex max-h-[80vh] flex-col sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Agent memory</DialogTitle>
+                <DialogDescription>
+                  Everything this agent has learned across runs — {memories.length === 1 ? '1 entry' : `${memories.length} entries`}.
+                </DialogDescription>
+              </DialogHeader>
+              {memories.length === 0 ? (
+                <p className="rounded-lg border border-dashed p-3 text-sm text-gray-500">
+                  Nothing learned yet — memories appear after runs complete.
+                </p>
+              ) : (
+                <ul className="min-h-0 divide-y overflow-y-auto rounded-lg border">
+                  {memories.map((memory) => (
+                    <MemoryRow key={memory.id} memory={memory} onDelete={deleteMemory} />
+                  ))}
+                </ul>
+              )}
+              {memories.length > 0 && (
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearAllMemory}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    Clear all memory
+                  </Button>
+                </DialogFooter>
+              )}
+            </DialogContent>
+          </Dialog>
         </div>
       )}
 

@@ -11,6 +11,7 @@
  * connection config key(s) in PROVIDER_CONFIG_KEYS.
  */
 
+import { randomBytes } from 'node:crypto'
 import { type DeliveryConnection, type NangoProxy, defaultProxy, DELIVERY_TOOLS, DELIVERY_PROVIDERS } from './delivery'
 
 export type NangoToolSpec = {
@@ -407,6 +408,43 @@ const CONFLUENCE_TOOLS: NangoToolSpec[] = [
 
 // ── Google Drive (v3) ─────────────────────────────────────────────────────────
 
+/** Mime type from a filename's extension — the small set flows produce. */
+function driveMimeFromFilename(filename: string): string {
+  const ext = filename.toLowerCase().split('.').pop() ?? ''
+  const map: Record<string, string> = {
+    html: 'text/html', htm: 'text/html', txt: 'text/plain', md: 'text/markdown',
+    csv: 'text/csv', json: 'application/json', xml: 'application/xml', pdf: 'application/pdf',
+  }
+  return map[ext] ?? 'application/octet-stream'
+}
+
+/**
+ * Drive multipart upload (uploadType=multipart): a JSON metadata part carrying
+ * the filename (and folder), then the media part base64-encoded. `media`
+ * uploads can't set a name — every file lands as "Untitled" — which is why
+ * imports that fell back to raw HTTP produced nameless, unauthenticated
+ * uploads. Exported for tests.
+ */
+export function buildDriveMultipartUpload(args: { filename: string; content: string; mimeType?: string; folderId?: string }): { body: string; contentType: string } {
+  const boundary = `bs_${randomBytes(12).toString('hex')}`
+  const mimeType = args.mimeType?.trim() || driveMimeFromFilename(args.filename)
+  const metadata: Record<string, unknown> = { name: args.filename, ...(args.folderId ? { parents: [args.folderId] } : {}) }
+  const body = [
+    `--${boundary}`,
+    'Content-Type: application/json; charset=UTF-8',
+    '',
+    JSON.stringify(metadata),
+    `--${boundary}`,
+    `Content-Type: ${mimeType}`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(args.content, 'utf8').toString('base64'),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n')
+  return { body, contentType: `multipart/related; boundary="${boundary}"` }
+}
+
 const GDRIVE_TOOLS: NangoToolSpec[] = [
   {
     provider: 'google_drive', name: 'google_drive_list_files', isWrite: false,
@@ -419,6 +457,36 @@ const GDRIVE_TOOLS: NangoToolSpec[] = [
     description: 'Read a Google Drive file’s metadata (and text when exportable).',
     inputSchema: { type: 'object', properties: { fileId: { type: 'string' } }, required: ['fileId'] },
     run: (c, a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: `/drive/v3/files/${seg(a.fileId)}`, connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { fields: 'id,name,mimeType,webViewLink' } }).then((r) => r.data),
+  },
+  {
+    provider: 'google_drive', name: 'google_drive_upload_file', isWrite: true,
+    description: 'Upload a text-based file (HTML, CSV, Markdown, JSON…) to Google Drive with a real filename, optionally into a folder.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filename: { type: 'string', description: 'The file name, extension included (e.g. report.html).' },
+        content: { type: 'string', description: 'The file content as text.' },
+        mimeType: { type: 'string', description: 'Optional — inferred from the extension when omitted.' },
+        folderId: { type: 'string', description: 'Optional Drive folder id to upload into.' },
+      },
+      required: ['filename', 'content'],
+    },
+    run: async (c, a, proxy = defaultProxy()) => {
+      const filename = str(a.filename)
+      const content = typeof a.content === 'string' ? a.content : ''
+      if (!content) throw new Error('Google Drive upload needs text content — pass the file body in "content".')
+      const upload = buildDriveMultipartUpload({ filename, content, mimeType: str(a.mimeType) || undefined, folderId: str(a.folderId) || undefined })
+      const response = await proxy({
+        method: 'POST',
+        endpoint: '/upload/drive/v3/files',
+        connectionId: c.connectionId,
+        providerConfigKey: c.providerConfigKey,
+        params: { uploadType: 'multipart', fields: 'id,name,mimeType,webViewLink' },
+        headers: { 'Content-Type': upload.contentType },
+        data: upload.body,
+      })
+      return response.data
+    },
   },
 ]
 

@@ -254,3 +254,27 @@ test('figma_get_file → GET /v1/files/{key}; post_comment → POST comments wit
   assert.equal(comment.endpoint, '/v1/files/abc/comments')
   assert.equal((comment.data as { message: string }).message, 'ship it')
 })
+
+test('google drive: upload builds a multipart body with metadata name, parents, and base64 media', async () => {
+  const call = await run('google_drive_upload_file', { filename: 'report.html', content: '<h1>Brief</h1>', folderId: 'folder123' })
+  assert.equal(call.method, 'POST')
+  assert.equal(call.endpoint, '/upload/drive/v3/files')
+  assert.deepEqual(call.params, { uploadType: 'multipart', fields: 'id,name,mimeType,webViewLink' })
+  const contentType = call.headers?.['Content-Type'] ?? ''
+  const boundary = /multipart\/related; boundary="([^"]+)"/.exec(contentType)?.[1]
+  assert.ok(boundary, 'content type carries the boundary')
+  const body = String(call.data)
+  assert.ok(body.includes(`--${boundary}`))
+  assert.ok(body.includes('"name":"report.html"'), 'metadata part names the file')
+  assert.ok(body.includes('"parents":["folder123"]'), 'metadata part carries the folder')
+  assert.ok(body.includes('Content-Type: text/html'), 'mime type inferred from the extension')
+  assert.ok(body.includes(Buffer.from('<h1>Brief</h1>', 'utf8').toString('base64')), 'media part is base64')
+})
+
+test('google drive: upload defaults mime by extension and requires content', async () => {
+  const call = await run('google_drive_upload_file', { filename: 'notes.txt', content: 'plain' })
+  assert.ok(String(call.data).includes('Content-Type: text/plain'))
+  const spec = NANGO_PROVIDER_TOOLS.find((t) => t.name === 'google_drive_upload_file')!
+  assert.equal(spec.isWrite, true)
+  await assert.rejects(() => spec.run(conn, { filename: 'x.txt' }, async () => ({ data: {} })), /needs text content/)
+})

@@ -133,6 +133,7 @@ export function McpConnectionDialog({
   onSave,
   editingConnection,
   initialName,
+  returnTo = '/integrations?tab=servers',
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -140,6 +141,8 @@ export function McpConnectionDialog({
   editingConnection?: SerializedConnection | null
   /** Pre-fills the name when adding — used when a template asks for a server by name. */
   initialName?: string
+  /** Where the SSO redirect chain lands back — must be wherever this dialog is mounted. */
+  returnTo?: string
 }) {
   const [draft, setDraft] = useState<McpConnectionDraft>(emptyDraft)
   const [saving, setSaving] = useState(false)
@@ -240,7 +243,7 @@ export function McpConnectionDialog({
     const params = new URLSearchParams({
       serverUrl: draft.serverUrl.trim(),
       name: draft.name.trim(),
-      returnTo: '/integrations?tab=servers',
+      returnTo,
     })
     if (editingConnection) params.set('connectionId', editingConnection.id)
     window.location.href = `/api/mcp-connections/oauth/start?${params.toString()}`

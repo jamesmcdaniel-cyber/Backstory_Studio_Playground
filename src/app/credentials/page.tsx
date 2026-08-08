@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink, Plus, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,16 @@ import {
 import { PageHeader } from '@/components/ui/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import {
+  ConnectIntegrationDialog,
+  type ConnectableIntegration,
+} from '@/components/integrations/connect-integration-dialog'
+import {
+  McpConnectionDialog,
+  draftAuthPayload,
+  type McpConnectionDraft,
+  type SerializedConnection,
+} from '@/app/connections/mcp-connection-dialog'
 import {
   HttpCredentialDialog,
   HTTP_AUTH_OPTIONS,
@@ -52,21 +62,11 @@ type OauthRow = {
   error?: string
 }
 
-type CatalogIntegration = {
-  id: string
-  provider: string
-  name: string
-  logo?: string
-}
+type CatalogIntegration = ConnectableIntegration
 
-type McpConnection = {
-  id: string
-  provider: string | null
-  name: string
-  serverUrl: string
-  isActive: boolean
-  userId: string | null
-}
+// The list endpoint serialises the full connection (auth mode included), plus
+// userId for the personal-vs-workspace marker.
+type McpRow = SerializedConnection & { userId?: string | null }
 
 type OauthConfirm = { kind: 'rotate' | 'disconnect'; row: OauthRow }
 
@@ -97,19 +97,25 @@ export default function CredentialsPage() {
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [oauth, setOauth] = useState<OauthRow[]>([])
-  const [mcp, setMcp] = useState<McpConnection[]>([])
+  const [catalog, setCatalog] = useState<CatalogIntegration[]>([])
+  const [mcp, setMcp] = useState<McpRow[]>([])
   const [http, setHttp] = useState<HttpCredentialSummary[]>([])
 
+  const [connectOpen, setConnectOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [rotateHttpTarget, setRotateHttpTarget] = useState<HttpCredentialSummary | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<HttpCredentialSummary | null>(null)
   const [oauthConfirm, setOauthConfirm] = useState<OauthConfirm | null>(null)
   const [oauthConfirmBusy, setOauthConfirmBusy] = useState(false)
+  const [mcpDialogOpen, setMcpDialogOpen] = useState(false)
+  const [mcpEditing, setMcpEditing] = useState<McpRow | null>(null)
+  const [mcpDeleteTarget, setMcpDeleteTarget] = useState<McpRow | null>(null)
+  const [mcpBusyId, setMcpBusyId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [nango, catalog, servers, credentials] = await Promise.all([
+    const [nango, catalogData, servers, credentials] = await Promise.all([
       fetchJson('/api/nango/status'),
       fetchJson('/api/nango/integrations'),
       fetchJson('/api/mcp-connections'),
@@ -119,8 +125,9 @@ export default function CredentialsPage() {
       string,
       { provider?: string; connected?: boolean; error?: string; verifiedAt?: string }
     >
-    const integrations = Array.isArray(catalog?.integrations) ? (catalog.integrations as CatalogIntegration[]) : []
+    const integrations = Array.isArray(catalogData?.integrations) ? (catalogData.integrations as CatalogIntegration[]) : []
     const byId = new Map(integrations.map((integration) => [integration.id, integration]))
+    setCatalog(integrations)
     setOauth(
       Object.entries(connections).map(([key, status]) => ({
         key,
@@ -132,7 +139,7 @@ export default function CredentialsPage() {
         error: status.error,
       })),
     )
-    setMcp(Array.isArray(servers?.connections) ? (servers.connections as McpConnection[]) : [])
+    setMcp(Array.isArray(servers?.connections) ? (servers.connections as McpRow[]) : [])
     setHttp(Array.isArray(credentials?.credentials) ? (credentials.credentials as HttpCredentialSummary[]) : [])
     setLoading(false)
     setLoaded(true)
@@ -220,6 +227,62 @@ export default function CredentialsPage() {
     }
   }
 
+  // Catalog entries with no live connection — what the connect picker offers.
+  // A "needs reconnect" account keeps its row (and Reconnect button) above, so
+  // it stays out of the picker to avoid two competing entry points.
+  const accountIds = useMemo(() => new Set(oauth.map((row) => row.key)), [oauth])
+  const connectable = useMemo(
+    () => catalog.filter((integration) => !accountIds.has(integration.id)),
+    [accountIds, catalog],
+  )
+
+  const saveMcpConnection = async (draft: McpConnectionDraft) => {
+    // Omit blank secret fields on edit — the server preserves the stored
+    // encrypted secrets for omitted fields.
+    const payload: Record<string, unknown> = {
+      name: draft.name,
+      description: draft.description || undefined,
+      serverUrl: draft.serverUrl,
+      ...draftAuthPayload(draft),
+    }
+    if (mcpEditing) payload.id = mcpEditing.id
+
+    const response = await fetch('/api/mcp-connections', {
+      method: mcpEditing ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      writeErrorToast(data, response.status)
+      throw new Error((data as { error?: string })?.error || 'Failed to save the server.')
+    }
+    toast.success(mcpEditing ? 'Server updated.' : 'Server added.')
+    setMcpEditing(null)
+    await load()
+  }
+
+  const removeMcpConnection = async (row: McpRow) => {
+    setMcpBusyId(row.id)
+    try {
+      const response = await fetch('/api/mcp-connections', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: row.id }),
+      })
+      const data = await response.json().catch(() => null)
+      if (response.ok) {
+        toast.success(`${row.name} removed.`)
+        await load()
+      } else {
+        writeErrorToast(data, response.status)
+      }
+    } finally {
+      setMcpBusyId(null)
+      setMcpDeleteTarget(null)
+    }
+  }
+
   const connectedCount =
     oauth.filter((row) => row.connected).length +
     mcp.filter((row) => row.isActive).length +
@@ -281,15 +344,15 @@ export default function CredentialsPage() {
             title="App accounts"
             hint="OAuth accounts flows use through Tool steps. Reconnect renews expired tokens; rotate revokes them first — use it when a token may have leaked."
             action={
-              <Button asChild variant="outline" size="sm">
-                <Link href="/integrations">
-                  Connect new <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </Link>
-              </Button>
+              canManage && (
+                <Button variant="outline" size="sm" onClick={() => setConnectOpen(true)}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" /> Connect new
+                </Button>
+              )
             }
           >
             {oauth.length === 0 ? (
-              <SectionEmpty>No app accounts connected yet — connect Slack, Gmail, Salesforce and more in Integrations.</SectionEmpty>
+              <SectionEmpty>No app accounts connected yet — connect Slack, Gmail, Salesforce and more with Connect new.</SectionEmpty>
             ) : (
               oauth.map((row) => (
                 <CredentialRow
@@ -408,29 +471,128 @@ export default function CredentialsPage() {
             title="MCP servers"
             hint="Connected servers exposing tools to agents and HTTP steps."
             action={
-              <Button asChild variant="outline" size="sm">
-                <Link href="/integrations?tab=servers">
-                  Manage servers <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </Link>
-              </Button>
+              canManage && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setMcpEditing(null)
+                    setMcpDialogOpen(true)
+                  }}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" /> Add server
+                </Button>
+              )
             }
           >
             {mcp.length === 0 ? (
               <SectionEmpty>No MCP servers connected.</SectionEmpty>
             ) : (
-              mcp.map((row) => (
-                <CredentialRow
-                  key={row.id}
-                  logoSlug={row.provider ?? row.name}
-                  name={row.name}
-                  detail={hostOf(row.serverUrl) + (row.userId ? ' · personal' : '')}
-                  badge={row.isActive ? <Badge variant="good">Active</Badge> : <Badge variant="warn">Inactive</Badge>}
-                />
-              ))
+              mcp.map((row) => {
+                // Platform-managed rows (the native Backstory server) and SSO
+                // connections reconnect through the OAuth redirect; everything
+                // else re-enters its secrets in the edit dialog, which
+                // re-verifies on save.
+                const reconnectsViaOauth = Boolean(row.provider) || row.auth?.flow === 'authcode'
+                return (
+                  <CredentialRow
+                    key={row.id}
+                    logoSlug={row.provider ?? row.name}
+                    name={row.name}
+                    detail={hostOf(row.serverUrl) + (row.userId ? ' · personal' : '')}
+                    badge={
+                      row.isActive ? (
+                        <Badge variant="good">Active</Badge>
+                      ) : (
+                        <Badge variant="warn">{row.provider ? 'Needs authorization' : 'Inactive'}</Badge>
+                      )
+                    }
+                    actions={
+                      canManage && (
+                        <>
+                          {reconnectsViaOauth ? (
+                            <Button asChild variant="ghost" size="sm" title="Re-run authorization to renew the server's tokens">
+                              <a href={`/api/mcp-connections/oauth/start?connectionId=${encodeURIComponent(row.id)}&returnTo=%2Fcredentials`}>
+                                <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Reconnect
+                              </a>
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setMcpEditing(row)
+                                setMcpDialogOpen(true)
+                              }}
+                              title="Re-enter the server's credentials — saving verifies the connection"
+                            >
+                              <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Reconnect
+                            </Button>
+                          )}
+                          {/* The native Backstory server is platform-managed and can
+                              never be deleted — the API refuses too. */}
+                          {!row.provider && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() => setMcpDeleteTarget(row)}
+                              disabled={mcpBusyId === row.id}
+                              aria-label={`Delete ${row.name}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </>
+                      )
+                    }
+                  />
+                )
+              })
             )}
           </CredentialSection>
         </>
       )}
+
+      <ConnectIntegrationDialog
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+        integrations={connectable}
+        busy={nangoBusy}
+        onConnect={(integration) => void connect({ id: integration.id, name: integration.name })}
+      />
+
+      <McpConnectionDialog
+        open={mcpDialogOpen}
+        onOpenChange={(next) => {
+          setMcpDialogOpen(next)
+          if (!next) setMcpEditing(null)
+        }}
+        onSave={saveMcpConnection}
+        editingConnection={mcpEditing}
+        returnTo="/credentials"
+      />
+
+      <Dialog open={Boolean(mcpDeleteTarget)} onOpenChange={(next) => !next && setMcpDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete “{mcpDeleteTarget?.name}”?</DialogTitle>
+            <DialogDescription>
+              Agents and HTTP steps using this server's tools lose access until it is connected again.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMcpDeleteTarget(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              loading={Boolean(mcpDeleteTarget && mcpBusyId === mcpDeleteTarget.id)}
+              onClick={() => mcpDeleteTarget && void removeMcpConnection(mcpDeleteTarget)}
+            >
+              Delete server
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <HttpCredentialDialog
         open={createOpen || Boolean(rotateHttpTarget)}

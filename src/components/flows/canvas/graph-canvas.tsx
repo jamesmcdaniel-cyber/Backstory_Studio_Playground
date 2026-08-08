@@ -749,15 +749,15 @@ function GraphCanvasInner(props: GraphCanvasProps) {
       {picker && (
         <>
           <div className="absolute inset-0 z-30" onClick={() => setPicker(null)} />
+          {/* Anchored to the canvas's top-right, deliberately covering the
+              floating + button (same right-4/top-4 corner): the panel IS that
+              button's expanded state, and a fixed home means it never lands on
+              top of the nodes you're wiring. */}
           <div
             ref={pickerElRef}
             className={cn(
-              'absolute z-40 flex max-h-[72vh] w-[min(620px,calc(100%-2rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
+              'absolute right-4 top-4 z-40 flex max-h-[calc(100%-2rem)] w-[min(620px,calc(100%-2rem))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]',
             )}
-            style={{
-              left: Math.max(16, Math.min(picker.screen.x, (wrapperRef.current?.clientWidth ?? 800) - 640)),
-              top: Math.max(16, Math.min(picker.screen.y, (wrapperRef.current?.clientHeight ?? 600) - 120)),
-            }}
           >
             <FlowPicker
               mode="action"

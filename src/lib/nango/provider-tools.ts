@@ -579,25 +579,25 @@ const SLACK_TOOLS: NangoToolSpec[] = [
     provider: 'slack', name: 'slack_list_channels', isWrite: false,
     description: 'List Slack channels the connected account can access.',
     inputSchema: { type: 'object', properties: {} },
-    run: (c, _a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/conversations.list', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { limit: 100, types: 'public_channel,private_channel' } }).then((r) => r.data),
+    run: (c, _a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/conversations.list', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { limit: 100, types: 'public_channel,private_channel' } }).then((r) => slackData(r.data)),
   },
   {
     provider: 'slack', name: 'slack_read_messages', isWrite: false,
     description: 'Read recent messages from a Slack channel.',
     inputSchema: { type: 'object', properties: { channel: { type: 'string', description: 'Channel id.' }, limit: { type: 'number' } }, required: ['channel'] },
-    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/conversations.history', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { channel: str(a.channel), limit: num(a.limit, 30) } }).then((r) => r.data),
+    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/conversations.history', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { channel: str(a.channel), limit: num(a.limit, 30) } }).then((r) => slackData(r.data)),
   },
   {
     provider: 'slack', name: 'slack_search_messages', isWrite: false,
     description: 'Search messages across the connected Slack workspace.',
     inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Slack search query, e.g. "deploy in:#eng after:2026-08-01".' }, count: { type: 'number', description: 'Max results (default 20).' } }, required: ['query'] },
-    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/search.messages', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { query: str(a.query), count: num(a.count, 20) } }).then((r) => r.data),
+    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'GET', endpoint: '/search.messages', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, params: { query: str(a.query), count: num(a.count, 20) } }).then((r) => slackData(r.data)),
   },
   {
     provider: 'slack', name: 'slack_add_reaction', isWrite: true,
     description: 'Add an emoji reaction to a Slack message.',
     inputSchema: { type: 'object', properties: { channel: { type: 'string', description: 'Channel id of the message.' }, timestamp: { type: 'string', description: 'Message timestamp (ts).' }, name: { type: 'string', description: 'Emoji name without colons, e.g. thumbsup.' } }, required: ['channel', 'timestamp', 'name'] },
-    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'POST', endpoint: '/reactions.add', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { channel: str(a.channel), timestamp: str(a.timestamp), name: str(a.name).replace(/:/g, '') } }).then((r) => r.data),
+    run: (c, a, proxy = defaultProxy()) => proxy({ method: 'POST', endpoint: '/reactions.add', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { channel: str(a.channel), timestamp: str(a.timestamp), name: str(a.name).replace(/:/g, '') } }).then((r) => slackData(r.data)),
   },
   {
     provider: 'slack', name: 'slack_send_direct_message', isWrite: true,
@@ -607,9 +607,9 @@ const SLACK_TOOLS: NangoToolSpec[] = [
       // A DM posts into the user's IM conversation, which must be opened (or
       // re-opened) first — conversations.open is idempotent for an existing IM.
       const opened = await proxy({ method: 'POST', endpoint: '/conversations.open', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { users: str(a.user) } })
-      const channel = (opened.data as { channel?: { id?: string } })?.channel?.id
+      const channel = (slackData(opened.data) as { channel?: { id?: string } })?.channel?.id
       if (!channel) throw new Error('Slack did not open a direct-message conversation for that user id.')
-      return proxy({ method: 'POST', endpoint: '/chat.postMessage', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { channel, text: str(a.text) } }).then((r) => r.data)
+      return proxy({ method: 'POST', endpoint: '/chat.postMessage', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey, data: { channel, text: str(a.text) } }).then((r) => slackData(r.data))
     },
   },
 ]

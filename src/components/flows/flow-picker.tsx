@@ -352,7 +352,7 @@ export function FlowPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favorites, agents, toolCatalog, mode, searching, normalizedQuery])
 
-  const baseTitle = mode === 'trigger' ? 'Add a trigger' : 'Add an action'
+  const baseTitle = mode === 'trigger' ? 'Add a trigger' : 'Node Panel'
   const drillLabel = drill?.kind === 'group' ? drill.group.label : drill?.kind === 'connector' ? drill.provider.brand.label : null
   const drillSubtitle =
     drill?.kind === 'group'

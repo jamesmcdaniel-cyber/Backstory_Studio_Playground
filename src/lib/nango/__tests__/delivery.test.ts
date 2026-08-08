@@ -41,6 +41,18 @@ test('slack_post_message tool passes thread_ts through', async () => {
   assert.equal((calls[0].data as { thread_ts?: string }).thread_ts, '9.9')
 })
 
+test('slackPostMessage throws on Slack ok:false instead of returning it as success', async () => {
+  // Slack's Web API returns HTTP 200 with { ok: false, error } on failure —
+  // a channel_not_found must fail the step, not count as a successful run.
+  const proxy = async () => ({
+    data: { ok: false, error: 'channel_not_found', warning: 'missing_charset', response_metadata: { warnings: ['missing_charset'] } },
+  })
+  await assert.rejects(
+    () => slackPostMessage(connection, { channel: '#nope', text: 'hi' }, proxy),
+    /channel_not_found/,
+  )
+})
+
 test('gmailSendEmail carries Cc and Bcc headers', async () => {
   const { calls, proxy } = recordingProxy()
   await gmailSendEmail(

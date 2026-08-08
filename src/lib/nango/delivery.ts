@@ -140,6 +140,26 @@ export async function resolveNangoConnection(
 
 // ── Adapters ─────────────────────────────────────────────────────────────────
 
+/**
+ * Slack's Web API reports failure as HTTP 200 + { ok: false, error } — without
+ * this guard a channel_not_found flows downstream as a "successful" payload
+ * and the run counts as succeeded. Every Slack call unwraps through here so
+ * an API-level rejection is a real thrown error.
+ */
+export function slackData(data: unknown): unknown {
+  if (data && typeof data === 'object' && !Array.isArray(data) && (data as { ok?: unknown }).ok === false) {
+    const code = String((data as { error?: unknown }).error ?? 'unknown_error')
+    const hint =
+      code === 'channel_not_found'
+        ? ' — the connected Slack workspace has no such channel; check the name, or invite the app to a private channel.'
+        : code === 'not_in_channel'
+          ? ' — invite the app to the channel first.'
+          : ''
+    throw new Error(`Slack rejected the call: ${code}${hint}`)
+  }
+  return data
+}
+
 export async function slackPostMessage(
   connection: DeliveryConnection,
   args: { channel: string; text: string; thread_ts?: string },
@@ -152,7 +172,7 @@ export async function slackPostMessage(
     providerConfigKey: connection.providerConfigKey,
     data: { channel: args.channel, text: args.text, ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}) },
   })
-  return response.data
+  return slackData(response.data)
 }
 
 /**

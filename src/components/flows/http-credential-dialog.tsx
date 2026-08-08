@@ -79,6 +79,7 @@ export function HttpCredentialDialog({
   requestMethod,
   initialAuthType = 'basic',
   editableUrl = false,
+  rotateCredential,
   onSaved,
 }: {
   open: boolean
@@ -93,6 +94,14 @@ export function HttpCredentialDialog({
    * to bind the credential's host to.
    */
   editableUrl?: boolean
+  /**
+   * Rotate mode: replace an existing credential's secrets in place. Name and
+   * auth type prefill from the stored row, secrets always start empty (they are
+   * never sent back to the browser), and the save carries the row's id so the
+   * live-verified new secrets overwrite the old ones — every flow step keeps
+   * pointing at the same credential.
+   */
+  rotateCredential?: HttpCredentialSummary | null
   onSaved: (credential: HttpCredentialSummary) => void
 }) {
   const [name, setName] = useState('')
@@ -112,10 +121,10 @@ export function HttpCredentialDialog({
 
   useEffect(() => {
     if (!open) return
-    setAuthType(initialAuthType)
+    setAuthType(rotateCredential?.authType ?? initialAuthType)
     setConfig({})
-    setUrlDraft(requestUrl)
-  }, [initialAuthType, open, requestUrl])
+    setUrlDraft(rotateCredential ? `https://${rotateCredential.allowedHost}/` : requestUrl)
+  }, [initialAuthType, open, requestUrl, rotateCredential])
 
   // Name defaults to "<host> <method>" and follows the host until the user
   // types their own — in editable mode the host isn't known when the dialog
@@ -123,8 +132,12 @@ export function HttpCredentialDialog({
   const [nameTouched, setNameTouched] = useState(false)
   useEffect(() => {
     if (!open || nameTouched) return
+    if (rotateCredential) {
+      setName(rotateCredential.name)
+      return
+    }
     setName(host ? `${host} ${HTTP_AUTH_OPTIONS.find((option) => option.value === authType)?.label || 'credential'}` : '')
-  }, [authType, host, nameTouched, open])
+  }, [authType, host, nameTouched, open, rotateCredential])
   useEffect(() => {
     if (!open) setNameTouched(false)
   }, [open])
@@ -141,14 +154,21 @@ export function HttpCredentialDialog({
       const response = await fetch('/api/http-credentials', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, authType, url, method: requestMethod, config }),
+        body: JSON.stringify({
+          ...(rotateCredential ? { id: rotateCredential.id } : {}),
+          name,
+          authType,
+          url,
+          method: requestMethod,
+          config,
+        }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
         toast.error(data.error || 'The API could not verify these credentials.')
         return
       }
-      toast.success('Credential verified and saved.')
+      toast.success(rotateCredential ? 'New secrets verified — credential rotated.' : 'Credential verified and saved.')
       onSaved(data.credential)
       onOpenChange(false)
     } finally {
@@ -165,9 +185,11 @@ export function HttpCredentialDialog({
               <Globe2 className="h-5 w-5" />
             </span>
             <div>
-              <DialogTitle>Set up HTTP credential</DialogTitle>
+              <DialogTitle>{rotateCredential ? `Rotate “${rotateCredential.name}”` : 'Set up HTTP credential'}</DialogTitle>
               <DialogDescription className="mt-1">
-                Verify once, then reuse it in HTTP nodes for the same API host.
+                {rotateCredential
+                  ? 'Enter fresh secrets — they are verified live, then replace the stored ones. Every step using this credential keeps working.'
+                  : 'Verify once, then reuse it in HTTP nodes for the same API host.'}
               </DialogDescription>
             </div>
           </div>

@@ -21,6 +21,8 @@ import {
 } from '@/components/flows/http-credential-dialog'
 import { KnowledgePanel } from '@/app/agents/knowledge-panel'
 import { AgentHttpEndpointDialog } from '@/components/agents/http-endpoint-dialog'
+import { QuickConfigChip } from '@/components/agents/tool-quick-config-popover'
+import { parseAgentToolSettings, quickConfigForChip, type ToolScopeOption } from '@/lib/connectors/tool-quick-config'
 import { endpointParams, endpointToolName, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { cn } from '@/lib/utils'
 import { DAY_LABELS, cadenceOf, cronToTime, daysFromCron, dowCron } from '@/lib/scheduling/cadence'
@@ -338,6 +340,8 @@ export type AgentDraft = {
   model: string
   priority: string
   integrations: string[]
+  /** Per-tool scopes (Slack channels, GitHub repos…) keyed by quick-config key. */
+  toolSettings?: Record<string, ToolScopeOption[]>
   skills: string[]
   icon: string
   folder: string
@@ -400,6 +404,7 @@ const emptyDraft: AgentDraft = {
   model: 'claude-sonnet-5',
   priority: 'medium',
   integrations: [],
+  toolSettings: {},
   skills: [],
   icon: '🤖',
   folder: '',
@@ -676,6 +681,7 @@ export function AgentConfigForm({
       ...source,
       instructions: source.instructions || source.objective || '',
       integrations: source.integrations || [],
+      toolSettings: parseAgentToolSettings((source as { toolSettings?: unknown }).toolSettings),
       skills: source.skills || [],
       icon: source.icon || emptyDraft.icon,
       folder: source.folder || '',
@@ -942,6 +948,27 @@ export function AgentConfigForm({
               <div className="flex flex-wrap gap-2">
                 {availableIntegrations.tools.map((t) => {
                   const selected = draft.integrations.includes(t.key)
+                  // Tools with a natural resource scope (Slack channels, GitHub
+                  // repos…) get a gear popover on the chip that fetches the live
+                  // options and restricts the agent to a chosen subset.
+                  const quickConfig = quickConfigForChip(t.key)
+                  if (quickConfig) {
+                    return (
+                      <QuickConfigChip
+                        key={t.key}
+                        label={t.label}
+                        slug={t.slug}
+                        connected={t.connected}
+                        selected={selected}
+                        config={quickConfig}
+                        value={draft.toolSettings?.[quickConfig.key] ?? []}
+                        onToggle={() => toggleIntegration(t.key)}
+                        onValueChange={(value) =>
+                          setDraft({ ...draft, toolSettings: { ...(draft.toolSettings ?? {}), [quickConfig.key]: value } })
+                        }
+                      />
+                    )
+                  }
                   return (
                     <button
                       key={t.key}

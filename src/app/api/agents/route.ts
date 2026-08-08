@@ -43,6 +43,11 @@ const agentSchema = z.object({
   model: z.string().default(DEFAULT_AGENT_MODEL),
   priority: z.string().default('medium'),
   integrations: z.array(z.string()).default([]),
+  // Per-tool scopes (Slack channels, GitHub repos…) chosen in the chip popover,
+  // keyed by quick-config key. Empty list = unrestricted.
+  toolSettings: z
+    .record(z.string(), z.array(z.object({ id: z.string().min(1), label: z.string() })).max(200))
+    .optional(),
   skills: z.array(z.string()).default([]),
   folder: z.string().trim().max(60).nullish(),
   visibility: z.enum(['shared', 'private']).default('shared'),
@@ -112,6 +117,7 @@ async function resolveClonedAgent(
     model: base.model,
     priority: base.priority,
     integrations: base.integrations,
+    toolSettings: base.toolSettings,
     skills: base.skills,
     folder: base.folder,
     visibility: base.visibility === 'private' ? 'private' : 'shared',
@@ -173,6 +179,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         description: data.description,
         model: data.model,
         integrations: data.integrations,
+        toolSettings: data.toolSettings ?? {},
         skills: data.skills,
         icon: data.icon || '',
         allowSubagents: data.allowSubagents === true,
@@ -218,6 +225,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(body.description !== undefined && { description: body.description }),
         ...(body.model !== undefined && { model: body.model }),
         ...(body.integrations !== undefined && { integrations: body.integrations }),
+        ...(body.toolSettings !== undefined && { toolSettings: body.toolSettings }),
         ...(body.skills !== undefined && { skills: body.skills }),
         ...(body.icon !== undefined && { icon: body.icon }),
         ...(body.allowSubagents !== undefined && { allowSubagents: body.allowSubagents }),

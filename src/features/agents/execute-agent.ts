@@ -24,6 +24,7 @@ import {
   type ToolPlaneGroup,
 } from './tool-planes'
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
+import { parseAgentToolSettings, scopeDescriptionSuffix, toolScopeViolation } from '@/lib/connectors/tool-quick-config'
 import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
@@ -771,6 +772,15 @@ export async function runAgentExecution(
     // Configured API endpoints (agent setup → HTTP API) become named tools.
     const httpEndpoints = parseAgentHttpEndpoints(agentMetadata.httpEndpoints)
     const { tools, bindings, unavailable } = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints)
+    // Per-tool scopes (agent setup → chip gear): tell the model up front which
+    // channels/repos are permitted, so it targets allowed values instead of
+    // discovering the hard guard below by being blocked.
+    const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
+    for (const tool of tools) {
+      const binding = bindings.get(tool.name)
+      const suffix = binding ? scopeDescriptionSuffix(binding.provider, toolSettings) : null
+      if (suffix) tool.description = `${tool.description} ${suffix}`
+    }
     // Community skills are public-library rows; resolve any attached ids that
     // aren't built in and compose them the same way. Best-effort.
     // systemPrisma: public community skill library — cross-org by design, same
@@ -1208,6 +1218,25 @@ export async function runAgentExecution(
             })
             await recordEvent(execution.id, step.id, 'tool.replayed', { name: step.node })
             results.push({ toolCallId: call.id, content: JSON.stringify(cached) })
+            continue
+          }
+
+          // Per-tool scope guard: a call targeting a channel/repo outside the
+          // agent's configured allow-list is refused BEFORE the approval gate,
+          // so an out-of-scope write is never even queued for a human decision.
+          const scopeViolation = toolScopeViolation({
+            provider: binding.provider,
+            toolName: binding.toolName,
+            args: call.input,
+            settings: toolSettings,
+          })
+          if (scopeViolation) {
+            await prisma.workflowStep.update({
+              where: { id: step.id },
+              data: { status: 'failed', error: jsonValue({ message: scopeViolation }), completedAt: new Date() },
+            })
+            await recordEvent(execution.id, step.id, 'tool.blocked', { name: step.node, reason: scopeViolation })
+            results.push({ toolCallId: call.id, content: JSON.stringify({ error: scopeViolation }), isError: true })
             continue
           }
 

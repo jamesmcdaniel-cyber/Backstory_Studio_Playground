@@ -1,4 +1,5 @@
 import { readAgentMetadata } from '@/lib/agents/metadata'
+import { parseAgentToolSettings } from '@/lib/connectors/tool-quick-config'
 import { parseAgentHttpEndpoints } from '@/lib/integrations/http-endpoints'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 
@@ -30,6 +31,7 @@ export function serializeAgent(agent: {
     goal: agent.goal || null,
     model: metadata.model || DEFAULT_AGENT_MODEL,
     integrations: metadata.integrations || [],
+    toolSettings: parseAgentToolSettings(metadata.toolSettings),
     skills: metadata.skills || [],
     icon: metadata.icon || '',
     allowSubagents: (metadata as { allowSubagents?: boolean }).allowSubagents === true,

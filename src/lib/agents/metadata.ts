@@ -34,6 +34,9 @@ export type AgentMetadata = {
   httpEndpoints?: unknown[]
   /** AI-proposed goal surfaced from a run's reflection pass, pending user confirmation. */
   suggestedGoal?: string
+  /** Per-tool scopes (Slack channels, GitHub repos…) keyed by quick-config key.
+   *  Validated by parseAgentToolSettings on read; empty list = unrestricted. */
+  toolSettings?: unknown
 }
 
 /** Parse an unknown JSON value into a typed AgentMetadata (never throws). */

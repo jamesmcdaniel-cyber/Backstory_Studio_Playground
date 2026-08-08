@@ -193,7 +193,11 @@ async function resolveValidatedGraph(
       : currentGraph
   const graph = flowGraphSchema.parse(source)
   const usedConnectionIds = Array.from(new Set(graph.nodes.flatMap((node) =>
-    node.type === 'tool' || node.type === 'http' ? [node.data.connectionId] : [],
+    node.type === 'tool' || node.type === 'http'
+      ? [node.data.connectionId]
+      : node.type === 'agent'
+        ? node.data.toolConnectionIds ?? []
+        : [],
   ).filter((id): id is string => Boolean(id))))
   const usedHttpCredentialIds = Array.from(new Set(graph.nodes.flatMap((node) =>
     node.type === 'http' ? [node.data.credentialId] : [],

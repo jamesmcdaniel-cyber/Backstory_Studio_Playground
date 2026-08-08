@@ -58,7 +58,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const graph = flowGraphSchema.parse(existing.graph)
   const usedConnectionIds = Array.from(new Set(graph.nodes.flatMap((node) =>
-    node.type === 'tool' || node.type === 'http' ? [node.data.connectionId] : [],
+    node.type === 'tool' || node.type === 'http'
+      ? [node.data.connectionId]
+      : node.type === 'agent'
+        ? node.data.toolConnectionIds ?? []
+        : [],
   ).filter((id): id is string => Boolean(id))))
   const usedHttpCredentialIds = Array.from(new Set(graph.nodes.flatMap((node) =>
     node.type === 'http' ? [node.data.credentialId] : [],

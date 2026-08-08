@@ -125,3 +125,26 @@ test('LIST_INTO_SINGLE warns when a list-producing step feeds a run-once http/to
   const fixedResult = validateFlowGraph(fixed, { agents: [{ id: 'agent-1' }] })
   assert.ok(!fixedResult.issues.some((issue) => issue.code === 'LIST_INTO_SINGLE'))
 })
+
+test('agent toolConnectionIds validate against the catalog like tool steps do', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a', type: 'agent', data: { agentId: 'agent-1', input: 'Go', toolConnectionIds: ['nango:slack', 'mcp-dead'] } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'a' }],
+  }
+  const result = validateFlowGraph(graph, {
+    agents: [{ id: 'agent-1' }],
+    toolCatalog: [{ id: 'nango:slack', tools: [{ name: 'slack_send' }] }, { id: 'mcp-dead', toolsError: 'unreachable' }],
+  })
+  assert.ok(result.errors.some((issue) => issue.code === 'AGENT_TOOL_CONNECTION_UNAVAILABLE' && issue.nodeId === 'a'))
+  assert.ok(!result.issues.some((issue) => issue.code === 'UNKNOWN_AGENT_TOOL_CONNECTION'))
+
+  const missing = validateFlowGraph(graph, { agents: [{ id: 'agent-1' }], toolCatalog: [{ id: 'nango:slack' }] })
+  assert.ok(missing.errors.some((issue) => issue.code === 'UNKNOWN_AGENT_TOOL_CONNECTION' && issue.nodeId === 'a'))
+
+  // No catalog in context (draft-time light validation): skipped entirely.
+  const light = validateFlowGraph(graph, { agents: [{ id: 'agent-1' }] })
+  assert.ok(!light.issues.some((issue) => issue.code.includes('AGENT_TOOL')))
+})

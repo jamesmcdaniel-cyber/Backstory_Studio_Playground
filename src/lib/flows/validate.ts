@@ -399,6 +399,18 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       if (!node.data.input?.trim()) {
         add(issues, 'warning', 'EMPTY_AGENT_INPUT', `${nodeLabel(node)} has an empty message.`, node.id)
       }
+      // Step-granted tool connections get the same existence/health checks as
+      // tool steps — an agent whose prompt assumes tools it can't actually
+      // reach produces confident hallucinated output, not an error.
+      if (context.toolCatalog) {
+        for (const grantedId of node.data.toolConnectionIds ?? []) {
+          if (!connectionIds.has(grantedId)) {
+            add(issues, 'error', 'UNKNOWN_AGENT_TOOL_CONNECTION', `${nodeLabel(node)} grants the agent a tool connection that is not available — re-pick it under Tools.`, node.id)
+          } else if (toolErrorsByConnection.get(grantedId)) {
+            add(issues, 'error', 'AGENT_TOOL_CONNECTION_UNAVAILABLE', `${nodeLabel(node)} grants the agent a connection that can't be reached — reconnect it in Integrations.`, node.id)
+          }
+        }
+      }
     }
 
     if (node.type === 'tool') {

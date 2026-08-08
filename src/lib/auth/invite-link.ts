@@ -1,5 +1,11 @@
 import { validatedReturnPath } from './return-path'
 
+export function invitationMatchesIdentity(invitedEmail: string, verifiedEmail: string | null | undefined): boolean {
+  const invited = invitedEmail.trim().toLowerCase()
+  const verified = verifiedEmail?.trim().toLowerCase()
+  return Boolean(invited && verified && invited === verified)
+}
+
 /** The invitation acceptance URL. `next` (validated same-origin) is where
  *  acceptance lands the recipient — an invite sent from a jam points at that
  *  flow, so joining a workspace and arriving where you were invited is one

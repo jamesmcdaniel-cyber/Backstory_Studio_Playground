@@ -2,7 +2,7 @@
 
 ## Database roles and RLS
 
-`DATABASE_URL` must use a non-owner PostgreSQL role without `BYPASSRLS`. `SYSTEM_DATABASE_URL` is reserved for migrations, auth bootstrap, scheduled cross-tenant maintenance, SCIM/API-key tenant resolution, exports, and deletion. Set `DATABASE_RLS_ENABLED=true` only after deploying the RLS migration and validating both connections. The app sets `app.organization_id` with `SET LOCAL` inside transactions; missing or conflicting tenant context fails closed.
+`DATABASE_URL` must use a non-owner PostgreSQL role without `BYPASSRLS`. `SYSTEM_DATABASE_URL` must use a distinct privileged role and is reserved for migrations, auth bootstrap, scheduled cross-tenant maintenance, SCIM/API-key tenant resolution, exports, and deletion. Production requires `DATABASE_RLS_ENABLED=true` and refuses to boot when the roles are absent or share a username. Deploy the RLS migration and validate both connections before rolling out this build. The app sets `app.organization_id` with `SET LOCAL` inside transactions; missing or conflicting tenant context fails closed.
 
 Validate in staging by creating two organizations, writing one flow per organization, setting `app.organization_id` to the first organization, and verifying direct SQL cannot select or mutate the second. Repeat for every table listed in the RLS migration and its relation-owned child tables.
 

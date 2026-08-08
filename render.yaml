@@ -48,9 +48,19 @@ services:
       # pooler's own client ceiling once multiplied by numInstances).
       - key: DATABASE_URL
         sync: false
+      # Distinct privileged role used only by explicitly enumerated worker/system paths.
+      - key: SYSTEM_DATABASE_URL
+        sync: false
+      - key: DATABASE_RLS_ENABLED
+        value: "true"
       - key: DIRECT_URL
         sync: false
       - key: ENCRYPTION_KEY
+        sync: false
+      # Separately container-isolated Python execution plane.
+      - key: PYTHON_RUNNER_URL
+        sync: false
+      - key: PYTHON_RUNNER_TOKEN
         sync: false
       # Model provider (runs execute here) — Anthropic (Claude).
       - key: ANTHROPIC_API_KEY

@@ -10,11 +10,12 @@ if (TEST_DB) {
   let prisma: any
   let isAllowedEmail: any
   let allowedDomainOrg: any
+  let isIdentityAdmitted: any
   const ids: Record<string, string> = {}
 
   before(async () => {
     ;({ prisma } = await import('@/lib/prisma'))
-    ;({ isAllowedEmail, allowedDomainOrg } = await import('@/lib/auth/allowed-domain'))
+    ;({ isAllowedEmail, allowedDomainOrg, isIdentityAdmitted } = await import('@/lib/auth/allowed-domain'))
 
     const stamp = Date.now()
     const org = await prisma.organization.create({
@@ -53,6 +54,21 @@ if (TEST_DB) {
   test('lookalike domains do not inherit access', async () => {
     assert.equal(await isAllowedEmail(`person@${ids.activeDomain}.attacker.example`), false)
     assert.equal(await isAllowedEmail('person@people.ai.attacker.example'), false)
+  })
+
+  test('central admission allows an exact pending invite but refuses other identities', async () => {
+    const email = `invitee-${Date.now()}@unlisted.example`
+    await prisma.invitation.create({
+      data: {
+        organizationId: ids.org,
+        email,
+        role: 'USER',
+        tokenHash: crypto.randomUUID(),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    })
+    assert.equal(await isIdentityAdmitted(email, crypto.randomUUID()), true)
+    assert.equal(await isIdentityAdmitted(`other-${email}`, crypto.randomUUID()), false)
   })
 
   test('allowedDomainOrg returns the shared workspace, and null for company domains', async () => {

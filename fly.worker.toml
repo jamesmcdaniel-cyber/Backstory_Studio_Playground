@@ -16,7 +16,8 @@
 # (src/lib/workers/assert-env.ts) enforces these, so a gap fails at deploy
 # time instead of at a user's run:
 #   fatal (worker refuses to boot):
-#     REDIS_URL DATABASE_URL ENCRYPTION_KEY ANTHROPIC_API_KEY
+#     REDIS_URL DATABASE_URL SYSTEM_DATABASE_URL ENCRYPTION_KEY ANTHROPIC_API_KEY
+#     PYTHON_RUNNER_URL PYTHON_RUNNER_TOKEN
 #   warned (capability silently degrades without them):
 #     SENTRY_DSN            — crashes/dead-letters console-only otherwise
 #     NANGO_SECRET_KEY      — integration tools in flows fail
@@ -42,6 +43,7 @@ primary_region = "iad"
 [env]
   NODE_ENV = "production"
   EXECUTION_MODE = "queue"
+  DATABASE_RLS_ENABLED = "true"
   WORKER_PORT = "3002"
   # Per-worker, PER-QUEUE concurrency; the runtime starts four queues, so
   # in-flight jobs per machine ≈ 4x this. Size DATABASE_URL's connection_limit

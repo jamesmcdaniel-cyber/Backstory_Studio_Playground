@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildInviteLink } from '../invite-link'
+import { buildInviteLink, invitationMatchesIdentity } from '../invite-link'
 
 test('buildInviteLink points at the invite page and carries a safe next path', () => {
   assert.equal(buildInviteLink('https://app.test', 'tok'), 'https://app.test/invite/tok')
@@ -17,4 +17,10 @@ test('buildInviteLink drops an unsafe next instead of forwarding it', () => {
 
 test('buildInviteLink normalizes a trailing slash on the base', () => {
   assert.equal(buildInviteLink('https://app.test/', 'tok'), 'https://app.test/invite/tok')
+})
+
+test('invitation acceptance is bound to the verified recipient email', () => {
+  assert.equal(invitationMatchesIdentity(' Person@Example.com ', 'person@example.com'), true)
+  assert.equal(invitationMatchesIdentity('person@example.com', 'attacker@example.com'), false)
+  assert.equal(invitationMatchesIdentity('person@example.com', null), false)
 })

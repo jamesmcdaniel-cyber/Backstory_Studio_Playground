@@ -694,7 +694,35 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     if (!perItem) continue
     if (!perItem.over?.trim()) {
       add(issues, 'error', 'MISSING_PERITEM_SOURCE', `${nodeLabel(node)} runs once per item but has no list to process.`, node.id)
+      continue
     }
+    // A per-item step whose config never mentions the current item makes N
+    // identical calls — the hardcoded-ID bug (a Slack read wired per-account
+    // but pinned to one channel). `over` itself is excluded: it names the
+    // list, not the item. {{input}} counts — inside a fan-out it IS the item.
+    const { perItem: _overOnly, ...restData } = node.data as Record<string, unknown>
+    const rendered = JSON.stringify(restData)
+    if (!/\{\{\s*(item|input|loop)\s*[.}]/.test(rendered)) {
+      add(issues, 'warning', 'PER_ITEM_STATIC_ARGS', `${nodeLabel(node)} runs once per item but never uses the current item — every run will be identical. Pick a value from "Current item" in the data menu.`, node.id)
+    }
+  }
+
+  // List-shaped output consumed whole by a run-once side-effecting step: the
+  // upstream fans out per item (or is a loop), the downstream http/tool fires
+  // once with the whole array stuffed into its config. Agents are exempt —
+  // aggregating all items into one prompt is a deliberate, common pattern.
+  const listProducerIds = new Set(
+    graph.nodes
+      .filter((node) => node.type === 'loop' || Boolean((node.data as { perItem?: { over?: string } }).perItem?.over?.trim()))
+      .map((node) => node.id),
+  )
+  for (const edge of graph.edges) {
+    if (!listProducerIds.has(edge.source)) continue
+    const target = byId.get(edge.target)
+    if (!target || (target.type !== 'http' && target.type !== 'tool')) continue
+    if ((target.data as { perItem?: { over?: string } }).perItem?.over?.trim()) continue
+    const source = byId.get(edge.source)
+    add(issues, 'warning', 'LIST_INTO_SINGLE', `${nodeLabel(source)} produces a list, but ${nodeLabel(target)} runs only once over the whole thing — turn on "run once per item" on ${nodeLabel(target)} if you meant one run per item.`, target.id)
   }
 
   validateVariableNodes(graph, issues)

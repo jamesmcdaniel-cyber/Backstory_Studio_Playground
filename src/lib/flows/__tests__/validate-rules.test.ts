@@ -79,3 +79,49 @@ test('TOKEN_UNKNOWN_VAR flags variables no step initializes', () => {
   assert.ok(result.errors.some((issue) => issue.code === 'TOKEN_UNKNOWN_VAR' && issue.nodeId === 'a' && /cuont/.test(issue.message)))
   assert.equal(result.errors.filter((issue) => issue.code === 'TOKEN_UNKNOWN_VAR').length, 1)
 })
+
+test('PER_ITEM_STATIC_ARGS warns when a per-item step never uses the current item', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'static', type: 'tool', data: { connectionId: 'c1', toolName: 'read_channel', args: '{"channel":"D095KBU0KNZ"}', perItem: { over: '{{trigger.input.accounts}}' } } },
+      { id: 'mapped', type: 'tool', data: { connectionId: 'c1', toolName: 'read_channel', args: '{"channel":"{{item.slackChannelId}}"}', perItem: { over: '{{trigger.input.accounts}}' } } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'static' },
+      { id: 'e2', source: 'static', target: 'mapped' },
+    ],
+  }
+  const result = validateFlowGraph(graph)
+  assert.ok(result.warnings.some((issue) => issue.code === 'PER_ITEM_STATIC_ARGS' && issue.nodeId === 'static'))
+  assert.ok(!result.issues.some((issue) => issue.code === 'PER_ITEM_STATIC_ARGS' && issue.nodeId === 'mapped'))
+})
+
+test('LIST_INTO_SINGLE warns when a list-producing step feeds a run-once http/tool step', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'files', type: 'code', data: { language: 'javascript', mode: 'all', code: 'return input', input: '{{item}}', perItem: { over: '{{trigger.input.accounts}}' } } },
+      { id: 'upload', type: 'http', data: { method: 'POST', url: 'https://www.googleapis.com/upload/drive/v3/files', credentialId: 'cred-1', body: '{{step.files.output}}' } },
+      { id: 'summarize', type: 'agent', data: { agentId: 'agent-1', input: 'Summarize {{step.files.output}}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'files' },
+      { id: 'e2', source: 'files', target: 'upload' },
+      { id: 'e3', source: 'upload', target: 'summarize' },
+    ],
+  }
+  const result = validateFlowGraph(graph, { agents: [{ id: 'agent-1' }] })
+  assert.ok(result.warnings.some((issue) => issue.code === 'LIST_INTO_SINGLE' && issue.nodeId === 'upload'))
+  // Agents aggregate deliberately (summaries over all items) — never flagged.
+  assert.ok(!result.issues.some((issue) => issue.code === 'LIST_INTO_SINGLE' && issue.nodeId === 'summarize'))
+
+  const fixed: FlowGraph = {
+    ...graph,
+    nodes: graph.nodes.map((n) =>
+      n.id === 'upload' ? { ...n, data: { ...n.data, perItem: { over: '{{step.files.output}}' } } } : n,
+    ) as FlowGraph['nodes'],
+  }
+  const fixedResult = validateFlowGraph(fixed, { agents: [{ id: 'agent-1' }] })
+  assert.ok(!fixedResult.issues.some((issue) => issue.code === 'LIST_INTO_SINGLE'))
+})

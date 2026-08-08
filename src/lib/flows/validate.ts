@@ -115,6 +115,11 @@ function hasTemplate(value: string | undefined): boolean {
   return Boolean(value?.includes('{{'))
 }
 
+// Import-skeleton placeholders: YOUR_ACCOUNT-style tokens and <angle-bracket>
+// fill-ins. Case-sensitive on the YOUR_ prefix (real hosts are lowercase);
+// the angle form requires a letter start so JSX-ish content can't match.
+const PLACEHOLDER_RE = /YOUR_[A-Z][A-Z0-9_]*|<[a-z][a-z0-9 _-]*>/
+
 function validateHttpUrl(issues: FlowValidationIssue[], value: string, nodeId: string) {
   if (!value.trim()) {
     add(issues, 'error', 'MISSING_HTTP_URL', 'HTTP request needs a URL.', nodeId)
@@ -429,6 +434,28 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
 
     if (node.type === 'http') {
       validateHttpUrl(issues, node.data.url, node.id)
+      // Placeholder skeletons: the n8n importer deliberately emits
+      // YOUR_ACCOUNT-style hosts when it can't map a credentialed app node.
+      // They parse as valid URLs, "succeed" into fail-soft paths downstream,
+      // and quietly produce empty data — block them loudly instead.
+      if (!hasTemplate(node.data.url) && PLACEHOLDER_RE.test(node.data.url)) {
+        add(issues, 'error', 'PLACEHOLDER_VALUE', `${nodeLabel(node)} still has a placeholder in its URL — replace it with your real account address.`, node.id)
+      }
+      // Flow data pasted into a quoted SQL literal: one apostrophe in the data
+      // breaks the statement, and %/_ wildcards fuzz the match. The SQL APIs
+      // this pattern targets (Snowflake &c.) all take bind variables.
+      const sqlField = (() => {
+        const parsed = parseObjectJson(node.data.body)
+        if (!parsed) return undefined
+        for (const key of ['statement', 'sql', 'query']) {
+          const value = parsed[key]
+          if (typeof value === 'string') return value
+        }
+        return undefined
+      })()
+      if (sqlField && /'[^']*\{\{[^}]+\}\}[^']*'/.test(sqlField)) {
+        add(issues, 'warning', 'SQL_TOKEN_IN_LITERAL', `${nodeLabel(node)} pastes flow data directly into a SQL string — a quote in the data breaks the query. Use the API's bind variables instead.`, node.id)
+      }
       // No zero-auth requests: every HTTP step must authenticate, either by
       // reusing a connected integration or with a stored credential. When the
       // URL points at a provider we recognize, the message says whether that
@@ -642,6 +669,13 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
 
     if (node.type === 'code' && !node.data.code.trim()) {
       add(issues, 'error', 'EMPTY_CODE', `${nodeLabel(node)} needs code to run.`, node.id)
+    }
+
+    // The importer's passthrough stub for an unmappable n8n node: it "runs"
+    // by returning its input unchanged, which silently defeats whatever the
+    // original node did. Surface it as a blocker until finished or removed.
+    if (node.type === 'code' && node.data.code.trimStart().startsWith('// TODO (imported from n8n')) {
+      add(issues, 'error', 'PLACEHOLDER_VALUE', `${nodeLabel(node)} is an imported stub that passes data through unchanged — finish it or delete it.`, node.id)
     }
 
     if (node.type === 'subflow') {

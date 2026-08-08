@@ -124,7 +124,6 @@ const edgeTypes = { step: StepEdge }
 
 /** Where an insert picker is open, and what it will do on pick. */
 type PickerState = {
-  screen: { x: number; y: number }
   position: NodePosition
   target:
     | { kind: 'handle'; sourceId: string; branch?: string }
@@ -178,7 +177,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   } = props
 
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition, flowToScreenPosition, fitView, zoomIn, zoomOut } = useReactFlow()
+  const { screenToFlowPosition, fitView, zoomIn, zoomOut } = useReactFlow()
   const storeApi = useStoreApi()
   const { zoom } = useViewport()
   const [picker, setPicker] = useState<PickerState | null>(null)
@@ -188,10 +187,10 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   // first-run invitation below is the only visible next action.
   const emptyGraph = graph.nodes.every((node) => NON_EXECUTABLE_NODE_TYPES.has(node.type))
 
-  // Keep the insert picker fully on screen: clamp its position to the wrapper
-  // using its MEASURED size (the initial inline style only knows the click
-  // point). Re-clamps as the popover grows/shrinks (search, drill-in) so the
-  // bottom edge never ends up cut off by the canvas edge.
+  // The picker's position is owned by its classes (anchored top-right); this
+  // effect only bounds its height. Keep the 72vh cap, but a short canvas
+  // (split panes, small windows) tightens it further so the popover always
+  // fits inside the wrapper.
   useLayoutEffect(() => {
     if (!picker) return
     const el = pickerElRef.current
@@ -199,15 +198,10 @@ function GraphCanvasInner(props: GraphCanvasProps) {
     if (!el || !wrapper) return
     const clamp = () => {
       const margin = 16
-      // Keep the 72vh cap, but a short canvas (split panes, small windows)
-      // tightens it further so the popover always fits inside the wrapper.
       el.style.maxHeight = `${Math.min(Math.round(window.innerHeight * 0.72), Math.max(200, wrapper.clientHeight - margin * 2))}px`
-      el.style.left = `${Math.max(margin, Math.min(picker.screen.x, wrapper.clientWidth - el.offsetWidth - margin))}px`
-      el.style.top = `${Math.max(margin, Math.min(picker.screen.y, wrapper.clientHeight - el.offsetHeight - margin))}px`
     }
     clamp()
     const observer = new ResizeObserver(clamp)
-    observer.observe(el)
     observer.observe(wrapper)
     return () => observer.disconnect()
   }, [picker])
@@ -372,15 +366,9 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   const openPicker = useCallback(
     (position: NodePosition, target: PickerState['target']) => {
       if (readOnly) return
-      const wrapper = wrapperRef.current?.getBoundingClientRect()
-      const screen = flowToScreenPosition(position)
-      setPicker({
-        position,
-        target,
-        screen: { x: screen.x - (wrapper?.left ?? 0), y: screen.y - (wrapper?.top ?? 0) },
-      })
+      setPicker({ position, target })
     },
-    [flowToScreenPosition, readOnly],
+    [readOnly],
   )
 
   const handleAddFrom = useCallback(

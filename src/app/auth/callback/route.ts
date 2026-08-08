@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { isAllowedEmail } from '@/lib/auth/allowed-domain'
 import { amrMethods, emailDomain, isEnterpriseIdentity } from '@/lib/auth/enterprise-policy'
 import { validatedReturnPath } from '@/lib/auth/return-path'
-import { prisma } from '@/lib/prisma'
+import { systemPrisma } from '@/lib/prisma'
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get('code')
@@ -40,7 +40,10 @@ export async function GET(request: NextRequest) {
   // driven, so it works before the user row is even provisioned.
   const domain = emailDomain(user?.email)
   if (domain) {
-    const enforced = await prisma.organizationDomain.findFirst({
+    // systemPrisma: pre-tenant by nature — the session isn't admitted yet, so
+    // there is no organization scope; the lookup asks which org (if any) has
+    // claimed this email domain with SSO enforcement turned on.
+    const enforced = await systemPrisma.organizationDomain.findFirst({
       where: { domain, status: 'verified', organization: { ssoEnforced: true } },
       select: { id: true },
     })

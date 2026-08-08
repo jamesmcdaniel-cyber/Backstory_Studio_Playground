@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emailDomain, isEnterpriseIdentity, satisfiesMfaPolicy } from '@/lib/auth/enterprise-policy'
+import { amrMethods, emailDomain, isEnterpriseIdentity, satisfiesMfaPolicy } from '@/lib/auth/enterprise-policy'
 
 test('workspace MFA fails closed unless the session is AAL2', () => {
   assert.equal(satisfiesMfaPolicy('required', 'aal1'), false)
@@ -13,4 +13,20 @@ test('enterprise identity and domains normalize safely', () => {
   assert.equal(emailDomain('invalid'), null)
   assert.equal(isEnterpriseIdentity(['password', 'saml']), true)
   assert.equal(isEnterpriseIdentity(['password']), false)
+})
+
+test('only IdP-brokered identities satisfy SSO enforcement', () => {
+  // Supabase marks SAML sign-ins 'sso/saml' in amr and 'sso:<uuid>' as provider.
+  assert.equal(isEnterpriseIdentity(['sso/saml']), true)
+  assert.equal(isEnterpriseIdentity(['sso:1c5a95f4-0000-0000-0000-000000000000']), true)
+  // Social OAuth is NOT enterprise — "Continue with Google" must not bypass Okta.
+  assert.equal(isEnterpriseIdentity(['google']), false)
+  assert.equal(isEnterpriseIdentity(['azure']), false)
+  assert.equal(isEnterpriseIdentity(['oauth']), false)
+})
+
+test('amrMethods tolerates string and object entries and junk', () => {
+  assert.deepEqual(amrMethods([{ method: 'sso/saml', timestamp: 1 }, 'password', { bogus: true }, 7]), ['sso/saml', 'password'])
+  assert.deepEqual(amrMethods(undefined), [])
+  assert.deepEqual(amrMethods('nope'), [])
 })

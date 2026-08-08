@@ -26,6 +26,11 @@ export function SetupGate({ children }: { children: ReactNode }) {
             return
           }
           setStatus({ entitled: Boolean(data.entitled), backstoryConnected: true })
+        } else if (data?.code === 'SSO_REQUIRED') {
+          // The org enforces SSO but this session didn't come through the
+          // IdP (it may predate enforcement). Every API will refuse it —
+          // route through sign-out to the SSO-primed login screen.
+          window.location.assign('/auth/sso-required')
         } else {
           // Status endpoint failed (401 handled by middleware; transient 5xx):
           // fail open so an outage doesn't lock the product. APIs still gate.

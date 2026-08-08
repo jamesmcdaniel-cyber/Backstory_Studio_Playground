@@ -1623,6 +1623,10 @@ function FlowBuilder() {
       toast.error(data.error || 'Could not re-run from that step.')
       return
     }
+    // Follow the fresh run live in the open panel, like a plain Run.
+    pinnedRunId.current = null
+    if (data.run?.flowRunId) watchedRun.current = { id: data.run.flowRunId, status: 'running' }
+    setShowRuns(true)
     toast.success('Re-running from that step — earlier steps replay their recorded results.')
     pollRuns()
   }, [id, pollRuns])
@@ -1670,6 +1674,10 @@ function FlowBuilder() {
         toast.error(data.error || 'Could not start that run.')
         return
       }
+      // Follow the continued/forked run live in the open panel.
+      pinnedRunId.current = null
+      if (data.run?.flowRunId) watchedRun.current = { id: data.run.flowRunId, status: 'running' }
+      setShowRuns(true)
       toast.success(patch ? 'Continuing this run from the edited step.' : 'Started a separate run with your edit.')
       pollRuns()
     },
@@ -1879,11 +1887,11 @@ function FlowBuilder() {
         // history) even if you leave this page. pollRuns follows it live and
         // toasts the outcome when it settles.
         if (data.run?.flowRunId) watchedRun.current = { id: data.run.flowRunId, status: 'running' }
-        // The runs panel does NOT auto-open (it was closed constantly) — the
-        // canvas shows live step status; the panel is one click away here.
-        toast.success('Run started — it keeps going even if you leave this page.', {
-          action: { label: 'Watch', onClick: () => setShowRuns(true) },
-        })
+        // The runs panel auto-opens on every start (user mandate 2026-08-07:
+        // a running flow must narrate itself in realtime) — pollRuns selects
+        // the fresh run and streams step statuses into the open panel.
+        setShowRuns(true)
+        toast.success('Run started — it keeps going even if you leave this page.')
       }
       pollRuns()
     } finally {

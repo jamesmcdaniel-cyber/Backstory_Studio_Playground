@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ExternalLink, Plus, RefreshCw, RotateCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Plus, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,7 +29,7 @@ import { useNangoConnect } from '@/lib/client/use-nango-connect'
  * The workspace's credential surface — everything a flow or agent can
  * authenticate with, fully manageable from one page. This replaced the
  * collapsible read-mostly bank on /flows: expired credentials are fixed in
- * place (verify / reconnect / re-verify), and an exposed or leaked credential
+ * place (reconnect / re-verify), and an exposed or leaked credential
  * is rotated here without touching any flow — OAuth accounts revoke stored
  * tokens then re-run consent, HTTP credentials take fresh secrets behind the
  * same id.
@@ -144,7 +144,7 @@ export default function CredentialsPage() {
 
   // Reconnect reuses the shared Nango round-trip: opening the Connect UI over
   // an existing connection re-runs consent and stores fresh tokens.
-  const { busy: nangoBusy, verifying, connect, verify } = useNangoConnect(load)
+  const { busy: nangoBusy, connect } = useNangoConnect(load)
 
   const deleteOauthConnection = useCallback(async (row: OauthRow) => {
     const response = await fetch(`/api/nango/connections/${encodeURIComponent(row.key)}`, { method: 'DELETE' })
@@ -308,17 +308,6 @@ export default function CredentialsPage() {
                   actions={
                     canManage && (
                       <>
-                        {row.connected && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void verify({ id: row.key, name: row.name })}
-                            loading={verifying === row.key}
-                            title="Check the stored tokens still work"
-                          >
-                            <ShieldCheck className="mr-1.5 h-3.5 w-3.5" /> Verify
-                          </Button>
-                        )}
                         <Button
                           variant="ghost"
                           size="sm"

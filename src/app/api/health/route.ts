@@ -5,6 +5,7 @@ import { encryptionConfigured } from '@/lib/crypto/secrets'
 import { neo4jPing } from '@/lib/rag/neo4j-store'
 import { probeQueueConsumers } from '@/lib/queue/consumer-probe'
 import { apiLogger } from '@/lib/logger'
+import { timingSafeEqual } from 'node:crypto'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -80,10 +81,22 @@ async function runProbes(): Promise<HealthSnapshot> {
   }
 }
 
-export async function GET() {
+function detailedProbeAuthorized(request: Request): boolean {
+  const expected = process.env.HEALTH_PROBE_SECRET
+  if (!expected) return false
+  const presented = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
+  const a = Buffer.from(presented)
+  const b = Buffer.from(expected)
+  return a.length === b.length && a.length > 0 && timingSafeEqual(a, b)
+}
+
+export async function GET(request: Request) {
   const now = Date.now()
   if (lastProbe && now - lastProbe.at < PROBE_TTL_MS) {
-    return NextResponse.json(lastProbe.snapshot.body, { status: lastProbe.snapshot.healthy ? 200 : 503 })
+    const body = detailedProbeAuthorized(request)
+      ? lastProbe.snapshot.body
+      : { status: lastProbe.snapshot.healthy ? 'ok' : 'unhealthy' }
+    return NextResponse.json(body, { status: lastProbe.snapshot.healthy ? 200 : 503 })
   }
 
   inFlight ??= runProbes()
@@ -96,7 +109,8 @@ export async function GET() {
     })
 
   const snapshot = await inFlight
-  return NextResponse.json(snapshot.body, { status: snapshot.healthy ? 200 : 503 })
+  const body = detailedProbeAuthorized(request) ? snapshot.body : { status: snapshot.healthy ? 'ok' : 'unhealthy' }
+  return NextResponse.json(body, { status: snapshot.healthy ? 200 : 503 })
 }
 
 async function probe(fn: () => Promise<void>): Promise<{ ok: boolean; ms?: number }> {

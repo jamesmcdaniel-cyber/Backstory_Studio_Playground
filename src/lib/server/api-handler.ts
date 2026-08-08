@@ -6,6 +6,8 @@ import { AuthContextError, PermissionDeniedError, requireAuthContext, type AuthC
 import type { Permission } from '@/lib/authz/permissions'
 import { rateLimit, type RateLimitOptions } from '@/lib/ratelimit'
 import { isCustomerEdition } from '@/lib/edition'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
+import { recordAudit } from '@/lib/audit'
 
 /**
  * Default write budget, per user per minute, applied to every mutating request.
@@ -110,6 +112,18 @@ export function withAuthenticatedApi(
       }
 
       const result = await handler(request, auth, context)
+
+      if (!READ_METHODS.has(request.method) && isPlatformOwnerEmail(auth.dbUser.email)) {
+        void recordAudit({
+          organizationId: auth.organizationId,
+          actorUserId: auth.dbUser.id,
+          action: 'platform_owner.api_write',
+          resourceType: 'api_route',
+          resourceId: request.nextUrl.pathname,
+          detail: { method: request.method },
+          ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null,
+        })
+      }
 
       return result instanceof Response ? result : NextResponse.json(result)
     } catch (error) {

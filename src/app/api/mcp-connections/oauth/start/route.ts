@@ -17,6 +17,7 @@ import { NextResponse } from 'next/server'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { encryptSecret } from '@/lib/crypto/secrets'
 import { prisma } from '@/lib/prisma'
+import { canonicalAppOrigin } from '@/lib/app-origin'
 import {
   OAUTH_COOKIE,
   buildAuthorizeUrl,
@@ -30,6 +31,7 @@ import {
 const COOKIE_MAX_AGE_S = 600 // 10 minutes to complete the login
 
 export const GET = withAuthenticatedApi(async (request, auth) => {
+  const appOrigin = canonicalAppOrigin(request.url)
   const serverUrl = request.nextUrl.searchParams.get('serverUrl')?.trim()
   const name = request.nextUrl.searchParams.get('name')?.trim()
   const connectionId = request.nextUrl.searchParams.get('connectionId')?.trim() || undefined
@@ -39,7 +41,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const errorRedirect = (code: string) => {
     const path = returnTo ?? '/integrations?tab=servers'
     const separator = path.includes('?') ? '&' : '?'
-    return NextResponse.redirect(new URL(`${path}${separator}error=${code}`, request.nextUrl.origin))
+    return NextResponse.redirect(new URL(`${path}${separator}error=${code}`, appOrigin))
   }
   const scope = request.nextUrl.searchParams.get('scope')?.trim() || 'claudeai'
 
@@ -69,7 +71,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     return errorRedirect('oauth_params')
   }
 
-  const redirectUri = `${request.nextUrl.origin}/api/mcp-connections/oauth/callback`
+  const redirectUri = `${appOrigin}/api/mcp-connections/oauth/callback`
 
   try {
     const meta = await discoverAuthServer(effectiveServerUrl)

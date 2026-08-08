@@ -3,16 +3,19 @@ import { systemPrisma, prisma } from '@/lib/prisma'
 import { rateLimit } from '@/lib/ratelimit'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
 import { dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
+import { flowResumeTokenValid } from '@/lib/flows/resume-token'
+import { readRequestTextLimited, RequestBodyTooLargeError } from '@/lib/net/request-body'
 
 export const runtime = 'nodejs'
+const MAX_RESUME_BODY_BYTES = 1_000_000
 
 /**
  * Public callback endpoint for a `wait` step in `webhook` mode. The run exposes
- * {{run.resumeUrl}} (this URL, carrying the run's unguessable cuid) to a
+ * {{run.resumeUrl}} (this URL, carrying a distinct one-time capability) to a
  * pre-wait step, which hands it to an external system (DocuSign, an approval
  * service, …). When that system POSTs back here, the run resumes with the POST
- * body as the wait step's output. No session — the unguessable run id is the
- * capability, and the run must be genuinely waiting on a webhook wait.
+ * body as the wait step's output. No session; the run must be genuinely
+ * waiting on a webhook wait and the capability hash must match.
  */
 export async function POST(request: NextRequest) {
   // Path: /api/flows/[id]/runs/[runId]/resume
@@ -21,12 +24,16 @@ export async function POST(request: NextRequest) {
   const flowId = parts.at(-4)
   if (!flowId || !runId) return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 })
 
-  const limited = await rateLimit(`flow-resume:${runId}`, { limit: 60, windowMs: 60_000 })
+  const limited = await rateLimit(`flow-resume:${runId}`, { limit: 30, windowMs: 60_000, failureMode: 'closed' })
   if (!limited.ok) return NextResponse.json({ success: false, error: 'Rate limit exceeded' }, { status: 429 })
 
   // systemPrisma: session-less callback (unguessable run id is the capability).
+  const provided = request.nextUrl.searchParams.get('token') || request.headers.get('x-resume-token') || ''
   const run = await systemPrisma.flowRun.findFirst({ where: { id: runId, flowId } })
   if (!run) return NextResponse.json({ success: false, error: 'Run not found' }, { status: 404 })
+  if (!run.resumeTokenHash || !flowResumeTokenValid(run.id, provided, run.resumeTokenHash)) {
+    return NextResponse.json({ success: false, error: 'Invalid resume capability.' }, { status: 401 })
+  }
   if (run.status !== 'waiting') {
     return NextResponse.json({ success: false, error: 'This run is not waiting for a callback.' }, { status: 409 })
   }
@@ -45,10 +52,29 @@ export async function POST(request: NextRequest) {
   }
 
   const contentType = request.headers.get('content-type') || ''
+  let rawBody: string
+  try {
+    rawBody = await readRequestTextLimited(request, MAX_RESUME_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json({ success: false, error: 'Callback body is too large.' }, { status: 413 })
+    }
+    throw error
+  }
   const body = contentType.toLowerCase().includes('application/json')
-    ? await request.json().catch(() => ({}))
-    : await request.text().catch(() => '')
+    ? (() => { try { return rawBody ? JSON.parse(rawBody) : {} } catch { return {} } })()
+    : rawBody
   const payload = flowInputFromWebhookBody(body)
+
+  // One winner consumes the capability. A duplicate or concurrent replay sees
+  // a null hash and cannot dispatch a second resume.
+  const consumed = await systemPrisma.flowRun.updateMany({
+    where: { id: run.id, flowId, status: 'waiting', resumeTokenHash: run.resumeTokenHash },
+    data: { resumeTokenHash: null },
+  })
+  if (consumed.count !== 1) {
+    return NextResponse.json({ success: false, error: 'This callback has already been consumed.' }, { status: 409 })
+  }
 
   const userId =
     run.userId ??
@@ -57,14 +83,23 @@ export async function POST(request: NextRequest) {
 
   // reply is a non-empty string so runFlowExecution treats this as a resume and
   // the wait step exposes the callback body as {{step.<id>.output}}.
-  await dispatchDetachedFlowExecution({
-    flowId,
-    organizationId: run.organizationId,
-    userId,
-    input: {},
-    flowRunId: run.id,
-    reply: typeof payload === 'string' && payload ? payload : JSON.stringify(payload ?? {}),
-  })
+  try {
+    await dispatchDetachedFlowExecution({
+      flowId,
+      organizationId: run.organizationId,
+      userId,
+      input: {},
+      flowRunId: run.id,
+      reply: typeof payload === 'string' && payload ? payload : JSON.stringify(payload ?? {}),
+    })
+  } catch (error) {
+    // A synchronous handoff failure is safely retryable with the same URL.
+    await systemPrisma.flowRun.updateMany({
+      where: { id: run.id, flowId, status: 'waiting', resumeTokenHash: null },
+      data: { resumeTokenHash: run.resumeTokenHash },
+    })
+    throw error
+  }
 
   return NextResponse.json({ success: true, runId: run.id, status: 'running' })
 }

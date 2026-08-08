@@ -15,6 +15,21 @@
  */
 
 import crypto from 'crypto'
+import { assertPublicUrl } from '@/lib/net/ssrf'
+import { readResponseTextLimited } from '@/lib/net/response-body'
+
+const OAUTH_METADATA_MAX_BYTES = 128_000
+const OAUTH_RESPONSE_MAX_BYTES = 128_000
+
+async function assertOAuthEndpoint(raw: string, expectedOrigin?: string): Promise<URL> {
+  await assertPublicUrl(raw)
+  const url = new URL(raw)
+  if (url.username || url.password) throw new Error('OAuth endpoints must not contain URL credentials')
+  if (expectedOrigin && url.origin !== expectedOrigin) {
+    throw new Error('OAuth metadata endpoints must share the authorization-server origin')
+  }
+  return url
+}
 
 /**
  * Cookie carrying the in-flight OAuth state between /oauth/start and
@@ -67,8 +82,10 @@ export interface AuthServerMetadata {
 export async function discoverAuthServer(
   serverUrl: string,
 ): Promise<AuthServerMetadata> {
+  await assertPublicUrl(serverUrl)
   const origin = new URL(serverUrl).origin
   const discoveryUrl = `${origin}/.well-known/oauth-authorization-server`
+  await assertPublicUrl(discoveryUrl)
 
   const response = await fetch(discoveryUrl, {
     headers: { Accept: 'application/json' },
@@ -81,12 +98,18 @@ export async function discoverAuthServer(
     )
   }
 
-  const meta = (await response.json()) as AuthServerMetadata
+  const meta = JSON.parse(await readResponseTextLimited(response, OAUTH_METADATA_MAX_BYTES, 'OAuth metadata')) as AuthServerMetadata
   if (!meta.authorization_endpoint || !meta.token_endpoint) {
     throw new Error(
       'OAuth discovery metadata is missing authorization_endpoint or token_endpoint',
     )
   }
+  const issuerOrigin = meta.issuer
+    ? (await assertOAuthEndpoint(meta.issuer)).origin
+    : origin
+  await assertOAuthEndpoint(meta.authorization_endpoint, issuerOrigin)
+  await assertOAuthEndpoint(meta.token_endpoint, issuerOrigin)
+  if (meta.registration_endpoint) await assertOAuthEndpoint(meta.registration_endpoint, issuerOrigin)
   return meta
 }
 
@@ -143,6 +166,7 @@ export async function registerClient(
   registrationEndpoint: string,
   redirectUri: string,
 ): Promise<RegisteredClient> {
+  await assertPublicUrl(registrationEndpoint)
   const response = await fetch(registrationEndpoint, {
     method: 'POST',
     headers: {
@@ -168,7 +192,7 @@ export async function registerClient(
     )
   }
 
-  const data = (await response.json()) as RegisteredClient
+  const data = JSON.parse(await readResponseTextLimited(response, OAUTH_RESPONSE_MAX_BYTES, 'OAuth registration response')) as RegisteredClient
   if (!data.client_id) {
     throw new Error(
       'Dynamic client registration response did not include client_id',
@@ -195,6 +219,7 @@ export function buildAuthorizeUrl(
   { clientId, redirectUri, state, codeChallenge, scope }: BuildAuthorizeUrlParams,
 ): string {
   const url = new URL(authorizationEndpoint)
+  if (url.protocol !== 'https:') throw new Error('OAuth authorization endpoint must use https')
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', clientId)
   url.searchParams.set('redirect_uri', redirectUri)
@@ -259,6 +284,7 @@ export async function exchangeCode(
   tokenEndpoint: string,
   { code, redirectUri, clientId, clientSecret, codeVerifier }: ExchangeCodeParams,
 ): Promise<TokenResponse> {
+  await assertPublicUrl(tokenEndpoint)
   const { headers, bodyExtra } = clientAuth(clientId, clientSecret)
 
   const body = new URLSearchParams({
@@ -286,7 +312,7 @@ export async function exchangeCode(
     throw new Error(`Token exchange failed (status ${response.status})`)
   }
 
-  const data = (await response.json()) as RawTokenResponse
+  const data = JSON.parse(await readResponseTextLimited(response, OAUTH_RESPONSE_MAX_BYTES, 'OAuth token response')) as RawTokenResponse
   if (!data.access_token) {
     throw new Error('Token exchange response did not include access_token')
   }
@@ -316,6 +342,7 @@ export async function refreshAccessToken(
   tokenEndpoint: string,
   { clientId, clientSecret, refreshToken }: RefreshTokenParams,
 ): Promise<TokenResponse> {
+  await assertPublicUrl(tokenEndpoint)
   const { headers, bodyExtra } = clientAuth(clientId, clientSecret)
 
   const body = new URLSearchParams({
@@ -341,7 +368,7 @@ export async function refreshAccessToken(
     throw new Error(`Token refresh failed (status ${response.status})`)
   }
 
-  const data = (await response.json()) as RawTokenResponse
+  const data = JSON.parse(await readResponseTextLimited(response, OAUTH_RESPONSE_MAX_BYTES, 'OAuth token response')) as RawTokenResponse
   if (!data.access_token) {
     throw new Error('Token refresh response did not include access_token')
   }

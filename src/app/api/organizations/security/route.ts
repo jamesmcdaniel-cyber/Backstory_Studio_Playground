@@ -15,7 +15,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     }),
   ])
   return { success: true, policy: organization, domains }
-}, { permission: 'security.manage', skipMfaGate: true })
+}, { permission: 'security.manage' })
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const body = z.object({

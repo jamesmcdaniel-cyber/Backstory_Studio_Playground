@@ -16,6 +16,23 @@ function createPrismaClient(datasourceUrl?: string) {
   })
 }
 
+function assertProductionDatabaseIsolation(): void {
+  if (process.env.NODE_ENV !== 'production') return
+  if (process.env.DATABASE_RLS_ENABLED !== 'true') {
+    throw new Error('DATABASE_RLS_ENABLED=true is required in production')
+  }
+  const appUrl = process.env.DATABASE_URL
+  const systemUrl = process.env.SYSTEM_DATABASE_URL
+  if (!appUrl || !systemUrl) {
+    throw new Error('Production requires distinct DATABASE_URL and SYSTEM_DATABASE_URL roles')
+  }
+  if (appUrl === systemUrl) {
+    throw new Error('DATABASE_URL must not use the privileged SYSTEM_DATABASE_URL role')
+  }
+}
+
+assertProductionDatabaseIsolation()
+
 function createGuardedClient(base: PrismaClient) {
   // Tenant guard: org-carrying models must be queried with organizationId.
   // See src/lib/tenant-guard.ts. System-wide paths use systemPrisma below.

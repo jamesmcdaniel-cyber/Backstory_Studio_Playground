@@ -10,9 +10,11 @@ import { routeSignal } from '@/lib/signals/router'
 import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { captureError } from '@/lib/observability/sentry'
 import { decryptSecret } from '@/lib/crypto/secrets'
+import { readRequestTextLimited, RequestBodyTooLargeError } from '@/lib/net/request-body'
 
 export const runtime = 'nodejs'
 export const maxDuration = 800
+const PEOPLE_AI_WEBHOOK_MAX_BYTES = 1_000_000
 
 /**
  * People.ai SalesAI webhook receiver (registered via POST /v1/salesai/webhooks).
@@ -30,7 +32,15 @@ export async function POST(request: NextRequest) {
   }
 
   const globalSecret = process.env.PEOPLE_AI_WEBHOOK_SECRET || null
-  const rawBody = await request.text()
+  let rawBody: string
+  try {
+    rawBody = await readRequestTextLimited(request, PEOPLE_AI_WEBHOOK_MAX_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json({ success: false, error: 'Webhook body is too large' }, { status: 413 })
+    }
+    throw error
+  }
   // SEAM: header name per SalesAI webhook registration docs; both common
   // conventions accepted.
   const header =

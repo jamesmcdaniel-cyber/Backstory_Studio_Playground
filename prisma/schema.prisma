@@ -1133,6 +1133,9 @@ model FlowRun {
   // resume. The cron scan wakes waiting runs whose resumeAt is due. Null for
   // runs waiting on a human reply / approval / open-ended webhook callback.
   resumeAt          DateTime?
+  // One-time hash for a webhook-wait callback capability. The plaintext token
+  // is derived server-side and appears only in {{run.resumeUrl}}.
+  resumeTokenHash   String?
   organizationId    String    @db.Uuid
   userId            String?
 

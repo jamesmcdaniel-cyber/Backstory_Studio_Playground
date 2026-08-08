@@ -142,7 +142,7 @@ export async function resolveNangoConnection(
 
 export async function slackPostMessage(
   connection: DeliveryConnection,
-  args: { channel: string; text: string },
+  args: { channel: string; text: string; thread_ts?: string },
   proxy: NangoProxy = defaultProxy(),
 ): Promise<unknown> {
   const response = await proxy({
@@ -150,7 +150,7 @@ export async function slackPostMessage(
     endpoint: '/chat.postMessage',
     connectionId: connection.connectionId,
     providerConfigKey: connection.providerConfigKey,
-    data: { channel: args.channel, text: args.text },
+    data: { channel: args.channel, text: args.text, ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}) },
   })
   return response.data
 }
@@ -209,8 +209,14 @@ function htmlToText(html: string): string {
  * multipart/alternative (plain text first, HTML last — receivers render the
  * last part they understand); a plain body stays a single text/plain part.
  */
-export function buildGmailMimeMessage(args: { to: string; subject: string; body: string }): string {
-  const headers = [`To: ${headerValue(args.to)}`, `Subject: ${encodeHeader(args.subject)}`, 'MIME-Version: 1.0']
+export function buildGmailMimeMessage(args: { to: string; subject: string; body: string; cc?: string; bcc?: string }): string {
+  const headers = [
+    `To: ${headerValue(args.to)}`,
+    ...(args.cc ? [`Cc: ${headerValue(args.cc)}`] : []),
+    ...(args.bcc ? [`Bcc: ${headerValue(args.bcc)}`] : []),
+    `Subject: ${encodeHeader(args.subject)}`,
+    'MIME-Version: 1.0',
+  ]
 
   if (!LOOKS_HTML.test(args.body)) {
     return [
@@ -244,7 +250,7 @@ export function buildGmailMimeMessage(args: { to: string; subject: string; body:
 
 export async function gmailSendEmail(
   connection: DeliveryConnection,
-  args: { to: string; subject: string; body: string },
+  args: { to: string; subject: string; body: string; cc?: string; bcc?: string },
   proxy: NangoProxy = defaultProxy(),
 ): Promise<unknown> {
   const raw = Buffer.from(buildGmailMimeMessage(args), 'utf8').toString('base64url')
@@ -293,11 +299,16 @@ export const DELIVERY_TOOLS: DeliveryToolSpec[] = [
       properties: {
         channel: { type: 'string', description: 'Channel id or name (e.g. #revenue) or user id for a DM.' },
         text: { type: 'string', description: 'Message text.' },
+        thread_ts: { type: 'string', description: 'Timestamp of a message to reply to in a thread.' },
       },
       required: ['channel', 'text'],
     },
     run: (connection, args, proxy) =>
-      slackPostMessage(connection, { channel: String(args.channel), text: String(args.text) }, proxy),
+      slackPostMessage(
+        connection,
+        { channel: String(args.channel), text: String(args.text), ...(args.thread_ts ? { thread_ts: String(args.thread_ts) } : {}) },
+        proxy,
+      ),
   },
   {
     capability: 'gmail',
@@ -309,13 +320,21 @@ export const DELIVERY_TOOLS: DeliveryToolSpec[] = [
         to: { type: 'string' },
         subject: { type: 'string' },
         body: { type: 'string' },
+        cc: { type: 'string', description: 'Comma-separated Cc recipients.' },
+        bcc: { type: 'string', description: 'Comma-separated Bcc recipients.' },
       },
       required: ['to', 'subject', 'body'],
     },
     run: (connection, args, proxy) =>
       gmailSendEmail(
         connection,
-        { to: String(args.to), subject: String(args.subject), body: String(args.body) },
+        {
+          to: String(args.to),
+          subject: String(args.subject),
+          body: String(args.body),
+          ...(args.cc ? { cc: String(args.cc) } : {}),
+          ...(args.bcc ? { bcc: String(args.bcc) } : {}),
+        },
         proxy,
       ),
   },

@@ -76,7 +76,7 @@ test('a webhook → http → if workflow converts to a runnable graph with real 
 
   const transforms = graph.nodes.filter((n) => n.type === 'transform') as any[]
   assert.equal(transforms.length, 2)
-  assert.deepEqual(transforms[0].data.fields, [{ name: 'result', value: 'won' }])
+  assert.deepEqual(transforms[0].data.fields, [{ name: 'result', value: 'won', type: 'string' }])
 
   const trueEdge = graph.edges.find((e) => e.source === cond.id && e.branch === 'true')
   const falseEdge = graph.edges.find((e) => e.source === cond.id && e.branch === 'false')

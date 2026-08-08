@@ -28,6 +28,31 @@ test('slackPostMessage proxies chat.postMessage with channel + text', async () =
   assert.deepEqual(calls[0].data, { channel: '#revenue', text: 'hi' })
 })
 
+test('slackPostMessage threads a reply when thread_ts is given', async () => {
+  const { calls, proxy } = recordingProxy()
+  await slackPostMessage(connection, { channel: '#revenue', text: 'hi', thread_ts: '171234.5678' }, proxy)
+  assert.deepEqual(calls[0].data, { channel: '#revenue', text: 'hi', thread_ts: '171234.5678' })
+})
+
+test('slack_post_message tool passes thread_ts through', async () => {
+  const { calls, proxy } = recordingProxy()
+  const tool = DELIVERY_TOOLS.find((t) => t.name === 'slack_post_message')!
+  await tool.run(connection, { channel: 'C1', text: 'hi', thread_ts: '9.9' }, proxy)
+  assert.equal((calls[0].data as { thread_ts?: string }).thread_ts, '9.9')
+})
+
+test('gmailSendEmail carries Cc and Bcc headers', async () => {
+  const { calls, proxy } = recordingProxy()
+  await gmailSendEmail(
+    { connectionId: 'c', providerConfigKey: 'google-mail', scope: 'org' },
+    { to: 'a@b.com', subject: 'Hey', body: 'Body', cc: 'boss@b.com', bcc: 'audit@b.com' },
+    proxy,
+  )
+  const decoded = Buffer.from((calls[0].data as { raw: string }).raw, 'base64url').toString('utf8')
+  assert.match(decoded, /Cc: boss@b\.com/)
+  assert.match(decoded, /Bcc: audit@b\.com/)
+})
+
 test('gmailSendEmail base64url-encodes an RFC822 message', async () => {
   const { calls, proxy } = recordingProxy()
   await gmailSendEmail(

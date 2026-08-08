@@ -1,4 +1,5 @@
-import type { FlowGraph, FlowNode, ConditionOp, OutputField } from '@/lib/flows/graph'
+import type { FlowGraph, FlowNode, ConditionOp, OutputField, FieldType } from '@/lib/flows/graph'
+import { FIELD_TYPES } from '@/lib/flows/graph'
 
 /**
  * Import an n8n workflow JSON (Workflows → Download) as a Backstory flow —
@@ -24,9 +25,80 @@ type N8nNodeIn = {
   position?: [number, number]
   notes?: string
   disabled?: boolean
+  /** n8n node-level error policy: stopWorkflow (default) / continueRegularOutput /
+   * continueErrorOutput (routes failures out the second output). */
+  onError?: string
+  /** Legacy spelling of continueRegularOutput. */
+  continueOnFail?: boolean
+  retryOnFail?: boolean
+  maxTries?: number
+  waitBetweenTries?: number
+  alwaysOutputData?: boolean
   /** n8n app/action nodes carry their credential bindings here — the signal
    * that a node talks to an external service and should import as a Tool step. */
   credentials?: Record<string, unknown>
+}
+
+/** Our node kinds whose data schema carries onError / retries / alwaysOutputData. */
+const ACTION_SETTING_KINDS = new Set(['agent', 'ai', 'code', 'http', 'tool', 'subflow'])
+
+/**
+ * n8n credential TYPE name → our Nango provider. Verified against n8n's
+ * credential schemas (packages/nodes-base/credentials); lets an app node we
+ * have no parameter mapping for still arrive bound to the right integration.
+ */
+const CREDENTIAL_TYPE_PROVIDERS: Record<string, { key: string; label: string }> = {
+  slackApi: { key: 'slack', label: 'Slack' },
+  slackOAuth2Api: { key: 'slack', label: 'Slack' },
+  gmailOAuth2: { key: 'gmail', label: 'Gmail' },
+  googleSheetsOAuth2Api: { key: 'google_sheets', label: 'Google Sheets' },
+  googleSheetsTriggerOAuth2Api: { key: 'google_sheets', label: 'Google Sheets' },
+  googleDriveOAuth2Api: { key: 'google_drive', label: 'Google Drive' },
+  salesforceOAuth2Api: { key: 'salesforce', label: 'Salesforce' },
+  salesforceJwtApi: { key: 'salesforce', label: 'Salesforce' },
+  hubspotApi: { key: 'hubspot', label: 'HubSpot' },
+  hubspotAppToken: { key: 'hubspot', label: 'HubSpot' },
+  hubspotOAuth2Api: { key: 'hubspot', label: 'HubSpot' },
+  hubspotDeveloperApi: { key: 'hubspot', label: 'HubSpot' },
+  notionApi: { key: 'notion', label: 'Notion' },
+  notionOAuth2Api: { key: 'notion', label: 'Notion' },
+  airtableApi: { key: 'airtable', label: 'Airtable' },
+  airtableTokenApi: { key: 'airtable', label: 'Airtable' },
+  airtableOAuth2Api: { key: 'airtable', label: 'Airtable' },
+  jiraSoftwareCloudApi: { key: 'jira', label: 'Jira' },
+  jiraSoftwareCloudOAuth2Api: { key: 'jira', label: 'Jira' },
+  jiraSoftwareServerApi: { key: 'jira', label: 'Jira' },
+  jiraSoftwareServerPatApi: { key: 'jira', label: 'Jira' },
+  zendeskApi: { key: 'zendesk', label: 'Zendesk' },
+  zendeskOAuth2Api: { key: 'zendesk', label: 'Zendesk' },
+  linearApi: { key: 'linear', label: 'Linear' },
+  linearOAuth2Api: { key: 'linear', label: 'Linear' },
+  asanaApi: { key: 'asana', label: 'Asana' },
+  asanaOAuth2Api: { key: 'asana', label: 'Asana' },
+  githubApi: { key: 'github', label: 'GitHub' },
+  githubOAuth2Api: { key: 'github', label: 'GitHub' },
+  githubAppApi: { key: 'github', label: 'GitHub' },
+  mondayComApi: { key: 'monday', label: 'Monday' },
+  mondayComOAuth2Api: { key: 'monday', label: 'Monday' },
+  figmaApi: { key: 'figma', label: 'Figma' },
+  confluenceCloudApi: { key: 'confluence', label: 'Confluence' },
+}
+
+/**
+ * n8n node-level settings → the matching fields on our node data. These are
+ * the settings every n8n node has (Settings tab); dropping them silently
+ * changes runtime behavior (no retries, failures stop instead of routing).
+ */
+function nodeSettingsFrom(node: N8nNodeIn): Record<string, unknown> {
+  const settings: Record<string, unknown> = {}
+  if (node.onError === 'continueErrorOutput') settings.onError = 'route'
+  else if (node.onError === 'continueRegularOutput' || node.continueOnFail) settings.onError = 'continue'
+  if (node.retryOnFail) {
+    settings.retries = Math.max(0, Math.min(5, (Number(node.maxTries) || 3) - 1))
+    if (Number(node.waitBetweenTries) > 0) settings.retryDelayMs = Math.min(60_000, Number(node.waitBetweenTries))
+  }
+  if (node.alwaysOutputData) settings.alwaysOutputData = true
+  return settings
 }
 
 /** One node's outgoing ports: `main` plus AI cluster types (ai_tool, ai_languageModel, …). */
@@ -38,6 +110,8 @@ type N8nConnectionPorts = { main?: Array<Array<{ node?: string; index?: number }
 type N8nWorkflowIn = {
   name?: string
   nodes?: N8nNodeIn[]
+  /** n8n pin data: recorded per-node mock outputs, keyed by node NAME. */
+  pinData?: Record<string, unknown>
   connections?: Record<string, N8nConnectionPorts>
 }
 
@@ -161,6 +235,31 @@ const $input = {
 const $json = ($input.first() || {}).json;
 /* Legacy n8n Code API: "items" is the incoming item list. */
 const items = $input.all();
+/* Minimal luxon-style $now/$today — enough for the minus/plus/toISO/toFormat
+ * date math n8n expressions lean on. UTC, like the platform's date ops. */
+const __n8nUnitMs = { second: 1e3, minute: 6e4, hour: 36e5, day: 864e5, week: 6048e5, month: 2592e6, year: 31536e6 };
+const __n8nSpanMs = (n, unit) => {
+  if (n && typeof n === 'object') return Object.entries(n).reduce((sum, [u, v]) => sum + __n8nSpanMs(v, u), 0);
+  const key = String(unit || 'day').toLowerCase().replace(/s$/, '');
+  return Number(n) * (__n8nUnitMs[key] || __n8nUnitMs.day);
+};
+const __n8nDT = (ms) => ({
+  toISO: () => new Date(ms).toISOString(),
+  toMillis: () => ms,
+  valueOf: () => ms,
+  toString: () => new Date(ms).toISOString(),
+  toFormat: (f) => {
+    const d = new Date(ms); const p = (v, w) => String(v).padStart(w || 2, '0');
+    return String(f)
+      .replace(/yyyy/g, String(d.getUTCFullYear())).replace(/MM/g, p(d.getUTCMonth() + 1))
+      .replace(/dd/g, p(d.getUTCDate())).replace(/HH/g, p(d.getUTCHours()))
+      .replace(/mm/g, p(d.getUTCMinutes())).replace(/ss/g, p(d.getUTCSeconds()));
+  },
+  minus: (n, unit) => __n8nDT(ms - __n8nSpanMs(n, unit)),
+  plus: (n, unit) => __n8nDT(ms + __n8nSpanMs(n, unit)),
+});
+const $now = __n8nDT(Date.now());
+const $today = __n8nDT(new Date().setUTCHours(0, 0, 0, 0));
 const __n8nUnwrap = (r) =>
   Array.isArray(r)
     ? r.map((x) => (x && typeof x === 'object' && 'json' in x ? x.json : x))
@@ -265,9 +364,93 @@ function locatorValue(value: unknown): string {
  * to add.
  */
 type IntegrationBinding =
-  | { connectionId: string; toolName: string; args: Record<string, unknown>; label: string }
+  | { connectionId: string; toolName: string; args: Record<string, unknown>; label: string; note?: string; warning?: string }
   | { missing: string }
   | null
+
+/**
+ * n8n's `url` locator mode stores the pasted URL verbatim; the file id is
+ * extracted by the node at run time. Mirror that here so the tool arg gets the
+ * bare id, not a URL the API would reject.
+ */
+function googleFileId(value: unknown): string {
+  const raw = locatorValue(value)
+  const match = /\/(?:d|folders)\/([a-zA-Z0-9_-]{5,})/.exec(raw)
+  return match ? match[1] : raw
+}
+
+/**
+ * The column → value mapping an n8n Sheets write carries: the v4+
+ * resourceMapper (`columns.value`), or the legacy fieldsUi/fields key-pair
+ * lists. Null when the node maps input automatically (nothing static to copy).
+ */
+function sheetColumnValues(
+  parameters: Record<string, unknown>,
+  trs: (value: unknown) => string,
+): { columns: string[]; values: string[] } | null {
+  const mapper = parameters.columns as { mappingMode?: string; value?: unknown } | undefined
+  if (mapper && typeof mapper === 'object') {
+    const value = mapper.value
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const entries = Object.entries(value as Record<string, unknown>)
+      if (entries.length) return { columns: entries.map(([k]) => k), values: entries.map(([, v]) => trs(v)) }
+    }
+    return null
+  }
+  const legacy =
+    (parameters.fieldsUi as { fieldValues?: unknown[] } | undefined)?.fieldValues ??
+    (parameters.fields as { values?: unknown[] } | undefined)?.values
+  if (Array.isArray(legacy) && legacy.length) {
+    const pairs = legacy
+      .map((entry) => entry as { column?: unknown; columnName?: unknown; fieldValue?: unknown })
+      .filter((entry) => entry && typeof entry === 'object')
+    if (pairs.length) {
+      return {
+        columns: pairs.map((p) => String(p.column ?? p.columnName ?? '')),
+        values: pairs.map((p) => trs(p.fieldValue)),
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * The record payload an n8n Salesforce create/update carries: the resource's
+ * top-level scalar params (company, lastname, …) plus the additional/update
+ * fields collection. Salesforce's REST API matches field names
+ * case-insensitively, so n8n's lowercased param names post fine as-is.
+ */
+function salesforceFields(
+  parameters: Record<string, unknown>,
+  trs: (value: unknown) => string,
+): Record<string, unknown> {
+  const SKIP = new Set(['resource', 'operation', 'authentication', 'query', 'externalId', 'externalIdValue'])
+  const fields: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(parameters)) {
+    if (SKIP.has(key) || key.endsWith('Id') || key.endsWith('Ui')) continue
+    if (typeof value === 'string') fields[key] = trs(value)
+    else if (typeof value === 'number' || typeof value === 'boolean') fields[key] = value
+  }
+  for (const collection of [parameters.additionalFields, parameters.updateFields]) {
+    if (!collection || typeof collection !== 'object' || Array.isArray(collection)) continue
+    for (const [key, value] of Object.entries(collection as Record<string, unknown>)) {
+      fields[key] = typeof value === 'string' ? trs(value) : value
+    }
+  }
+  return fields
+}
+
+/** n8n stores Salesforce resources lowercased (`lead`); post the SObject name. */
+function salesforceSobject(resource: string): string {
+  return resource ? resource.charAt(0).toUpperCase() + resource.slice(1) : resource
+}
+
+/** The record id an n8n Salesforce update/get names: `recordId` or `<resource>Id`. */
+function salesforceRecordId(parameters: Record<string, unknown>): unknown {
+  if (parameters.recordId !== undefined) return parameters.recordId
+  const idKey = Object.keys(parameters).find((key) => key.endsWith('Id') && key !== 'externalId')
+  return idKey ? parameters[idKey] : undefined
+}
 
 /** Map an n8n APP node (slack, gmail, drive, …) onto a platform integration tool. */
 function integrationBindingFor(type: string, parameters: Record<string, unknown>, tr: (v: string) => string): IntegrationBinding {
@@ -278,11 +461,17 @@ function integrationBindingFor(type: string, parameters: Record<string, unknown>
     case 'n8n-nodes-base.slack': {
       if (!resource || resource === 'message') {
         if (!operation || operation === 'post') {
+          const threadTs = (parameters.otherOptions as { thread_ts?: { replyValues?: Array<{ thread_ts?: unknown }> } } | undefined)
+            ?.thread_ts?.replyValues?.[0]?.thread_ts
           return {
             connectionId: 'nango:slack',
             toolName: 'slack_post_message',
             label: 'Slack',
-            args: { channel: trs(locatorValue(parameters.channelId ?? parameters.channel)), text: trs(parameters.text) },
+            args: {
+              channel: trs(locatorValue(parameters.channelId ?? parameters.channel)),
+              text: trs(parameters.text),
+              ...(threadTs ? { thread_ts: trs(threadTs) } : {}),
+            },
           }
         }
         if (operation === 'getAll' || operation === 'history') {
@@ -302,11 +491,18 @@ function integrationBindingFor(type: string, parameters: Record<string, unknown>
     case 'n8n-nodes-base.gmail': {
       if (!resource || resource === 'message') {
         if (!operation || operation === 'send') {
+          const options = (parameters.options ?? {}) as { ccList?: unknown; bccList?: unknown }
           return {
             connectionId: 'nango:gmail',
             toolName: 'gmail_send_email',
             label: 'Gmail',
-            args: { to: trs(parameters.sendTo ?? parameters.to), subject: trs(parameters.subject), body: trs(parameters.message ?? parameters.body) },
+            args: {
+              to: trs(parameters.sendTo ?? parameters.to),
+              subject: trs(parameters.subject),
+              body: trs(parameters.message ?? parameters.body),
+              ...(options.ccList ? { cc: trs(options.ccList) } : {}),
+              ...(options.bccList ? { bcc: trs(options.bccList) } : {}),
+            },
           }
         }
         if (operation === 'getAll' || operation === 'list') {
@@ -336,16 +532,24 @@ function integrationBindingFor(type: string, parameters: Record<string, unknown>
       return { missing: `Google Drive ${operation || 'upload'} (the Drive integration is read-only — list/read files)` }
     }
     case 'n8n-nodes-base.googleSheets': {
-      const spreadsheetId = trs(locatorValue(parameters.documentId ?? parameters.sheetId))
+      const spreadsheetId = trs(googleFileId(parameters.documentId ?? parameters.sheetId))
       const range = trs(locatorValue(parameters.range ?? parameters.sheetName))
       if (!operation || operation === 'read' || operation === 'readRows' || operation === 'getAll' || operation === 'lookup') {
         return { connectionId: 'nango:google_sheets', toolName: 'google_sheets_read_range', label: 'Google Sheets', args: { spreadsheetId, range } }
       }
-      if (operation === 'append' || operation === 'appendOrUpdate') {
-        return { connectionId: 'nango:google_sheets', toolName: 'google_sheets_append_row', label: 'Google Sheets', args: { spreadsheetId, range, values: [] } }
-      }
-      if (operation === 'update') {
-        return { connectionId: 'nango:google_sheets', toolName: 'google_sheets_update_range', label: 'Google Sheets', args: { spreadsheetId, range, values: [] } }
+      if (operation === 'append' || operation === 'appendOrUpdate' || operation === 'update') {
+        const mapped = sheetColumnValues(parameters, trs)
+        const append = operation !== 'update'
+        return {
+          connectionId: 'nango:google_sheets',
+          toolName: append ? 'google_sheets_append_row' : 'google_sheets_update_range',
+          label: 'Google Sheets',
+          // append takes one row; update takes rows-of-rows.
+          args: { spreadsheetId, range, values: mapped ? (append ? mapped.values : [mapped.values]) : [] },
+          ...(mapped
+            ? { note: `Writes the columns ${mapped.columns.join(', ')} in that order — check it matches the sheet.` }
+            : { warning: 'its column mapping does not transfer — set the row values on the step.' }),
+        }
       }
       return { missing: `Google Sheets ${operation}` }
     }
@@ -354,14 +558,23 @@ function integrationBindingFor(type: string, parameters: Record<string, unknown>
         return { connectionId: 'nango:salesforce', toolName: 'salesforce_query', label: 'Salesforce', args: { soql: trs(parameters.query) } }
       }
       if (operation === 'create') {
-        return { connectionId: 'nango:salesforce', toolName: 'salesforce_create_record', label: 'Salesforce', args: { sobject: trs(parameters.resource ?? resource), fields: {} } }
+        return {
+          connectionId: 'nango:salesforce',
+          toolName: 'salesforce_create_record',
+          label: 'Salesforce',
+          args: { sobject: salesforceSobject(resource), fields: salesforceFields(parameters, trs) },
+        }
       }
       if (operation === 'update') {
         return {
           connectionId: 'nango:salesforce',
           toolName: 'salesforce_update_record',
           label: 'Salesforce',
-          args: { sobject: trs(parameters.resource ?? resource), id: trs(locatorValue(parameters.recordId)), fields: {} },
+          args: {
+            sobject: salesforceSobject(resource),
+            id: trs(locatorValue(salesforceRecordId(parameters))),
+            fields: salesforceFields(parameters, trs),
+          },
         }
       }
       if (operation === 'get') {
@@ -369,7 +582,7 @@ function integrationBindingFor(type: string, parameters: Record<string, unknown>
           connectionId: 'nango:salesforce',
           toolName: 'salesforce_get_record',
           label: 'Salesforce',
-          args: { sobject: trs(parameters.resource ?? resource), id: trs(locatorValue(parameters.recordId)) },
+          args: { sobject: salesforceSobject(resource), id: trs(locatorValue(salesforceRecordId(parameters))) },
         }
       }
       return { missing: `Salesforce ${operation}` }
@@ -474,8 +687,12 @@ const OPERATION_TO_OP: Record<string, ConditionOp> = {
 type RawClause = { leftValue?: unknown; rightValue?: unknown; operator?: { operation?: string } }
 
 function clausesFrom(parameters: Record<string, unknown>, tr: (v: string) => string, warn: (msg: string) => void, nodeName: string) {
-  const conditions = (parameters.conditions ?? {}) as { combinator?: string; conditions?: RawClause[] }
+  const conditions = (parameters.conditions ?? {}) as { combinator?: string; conditions?: RawClause[]; options?: { caseSensitive?: boolean } }
   const raw = Array.isArray(conditions.conditions) ? conditions.conditions : []
+  // n8n stores case handling once per node (v2 `options.caseSensitive`, plus a
+  // node-level `options.ignoreCase` on some versions); ours is per clause.
+  const ignoreCase =
+    conditions.options?.caseSensitive === false || (parameters.options as { ignoreCase?: boolean } | undefined)?.ignoreCase === true
   const clauses = raw.map((c) => {
     const operation = c.operator?.operation ?? 'equals'
     const op = OPERATION_TO_OP[operation]
@@ -484,6 +701,7 @@ function clausesFrom(parameters: Record<string, unknown>, tr: (v: string) => str
       left: tr(String(c.leftValue ?? '')),
       op: op ?? ('eq' as ConditionOp),
       right: tr(String(c.rightValue ?? '')),
+      ...(ignoreCase ? { ignoreCase: true } : {}),
     }
   })
   return { clauses, match: conditions.combinator === 'or' ? ('any' as const) : ('all' as const) }
@@ -736,8 +954,24 @@ function mapNode(
           },
         } as FlowNode
       }
-      const fields = entries.map((a) => ({ name: String(a.name), value: tr(String(a.value ?? '')) }))
-      return { id, type: 'transform', data: { label, fields } } as FlowNode
+      const fields = entries.map((a) => ({
+        name: String(a.name),
+        value: tr(String(a.value ?? '')),
+        ...(a.type && (FIELD_TYPES as readonly string[]).includes(String(a.type)) ? { type: a.type as FieldType } : {}),
+      }))
+      // n8n's "Include Other Input Fields" (v3.3+) / "Keep Only Set" (≤3.2,
+      // inverted). Ours is all-or-nothing — selective include modes fall back
+      // to all, loudly.
+      const includeOthers = parameters.includeOtherFields === true || parameters.keepOnlySet === false
+      const include = String(parameters.include ?? 'all')
+      if (includeOthers && include !== 'all') {
+        warn(`“${name}”: n8n included only SOME other input fields (“${include}”) — imported including ALL of them; trim downstream if needed.`)
+      }
+      return {
+        id,
+        type: 'transform',
+        data: { label, fields, ...(includeOthers ? { includeOtherFields: true } : {}) },
+      } as FlowNode
     }
     case 'n8n-nodes-base.code': {
       const python = String(parameters.language ?? '').toLowerCase().includes('python')
@@ -770,8 +1004,42 @@ function mapNode(
         },
       } as FlowNode
     }
-    case 'n8n-nodes-base.merge':
+    case 'n8n-nodes-base.merge': {
+      const mode = String(parameters.mode ?? 'append')
+      if (mode === 'combine' || mode === 'mergeByKey' || mode === 'mergeByIndex') {
+        const combineBy = mode === 'mergeByIndex' ? 'combineByPosition' : String(parameters.combineBy ?? 'combineByFields')
+        if (combineBy === 'combineByFields') {
+          const fieldSpec =
+            String(parameters.fieldsToMatchString ?? '').trim() ||
+            String(
+              ((parameters.mergeByFields as { values?: Array<{ field1?: unknown }> })?.values?.[0]?.field1 ?? parameters.propertyName1 ?? ''),
+            ).trim()
+          const key = fieldSpec.split(',')[0]?.trim() ?? ''
+          if (fieldSpec.includes(',')) {
+            warn(`“${name}”: Merge matched on several fields — imported matching on “${key}” only.`)
+          }
+          const joinMode = String(parameters.joinMode ?? 'keepMatches')
+          if (joinMode !== 'keepMatches' && joinMode !== 'keepEverything') {
+            warn(`“${name}”: Merge output mode “${joinMode}” has no equivalent — imported as a full join by key; review it.`)
+          }
+          return {
+            id,
+            type: 'join',
+            data: { label, mode: 'combineByKey', ...(key ? { key } : {}), ...(joinMode === 'keepEverything' ? { includeUnpaired: true } : {}) },
+          } as FlowNode
+        }
+        if (combineBy === 'combineByPosition') {
+          return { id, type: 'join', data: { label, mode: 'combineByPosition' } } as FlowNode
+        }
+        if (combineBy === 'combineAll') {
+          return { id, type: 'join', data: { label, mode: 'allCombinations' } } as FlowNode
+        }
+      }
+      if (mode === 'combineBySql' || mode === 'chooseBranch') {
+        warn(`“${name}”: Merge mode “${mode}” has no equivalent — imported as append; review it.`)
+      }
       return { id, type: 'join', data: { label, mode: 'append' } } as FlowNode
+    }
     case 'n8n-nodes-base.respondToWebhook':
       // The webhook trigger's default response mode replies with the run's
       // result — a named `output` step makes this node's payload BE that result.
@@ -1103,6 +1371,7 @@ ${body}`,
       const binding = integrationBindingFor(type, parameters, tr)
       if (binding && 'connectionId' in binding) {
         warn(`“${name}”: bound to the platform's ${binding.label} integration (${binding.toolName}) — confirm the ${binding.label} connection under Integrations.`)
+        if (binding.warning) warn(`“${name}”: ${binding.warning}`)
         return {
           id,
           type: 'tool',
@@ -1111,7 +1380,9 @@ ${body}`,
             connectionId: binding.connectionId,
             toolName: binding.toolName,
             args: JSON.stringify(binding.args),
-            note: `Imported from n8n (${type}); runs through the connected ${binding.label} integration.`,
+            note: [`Imported from n8n (${type}); runs through the connected ${binding.label} integration.`, binding.note]
+              .filter(Boolean)
+              .join(' '),
           },
         } as FlowNode
       }
@@ -1193,16 +1464,30 @@ ${body}`,
               typeof value === 'string' ? tr(value.startsWith('=') || !value.includes('{{') ? value : `=${value}`) : value,
             ]),
         )
-        warn(`“${name}” (${app}) imported as a Tool step without a connection — open it and pick the matching integration; its n8n parameters are preserved in Args.`)
+        // The n8n credential TYPE name (slackOAuth2Api, notionApi, …) is a
+        // reliable provider signal even when the node type has no mapping —
+        // bind the step to the matching connected integration.
+        const provider = Object.keys(node.credentials)
+          .map((credentialType) => CREDENTIAL_TYPE_PROVIDERS[credentialType])
+          .find(Boolean)
+        if (provider) {
+          warn(
+            `“${name}” (${app}) imported bound to your ${provider.label} integration via its n8n credential — open it and pick the matching ${provider.label} tool; its n8n parameters are preserved in Args.`,
+          )
+        } else {
+          warn(`“${name}” (${app}) imported as a Tool step without a connection — open it and pick the matching integration; its n8n parameters are preserved in Args.`)
+        }
         return {
           id,
           type: 'tool',
           data: {
             label,
-            connectionId: '',
+            connectionId: provider ? `nango:${provider.key}` : '',
             toolName: `${app}${operation}`,
             args: JSON.stringify(translatedParams),
-            note: `Imported from n8n (${type}). Pick your connected integration and the matching tool; the original parameters are in Args.`,
+            note: provider
+              ? `Imported from n8n (${type}); its n8n credential maps to the connected ${provider.label} integration — pick the matching tool.`
+              : `Imported from n8n (${type}). Pick your connected integration and the matching tool; the original parameters are in Args.`,
           },
         } as FlowNode
       }
@@ -1419,12 +1704,16 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     const parentId = idByName.get(parent)
     return parentId ? `step.${parentId}.output` : 'trigger.input'
   }
-  const warnedExprNodes = new Set<string>()
+  const warnedExprNodes = new Map<string, Set<string>>()
   const trFor = (nodeName: string | undefined) => (v: string) =>
     fromN8nExpression(v, idByName, jsonBaseFor(nodeName), (expr) => {
       const key = nodeName ?? '?'
-      if (warnedExprNodes.has(key) || !/[($]/.test(expr)) return
-      warnedExprNodes.add(key)
+      // One warning per DISTINCT broken expression (capped) — a single
+      // warning per node used to hide every breakage after the first.
+      const seen = warnedExprNodes.get(key) ?? new Set<string>()
+      if (!warnedExprNodes.has(key)) warnedExprNodes.set(key, seen)
+      if (seen.has(expr) || seen.size >= 5) return
+      seen.add(expr)
       warn(`“${key}”: an n8n JS expression ({{ ${expr.slice(0, 60)} }}) was kept as-is — our templates can't evaluate JavaScript; compute it in a Code step instead.`)
     })
 
@@ -1709,6 +1998,19 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         const headers = data.headers === undefined ? undefined : hoistJsonMap(data.headers)
         const body = data.body === undefined ? undefined : hoistRawExpressions(data.body, computeId, exprs)
         if (exprs.size > 0) {
+          // The shim covers $/$input/$json/items/$now/$today — anything else
+          // from n8n's expression runtime is undefined in the sandbox and the
+          // step would throw at run time. Say so now, naming the global.
+          const UNSUPPORTED = /\$env|\$vars|\$execution|\$workflow|\$jmespath|\$prevNode|\$runIndex|\$itemIndex|\$fromAI|\$binary|\$items\s*\(|\bDateTime\b/g
+          const unsupported = new Set<string>()
+          for (const expr of exprs.keys()) {
+            for (const match of expr.match(UNSUPPORTED) ?? []) unsupported.add(match.replace(/\s*\($/, ''))
+          }
+          if (unsupported.size) {
+            warn(
+              `“${node.name}”: uses ${[...unsupported].join(', ')} — n8n runtime values with no equivalent here; the inserted Code step will fail until those are replaced.`,
+            )
+          }
           usedIds.add(computeId)
           mapped = {
             ...mapped,
@@ -1741,8 +2043,9 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           synthEdges.push({ source: computeId, target: id })
           // The per-node "JS expression kept as-is" warning no longer applies —
           // the expressions now run in the inserted compute step.
-          const stale = warnings.findIndex((w) => w.startsWith(`“${node.name}”: an n8n JS expression`))
-          if (stale !== -1) warnings.splice(stale, 1)
+          for (let i = warnings.length - 1; i >= 0; i--) {
+            if (warnings[i].startsWith(`“${node.name}”: an n8n JS expression`)) warnings.splice(i, 1)
+          }
           warn(
             `“${node.name}”: its n8n JS expressions were moved into an inserted Code step (“${node.name} — expressions”) that computes them before the request.`,
           )
@@ -1755,7 +2058,16 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       mapped = { ...mapped, data: { ...mapped.data, perItem: { over: perItemOverByName.get(node.name)! } } } as FlowNode
       warn(`“${node.name}”: runs once per upstream item (n8n executes per item) — the collected results flow on as a list.`)
     }
-    if (mapped) nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
+    if (mapped) {
+      // Carry n8n's node-level flags: `disabled` (any kind) and the Settings-tab
+      // reliability options (action kinds whose schema has the fields).
+      if (ACTION_SETTING_KINDS.has(mapped.type)) {
+        const settings = nodeSettingsFrom(node)
+        if (Object.keys(settings).length) mapped = { ...mapped, data: { ...mapped.data, ...settings } } as FlowNode
+      }
+      if (node.disabled) mapped = { ...mapped, disabled: true } as FlowNode
+      nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
+    }
   }
 
   // No trigger in the file → synthesize a manual one and wire it to the roots.
@@ -1768,6 +2080,9 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   }
 
   // Connections (keyed by source NAME) → edges, skipping any that closes a cycle.
+  const errorOutputByName = new Set(
+    (workflow.nodes ?? []).filter((n) => n.onError === 'continueErrorOutput' && n.name).map((n) => n.name as string),
+  )
   const edges: FlowGraph['edges'] = []
   const adjacency = new Map<string, Set<string>>()
   const reaches = (from: string, to: string, seen = new Set<string>()): boolean => {
@@ -1821,7 +2136,12 @@ export function n8nToFlow(input: unknown): N8nImportResult {
               : 'true'
             : sourceType === 'switch'
               ? casesById.get(sourceId)?.[outIdx]?.id ?? 'default'
-              : undefined
+              : // onError:'route' — n8n's second output is the ERROR branch, not a
+                // parallel success lane; an unlabelled edge here would run the
+                // failure path on every successful execution.
+                errorOutputByName.has(sourceName) && outIdx === 1
+                ? 'error'
+                : undefined
         edges.push({ id: `e-${edgeIndex++}`, source: sourceId, target: targetId, ...(branch ? { branch } : {}) })
         if (!adjacency.has(sourceId)) adjacency.set(sourceId, new Set())
         adjacency.get(sourceId)!.add(targetId)
@@ -1851,9 +2171,21 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     )
   }
 
+  // n8n pinData is our per-node pinned mock output: unwrap the [{json}] item
+  // envelope (single item → the object, several → a list of them).
+  const pinData: Record<string, unknown> = {}
+  for (const [pinName, items] of Object.entries(workflow.pinData ?? {})) {
+    const pinId = idByName.get(pinName)
+    if (!pinId || !nodeIds.has(pinId)) continue
+    const list = (Array.isArray(items) ? items : [items]).map((item) =>
+      item && typeof item === 'object' && 'json' in (item as Record<string, unknown>) ? (item as { json: unknown }).json : item,
+    )
+    pinData[pinId] = list.length === 1 ? list[0] : list
+  }
+
   return {
     name: workflow.name?.trim() || 'Imported from n8n',
-    graph: { nodes, edges },
+    graph: { nodes, edges, ...(Object.keys(pinData).length ? { pinData } : {}) },
     warnings,
     agents: Array.from(agentClusters.values()),
   }

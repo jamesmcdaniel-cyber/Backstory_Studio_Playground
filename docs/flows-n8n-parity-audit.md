@@ -539,3 +539,172 @@ Compression, Edit Image, Convert to File / Extract from File as dedicated
 steps (file references + HTTP `responseType: 'file'` + text-op auto-extract
 cover the common path), Crypto, and HTML CSS-selector extraction (the AI
 extract step covers it in plain English).
+
+---
+
+# Addendum — Import fidelity & credential surface (2026-08-07)
+
+Prior passes audited engine semantics (§2), editor UX (§3), and node
+configuration (§6–§13). This pass audits the two remaining surfaces: **what
+survives an n8n import** and **what a user is asked for when connecting an
+integration**. Method: fresh n8n source clone as ground truth (403 credential
+schemas, serialized-JSON shapes from `packages/workflow/src/interfaces.ts` +
+`schemas.ts`), plus a **live probe** — 13 real-shape n8n workflow exports
+(resource locators, `assignmentCollection`, FilterValue conditions, resource
+mappers, `onError` branches, pinData, disabled flags) pushed through
+`n8nToFlow` and the output inspected. Findings below are run-verified, not
+read-verified, except where noted.
+
+## 17. Import fidelity — ranked
+
+### P0 — silent data destruction (the "every import uncovers major flaws" class)
+
+1. **Write payloads are emptied, with a misleading warning.** Verified live:
+   Google Sheets append with a v4 `columns` resource-mapper
+   (`{mappingMode:'defineBelow', value:{Name:…, Email:…}}`) imports as
+   `google_sheets_append_row` with `values: []`; Salesforce create with
+   top-level fields + `additionalFields` imports as `salesforce_create_record`
+   with `fields: {}`. The only warning is "confirm the … connection under
+   Integrations" — the flow *looks* correctly bound and then writes nothing.
+   Fix: read `columns.value` / the per-resource field params and
+   `additionalFields`, translate expressions per value; warn loudly on any
+   shape we can't read.
+2. **Sheets `documentId` in `url` mode passes the whole URL as
+   `spreadsheetId`.** Verified live: `https://docs.google.com/spreadsheets/d/
+   1AbCdEfG/edit#gid=0` lands verbatim in args. n8n's `url` RL mode
+   regex-extracts the file id; `locatorValue()` (from-n8n.ts:250) returns
+   `.value` raw. Runtime call fails. Same risk for any RL whose `url` mode
+   needs extraction.
+3. **`onError: 'continueErrorOutput'` error branches import as ordinary
+   success edges.** Verified live: the "Alert on failure" branch becomes a
+   parallel unlabelled edge — it now runs on every *success* and does not run
+   on failure. Branch labelling (from-n8n.ts:1816-1824) only covers
+   `condition`/`switch`. Our schema has `onError:'route'` + an error edge —
+   map it; until then, at minimum warn.
+4. **Disabled nodes import live.** Verified live: a `disabled: true` HTTP
+   POST imports as an executable step, silently. `disabled` is parsed into
+   `N8nNodeIn` (:26) and never read. Our schema has `disabled` — copy it.
+
+### P1 — silent behavior changes
+
+5. **Merge configuration dropped without warning.** Verified live:
+   `combine`/`combineByFields` on `email` + `joinMode:'keepMatches'` imports
+   as `join mode:'append'` — no warning. Our `join` already supports
+   `combineByKey` (§13): map `combineByFields → combineByKey`,
+   `fieldsToMatchString → key`, `combineByPosition → combineByPosition`; warn
+   on SQL/chooseBranch only.
+6. **Set/transform loses `includeOtherFields` and per-field `type`.**
+   Verified live: v3.4 assignments import as bare `{name, value}` fields —
+   `type:'number'` and `includeOtherFields:true / include:'all'` vanish. Our
+   transform supports both (§13). Consequence: imported transform *replaces*
+   the payload where n8n *merged*, and typed values become strings.
+7. **Node-level reliability settings dropped.** Verified live: `retryOnFail`,
+   `maxTries`, `waitBetweenTries`, `alwaysOutputData` all discarded — our
+   schema has `retries`, `retryDelayMs`, `alwaysOutputData` (§13). Pure
+   mapping work, zero engine change.
+8. **Hoisted expressions can reference n8n globals the sandbox never
+   defines.** Verified live: `={{ $now.minus(7, 'days') }}` hoists into the
+   compute code step verbatim — but `withN8nCodeShim` defines only `$`,
+   `$input`, `$json`, `items`. The step throws `ReferenceError: $now is not
+   defined` at run time. Shim should define `$now`/`$today` (Date-based),
+   and the hoister should warn on `$env`, `$vars`, `$execution`, `$workflow`,
+   `$jmespath`, `DateTime` instead of emitting code that cannot run.
+9. **If-node case sensitivity dropped.** Verified live: `options.ignoreCase`
+   / `caseSensitive:false` vanish; our clauses support per-clause
+   `ignoreCase` (§13). (The `or` combinator DOES carry — `match:'any'`.)
+10. **`pinData` silently discarded — we have the feature.** n8n pinData is
+    exactly our mock-output/pinData system; map per-node entries instead of
+    dropping. Ditto `settings.errorWorkflow` → note pointing at our
+    `flow.failed` signal flows.
+11. **Slack `otherOptions` (thread_ts threading, unfurl, sendAsUser) and
+    Gmail `options` (cc/bcc/senderName) silently dropped.** Verified live:
+    happy-path args (channel/text, to/subject/body) carry; the rest vanish
+    without a note. Threading loss changes behavior invisibly.
+12. **Credential references are never read.** The importer uses
+    `node.credentials` only as a boolean. The credential-type key
+    (`slackOAuth2Api`, `gmailOAuth2`, `googleSheetsOAuth2Api`,
+    `salesforceOAuth2Api`, `hubspotOAuth2Api`, `notionApi`, …) is a reliable
+    provider signal n8n ground truth gives us for free — a
+    credential-name → plane table would bind tools even when the node *type*
+    is unmapped (today those become unbound `tool` stubs named
+    `"<segment>.<op>"`).
+
+### P2 — visibility
+
+13. **Warning throttling hides breakage**: untranslatable expressions warn at
+    most once per node, and only when they contain `(` or `$`
+    (from-n8n.ts:1426). Broken tokens ship silently past the first.
+14. **The import report (Workstream 1 of the 2026-08-07 flow-gap-closure
+    plan) is the meta-fix and is unbuilt.** All warnings die with the import
+    toast today. Every finding above should land as a typed
+    `FlowImportNote`, several with node-anchored severity=error.
+
+### Verified working — don't re-fix
+
+Resource-locator extraction for `list`/`id`/`name` modes (Slack channel RL →
+`C0123ABC`); `$json` parenting and `$('Node')` translation; If `or`
+combinator → `match:'any'`; switch fallback → `default` branch edge and
+per-case branch labels; schedule `rule.interval` → cadence (imported paused,
+warned — by design); HTTP expression hoisting mechanics and stale-warning
+splice; the code shim executing in the real QuickJS sandbox; Slack/Gmail/
+Salesforce-read happy-path arg mapping; loop-edge suppression; auth
+auto-bind for HTTP hosts (`bind-imported-auth.ts`).
+
+## 18. Credential surface — why it feels "random"
+
+Ground truth: n8n ships 403 credential schemas; every provider's quirks are
+first-class fields (Zendesk **subdomain**, Salesforce **sandbox/production**
+environment, Jira **domain** ×4 variants, GitHub **server** for Enterprise,
+Gong **baseUrl** + key/secret, Microsoft tenant-in-URL + national-cloud
+picker + certificate-vs-secret, Slack **signature secret** + scope lists,
+Linear **actor** + admin-scope toggles). Ours, by plane:
+
+| Plane | Per-provider tailoring |
+|---|---|
+| Nango OAuth (16 providers) | **None on our side** — identical Connect button; scopes/subdomains live in Nango's dashboard/iframe, invisible to us |
+| HTTP credentials | Generic by auth *type* (8 types), host-locked, live-verified — solid but provider-blind |
+| MCP connections | Best UX (auto-discovery, test button), single generic form |
+| `credential-providers.ts` (slack/email/granola) | **The only tailored registry — and its panel (`WorkspaceCredentialsPanel`) is dead code, never rendered** |
+| People.ai OAuth | Single-purpose, fine |
+
+Ranked findings:
+
+1. **`WorkspaceCredentialsPanel` is orphaned** (workspace-credentials-panel.tsx:161,
+   zero importers). Slack bot token, Resend key, Granola key have no entry
+   point; agents error with "Granola not connected" and no path to connect.
+2. **The step-drawer's "Predefined Credential Type" list excludes Nango
+   connections and then claims "No connected integrations yet"** — false for
+   anyone who connected via the grid (step-drawer.tsx:643-650).
+3. **Zero per-provider guidance on the connect grid** — no scope disclosure,
+   no "you'll need your Zendesk subdomain", no docs links. n8n's per-provider
+   fields are the tailoring users expect; ours arrives unannounced inside
+   Nango's iframe.
+4. **Slack spans three planes** (native bot token / Nango delivery / Nango
+   tools) with one label and three different credentials. Needs one "Slack"
+   surface that explains which capability each connection powers.
+5. **Four vocabularies for one concept**: "Predefined/Generic Credential
+   Type" (n8n-derived) vs "Authentication method" vs "Authentication" vs
+   "Connect".
+6. **Docs/code drift**: nango-setup.md lists 14 providers, code has 16
+   (airtable, figma undocumented → likely unconfigured in Nango → connect
+   succeeds with 0 tools and only a soft signal; the doc-promised amber
+   mismatch note does not exist in code).
+7. HTTP credential auth-type list is unfiltered by target host (offers OAuth1
+   and Digest for `api.github.com` with no hint). A small host → suggested-
+   auth-type hint table (seedable from n8n's credential schemas) would close
+   most of the perceived distance.
+
+## 19. Recommended sequencing
+
+1. **Ride Workstream 1 (import report)** — land the P0 import fixes (§17.1-4)
+   *with* the persistent `FlowImportNote` surface, so remaining losses become
+   visible instead of silent.
+2. **Mapping-only P1 fixes** (§17.5-7, 9-11): merge modes, transform
+   include/types, retry/alwaysOutputData, ignoreCase, pinData, Slack/Gmail
+   options — all target schema fields that already exist.
+3. **Credential-name → plane binding table** (§17.12) + shim `$now/$today`
+   (§17.8).
+4. **Credential surface**: resurrect or fold `WorkspaceCredentialsPanel` into
+   the integrations page; fix the predefined-credential empty-state lie; add
+   per-provider connect guidance (subdomain/environment/scopes) seeded from
+   the n8n schema ground truth in this addendum.

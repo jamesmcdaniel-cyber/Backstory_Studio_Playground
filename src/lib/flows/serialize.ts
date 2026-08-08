@@ -42,6 +42,9 @@ export function serializeFlow(flow: {
   anonymousViews?: number
   folder?: string
   userId?: string | null
+  /// Persisted import report ({notes, blocking}) — null/absent when cleared
+  /// or for flows that weren't imported.
+  importNotes?: unknown
   createdAt: Date
   updatedAt: Date
 }, viewerId?: string, access?: FlowViewerAccess) {
@@ -83,6 +86,7 @@ export function serializeFlow(flow: {
         : {}),
     }),
     folder: flow.folder ?? '',
+    importNotes: flow.importNotes ?? null,
     stepCount,
     version: flow.version ?? 1,
     published,

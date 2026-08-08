@@ -3,6 +3,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import type { AuthContext } from '@/lib/server/auth'
 import { nativeFlowPackageSchema } from '@/lib/flows/native-package'
 import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
+import { validateFlowGraph } from '@/lib/flows/validate'
 import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
 import { bindImportedHttpAuth, dropStaleAuthWarnings } from '@/lib/flows/import/bind-imported-auth'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
@@ -153,6 +154,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     const bound = bindImportedHttpAuth(graph, { mcpConnections, httpCredentials })
     graph = bound.graph
     warnings = [...dropStaleAuthWarnings(warnings, bound.boundLabels), ...bound.notes]
+    // The import report, persisted so it outlives the toast: every importer
+    // note plus how many BLOCKING problems the converted graph starts with
+    // (structure-only validation — connection-aware checks are the builder's
+    // live job). The builder shows these in the Import notes panel until the
+    // user clears them.
+    const validation = validateFlowGraph(graph, { requireRunnable: false })
+    const importNotes = {
+      notes: warnings.map((message) => ({ code: 'IMPORT_NOTE', severity: 'warning', message })),
+      blocking: validation.errors.length,
+    }
     const flow = await prisma.flow.create({
       data: {
         organizationId: auth.organizationId,
@@ -161,9 +172,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         status: 'DRAFT',
         graph: JSON.parse(JSON.stringify(graph)),
         trigger: JSON.parse(JSON.stringify(triggerFromGraph(graph))),
+        ...(importNotes.notes.length || importNotes.blocking ? { importNotes } : {}),
       },
     })
-    return { success: true, flow: serializeFlow(flow), warnings, source: 'n8n' }
+    return { success: true, flow: serializeFlow(flow), warnings, blocking: importNotes.blocking, source: 'n8n' }
   }
 
   const parsed = nativeFlowPackageSchema.safeParse(payload)

@@ -891,6 +891,11 @@ model Flow {
   // Polling-trigger dedupe state ({ seen: string[] }) — the keys of items already
   // emitted, so a poll only starts the flow for genuinely new records.
   pollCursor     Json?
+  /// Import report ({ notes: [{code, severity, message, nodeId?}], blocking }):
+  /// what the importer couldn't translate faithfully plus the post-import
+  /// validation blocker count. Null once the user clears the notes (or for
+  /// flows that weren't imported).
+  importNotes    Json?
   organizationId String   @db.Uuid
   userId         String?
   createdAt      DateTime @default(now())

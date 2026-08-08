@@ -4,7 +4,7 @@ import type { AuthContext } from '@/lib/server/auth'
 import { nativeFlowPackageSchema } from '@/lib/flows/native-package'
 import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
-import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
+import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type FlowImportNote, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
 import { bindImportedHttpAuth, dropStaleAuthWarnings } from '@/lib/flows/import/bind-imported-auth'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { triggerFromGraph } from '@/lib/flows/trigger'
@@ -136,8 +136,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   if (looksLikeN8nWorkflow(payload)) {
     const converted = n8nToFlow(payload)
-    let warnings = [...converted.warnings]
-    let graph = await materializeImportedAgents(converted.agents, flowGraphSchema.parse(converted.graph), auth, warnings)
+    const agentWarnings: string[] = []
+    let graph = await materializeImportedAgents(converted.agents, flowGraphSchema.parse(converted.graph), auth, agentWarnings)
     // An n8n export never carries secrets (only {id, name} references into the
     // source instance), so instead of importing every external call red, bind
     // each unauthenticated http step to auth this org already has.
@@ -153,17 +153,21 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     ])
     const bound = bindImportedHttpAuth(graph, { mcpConnections, httpCredentials })
     graph = bound.graph
-    warnings = [...dropStaleAuthWarnings(warnings, bound.boundLabels), ...bound.notes]
-    // The import report, persisted so it outlives the toast: every importer
-    // note plus how many BLOCKING problems the converted graph starts with
-    // (structure-only validation — connection-aware checks are the builder's
-    // live job). The builder shows these in the Import notes panel until the
-    // user clears them.
+    // The import report, persisted so it outlives the toast. Structured notes
+    // (code/severity/nodeId anchoring) come straight from the importer; stale
+    // credential-transfer notes drop once the binder authenticated their step;
+    // agent-materialization and binder outcomes append as their own notes.
+    // `blocking` counts the converted graph's validation errors (structure-only
+    // — connection-aware checks are the builder's live job).
+    const keptMessages = new Set(dropStaleAuthWarnings(converted.notes.map((note) => note.message), bound.boundLabels))
+    const notes: FlowImportNote[] = [
+      ...converted.notes.filter((note) => keptMessages.has(note.message)),
+      ...agentWarnings.map((message) => ({ code: 'AGENT_MCP_UNMATCHED', severity: 'warning' as const, message })),
+      ...bound.notes.map((message) => ({ code: 'AUTH_BOUND', severity: 'info' as const, message })),
+    ]
+    const warnings = notes.map((note) => note.message)
     const validation = validateFlowGraph(graph, { requireRunnable: false })
-    const importNotes = {
-      notes: warnings.map((message) => ({ code: 'IMPORT_NOTE', severity: 'warning', message })),
-      blocking: validation.errors.length,
-    }
+    const importNotes = { notes, blocking: validation.errors.length }
     const flow = await prisma.flow.create({
       data: {
         organizationId: auth.organizationId,

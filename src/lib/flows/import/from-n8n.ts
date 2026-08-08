@@ -135,7 +135,28 @@ export type N8nAgentSpec = {
   hasMemory: boolean
 }
 
-export type N8nImportResult = { name: string; graph: FlowGraph; warnings: string[]; agents: N8nAgentSpec[] }
+/**
+ * One thing the importer changed, dropped, or wants reviewed — typed so the
+ * report can persist past the import toast and anchor to the step it's about.
+ */
+export type FlowImportNote = {
+  code: string
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  nodeId?: string
+}
+
+export type WarnOpts = { code?: string; nodeId?: string; severity?: FlowImportNote['severity'] }
+export type WarnFn = (message: string, opts?: WarnOpts) => void
+
+export type N8nImportResult = {
+  name: string
+  graph: FlowGraph
+  /** Flat messages, kept for compat — always `notes.map((n) => n.message)`. */
+  warnings: string[]
+  notes: FlowImportNote[]
+  agents: N8nAgentSpec[]
+}
 
 /** n8n export shape: a nodes array where entries carry an n8n-style `type`. */
 export function looksLikeN8nWorkflow(json: unknown): boolean {
@@ -604,7 +625,7 @@ function httpIntegrationBindingFor(
   method: string,
   url: string,
   body: string | undefined,
-  warn: (msg: string) => void,
+  warn: WarnFn,
   nodeName: string,
 ): Extract<IntegrationBinding, { connectionId: string }> | null {
   const slack = url.match(/^https:\/\/slack\.com\/api\/([a-zA-Z.]+)(\?([^#]*))?/)
@@ -686,7 +707,7 @@ const OPERATION_TO_OP: Record<string, ConditionOp> = {
 
 type RawClause = { leftValue?: unknown; rightValue?: unknown; operator?: { operation?: string } }
 
-function clausesFrom(parameters: Record<string, unknown>, tr: (v: string) => string, warn: (msg: string) => void, nodeName: string) {
+function clausesFrom(parameters: Record<string, unknown>, tr: (v: string) => string, warn: WarnFn, nodeName: string) {
   const conditions = (parameters.conditions ?? {}) as { combinator?: string; conditions?: RawClause[]; options?: { caseSensitive?: boolean } }
   const raw = Array.isArray(conditions.conditions) ? conditions.conditions : []
   // n8n stores case handling once per node (v2 `options.caseSensitive`, plus a
@@ -829,7 +850,7 @@ function mapNode(
   node: N8nNodeIn,
   id: string,
   tr: (v: string) => string,
-  warn: (msg: string) => void,
+  warn: WarnFn,
   labelToId: Map<string, string>,
   jsonBase: string,
 ): FlowNode | null {
@@ -888,7 +909,7 @@ function mapNode(
       const query = parameters.sendQuery === true ? pairs(parameters.queryParameters) : {}
       const headers = parameters.sendHeaders === true ? pairs(parameters.headerParameters) : {}
       if (parameters.authentication || node.credentials) {
-        warn(`“${name}”: its n8n credential does not transfer — add the auth header (or an MCP connection) on the HTTP step before running.`)
+        warn(`“${name}”: its n8n credential does not transfer — add the auth header (or an MCP connection) on the HTTP step before running.`, { code: 'CREDENTIAL_NOT_TRANSFERRED', nodeId: id })
       }
       return {
         id,
@@ -1029,6 +1050,10 @@ function mapNode(
           } as FlowNode
         }
         if (combineBy === 'combineByPosition') {
+          warn(
+            'This merge pairs items by position, which breaks if one side drops an item — switch it to match on a shared field if the lists can get out of step.',
+            { code: 'MERGE_BY_POSITION', nodeId: id, severity: 'info' },
+          )
           return { id, type: 'join', data: { label, mode: 'combineByPosition' } } as FlowNode
         }
         if (combineBy === 'combineAll') {
@@ -1370,8 +1395,11 @@ ${body}`,
       // an unbound stub: the step arrives bound and runnable.
       const binding = integrationBindingFor(type, parameters, tr)
       if (binding && 'connectionId' in binding) {
-        warn(`“${name}”: bound to the platform's ${binding.label} integration (${binding.toolName}) — confirm the ${binding.label} connection under Integrations.`)
-        if (binding.warning) warn(`“${name}”: ${binding.warning}`)
+        warn(
+          `“${name}”: bound to the platform's ${binding.label} integration (${binding.toolName}) — confirm the ${binding.label} connection under Integrations.`,
+          { code: 'INTEGRATION_BOUND', nodeId: id, severity: 'info' },
+        )
+        if (binding.warning) warn(`“${name}”: ${binding.warning}`, { code: 'CREDENTIAL_NOT_TRANSFERRED', nodeId: id })
         return {
           id,
           type: 'tool',
@@ -1433,6 +1461,7 @@ ${body}`,
         })()
         warn(
           `“${name}”: the platform's integrations don't cover ${binding.missing} — imported as a direct API request (${skeleton.hint}).`,
+          { code: 'CREDENTIAL_SKELETON', nodeId: id },
         )
         return {
           id,
@@ -1473,9 +1502,10 @@ ${body}`,
         if (provider) {
           warn(
             `“${name}” (${app}) imported bound to your ${provider.label} integration via its n8n credential — open it and pick the matching ${provider.label} tool; its n8n parameters are preserved in Args.`,
+            { code: 'UNMAPPED_NODE', nodeId: id },
           )
         } else {
-          warn(`“${name}” (${app}) imported as a Tool step without a connection — open it and pick the matching integration; its n8n parameters are preserved in Args.`)
+          warn(`“${name}” (${app}) imported as a Tool step without a connection — open it and pick the matching integration; its n8n parameters are preserved in Args.`, { code: 'UNMAPPED_NODE', nodeId: id })
         }
         return {
           id,
@@ -1493,7 +1523,7 @@ ${body}`,
       }
       // Credential-less utility with no mapping: a runnable passthrough stub
       // keeps the chain executing end-to-end (a dead note would not).
-      warn(`“${name}” (${type}) has no native equivalent — imported as a passthrough Code step (it currently just forwards its input); implement or replace it.`)
+      warn(`“${name}” (${type}) has no native equivalent — imported as a passthrough Code step (it currently just forwards its input); implement or replace it.`, { code: 'UNMAPPED_NODE', nodeId: id })
       return {
         id,
         type: 'code',
@@ -1542,8 +1572,14 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   const workflow = (input ?? {}) as N8nWorkflowIn
   const sourceNodes = Array.isArray(workflow.nodes) ? workflow.nodes : []
   if (sourceNodes.length === 0) throw new Error('This n8n file has no nodes to import.')
-  const warnings: string[] = []
-  const warn = (msg: string) => warnings.push(msg)
+  const notes: FlowImportNote[] = []
+  const warn: WarnFn = (message, opts) =>
+    notes.push({
+      code: opts?.code ?? 'IMPORT_NOTE',
+      severity: opts?.severity ?? 'warning',
+      message,
+      ...(opts?.nodeId ? { nodeId: opts.nodeId } : {}),
+    })
 
   // Name → id map for connections and expression translation. The FIRST
   // trigger-typed node must get the literal id "trigger" — flow validation
@@ -1714,7 +1750,10 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       if (!warnedExprNodes.has(key)) warnedExprNodes.set(key, seen)
       if (seen.has(expr) || seen.size >= 5) return
       seen.add(expr)
-      warn(`“${key}”: an n8n JS expression ({{ ${expr.slice(0, 60)} }}) was kept as-is — our templates can't evaluate JavaScript; compute it in a Code step instead.`)
+      warn(`“${key}”: an n8n JS expression ({{ ${expr.slice(0, 60)} }}) was kept as-is — our templates can't evaluate JavaScript; compute it in a Code step instead.`, {
+        code: 'EXPRESSION_KEPT',
+        nodeId: nodeName ? idByName.get(nodeName) : undefined,
+      })
     })
 
   // An n8n AI Agent WITH tool or memory sub-nodes is a real agent, not a bare
@@ -1867,7 +1906,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         warn(`“${node.name ?? node.type}” (${node.type}): a provider event trigger imported as a webhook trigger — point the provider's webhook/automation at this flow's URL.`)
       }
     } else if (triggerType) {
-      warn(`“${node.name ?? node.type}”: a flow has one trigger — this extra ${n8nTriggerType(node.type)} trigger became a note; switch the flow's trigger type in the builder if you want this one instead.`)
+      warn(`“${node.name ?? node.type}”: a flow has one trigger — this extra ${n8nTriggerType(node.type)} trigger became a note; switch the flow's trigger type in the builder if you want this one instead.`, { code: 'EXTRA_TRIGGER', nodeId: id })
       mapped = {
         id,
         type: 'note',
@@ -2043,8 +2082,8 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           synthEdges.push({ source: computeId, target: id })
           // The per-node "JS expression kept as-is" warning no longer applies —
           // the expressions now run in the inserted compute step.
-          for (let i = warnings.length - 1; i >= 0; i--) {
-            if (warnings[i].startsWith(`“${node.name}”: an n8n JS expression`)) warnings.splice(i, 1)
+          for (let i = notes.length - 1; i >= 0; i--) {
+            if (notes[i].message.startsWith(`“${node.name}”: an n8n JS expression`)) notes.splice(i, 1)
           }
           warn(
             `“${node.name}”: its n8n JS expressions were moved into an inserted Code step (“${node.name} — expressions”) that computes them before the request.`,
@@ -2125,7 +2164,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         const targetId = target?.node ? edgeTargetOverride.get(target.node) ?? idByName.get(target.node) : undefined
         if (!targetId || !nodeIds.has(targetId) || bodyMemberIds.has(targetId)) continue
         if (reaches(targetId, sourceId)) {
-          warn(`Dropped the looping connection ${sourceName} → ${target.node} (our flows are one-way; rebuild n8n loops as a Loop step).`)
+          warn(`Dropped the looping connection ${sourceName} → ${target.node} (our flows are one-way; rebuild n8n loops as a Loop step).`, { code: 'LOOP_EDGE_DROPPED', nodeId: sourceId })
           continue
         }
         const sourceType = typeById.get(sourceId)
@@ -2171,6 +2210,20 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     )
   }
 
+  // A condition gating on a test_mode-style boolean is almost always n8n
+  // scaffolding: here an unpublished flow already runs privately, so the
+  // branch is probably dead weight.
+  for (const node of nodes) {
+    if (node.type !== 'condition') continue
+    const clauses = (node.data as { clauses?: Array<{ left?: string }> }).clauses ?? []
+    if (clauses.some((clause) => /test[_-]?mode/i.test(clause.left ?? ''))) {
+      warn(
+        'This looks like an imported test-mode switch. In this builder an unpublished flow already runs privately, so this branch may be dead weight — review whether both paths still make sense.',
+        { code: 'TEST_MODE_BRANCH', nodeId: node.id, severity: 'info' },
+      )
+    }
+  }
+
   // n8n pinData is our per-node pinned mock output: unwrap the [{json}] item
   // envelope (single item → the object, several → a list of them).
   const pinData: Record<string, unknown> = {}
@@ -2186,7 +2239,8 @@ export function n8nToFlow(input: unknown): N8nImportResult {
   return {
     name: workflow.name?.trim() || 'Imported from n8n',
     graph: { nodes, edges, ...(Object.keys(pinData).length ? { pinData } : {}) },
-    warnings,
+    warnings: notes.map((n) => n.message),
+    notes,
     agents: Array.from(agentClusters.values()),
   }
 }

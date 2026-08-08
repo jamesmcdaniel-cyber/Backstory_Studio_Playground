@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, Users, FileText, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, Users, FileText, FileWarning, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
@@ -53,6 +53,7 @@ import { GraphCanvas } from '@/components/flows/canvas/graph-canvas'
 import { StepDrawer, type OrgMember, type ToolCatalog } from '@/components/flows/step-drawer'
 import { CopilotPanel } from '@/components/flows/copilot-panel'
 import { RunPanel, runIsDegraded, type FlowRunDetail } from '@/components/flows/run-panel'
+import { ImportNotesPanel, parseImportReport, type FlowImportReport } from '@/components/flows/import-notes-panel'
 import { CheckerPanel } from '@/components/flows/checker-panel'
 import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
@@ -274,6 +275,10 @@ function FlowBuilder() {
   const [showCopilot, setShowCopilot] = useState(false)
   const [showRuns, setShowRuns] = useState(false)
   const [showChecker, setShowChecker] = useState(false)
+  // Persisted import report (Flow.importNotes) — null once cleared or for
+  // flows that weren't imported; the toggle only renders when a report exists.
+  const [importReport, setImportReport] = useState<FlowImportReport | null>(null)
+  const [showImportNotes, setShowImportNotes] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [showJam, setShowJam] = useState(false)
   // Read-only History overlay: a published version (vN) or a recent-edit
@@ -390,6 +395,7 @@ function FlowBuilder() {
           setShareRole(flow.shareRole === 'edit' ? 'edit' : 'view')
           setShareAnonymous(Boolean(flow.shareAnonymous))
           setAnonymousViews(Number(flow.anonymousViews ?? 0))
+          setImportReport(parseImportReport(flow.importNotes))
           setSavedSnapshot(JSON.stringify({ name: flow.name, description: flow.description || '', graph: g }))
           // Only now is it safe to persist — every save path checks this flag.
           loadedOkRef.current = true
@@ -1663,6 +1669,22 @@ function FlowBuilder() {
     [id],
   )
 
+  // Dismiss the persisted import report — the flow keeps its live checker;
+  // the historical import record goes away for everyone.
+  const clearImportNotes = useCallback(async () => {
+    const response = await fetch('/api/flows', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, clearImportNotes: true }),
+    })
+    if (!response.ok) {
+      toast.error('Could not clear the import notes.')
+      return
+    }
+    setImportReport(null)
+    setShowImportNotes(false)
+  }, [id])
+
   // Node-editor step controls: run through a node ("Execute step") or up to but
   // not including it ("Execute previous nodes"). Both start a partial run whose
   // recorded step rows populate the drawer's INPUT/OUTPUT panes.
@@ -2286,6 +2308,14 @@ function FlowBuilder() {
               <Badge variant="warn" className="ml-1.5">{validation.warnings.length}</Badge>
             )}
           </Button>
+          {importReport && (
+            <Button variant="ghost" size="sm" aria-pressed={showImportNotes} onClick={() => setShowImportNotes((v) => !v)} className={cn('h-7 px-2.5', showImportNotes && 'bg-muted text-foreground')}>
+              <FileWarning className="mr-1.5 h-4 w-4" /> Import notes
+              {importReport.notes.length > 0 && (
+                <Badge variant="warn" className="ml-1.5">{importReport.notes.length}</Badge>
+              )}
+            </Button>
+          )}
         </div>
         {!external && (
           <Button variant="ghost" size="sm" onClick={() => router.push(`/flows/${id}/activity`)}>
@@ -2751,6 +2781,18 @@ function FlowBuilder() {
               onDownloadDebug={exportDebugJson}
               onClose={() => setShowChecker(false)}
               onJump={jumpToNode}
+            />
+          </ResizablePanel>
+        )}
+
+        {showImportNotes && importReport && (
+          <ResizablePanel storageKey="flow.importNotesWidth">
+            <ImportNotesPanel
+              report={importReport}
+              onJump={jumpToNode}
+              canClear={canEdit && !external}
+              onClear={() => void clearImportNotes()}
+              onClose={() => setShowImportNotes(false)}
             />
           </ResizablePanel>
         )}

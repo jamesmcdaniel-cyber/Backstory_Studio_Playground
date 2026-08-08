@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
@@ -90,6 +91,8 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     // Jam autosaves coalesce audit rows client-side (one per window) instead
     // of one per debounce tick.
     suppressAudit: z.boolean().optional(),
+    // Dismiss the persisted import report (Import notes panel's Clear button).
+    clearImportNotes: z.boolean().optional(),
   }).merge(flowSchema.partial()).parse(await request.json())
   // systemPrisma: deliberately cross-tenant — an external collaborator's save
   // must find the flow outside their org; resolveFlowRole below is the access
@@ -145,6 +148,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     // never sees it, so a plain PUT would silently wipe it.
     ...(nextTrigger !== undefined && { trigger: jsonValue(anchorTriggerSchedule(preserveWebhookSecretHash(nextTrigger, existing.trigger), existing.trigger)) }),
     ...(body.graph !== undefined && { graph: jsonValue(body.graph) }),
+    ...(body.clearImportNotes ? { importNotes: Prisma.DbNull } : {}),
   }
   // Scoped to the OWNING org (which for a guest differs from the caller's).
   let flow

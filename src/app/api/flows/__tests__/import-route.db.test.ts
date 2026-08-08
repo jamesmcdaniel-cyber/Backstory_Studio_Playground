@@ -51,9 +51,18 @@ if (TEST_DB) {
         'the slack node binds to the platform Slack integration',
       )
       // The import report persists — the toast is a headline, not the only copy.
-      const notes = flow.importNotes as { notes: { code: string; severity: string; message: string }[]; blocking: number }
+      const notes = flow.importNotes as {
+        notes: { code: string; severity: string; message: string; nodeId?: string }[]
+        blocking: number
+      }
       assert.ok(notes && Array.isArray(notes.notes) && notes.notes.length > 0, 'import notes persist on the flow')
       assert.equal(typeof notes.blocking, 'number')
+      // Typed, node-anchored notes survive the route — not flattened to IMPORT_NOTE.
+      const toolNode = graph.nodes.find((n) => n.type === 'tool')!
+      assert.ok(
+        notes.notes.some((n) => n.nodeId === toolNode.id),
+        `expected a note anchored to the imported tool step, got ${JSON.stringify(notes.notes)}`,
+      )
       assert.equal(typeof body.blocking, 'number', 'the response carries the blocking count')
     } finally {
       await s.cleanup()

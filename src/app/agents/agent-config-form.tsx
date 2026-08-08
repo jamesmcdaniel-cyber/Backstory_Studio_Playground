@@ -196,8 +196,8 @@ function HttpCredentialsPanel({ active }: { active: boolean }) {
   const load = useCallback(() => {
     fetch('/api/http-credentials', { cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : null))
-      // A member without integration.manage can't list credentials; show the
-      // section as empty rather than erroring at them about permissions.
+      // Listing needs only flow.read; on any failure show the section as
+      // empty rather than erroring at the user.
       .then((data) => setCredentials(Array.isArray(data?.credentials) ? data.credentials : []))
       .catch(() => setCredentials([]))
   }, [])

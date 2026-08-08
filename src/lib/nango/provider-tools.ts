@@ -12,7 +12,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { type DeliveryConnection, type NangoProxy, defaultProxy, DELIVERY_TOOLS, DELIVERY_PROVIDERS } from './delivery'
+import { type DeliveryConnection, type NangoProxy, defaultProxy, slackData, DELIVERY_TOOLS, DELIVERY_PROVIDERS } from './delivery'
 
 export type NangoToolSpec = {
   /** Capability/provider key, e.g. 'github'. Runtime provider id is `nango:<provider>`. */

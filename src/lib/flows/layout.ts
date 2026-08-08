@@ -12,8 +12,8 @@ const NODE_HEIGHT = 64
 // The gaps are generous on purpose: the wire between two cards is where the
 // insert/delete affordances and the direction arrow live, so it needs room to
 // read as a wire rather than a seam between adjacent cards.
-const RANK_SEP = 140
-const NODE_SEP = 48
+const RANK_SEP = 220
+const NODE_SEP = 64
 
 /**
  * Compute a deterministic left-to-right layout for the OUTER DAG. Container

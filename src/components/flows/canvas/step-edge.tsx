@@ -35,7 +35,9 @@ const EDGE_COLORS = {
   succeeded: '#008859',
   running: '#f59e0b',
   error: '#f59e0b',
-  idle: '#94a3b8',
+  // slate-500, not 400: the resting wire has to read as a wire from a zoomed-
+  // out canvas, not fade into the dot grid.
+  idle: '#64748b',
 } as const
 
 type EdgeVariant = keyof typeof EDGE_COLORS
@@ -57,8 +59,8 @@ export function FlowEdgeMarkerDefs() {
             viewBox="0 0 10 10"
             refX="9"
             refY="5"
-            markerWidth="12"
-            markerHeight="12"
+            markerWidth="14"
+            markerHeight="14"
             markerUnits="userSpaceOnUse"
             orient="auto-start-reverse"
           >
@@ -118,7 +120,7 @@ function StepEdgeComponent({
         className={state === 'running' ? 'flow-edge-running' : undefined}
         style={{
           stroke,
-          strokeWidth: selected || emphasized ? 3 : 1.75,
+          strokeWidth: selected || emphasized ? 3 : 2.25,
           strokeDasharray: state === 'dead' ? '4 4' : undefined,
           opacity: state === 'dead' ? 0.6 : 1,
         }}

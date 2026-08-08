@@ -48,7 +48,7 @@ import { FlowPicker } from '@/components/flows/flow-picker'
 import type { FlowInsertSeed } from '@/components/flows/flow-canvas'
 import type { ToolCatalog } from '@/components/flows/step-drawer'
 import { CanvasActionsContext, StepNode, type StepFlowNode } from './step-node'
-import { StepEdge, type StepFlowEdge } from './step-edge'
+import { StepEdge, FlowEdgeMarkerDefs, type StepFlowEdge } from './step-edge'
 import { useHoldToPan } from './use-hold-to-pan'
 
 /**
@@ -568,6 +568,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
       {/* Ambient depth behind the first-run invitation; sits under the (transparent)
           React Flow pane so the dot grid draws over it. */}
       {emptyGraph && !readOnly && <Aurora intensity={0.55} />}
+      <FlowEdgeMarkerDefs />
       <CanvasActionsContext.Provider value={actions}>
         <ReactFlow<StepFlowNode, StepFlowEdge>
           nodes={rfNodes}

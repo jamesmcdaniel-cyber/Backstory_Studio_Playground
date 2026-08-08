@@ -1899,7 +1899,15 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       }
       continue
     }
-    const position = Array.isArray(node.position) ? { x: Number(node.position[0]) || 0, y: Number(node.position[1]) || 0 } : undefined
+    // n8n's canvas grid (~220px columns) is sized for its compact square
+    // widgets; Backstory step cards are ~200px wide, so copying coordinates
+    // verbatim leaves ~20px of visible wire between cards. Stretch the
+    // horizontal axis so the relative arrangement survives but the wires get
+    // room for their affordances and direction arrows. Vertical spacing in
+    // n8n exports is already generous for our 64px-tall cards.
+    const position = Array.isArray(node.position)
+      ? { x: (Number(node.position[0]) || 0) * 1.5, y: Number(node.position[1]) || 0 }
+      : undefined
     const triggerType = n8nTriggerType(node.type)
     let mapped: FlowNode | null
     if (triggerType && !triggerId) {
@@ -1996,7 +2004,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           instructions: 'Answer the question using only the retrieved context. Say so plainly if the context does not contain the answer.',
         },
       } as FlowNode
-      const answerPosition = position ? { x: position.x + 220, y: position.y } : undefined
+      const answerPosition = position ? { x: position.x + 330, y: position.y } : undefined
       nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
       nodes.push(answerPosition ? ({ ...answer, position: answerPosition } as FlowNode) : answer)
       edgeSourceOverride.set(node.name, answerId)
@@ -2023,7 +2031,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
           edgeSourceOverride.set(node.name, switchId)
           synthEdges.push({ source: id, target: switchId })
           nodes.push(position ? ({ ...mapped, position } as FlowNode) : mapped)
-          const routerPosition = position ? { x: position.x + 220, y: position.y } : undefined
+          const routerPosition = position ? { x: position.x + 330, y: position.y } : undefined
           const router = { id: switchId, type: 'switch', data: { label: `${node.name} routes`, cases } } as FlowNode
           nodes.push(routerPosition ? ({ ...router, position: routerPosition } as FlowNode) : router)
           continue
@@ -2095,7 +2103,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
               ),
             },
           } as FlowNode
-          const computePosition = position ? { x: position.x - 220, y: position.y } : undefined
+          const computePosition = position ? { x: position.x - 330, y: position.y } : undefined
           nodes.push(computePosition ? ({ ...compute, position: computePosition } as FlowNode) : compute)
           edgeTargetOverride.set(node.name, computeId)
           synthEdges.push({ source: computeId, target: id })

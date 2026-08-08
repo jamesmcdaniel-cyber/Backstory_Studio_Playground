@@ -9,8 +9,11 @@ const NODE_WIDTH = 200
 const NODE_HEIGHT = 64
 // Left-to-right flow (n8n style): rank = column, so `ranksep` is horizontal gap
 // between columns and `nodesep` is vertical gap between siblings in a column.
-const RANK_SEP = 90
-const NODE_SEP = 28
+// The gaps are generous on purpose: the wire between two cards is where the
+// insert/delete affordances and the direction arrow live, so it needs room to
+// read as a wire rather than a seam between adjacent cards.
+const RANK_SEP = 140
+const NODE_SEP = 48
 
 /**
  * Compute a deterministic left-to-right layout for the OUTER DAG. Container

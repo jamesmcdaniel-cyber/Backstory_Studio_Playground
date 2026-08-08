@@ -23,6 +23,53 @@ export type StepEdgeData = {
 
 export type StepFlowEdge = Edge<StepEdgeData, 'step'>
 
+// One color per edge condition — the stroke and its arrowhead marker derive
+// from the same table so they can never disagree. Run-state colors use the
+// brand semantic scale (backstory-design.css green/red-500), deliberately
+// saturated so success and failure read at a glance across a large canvas.
+// Selection wins so a selected edge never disappears into the run coloring.
+const EDGE_COLORS = {
+  selected: '#3b82f6',
+  dead: '#cbd5e1',
+  failed: '#e53935',
+  succeeded: '#008859',
+  running: '#f59e0b',
+  error: '#f59e0b',
+  idle: '#94a3b8',
+} as const
+
+type EdgeVariant = keyof typeof EDGE_COLORS
+
+/**
+ * Direction arrowheads, one marker per edge color. SVG markers resolve by
+ * document-wide id, so rendering this once anywhere in the canvas wrapper is
+ * enough for every edge; sized in userSpaceOnUse units so the arrow stays the
+ * same size whether the edge is 1.75px idle or 3px emphasized.
+ */
+export function FlowEdgeMarkerDefs() {
+  return (
+    <svg aria-hidden width={0} height={0} style={{ position: 'absolute' }}>
+      <defs>
+        {(Object.entries(EDGE_COLORS) as [EdgeVariant, string][]).map(([variant, color]) => (
+          <marker
+            key={variant}
+            id={`flow-arrow-${variant}`}
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="12"
+            markerHeight="12"
+            markerUnits="userSpaceOnUse"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 1 L 9 5 L 0 9 z" fill={color} />
+          </marker>
+        ))}
+      </defs>
+    </svg>
+  )
+}
+
 function StepEdgeComponent({
   id,
   sourceX,
@@ -47,23 +94,14 @@ function StepEdgeComponent({
 
   const isError = data?.isError
   const state = data?.state ?? 'idle'
-  // Run-state colors use the brand semantic scale (backstory-design.css
-  // green/red-500), deliberately saturated so success and failure read at a
-  // glance across a large canvas. Selection still wins so a selected edge
-  // never disappears into the run coloring.
-  const stroke = selected
-    ? '#3b82f6'
-    : state === 'dead'
-      ? '#cbd5e1'
-      : state === 'failed'
-        ? '#e53935'
-        : state === 'succeeded'
-          ? '#008859'
-          : state === 'running'
-            ? '#f59e0b'
-            : isError
-              ? '#f59e0b'
-              : '#94a3b8'
+  const variant: EdgeVariant = selected
+    ? 'selected'
+    : state === 'dead' || state === 'failed' || state === 'succeeded' || state === 'running'
+      ? state
+      : isError
+        ? 'error'
+        : 'idle'
+  const stroke = EDGE_COLORS[variant]
   const emphasized = state === 'succeeded' || state === 'failed' || state === 'running'
 
   return (
@@ -76,6 +114,7 @@ function StepEdgeComponent({
       <BaseEdge
         id={id}
         path={path}
+        markerEnd={`url(#flow-arrow-${variant})`}
         className={state === 'running' ? 'flow-edge-running' : undefined}
         style={{
           stroke,

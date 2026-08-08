@@ -178,4 +178,48 @@ if (TEST_DB) {
     assert.ok(aggregate, 'the aggregate array downstream consumed must have a row')
     assert.deepEqual(aggregate.output, ['did:a', 'did:b'])
   })
+
+  test('degraded success persists warnings: per-item skip counts on the aggregate row, loop skip counts on the loop row', async () => {
+    const graph = {
+      nodes: [
+        { id: 'trigger', type: 'trigger', data: {} },
+        {
+          id: 'js',
+          type: 'code',
+          data: {
+            language: 'javascript',
+            mode: 'all',
+            code: "if (input === 'B') throw new Error('bad B'); return `did:${input}`",
+            input: '{{item}}',
+            perItem: { over: '{{trigger.input.items}}', itemError: 'skip' },
+          },
+        },
+      ],
+      edges: [{ id: 'e1', source: 'trigger', target: 'js' }],
+    }
+    const { result, steps } = await run(graph, { items: ['A', 'B', 'C'] })
+    assert.equal(result.status, 'succeeded')
+    const aggregate = steps.find((s: any) => s.nodeId === 'js')
+    assert.deepEqual(aggregate.output, ['did:A', 'did:C'])
+    assert.deepEqual(aggregate.warnings, ['1 of 3 items failed and was skipped.'])
+
+    const loopGraph = {
+      nodes: [
+        { id: 'trigger', type: 'trigger', data: {} },
+        { id: 'loop', type: 'loop', data: { over: '{{trigger.input.items}}', itemError: 'skip', body: ['inner'] } },
+        {
+          id: 'inner',
+          type: 'code',
+          data: { language: 'javascript', mode: 'all', code: "if (input === 'B') throw new Error('bad B'); return input", input: '{{item}}' },
+        },
+      ],
+      edges: [{ id: 'e1', source: 'trigger', target: 'loop' }],
+    }
+    const loopRun = await run(loopGraph, { items: ['A', 'B'] })
+    assert.equal(loopRun.result.status, 'succeeded')
+    const loopStep = loopRun.steps.find((s: any) => s.nodeId === 'loop')
+    assert.deepEqual(loopStep.warnings, ['1 of 2 items failed and was skipped.'])
+    const cleanRow = loopRun.steps.find((s: any) => s.nodeId === 'inner#0')
+    assert.equal(cleanRow.warnings, null)
+  })
 }

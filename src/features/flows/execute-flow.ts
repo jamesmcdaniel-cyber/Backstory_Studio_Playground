@@ -641,7 +641,7 @@ export async function runFlowExecution(
   // `outcome.iterationKey` (the per-iteration `${nodeId}#${index}` inside a
   // loop, or the bare id on the main chain).
   const pending: Promise<unknown>[] = []
-  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string }) => {
+  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[] }) => {
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
     broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status })
@@ -661,9 +661,14 @@ export async function runFlowExecution(
         const aggregateOrder = order++
         pending.push(
           (async () => {
+            // Warnings only ever ADD here (never null out): the interpreter's
+            // producers (empty result, item-policy counts) and any adapter-side
+            // note are disjoint by construction, so a present outcome.warnings
+            // is authoritative for this row.
+            const warningsPatch = outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}
             const updated = await prisma.flowRunStep.updateMany({
               where: { flowRunId: run.id, nodeId: rowKey, status: 'succeeded' },
-              data: { output: jsonValue(outcome.output) },
+              data: { output: jsonValue(outcome.output), ...warningsPatch },
             })
             if (updated.count === 0) {
               await prisma.flowRunStep.create({
@@ -674,6 +679,7 @@ export async function runFlowExecution(
                   status: 'succeeded',
                   input: jsonValue(outcome.input ?? {}),
                   output: jsonValue(outcome.output ?? null),
+                  ...warningsPatch,
                   startedAt: new Date(),
                   finishedAt: new Date(),
                 },
@@ -741,6 +747,7 @@ export async function runFlowExecution(
             input: jsonValue(outcome.input ?? {}),
             output: jsonValue(outcome.output ?? null),
             error: outcome.error ? outcome.error.slice(0, 300) : null,
+            ...(outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}),
             startedAt: new Date(),
             finishedAt: new Date(),
           },

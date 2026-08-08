@@ -41,8 +41,8 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         // output is always fetched (a waiting step stores its pause reason
         // there) but stripped from summary wire steps below to stay slim.
         select: summary
-          ? { nodeId: true, status: true, order: true, error: true, output: true }
-          : { nodeId: true, status: true, order: true, error: true, input: true, output: true, logs: true, startedAt: true, finishedAt: true, agentExecutionId: true },
+          ? { nodeId: true, status: true, order: true, error: true, output: true, warnings: true }
+          : { nodeId: true, status: true, order: true, error: true, input: true, output: true, logs: true, warnings: true, startedAt: true, finishedAt: true, agentExecutionId: true },
       },
     },
   })
@@ -57,7 +57,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     // What the run is blocked on (agent question / approval), non-null only
     // when the run is waiting — reply UIs key off this.
     waiting: deriveRunWaiting(run.status, run.steps),
-    steps: summary ? run.steps.map(({ nodeId, status, order, error }) => ({ nodeId, status, order, error })) : run.steps,
+    steps: summary ? run.steps.map(({ nodeId, status, order, error, warnings }) => ({ nodeId, status, order, error, warnings })) : run.steps,
   })
   return {
     success: true,

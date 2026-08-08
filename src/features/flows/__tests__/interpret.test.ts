@@ -2985,3 +2985,17 @@ test('a knowledge step with zero hits gets the empty-result warning', async () =
   const result = await interpretFlow(graph, '', { runAgent: async () => ({ output: '' }), runAction: async () => ({ output: [] }) })
   assert.deepEqual(result.steps.find((s) => s.nodeId === 'k1')?.warnings, ['This step succeeded but returned no items.'])
 })
+
+test('a tool step whose "successful" response is an error payload gets an in-band error warning', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 't1', type: 'tool', data: { connectionId: 'c1', toolName: 'send', args: '{}' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 't1' }],
+  }
+  const result = await interpretFlow(graph, '', { runAgent: async () => ({ output: '' }), runAction: async () => ({ output: { error: 'channel_not_found', ok: false } }) })
+  const step = result.steps.find((s) => s.nodeId === 't1')
+  assert.equal(result.status, 'succeeded')
+  assert.match(step?.warnings?.[0] ?? '', /channel_not_found/)
+})

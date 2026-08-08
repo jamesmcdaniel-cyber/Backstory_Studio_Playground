@@ -8,6 +8,7 @@ import { runDataOp, chunkItems, coerceFieldType } from '@/lib/flows/data-ops'
 import { mergeAppend, mergeAllCombinations, mergeByKey, mergeByPosition } from '@/lib/flows/merge'
 import { computeResumeAt } from '@/lib/flows/wait'
 import { foreignReferences, unresolvedAuthHeaders, foreignReferenceMessage, unresolvedAuthMessage } from '@/lib/flows/foreign-reference'
+import { inBandErrorWarning } from './tool-output'
 
 export type StepOutcome = {
   nodeId: string
@@ -1011,10 +1012,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // Empty-result visibility: for http the payload is the envelope's body;
       // for tools the output itself. A succeeded-but-empty read is the classic
       // masked-upstream-stub bug — surface it instead of letting downstream
-      // fail-soft paths hide it.
+      // fail-soft paths hide it. Tools additionally get in-band {error}
+      // payload detection (a "successful" MCP call that actually failed).
       const emptyTarget = node.type === 'http' && output && typeof output === 'object' && !Array.isArray(output) ? (output as Record<string, unknown>).body : output
-      const emptyWarning = emptyResultWarning(emptyTarget)
-      emit({ nodeId: node.id, status: 'succeeded', output, ...(emptyWarning ? { warnings: [emptyWarning] } : {}) })
+      const stepWarnings = [emptyResultWarning(emptyTarget), ...(node.type === 'tool' ? [inBandErrorWarning(output)] : [])].filter((w): w is string => Boolean(w))
+      emit({ nodeId: node.id, status: 'succeeded', output, ...(stepWarnings.length ? { warnings: stepWarnings } : {}) })
       return { kind: 'ok', output }
     }
 

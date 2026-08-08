@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { flowToolOutput } from '../tool-output'
+import { flowToolOutput, inBandErrorWarning } from '../tool-output'
 
 test('flowToolOutput preserves structuredContent as direct workflow output', () => {
   assert.deepEqual(flowToolOutput({
@@ -20,4 +20,20 @@ test('flowToolOutput parses JSON text content and top-level JSON strings', () =>
 test('flowToolOutput returns plain text content and fails MCP error results', () => {
   assert.equal(flowToolOutput({ content: [{ type: 'text', text: 'sent to Slack' }] }), 'sent to Slack')
   assert.throws(() => flowToolOutput({ isError: true, content: [{ type: 'text', text: 'Slack rejected the message' }] }), /Slack rejected/)
+})
+
+test('inBandErrorWarning flags success payloads that carry an error field', () => {
+  assert.match(inBandErrorWarning({ error: 'no such channel' }) ?? '', /no such channel/)
+  assert.match(inBandErrorWarning({ ok: false, error: 'rate limited' }) ?? '', /rate limited/)
+  assert.match(inBandErrorWarning({ error: { code: 42 }, status: 'failed' }) ?? '', /"code":42/)
+})
+
+test('inBandErrorWarning leaves real data and empty errors alone', () => {
+  assert.equal(inBandErrorWarning({ error: null }), undefined)
+  assert.equal(inBandErrorWarning({ error: '' }), undefined)
+  assert.equal(inBandErrorWarning({ ok: true, data: [] }), undefined)
+  assert.equal(inBandErrorWarning({ error: 'soft', results: [1, 2] }), undefined)
+  assert.equal(inBandErrorWarning('plain text'), undefined)
+  assert.equal(inBandErrorWarning([1, 2]), undefined)
+  assert.equal(inBandErrorWarning(undefined), undefined)
 })

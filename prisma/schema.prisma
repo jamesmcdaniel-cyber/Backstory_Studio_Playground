@@ -1200,6 +1200,10 @@ model FlowRunStep {
   // console.log / print() output captured from code steps, for display only —
   // never consumed by downstream nodes. An array of strings.
   logs             Json?
+  // Degraded-success notes from the engine (StepOutcome.warnings): items an
+  // itemError policy dropped, empty results, in-band tool errors. An array of
+  // plain-English strings; null when the step ran clean.
+  warnings         Json?
   startedAt        DateTime?
   finishedAt       DateTime?
 

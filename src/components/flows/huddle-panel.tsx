@@ -14,10 +14,11 @@ export type HuddleMember = { clientId: string; name: string; color: string }
 export type HuddleCapture = ReturnType<typeof useHuddleCapture>
 
 /**
- * Every huddle control, living inside the Jam widget — there is deliberately no
- * separate floating huddle surface. Only the mute toggle is promoted out of
- * here (to the header's Jam button), because muting has to be reachable in one
- * action and this panel sits behind a dialog.
+ * Every huddle control, living inside the Jam widget. Join / mic toggle /
+ * leave are also promoted to the canvas's floating Huddle+Jam pill
+ * (huddle-jam-pill.tsx), because voice has to be reachable in one action and
+ * this panel sits behind a dialog; device pickers, per-peer volume, notes and
+ * the relay explainer live only here.
  */
 export function HuddlePanel({
   huddle,

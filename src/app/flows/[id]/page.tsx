@@ -4,8 +4,9 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, Users, FileText, FileWarning, BookmarkPlus, Mic, MicOff, Radio, Workflow } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, FileText, FileWarning, BookmarkPlus, Workflow } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
+import { HuddleJamPill } from '@/components/flows/huddle-jam-pill'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
 import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
@@ -2393,72 +2394,6 @@ function FlowBuilder() {
             )}
           </div>
         )}
-        {/* Flow + jam health as one dot on the Jam button. Green = runs
-            dispatch and the live channel is up; amber = live channel
-            reconnecting; red = execution backend offline, a run stranded, or
-            the channel refused. The specifics live in the tooltip — the old
-            per-condition pills shouted the details at everyone all the time. */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowJam(true)}
-          title={[
-            `Flows: ${queueAlert ?? (pickupStalledRunId ? NEVER_PICKED_UP_ERROR : 'online — runs will start')}`,
-            `Jam: ${
-              jamStatus === 'live'
-                ? 'live'
-                : jamStatus === 'error'
-                  ? 'unavailable — the live channel refused the connection. Your edits still save; teammates just won’t see them live.'
-                  : jamStatus === 'connecting'
-                    ? 'connecting…'
-                    : 'reconnecting…'
-            }`,
-          ].join('\n')}
-        >
-          <span
-            role="status"
-            aria-label={queueAlert || pickupStalledRunId || jamStatus === 'error'
-              ? 'Flow or jam health degraded'
-              : jamStatus !== 'live'
-                ? 'Jam reconnecting'
-                : 'Flows and jam healthy'}
-            className={cn(
-              'mr-1.5 h-2 w-2 rounded-full',
-              queueAlert || pickupStalledRunId || jamStatus === 'error'
-                ? 'bg-red-500'
-                : jamStatus !== 'live'
-                  ? 'bg-amber-500'
-                  : 'bg-emerald-500',
-            )}
-          />
-          <Users className="mr-1.5 h-4 w-4" /> Jam
-          {others.length > 0 && <span className="ml-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-semibold text-white">{others.length}</span>}
-          {huddleMembers.length > 0 && <Mic className="ml-1.5 h-3.5 w-3.5 text-emerald-600" />}
-        </Button>
-        {/* The ONE huddle control outside the Jam widget. Muting has to be
-            reachable in one action; everything else lives in the dialog. */}
-        {huddle.joined && (
-          huddle.pttEnabled ? (
-            <Button
-              variant={huddle.transmitting ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setShowJam(true)}
-              title="Push to talk is on — hold Space to speak"
-            >
-              <Radio className={cn('mr-1.5 h-4 w-4', huddle.transmitting && 'animate-pulse')} />
-              {huddle.transmitting ? 'Live' : 'Hold Space'}
-            </Button>
-          ) : (
-            <Button
-              variant={huddle.muted ? 'default' : 'outline'}
-              size="sm"
-              onClick={huddle.toggleMute}
-              aria-label={huddle.muted ? 'Unmute' : 'Mute'}
-            >
-              {huddle.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-            </Button>
-          )
-        )}
         {!external && (
           <>
             <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
@@ -2684,6 +2619,34 @@ function FlowBuilder() {
             />
           </div>
         </div>
+
+        {/* Huddle + Jam live top-center over the canvas (both views), not in
+            the header — voice and people are canvas-level, not document-level. */}
+        <HuddleJamPill
+          huddle={huddle}
+          huddleCount={huddleMembers.length}
+          othersCount={others.length}
+          dotLevel={
+            queueAlert || pickupStalledRunId || jamStatus === 'error'
+              ? 'degraded'
+              : jamStatus !== 'live'
+                ? 'reconnecting'
+                : 'ok'
+          }
+          healthTitle={[
+            `Flows: ${queueAlert ?? (pickupStalledRunId ? NEVER_PICKED_UP_ERROR : 'online — runs will start')}`,
+            `Jam: ${
+              jamStatus === 'live'
+                ? 'live'
+                : jamStatus === 'error'
+                  ? 'unavailable — the live channel refused the connection. Your edits still save; teammates just won’t see them live.'
+                  : jamStatus === 'connecting'
+                    ? 'connecting…'
+                    : 'reconnecting…'
+            }`,
+          ].join('\n')}
+          onOpenJam={() => setShowJam(true)}
+        />
 
         {selectedIds.length > 1 && !viewingVersion && (
           // animate-fade-in only: the -up variant animates `transform`, which would

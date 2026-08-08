@@ -544,6 +544,42 @@ extract step covers it in plain English).
 
 # Addendum — Import fidelity & credential surface (2026-08-07)
 
+> **Status update (2026-08-07, same day): §17 and §18 closed.**
+>
+> **§17 import fidelity:** Sheets/Salesforce write payloads now carry mapped
+> columns/fields (resource-mapper + legacy shapes, autoMap warns loudly);
+> URL-mode locators extract the bare file id; `onError: continueErrorOutput`
+> → `onError:'route'` + a labelled `error` edge; `disabled` carries; merge
+> combine modes map (byFields→combineByKey+key, byPosition, combineAll;
+> SQL/chooseBranch warn); Set carries per-field `type` +
+> `includeOtherFields`; retryOnFail/maxTries/waitBetweenTries/
+> alwaysOutputData map to retries/retryDelayMs/alwaysOutputData; If/Filter
+> case-insensitivity → per-clause `ignoreCase`; n8n `pinData` → graph
+> pinData keyed by our node ids; the code shim defines luxon-style
+> `$now`/`$today` and hoisted expressions using other n8n globals
+> ($env/$vars/$execution/…) warn by name; untranslatable-expression warnings
+> are per-distinct-expression (cap 5/node), not once-per-node; Slack
+> `thread_ts` and Gmail cc/bcc flow through importer AND delivery tools; an
+> n8n credential-type table (slackOAuth2Api → nango:slack, ×36 entries)
+> binds even unmapped app nodes to the right integration. The import report
+> (Workstream 1) shipped in parallel: `n8nToFlow` returns typed
+> `FlowImportNote[]` (code/severity/nodeId), the route persists them whole
+> (`Flow.importNotes` + blocking count), and the builder's Import notes
+> panel renders them with jump-to-step and Clear.
+> Tests: `import/__tests__/import-fidelity.test.ts` (27), delivery tests,
+> `import-route.db.test.ts` (typed + anchored assertions).
+>
+> **§18 credential surface:** `WorkspaceCredentialsPanel` is rendered on
+> /integrations (Slack bot token / Resend / Granola now connectable — also
+> unblocks the Granola dead end); the step-drawer's predefined-credential
+> picker is renamed "Connected server (MCP)" with an honest empty state
+> (no more "No connected integrations yet" lie); the OAuth grid carries
+> per-provider connect hints (Zendesk subdomain, Salesforce sandbox, Notion
+> page-sharing, …) and an amber connected-but-zero-tools note;
+> nango-setup.md now lists all 16 providers. Guarded by
+> `components/integrations/__tests__/credential-surface.test.ts` (dead-code
+> scan — the panel can't silently orphan again).
+
 Prior passes audited engine semantics (§2), editor UX (§3), and node
 configuration (§6–§13). This pass audits the two remaining surfaces: **what
 survives an n8n import** and **what a user is asked for when connecting an

@@ -60,8 +60,10 @@ assigns a different default slug — but prefer the canonical one.
 | Slack | `slack` | — |
 | Gmail | `google-mail` | `gmail` |
 | Salesforce | `salesforce` | `salesforce-sandbox` |
+| Airtable | `airtable` | — |
+| Figma | `figma` | — |
 
-These 14 providers are the ones with authored agent tools. The canonical list is
+These 16 providers are the ones with authored agent tools. The canonical list is
 `PROVIDER_CONFIG_KEYS` in `src/lib/nango/provider-tools.ts` (plus the delivery
 write tools for Slack/Gmail/Salesforce in `src/lib/nango/delivery.ts`) — keep the
 dashboard and that map in sync when adding providers.

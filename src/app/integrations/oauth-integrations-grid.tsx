@@ -15,6 +15,28 @@ import { useNangoConnect } from '@/lib/client/use-nango-connect'
 /** Integration cards per page — mirrors the Templates library grid. */
 const PAGE_SIZE = 9
 
+/**
+ * What the provider's consent flow will ask for, surfaced BEFORE the user
+ * clicks Connect. The Nango iframe collects these (subdomain, environment,
+ * account picks) without warning, which reads as "random" — this names it.
+ * Keyed by the catalog provider slug; partial on purpose.
+ */
+const PROVIDER_CONNECT_HINTS: Record<string, string> = {
+  salesforce: 'Salesforce asks production vs sandbox — sandbox logins go through test.salesforce.com.',
+  'salesforce-sandbox': 'Connects against test.salesforce.com (sandbox orgs).',
+  zendesk: 'Have your Zendesk subdomain ready — the “company” in company.zendesk.com.',
+  jira: 'Sign in with Atlassian and pick your site (yourteam.atlassian.net) when asked.',
+  confluence: 'Sign in with Atlassian and pick your site (yourteam.atlassian.net) when asked.',
+  slack: 'Grants this workspace’s Slack app scopes — invite the bot to any channel it should post in.',
+  notion: 'During Notion’s consent step, share the pages and databases the integration may read — unshared pages stay invisible.',
+  airtable: 'Airtable grants only the bases you pick during consent.',
+  hubspot: 'Pick which HubSpot account to grant when HubSpot asks.',
+  github: 'Authorizes github.com accounts — GitHub Enterprise servers are not supported here.',
+  gmail: 'Google may warn about an unverified app while the OAuth app is in testing — continue with your workspace account.',
+  google_drive: 'Google may warn about an unverified app while the OAuth app is in testing — continue with your workspace account.',
+  google_sheets: 'Google may warn about an unverified app while the OAuth app is in testing — continue with your workspace account.',
+}
+
 type Integration = {
   id: string
   provider: string
@@ -140,6 +162,15 @@ export function OAuthIntegrationsGrid() {
                     ? ` ${integration.toolCount} agent tool${integration.toolCount === 1 ? '' : 's'} available.`
                     : ''}
                 </p>
+                {!connection?.connected && PROVIDER_CONNECT_HINTS[integration.provider] && (
+                  <p className="text-xs text-gray-500">{PROVIDER_CONNECT_HINTS[integration.provider]}</p>
+                )}
+                {connection?.connected && integration.toolCount === 0 && (
+                  <p className="text-xs text-amber-700">
+                    Connected, but no agent tools resolve for this app — check its unique key in the Nango dashboard,
+                    or its tools haven’t shipped yet.
+                  </p>
+                )}
                 {connection?.error && <p className="text-sm text-red-600">{connection.error}</p>}
                 {connection?.connected
                   ? <div className="grid grid-cols-2 gap-2">

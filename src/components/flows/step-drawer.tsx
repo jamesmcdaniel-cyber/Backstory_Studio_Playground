@@ -1391,12 +1391,12 @@ export function StepDrawer({
                   if (mode !== 'generic' && node.data.credentialId) onChange({ ...node, data: { ...node.data, credentialId: undefined } })
                 }}
               >
-                <option value="predefined">Predefined Credential Type</option>
-                <option value="generic">Generic Credential Type</option>
+                <option value="predefined">Connected server (MCP)</option>
+                <option value="generic">Manual credential</option>
               </select>
               <p className="mt-1 text-xs text-muted-foreground">
                 {httpAuthMode === 'predefined'
-                  ? 'Reuse a connected integration for authentication.'
+                  ? 'Reuse a connected MCP server’s token for authentication.'
                   : 'Choose an auth method, then set up a reusable credential for this host.'}
               </p>
               {!node.data.connectionId && !node.data.credentialId && (
@@ -1408,10 +1408,12 @@ export function StepDrawer({
 
             {httpAuthMode === 'predefined' && (
               <div>
-                <label className={labelClass}>Predefined credential</label>
+                <label className={labelClass}>Connected server</label>
                 {predefinedConnections.length === 0 ? (
                   <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                    No connected integrations yet. Connect one under Integrations, then it appears here.
+                    No MCP servers with an injectable token are connected. App integrations (Slack, Salesforce, …)
+                    authenticate through Tool steps instead — for a raw HTTP call, add an MCP server under
+                    Integrations → MCP Servers, or use a manual credential.
                   </p>
                 ) : (
                   <select

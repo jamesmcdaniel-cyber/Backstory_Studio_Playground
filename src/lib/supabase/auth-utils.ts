@@ -2,6 +2,7 @@ import type { User } from '@supabase/supabase-js'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
 import { allowedDomainOrg } from '@/lib/auth/allowed-domain'
+import { amrMethods } from '@/lib/auth/enterprise-policy'
 import { normalizeStaffEmail, staffBootstrapAllowlist } from '@/lib/catalogue/staff-emails'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { isCustomerEdition } from '@/lib/edition'
@@ -216,14 +217,7 @@ export async function getAuthWithUser() {
     const claims = data?.claims
     if (claims?.sub) {
       assuranceLevel = typeof claims.aal === 'string' ? claims.aal : null
-      const amr = Array.isArray(claims.amr) ? claims.amr : []
-      authMethods = amr.flatMap((entry) => {
-        if (typeof entry === 'string') return [entry]
-        if (entry && typeof entry === 'object' && typeof (entry as { method?: unknown }).method === 'string') {
-          return [(entry as { method: string }).method]
-        }
-        return []
-      })
+      authMethods = amrMethods(claims.amr)
       user = {
         id: claims.sub,
         email: typeof claims.email === 'string' ? claims.email : undefined,

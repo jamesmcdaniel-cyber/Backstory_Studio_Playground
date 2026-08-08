@@ -28,6 +28,17 @@ export function AuthGateway() {
   const router = useRouter()
   const [ssoDomain, setSsoDomain] = useState('')
   const [ssoLoading, setSsoLoading] = useState(false)
+  // Set when the auth callback bounced a sign-in because the org enforces SSO:
+  // ?sso_required=<domain>. The domain is prefilled so one click resumes
+  // through the identity provider.
+  const [ssoRequired, setSsoRequired] = useState(false)
+
+  useEffect(() => {
+    const required = new URLSearchParams(window.location.search).get('sso_required')
+    if (!required) return
+    setSsoRequired(true)
+    if (required.includes('.')) setSsoDomain(required)
+  }, [])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -165,9 +176,16 @@ export function AuthGateway() {
                   <span className="block text-graphite-500">you left off.</span>
                 </h2>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
-                  Continue with your company Google account. Your organization&apos;s Okta policy is applied by Google during sign-in.
+                  Continue with your company Google account, or through your organization&apos;s identity provider below.
                 </p>
               </div>
+
+              {ssoRequired && (
+                <div role="alert" className="mt-6 rounded-xl border border-amber-300/70 bg-amber-50/70 px-4 py-3 text-sm text-amber-900">
+                  Your organization requires signing in through its identity provider (SSO).
+                  {ssoDomain ? ' Continue below to go through it.' : ' Enter your company domain below to continue.'}
+                </div>
+              )}
 
               <div className="mt-10">
                 {authLoading ? (
@@ -224,7 +242,7 @@ export function AuthGateway() {
                   <ShieldCheck className="mt-0.5 h-4 w-4 text-horizon-600" />
                   <div>
                     <p className="text-sm font-medium text-graphite-800">Company SSO</p>
-                    <p className="mt-0.5 text-xs leading-5 text-graphite-500">Google and Okta policies stay enforced.</p>
+                    <p className="mt-0.5 text-xs leading-5 text-graphite-500">Okta and SAML policies are enforced at sign-in.</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3">

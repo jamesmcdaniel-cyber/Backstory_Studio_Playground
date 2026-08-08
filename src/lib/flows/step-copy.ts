@@ -35,6 +35,7 @@ export const DATA_OP_INPUT_PLACEHOLDER: Record<DataOp, string> = {
   htmlToMarkdown: 'The HTML to convert',
   xmlParse: 'The XML text to parse',
   xmlBuild: 'The record to turn into XML',
+  columnarToRecords: 'The columns-and-rows response to convert',
 }
 
 /** One-line helper under each data operation's fields. */
@@ -66,6 +67,7 @@ export const DATA_OP_HELPER: Record<DataOp, string> = {
   htmlToMarkdown: 'Converts HTML into Markdown text.',
   xmlParse: 'Turns XML text into structured data so later steps can map its fields.',
   xmlBuild: 'Builds an XML document from a record — field names become the tags.',
+  columnarToRecords: 'Turns a columns-and-rows API response (like a Snowflake SQL result) into a list of records so later steps can map its fields.',
 }
 
 /** Placeholder for a variable step's value field, per operation. */

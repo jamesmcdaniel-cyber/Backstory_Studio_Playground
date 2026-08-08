@@ -92,6 +92,7 @@ export const DATA_OP_LABELS: Record<DataOp, string> = {
   htmlToMarkdown: 'HTML to Markdown',
   xmlParse: 'Parse XML',
   xmlBuild: 'Create XML',
+  columnarToRecords: 'Columns to records',
 }
 
 /** RFC 4180 CSV: quoted fields may hold commas, newlines, and doubled quotes. */
@@ -217,6 +218,36 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
       assignField(record, field.name.trim(), exact ? readPath(ctx, exact[1]) ?? null : resolveTemplate(field.value, ctx))
     }
     return { output: record }
+  }
+
+  if (op === 'columnarToRecords') {
+    // SQL-over-HTTP APIs return columns-and-rows, not records — Snowflake's
+    // SQL API v2 ({resultSetMetaData.rowType[].name, data: [[...]]}) and the
+    // generic {columns, rows} shape. Field access ({{item.NAME}}) needs
+    // records, so zip each row against the column names. A list that is
+    // already records passes through untouched.
+    const structured = asStructured(config.input)
+    if (Array.isArray(structured) && structured.every((item) => item && typeof item === 'object' && !Array.isArray(item))) {
+      return { output: structured }
+    }
+    if (structured && typeof structured === 'object' && !Array.isArray(structured)) {
+      const source = structured as Record<string, unknown>
+      const meta = source.resultSetMetaData as { rowType?: { name?: unknown }[] } | undefined
+      const names = Array.isArray(meta?.rowType)
+        ? meta.rowType.map((column) => String(column?.name ?? ''))
+        : Array.isArray(source.columns)
+          ? (source.columns as unknown[]).map(String)
+          : null
+      const rows = Array.isArray(source.data) ? source.data : Array.isArray(source.rows) ? source.rows : null
+      if (names && rows) {
+        return {
+          output: (rows as unknown[]).map((row) =>
+            Object.fromEntries(names.map((name, index) => [name, Array.isArray(row) ? row[index] : undefined])),
+          ),
+        }
+      }
+    }
+    return { error: `${label} needs a response with column names and rows — like a Snowflake SQL API result.` }
   }
 
   if (op === 'parseJson') {

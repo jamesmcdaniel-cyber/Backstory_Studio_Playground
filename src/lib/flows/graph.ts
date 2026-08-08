@@ -432,6 +432,9 @@ export const DATA_OPS = [
   // Date & Time (n8n's dedicated node), field renames, and format conversions.
   'formatDate', 'dateShift', 'dateDiff', 'datePart', 'renameKeys',
   'markdownToHtml', 'htmlToMarkdown', 'xmlParse', 'xmlBuild',
+  // Columnar API responses (Snowflake SQL API's resultSetMetaData+data,
+  // generic columns+rows) → a list of records field access can use.
+  'columnarToRecords',
 ] as const
 export type DataOp = (typeof DATA_OPS)[number]
 // Deterministic data-shaping step between other steps: no LLM, no I/O. `input`

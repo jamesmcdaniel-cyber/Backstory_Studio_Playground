@@ -91,6 +91,7 @@ export const BUILTIN_GROUPS: PickerGroup[] = [
       { id: 'data-html-to-markdown', label: 'HTML to Markdown', description: 'Convert HTML into Markdown text.', mode: 'action', stepType: 'data', seed: { dataOp: 'htmlToMarkdown' } },
       { id: 'data-xml-parse', label: 'Parse XML', description: 'Turn XML text into structured data for later steps.', mode: 'action', stepType: 'data', seed: { dataOp: 'xmlParse' } },
       { id: 'data-xml-build', label: 'Create XML', description: 'Build an XML document from a record.', mode: 'action', stepType: 'data', seed: { dataOp: 'xmlBuild' } },
+      { id: 'data-columnar-to-records', label: 'Columns to records', description: 'Turn a columns-and-rows API response (like a Snowflake SQL result) into a list of records.', mode: 'action', stepType: 'data', seed: { dataOp: 'columnarToRecords' } },
     ],
   },
   {

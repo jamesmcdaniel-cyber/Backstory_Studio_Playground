@@ -272,3 +272,26 @@ test('parseJson reads a file reference by its extracted content', () => {
   const fileRef = { fileId: 'f2', filename: 'r.json', mimeType: 'application/json', size: 9, url: '/api/files/f2', content: '{"x":1}' }
   assert.deepEqual(ok(runDataOp('parseJson', { input: fileRef })), { x: 1 })
 })
+
+// ── columnarToRecords: columns+rows APIs (Snowflake SQL API v2 &c.) ─────────
+
+test('columnarToRecords maps Snowflake SQL API shape to records', () => {
+  const res = runDataOp('columnarToRecords', {
+    input: {
+      resultSetMetaData: { rowType: [{ name: 'ACCOUNTNAME' }, { name: 'DF_ENTITLED' }] },
+      data: [['Acme', true], ['Globex', false]],
+    },
+  })
+  assert.deepEqual(res, { output: [{ ACCOUNTNAME: 'Acme', DF_ENTITLED: true }, { ACCOUNTNAME: 'Globex', DF_ENTITLED: false }] })
+})
+
+test('columnarToRecords maps generic columns/rows and passes record lists through', () => {
+  assert.deepEqual(runDataOp('columnarToRecords', { input: { columns: ['a', 'b'], rows: [[1, 2]] } }), { output: [{ a: 1, b: 2 }] })
+  const already = [{ a: 1 }, { a: 2 }]
+  assert.deepEqual(runDataOp('columnarToRecords', { input: already }), { output: already })
+})
+
+test('columnarToRecords rejects shapes without columns and rows in plain english', () => {
+  const res = runDataOp('columnarToRecords', { input: { foo: 'bar' } })
+  assert.ok('error' in res && /column names and rows/.test(res.error))
+})

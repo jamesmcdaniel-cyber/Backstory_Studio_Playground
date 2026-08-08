@@ -45,3 +45,37 @@ test('SQL_TOKEN_IN_LITERAL warns when a token sits inside a quoted SQL string', 
   assert.ok(result.warnings.some((issue) => issue.code === 'SQL_TOKEN_IN_LITERAL' && issue.nodeId === 'h'))
   assert.ok(!result.issues.some((issue) => issue.code === 'SQL_TOKEN_IN_LITERAL' && issue.nodeId === 'h2'))
 })
+
+test('TOKEN_UNKNOWN_STEP flags references to steps that are not in the graph', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a', type: 'agent', data: { agentId: 'agent-1', input: 'Summarize {{step.ghost.output}}' } },
+      { id: 'b', type: 'agent', data: { agentId: 'agent-1', input: 'Read {{step.a.output}} and {{trigger.input.name}} and {{item.x}}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'a' },
+      { id: 'e2', source: 'a', target: 'b' },
+    ],
+  }
+  const result = validateFlowGraph(graph, { agents: [{ id: 'agent-1' }] })
+  assert.ok(result.errors.some((issue) => issue.code === 'TOKEN_UNKNOWN_STEP' && issue.nodeId === 'a'))
+  assert.ok(!result.issues.some((issue) => issue.code === 'TOKEN_UNKNOWN_STEP' && issue.nodeId === 'b'))
+})
+
+test('TOKEN_UNKNOWN_VAR flags variables no step initializes', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'v', type: 'variable', data: { op: 'initialize', name: 'count', varType: 'integer', value: '0' } },
+      { id: 'a', type: 'agent', data: { agentId: 'agent-1', input: 'Count is {{var.count}} but typo is {{var.cuont}}' } },
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'v' },
+      { id: 'e2', source: 'v', target: 'a' },
+    ],
+  }
+  const result = validateFlowGraph(graph, { agents: [{ id: 'agent-1' }] })
+  assert.ok(result.errors.some((issue) => issue.code === 'TOKEN_UNKNOWN_VAR' && issue.nodeId === 'a' && /cuont/.test(issue.message)))
+  assert.equal(result.errors.filter((issue) => issue.code === 'TOKEN_UNKNOWN_VAR').length, 1)
+})

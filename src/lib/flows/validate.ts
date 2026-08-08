@@ -780,6 +780,35 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     }
   }
 
+  // Token-reference integrity: a canonical {{step.<id>.…}} naming a node the
+  // graph doesn't have (deleted step, mangled import) resolves to nothing at
+  // run time; same for {{var.<name>}} with no initializer anywhere. Both were
+  // previously silent until the run failed. One issue per node per kind.
+  const initializedVarNames = new Set(
+    graph.nodes
+      .filter((node): node is Extract<FlowNode, { type: 'variable' }> => node.type === 'variable' && node.data.op === 'initialize')
+      .map((node) => node.data.name.trim())
+      .filter(Boolean),
+  )
+  for (const node of graph.nodes) {
+    if (node.type === 'trigger' || node.type === 'note') continue
+    const dataStr = JSON.stringify(node.data)
+    // Ids and names may contain spaces (the importer derives ids from n8n node
+    // names) — capture up to the next `.` or closing brace, then trim.
+    for (const match of dataStr.matchAll(/\{\{\s*step\.([^.}]+)/g)) {
+      if (!byId.has(match[1].trim())) {
+        add(issues, 'error', 'TOKEN_UNKNOWN_STEP', `${nodeLabel(node)} uses data from a step that no longer exists — open its settings and re-pick the value from the data menu.`, node.id)
+        break
+      }
+    }
+    for (const match of dataStr.matchAll(/\{\{\s*var\.([^.}]+)/g)) {
+      if (!initializedVarNames.has(match[1].trim())) {
+        add(issues, 'error', 'TOKEN_UNKNOWN_VAR', `${nodeLabel(node)} uses a variable "${match[1].trim()}" that no step initializes.`, node.id)
+        break
+      }
+    }
+  }
+
   const reachable = reachableNodeIds(graph)
   for (const node of graph.nodes) {
     if (node.type !== 'trigger' && !reachable.has(node.id)) {

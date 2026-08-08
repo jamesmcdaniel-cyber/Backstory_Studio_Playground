@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { createClient } from '@/lib/supabase/client'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -59,6 +60,7 @@ export default function SettingsPage() {
         email={user?.emailAddress ?? ''}
       />
       <WorkspaceSection isAdmin={isAdmin} />
+      <WorkspaceCredentialsPanel />
       {isAdmin && <EnterpriseSecuritySection />}
       {isAdmin && <DeveloperApiSection />}
       <MembersSection isAdmin={isAdmin} selfId={userId} />

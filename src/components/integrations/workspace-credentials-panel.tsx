@@ -5,6 +5,7 @@ import { CheckCircle2, ExternalLink, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 
 /**
@@ -136,7 +137,10 @@ function CredentialRow({ provider }: { provider: Provider }) {
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Input
           type="password"
-          autoComplete="off"
+          // "new-password", not "off": Chrome's password manager ignores "off"
+          // on password fields — it filled the user's saved site password here
+          // and paired their email into the nearest text input as a username.
+          autoComplete="new-password"
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder={state.hasOwnKey ? `Replace ${state.fieldLabel.toLowerCase()}` : state.fieldLabel}
@@ -160,19 +164,19 @@ function CredentialRow({ provider }: { provider: Provider }) {
 
 export function WorkspaceCredentialsPanel() {
   return (
-    <section className="space-y-3">
-      <div>
-        <h2 className="text-lg font-semibold text-gray-900">Workspace keys</h2>
-        <p className="text-sm text-gray-500">
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Workspace keys</CardTitle>
+        <CardDescription>
           Connect these with your own account, so your agents post and send as your workspace — never through a shared
           one. Keys are verified when you save them, encrypted at rest, and never shown again.
-        </p>
-      </div>
-      <div className="space-y-3">
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
         {PROVIDERS.map((provider) => (
           <CredentialRow key={provider} provider={provider} />
         ))}
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }

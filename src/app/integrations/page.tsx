@@ -4,7 +4,6 @@ import { Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AlertCircle, Cable, CheckCircle2, Server } from 'lucide-react'
 import { McpServersPanel } from '@/components/integrations/mcp-servers-panel'
-import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
 import { PageHeader } from '@/components/ui/page-header'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { OAuthIntegrationsGrid } from './oauth-integrations-grid'
@@ -44,12 +43,12 @@ function IntegrationsTabs() {
       </TabsList>
       <TabsContent value="integrations" className="mt-6 space-y-8">
         {/* Backstory Sales AI (MCP) connects on the MCP servers tab. Granola,
-            the Slack bot token and the Resend key are workspace keys — the
-            per-provider panel below the OAuth grid. */}
+            the Slack bot token and the Resend key are workspace keys, managed
+            in Settings — keeping password-type inputs off this page also keeps
+            Chrome's password manager from autofilling the search bar. */}
         <Suspense fallback={<p className="text-sm text-gray-500">Loading integrations...</p>}>
           <OAuthIntegrationsGrid />
         </Suspense>
-        <WorkspaceCredentialsPanel />
       </TabsContent>
       <TabsContent value="servers" className="mt-6">
         {oauthConnected && (

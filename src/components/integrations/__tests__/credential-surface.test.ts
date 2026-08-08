@@ -12,9 +12,27 @@ import { join } from 'node:path'
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8')
 
-test('the integrations page renders WorkspaceCredentialsPanel', () => {
+test('the settings page renders WorkspaceCredentialsPanel', () => {
+  const page = read('src/app/settings/page.tsx')
+  assert.match(page, /WorkspaceCredentialsPanel/, 'the workspace keys panel must be reachable from /settings')
+})
+
+test('the integrations page carries no password inputs', () => {
+  // Chrome's password manager pairs a saved password with the nearest text
+  // input as its "username" — which was the integrations search bar getting
+  // the user's email autofilled. Workspace keys (password-type inputs) live
+  // in Settings; this page must stay free of them.
   const page = read('src/app/integrations/page.tsx')
-  assert.match(page, /WorkspaceCredentialsPanel/, 'the workspace keys panel must be reachable from /integrations')
+  assert.doesNotMatch(page, /WorkspaceCredentialsPanel/, 'workspace keys must not render on /integrations')
+})
+
+test('workspace key inputs opt out of saved-credential autofill', () => {
+  const panel = read('src/components/integrations/workspace-credentials-panel.tsx')
+  assert.match(
+    panel,
+    /autoComplete="new-password"/,
+    'key inputs need autoComplete="new-password" — Chrome ignores "off" and fills saved site credentials',
+  )
 })
 
 test('the step-drawer predefined-credential empty state does not deny connected integrations', () => {

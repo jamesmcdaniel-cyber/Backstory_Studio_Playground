@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 import { isEditionBlockedPath } from '@/lib/edition'
+import { contentSecurityPolicy } from '@/lib/security/csp'
 
 export async function middleware(request: NextRequest) {
   // Refused at the edge, before any session work: in the customer edition the
@@ -10,24 +11,7 @@ export async function middleware(request: NextRequest) {
     return new NextResponse(null, { status: 404 })
   }
   const nonce = btoa(crypto.randomUUID())
-  const scriptSrc = [`'self'`, `'nonce-${nonce}'`, `'strict-dynamic'`]
-  if (process.env.NODE_ENV !== 'production') scriptSrc.push(`'unsafe-eval'`)
-  const csp = [
-    `default-src 'self'`,
-    `script-src ${scriptSrc.join(' ')}`,
-    `style-src 'self' 'unsafe-inline'`,
-    `img-src 'self' data: blob: https:`,
-    `font-src 'self' data:`,
-    `connect-src 'self' https: wss:`,
-    `media-src 'self' data: blob:`,
-    `worker-src 'self' blob:`,
-    `frame-src 'self'`,
-    `frame-ancestors 'none'`,
-    `base-uri 'self'`,
-    `form-action 'self'`,
-    `object-src 'none'`,
-    ...(process.env.NODE_ENV === 'production' ? ['upgrade-insecure-requests'] : []),
-  ].join('; ')
+  const csp = contentSecurityPolicy(nonce)
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set('x-nonce', nonce)
   requestHeaders.set('content-security-policy', csp)

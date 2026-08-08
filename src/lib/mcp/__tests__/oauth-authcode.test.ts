@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { safeReturnToPath } from '../oauth-authcode'
+import { discoverAuthServer, safeReturnToPath } from '../oauth-authcode'
 
 test('safeReturnToPath accepts plain same-origin paths', () => {
   assert.equal(safeReturnToPath('/connect'), '/connect')
@@ -25,4 +25,8 @@ test('safeReturnToPath rejects control characters (WHATWG strips them before par
   assert.equal(safeReturnToPath('/\n/evil.com'), undefined)
   assert.equal(safeReturnToPath('/\r/evil.com'), undefined)
   assert.equal(safeReturnToPath('/connect '), undefined)
+})
+
+test('OAuth discovery rejects loopback before issuing a request', async () => {
+  await assert.rejects(discoverAuthServer('http://127.0.0.1:3000/mcp'), /https|private|reserved/i)
 })

@@ -10,8 +10,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.repository == 'jamesmcdaniel-cyber/Backstory_Studio'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 20, cache: npm }
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - run: npm ci
@@ -25,6 +25,6 @@ jobs:
         env:
           RESTORE_DATABASE_URL: ${{ secrets.RESTORE_TEST_DATABASE_URL }}
           RESTORE_CONFIRM: REPLACE_TARGET_DATABASE
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with: { name: restore-proof-manifest, path: '${{ runner.temp }}/backups/*.json', retention-days: 90 }

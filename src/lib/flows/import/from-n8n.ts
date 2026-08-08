@@ -549,8 +549,27 @@ function integrationBindingFor(type: string, parameters: Record<string, unknown>
       if (operation === 'download' || operation === 'get') {
         return { connectionId: 'nango:google_drive', toolName: 'google_drive_read_file', label: 'Google Drive', args: { fileId: trs(locatorValue(parameters.fileId)) } }
       }
-      // upload / update / share… — Drive is connected read-only today.
-      return { missing: `Google Drive ${operation || 'upload'} (the Drive integration is read-only — list/read files)` }
+      if (!operation || operation === 'upload' || operation === 'createFromText') {
+        // n8n uploads binary data from the previous node; our tool uploads
+        // text content with a real filename via multipart. Default both to the
+        // incoming step's fields — the Convert-to-File shape ({filename,
+        // mimeType, content}) — so the classic convert→upload chain works.
+        const folderId = trs(locatorValue(parameters.folderId ?? parameters.parents))
+        return {
+          connectionId: 'nango:google_drive',
+          toolName: 'google_drive_upload_file',
+          label: 'Google Drive',
+          args: {
+            filename: trs(parameters.name) || '{{input.filename}}',
+            content: '{{input.content}}',
+            mimeType: '{{input.mimeType}}',
+            ...(folderId ? { folderId } : {}),
+          },
+          note: 'Uploads the incoming step’s text content under the filename shown — check both before running.',
+        }
+      }
+      // update / share / move… — no equivalent tool yet.
+      return { missing: `Google Drive ${operation}` }
     }
     case 'n8n-nodes-base.googleSheets': {
       const spreadsheetId = trs(googleFileId(parameters.documentId ?? parameters.sheetId))
@@ -2198,6 +2217,32 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       edges.push({ id: `e-${edgeIndex++}`, source: triggerId, target: node.id })
       hasIncoming.add(node.id)
     }
+  }
+
+  // Snowflake's SQL API answers in columns-and-rows (resultSetMetaData +
+  // arrays of values) — field access on the raw body silently yields nothing
+  // even once auth works. Wire a Columns-to-records step after every imported
+  // Snowflake statement call so downstream field mapping sees real records.
+  for (const node of [...nodes]) {
+    if (node.type !== 'http' || bodyMemberIds.has(node.id)) continue
+    const url = (node.data as { url?: string }).url ?? ''
+    if (!/snowflakecomputing\.com\/api\/v2\/statements/.test(url)) continue
+    const rowsId = `${node.id}-rows`
+    if (nodeIds.has(rowsId)) continue
+    nodes.push({
+      id: rowsId,
+      type: 'data',
+      data: { label: 'Columns to records', op: 'columnarToRecords', input: `{{step.${node.id}.output.body}}` },
+    } as FlowNode)
+    nodeIds.add(rowsId)
+    for (const edge of edges) {
+      if (edge.source === node.id) edge.source = rowsId
+    }
+    edges.push({ id: `e-${edgeIndex++}`, source: node.id, target: rowsId })
+    warn(
+      'Added a “Columns to records” step after the Snowflake call — its API answers in columns and rows, and this converts them so later steps can map fields.',
+      { code: 'SNOWFLAKE_SHAPE', nodeId: rowsId, severity: 'info' },
+    )
   }
 
   // n8n executes every node once per ITEM flowing through it; Backstory runs

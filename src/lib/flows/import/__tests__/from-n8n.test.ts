@@ -317,13 +317,13 @@ test('credentialed app nodes bind to platform integrations; uncovered capabiliti
   const args = JSON.parse(email.data.args)
   assert.equal(args.to, 'a@b.c')
   assert.equal(args.subject, '{{step.id-Prep.output.subject}}', 'args carried over with translated references')
-  // Drive UPLOAD is not covered (the Drive integration is read-only) — the
-  // step becomes a DIRECT API REQUEST with the endpoint prefilled, and the
-  // warning names the missing capability.
+  // Drive UPLOAD binds to the first-class upload tool (multipart with a real
+  // filename) — no more raw-HTTP fallback.
   const upload = graph.nodes.find((n: any) => n.data?.label === 'Upload file') as any
-  assert.equal(upload.type, 'http')
-  assert.match(upload.data.url, /googleapis\.com\/upload\/drive/)
-  assert.ok(result.warnings.some((w) => /Upload file/.test(w) && /direct API request/i.test(w)))
+  assert.equal(upload.type, 'tool')
+  assert.equal(upload.data.connectionId, 'nango:google_drive')
+  assert.equal(upload.data.toolName, 'google_drive_upload_file')
+  assert.equal(JSON.parse(upload.data.args).filename, 'report.html')
 })
 
 test('utility nodes map to native data ops; credential-less leftovers become passthrough code stubs', () => {
@@ -927,4 +927,61 @@ test('the data-transformation node family imports as native data ops with settin
   // The whole converted graph still validates as runnable.
   const issues = validateFlowGraph(graph).issues.filter((issue) => issue.level === 'error')
   assert.deepEqual(issues, [])
+})
+
+test('google drive uploads bind to the first-class upload tool instead of a raw HTTP fallback', () => {
+  const workflow = {
+    name: 'Drive upload',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Upload', 'n8n-nodes-base.googleDrive', { operation: 'upload', name: 'report.html', folderId: { __rl: true, value: 'folder123', mode: 'id' } }),
+    ],
+    connections: chain('Start', 'Upload'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const upload = graph.nodes.find((n) => n.id === 'id-Upload')
+  assert.equal(upload?.type, 'tool')
+  const data = upload?.data as { connectionId?: string; toolName?: string; args?: string }
+  assert.equal(data.connectionId, 'nango:google_drive')
+  assert.equal(data.toolName, 'google_drive_upload_file')
+  const args = JSON.parse(data.args ?? '{}')
+  assert.equal(args.filename, 'report.html')
+  assert.equal(args.content, '{{input.content}}')
+  assert.equal(args.folderId, 'folder123')
+  assert.ok(!result.warnings.some((w) => /read-only/.test(w)), 'no read-only fallback warning')
+})
+
+test('imported Snowflake calls get a Columns-to-records step wired after them', () => {
+  const workflow = {
+    name: 'Snowflake',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('Query', 'n8n-nodes-base.snowflake', { query: 'SELECT 1' }),
+      n8nNode('Use', 'n8n-nodes-base.set', { assignments: { assignments: [{ name: 'x', value: '={{ $json.DF_ENTITLED }}' }] } }),
+    ],
+    connections: chain('Start', 'Query', 'Use'),
+  }
+  const result = n8nToFlow(workflow)
+  const graph = flowGraphSchema.parse(result.graph)
+  const rows = graph.nodes.find((n) => n.id === 'id-Query-rows')
+  assert.equal(rows?.type, 'data')
+  assert.equal((rows?.data as { op?: string }).op, 'columnarToRecords')
+  assert.ok(graph.edges.some((e) => e.source === 'id-Query' && e.target === 'id-Query-rows'), 'http feeds the converter')
+  assert.ok(graph.edges.some((e) => e.source === 'id-Query-rows' && e.target === 'id-Use'), 'the converter feeds the old consumer')
+  assert.ok(!graph.edges.some((e) => e.source === 'id-Query' && e.target === 'id-Use'), 'the direct edge is rewired')
+  assert.ok(result.notes.some((n) => n.code === 'SNOWFLAKE_SHAPE'), 'the insertion is explained in the notes')
+})
+
+test('positional merges carry an info note suggesting key-based matching', () => {
+  const workflow = {
+    name: 'Merge',
+    nodes: [
+      n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
+      n8nNode('M', 'n8n-nodes-base.merge', { mode: 'combine', combineBy: 'combineByPosition' }),
+    ],
+    connections: chain('Start', 'M'),
+  }
+  const result = n8nToFlow(workflow)
+  assert.ok(result.notes.some((n) => n.code === 'MERGE_BY_POSITION' && n.nodeId === 'id-M' && n.severity === 'info'))
 })

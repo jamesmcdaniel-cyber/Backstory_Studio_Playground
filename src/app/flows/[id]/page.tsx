@@ -52,7 +52,7 @@ import { CanvasRail } from '@/components/flows/canvas-rail'
 import { GraphCanvas } from '@/components/flows/canvas/graph-canvas'
 import { StepDrawer, type OrgMember, type ToolCatalog } from '@/components/flows/step-drawer'
 import { CopilotPanel } from '@/components/flows/copilot-panel'
-import { RunPanel, type FlowRunDetail } from '@/components/flows/run-panel'
+import { RunPanel, runIsDegraded, type FlowRunDetail } from '@/components/flows/run-panel'
 import { CheckerPanel } from '@/components/flows/checker-panel'
 import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
@@ -465,7 +465,7 @@ function FlowBuilder() {
       .then((r) => r.json())
       .then((data) => {
         if (!data?.runs) return
-        setRuns(data.runs.map((r: { id: string; status: string; startedAt?: string }) => ({ id: r.id, status: r.status, startedAt: r.startedAt })))
+        setRuns((data.runs as FlowRunDetail[]).map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt, degraded: runIsDegraded(r.status, r.steps ?? []) })))
         const found = (data.runs as FlowRunDetail[]).find((r) => r.id === runId)
         if (found) {
           pinnedRunId.current = found.id
@@ -1439,7 +1439,7 @@ function FlowBuilder() {
       if (typeof document !== 'undefined' && document.hidden) return
       const data = await fetch(`/api/flows/${id}/runs`, { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
       const allRuns = data?.runs as FlowRunDetail[] | undefined
-      if (allRuns) setRuns(allRuns.map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt })))
+      if (allRuns) setRuns(allRuns.map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt, degraded: runIsDegraded(r.status, r.steps ?? []) })))
       const latest = data?.latest as FlowRunDetail | null
       if (!latest) {
         // Nothing to watch (flow never ran) — stop the interval.

@@ -16,9 +16,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { STATUS_DOT, STATUS_TEXT } from '@/lib/flows/node-presentation'
+import { runIsDegraded } from '@/components/flows/run-panel'
 import { cn } from '@/lib/utils'
 
-type RunStepSummary = { nodeId: string; status: string; order: number; error?: string | null }
+type RunStepSummary = { nodeId: string; status: string; order: number; error?: string | null; warnings?: string[] | null }
 type RunWaiting = { nodeId: string; kind: 'input' | 'approval'; question?: string }
 type RunSummary = {
   id: string
@@ -309,6 +310,12 @@ export default function FlowActivityPage() {
                         <Badge variant={STATUS_BADGE[run.status] || 'outline'} className="capitalize">
                           {run.status}
                         </Badge>
+                        {runIsDegraded(run.status, run.steps) && (
+                          <span
+                            className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                            title="Finished with warnings — some steps came back empty, failed quietly, or skipped items"
+                          />
+                        )}
                       </span>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{new Date(run.startedAt).toLocaleString()}</TableCell>

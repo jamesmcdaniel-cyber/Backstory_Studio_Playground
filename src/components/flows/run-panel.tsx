@@ -31,6 +31,9 @@ export type RunStep = {
   output?: unknown
   // console.log / print() output captured from a code step (display-only).
   logs?: string[] | null
+  // Degraded-success notes from the engine: skipped items, empty results,
+  // in-band tool errors. The step still succeeded — these explain the "but".
+  warnings?: string[] | null
   startedAt?: string | null
   finishedAt?: string | null
   // Agent steps: the underlying agent execution, linked as soon as it starts,
@@ -48,6 +51,16 @@ export type FlowRunDetail = {
   trigger?: unknown
   waiting?: { nodeId: string; kind: 'input' | 'approval'; question?: string } | null
   steps: RunStep[]
+}
+
+/**
+ * A run that reads "succeeded" but carries fine print: any step with engine
+ * warnings, or a step that failed while the run continued (on-error continue).
+ * Shared by the run selector, the run header, and the activity table.
+ */
+export function runIsDegraded(status: string, steps: { status: string; warnings?: string[] | null }[]): boolean {
+  if (status !== 'succeeded') return false
+  return steps.some((step) => (step.warnings?.length ?? 0) > 0 || step.status === 'failed')
 }
 
 /** Whether the run replayed the last successful run's input (execute-flow marks it). */
@@ -206,6 +219,12 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50">
         <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
         <span className="flex-1 truncate text-sm">{label}</span>
+        {(step.warnings?.length ?? 0) > 0 && (
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+            title={`${step.warnings!.length === 1 ? '1 warning' : `${step.warnings!.length} warnings`} — open the step for details`}
+          />
+        )}
         <span className={cn('text-xs font-medium', !waitingKind && 'capitalize', STATUS_TEXT[step.status] || 'text-muted-foreground')}>{step.status === 'running' && !live ? <TypewriterStatus seed={step.nodeId.length ? step.nodeId.charCodeAt(step.nodeId.length - 1) : 0} /> : statusLabel}</span>
       </button>
       {live && feed.length > 0 && (
@@ -226,6 +245,13 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
       {open && (
         <div className="space-y-2 px-3 pb-3 pl-8">
           {step.error && <p className="rounded bg-red-50 px-2 py-1 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">{step.error}</p>}
+          {(step.warnings?.length ?? 0) > 0 && (
+            <ul className="space-y-1 rounded bg-amber-50 px-2 py-1.5 dark:bg-amber-500/10">
+              {step.warnings!.map((warning, wi) => (
+                <li key={wi} className="text-xs text-amber-800 dark:text-amber-300">{warning}</li>
+              ))}
+            </ul>
+          )}
           <div>
             <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Input</p>
             <pre className="max-h-40 overflow-auto rounded bg-muted px-2 py-1.5 text-xs">{preview((step.input as { prompt?: unknown })?.prompt ?? step.input)}</pre>
@@ -446,7 +472,7 @@ export function RunPanel({
   onRun,
   starting,
 }: {
-  runs: { id: string; status: string; startedAt?: string }[]
+  runs: { id: string; status: string; startedAt?: string; degraded?: boolean }[]
   selected: FlowRunDetail | null
   onSelectRun: (runId: string) => void
   onClose: () => void
@@ -488,7 +514,7 @@ export function RunPanel({
             <SelectContent>
               {runs.map((run) => (
                 <SelectItem key={run.id} value={run.id} className="text-xs">
-                  {run.status} · {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.slice(0, 8)}
+                  {run.degraded ? 'succeeded with warnings' : run.status} · {run.startedAt ? new Date(run.startedAt).toLocaleString() : run.id.slice(0, 8)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -507,6 +533,11 @@ export function RunPanel({
           <>
             <div className="border-b border-border px-3 py-2">
               <span className={cn('text-xs font-semibold capitalize', STATUS_TEXT[selected.status])}>{selected.status === 'running' ? <TypewriterStatus /> : selected.status}</span>
+              {runIsDegraded(selected.status, selected.steps) && (
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                  Some steps have warnings — the run finished, but parts of it came back empty, failed quietly, or skipped items. Open the marked steps below.
+                </p>
+              )}
               {reusedInputOf(selected.trigger) && (
                 <p className="mt-1 text-xs text-muted-foreground">Using the input from the last successful run.</p>
               )}

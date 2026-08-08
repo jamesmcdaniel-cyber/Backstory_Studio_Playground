@@ -22,4 +22,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     select: { id: true, domain: true, status: true, verifiedAt: true },
   })
   return { success: true, domain: verified }
-}, { permission: 'security.manage', skipMfaGate: true })
+}, { permission: 'security.manage' })

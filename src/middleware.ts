@@ -9,7 +9,31 @@ export async function middleware(request: NextRequest) {
   if (isEditionBlockedPath(request.nextUrl.pathname)) {
     return new NextResponse(null, { status: 404 })
   }
-  return updateSession(request)
+  const nonce = btoa(crypto.randomUUID())
+  const scriptSrc = [`'self'`, `'nonce-${nonce}'`, `'strict-dynamic'`]
+  if (process.env.NODE_ENV !== 'production') scriptSrc.push(`'unsafe-eval'`)
+  const csp = [
+    `default-src 'self'`,
+    `script-src ${scriptSrc.join(' ')}`,
+    `style-src 'self' 'unsafe-inline'`,
+    `img-src 'self' data: blob: https:`,
+    `font-src 'self' data:`,
+    `connect-src 'self' https: wss:`,
+    `media-src 'self' data: blob:`,
+    `worker-src 'self' blob:`,
+    `frame-src 'self'`,
+    `frame-ancestors 'none'`,
+    `base-uri 'self'`,
+    `form-action 'self'`,
+    `object-src 'none'`,
+    ...(process.env.NODE_ENV === 'production' ? ['upgrade-insecure-requests'] : []),
+  ].join('; ')
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('x-nonce', nonce)
+  requestHeaders.set('content-security-policy', csp)
+  const response = await updateSession(request, requestHeaders)
+  response.headers.set('Content-Security-Policy', csp)
+  return response
 }
 
 export const config = {

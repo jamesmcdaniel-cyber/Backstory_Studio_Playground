@@ -26,12 +26,6 @@ const nextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=()' },
           // Force HTTPS for a year (browsers ignore this on localhost/non-TLS).
           { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
-          // Conservative CSP: anti-clickjacking (frame-ancestors) + block base-tag
-          // hijacking and plugin/object embedding. Deliberately NOT restricting
-          // script/style src — Next.js hydration uses inline scripts and a strict
-          // script-src needs nonce wiring (post-launch hardening). Generated HTML
-          // is already isolated in sandboxed, script-less iframes (HtmlPreview).
-          { key: 'Content-Security-Policy', value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" },
         ],
       },
     ]

@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads'
 import { getQuickJS, shouldInterruptAfterDeadline } from 'quickjs-emscripten'
 import { loadPyodide, type PyodideAPI } from 'pyodide'
+import { readResponseTextLimited } from '@/lib/net/response-body'
 
 export type CodeLanguage = 'javascript' | 'python'
 export type CodeMode = 'all' | 'each'
@@ -167,7 +168,7 @@ ${options.code}
   }
 }
 
-async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: number): Promise<CodeRunResult> {
+async function runPythonInProcess(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: number): Promise<CodeRunResult> {
   let result: CodeRunResult | undefined
   let failure: unknown
   // A Pyodide interpreter is stateful and not re-entrant. Serialize calls and
@@ -216,6 +217,42 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
   await execution
   if (failure) throw failure
   return result as CodeRunResult
+}
+
+/**
+ * Production Python is delegated to a separately isolated service with its own
+ * OS/container memory and CPU limits. Running Pyodide in the web/worker process
+ * is retained only for local development; a Python allocation must never be
+ * able to exhaust the multi-tenant execution worker.
+ */
+async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: number): Promise<CodeRunResult> {
+  const runnerUrl = process.env.PYTHON_RUNNER_URL?.trim()
+  if (!runnerUrl) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Python execution requires an isolated PYTHON_RUNNER_URL in production.')
+    }
+    return runPythonInProcess(options, timeoutMs)
+  }
+  const url = new URL(runnerUrl)
+  if (process.env.NODE_ENV === 'production' && url.protocol !== 'https:') {
+    throw new Error('PYTHON_RUNNER_URL must use https in production.')
+  }
+  const token = process.env.PYTHON_RUNNER_TOKEN?.trim()
+  if (process.env.NODE_ENV === 'production' && !token) {
+    throw new Error('PYTHON_RUNNER_TOKEN is required in production.')
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ code: options.code, input: options.input ?? null, context: options.context ?? {}, timeoutMs }),
+    redirect: 'error',
+    signal: AbortSignal.timeout(timeoutMs + 2_000),
+  })
+  if (!response.ok) throw new Error(`Isolated Python runner failed (status ${response.status}).`)
+  return parseResponse(await readResponseTextLimited(response, MAX_OUTPUT_BYTES, 'Python runner response'))
 }
 
 async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<CodeRunResult> {

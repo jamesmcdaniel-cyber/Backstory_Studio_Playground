@@ -33,4 +33,4 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     select: { mfaPolicy: true, ssoEnforced: true },
   })
   return { success: true, policy }
-}, { permission: 'security.manage', skipMfaGate: true })
+}, { permission: 'security.manage' })

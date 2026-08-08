@@ -6,16 +6,11 @@ export const FLOW_WEBHOOK_MAX_SKEW_MS = 5 * 60_000
 export type WebhookReplayHeaders = { deliveryId: string; timestampMs: number }
 
 /**
- * Replay protection is OPT-IN (FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION=true).
- * It used to default ON in production, which 400'd every sender that cannot
- * emit custom headers — i.e. virtually all third-party webhook producers — so
- * webhook triggers looked dead in prod. The secret is a bearer token: an
- * attacker who can capture a request to replay it already holds the secret,
- * so mandatory replay headers added little defense for what they cost.
- * Senders that DO provide the headers still get validation + dedupe.
+ * Production requires timestamped delivery ids so a captured valid request
+ * cannot be replayed. Development may opt in explicitly for integration tests.
  */
 export function requireWebhookReplayProtection(): boolean {
-  return process.env.FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION === 'true'
+  return process.env.NODE_ENV === 'production' || process.env.FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION === 'true'
 }
 
 export function parseWebhookReplayHeaders(

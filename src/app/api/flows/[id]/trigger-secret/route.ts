@@ -44,7 +44,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const base = {
     success: true as const,
     url: `${baseUrl}/api/flows/${flow.id}/trigger`,
-    usage: 'POST with header "x-trigger-secret: <secret>". Send {"input": ...} or any JSON body as the flow input.',
+    usage: 'POST with x-trigger-secret, a unique x-trigger-delivery-id, and the current Unix x-trigger-timestamp. Send {"input": ...} or any JSON body.',
   }
 
   if (hasSecret && !rotate) {

@@ -68,3 +68,15 @@ describe('published', () => {
     assert.equal((serializeFlow(flowRow(graph)) as { published: boolean }).published, false)
   })
 })
+
+describe('icon', () => {
+  const graph = { nodes: [], edges: [] }
+
+  it('passes the stored emoji through to the wire shape', () => {
+    assert.equal((serializeFlow(flowRow(graph, { icon: '📊' })) as { icon: string }).icon, '📊')
+  })
+
+  it('defaults to the empty string (generic glyph) for rows without one', () => {
+    assert.equal((serializeFlow(flowRow(graph)) as { icon: string }).icon, '')
+  })
+})

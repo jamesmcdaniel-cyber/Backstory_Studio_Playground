@@ -30,6 +30,8 @@ export function serializeFlow(flow: {
   id: string
   name: string
   description: string
+  /// Emoji shown on the card/builder ('' or absent = generic glyph).
+  icon?: string
   status: string
   trigger: unknown
   graph: unknown
@@ -59,6 +61,7 @@ export function serializeFlow(flow: {
     id: flow.id,
     name: flow.name,
     description: flow.description,
+    icon: flow.icon ?? '',
     status: flow.status.toLowerCase(),
     trigger: publicTrigger(flow.trigger),
     graph,

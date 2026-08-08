@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, Users, FileText, FileWarning, BookmarkPlus, Mic, MicOff, Radio } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, Users, FileText, FileWarning, BookmarkPlus, Mic, MicOff, Radio, Workflow } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
@@ -56,6 +56,7 @@ import { RunPanel, runIsDegraded, type FlowRunDetail } from '@/components/flows/
 import { ImportNotesPanel, parseImportReport, type FlowImportReport } from '@/components/flows/import-notes-panel'
 import { CheckerPanel } from '@/components/flows/checker-panel'
 import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
+import { FlowIconInput } from '@/components/flows/flow-icon-input'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
 import { useCanvasPan } from '@/components/flows/use-canvas-pan'
 import { VersionsPanel } from '@/components/flows/versions-panel'
@@ -229,9 +230,11 @@ function FlowBuilder() {
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  // Emoji card icon ('' = generic glyph). Saved through the settings dialog.
+  const [icon, setIcon] = useState('')
   const [folder, setFolder] = useState('')
   const [showFlowSettings, setShowFlowSettings] = useState(false)
-  const [settingsDraft, setSettingsDraft] = useState({ name: '', description: '', folder: '' })
+  const [settingsDraft, setSettingsDraft] = useState({ name: '', description: '', icon: '', folder: '' })
   const [graph, setGraph] = useState<FlowGraph>(emptyGraph())
   const [savingTemplate, setSavingTemplate] = useState(false)
   // Lifecycle status is owned by publish/unpublish (server-side); the client
@@ -381,6 +384,7 @@ function FlowBuilder() {
           baseUpdatedAt.current = flow.updatedAt ?? null
           setName(flow.name)
           setDescription(flow.description || '')
+          setIcon(flow.icon || '')
           setFolder(flow.folder || '')
           setGraph(g)
           setStatus(flow.status)
@@ -1553,9 +1557,9 @@ function FlowBuilder() {
   }, [id])
 
   const openFlowSettings = useCallback(() => {
-    setSettingsDraft({ name, description, folder })
+    setSettingsDraft({ name, description, icon, folder })
     setShowFlowSettings(true)
-  }, [name, description, folder])
+  }, [name, description, icon, folder])
 
   const saveFlowSettings = useCallback(async () => {
     const nextName = settingsDraft.name.trim()
@@ -1572,6 +1576,7 @@ function FlowBuilder() {
           id,
           name: nextName,
           description: settingsDraft.description,
+          icon: settingsDraft.icon,
           folder: settingsDraft.folder.trim().slice(0, 60),
           ...(baseUpdatedAt.current ? { baseUpdatedAt: baseUpdatedAt.current } : {}),
         }),
@@ -1585,6 +1590,7 @@ function FlowBuilder() {
       const nextFolder = settingsDraft.folder.trim().slice(0, 60)
       setName(nextName)
       setDescription(nextDescription)
+      setIcon(settingsDraft.icon)
       setFolder(nextFolder)
       if (data.flow?.updatedAt) baseUpdatedAt.current = data.flow.updatedAt
       setSavedSnapshot(JSON.stringify({ name: nextName, description: nextDescription, graph }))
@@ -1943,6 +1949,7 @@ function FlowBuilder() {
       body: JSON.stringify({
         name: `${flowName} copy`,
         description,
+        ...(icon ? { icon } : {}),
         graph,
       }),
     })
@@ -1953,7 +1960,7 @@ function FlowBuilder() {
     } else {
       toast.error(data.error || 'Could not duplicate the flow.')
     }
-  }, [name, description, graph, router])
+  }, [name, description, icon, graph, router])
 
   const downloadFlow = useCallback(async () => {
     const flowName = name.trim() || 'Untitled flow'
@@ -2164,6 +2171,23 @@ function FlowBuilder() {
         <Button variant="ghost" size="icon" onClick={() => router.push('/flows')} aria-label="Back to flows">
           <ArrowLeft className="h-4 w-4" />
         </Button>
+        {/* The flow's card icon, editable in place — clicking opens the same
+            details dialog as the ⋯ menu's "Edit details…". */}
+        {canEdit && !external ? (
+          <button
+            type="button"
+            onClick={openFlowSettings}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-base transition-colors hover:bg-muted"
+            title="Edit name, description & icon"
+            aria-label="Edit flow name, description, and icon"
+          >
+            {icon ? <span aria-hidden>{icon}</span> : <Workflow className="h-4 w-4 text-muted-foreground" />}
+          </button>
+        ) : (
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-base">
+            {icon ? <span aria-hidden>{icon}</span> : <Workflow className="h-4 w-4 text-muted-foreground" />}
+          </span>
+        )}
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -2876,6 +2900,13 @@ function FlowBuilder() {
                 placeholder="What this flow does and when to use it."
               />
             </label>
+            <div className="space-y-1.5 text-sm">
+              <span className="font-medium">Icon</span>
+              <FlowIconInput
+                value={settingsDraft.icon}
+                onChange={(nextIcon) => setSettingsDraft((current) => ({ ...current, icon: nextIcon }))}
+              />
+            </div>
             <label className="block space-y-1.5 text-sm">
               <span className="font-medium">Folder</span>
               <input

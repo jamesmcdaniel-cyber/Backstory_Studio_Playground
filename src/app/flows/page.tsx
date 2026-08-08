@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff } from 'lucide-react'
+import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search } from 'lucide-react'
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,9 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { useFlowImport } from '@/components/flows/use-flow-import'
+import { FlowIconInput } from '@/components/flows/flow-icon-input'
 import { FlowTemplateGallery } from '@/components/flows/flow-template-gallery'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
@@ -28,6 +30,8 @@ type FlowItem = {
   id: string
   name: string
   description: string
+  /** Emoji card icon ('' = the generic Workflow glyph). */
+  icon?: string
   status: string
   /** True once the flow has a published graph — what actually arms triggers. */
   published?: boolean
@@ -101,16 +105,59 @@ export default function FlowsPage() {
   const [page, setPage] = useState(1)
   const [creating, setCreating] = useState(false)
   const [folderFilter, setFolderFilter] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
   const flowImport = useFlowImport()
 
   const folders = Array.from(new Set(flows.map((flow) => flow.folder?.trim() || ''))).filter(Boolean).sort()
-  const visibleFlows = folderFilter === null ? flows : flows.filter((flow) => (flow.folder?.trim() || '') === folderFilter)
+  const query = search.trim().toLowerCase()
+  const visibleFlows = flows.filter(
+    (flow) =>
+      (folderFilter === null || (flow.folder?.trim() || '') === folderFilter) &&
+      (!query || flow.name.toLowerCase().includes(query) || (flow.description || '').toLowerCase().includes(query)),
+  )
 
   // Folder move + delete run through real dialogs, not window.prompt/confirm —
   // the only two browser-chrome interruptions left in the app.
   const [folderDialog, setFolderDialog] = useState<{ flow: FlowItem; value: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<FlowItem | null>(null)
   const [mutating, setMutating] = useState(false)
+
+  // Edit name/description/icon straight from the card — no editor round-trip.
+  const [editDialog, setEditDialog] = useState<{ flow: FlowItem; name: string; description: string; icon: string } | null>(null)
+
+  const editDetails = (flow: FlowItem) =>
+    setEditDialog({ flow, name: flow.name, description: flow.description || '', icon: flow.icon ?? '' })
+
+  const commitDetails = async () => {
+    if (!editDialog || mutating) return
+    const name = editDialog.name.trim()
+    if (!name) {
+      toast.error('Flow name is required.')
+      return
+    }
+    setMutating(true)
+    try {
+      const response = await fetch('/api/flows', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: editDialog.flow.id, name, description: editDialog.description, icon: editDialog.icon }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        toast.error(data.error || 'Could not save the flow details.')
+        return
+      }
+      setFlows((prev) =>
+        prev.map((entry) =>
+          entry.id === editDialog.flow.id ? { ...entry, name, description: editDialog.description, icon: editDialog.icon } : entry,
+        ),
+      )
+      toast.success('Flow details saved.')
+      setEditDialog(null)
+    } finally {
+      setMutating(false)
+    }
+  }
 
   const moveToFolder = (flow: FlowItem) => setFolderDialog({ flow, value: flow.folder?.trim() ?? '' })
 
@@ -152,6 +199,7 @@ export default function FlowsPage() {
       body: JSON.stringify({
         name: `${source.name} (copy)`,
         description: source.description || '',
+        icon: source.icon || undefined,
         graph: source.graph,
         trigger: source.trigger,
         folder: source.folder || undefined,
@@ -299,6 +347,16 @@ export default function FlowsPage() {
         />
       ) : (
         <>
+          <div className="relative max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => { setSearch(event.target.value); setPage(1) }}
+              placeholder="Search flows…"
+              className="pl-9"
+              aria-label="Search flows by name or description"
+            />
+          </div>
           {folders.length > 0 && (
             <div className="mb-4 flex flex-wrap items-center gap-1.5">
               <button
@@ -327,6 +385,10 @@ export default function FlowsPage() {
               </button>
             </div>
           )}
+          {visibleFlows.length === 0 && query ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No flows match “{search.trim()}”.</p>
+          ) : (
+          <>
           {/* StaggerReveal over the CSS ladder: viewport-triggered, spring-eased,
               reduced-motion aware, and not capped at 12 children. */}
           <StaggerReveal className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -354,6 +416,9 @@ export default function FlowsPage() {
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start">
+                            <DropdownMenuItem onSelect={() => editDetails(flow)}>
+                              <Pencil className="mr-2 h-4 w-4" /> Edit details
+                            </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => void togglePublish(flow)}>
                               {flow.published
                                 ? <><CircleOff className="mr-2 h-4 w-4" /> Unpublish</>
@@ -394,8 +459,8 @@ export default function FlowsPage() {
                       </span>
                     </div>
                     <div className="flex items-start gap-2.5">
-                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105', accent.chip)}>
-                        <Workflow className="h-[18px] w-[18px]" />
+                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg transition-transform group-hover:scale-105', accent.chip)}>
+                        {flow.icon ? <span aria-hidden>{flow.icon}</span> : <Workflow className="h-[18px] w-[18px]" />}
                       </span>
                       <CardTitle className="min-w-0 text-base leading-snug">{flow.name}</CardTitle>
                     </div>
@@ -410,6 +475,8 @@ export default function FlowsPage() {
             })}
           </StaggerReveal>
           <Pagination page={current} pageCount={pageCount} onPageChange={setPage} />
+          </>
+          )}
         </>
       )}
 
@@ -417,6 +484,45 @@ export default function FlowsPage() {
           category-filterable and paged, so nobody has to detour through the
           Agents → Templates library to find one. */}
       <FlowTemplateGallery />
+
+      <Dialog open={editDialog !== null} onOpenChange={(open) => { if (!open) setEditDialog(null) }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit flow details</DialogTitle>
+            <DialogDescription>The name, description, and icon shown on this flow’s card.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Name</span>
+              <Input
+                value={editDialog?.name ?? ''}
+                onChange={(event) => setEditDialog((current) => (current ? { ...current, name: event.target.value } : current))}
+                autoFocus
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Description</span>
+              <Textarea
+                rows={3}
+                value={editDialog?.description ?? ''}
+                onChange={(event) => setEditDialog((current) => (current ? { ...current, description: event.target.value } : current))}
+                placeholder="What this flow does and when to use it."
+              />
+            </label>
+            <div className="space-y-1.5 text-sm">
+              <span className="font-medium">Icon</span>
+              <FlowIconInput
+                value={editDialog?.icon ?? ''}
+                onChange={(icon) => setEditDialog((current) => (current ? { ...current, icon } : current))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialog(null)}>Cancel</Button>
+            <Button onClick={() => void commitDetails()} loading={mutating}>Save details</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={folderDialog !== null} onOpenChange={(open) => { if (!open) setFolderDialog(null) }}>
         <DialogContent className="sm:max-w-sm">

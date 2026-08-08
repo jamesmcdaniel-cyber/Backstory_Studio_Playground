@@ -24,6 +24,9 @@ const triggerSchema = z.object({ type: z.enum(['manual', 'schedule', 'webhook', 
 const flowSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(''),
+  // Emoji card icon ('' clears back to the generic glyph). 16 chars covers
+  // multi-codepoint emoji (ZWJ sequences) without admitting arbitrary text.
+  icon: z.string().trim().max(16).optional(),
   status: z.enum(['DRAFT', 'ACTIVE', 'DISABLED']).default('DRAFT'),
   visibility: z.enum(['shared', 'private', 'view']).default('shared'),
   trigger: triggerSchema.optional(),
@@ -72,6 +75,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     data: {
       name: data.name,
       description: data.description,
+      icon: data.icon ?? '',
       status: data.status,
       visibility: data.visibility,
       folder: data.folder ?? '',
@@ -134,6 +138,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   const data = {
     ...(body.name !== undefined && { name: body.name }),
     ...(body.description !== undefined && { description: body.description }),
+    ...(body.icon !== undefined && { icon: body.icon }),
     // Lifecycle is owned by publish/unpublish, NOT by this endpoint. Accepting
     // a status here let any caller with a stale client-side value silently
     // demote a published (ACTIVE) flow back to DRAFT — the flow kept running
@@ -178,6 +183,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   const changedFields = [
     body.name !== undefined && body.name !== existing.name ? 'name' : null,
     body.description !== undefined && body.description !== existing.description ? 'description' : null,
+    body.icon !== undefined && body.icon !== existing.icon ? 'icon' : null,
     body.visibility !== undefined && body.visibility !== existing.visibility ? 'visibility' : null,
     body.folder !== undefined && body.folder !== existing.folder ? 'folder' : null,
     body.trigger !== undefined && JSON.stringify(body.trigger) !== JSON.stringify(existing.trigger) ? 'trigger' : null,

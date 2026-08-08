@@ -65,7 +65,7 @@ export type InstantiatedFlowTemplate = {
 export async function instantiateFlowTemplate(
   organizationId: string,
   userId: string,
-  template: Pick<SerializedFlowTemplate, 'name' | 'description' | 'graph' | 'notes' | 'bindings' | 'integrations'>,
+  template: Pick<SerializedFlowTemplate, 'name' | 'description' | 'graph' | 'notes' | 'bindings' | 'integrations'> & { icon?: string },
 ): Promise<InstantiatedFlowTemplate> {
   const context = await loadBindingContext(organizationId, userId)
   const resolutions = resolveBindings(template.bindings as FlowTemplateBinding[], context)
@@ -82,6 +82,8 @@ export async function instantiateFlowTemplate(
     data: {
       name: template.name,
       description: template.description,
+      // The template's emoji follows the flow so cards stay tellable apart.
+      icon: template.icon ?? '',
       // Always DRAFT: a template's trigger may be a schedule, and a flow with
       // unfilled slots must never start firing on its own.
       status: 'DRAFT',

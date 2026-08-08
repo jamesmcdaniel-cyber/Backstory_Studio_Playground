@@ -872,6 +872,9 @@ model Flow {
   id             String   @id @default(cuid())
   name           String
   description    String   @default("")
+  /// Emoji shown on the flow's card and in the builder ('' = the generic
+  /// Workflow glyph). Seeded from the template's icon on instantiate.
+  icon           String   @default("")
   status         String   @default("DRAFT") // DRAFT | ACTIVE | DISABLED
   trigger        Json     @default("{}") // { type: 'manual'|'schedule'|'signal', ... }
   graph          Json     @default("{}") // working draft: { nodes, edges }

@@ -16,13 +16,18 @@ function setNodeEnv(value: string) {
 const FULL_PROD_ENV = {
   NODE_ENV: 'production',
   DATABASE_URL: 'postgresql://u:p@h:6543/db',
+  SYSTEM_DATABASE_URL: 'postgresql://system:p@h:5432/db',
+  DATABASE_RLS_ENABLED: 'true',
   DIRECT_URL: 'postgresql://u:p@h:5432/db',
+  NEXT_PUBLIC_APP_URL: 'https://app.example.test',
   NEXT_PUBLIC_SUPABASE_URL: 'https://x.supabase.co',
   NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon',
   ENCRYPTION_KEY: 'k',
   ANTHROPIC_API_KEY: 'sk-ant-x',
   REDIS_URL: 'redis://localhost:6379',
   FILE_SCAN_URL: 'https://scanner.example.test/scan',
+  PYTHON_RUNNER_URL: 'https://python-runner.example.test/run',
+  PYTHON_RUNNER_TOKEN: 'runner-token',
 }
 
 beforeEach(() => {

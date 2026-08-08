@@ -61,9 +61,14 @@ export async function POST(request: NextRequest) {
     }
     throw error
   }
-  const body = contentType.toLowerCase().includes('application/json')
-    ? (() => { try { return rawBody ? JSON.parse(rawBody) : {} } catch { return {} } })()
-    : rawBody
+  let body: unknown = rawBody
+  if (contentType.toLowerCase().includes('application/json')) {
+    try {
+      body = rawBody ? JSON.parse(rawBody) : {}
+    } catch {
+      return NextResponse.json({ success: false, error: 'Callback body is not valid JSON.' }, { status: 400 })
+    }
+  }
   const payload = flowInputFromWebhookBody(body)
 
   // One winner consumes the capability. A duplicate or concurrent replay sees

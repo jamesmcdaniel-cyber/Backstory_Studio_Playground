@@ -5,8 +5,12 @@ import { auditWorkerEnv } from '@/lib/workers/assert-env'
 const FULL_ENV: Record<string, string> = {
   REDIS_URL: 'rediss://default:secret@example.upstash.io:6379',
   DATABASE_URL: 'postgresql://u:p@db.example.com:5432/app?pgbouncer=true&connection_limit=20',
+  SYSTEM_DATABASE_URL: 'postgresql://system:p@db.example.com:5432/app',
+  DATABASE_RLS_ENABLED: 'true',
   ENCRYPTION_KEY: 'k'.repeat(32),
   ANTHROPIC_API_KEY: 'sk-ant-test',
+  PYTHON_RUNNER_URL: 'https://python-runner.example.com/run',
+  PYTHON_RUNNER_TOKEN: 'runner-token',
   SENTRY_DSN: 'https://x@sentry.example/1',
   NANGO_SECRET_KEY: 'nango',
   VOYAGE_API_KEY: 'voyage',

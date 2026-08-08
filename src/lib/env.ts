@@ -11,11 +11,16 @@
 
 const REQUIRED_IN_PRODUCTION = [
   'DATABASE_URL',
+  'SYSTEM_DATABASE_URL',
+  'DATABASE_RLS_ENABLED',
   'DIRECT_URL',
+  'NEXT_PUBLIC_APP_URL',
   'NEXT_PUBLIC_SUPABASE_URL',
   'NEXT_PUBLIC_SUPABASE_ANON_KEY',
   'ENCRYPTION_KEY',
   'FILE_SCAN_URL',
+  'PYTHON_RUNNER_URL',
+  'PYTHON_RUNNER_TOKEN',
 ] as const
 
 /** At least one model provider key must be present for agent runs. Claude
@@ -26,6 +31,9 @@ export function assertServerEnv(): void {
   if (process.env.NODE_ENV !== 'production') return
 
   const missing = REQUIRED_IN_PRODUCTION.filter((name) => !process.env[name])
+  if (process.env.DATABASE_RLS_ENABLED && process.env.DATABASE_RLS_ENABLED !== 'true') {
+    missing.push('DATABASE_RLS_ENABLED=true' as never)
+  }
 
   const hasModelKey = MODEL_KEYS.some((name) => Boolean(process.env[name]))
   if (!hasModelKey) {

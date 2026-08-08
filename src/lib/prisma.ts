@@ -29,6 +29,14 @@ function assertProductionDatabaseIsolation(): void {
   if (appUrl === systemUrl) {
     throw new Error('DATABASE_URL must not use the privileged SYSTEM_DATABASE_URL role')
   }
+  try {
+    if (new URL(appUrl).username === new URL(systemUrl).username) {
+      throw new Error('DATABASE_URL and SYSTEM_DATABASE_URL must use distinct database roles')
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('distinct database roles')) throw error
+    throw new Error('DATABASE_URL and SYSTEM_DATABASE_URL must be valid PostgreSQL URLs')
+  }
 }
 
 assertProductionDatabaseIsolation()

@@ -415,7 +415,14 @@ export default function FlowsPage() {
                               <MoreHorizontal className="h-4 w-4" />
                             </button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="start">
+                          {/* The whole card is an <a>. Radix portals the menu to <body>,
+                              but React synthetic clicks still bubble through the REACT tree
+                              into the Link — which navigated mid-dialog-open and left the
+                              modal's pointer-events lock stuck on <body>. Stop them here. */}
+                          <DropdownMenuContent
+                            align="start"
+                            onClick={(event) => { event.preventDefault(); event.stopPropagation() }}
+                          >
                             <DropdownMenuItem onSelect={() => editDetails(flow)}>
                               <Pencil className="mr-2 h-4 w-4" /> Edit details
                             </DropdownMenuItem>

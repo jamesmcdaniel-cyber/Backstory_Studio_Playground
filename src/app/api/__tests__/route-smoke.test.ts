@@ -71,6 +71,9 @@ if (TEST_DB) {
     // so the request URL is what selects it — exercise a real one.
     { name: 'GET /api/integrations/credentials/[provider]', run: async () => (await import('../integrations/credentials/[provider]/route')).GET(req('/api/integrations/credentials/slack')) },
     { name: 'GET /api/mcp-connections', run: async () => (await import('../mcp-connections/route')).GET(req('/api/mcp-connections')) },
+    // 404s for an unknown connection id (no row, so no server is contacted) —
+    // smoke only asserts < 500.
+    { name: 'GET /api/mcp-connections/[id]/tools', run: async () => (await import('../mcp-connections/[id]/tools/route')).GET(req('/api/mcp-connections/nonexistent/tools')) },
     { name: 'GET /api/mcp-connections/oauth/start', run: async () => (await import('../mcp-connections/oauth/start/route')).GET(req('/api/mcp-connections/oauth/start')) },
     { name: 'GET /api/organizations/members', run: async () => (await import('../organizations/members/route')).GET(req('/api/organizations/members')) },
     { name: 'GET /api/organizations/invitations', run: async () => (await import('../organizations/invitations/route')).GET(req('/api/organizations/invitations')) },

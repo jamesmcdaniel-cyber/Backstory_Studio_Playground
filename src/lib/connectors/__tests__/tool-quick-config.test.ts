@@ -2,6 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   TOOL_QUICK_CONFIGS,
+  mcpAllowedToolNames,
+  mcpQuickConfigKey,
+  mcpToolQuickConfig,
   parseAgentToolSettings,
   quickConfigForChip,
   quickConfigForProvider,
@@ -93,6 +96,31 @@ test('slack scope guard allows by id or name and blocks the rest', () => {
   assert.ok(
     toolScopeViolation({ provider: 'slack', toolName: 'post_message', args: { channel: '#x' }, settings })?.includes('#x'),
   )
+})
+
+test('mcpToolQuickConfig keys by connection id and lists via the tools endpoint', () => {
+  const config = mcpToolQuickConfig({ id: 'conn_1', name: 'Backstory MCP' })
+  assert.equal(config.key, 'mcp:conn_1')
+  assert.equal(config.optionsUrl, '/api/mcp-connections/conn_1/tools')
+  assert.equal(config.optionsRequest, undefined)
+  assert.equal(config.title, 'Backstory MCP tools')
+  assert.deepEqual(config.mapItem({ name: ' search_accounts ', description: 'x' }), { id: 'search_accounts', label: 'search_accounts' })
+  assert.equal(config.mapItem({ description: 'no name' }), null)
+  assert.equal(config.mapItem('junk'), null)
+  // The mcp: namespace never collides with the static provider matchers.
+  assert.equal(quickConfigForProvider(config.key), undefined)
+  assert.equal(scopeDescriptionSuffix(config.key, { [config.key]: [{ id: 'a', label: 'a' }] }), null)
+})
+
+test('mcpAllowedToolNames: empty/missing = unrestricted, per-connection otherwise', () => {
+  assert.equal(mcpAllowedToolNames({}, 'conn_1'), null)
+  assert.equal(mcpAllowedToolNames({ [mcpQuickConfigKey('conn_1')]: [] }, 'conn_1'), null)
+  const settings = { [mcpQuickConfigKey('conn_1')]: [{ id: 'search_accounts', label: 'search_accounts' }] }
+  const allowed = mcpAllowedToolNames(settings, 'conn_1')
+  assert.ok(allowed?.has('search_accounts'))
+  assert.equal(allowed?.has('delete_account'), false)
+  // Another connection's restriction does not leak.
+  assert.equal(mcpAllowedToolNames(settings, 'conn_2'), null)
 })
 
 test('github scope guard checks owner/repo pairs case-insensitively', () => {

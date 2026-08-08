@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChevronDown, Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
@@ -22,7 +22,7 @@ import {
 import { KnowledgePanel } from '@/app/agents/knowledge-panel'
 import { AgentHttpEndpointDialog } from '@/components/agents/http-endpoint-dialog'
 import { QuickConfigChip } from '@/components/agents/tool-quick-config-popover'
-import { parseAgentToolSettings, quickConfigForChip, type ToolScopeOption } from '@/lib/connectors/tool-quick-config'
+import { mcpToolQuickConfig, parseAgentToolSettings, quickConfigForChip, type ToolQuickConfig, type ToolScopeOption } from '@/lib/connectors/tool-quick-config'
 import { endpointParams, endpointToolName, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { cn } from '@/lib/utils'
 import { DAY_LABELS, cadenceOf, cronToTime, daysFromCron, dowCron } from '@/lib/scheduling/cadence'
@@ -550,6 +550,15 @@ export function AgentConfigForm({
   const baselineRef = useRef<string>(JSON.stringify(emptyDraft))
   const [skillNames, setSkillNames] = useState<Record<string, string>>({})
   const [availableIntegrations, setAvailableIntegrations] = useState<AvailableIntegrations | null>(null)
+  // Stable per-connection quick-config objects: the popover refetches when its
+  // config identity changes, so these must not be rebuilt on every keystroke.
+  const mcpQuickConfigs = useMemo(() => {
+    const configs = new Map<string, ToolQuickConfig>()
+    for (const connection of availableIntegrations?.connections ?? []) {
+      configs.set(connection.id, mcpToolQuickConfig(connection))
+    }
+    return configs
+  }, [availableIntegrations])
   const [runs, setRuns] = useState<any[]>([])
   const [runsLoading, setRunsLoading] = useState(false)
   const [memories, setMemories] = useState<AgentMemory[]>([])
@@ -994,21 +1003,24 @@ export function AgentConfigForm({
                 })}
                 {availableIntegrations.connections.map((c) => {
                   const selected = draft.integrations.includes(c.name)
+                  // Every MCP connection gets the gear popover: its options are
+                  // the server's own tool list, so the agent can be limited to
+                  // a subset of the server's tools.
+                  const quickConfig = mcpQuickConfigs.get(c.id) ?? mcpToolQuickConfig(c)
                   return (
-                    <button
+                    <QuickConfigChip
                       key={c.id}
-                      type="button"
-                      onClick={() => toggleIntegration(c.name)}
-                      className={cn(
-                        'flex items-center gap-1.5 rounded-full border py-1 pl-1.5 pr-3 text-xs transition-colors duration-150',
-                        selected
-                          ? 'border-primary bg-primary text-primary-foreground'
-                          : 'border-border bg-transparent text-muted-foreground hover:border-primary hover:text-foreground',
-                      )}
-                    >
-                      <IntegrationLogo slug={c.name.toLowerCase().replace(/[^a-z0-9]+/g, '')} name={c.name} className="h-4 w-4 bg-white/70" />
-                      {c.name}
-                    </button>
+                      label={c.name}
+                      slug={c.name.toLowerCase().replace(/[^a-z0-9]+/g, '')}
+                      connected
+                      selected={selected}
+                      config={quickConfig}
+                      value={draft.toolSettings?.[quickConfig.key] ?? []}
+                      onToggle={() => toggleIntegration(c.name)}
+                      onValueChange={(value) =>
+                        setDraft({ ...draft, toolSettings: { ...(draft.toolSettings ?? {}), [quickConfig.key]: value } })
+                      }
+                    />
                   )
                 })}
               </div>

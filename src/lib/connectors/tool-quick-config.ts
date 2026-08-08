@@ -31,12 +31,14 @@ export type ToolQuickConfig = {
   title: string
   description: string
   /** Request body for POST /api/flows/tool-options (a read-only tool run). */
-  optionsRequest: {
+  optionsRequest?: {
     connectionId: string
     toolName: string
     args?: Record<string, unknown>
     itemsPath?: string
   }
+  /** GET endpoint returning { success, items } — used instead of optionsRequest. */
+  optionsUrl?: string
   /** Normalize one fetched item into an option; null skips the item. */
   mapItem: (item: unknown) => ToolScopeOption | null
 }
@@ -75,6 +77,42 @@ export const TOOL_QUICK_CONFIGS: ToolQuickConfig[] = [
     },
   },
 ]
+
+/**
+ * MCP connections get the same gear popover, but per CONNECTION rather than per
+ * static descriptor: the options are the server's own tools (via
+ * GET /api/mcp-connections/[id]/tools), and the setting means "which tools this
+ * agent may use" rather than a resource scope. Keyed `mcp:<connectionId>` so a
+ * renamed server keeps its setting and two servers never collide — connection
+ * NAMES are the selection keys elsewhere, ids are the stable handle.
+ */
+export const mcpQuickConfigKey = (connectionId: string) => `mcp:${connectionId}`
+
+export function mcpToolQuickConfig(connection: { id: string; name: string }): ToolQuickConfig {
+  return {
+    key: mcpQuickConfigKey(connection.id),
+    noun: 'tool',
+    nounPlural: 'tools',
+    title: `${connection.name} tools`,
+    description: 'Choose which of this server’s tools the agent can use.',
+    optionsUrl: `/api/mcp-connections/${connection.id}/tools`,
+    mapItem: (item) => {
+      const row = record(item)
+      const name = typeof row?.name === 'string' ? row.name.trim() : ''
+      return name ? { id: name, label: name } : null
+    },
+  }
+}
+
+/**
+ * The tool-name allowlist for an MCP connection, or null when unrestricted
+ * (no entry / empty = all tools — the same sentinel as resource scopes).
+ */
+export function mcpAllowedToolNames(settings: AgentToolSettings, connectionId: string): Set<string> | null {
+  const options = scopedOptions(settings, mcpQuickConfigKey(connectionId))
+  if (options.length === 0) return null
+  return new Set(options.map((option) => option.id))
+}
 
 /** The quick config a connected-tools chip offers, if any. */
 export function quickConfigForChip(chipKey: string): ToolQuickConfig | undefined {

@@ -95,11 +95,16 @@ function QuickConfigPanel({
     let cancelled = false
     setError(null)
     setLiveOptions(null)
-    fetch('/api/flows/tool-options', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config.optionsRequest),
-    })
+    // Two option sources: a read-only tool run (resource scopes: channels,
+    // repos) or a plain GET (an MCP server's own tool list).
+    const load = config.optionsUrl
+      ? fetch(config.optionsUrl, { cache: 'no-store' })
+      : fetch('/api/flows/tool-options', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config.optionsRequest),
+        })
+    load
       .then(async (response) => {
         const data = await response.json().catch(() => ({}))
         if (!response.ok || !data.success) throw new Error(data.error || `Could not load ${config.nounPlural}.`)

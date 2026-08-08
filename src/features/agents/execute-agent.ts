@@ -24,7 +24,7 @@ import {
   type ToolPlaneGroup,
 } from './tool-planes'
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
-import { parseAgentToolSettings, scopeDescriptionSuffix, toolScopeViolation } from '@/lib/connectors/tool-quick-config'
+import { mcpAllowedToolNames, parseAgentToolSettings, scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
 import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
@@ -359,6 +359,7 @@ async function loadTools(
   ownerUserId?: string | null,
   query?: string,
   httpEndpoints: AgentHttpEndpoint[] = [],
+  toolSettings: AgentToolSettings = {},
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
   // at the end (capDiscoveredTools) so write tools aren't crowded out. Plane
@@ -398,8 +399,14 @@ async function loadTools(
   // ---- Per-org MCP connections (all active connections, any authType) ------
   // Custom MCP connections load for every agent regardless of the providers
   // list. A failing/unreachable server must not abort the run or block others.
+  // Per-agent tool toggles (agent setup → MCP chip gear) filter HERE, before
+  // the per-group cap and the global 64-tool cap, so a disabled tool never
+  // exists for the run — no description, no cap slot, nothing to call.
   const mcpGroups = await loadMcpConnectionPlaneGroups(organizationId, ownerUserId)
-  for (const group of mcpGroups) pushGroup(group, { cap: 20 })
+  for (const group of mcpGroups) {
+    const allowed = mcpAllowedToolNames(toolSettings, group.id)
+    pushGroup(allowed ? { ...group, tools: group.tools.filter((tool) => allowed.has(tool.name)) } : group, { cap: 20 })
+  }
 
   // ---- Native built-ins (Granola / Slack / HTTP / Email) --------------------
   // Each gated on its availability AND a matching providers entry.
@@ -771,11 +778,11 @@ export async function runAgentExecution(
     const toolQuery = [agent.objective, data.input].filter(Boolean).join('\n')
     // Configured API endpoints (agent setup → HTTP API) become named tools.
     const httpEndpoints = parseAgentHttpEndpoints(agentMetadata.httpEndpoints)
-    const { tools, bindings, unavailable } = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints)
-    // Per-tool scopes (agent setup → chip gear): tell the model up front which
-    // channels/repos are permitted, so it targets allowed values instead of
-    // discovering the hard guard below by being blocked.
+    // Per-tool scopes (agent setup → chip gear). Resource scopes (channels,
+    // repos) are enforced below on descriptions + call args; MCP tool toggles
+    // are enforced inside loadTools by never loading a disabled tool.
     const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
+    const { tools, bindings, unavailable } = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings)
     for (const tool of tools) {
       const binding = bindings.get(tool.name)
       const suffix = binding ? scopeDescriptionSuffix(binding.provider, toolSettings) : null

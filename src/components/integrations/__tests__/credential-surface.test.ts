@@ -36,11 +36,12 @@ test('workspace key inputs opt out of saved-credential autofill', () => {
 })
 
 test('the credentials page is the full management surface', () => {
-  // /credentials replaced the read-mostly bank on /flows: workspace keys render
-  // inline (the panel's inputs already carry the autofill guard), and both
-  // OAuth and HTTP rows expose rotation for exposed/leaked credentials.
+  // /credentials replaced the read-mostly bank on /flows: both OAuth and HTTP
+  // rows expose rotation for exposed/leaked credentials. Workspace keys are
+  // deliberately absent — agents act on behalf of the user who connected them,
+  // never a shared workspace identity.
   const page = read('src/app/credentials/page.tsx')
-  assert.match(page, /WorkspaceCredentialsPanel/, 'workspace keys must be manageable from /credentials')
+  assert.doesNotMatch(page, /WorkspaceCredentialsPanel/, 'workspace keys must not render on /credentials')
   assert.match(page, /rotateCredential/, 'HTTP credential rotation must be wired into /credentials')
   assert.match(page, /kind: 'rotate'/, 'OAuth token rotation (revoke + reconnect) must be wired into /credentials')
 })
@@ -51,6 +52,15 @@ test('the flows page links to the credentials page', () => {
   const page = read('src/app/flows/page.tsx')
   assert.match(page, /href="\/credentials"/, 'the Flows header must keep a link to /credentials')
   assert.doesNotMatch(page, /CredentialsBank/, 'the inline bank was replaced by the dedicated page')
+})
+
+test('credentials is a flows-scoped surface, not a sidebar destination', () => {
+  // Explicit product call (2026-08-07): /credentials is reached from the
+  // Flows header only, and always offers the way back to /flows.
+  const sidebar = read('src/components/layout/sidebar.tsx')
+  assert.doesNotMatch(sidebar, /\/credentials/, 'the sidebar must not link to /credentials')
+  const page = read('src/app/credentials/page.tsx')
+  assert.match(page, /href="\/flows"/, 'the credentials page must link back to /flows')
 })
 
 test('the step-drawer predefined-credential empty state does not deny connected integrations', () => {

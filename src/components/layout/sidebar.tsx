@@ -12,7 +12,6 @@ import {
   ChevronsUpDown,
   Folder,
   ImagePlus,
-  KeyRound,
   Loader2,
   Lock,
   LogOut,
@@ -69,12 +68,13 @@ export function notifyAgentsChanged() {
   window.dispatchEvent(new CustomEvent(AGENTS_CHANGED_EVENT))
 }
 
+// Credentials is deliberately absent: it's a Flows-scoped surface, reached
+// from the Credentials button on /flows (and it links back there).
 const navigation = [
   { name: 'Home', href: '/dashboard', icon: HomeIcon },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Flows', href: '/flows', icon: Workflow },
   { name: 'Integrations', href: '/integrations', icon: Plug },
-  { name: 'Credentials', href: '/credentials', icon: KeyRound },
 ]
 
 // Super admins only. Customer workspaces never resolve catalogue.review (the

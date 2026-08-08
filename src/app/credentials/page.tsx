@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ExternalLink, Plus, RefreshCw, RotateCw, ShieldCheck, Trash2 } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Plus, RefreshCw, RotateCw, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,7 +17,6 @@ import {
 import { PageHeader } from '@/components/ui/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
-import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
 import {
   HttpCredentialDialog,
   HTTP_AUTH_OPTIONS,
@@ -33,15 +32,15 @@ import { useNangoConnect } from '@/lib/client/use-nango-connect'
  * place (verify / reconnect / re-verify), and an exposed or leaked credential
  * is rotated here without touching any flow — OAuth accounts revoke stored
  * tokens then re-run consent, HTTP credentials take fresh secrets behind the
- * same id, workspace keys are replaced in the panel below.
+ * same id.
+ *
+ * Deliberately absent: workspace-shared API keys. Agents act on behalf of the
+ * user who connected them, never a shared workspace identity.
  *
  * Every list endpoint is redacted and flow.read, so all members can audit
  * status; mutations are integration.manage (ADMIN+) and the write affordances
  * hide for everyone else.
  */
-
-/** Mirrors the Settings panel's provider list (workspace-credentials-panel.tsx). */
-const WORKSPACE_KEY_PROVIDERS = ['slack', 'email', 'granola'] as const
 
 type OauthRow = {
   key: string
@@ -67,14 +66,6 @@ type McpConnection = {
   serverUrl: string
   isActive: boolean
   userId: string | null
-}
-
-type WorkspaceKey = {
-  provider: string
-  label: string
-  configured: boolean
-  hasOwnKey: boolean
-  source: 'org' | 'env' | null
 }
 
 type OauthConfirm = { kind: 'rotate' | 'disconnect'; row: OauthRow }
@@ -108,7 +99,6 @@ export default function CredentialsPage() {
   const [oauth, setOauth] = useState<OauthRow[]>([])
   const [mcp, setMcp] = useState<McpConnection[]>([])
   const [http, setHttp] = useState<HttpCredentialSummary[]>([])
-  const [keys, setKeys] = useState<WorkspaceKey[]>([])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [rotateHttpTarget, setRotateHttpTarget] = useState<HttpCredentialSummary | null>(null)
@@ -119,12 +109,11 @@ export default function CredentialsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [nango, catalog, servers, credentials, ...keyStates] = await Promise.all([
+    const [nango, catalog, servers, credentials] = await Promise.all([
       fetchJson('/api/nango/status'),
       fetchJson('/api/nango/integrations'),
       fetchJson('/api/mcp-connections'),
       fetchJson('/api/http-credentials'),
-      ...WORKSPACE_KEY_PROVIDERS.map((provider) => fetchJson(`/api/integrations/credentials/${provider}`)),
     ])
     const connections = (nango?.connections ?? {}) as Record<
       string,
@@ -145,7 +134,6 @@ export default function CredentialsPage() {
     )
     setMcp(Array.isArray(servers?.connections) ? (servers.connections as McpConnection[]) : [])
     setHttp(Array.isArray(credentials?.credentials) ? (credentials.credentials as HttpCredentialSummary[]) : [])
-    setKeys(keyStates.flatMap((state) => (state?.provider ? [state as unknown as WorkspaceKey] : [])))
     setLoading(false)
     setLoaded(true)
   }, [])
@@ -235,8 +223,7 @@ export default function CredentialsPage() {
   const connectedCount =
     oauth.filter((row) => row.connected).length +
     mcp.filter((row) => row.isActive).length +
-    http.filter((row) => row.status === 'verified').length +
-    keys.filter((row) => row.configured).length
+    http.filter((row) => row.status === 'verified').length
   const attentionCount =
     oauth.filter((row) => !row.connected).length +
     mcp.filter((row) => !row.isActive).length +
@@ -255,17 +242,24 @@ export default function CredentialsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <PageHeader
-          eyebrow="Workspace"
-          title="Credentials"
-          description="Connect once — every flow and agent reuses these. Fix an expired credential or rotate a leaked one right here."
-        />
-        <div className="flex items-center gap-3">
-          {summary}
-          <Button variant="outline" size="icon" onClick={() => void load()} disabled={loading} aria-label="Refresh credentials">
-            <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-          </Button>
+      <div className="space-y-3">
+        {/* Reached only from /flows (no sidebar entry), so the page always
+            offers the way back to where the journey started. */}
+        <Link href="/flows" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" /> Back to flows
+        </Link>
+        <div className="flex items-start justify-between gap-4">
+          <PageHeader
+            eyebrow="Flows"
+            title="Credentials"
+            description="Connect once — every flow and agent reuses these. Fix an expired credential or rotate a leaked one right here."
+          />
+          <div className="flex items-center gap-3">
+            {summary}
+            <Button variant="outline" size="icon" onClick={() => void load()} disabled={loading} aria-label="Refresh credentials">
+              <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -446,17 +440,6 @@ export default function CredentialsPage() {
               ))
             )}
           </CredentialSection>
-
-          <section className="space-y-2">
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace keys</h3>
-              <p className="text-xs text-muted-foreground/80">
-                API keys shared by the whole workspace — verified when saved, encrypted at rest, never shown again. Rotate one
-                by pasting its replacement.
-              </p>
-            </div>
-            <WorkspaceCredentialsPanel />
-          </section>
         </>
       )}
 

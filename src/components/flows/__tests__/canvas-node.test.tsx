@@ -52,26 +52,26 @@ test('a plain step offers one add-step stub, and none once connected', (t) => {
   t.after(cleanup)
   const node: FlowNode = { id: 'a', type: 'agent', data: { agentId: 'x', input: '' } }
   const open = renderNode(node)
-  assert.equal(open.container.querySelectorAll('button[aria-label="Add step"]').length, 1)
+  assert.equal(open.container.querySelectorAll('[role="button"][aria-label="Add step"]').length, 1)
   cleanup()
   const wired = renderNode(node, { connected: ['out'] })
-  assert.equal(wired.container.querySelectorAll('button[aria-label="Add step"]').length, 0)
+  assert.equal(wired.container.querySelectorAll('[role="button"][aria-label="Add step"]').length, 0)
 })
 
 test('a condition renders a labeled stub per branch', (t) => {
   t.after(cleanup)
   const node: FlowNode = { id: 'c', type: 'condition', data: { match: 'all', clauses: [] } }
   const { container } = renderNode(node)
-  assert.ok(container.querySelector('button[aria-label="Add step on Then"]'))
-  assert.ok(container.querySelector('button[aria-label="Add step on Otherwise"]'))
+  assert.ok(container.querySelector('[role="button"][aria-label="Add step on Then"]'))
+  assert.ok(container.querySelector('[role="button"][aria-label="Add step on Otherwise"]'))
 })
 
 test('a step routing on failure renders an On error stub alongside its normal one', (t) => {
   t.after(cleanup)
   const node: FlowNode = { id: 'h', type: 'http', data: { method: 'GET', url: 'https://x', onError: 'route' } }
   const { container } = renderNode(node)
-  assert.ok(container.querySelector('button[aria-label="Add step"]'))
-  assert.ok(container.querySelector('button[aria-label="Add step on On error"]'))
+  assert.ok(container.querySelector('[role="button"][aria-label="Add step"]'))
+  assert.ok(container.querySelector('[role="button"][aria-label="Add step on On error"]'))
 })
 
 test('a read-only canvas offers no add-step stubs', (t) => {

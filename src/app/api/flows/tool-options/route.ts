@@ -24,6 +24,13 @@ const schema = z.object({
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const body = schema.parse(await request.json())
   const { plane, ref } = parseFlowToolConnectionId(body.connectionId)
+  // Only the native and nango planes carry authoritative per-tool write
+  // classification. MCP and People.ai executors report isWrite:false for
+  // every tool regardless of what it does, so the write refusal below cannot
+  // hold there — a "picker" call could fire an arbitrary side effect.
+  if (plane === 'mcp' || plane === 'people_ai') {
+    return { success: false as const, error: 'Pick from a list is not available for MCP connections.' }
+  }
   const executor = await resolveFlowToolExecutor({
     organizationId: auth.organizationId,
     userId: auth.dbUser.id,

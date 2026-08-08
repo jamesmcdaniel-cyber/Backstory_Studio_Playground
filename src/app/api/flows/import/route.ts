@@ -14,23 +14,42 @@ import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 
 const URL_IMPORT_MAX_BYTES = 5_000_000
 
+const URL_IMPORT_MAX_REDIRECTS = 3
+
 /** Fetch a user-supplied import URL server-side (browser CORS can't) — SSRF-guarded, size- and time-capped. */
 async function fetchImportUrl(raw: string): Promise<unknown> {
-  const target = resolveN8nImportUrl(raw.trim())
-  try {
-    await assertPublicUrl(target)
-  } catch (error) {
-    throw new ApiError(error instanceof SsrfError ? error.message : 'That URL cannot be fetched.', 400, 'BAD_IMPORT_URL')
-  }
+  // Redirects are followed manually so the SSRF guard re-runs on every hop —
+  // a public URL must not be able to 302 into a private or metadata address.
+  let current = resolveN8nImportUrl(raw.trim())
   let response: Response
-  try {
-    response = await fetch(target, {
-      headers: { accept: 'application/json' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(15_000),
-    })
-  } catch {
-    throw new ApiError('Could not reach that URL.', 400, 'BAD_IMPORT_URL')
+  for (let hop = 0; ; hop++) {
+    try {
+      await assertPublicUrl(current)
+    } catch (error) {
+      throw new ApiError(error instanceof SsrfError ? error.message : 'That URL cannot be fetched.', 400, 'BAD_IMPORT_URL')
+    }
+    try {
+      response = await fetch(current, {
+        headers: { accept: 'application/json' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(15_000),
+      })
+    } catch {
+      throw new ApiError('Could not reach that URL.', 400, 'BAD_IMPORT_URL')
+    }
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      if (!location || hop >= URL_IMPORT_MAX_REDIRECTS) {
+        throw new ApiError('That URL redirects too many times.', 400, 'BAD_IMPORT_URL')
+      }
+      try {
+        current = new URL(location, current).toString()
+      } catch {
+        throw new ApiError('That URL cannot be fetched.', 400, 'BAD_IMPORT_URL')
+      }
+      continue
+    }
+    break
   }
   if (!response.ok) throw new ApiError(`That URL answered ${response.status} — it must serve the workflow JSON.`, 400, 'BAD_IMPORT_URL')
   const declared = Number(response.headers.get('content-length') || 0)

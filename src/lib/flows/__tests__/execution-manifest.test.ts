@@ -51,6 +51,26 @@ test('default-model env drift alone never invalidates a pinned manifest', () => 
   assert.equal(executionManifestMatches(pinned, manifest('2026-08-02T00:01:00.000Z', undefined, ['other-agent-model', 'other-summary-model'])), false)
 })
 
+test('a pinned tool absent from the current catalog is not drift', () => {
+  // A tool-plane outage (or deleted connection) makes the catalog come back
+  // without the tool. That is an availability problem the step itself will
+  // report with a real error — not a schema change that invalidates the run.
+  const pinned = manifest()
+  const withoutTool = buildFlowExecutionManifest({
+    graph,
+    agents: [{ id: 'a1', updatedAt: '2026-08-02T00:00:00.000Z' }],
+    toolCatalog: [],
+    agentModel: 'agent-model',
+    summaryModel: 'summary-model',
+  })
+  assert.equal(executionManifestMatches(pinned, withoutTool), true)
+  // The reverse also passes: a tool the pin-time catalog missed appearing now
+  // is added capability, not drift.
+  assert.equal(executionManifestMatches(withoutTool, pinned), true)
+  // But a schema change on a tool present in BOTH catalogs still fails.
+  assert.equal(executionManifestMatches(pinned, manifest(undefined, ['accountId'])), false)
+})
+
 test('legacy runs without a manifest remain resumable', () => {
   assert.equal(executionManifestMatches(null, manifest()), true)
 })

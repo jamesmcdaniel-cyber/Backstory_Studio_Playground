@@ -428,12 +428,26 @@ export async function runFlowExecution(
     graph = resolvedGraph.graph
     orgAgents = resolvedGraph.agents
     manifest = resolvedGraph.manifest
-    if (existingRun?.executionManifest && !executionManifestMatches(existingRun.executionManifest, manifest)) {
+    // The drift gate protects runs that already executed steps: resuming or
+    // patching against changed agents/tools would silently mix two
+    // configurations in one run. A PREPARED run has executed nothing — the
+    // manifest it carries was pinned by the web process, and this (worker)
+    // process may be a different deploy with newer in-repo tool schemas, so a
+    // mismatch here is rolling-deploy skew, not danger. It executes entirely
+    // with this process's consistent view; re-pin the manifest to that view so
+    // any LATER resume compares like-for-like.
+    if ((resuming || patching) && existingRun?.executionManifest && !executionManifestMatches(existingRun.executionManifest, manifest)) {
       throw new ApiError(
         'This run’s agent or integration configuration changed after it started. Start a new run so it can use the updated configuration safely.',
         409,
         'FLOW_DEPENDENCY_DRIFT',
       )
+    }
+    if (prepared && existingRun && !executionManifestMatches(existingRun.executionManifest, manifest)) {
+      await prisma.flowRun.updateMany({
+        where: { id: existingRun.id, organizationId: job.organizationId },
+        data: { executionManifest: jsonValue(manifest) },
+      })
     }
   } catch (error) {
     // The `status: 'running'` guard means we only roll back a claim we

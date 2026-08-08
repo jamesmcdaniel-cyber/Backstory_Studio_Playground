@@ -58,6 +58,21 @@ export function sourceHandleOf(edge: FlowEdge): string {
   return edge.branch ?? OUT_HANDLE
 }
 
+/** Suffix marking the draggable `+` stub that stands in for a source handle. */
+const PLUS_SUFFIX = '__plus'
+
+/** Handle id for a source handle's `+` stub (click to pick, drag to connect). */
+export function plusHandleId(handleId: string): string {
+  return `${handleId}${PLUS_SUFFIX}`
+}
+
+/** Maps a `+`-stub handle id back to the source handle it stands in for, so a
+ *  connection dragged off the stub lands on the same branch as one dragged off
+ *  the handle itself. Edges are never stored against a stub id. */
+export function baseHandleId(handleId: string): string {
+  return handleId.endsWith(PLUS_SUFFIX) ? handleId.slice(0, -PLUS_SUFFIX.length) : handleId
+}
+
 /**
  * Whether the Inline chain renderer can show this graph faithfully. It walks a
  * single spine (one plain successor per node) and renders branches as nested

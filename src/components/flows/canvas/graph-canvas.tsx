@@ -30,6 +30,7 @@ import type { StepType } from '@/lib/flows/mutate'
 import { canConnect } from '@/lib/flows/mutate'
 import { layoutGraph, type NodePosition } from '@/lib/flows/layout'
 import {
+  baseHandleId,
   edgeRunStates,
   hasTargetHandle,
   outerEdges,
@@ -129,6 +130,14 @@ type PickerState = {
     | { kind: 'handle'; sourceId: string; branch?: string }
     | { kind: 'edge'; edgeId: string }
     | { kind: 'standalone' }
+}
+
+/** The graph branch a connection drag encodes. A drag can start from a plain
+ *  source handle OR from its `+` stub — the stub's id carries a suffix that
+ *  `baseHandleId` maps back to the same branch; `out` means no branch. */
+function branchOfHandle(handleId: string | null | undefined): string | undefined {
+  const base = handleId ? baseHandleId(handleId) : undefined
+  return base && base !== 'out' ? base : undefined
 }
 
 const MINIMAP_COLOR: Record<string, string> = {
@@ -433,8 +442,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   const isValidConnection = useCallback(
     (connection: Connection | { source: string; target: string; sourceHandle?: string | null }) => {
       if (!connection.source || !connection.target) return false
-      const branch = connection.sourceHandle && connection.sourceHandle !== 'out' ? connection.sourceHandle : undefined
-      return canConnect(graph, connection.source, connection.target, branch)
+      return canConnect(graph, connection.source, connection.target, branchOfHandle(connection.sourceHandle))
     },
     [graph],
   )
@@ -442,8 +450,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return
-      const branch = connection.sourceHandle && connection.sourceHandle !== 'out' ? connection.sourceHandle : undefined
-      onConnectNodes(connection.source, connection.target, branch)
+      onConnectNodes(connection.source, connection.target, branchOfHandle(connection.sourceHandle))
     },
     [onConnectNodes],
   )
@@ -454,11 +461,10 @@ function GraphCanvasInner(props: GraphCanvasProps) {
       if (readOnly || state.toNode || !state.fromNode) return
       const point = 'changedTouches' in event ? event.changedTouches[0] : event
       const position = screenToFlowPosition({ x: point.clientX, y: point.clientY })
-      const handleId = state.fromHandle?.id
       openPicker(position, {
         kind: 'handle',
         sourceId: state.fromNode.id,
-        branch: handleId && handleId !== 'out' ? handleId : undefined,
+        branch: branchOfHandle(state.fromHandle?.id),
       })
     },
     [openPicker, readOnly, screenToFlowPosition],
@@ -572,6 +578,11 @@ function GraphCanvasInner(props: GraphCanvasProps) {
           onConnect={handleConnect}
           onConnectEnd={handleConnectEnd}
           isValidConnection={isValidConnection}
+          // The in-flight line matches a resting edge, so the drag previews the
+          // wire it becomes; the generous radius lets a drop land near a step's
+          // input port instead of demanding a direct hit.
+          connectionLineStyle={{ stroke: '#64748b', strokeWidth: 2.25 }}
+          connectionRadius={28}
           onSelectionChange={handleSelectionChange}
           onPaneClick={() => setPicker(null)}
           onContextMenu={(event) => event.preventDefault()}

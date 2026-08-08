@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { FlowGraph, FlowNode } from '@/lib/flows/graph'
 import {
+  baseHandleId,
   edgeRunStates,
   freePosition,
   hasTargetHandle,
@@ -9,6 +10,7 @@ import {
   outerEdges,
   outerNodes,
   placeDownstreamOf,
+  plusHandleId,
   sourceHandleOf,
   sourceHandlesFor,
   unreachableInlineIds,
@@ -76,6 +78,15 @@ test('a stop step offers no outgoing handle', () => {
 test('an edge leaves the handle named by its branch, or "out" when plain', () => {
   assert.equal(sourceHandleOf(edge('a', 'b')), 'out')
   assert.equal(sourceHandleOf(edge('c', 'b', 'true')), 'true')
+})
+
+test('a `+` stub handle round-trips to the source handle it stands in for', () => {
+  assert.equal(baseHandleId(plusHandleId('out')), 'out')
+  assert.equal(baseHandleId(plusHandleId('true')), 'true')
+  assert.equal(baseHandleId(plusHandleId('error')), 'error')
+  // A plain handle id passes through untouched.
+  assert.equal(baseHandleId('out'), 'out')
+  assert.equal(baseHandleId('case1'), 'case1')
 })
 
 test('container body steps are excluded from the canvas graph', () => {

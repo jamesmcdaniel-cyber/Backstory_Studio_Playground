@@ -1,12 +1,12 @@
 'use client'
 
-import { memo, createContext, useContext } from 'react'
-import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
+import { memo, createContext, useContext, useEffect, useRef } from 'react'
+import { Handle, Position, useUpdateNodeInternals, type NodeProps, type Node } from '@xyflow/react'
 import { AlertTriangle, Ban, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { NODE_ICON, NODE_TONE, STATUS_DOT, type StepStatus } from '@/lib/flows/node-presentation'
-import type { SourceHandle } from '@/lib/flows/canvas-model'
+import { plusHandleId, type SourceHandle } from '@/lib/flows/canvas-model'
 import type { FlowNode } from '@/lib/flows/graph'
 import { AgentSubNodes } from './agent-sub-nodes'
 
@@ -70,7 +70,7 @@ function handleOffsets(count: number): string[] {
   return Array.from({ length: count }, (_, index) => `${start + (span / (count - 1)) * index}%`)
 }
 
-function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
+function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
   const { onAddFrom, readOnly } = useContext(CanvasActionsContext)
   const { node, title, subtitle, status, issues, handles, hasTarget, connected, bodyCount, editors, brand, emoji, highlighted } = data
   const Icon = NODE_ICON[node.type]
@@ -79,6 +79,19 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
   const errorCount = issues?.errors ?? 0
   const warningCount = issues?.warnings ?? 0
   const ring = editors?.[0]?.color
+
+  // Where the pointer pressed a `+` stub — a click opens the picker, but a
+  // drag that circles back and releases on the stub must not.
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null)
+
+  // The `+` stubs are real connection handles that mount and unmount as edges
+  // come and go, so React Flow must re-measure this node's handle bounds —
+  // otherwise a drag from a fresh stub draws its line from a stale anchor.
+  const updateNodeInternals = useUpdateNodeInternals()
+  const handleSetKey = `${handles.map((handle) => handle.id).join('|')};${connected.join('|')}`
+  useEffect(() => {
+    updateNodeInternals(id)
+  }, [id, handleSetKey, updateNodeInternals])
 
   return (
     <div className="relative" style={{ width: 200 }}>
@@ -174,6 +187,7 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
       {handles.map((handle, index) => {
         const isConnected = connectedSet.has(handle.id)
         const isError = handle.tone === 'error'
+        const showPlus = !isConnected && !readOnly
         return (
           <span key={handle.id}>
             <Handle
@@ -190,28 +204,58 @@ function StepNodeComponent({ data, selected }: NodeProps<StepFlowNode>) {
                   'pointer-events-none absolute max-w-[140px] -translate-y-[150%] truncate whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide',
                   isError ? 'text-amber-600' : 'text-slate-400',
                 )}
-                style={{ top: offsets[index], left: 'calc(100% + 10px)' }}
+                style={{ top: offsets[index], left: showPlus ? 'calc(100% + 28px)' : 'calc(100% + 10px)' }}
               >
                 {handle.label}
               </span>
             )}
-            {!isConnected && !readOnly && (
-              <button
-                type="button"
-                aria-label={handle.label ? `Add step on ${handle.label}` : 'Add step'}
-                title={handle.label ? `Add step on ${handle.label}` : 'Add step'}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onAddFrom(node.id, handle.branch)
-                }}
-                className={cn(
-                  'nodrag absolute flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border border-dashed bg-white text-slate-400 transition-[color,border-color,transform] duration-fast hover:scale-110 hover:border-blue-400 hover:text-blue-600',
-                  isError ? 'border-amber-300' : 'border-slate-300',
-                )}
-                style={{ top: offsets[index], left: 'calc(100% + 10px)' }}
-              >
-                <Plus className="h-3 w-3" />
-              </button>
+            {showPlus && (
+              <>
+                {/* Leader wire holding the `+` off the card, so the stub reads
+                    as the start of the next connection rather than a badge. */}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'pointer-events-none absolute h-px w-[22px] -translate-y-1/2',
+                    isError ? 'bg-amber-300' : 'bg-slate-300 dark:bg-slate-600',
+                  )}
+                  style={{ top: offsets[index], left: 'calc(100% + 6px)' }}
+                />
+                {/* A real source handle wearing the `+`: click opens the insert
+                    picker, press-and-drag draws a connection to another step.
+                    Its id maps back to the branch via baseHandleId, and it
+                    unmounts once the branch has an edge — so edges only ever
+                    anchor to the plain handle above. */}
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id={plusHandleId(handle.id)}
+                  isConnectableEnd={false}
+                  role="button"
+                  aria-label={handle.label ? `Add step on ${handle.label}` : 'Add step'}
+                  title={
+                    handle.label
+                      ? `Add step on ${handle.label} — click to pick, or drag to connect to another step`
+                      : 'Add step — click to pick, or drag to connect to another step'
+                  }
+                  onMouseDown={(event) => {
+                    pressOrigin.current = { x: event.clientX, y: event.clientY }
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    const origin = pressOrigin.current
+                    if (origin && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 5) return
+                    onAddFrom(node.id, handle.branch)
+                  }}
+                  className={cn(
+                    'nodrag flex !h-5 !w-5 items-center justify-center !rounded-full !border !border-dashed !bg-white text-slate-400 transition-colors duration-fast hover:!border-blue-400 hover:text-blue-600 dark:!bg-slate-900',
+                    isError ? '!border-amber-300' : '!border-slate-300 dark:!border-slate-600',
+                  )}
+                  style={{ top: offsets[index], left: 'calc(100% + 28px)', transform: 'translateY(-50%)' }}
+                >
+                  <Plus className="pointer-events-none h-3 w-3" />
+                </Handle>
+              </>
             )}
           </span>
         )

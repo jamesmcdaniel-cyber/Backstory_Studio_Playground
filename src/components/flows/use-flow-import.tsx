@@ -85,41 +85,43 @@ export function useFlowImport() {
     }
   }, [finishImport, importing, url])
 
+  // One fragment carries BOTH the hidden file input and the URL dialog, so
+  // every existing consumer that already renders `fileInput` gets the dialog
+  // for free — no per-consumer wiring.
   const fileInput = (
-    <input
-      ref={inputRef}
-      className="hidden"
-      type="file"
-      accept="application/json,.json"
-      onChange={(event) => {
-        const file = event.target.files?.[0]
-        event.target.value = ''
-        if (file) void importFile(file)
-      }}
-    />
+    <>
+      <input
+        ref={inputRef}
+        className="hidden"
+        type="file"
+        accept="application/json,.json"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (file) void importFile(file)
+        }}
+      />
+      <Dialog open={urlOpen} onOpenChange={(open) => { if (!importing) setUrlOpen(open) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Import from a URL</DialogTitle>
+            <DialogDescription>Paste an n8n.io template page URL, or a link to a workflow/flow JSON file.</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') void submitUrl() }}
+            placeholder="https://n8n.io/workflows/…"
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUrlOpen(false)} disabled={importing}>Cancel</Button>
+            <Button onClick={() => void submitUrl()} loading={importing} disabled={!url.trim() || importing}>Import</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 
-  const urlDialog = (
-    <Dialog open={urlOpen} onOpenChange={(open) => { if (!importing) setUrlOpen(open) }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Import from a URL</DialogTitle>
-          <DialogDescription>Paste an n8n.io template page URL, or a link to a workflow/flow JSON file.</DialogDescription>
-        </DialogHeader>
-        <Input
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          onKeyDown={(event) => { if (event.key === 'Enter') void submitUrl() }}
-          placeholder="https://n8n.io/workflows/…"
-          autoFocus
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setUrlOpen(false)} disabled={importing}>Cancel</Button>
-          <Button onClick={() => void submitUrl()} loading={importing} disabled={!url.trim() || importing}>Import</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-
-  return { fileInput, urlDialog, pickFile: () => inputRef.current?.click(), importFromUrl: () => setUrlOpen(true) }
+  return { fileInput, pickFile: () => inputRef.current?.click(), importFromUrl: () => setUrlOpen(true) }
 }

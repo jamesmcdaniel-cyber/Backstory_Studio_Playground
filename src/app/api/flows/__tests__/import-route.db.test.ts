@@ -50,6 +50,11 @@ if (TEST_DB) {
         ),
         'the slack node binds to the platform Slack integration',
       )
+      // The import report persists — the toast is a headline, not the only copy.
+      const notes = flow.importNotes as { notes: { code: string; severity: string; message: string }[]; blocking: number }
+      assert.ok(notes && Array.isArray(notes.notes) && notes.notes.length > 0, 'import notes persist on the flow')
+      assert.equal(typeof notes.blocking, 'number')
+      assert.equal(typeof body.blocking, 'number', 'the response carries the blocking count')
     } finally {
       await s.cleanup()
       await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})

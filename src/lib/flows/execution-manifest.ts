@@ -64,8 +64,24 @@ export function buildFlowExecutionManifest(params: {
   }
 }
 
+/**
+ * Hash of the dependencies that genuinely invalidate a pinned run: agent
+ * revisions and tool schemas. Model ids are deliberately excluded — they are
+ * env-derived defaults (AGENT_MODEL/SUMMARY_MODEL), and the manifest is pinned
+ * on the web process but re-checked on the worker fleet, which resolves its
+ * own env. A default-model difference between the two planes (or a deploy
+ * changing the default) must not fail runs whose graph and dependencies are
+ * untouched. Computed from the stored agents/tools arrays so manifests pinned
+ * before this distinction existed compare correctly too.
+ */
+function dependencyIntegrityHash(value: Pick<FlowExecutionManifest, 'agents' | 'tools'>): string {
+  return manifestHash({ agents: value.agents ?? [], tools: value.tools ?? [] })
+}
+
 export function executionManifestMatches(pinned: unknown, current: FlowExecutionManifest): boolean {
   if (!pinned || typeof pinned !== 'object' || Array.isArray(pinned)) return true // legacy run
   const value = pinned as Partial<FlowExecutionManifest>
-  return value.version === 1 && value.graphHash === current.graphHash && value.dependencyHash === current.dependencyHash
+  if (value.version !== 1 || value.graphHash !== current.graphHash) return false
+  if (value.dependencyHash === current.dependencyHash) return true
+  return dependencyIntegrityHash(value as Pick<FlowExecutionManifest, 'agents' | 'tools'>) === dependencyIntegrityHash(current)
 }

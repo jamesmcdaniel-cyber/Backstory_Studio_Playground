@@ -469,7 +469,6 @@ export function Sidebar() {
             >
               <Search className="h-3.5 w-3.5" />
               <span className={cn('flex-1 text-left', desktopCollapsed && 'lg:hidden')}>Search</span>
-              <kbd className={cn('rounded border bg-graphite-50 px-1.5 py-0.5 text-[10px]', desktopCollapsed && 'lg:hidden')}>⌘K</kbd>
             </button>
             <NotificationBell />
           </div>

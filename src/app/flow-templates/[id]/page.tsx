@@ -14,6 +14,7 @@ import { IntegrationConnectDialog } from '@/components/integrations/integration-
 import { FlowGraphPreview } from '@/components/flows/flow-graph-preview'
 import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
 import { useAuth } from '@/hooks/use-auth'
+import { createFlowFromTemplate } from '@/lib/client/flow-from-template'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { cn } from '@/lib/utils'
 
@@ -152,19 +153,13 @@ export default function FlowTemplateDetails() {
   const useTemplate = async () => {
     setUsing(true)
     try {
-      const response = await fetch(`/api/flow-templates/${id}/use`, { method: 'POST' })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.flow) {
-        toast.error(data.error || 'Could not create the flow. Please try again.')
+      const result = await createFlowFromTemplate(id)
+      if (!result.ok) {
+        toast.error(result.error)
         return
       }
-      const outstanding = Array.isArray(data.setup) ? data.setup.length : 0
-      toast.success(
-        outstanding > 0
-          ? `Created as a draft — ${outstanding} thing${outstanding === 1 ? '' : 's'} left to set up.`
-          : 'Created as a draft, ready to run.',
-      )
-      router.push(`/flows/${data.flow.id}`)
+      toast.success(result.message)
+      router.push(result.href)
     } finally {
       setUsing(false)
     }
@@ -190,7 +185,7 @@ export default function FlowTemplateDetails() {
             loadError ? (
               <Button onClick={() => window.location.reload()}>Try again</Button>
             ) : (
-              <Button variant="outline" onClick={() => router.push('/agents?view=templates')}>Back to templates</Button>
+              <Button variant="outline" onClick={() => router.push('/flows')}>Back to templates</Button>
             )
           }
         />
@@ -204,7 +199,7 @@ export default function FlowTemplateDetails() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <Link href="/agents?view=templates" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+      <Link href="/flows" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
         <ArrowLeft className="h-4 w-4" /> Back to templates
       </Link>
 

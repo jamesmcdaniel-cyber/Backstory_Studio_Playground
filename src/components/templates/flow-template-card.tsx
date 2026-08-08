@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Workflow, Pencil, Trash2, Layers } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { cn } from '@/lib/utils'
 
@@ -34,11 +35,18 @@ export function FlowTemplateCard({
   accent,
   onEdit,
   onDelete,
+  onUse,
+  usePending = false,
+  useDisabled = false,
 }: {
   template: FlowTemplateItem
   accent: { bar: string; tile: string; badge: string; ring: string }
   onEdit?: (template: FlowTemplateItem) => void
   onDelete?: (template: FlowTemplateItem) => void
+  /** When set, the card gets a real "Use this template" button that instantiates in place (the card itself still opens the detail page). */
+  onUse?: (template: FlowTemplateItem) => void
+  usePending?: boolean
+  useDisabled?: boolean
 }) {
   const readyNow = template.setupCount === 0
   return (
@@ -119,10 +127,23 @@ export function FlowTemplateCard({
               </div>
             </div>
           )}
-          <div className="flex items-center gap-1 pt-1 text-sm font-medium text-indigo-600 opacity-0 transition-opacity group-hover:opacity-100 dark:text-indigo-300">
-            Use this flow
-            <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
-          </div>
+          {onUse ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              disabled={useDisabled}
+              loading={usePending}
+              onClick={(event) => { event.preventDefault(); event.stopPropagation(); onUse(template) }}
+            >
+              Use this template
+            </Button>
+          ) : (
+            <div className="flex items-center gap-1 pt-1 text-sm font-medium text-indigo-600 opacity-0 transition-opacity group-hover:opacity-100 dark:text-indigo-300">
+              Use this flow
+              <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
+            </div>
+          )}
         </CardContent>
       </Card>
     </Link>

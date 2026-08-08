@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, FileText, Layers, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff } from 'lucide-react'
+import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff } from 'lucide-react'
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { useFlowImport } from '@/components/flows/use-flow-import'
+import { FlowTemplateGallery } from '@/components/flows/flow-template-gallery'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -22,21 +23,6 @@ import { cn } from '@/lib/utils'
 
 /** Cards per page on the Flows grid. */
 const PAGE_SIZE = 9
-
-/**
- * Templates offered on this page's "Start from a template" row. The rest live
- * in the gallery. The New-flow button itself always creates a blank draft.
- */
-const MENU_TEMPLATE_LIMIT = 6
-
-type FlowTemplateOption = {
-  id: string
-  name: string
-  description: string
-  icon?: string
-  stepCount: number
-  setupCount: number
-}
 
 type FlowItem = {
   id: string
@@ -111,12 +97,9 @@ function cardAccent(id: string) {
 export default function FlowsPage() {
   const router = useRouter()
   const [flows, setFlows] = useState<FlowItem[]>([])
-  const [flowTemplates, setFlowTemplates] = useState<FlowTemplateOption[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [creating, setCreating] = useState(false)
-  // Which template card is mid-instantiate, so only that card spins.
-  const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null)
   const [folderFilter, setFolderFilter] = useState<string | null>(null)
   const flowImport = useFlowImport()
 
@@ -251,26 +234,6 @@ export default function FlowsPage() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
-    // builtin=1: the strip always shows the curated flow templates. Without it
-    // the catalogue ranks the workspace's stored/AI-generated rows first and
-    // they crowd the curated set out of these six slots; the full mixed
-    // catalogue stays one click away behind "Browse all templates".
-    fetch(`/api/flow-templates?limit=${MENU_TEMPLATE_LIMIT}&builtin=1`, { cache: 'no-store' })
-      .then((response) => response.json())
-      .then((data) => {
-        if (cancelled || !data.success) return
-        setFlowTemplates(
-          (data.templates || []).map((entry: Record<string, any>): FlowTemplateOption => ({
-            id: entry.id,
-            name: entry.name,
-            description: entry.description,
-            icon: entry.icon || '',
-            stepCount: entry.stepCount ?? 0,
-            setupCount: (entry.bindings?.length ?? 0) + (entry.notes?.setup?.length ?? 0),
-          })),
-        )
-      })
-      .catch(() => undefined)
     return () => {
       cancelled = true
     }
@@ -292,33 +255,8 @@ export default function FlowsPage() {
     }
   }
 
-  // Templates go through the instantiate endpoint rather than a plain POST, so
-  // bindings resolve against this workspace and the unfilled ones come back as
-  // a setup list instead of silently landing as empty steps.
-  const createFromTemplate = async (template: FlowTemplateOption) => {
-    setCreating(true)
-    setPendingTemplateId(template.id)
-    try {
-      const response = await fetch(`/api/flow-templates/${template.id}/use`, { method: 'POST' })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.flow) {
-        toast.error(data.error || 'Could not create the flow.')
-        return
-      }
-      const outstanding = Array.isArray(data.setup) ? data.setup.length : 0
-      toast.success(
-        outstanding > 0
-          ? `Created as a draft — ${outstanding} thing${outstanding === 1 ? '' : 's'} left to set up.`
-          : 'Created as a draft, ready to run.',
-      )
-      router.push(`/flows/${data.flow.id}`)
-    } finally {
-      setCreating(false)
-      setPendingTemplateId(null)
-    }
-  }
   // New flow goes straight to a blank draft — templates live in the
-  // "Start from a template" strip below and the gallery, not behind this button.
+  // full "Start from a template" gallery below, not behind this button.
   const newFlowButton = (
     <Button onClick={() => createFlow()} loading={creating}>
       <Plus className="mr-1.5 h-4 w-4" /> New flow
@@ -475,66 +413,10 @@ export default function FlowsPage() {
         </>
       )}
 
-      {/* The template catalogue, on the page itself — it used to be reachable
-          only from the New-flow dropdown, so nobody found it. The card opens the
-          template's detail page; "Use" instantiates it straight into a draft. */}
-      {flowTemplates.length > 0 && (
-        <section className="space-y-3 border-t border-border/60 pt-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="eyebrow">Start from a template</p>
-              <p className="text-sm text-muted-foreground">Wired pipelines you can run as they are — picking one creates a draft flow.</p>
-            </div>
-            <Link href="/agents?view=templates" className="shrink-0 text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-300">
-              Browse all templates →
-            </Link>
-          </div>
-          <StaggerReveal className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {flowTemplates.map((template) => {
-              const accent = cardAccent(template.id)
-              return (
-              <StaggerItem key={template.id}>
-              <Link href={`/flow-templates/${template.id}`} className="block h-full">
-                <TiltCard className={cn('group flex h-full flex-col overflow-hidden border-border/60 transition-[box-shadow,border-color]', accent.border)}>
-                  <div aria-hidden="true" className={cn('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-60 blur-2xl transition-opacity duration-base group-hover:opacity-100', accent.glow)} />
-                  <CardHeader className="space-y-2.5 pt-5">
-                    <div className="flex items-start gap-2.5">
-                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-base transition-transform group-hover:scale-105', accent.chip)}>
-                        {template.icon ? <span aria-hidden>{template.icon}</span> : <FileText className="h-[18px] w-[18px]" />}
-                      </span>
-                      <CardTitle className="min-w-0 text-base leading-snug">{template.name}</CardTitle>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <span className="inline-flex items-center gap-1">
-                        <Layers className="h-3.5 w-3.5" />
-                        {template.stepCount} {template.stepCount === 1 ? 'step' : 'steps'}
-                      </span>
-                      <span className={cn('font-medium', template.setupCount === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400')}>
-                        {template.setupCount === 0 ? 'Ready to run' : `${template.setupCount} to set up`}
-                      </span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="flex flex-1 flex-col justify-between gap-3">
-                    <p className="line-clamp-3 text-sm text-muted-foreground">{template.description}</p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full"
-                      disabled={creating}
-                      loading={pendingTemplateId === template.id}
-                      onClick={(event) => { event.preventDefault(); event.stopPropagation(); void createFromTemplate(template) }}
-                    >
-                      Use this template
-                    </Button>
-                  </CardContent>
-                </TiltCard>
-              </Link>
-              </StaggerItem>
-              )
-            })}
-          </StaggerReveal>
-        </section>
-      )}
+      {/* The full template catalogue lives on this page — every flow template,
+          category-filterable and paged, so nobody has to detour through the
+          Agents → Templates library to find one. */}
+      <FlowTemplateGallery />
 
       <Dialog open={folderDialog !== null} onOpenChange={(open) => { if (!open) setFolderDialog(null) }}>
         <DialogContent className="sm:max-w-sm">

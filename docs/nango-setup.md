@@ -62,8 +62,15 @@ assigns a different default slug — but prefer the canonical one.
 | Salesforce | `salesforce` | `salesforce-sandbox` |
 | Airtable | `airtable` | — |
 | Figma | `figma` | — |
+| Granola | `granola` | — |
 
-These 16 providers are the ones with authored agent tools. The canonical list is
+Granola is API-key auth (not OAuth): Nango's connect UI asks for the user's
+Granola API token (`grn_…`) and stores it; tools proxy with it like any OAuth
+connection. It also has a separate built-in per-org-key plane
+(`src/lib/integrations/granola.ts`) — the Nango plane serves accounts connected
+from the integrations grid.
+
+These 17 providers are the ones with authored agent tools. The canonical list is
 `PROVIDER_CONFIG_KEYS` in `src/lib/nango/provider-tools.ts` (plus the delivery
 write tools for Slack/Gmail/Salesforce in `src/lib/nango/delivery.ts`) — keep the
 dashboard and that map in sync when adding providers.

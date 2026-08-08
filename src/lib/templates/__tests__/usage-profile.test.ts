@@ -149,9 +149,9 @@ test('capabilitiesForProviders dedupes a provider case-insensitively', () => {
   assert.equal(caps[0].provider, 'slack')
 })
 
-test('capabilitiesForProviders covers the Granola built-in from its fixed tool set', () => {
+test('capabilitiesForProviders covers Granola from the Nango tool registry', () => {
   const caps = capabilitiesForProviders([cp('granola', 'builtin')])
-  assert.deepEqual(caps, [{ provider: 'granola', capabilities: ['list_notes', 'get_note'] }])
+  assert.deepEqual(caps, [{ provider: 'granola', capabilities: ['granola_list_notes', 'granola_get_note'] }])
 })
 
 test('capabilitiesForProviders omits custom MCP servers with no static catalogue', () => {

@@ -17,7 +17,6 @@
 
 import { prisma } from '@/lib/prisma'
 import { NANGO_PROVIDER_TOOLS } from '@/lib/nango/provider-tools'
-import { granolaTools } from '@/lib/integrations/granola'
 import { listConnectedProviders, type ConnectedProvider } from '@/lib/integrations/connected'
 
 export type UsageRow = { provider: string; tool: string; runId: string | null; at: string }
@@ -204,15 +203,13 @@ export function aggregateUsage(rows: UsageRow[], windowDays: number = USAGE_WIND
 
 /**
  * Static capability list for a connected-provider key, or null when we have no
- * catalogued capabilities for it. The Nango provider-tool registry is the source;
- * Granola is the one built-in with a fixed tool set. Custom MCP servers (`mcp:*`)
- * have no static catalogue here, so they contribute no capabilities.
+ * catalogued capabilities for it. The Nango provider-tool registry is the source
+ * (Granola included, since it gained authored Nango tools). Custom MCP servers
+ * (`mcp:*`) have no static catalogue here, so they contribute no capabilities.
  */
 function capabilitiesForKey(key: string): string[] | null {
   const catalog = NANGO_PROVIDER_TOOLS.filter((tool) => tool.provider === key).map((tool) => tool.name)
-  if (catalog.length) return catalog
-  if (key === 'granola') return granolaTools().map((t) => t.name)
-  return null
+  return catalog.length ? catalog : null
 }
 
 /**

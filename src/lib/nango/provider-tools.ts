@@ -48,6 +48,7 @@ export const PROVIDER_CONFIG_KEYS: Record<string, readonly string[]> = {
   salesforce: ['salesforce', 'salesforce-sandbox'],
   airtable: ['airtable'],
   figma: ['figma'],
+  granola: ['granola'],
 }
 
 /** Provider keys offered to agent drafting and template generation. */
@@ -849,6 +850,33 @@ const FIGMA_TOOLS: NangoToolSpec[] = [
   },
 ]
 
+// ── Granola (public API v1) ───────────────────────────────────────────────────
+// Nango's granola template proxies to https://public-api.granola.ai (no /v1),
+// so endpoints carry the version prefix. API-key auth; the key stays in Nango.
+// Same two read tools as the built-in per-org-key plane (lib/integrations/
+// granola.ts) — this plane serves orgs that connected Granola through Nango.
+
+const GRANOLA_TOOLS: NangoToolSpec[] = [
+  {
+    provider: 'granola', name: 'granola_list_notes', isWrite: false,
+    description: "List the user's recent Granola meeting notes (id, title, owner, AI summary). Optionally filter with created_after (ISO 8601 date) and paginate with cursor.",
+    inputSchema: { type: 'object', properties: { created_after: { type: 'string', description: 'Only notes created after this ISO 8601 date.' }, cursor: { type: 'string', description: 'Pagination cursor from a previous response.' } } },
+    run: (c, a, proxy = defaultProxy()) => proxy({
+      method: 'GET', endpoint: '/v1/notes', connectionId: c.connectionId, providerConfigKey: c.providerConfigKey,
+      params: { ...(str(a.created_after) ? { created_after: str(a.created_after) } : {}), ...(str(a.cursor) ? { cursor: str(a.cursor) } : {}) },
+    }).then((r) => r.data),
+  },
+  {
+    provider: 'granola', name: 'granola_get_note', isWrite: false,
+    description: "Get a Granola meeting note's full AI summary and transcript by id.",
+    inputSchema: { type: 'object', properties: { note_id: { type: 'string', description: 'Granola note id (not_…).' } }, required: ['note_id'] },
+    run: (c, a, proxy = defaultProxy()) => proxy({
+      method: 'GET', endpoint: `/v1/notes/${seg(a.note_id)}`, connectionId: c.connectionId, providerConfigKey: c.providerConfigKey,
+      params: { include: 'transcript' },
+    }).then((r) => r.data),
+  },
+]
+
 /** Every authored provider tool. */
 export const NANGO_PROVIDER_TOOLS: NangoToolSpec[] = [
   ...GITHUB_TOOLS,
@@ -867,6 +895,7 @@ export const NANGO_PROVIDER_TOOLS: NangoToolSpec[] = [
   ...GMAIL_READ_TOOLS,
   ...AIRTABLE_TOOLS,
   ...FIGMA_TOOLS,
+  ...GRANOLA_TOOLS,
 ]
 
 /** Tools for one provider (or [] if none authored yet). */

@@ -35,6 +35,7 @@ const PROVIDER_CONNECT_HINTS: Record<string, string> = {
   gmail: 'Google may warn about an unverified app while the OAuth app is in testing — continue with your workspace account.',
   google_drive: 'Google may warn about an unverified app while the OAuth app is in testing — continue with your workspace account.',
   google_sheets: 'Google may warn about an unverified app while the OAuth app is in testing — continue with your workspace account.',
+  granola: 'Have your Granola API token (grn_…) ready — create one in Granola under Settings → API keys.',
 }
 
 type Integration = {
@@ -171,7 +172,10 @@ export function OAuthIntegrationsGrid() {
                     or its tools haven’t shipped yet.
                   </p>
                 )}
-                {connection?.error && <p className="text-sm text-red-600">{connection.error}</p>}
+                {/* Health warnings only make sense on a live connection — a
+                    disconnected card already says "Not connected", and its
+                    stale auth error would just shout at the Connect button. */}
+                {connection?.connected && connection.error && <p className="text-sm text-red-600">{connection.error}</p>}
                 {connection?.connected
                   ? <div className="grid grid-cols-2 gap-2">
                       <Button

@@ -113,7 +113,7 @@ test('toolsForProvider groups by provider', () => {
 
 test('all authored providers have tools and unique tool names', () => {
   const providers = new Set(NANGO_PROVIDER_TOOLS.map((t) => t.provider))
-  for (const p of ['github', 'linear', 'jira', 'asana', 'notion', 'hubspot', 'confluence', 'google_drive', 'google_sheets', 'monday', 'zendesk', 'slack', 'salesforce', 'gmail']) {
+  for (const p of ['github', 'linear', 'jira', 'asana', 'notion', 'hubspot', 'confluence', 'google_drive', 'google_sheets', 'monday', 'zendesk', 'slack', 'salesforce', 'gmail', 'granola']) {
     assert.ok(providers.has(p), `provider ${p} has tools`)
   }
   const names = NANGO_PROVIDER_TOOLS.map((t) => t.name)
@@ -253,6 +253,24 @@ test('figma_get_file → GET /v1/files/{key}; post_comment → POST comments wit
   assert.equal(comment.method, 'POST')
   assert.equal(comment.endpoint, '/v1/files/abc/comments')
   assert.equal((comment.data as { message: string }).message, 'ship it')
+})
+
+test('granola_list_notes → GET /v1/notes; empty filters stay out of the params', async () => {
+  const all = await run('granola_list_notes', {})
+  assert.equal(all.method, 'GET')
+  assert.equal(all.endpoint, '/v1/notes')
+  assert.deepEqual(all.params, {})
+
+  const filtered = await run('granola_list_notes', { created_after: '2026-08-01', cursor: 'cur_9' })
+  assert.deepEqual(filtered.params, { created_after: '2026-08-01', cursor: 'cur_9' })
+})
+
+test('granola_get_note → GET /v1/notes/{id} with transcript included, id URL-encoded', async () => {
+  const c = await run('granola_get_note', { note_id: 'not_abc/../x' })
+  assert.equal(c.method, 'GET')
+  assert.equal(c.endpoint, '/v1/notes/not_abc%2F..%2Fx')
+  assert.deepEqual(c.params, { include: 'transcript' })
+  assert.equal(NANGO_PROVIDER_TOOLS.find((t) => t.name === 'granola_get_note')!.isWrite, false)
 })
 
 test('google drive: upload builds a multipart body with metadata name, parents, and base64 media', async () => {

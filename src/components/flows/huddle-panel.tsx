@@ -23,6 +23,7 @@ export type HuddleCapture = ReturnType<typeof useHuddleCapture>
 export function HuddlePanel({
   huddle,
   members,
+  startBlocked,
   selfClientId,
   capture,
   captureAvailable,
@@ -30,6 +31,12 @@ export function HuddlePanel({
   huddle: FlowHuddle
   /** Everyone whose presence says they're in the huddle, self included. */
   members: HuddleMember[]
+  /**
+   * Why a huddle can't be STARTED right now (nobody else jamming, or the
+   * jam dot isn't green), or null/undefined when it can. Joining a live
+   * huddle is never gated.
+   */
+  startBlocked?: string | null
   selfClientId: string
   /** Huddle-notes capture state; absent → the feature is not offered at all. */
   capture?: HuddleCapture
@@ -38,6 +45,7 @@ export function HuddlePanel({
 }) {
   const { joined, connecting, muted, pttEnabled, transmitting, error, speakingIds, peerStates, peerAudio, relayAvailable } = huddle
   const live = members.length > 0
+  const blockedStart = !live && startBlocked != null
   // A lost peer with no TURN relay in play is almost always a strict NAT that
   // STUN can't traverse — say so, or "connection lost" reads as a random bug.
   const lostWithoutRelay = joined && relayAvailable === false
@@ -47,7 +55,17 @@ export function HuddlePanel({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-1.5">
         {!joined ? (
-          <Button size="sm" variant="outline" className="h-7 rounded-full" onClick={() => void huddle.join()} disabled={connecting}>
+          // aria-disabled instead of disabled when blocked: the button must
+          // stay hoverable so the tooltip can say WHY it won't start.
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn('h-7 rounded-full', blockedStart && 'cursor-not-allowed opacity-50 hover:bg-transparent')}
+            onClick={() => { if (!blockedStart) void huddle.join() }}
+            disabled={connecting}
+            aria-disabled={connecting || blockedStart}
+            title={blockedStart ? startBlocked ?? undefined : undefined}
+          >
             {connecting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Mic className="mr-1.5 h-3.5 w-3.5" />}
             {live ? 'Join huddle' : 'Start huddle'}
           </Button>

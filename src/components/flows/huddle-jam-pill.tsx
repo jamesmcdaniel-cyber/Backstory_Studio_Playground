@@ -16,12 +16,18 @@ import { cn } from '@/lib/utils'
  * flow + jam health. Green = runs dispatch and the live channel is up;
  * amber = live channel reconnecting; red = execution backend offline, a
  * run stranded, or the channel refused. Specifics live in the tooltip.
+ *
+ * Starting a huddle is gated (startBlocked) until someone else is jamming
+ * and the dot is green — voice with nobody to hear it is a mic left open.
+ * Joining a huddle that's already live is never gated. The blocked button
+ * stays hoverable (aria-disabled, not disabled) so the tooltip can say why.
  */
 export function HuddleJamPill({
   huddle,
   huddleCount,
   othersCount,
   dotLevel,
+  startBlocked,
   healthTitle,
   onOpenJam,
 }: {
@@ -31,11 +37,14 @@ export function HuddleJamPill({
   /** Collaborators present besides self. */
   othersCount: number
   dotLevel: 'ok' | 'reconnecting' | 'degraded'
+  /** Why a huddle can't be STARTED right now, or null when it can. */
+  startBlocked: string | null
   healthTitle: string
   onOpenJam: () => void
 }) {
   const { joined, connecting, muted, pttEnabled, transmitting } = huddle
   const liveElsewhere = !joined && huddleCount > 0
+  const blocked = !joined && !liveElsewhere && startBlocked != null
 
   return (
     // animate-fade-in only: the -up variant animates `transform`, which would
@@ -45,10 +54,11 @@ export function HuddleJamPill({
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 rounded-full"
-          onClick={() => void huddle.join()}
+          className={cn('h-7 rounded-full', blocked && 'cursor-not-allowed opacity-50 hover:bg-transparent')}
+          onClick={() => { if (!blocked) void huddle.join() }}
           disabled={connecting}
-          title={liveElsewhere ? 'Join the live huddle' : 'Start a huddle — your mic goes live'}
+          aria-disabled={connecting || blocked}
+          title={blocked ? startBlocked ?? undefined : liveElsewhere ? 'Join the live huddle' : 'Start a huddle — your mic goes live'}
         >
           {connecting ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Headphones className="mr-1.5 h-4 w-4" />}
           Huddle

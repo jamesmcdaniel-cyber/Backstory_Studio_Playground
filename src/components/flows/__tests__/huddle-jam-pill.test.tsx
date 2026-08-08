@@ -24,8 +24,9 @@ const makeHuddle = (over: Partial<Record<string, unknown>> = {}) =>
 
 const baseProps = {
   huddleCount: 0,
-  othersCount: 0,
+  othersCount: 1,
   dotLevel: 'ok' as const,
+  startBlocked: null,
   healthTitle: 'Flows: online',
   onOpenJam: () => {},
 }
@@ -44,6 +45,39 @@ test('out of the huddle: Huddle joins, Jam opens the dialog', () => {
   assert.equal(joins, 1)
   fireEvent.click(screen.getByRole('button', { name: /jam/i }))
   assert.equal(opened, 1)
+})
+
+test('starting is blocked while startBlocked gives a reason', () => {
+  let joins = 0
+  render(
+    <HuddleJamPill
+      {...baseProps}
+      othersCount={0}
+      startBlocked="Huddles need company — use Jam to bring someone into this flow first."
+      huddle={makeHuddle({ join: async () => { joins += 1 } })}
+    />,
+  )
+  const start = screen.getByRole('button', { name: /huddle/i })
+  fireEvent.click(start)
+  assert.equal(joins, 0)
+  assert.equal(start.getAttribute('aria-disabled'), 'true')
+  assert.match(start.getAttribute('title') ?? '', /use Jam/)
+})
+
+test('a huddle already live can be joined even while starting is blocked', () => {
+  let joins = 0
+  render(
+    <HuddleJamPill
+      {...baseProps}
+      huddleCount={2}
+      startBlocked="Huddles can start once the jam is connected and the dot is green."
+      huddle={makeHuddle({ join: async () => { joins += 1 } })}
+    />,
+  )
+  const join = screen.getByRole('button', { name: /huddle/i })
+  assert.equal(join.getAttribute('title'), 'Join the live huddle')
+  fireEvent.click(join)
+  assert.equal(joins, 1)
 })
 
 test('a live huddle you are not in shows the member count', () => {

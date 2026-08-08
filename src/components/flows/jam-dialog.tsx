@@ -46,6 +46,7 @@ export function JamDialog({
   onFollow,
   huddle,
   huddleMembers,
+  huddleStartBlocked,
   selfClientId,
   capture,
   shareToken,
@@ -79,6 +80,8 @@ export function JamDialog({
    *  Absent → the jam has no voice controls. */
   huddle?: FlowHuddle
   huddleMembers?: HuddleMember[]
+  /** Why a huddle can't be started right now, or null when it can. */
+  huddleStartBlocked?: string | null
   selfClientId?: string
   /** Huddle-notes capture (consent, session, upload state). */
   capture?: HuddleCapture
@@ -373,6 +376,7 @@ export function JamDialog({
                   <HuddlePanel
                     huddle={huddle}
                     members={huddleMembers ?? []}
+                    startBlocked={huddleStartBlocked}
                     selfClientId={selfClientId ?? ''}
                     capture={capture}
                     captureAvailable={captureAvailable}

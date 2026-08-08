@@ -599,6 +599,24 @@ function FlowBuilder() {
     useFlowCollab(id, self, applyRemoteGraph, () => (loadedOkRef.current ? graphRef.current : null))
   // Everyone here except me — for the presence avatar stack and the Jam dialog.
   const others = useMemo(() => participants.filter((p) => p.clientId !== selfClientId), [participants, selfClientId])
+  // The pill dot: green = runs dispatch and the live channel is up; amber =
+  // live channel reconnecting; red = execution backend offline, a run
+  // stranded, or the channel refused.
+  const dotLevel: 'ok' | 'reconnecting' | 'degraded' =
+    queueAlert || pickupStalledRunId || jamStatus === 'error'
+      ? 'degraded'
+      : jamStatus !== 'live'
+        ? 'reconnecting'
+        : 'ok'
+  // A huddle is a jam feature: starting one requires someone else jamming on
+  // this flow AND a green dot. Joining a huddle that's already live is never
+  // blocked — people being in it proves it works. Null = free to start.
+  const huddleStartBlocked =
+    others.length === 0
+      ? 'Huddles need company — use Jam to bring someone into this flow first.'
+      : dotLevel !== 'ok'
+        ? 'Huddles can start once the jam is connected and the dot is green.'
+        : null
   // ── Jam autosave ────────────────────────────────────────────────────────────
   // All peers share the merged graph via broadcast, so only ONE client needs
   // to write it to Postgres: the deterministically-elected persister (owner
@@ -2626,13 +2644,8 @@ function FlowBuilder() {
           huddle={huddle}
           huddleCount={huddleMembers.length}
           othersCount={others.length}
-          dotLevel={
-            queueAlert || pickupStalledRunId || jamStatus === 'error'
-              ? 'degraded'
-              : jamStatus !== 'live'
-                ? 'reconnecting'
-                : 'ok'
-          }
+          dotLevel={dotLevel}
+          startBlocked={huddleStartBlocked}
           healthTitle={[
             `Flows: ${queueAlert ?? (pickupStalledRunId ? NEVER_PICKED_UP_ERROR : 'online — runs will start')}`,
             `Jam: ${
@@ -2845,6 +2858,7 @@ function FlowBuilder() {
         onFollow={(target) => { setShowJam(false); changeView(target) }}
         huddle={huddle}
         huddleMembers={huddleMembers}
+        huddleStartBlocked={huddleStartBlocked}
         selfClientId={selfClientId}
         capture={huddleCapture}
         shareToken={shareToken}

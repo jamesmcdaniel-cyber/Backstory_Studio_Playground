@@ -26,6 +26,8 @@ const FULL_PROD_ENV = {
   ANTHROPIC_API_KEY: 'sk-ant-x',
   REDIS_URL: 'redis://localhost:6379',
   FILE_SCAN_URL: 'https://scanner.example.test/scan',
+  AUTH_ALLOW_PASSWORD: 'false',
+  FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION: 'true',
   PYTHON_RUNNER_URL: 'https://python-runner.example.test/run',
   PYTHON_RUNNER_TOKEN: 'runner-token',
 }

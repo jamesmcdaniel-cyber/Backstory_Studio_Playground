@@ -273,16 +273,25 @@ function FlowBuilder() {
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
   const [fixing, setFixing] = useState(false)
-  // Copilot is the workflow-building assistant — closed until the user opens
-  // it from the top bar; nothing (including Run) may pop it open on its own.
-  const [showCopilot, setShowCopilot] = useState(false)
-  const [showRuns, setShowRuns] = useState(false)
-  const [showChecker, setShowChecker] = useState(false)
+  // The right-side workspace panels (Runs, History, Copilot, Checker, Import
+  // notes) are mutually exclusive — opening one closes whichever was showing.
+  // Copilot stays closed until the user opens it from the top bar; nothing
+  // (including Run) may pop it open on its own.
+  const [activePanel, setActivePanel] = useState<'copilot' | 'runs' | 'checker' | 'importNotes' | 'versions' | null>(null)
+  const showCopilot = activePanel === 'copilot'
+  const showRuns = activePanel === 'runs'
+  const showChecker = activePanel === 'checker'
+  const showImportNotes = activePanel === 'importNotes'
+  const showVersions = activePanel === 'versions'
+  const togglePanel = useCallback((panel: NonNullable<typeof activePanel>) => {
+    setActivePanel((current) => (current === panel ? null : panel))
+  }, [])
+  const closePanel = useCallback((panel: NonNullable<typeof activePanel>) => {
+    setActivePanel((current) => (current === panel ? null : current))
+  }, [])
   // Persisted import report (Flow.importNotes) — null once cleared or for
   // flows that weren't imported; the toggle only renders when a report exists.
   const [importReport, setImportReport] = useState<FlowImportReport | null>(null)
-  const [showImportNotes, setShowImportNotes] = useState(false)
-  const [showVersions, setShowVersions] = useState(false)
   const [showJam, setShowJam] = useState(false)
   // Read-only History overlay: a published version (vN) or a recent-edit
   // snapshot, rendered on the same canvas with all mutations gated off.
@@ -481,7 +490,7 @@ function FlowBuilder() {
     const runId = searchParams.get('run')
     if (!runId) return
     deepLinkedRun.current = true
-    setShowRuns(true)
+    setActivePanel('runs')
     fetch(`/api/flows/${id}/runs`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((data) => {
@@ -1406,7 +1415,7 @@ function FlowBuilder() {
           // Open the Checker rather than only flashing a toast: a publish that
           // fails validation otherwise leaves the flow sitting as a draft with
           // no visible reason, which reads as "publish is broken".
-          setShowChecker(true)
+          setActivePanel('checker')
           const count = validation.errors.length
           toast.error(
             count > 1
@@ -1426,7 +1435,7 @@ function FlowBuilder() {
           // The server re-validates against live agents/connections, so it can
           // reject a graph the client thought was fine (a deleted agent, a
           // revoked connection). Surface it in the Checker too.
-          if (action === 'publish') setShowChecker(true)
+          if (action === 'publish') setActivePanel('checker')
           toast.error(data.error || (action === 'unpublish' ? 'Could not unpublish.' : 'Could not publish.'))
           return
         }
@@ -1478,7 +1487,7 @@ function FlowBuilder() {
       if (watched?.id === latest.id && watched.status !== latest.status) {
         if (latest.status === 'succeeded') toast.success('Flow ran.')
         else if (latest.status === 'failed') toast.error('The flow failed — check the step statuses.')
-        else if (latest.status === 'waiting') toast('The flow is waiting for your reply.', { action: { label: 'View', onClick: () => setShowRuns(true) } })
+        else if (latest.status === 'waiting') toast('The flow is waiting for your reply.', { action: { label: 'View', onClick: () => setActivePanel('runs') } })
       }
       watchedRun.current = { id: latest.id, status: latest.status }
       // Respect a pinned run: refresh its details (so a waiting banner clears
@@ -1626,7 +1635,7 @@ function FlowBuilder() {
     // Follow the fresh run live in the open panel, like a plain Run.
     pinnedRunId.current = null
     if (data.run?.flowRunId) watchedRun.current = { id: data.run.flowRunId, status: 'running' }
-    setShowRuns(true)
+    setActivePanel('runs')
     toast.success('Re-running from that step — earlier steps replay their recorded results.')
     pollRuns()
   }, [id, pollRuns])
@@ -1677,7 +1686,7 @@ function FlowBuilder() {
       // Follow the continued/forked run live in the open panel.
       pinnedRunId.current = null
       if (data.run?.flowRunId) watchedRun.current = { id: data.run.flowRunId, status: 'running' }
-      setShowRuns(true)
+      setActivePanel('runs')
       toast.success(patch ? 'Continuing this run from the edited step.' : 'Started a separate run with your edit.')
       pollRuns()
     },
@@ -1707,8 +1716,8 @@ function FlowBuilder() {
       return
     }
     setImportReport(null)
-    setShowImportNotes(false)
-  }, [id])
+    closePanel('importNotes')
+  }, [id, closePanel])
 
   // Node-editor step controls: run through a node ("Execute step") or up to but
   // not including it ("Execute previous nodes"). Both start a partial run whose
@@ -1866,7 +1875,7 @@ function FlowBuilder() {
     const missing = missingRequiredInputFields(inputFields, parseFlowInput(testInput))
     if (missing.length) {
       toast.error(`Fill the required input field${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}`)
-      setShowRuns(true)
+      setActivePanel('runs')
       return
     }
     setRunning(true)
@@ -1890,7 +1899,7 @@ function FlowBuilder() {
         // The runs panel auto-opens on every start (user mandate 2026-08-07:
         // a running flow must narrate itself in realtime) — pollRuns selects
         // the fresh run and streams step statuses into the open panel.
-        setShowRuns(true)
+        setActivePanel('runs')
         toast.success('Run started — it keeps going even if you leave this page.')
       }
       pollRuns()
@@ -2329,20 +2338,20 @@ function FlowBuilder() {
         <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
           {!external && (
             <>
-              <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => setShowRuns((v) => !v)} className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
+              <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => togglePanel('runs')} className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
                 <ListChecks className="mr-1.5 h-4 w-4" /> Runs
               </Button>
-              <Button variant="ghost" size="sm" aria-pressed={showVersions} onClick={() => setShowVersions((v) => !v)} className={cn('h-7 px-2.5', showVersions && 'bg-muted text-foreground')}>
+              <Button variant="ghost" size="sm" aria-pressed={showVersions} onClick={() => togglePanel('versions')} className={cn('h-7 px-2.5', showVersions && 'bg-muted text-foreground')}>
                 <History className="mr-1.5 h-4 w-4" /> History
               </Button>
             </>
           )}
           {canEdit && (
-            <Button variant="ghost" size="sm" aria-pressed={showCopilot} onClick={() => setShowCopilot((v) => !v)} className={cn('h-7 px-2.5', showCopilot && 'bg-muted text-foreground')}>
+            <Button variant="ghost" size="sm" aria-pressed={showCopilot} onClick={() => togglePanel('copilot')} className={cn('h-7 px-2.5', showCopilot && 'bg-muted text-foreground')}>
               <Sparkles className="mr-1.5 h-4 w-4" /> Copilot
             </Button>
           )}
-          <Button variant="ghost" size="sm" aria-pressed={showChecker} onClick={() => setShowChecker((v) => !v)} className={cn('h-7 px-2.5', showChecker && 'bg-muted text-foreground')}>
+          <Button variant="ghost" size="sm" aria-pressed={showChecker} onClick={() => togglePanel('checker')} className={cn('h-7 px-2.5', showChecker && 'bg-muted text-foreground')}>
             <ShieldCheck className="mr-1.5 h-4 w-4" /> Checker
             {validation.errors.length > 0 && (
               <Badge variant="risk" className="ml-1.5">{validation.errors.length}</Badge>
@@ -2352,7 +2361,7 @@ function FlowBuilder() {
             )}
           </Button>
           {importReport && (
-            <Button variant="ghost" size="sm" aria-pressed={showImportNotes} onClick={() => setShowImportNotes((v) => !v)} className={cn('h-7 px-2.5', showImportNotes && 'bg-muted text-foreground')}>
+            <Button variant="ghost" size="sm" aria-pressed={showImportNotes} onClick={() => togglePanel('importNotes')} className={cn('h-7 px-2.5', showImportNotes && 'bg-muted text-foreground')}>
               <FileWarning className="mr-1.5 h-4 w-4" /> Import notes
               {importReport.notes.length > 0 && (
                 <Badge variant="warn" className="ml-1.5">{importReport.notes.length}</Badge>
@@ -2562,7 +2571,7 @@ function FlowBuilder() {
               onInsertFromHandle={canvasInsertFromHandle}
               onInsertOnEdge={canvasInsertOnEdge}
               onInsertStandalone={canvasInsertStandalone}
-              onOpenCopilot={canEdit ? () => setShowCopilot(true) : undefined}
+              onOpenCopilot={canEdit ? () => setActivePanel('copilot') : undefined}
               onTidyUp={canvasTidyUp}
               onCopySelection={canvasCopy}
               onPasteAt={canvasPaste}
@@ -2786,7 +2795,7 @@ function FlowBuilder() {
                 // Keep Copilot open so the user can keep iterating on the draft.
               }}
               onNeedsAttention={(issues) => {
-                if (issues.length) setShowChecker(true)
+                if (issues.length) setActivePanel('checker')
               }}
             />
           </ResizablePanel>
@@ -2798,7 +2807,7 @@ function FlowBuilder() {
               runs={runs}
               selected={selectedRun}
               onSelectRun={selectRun}
-              onClose={() => setShowRuns(false)}
+              onClose={() => closePanel('runs')}
               inputFields={inputFields}
               inputValue={testInput}
               onInputChange={setTestInput}
@@ -2822,7 +2831,7 @@ function FlowBuilder() {
               onFixWithCopilot={fixWithCopilot}
               canFix={canEdit && !external}
               onDownloadDebug={exportDebugJson}
-              onClose={() => setShowChecker(false)}
+              onClose={() => closePanel('checker')}
               onJump={jumpToNode}
             />
           </ResizablePanel>
@@ -2835,7 +2844,7 @@ function FlowBuilder() {
               onJump={jumpToNode}
               canClear={canEdit && !external}
               onClear={() => void clearImportNotes()}
-              onClose={() => setShowImportNotes(false)}
+              onClose={() => closePanel('importNotes')}
             />
           </ResizablePanel>
         )}
@@ -2848,7 +2857,7 @@ function FlowBuilder() {
               onView={viewVersion}
               onViewEdit={viewEdit}
               onRestore={restoreVersion}
-              onClose={() => setShowVersions(false)}
+              onClose={() => closePanel('versions')}
             />
           </ResizablePanel>
         )}

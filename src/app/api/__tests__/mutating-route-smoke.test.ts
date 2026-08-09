@@ -88,6 +88,15 @@ if (TEST_DB) {
     } as never)
 
   /**
+   * The second argument Next.js hands a dynamic route. Routes that read
+   * `context.params` throw on `undefined` without it, so omitting it here
+   * would report a crash this harness caused rather than one a caller would
+   * hit. Required for every route matching `[id]` that reads its params from
+   * the context rather than the URL.
+   */
+  const ctx = (params: Record<string, string>) => ({ params: Promise.resolve(params) })
+
+  /**
    * name → handler. `route` is the path under src/app/api, used by the
    * completeness check to know which handlers are accounted for.
    */
@@ -112,10 +121,10 @@ if (TEST_DB) {
     { route: 'skills', method: 'DELETE', run: async () => (await import('../skills/route')).DELETE(rq('/api/skills', 'DELETE', { id: 'missing' })) },
 
     { route: 'catalogue/submissions', method: 'POST', run: async () => (await import('../catalogue/submissions/route')).POST(rq('/api/catalogue/submissions', 'POST', {})) },
-    { route: 'catalogue/submissions/[id]', method: 'DELETE', run: async () => (await import('../catalogue/submissions/[id]/route')).DELETE(rq('/api/catalogue/submissions/x', 'DELETE', {})) },
-    { route: 'catalogue/review/[id]', method: 'POST', run: async () => (await import('../catalogue/review/[id]/route')).POST(rq('/api/catalogue/review/x', 'POST', {})) },
+    { route: 'catalogue/submissions/[id]', method: 'DELETE', run: async () => (await import('../catalogue/submissions/[id]/route')).DELETE(rq('/api/catalogue/submissions/x', 'DELETE', {}), ctx({ id: 'x' })) },
+    { route: 'catalogue/review/[id]', method: 'POST', run: async () => (await import('../catalogue/review/[id]/route')).POST(rq('/api/catalogue/review/x', 'POST', {}), ctx({ id: 'x' })) },
     { route: 'catalogue/staff', method: 'PATCH', run: async () => (await import('../catalogue/staff/route')).PATCH(rq('/api/catalogue/staff', 'PATCH', {})) },
-    { route: 'catalogue/entries/[id]', method: 'DELETE', run: async () => (await import('../catalogue/entries/[id]/route')).DELETE(rq('/api/catalogue/entries/x', 'DELETE', {})) },
+    { route: 'catalogue/entries/[id]', method: 'DELETE', run: async () => (await import('../catalogue/entries/[id]/route')).DELETE(rq('/api/catalogue/entries/x', 'DELETE', {}), ctx({ id: 'x' })) },
 
     { route: 'flows', method: 'POST', run: async () => (await import('../flows/route')).POST(rq('/api/flows', 'POST', { name: 'Smoke created' })) },
     { route: 'flows', method: 'PUT', run: async () => (await import('../flows/route')).PUT(rq('/api/flows', 'PUT', { id: flowId, name: 'Smoke renamed', folder: 'Smoke' })) },

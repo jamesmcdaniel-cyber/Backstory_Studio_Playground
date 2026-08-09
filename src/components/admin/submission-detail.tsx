@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import type { QueuedSubmission } from './submission-queue'
+import { isExternalOrg, type QueuedSubmission } from './submission-queue'
 
 type Decision = 'approved' | 'changes_requested' | 'rejected'
 
@@ -66,13 +66,40 @@ export function SubmissionDetail({
 
   const instructions = readInstructions(submission.snapshot)
   const graph = submission.kind === 'flow_template' ? submission.snapshot.graph : null
+  const warnings = submission.warnings ?? []
 
   return (
     <div className="space-y-4 p-6">
       <header>
         <h2 className="text-lg font-medium">{submission.title}</h2>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">{submission.summary}</p>
+        {submission.organization && (
+          <p className="mt-2 text-xs text-neutral-500">
+            From {submission.organization.name}
+            {isExternalOrg(submission.organization.kind) && ' — an external workspace'}
+          </p>
+        )}
       </header>
+
+      {warnings.length > 0 && (
+        <section className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950">
+          <h3 className="text-xs font-medium text-amber-900 dark:text-amber-200">
+            {warnings.length === 1 ? 'One value looks like a credential' : `${warnings.length} values look like credentials`}
+          </h3>
+          <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/80">
+            Workspace ids were removed automatically. These are literal values the author typed in — publishing them
+            shares them with every workspace. Values are masked here.
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {warnings.map((warning, index) => (
+              <li key={`${warning.path}:${index}`} className="text-xs text-amber-900 dark:text-amber-200">
+                <code className="font-mono">{warning.path}</code> — {warning.reason}{' '}
+                <span className="text-amber-900/70 dark:text-amber-200/70">{warning.preview}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {instructions && (
         <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-neutral-50 p-4 text-xs dark:bg-neutral-900">

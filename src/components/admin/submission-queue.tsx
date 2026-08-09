@@ -8,6 +8,19 @@ export interface QueuedSubmission {
   status: string
   organizationId: string
   createdAt: string
+  organization?: { name: string; kind: string } | null
+  warnings?: SubmissionWarning[] | null
+}
+
+export interface SubmissionWarning {
+  path: string
+  reason: string
+  preview: string
+}
+
+/** True for a workspace that is not staff — its submissions come from outside. */
+export function isExternalOrg(kind: string | null | undefined): boolean {
+  return kind !== 'internal' && kind !== 'partner'
 }
 
 // Plain English everywhere a raw enum would otherwise leak into the UI.
@@ -47,6 +60,19 @@ export function SubmissionQueue({
             <span className="block text-sm font-medium">{submission.title}</span>
             <span className="mt-0.5 block text-xs text-neutral-500">
               {KIND_LABELS[submission.kind] ?? submission.kind}
+              {submission.organization ? ` · ${submission.organization.name}` : ''}
+            </span>
+            <span className="mt-1 flex gap-1.5">
+              {isExternalOrg(submission.organization?.kind) && (
+                <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                  External
+                </span>
+              )}
+              {(submission.warnings?.length ?? 0) > 0 && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  {submission.warnings!.length} to check
+                </span>
+              )}
             </span>
           </button>
         </li>

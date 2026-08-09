@@ -1355,6 +1355,9 @@ model CatalogueSubmission {
   decidedAt         DateTime?
   /// The published row created on approve.
   publishedEntryId  String?
+  /// Findings from the submit-time secret scan: [{path, reason, preview}].
+  /// Advisory for the reviewer — approval is never blocked on them.
+  warnings          Json?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

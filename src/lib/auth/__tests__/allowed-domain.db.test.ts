@@ -74,6 +74,80 @@ if (TEST_DB) {
     assert.equal(created.role, 'USER')
   })
 
+  test('a live invitation admits that one address, without opening its domain', async () => {
+    const stamp = Date.now()
+    const invited = `invitee-${stamp}@outside.example`
+    await prisma.invitation.create({
+      data: {
+        email: invited,
+        organizationId: ids.org,
+        tokenHash: `hash-live-${stamp}`,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    })
+
+    assert.equal(await isAllowedEmail(invited), true)
+    assert.equal(await isAllowedEmail(`INVITEE-${stamp}@OUTSIDE.EXAMPLE`), true, 'match is case-insensitive')
+    // Person-scoped, not domain-scoped: a colleague at the same company is not
+    // admitted by someone else's invitation.
+    assert.equal(await isAllowedEmail(`colleague-${stamp}@outside.example`), false)
+  })
+
+  test('an expired or revoked invitation admits nobody', async () => {
+    const stamp = Date.now()
+    const expired = `expired-${stamp}@outside.example`
+    const revoked = `revoked-${stamp}@outside.example`
+    const accepted = `accepted-${stamp}@outside.example`
+
+    await prisma.invitation.create({
+      data: {
+        email: expired,
+        organizationId: ids.org,
+        tokenHash: `hash-expired-${stamp}`,
+        expiresAt: new Date(Date.now() - 60 * 1000),
+      },
+    })
+    await prisma.invitation.create({
+      data: {
+        email: revoked,
+        organizationId: ids.org,
+        tokenHash: `hash-revoked-${stamp}`,
+        status: 'REVOKED',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    })
+    await prisma.invitation.create({
+      data: {
+        email: accepted,
+        organizationId: ids.org,
+        tokenHash: `hash-accepted-${stamp}`,
+        status: 'ACCEPTED',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    })
+
+    assert.equal(await isAllowedEmail(expired), false)
+    assert.equal(await isAllowedEmail(revoked), false)
+    // Acceptance hands access to the user row; the invitation stops granting it.
+    assert.equal(await isAllowedEmail(accepted), false)
+  })
+
+  test('an invitation does not make its domain a shared-workspace domain', async () => {
+    const stamp = Date.now()
+    const invited = `joiner-${stamp}@outside.example`
+    await prisma.invitation.create({
+      data: {
+        email: invited,
+        organizationId: ids.org,
+        tokenHash: `hash-joiner-${stamp}`,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    })
+    // allowedDomainOrg drives auto-join for ALLOWLISTED domains. An invitee
+    // joins by accepting their invitation, not by domain.
+    assert.equal(await allowedDomainOrg(invited), null)
+  })
+
   test('a user from a company domain still gets their own workspace', async () => {
     const { provisionUserForTest } = await import('@/lib/supabase/auth-utils')
     const created = await provisionUserForTest({

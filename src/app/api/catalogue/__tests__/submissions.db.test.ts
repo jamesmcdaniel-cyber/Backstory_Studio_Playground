@@ -4,8 +4,9 @@ import { NextRequest } from 'next/server'
 
 /**
  * Who may propose a catalogue entry, and what a reviewer will actually see.
- * The snapshot assertion is the load-bearing one: it proves an author cannot
- * edit their way into a different published entry after submitting.
+ * Two load-bearing assertions: the frozen snapshot proves an author cannot
+ * edit their way into a different published entry after submitting, and the
+ * sanitize pass proves an external workspace's private ids never ride along.
  */
 const TEST_DB = process.env.TEST_DATABASE_URL
 if (TEST_DB) {
@@ -46,7 +47,7 @@ if (TEST_DB) {
       headers: { 'content-type': 'application/json' },
     })
 
-  test('a customer workspace cannot submit to the catalogue', async () => {
+  test('an external customer workspace may submit — the review queue is the gate', async () => {
     installTestAuth(customer.auth)
     const { POST } = await import('../submissions/route')
     const response = await POST(post({
@@ -55,8 +56,51 @@ if (TEST_DB) {
       title: 'Digest',
       summary: 'A weekly digest.',
     }))
-    assert.equal(response.status, 403)
-    assert.equal((await response.json()).code, 'PERMISSION_DENIED')
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.submission.status, 'pending')
+    assert.equal(body.submission.organizationId, customer.organizationId)
+  })
+
+  test('a submission is sanitized on the way in: ids dropped, literals reported', async () => {
+    installTestAuth(customer.auth)
+    const dirty = await prisma.agentTemplate.create({
+      data: {
+        name: 'Dirty',
+        type: 'Reporting',
+        configuration: {
+          instructions: 'call the API',
+          connectionId: 'conn_private_123',
+          headers: { Authorization: 'Bearer abcdefghijklmnopqrstuvwxyz012345' },
+        },
+        organizationId: customer.organizationId,
+        userId: customer.userId,
+      },
+    })
+
+    const { POST } = await import('../submissions/route')
+    const response = await POST(post({
+      kind: 'agent_template',
+      sourceId: dirty.id,
+      title: 'Dirty',
+      summary: 'Carries a workspace id and a literal token.',
+    }))
+    assert.equal(response.status, 200)
+    const { submission } = await response.json()
+
+    const row = await prisma.catalogueSubmission.findFirst({
+      where: { id: submission.id, organizationId: customer.organizationId },
+    })
+    // The author's private connection id never reaches a published entry.
+    assert.equal(row.snapshot.configuration.connectionId, undefined)
+    assert.doesNotMatch(JSON.stringify(row.snapshot), /conn_private_123/)
+    // The instructions — the reason the template is worth installing — survive.
+    assert.equal(row.snapshot.configuration.instructions, 'call the API')
+    // The literal token cannot be stripped without breaking the template, so
+    // the reviewer is told about it instead.
+    assert.ok(Array.isArray(row.warnings) && row.warnings.length >= 1)
+    assert.match(row.warnings[0].path, /Authorization/)
+    assert.doesNotMatch(JSON.stringify(row.warnings), /abcdefghijklmnop/)
   })
 
   test('a partner workspace submits and gets a pending row with a frozen snapshot', async () => {

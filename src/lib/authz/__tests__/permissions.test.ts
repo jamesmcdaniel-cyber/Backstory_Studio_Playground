@@ -50,15 +50,46 @@ test('the platform owner email resolves every permission regardless of stored ro
   assert.ok(!stranger.has('members.manage'))
 })
 
-test('a customer admin can never submit or review, whatever their org role', () => {
-  // OWNER is excluded: it is the platform root tier, held only by the
-  // platform owner identities, and holds everything by design.
+test('a customer workspace may submit — external contributions are the point', () => {
+  // Anyone who can author a template can propose it; the review queue, not the
+  // org kind, is what keeps the catalogue clean.
+  for (const role of ['USER', 'ADMIN'] as const) {
+    const p = resolvePermissions({ role, platformRole: null }, customer)
+    assert.ok(p.has('template.author'), role)
+    assert.ok(p.has('template.submit'), role)
+  }
+  // A viewer authors nothing, so it proposes nothing.
+  const v = resolvePermissions(viewer, customer)
+  assert.ok(!v.has('template.submit'))
+})
+
+test('no customer role can ever review, publish, or take down', () => {
+  // OWNER is excluded: it is the platform root tier, held only by the platform
+  // owner identities, and holds everything by design.
   for (const role of ['VIEWER', 'USER', 'ADMIN'] as const) {
     const p = resolvePermissions({ role, platformRole: null }, customer)
-    assert.ok(!p.has('template.submit'), role)
     assert.ok(!p.has('catalogue.review'), role)
     assert.ok(!p.has('catalogue.publish'), role)
     assert.ok(!p.has('catalogue.takedown'), role)
+  }
+})
+
+test('reviewing the queue and administering domains stay super-admin only', () => {
+  // Both surfaces are gated on catalogue.review (/admin/layout.tsx and the
+  // /api/admin/domains + /api/catalogue/* routes). Only two identities reach
+  // it: a platform owner, or someone promoted to reviewer inside a staff org.
+  const owner = resolvePermissions({ role: 'VIEWER', platformRole: null, email: 'james.mcdaniel@backstory.ai' }, customer)
+  assert.ok(owner.has('catalogue.review'))
+
+  const promoted = resolvePermissions({ role: 'USER', platformRole: 'reviewer' }, internal)
+  assert.ok(promoted.has('catalogue.review'))
+
+  // Everyone else — including an admin of an external workspace that submits.
+  for (const org of [customer, partner, internal]) {
+    for (const role of ['VIEWER', 'USER', 'ADMIN'] as const) {
+      const p = resolvePermissions({ role, platformRole: null, email: 'someone@customer.com' }, org)
+      assert.ok(!p.has('catalogue.review'), `${role} in ${org.kind}`)
+    }
   }
 })
 
@@ -85,10 +116,13 @@ test('the platform overlay is independent of the org role', () => {
   assert.ok(!p.has('flow.write'))
 })
 
-test('a reviewer flag on a customer org grants nothing (defence in depth)', () => {
+test('a reviewer flag on a customer org grants no review rights (defence in depth)', () => {
+  // A reviewer who moves to a customer workspace loses the overlay without
+  // anyone having to remember to clear the flag. They keep ordinary authoring.
   const p = resolvePermissions({ role: 'ADMIN', platformRole: 'reviewer' }, customer)
   assert.ok(!p.has('catalogue.review'))
-  assert.ok(!p.has('template.submit'))
+  assert.ok(!p.has('catalogue.publish'))
+  assert.ok(!p.has('catalogue.takedown'))
 })
 
 test('every resolved permission is a declared one', () => {

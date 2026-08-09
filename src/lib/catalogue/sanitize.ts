@@ -43,10 +43,15 @@ const ORG_REFERENCE_KEYS = new Set([
 /** Keys whose VALUE is expected to be secret material when it is a literal. */
 const SECRET_KEY_PATTERN = /(secret|token|password|passwd|api[-_]?key|apikey|auth|credential|bearer|private[-_]?key)/i
 
-/** Literal credentials with a recognisable shape, whatever key they sit under. */
+/**
+ * Literal credentials with a recognisable shape, whatever key they sit under.
+ * ORDER MATTERS: first match wins, so provider-specific prefixes must precede
+ * the generic ones they extend (`sk-ant-` before bare `sk-`).
+ */
 const SECRET_VALUE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, reason: 'a private key' },
   { pattern: /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/i, reason: 'a literal Bearer token' },
+  { pattern: /\bsk-ant-[A-Za-z0-9_-]{16,}/, reason: 'an Anthropic API key' },
   { pattern: /\bsk-[A-Za-z0-9_-]{16,}/, reason: 'an OpenAI-style secret key' },
   { pattern: /\bsk_(live|test)_[A-Za-z0-9]{16,}/, reason: 'a Stripe secret key' },
   { pattern: /\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/, reason: 'a GitHub token' },
@@ -54,7 +59,6 @@ const SECRET_VALUE_PATTERNS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/, reason: 'a Slack token' },
   { pattern: /\bAKIA[0-9A-Z]{16}\b/, reason: 'an AWS access key id' },
   { pattern: /\bAIza[0-9A-Za-z_-]{35}\b/, reason: 'a Google API key' },
-  { pattern: /\bsk-ant-[A-Za-z0-9_-]{16,}/, reason: 'an Anthropic API key' },
 ]
 
 /** Long opaque strings: only suspicious when the KEY says they are secret. */

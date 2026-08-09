@@ -6,11 +6,8 @@ import { maybeGenerateOnGateClear } from '@/lib/templates/generation-queue'
 import { apiLogger } from '@/lib/logger'
 import { systemPrisma } from '@/lib/prisma'
 import { providerSignalOutboxEvent } from '@/lib/outbox'
-import { rateLimit } from '@/lib/ratelimit'
-import { readRequestTextLimited, RequestBodyTooLargeError } from '@/lib/net/request-body'
 
 export const runtime = 'nodejs'
-const NANGO_WEBHOOK_MAX_BYTES = 2_000_000
 
 /**
  * Nango connection-lifecycle webhook. Nango calls this when an account is
@@ -36,19 +33,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, skipped: 'nango-unconfigured' })
   }
 
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
-  const limited = await rateLimit(`nango-webhook:${ip}`, { limit: 120, windowMs: 60_000, failureMode: 'closed' })
-  if (!limited.ok) return NextResponse.json({ ok: false, error: 'Rate limit exceeded' }, { status: 429 })
-
-  let raw: string
-  try {
-    raw = await readRequestTextLimited(request, NANGO_WEBHOOK_MAX_BYTES)
-  } catch (error) {
-    if (error instanceof RequestBodyTooLargeError) {
-      return NextResponse.json({ ok: false, error: 'Webhook body is too large' }, { status: 413 })
-    }
-    throw error
-  }
+  const raw = await request.text()
   const headers: Record<string, string> = {}
   request.headers.forEach((value, key) => {
     headers[key] = value

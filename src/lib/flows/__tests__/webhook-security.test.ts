@@ -18,12 +18,15 @@ after(() => {
   process.env = { ...ORIGINAL_ENV }
 })
 
-test('replay protection is mandatory in production', () => {
+test('replay protection is OPT-IN everywhere — production must accept header-less senders', () => {
+  // The outage mode this guards against: Zapier/GitHub/Stripe-style senders
+  // cannot emit x-trigger-* headers, so a prod-default mandate 400s every
+  // delivery and the webhook looks dead. Strictness is an explicit env choice.
   Object.assign(process.env, { NODE_ENV: 'production' })
   delete process.env.FLOW_WEBHOOK_REQUIRE_REPLAY_PROTECTION
-  assert.equal(requireWebhookReplayProtection(), true)
+  assert.equal(requireWebhookReplayProtection(), false)
   const parsed = parseWebhookReplayHeaders(headers({}), Date.now())
-  assert.match(parsed.error ?? '', /require/i)
+  assert.equal(parsed.error, undefined)
   assert.equal(parsed.value, undefined)
 })
 

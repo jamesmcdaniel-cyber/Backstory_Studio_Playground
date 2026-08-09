@@ -4,7 +4,6 @@ import { backstoryGateEnabled, backstoryMcpReady, ensureBackstoryConnection } fr
 import { resolvePermissions, type Permission } from '@/lib/authz/permissions'
 import { emailDomain, isEnterpriseIdentity, satisfiesMfaPolicy } from '@/lib/auth/enterprise-policy'
 import { prisma } from '@/lib/prisma'
-import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 
 type AuthResult = NonNullable<Awaited<ReturnType<typeof getAuthWithUser>>>
 
@@ -104,9 +103,7 @@ export async function requireAuthContext(
   }
 
   const organization = auth.dbUser.organization
-  const platformOwner = isPlatformOwnerEmail(auth.dbUser.email)
-  const mfaRequired = platformOwner || !satisfiesMfaPolicy(organization?.mfaPolicy ?? 'optional', auth.assuranceLevel)
-  if (!options?.skipMfaGate && (mfaRequired && auth.assuranceLevel !== 'aal2')) {
+  if (!options?.skipMfaGate && !satisfiesMfaPolicy(organization?.mfaPolicy ?? 'optional', auth.assuranceLevel)) {
     throw new AuthContextError('Multi-factor authentication is required by this workspace.', 403, 'MFA_REQUIRED')
   }
   if (!options?.skipSsoGate && organization?.ssoEnforced) {

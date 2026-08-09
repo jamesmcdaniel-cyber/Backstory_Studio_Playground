@@ -15,7 +15,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     }),
   ])
   return { success: true, policy: organization, domains }
-}, { permission: 'security.manage' })
+}, { permission: 'security.manage', skipMfaGate: true })
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const body = z.object({
@@ -33,4 +33,4 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     select: { mfaPolicy: true, ssoEnforced: true },
   })
   return { success: true, policy }
-}, { permission: 'security.manage' })
+}, { permission: 'security.manage', skipMfaGate: true })

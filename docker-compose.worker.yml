@@ -6,14 +6,10 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      SYSTEM_DATABASE_URL: ${SYSTEM_DATABASE_URL}
-      DATABASE_RLS_ENABLED: "true"
       REDIS_URL: ${REDIS_URL}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       # Model provider (runs execute here) — Anthropic (Claude), not OpenAI.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      PYTHON_RUNNER_URL: ${PYTHON_RUNNER_URL}
-      PYTHON_RUNNER_TOKEN: ${PYTHON_RUNNER_TOKEN}
       # Integrations: OAuth + tool proxy via Nango (replaced Klavis).
       NANGO_SECRET_KEY: ${NANGO_SECRET_KEY}
     ports:
@@ -25,8 +21,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.75'
-          memory: 768M
+    # Uncomment if you want to limit resources
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '0.75'
+    #       memory: 768M

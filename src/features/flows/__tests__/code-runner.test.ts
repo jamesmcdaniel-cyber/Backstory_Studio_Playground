@@ -118,21 +118,3 @@ test('interrupts Python/WASM that exceeds its deadline', async () => {
     /timed out/,
   )
 })
-
-test('production refuses in-process Python when no isolated runner is configured', async () => {
-  const previousNodeEnv = process.env.NODE_ENV
-  const previousRunner = process.env.PYTHON_RUNNER_URL
-  Object.assign(process.env, { NODE_ENV: 'production' })
-  delete process.env.PYTHON_RUNNER_URL
-  try {
-    await assert.rejects(
-      runFlowCode({ language: 'python', mode: 'all', code: 'return 1', input: null }),
-      /isolated PYTHON_RUNNER_URL/,
-    )
-  } finally {
-    if (previousNodeEnv === undefined) Reflect.deleteProperty(process.env, 'NODE_ENV')
-    else Object.assign(process.env, { NODE_ENV: previousNodeEnv })
-    if (previousRunner === undefined) delete process.env.PYTHON_RUNNER_URL
-    else process.env.PYTHON_RUNNER_URL = previousRunner
-  }
-})

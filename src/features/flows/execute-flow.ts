@@ -53,8 +53,6 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
 import { flowSideEffectKey, withIdempotencyHeader } from '@/lib/flows/idempotency'
 import { flowSignalOutboxEvent } from '@/lib/outbox'
-import { flowResumeToken, flowResumeTokenHash } from '@/lib/flows/resume-token'
-import { canonicalAppOrigin } from '@/lib/app-origin'
 
 export type FlowExecutionJob = {
   flowId: string
@@ -1438,9 +1436,11 @@ export async function runFlowExecution(
   const runMeta = {
     id: run.id,
     url: `/flows/${run.flowId}?run=${run.id}`,
-    // A distinct one-time capability is carried in the URL; the ordinary run id
-    // is an object identifier, never an authorization credential.
-    resumeUrl: `${canonicalAppOrigin()}/api/flows/${run.flowId}/runs/${run.id}/resume?token=${encodeURIComponent(flowResumeToken(run.id))}`,
+    // Absolute public callback URL for a `webhook` wait: a pre-wait step sends
+    // this to the external system, which POSTs back to resume the run. The run
+    // id (an unguessable cuid) is the capability. Empty base URL degrades to a
+    // relative path (dev) — harmless, since webhook waits need a real deployment.
+    resumeUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/api/flows/${run.flowId}/runs/${run.id}/resume`,
     trigger: (run.trigger as unknown as { type?: string } | null)?.type ?? 'manual',
     startedAt: run.startedAt.toISOString(),
     flowId: run.flowId,
@@ -1518,13 +1518,10 @@ export async function runFlowExecution(
   // the cron scan can wake it. Any other waiting state (human reply, approval,
   // open-ended webhook callback) and every terminal state clear resumeAt.
   const resumeAt = status === 'waiting' && result.waiting?.resumeAt ? new Date(result.waiting.resumeAt) : null
-  const resumeTokenHash = status === 'waiting' && result.waiting?.waitKind === 'webhook'
-    ? flowResumeTokenHash(run.id)
-    : null
   await tenantTransaction(job.organizationId, async (tx) => {
     await tx.flowRun.update({
       where: { id: run.id, organizationId: job.organizationId },
-      data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt, resumeTokenHash },
+      data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt },
     })
     // Commit the terminal state and its downstream signal atomically. The
     // outbox worker handles delivery/retry after commit, so a process crash can

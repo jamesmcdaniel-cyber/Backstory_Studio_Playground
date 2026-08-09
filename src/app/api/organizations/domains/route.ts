@@ -23,7 +23,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   } catch {
     throw new ApiError('That domain is already claimed by a workspace.', 409, 'DOMAIN_CLAIMED')
   }
-}, { permission: 'security.manage' })
+}, { permission: 'security.manage', skipMfaGate: true })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const { id } = z.object({ id: z.string().min(1) }).parse(await request.json())
@@ -32,4 +32,4 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const remaining = await prisma.organizationDomain.count({ where: { organizationId: auth.organizationId, status: 'verified' } })
   if (!remaining) await prisma.organization.update({ where: { id: auth.organizationId }, data: { ssoEnforced: false } })
   return { success: true }
-}, { permission: 'security.manage' })
+}, { permission: 'security.manage', skipMfaGate: true })

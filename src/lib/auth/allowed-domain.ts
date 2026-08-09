@@ -58,32 +58,6 @@ export async function isAllowedEmail(email: string | null | undefined): Promise<
 }
 
 /**
- * Admission rule shared by every authentication method. Existing active users
- * and specifically invited addresses remain admissible even when their whole
- * email domain is not platform-allowlisted.
- */
-export async function isIdentityAdmitted(
-  email: string | null | undefined,
-  supabaseId?: string | null,
-): Promise<boolean> {
-  const normalized = email?.trim().toLowerCase()
-  if (!normalized) return false
-  if (supabaseId) {
-    const existing = await systemPrisma.user.findFirst({
-      where: { supabaseId, email: normalized, isActive: true },
-      select: { id: true },
-    })
-    if (existing) return true
-  }
-  if (await isAllowedEmail(normalized)) return true
-  const invitation = await systemPrisma.invitation.findFirst({
-    where: { email: normalized, status: 'PENDING', expiresAt: { gt: new Date() } },
-    select: { id: true },
-  })
-  return Boolean(invitation)
-}
-
-/**
  * The shared workspace a newly provisioned user from this domain should join,
  * or null when the domain has no allowlist row (company staff included — they
  * keep the existing invite/solo-workspace provisioning path).

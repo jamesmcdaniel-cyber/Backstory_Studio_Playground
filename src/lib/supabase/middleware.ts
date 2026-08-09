@@ -21,9 +21,8 @@ function copyCookies(source: NextResponse, target: NextResponse) {
   return target
 }
 
-export async function updateSession(request: NextRequest, requestHeaders?: Headers) {
-  const forwardedRequest = requestHeaders ? { headers: requestHeaders } : undefined
-  let response = NextResponse.next({ request: forwardedRequest })
+export async function updateSession(request: NextRequest) {
+  let response = NextResponse.next({ request })
   const pathname = request.nextUrl.pathname
   const isApi = pathname.startsWith('/api/')
 
@@ -40,7 +39,7 @@ export async function updateSession(request: NextRequest, requestHeaders?: Heade
       getAll: () => request.cookies.getAll(),
       setAll(cookies) {
         cookies.forEach(({ name, value }) => request.cookies.set(name, value))
-        response = NextResponse.next({ request: forwardedRequest })
+        response = NextResponse.next({ request })
         cookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
       },
     },

@@ -17,12 +17,8 @@ const WORKER_QUEUE_COUNT = 4
 const FATAL_VARS = [
   ['REDIS_URL', 'the queue plane — the worker cannot consume anything'],
   ['DATABASE_URL', 'Postgres — runs cannot be read or written'],
-  ['SYSTEM_DATABASE_URL', 'privileged system services cannot run separately from the tenant role'],
-  ['DATABASE_RLS_ENABLED', 'tenant isolation is not enforced by PostgreSQL'],
   ['ENCRYPTION_KEY', 'secret decryption — every stored credential is unreadable'],
   ['ANTHROPIC_API_KEY', 'model calls — every agent/flow step fails'],
-  ['PYTHON_RUNNER_URL', 'Python code cannot run outside the multi-tenant worker'],
-  ['PYTHON_RUNNER_TOKEN', 'the isolated Python runner cannot authenticate requests'],
 ] as const
 
 const WARN_VARS = [
@@ -43,9 +39,6 @@ export function auditWorkerEnv(env: Record<string, string | undefined>, concurre
   const warnings = WARN_VARS.filter(([name]) => !env[name]).map(
     ([name, consequence]) => `${name} is missing — ${consequence}.`,
   )
-  if (env.DATABASE_RLS_ENABLED && env.DATABASE_RLS_ENABLED !== 'true') {
-    fatal.push('DATABASE_RLS_ENABLED must be true — tenant isolation is not enforced by PostgreSQL.')
-  }
 
   const limitMatch = env.DATABASE_URL?.match(/[?&]connection_limit=(\d+)/)
   if (limitMatch) {

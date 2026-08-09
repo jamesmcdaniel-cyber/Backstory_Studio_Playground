@@ -517,7 +517,7 @@ export function TriggerEditor({
           )}
           <p className="text-xs text-muted-foreground">
             POST to the URL with the <code className="font-mono">x-trigger-secret</code> header; the JSON body, or its <code className="font-mono">input</code> field, becomes the flow input.
-            The <code className="font-mono">x-trigger-delivery-id</code> / <code className="font-mono">x-trigger-timestamp</code> headers are required in production and repeated deliveries of the same event are deduplicated.{' '}
+            The <code className="font-mono">x-trigger-delivery-id</code> / <code className="font-mono">x-trigger-timestamp</code> headers are optional — include them (as in the cURL) and repeated deliveries of the same event are deduplicated.{' '}
             {published === false ? (
               'Webhook calls run the published version — publish this flow to arm the webhook.'
             ) : published ? (

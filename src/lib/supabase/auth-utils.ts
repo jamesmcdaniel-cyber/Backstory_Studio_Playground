@@ -1,7 +1,7 @@
 import type { User } from '@supabase/supabase-js'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
-import { allowedDomainOrg, isIdentityAdmitted } from '@/lib/auth/allowed-domain'
+import { allowedDomainOrg } from '@/lib/auth/allowed-domain'
 import { amrMethods } from '@/lib/auth/enterprise-policy'
 import { normalizeStaffEmail, staffBootstrapAllowlist } from '@/lib/catalogue/staff-emails'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
@@ -240,14 +240,6 @@ export async function getAuthWithUser() {
       ...(Array.isArray(user.app_metadata?.providers) ? user.app_metadata.providers.filter((value): value is string => typeof value === 'string') : []),
     ]
     assuranceLevel = user.factors?.some((factor) => factor.status === 'verified') ? 'aal2' : 'aal1'
-  }
-
-  // Admission belongs on the shared auth path, not only an OAuth callback.
-  // This blocks direct Supabase password/OTP/magic-link sessions from creating
-  // an ADMIN workspace when that provider was accidentally enabled.
-  if (!(await isIdentityAdmitted(user.email, user.id))) {
-    await supabase.auth.signOut().catch(() => undefined)
-    return null
   }
 
   const resolved = (await findDbUser(user.id)) ?? (await provisionUser(user))

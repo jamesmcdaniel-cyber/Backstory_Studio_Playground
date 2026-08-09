@@ -5,7 +5,6 @@ import { hashToken } from '@/lib/crypto/secrets'
 import { transferUserToOrganization } from '@/lib/org-transfer'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import type { UserRole } from '@prisma/client'
-import { invitationMatchesIdentity } from '@/lib/auth/invite-link'
 
 const schema = z.object({ token: z.string().min(1) })
 
@@ -25,13 +24,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // resolved organizationId explicitly.
   const invite = await systemPrisma.invitation.findFirst({
     where: { tokenHash: hashToken(token), status: 'PENDING', expiresAt: { gt: new Date() } },
-    select: { id: true, organizationId: true, role: true, email: true, expiresAt: true },
+    select: { id: true, organizationId: true, role: true },
   })
   if (!invite) throw new ApiError('This invitation is invalid or has expired.', 404, 'INVITE_INVALID')
-  const callerEmail = auth.user.email?.trim().toLowerCase()
-  if (!callerEmail || !invitationMatchesIdentity(invite.email, callerEmail)) {
-    throw new ApiError('This invitation was issued to a different email address.', 403, 'INVITE_IDENTITY_MISMATCH')
-  }
 
   // Invitation.role is free text (the table predates the enum), so an unknown
   // value falls back to the member tier rather than failing the join.
@@ -44,16 +39,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // Deliberately privileged: accepting a membership moves data from the
   // caller's old tenant into the invitation's tenant in one transaction.
   await systemPrisma.$transaction(async (tx) => {
-    const consumed = await tx.invitation.updateMany({
-      where: { id: invite.id, organizationId: invite.organizationId, email: callerEmail, status: 'PENDING', expiresAt: { gt: new Date() } },
-      data: { status: 'ACCEPTED', acceptedByUserId: auth.dbUser.id, acceptedAt: new Date() },
-    })
-    if (consumed.count !== 1) throw new ApiError('This invitation has already been used.', 409, 'INVITE_ALREADY_USED')
     await transferUserToOrganization(tx, {
       userId: auth.dbUser.id,
       fromOrganizationId: auth.organizationId,
       toOrganizationId: invite.organizationId,
       role,
+    })
+    await tx.invitation.update({
+      where: { id: invite.id, organizationId: invite.organizationId },
+      data: { status: 'ACCEPTED', acceptedByUserId: auth.dbUser.id, acceptedAt: new Date() },
     })
   })
 

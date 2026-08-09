@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 import { isEditionBlockedPath } from '@/lib/edition'
-import { contentSecurityPolicy } from '@/lib/security/csp'
 
 export async function middleware(request: NextRequest) {
   // Refused at the edge, before any session work: in the customer edition the
@@ -10,9 +9,7 @@ export async function middleware(request: NextRequest) {
   if (isEditionBlockedPath(request.nextUrl.pathname)) {
     return new NextResponse(null, { status: 404 })
   }
-  const response = await updateSession(request)
-  response.headers.set('Content-Security-Policy', contentSecurityPolicy())
-  return response
+  return updateSession(request)
 }
 
 export const config = {

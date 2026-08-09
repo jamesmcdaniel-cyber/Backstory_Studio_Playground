@@ -23,7 +23,6 @@ import { decryptSecret, encryptSecret } from '@/lib/crypto/secrets'
 import { OAUTH_COOKIE, exchangeCode, safeReturnToPath } from '@/lib/mcp/oauth-authcode'
 import { bustBackstoryReadyCache } from '@/lib/mcp/backstory-connection'
 import { verifyMcpConfig } from '@/lib/mcp/verify-connection'
-import { canonicalAppOrigin } from '@/lib/app-origin'
 
 interface OAuthCookiePayload {
   state: string
@@ -42,7 +41,7 @@ interface OAuthCookiePayload {
 function redirect(request: NextRequest, query: string, clearCookie = false) {
   // MCP Servers now lives as a tab inside Integrations.
   const response = NextResponse.redirect(
-    new URL(`/integrations?tab=servers&${query}`, canonicalAppOrigin(request.url)),
+    new URL(`/integrations?tab=servers&${query}`, request.nextUrl.origin),
   )
   if (clearCookie) {
     response.cookies.set(OAUTH_COOKIE, '', { path: '/', maxAge: 0 })
@@ -51,7 +50,6 @@ function redirect(request: NextRequest, query: string, clearCookie = false) {
 }
 
 export async function GET(request: NextRequest) {
-  const appOrigin = canonicalAppOrigin(request.url)
   const code = request.nextUrl.searchParams.get('code')
   const state = request.nextUrl.searchParams.get('state')
 
@@ -71,7 +69,7 @@ export async function GET(request: NextRequest) {
     return redirect(request, 'error=oauth_state', true)
   }
 
-  const redirectUri = `${appOrigin}/api/mcp-connections/oauth/callback`
+  const redirectUri = `${request.nextUrl.origin}/api/mcp-connections/oauth/callback`
 
   try {
     const tokens = await exchangeCode(payload.tokenEndpoint, {
@@ -140,7 +138,7 @@ export async function GET(request: NextRequest) {
     const successPath = safeReturnTo
       ? `${safeReturnTo}${safeReturnTo.includes('?') ? '&' : '?'}connected=1`
       : '/integrations?tab=servers&connected=1'
-    const response = NextResponse.redirect(new URL(successPath, appOrigin))
+    const response = NextResponse.redirect(new URL(successPath, request.nextUrl.origin))
     response.cookies.set(OAUTH_COOKIE, '', { path: '/', maxAge: 0 })
     return response
   } catch (error) {
@@ -151,7 +149,7 @@ export async function GET(request: NextRequest) {
     const safeReturnTo = safeReturnToPath(payload?.returnTo)
     if (safeReturnTo) {
       const errorPath = `${safeReturnTo}${safeReturnTo.includes('?') ? '&' : '?'}error=oauth`
-      const response = NextResponse.redirect(new URL(errorPath, appOrigin))
+      const response = NextResponse.redirect(new URL(errorPath, request.nextUrl.origin))
       response.cookies.set(OAUTH_COOKIE, '', { path: '/', maxAge: 0 })
       return response
     }

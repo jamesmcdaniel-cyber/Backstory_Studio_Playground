@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { getNangoClient, NANGO_ORG_TAG } from '@/lib/nango/client'
 import { nangoApiError } from '@/lib/nango/errors'
-import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { checkIntegrationAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +13,19 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const { integrationId } = z
     .object({ integrationId: z.string().min(1).optional() })
     .parse(await request.json().catch(() => ({})))
+
+  // Refuse BEFORE minting a session token: letting the OAuth flow run and then
+  // rejecting the mirrored connection would leave the user authorised at the
+  // provider with nothing to show for it.
+  const allowance = await checkIntegrationAllowance({
+    organizationId: auth.organizationId,
+    userId: auth.dbUser.id,
+    canReview: auth.can('catalogue.review'),
+    email: auth.dbUser.email,
+  })
+  if (allowance.over) {
+    throw new ApiError(limitMessage('integration', allowance.limit), 429, 'INTEGRATION_LIMIT_REACHED')
+  }
 
   try {
     const { data } = await getNangoClient().createConnectSession({

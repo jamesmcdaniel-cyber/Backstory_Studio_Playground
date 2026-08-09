@@ -7,6 +7,7 @@ import { parseFlowInput } from '@/lib/flows/input'
 import { deriveRunWaiting } from '@/lib/flows/run-waiting'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkMonthlyTokenBudget } from '@/lib/usage/budget'
+import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
 import { recordAudit } from '@/lib/audit'
 
 export const runtime = 'nodejs'
@@ -27,6 +28,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // bounded by maxSteps; this blocks STARTING one once the workspace is over.
   const budget = await checkMonthlyTokenBudget(auth.organizationId, auth.dbUser.id)
   if (budget.over) throw new ApiError('Monthly token budget reached for this workspace.', 429, 'BUDGET_EXCEEDED')
+  // Daily per-person ceiling, the count-based twin of the token budget above:
+  // it bounds how many runs one non-super-admin account can start in a day.
+  const allowance = await checkDailyRunAllowance('flow', {
+    organizationId: auth.organizationId,
+    userId: auth.dbUser.id,
+    canReview: auth.can('catalogue.review'),
+    email: auth.dbUser.email,
+  })
+  if (allowance.over) throw new ApiError(limitMessage('flow', allowance.limit), 429, 'DAILY_LIMIT_REACHED')
   // Visibility gate: a private flow may only be run by its owner.
   const flow = await prisma.flow.findFirst({
     where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },

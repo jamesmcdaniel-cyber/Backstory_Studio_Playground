@@ -6,6 +6,7 @@ import { runAgentExecution } from '@/features/agents/execute-agent'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { rateLimit } from '@/lib/ratelimit'
+import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
 
 export const runtime = 'nodejs'
 export const maxDuration = 800
@@ -17,6 +18,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // budget, and nothing else bounds how many a user (or a loop) can start.
   const limited = await rateLimit(`agent-run:${auth.organizationId}`, { limit: 30, windowMs: 60_000 })
   if (!limited.ok) throw new ApiError('Too many agent runs — please wait a moment.', 429, 'RATE_LIMITED')
+  // Daily per-person ceiling. The limiter above only smooths bursts; this is
+  // what bounds a day's spend for everyone who is not a super admin.
+  const allowance = await checkDailyRunAllowance('agent', {
+    organizationId: auth.organizationId,
+    userId: auth.dbUser.id,
+    canReview: auth.can('catalogue.review'),
+    email: auth.dbUser.email,
+  })
+  if (allowance.over) throw new ApiError(limitMessage('agent', allowance.limit), 429, 'DAILY_LIMIT_REACHED')
   const { input } = z.object({ input: z.string().optional() }).parse(await request.json())
   const agent = await prisma.agentTask.findFirst({
     where: {

@@ -10,13 +10,8 @@ export async function middleware(request: NextRequest) {
   if (isEditionBlockedPath(request.nextUrl.pathname)) {
     return new NextResponse(null, { status: 404 })
   }
-  const nonce = btoa(crypto.randomUUID())
-  const csp = contentSecurityPolicy(nonce)
-  const requestHeaders = new Headers(request.headers)
-  requestHeaders.set('x-nonce', nonce)
-  requestHeaders.set('content-security-policy', csp)
-  const response = await updateSession(request, requestHeaders)
-  response.headers.set('Content-Security-Policy', csp)
+  const response = await updateSession(request)
+  response.headers.set('Content-Security-Policy', contentSecurityPolicy())
   return response
 }
 

@@ -1,5 +1,11 @@
-export function contentSecurityPolicy(nonce: string, production = process.env.NODE_ENV === 'production'): string {
-  const scriptSrc = [`'self'`, `'nonce-${nonce}'`, `'strict-dynamic'`]
+// script-src ceiling: pages are statically prerendered, so Next.js cannot
+// inject nonces into the inline bootstrap scripts baked into the HTML at
+// build time — and 'strict-dynamic' disables 'self' host allowlisting, so a
+// nonce policy blocks every script on a static page (full outage 2026-08-09).
+// 'unsafe-inline' stands until rendering is forced dynamic; external script
+// hosts remain blocked by 'self'.
+export function contentSecurityPolicy(production = process.env.NODE_ENV === 'production'): string {
+  const scriptSrc = [`'self'`, `'unsafe-inline'`]
   if (!production) scriptSrc.push(`'unsafe-eval'`)
   return [
     `default-src 'self'`,

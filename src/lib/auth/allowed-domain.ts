@@ -1,6 +1,9 @@
 /**
  * Platform access gate. A sign-in is admitted when the verified email's domain
- * is either a hardcoded company domain or an ACTIVE PlatformAllowedDomain row.
+ * is a hardcoded company domain, is named by ALLOWED_EMAIL_DOMAINS, or has an
+ * ACTIVE PlatformAllowedDomain row — or when a live invitation names that
+ * exact address, which is how one external person joins without opening their
+ * whole company's domain.
  *
  * Called once per sign-in (not per request), so a direct query is cheaper than
  * a cache plus the invalidation bug a cache would invite.
@@ -50,11 +53,36 @@ async function activeRow(email: string | null | undefined) {
   })
 }
 
+/**
+ * True when a live invitation names this exact address.
+ *
+ * Person-scoped, not domain-scoped: it admits the one human a workspace admin
+ * deliberately invited, and nobody else at their company. Admission ends when
+ * the invitation does — expiry, revocation (status leaves PENDING), or
+ * acceptance, after which the user row itself carries their access.
+ *
+ * This is why the public-email-provider rule does not apply here: allowing
+ * gmail.com as a DOMAIN would admit anyone with an email address, while an
+ * invitation to one gmail address admits exactly that person.
+ */
+async function hasLiveInvitation(email: string | null | undefined): Promise<boolean> {
+  const normalized = email?.trim().toLowerCase()
+  if (!normalized) return false
+  // systemPrisma: pre-tenant by nature — the invitee has no workspace yet, so
+  // there is no org context for RLS to scope the lookup to.
+  const invitation = await systemPrisma.invitation.findFirst({
+    where: { email: normalized, status: 'PENDING', expiresAt: { gt: new Date() } },
+    select: { id: true },
+  })
+  return invitation !== null
+}
+
 /** True when this verified email may hold a session on the platform. */
 export async function isAllowedEmail(email: string | null | undefined): Promise<boolean> {
   if (isCompanyEmail(email)) return true
   if (envAllowsEmail(email)) return true
-  return (await activeRow(email)) !== null
+  if ((await activeRow(email)) !== null) return true
+  return hasLiveInvitation(email)
 }
 
 /**

@@ -32,8 +32,8 @@ export type Permission = (typeof PERMISSIONS)[number]
 export type PermissionUser = { role: UserRole; platformRole: string | null; email?: string | null }
 export type PermissionOrg = { kind: string }
 
-/** Org kinds whose members may propose entries to the shared catalogue. */
-const SUBMITTING_ORG_KINDS = new Set(['internal', 'partner'])
+/** Org kinds whose members may DECIDE what the shared catalogue serves. */
+const REVIEWING_ORG_KINDS = new Set(['internal', 'partner'])
 
 // Cumulative bundles: each role adds to the one above it.
 const VIEWER_PERMISSIONS: Permission[] = ['flow.read', 'agent.read']
@@ -73,12 +73,16 @@ export function resolvePermissions(user: PermissionUser, org: PermissionOrg): Re
 
   const granted = new Set<Permission>(BY_ROLE[user.role] ?? VIEWER_PERMISSIONS)
 
-  // Platform overlay. Both checks are gated on the ORG kind as well as the
-  // user's flag: a reviewer who moves to a customer workspace loses review
-  // rights immediately, without anyone having to remember to clear the flag.
-  const submittingOrg = SUBMITTING_ORG_KINDS.has(org.kind)
-  if (submittingOrg) granted.add('template.submit')
-  if (submittingOrg && user.platformRole === 'reviewer') {
+  // Anyone who may author a template may PROPOSE it to the catalogue, whatever
+  // kind of workspace they sit in — external contributions are the point, and
+  // nothing reaches the catalogue without a reviewer approving it. Submissions
+  // are sanitized at snapshot time (src/lib/catalogue/sanitize.ts).
+  if (granted.has('template.author')) granted.add('template.submit')
+
+  // Review rights stay gated on the ORG kind as well as the user's flag: a
+  // reviewer who moves to a customer workspace loses them immediately, without
+  // anyone having to remember to clear the flag.
+  if (REVIEWING_ORG_KINDS.has(org.kind) && user.platformRole === 'reviewer') {
     granted.add('catalogue.review')
     granted.add('catalogue.publish')
     granted.add('catalogue.takedown')

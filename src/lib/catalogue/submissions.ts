@@ -8,6 +8,7 @@
  * and what gets published the same bytes.
  */
 import { prisma } from '@/lib/prisma'
+import { findSecretCandidates, stripOrgReferences } from '@/lib/catalogue/sanitize'
 import type { CatalogueSubmission } from '@prisma/client'
 
 export type SubmissionKind = 'flow_template' | 'agent_template' | 'shared_skill'
@@ -63,12 +64,20 @@ export async function createSubmission(params: CreateSubmissionParams): Promise<
   const source = await loadSource(params.kind, params.sourceId, params.organizationId)
   if (!source) throw new SourceNotFoundError()
 
+  // Sanitize BEFORE persisting, not at publish: the reviewer must read the
+  // same bytes that get published, which is the reason the snapshot is frozen
+  // here in the first place. Ids that only resolve in the author's workspace
+  // are dropped; literal credentials are reported for the reviewer to judge.
+  const snapshot = stripOrgReferences(buildSnapshot(params.kind, source))
+  const warnings = findSecretCandidates(snapshot)
+
   return prisma.catalogueSubmission.create({
     data: {
       kind: params.kind,
       title: params.title,
       summary: params.summary,
-      snapshot: buildSnapshot(params.kind, source) as never,
+      snapshot: snapshot as never,
+      warnings: warnings.length > 0 ? (warnings as never) : undefined,
       sourceId: params.sourceId,
       organizationId: params.organizationId,
       submittedByUserId: params.userId,

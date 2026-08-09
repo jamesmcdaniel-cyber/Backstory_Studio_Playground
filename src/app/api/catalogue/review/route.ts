@@ -11,6 +11,10 @@ export const GET = withAuthenticatedApi(async (request) => {
     where: { status },
     orderBy: { createdAt: 'asc' },
     take: 200,
+    // The submitting workspace rides along because ANY workspace may now
+    // propose an entry: whether this came from staff or from an outside
+    // customer changes how hard a reviewer looks, so it must be on screen.
+    include: { organization: { select: { name: true, kind: true } } },
   })
   return { success: true, submissions }
 }, { permission: 'catalogue.review', internalOnly: true })

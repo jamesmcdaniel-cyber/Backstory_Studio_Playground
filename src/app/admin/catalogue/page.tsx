@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { SubmissionQueue, type QueuedSubmission } from '@/components/admin/submission-queue'
 import { SubmissionDetail, type DetailSubmission } from '@/components/admin/submission-detail'
+import { DomainsPanel } from '@/components/admin/domains-panel'
 
-type Tab = 'queue' | 'published' | 'legacy' | 'staff'
+type Tab = 'queue' | 'published' | 'legacy' | 'access' | 'staff'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'queue', label: 'Queue' },
   { id: 'published', label: 'Published' },
   { id: 'legacy', label: 'Legacy' },
+  { id: 'access', label: 'Access' },
   { id: 'staff', label: 'Super admins' },
 ]
 
@@ -32,7 +34,8 @@ export default function CatalogueAdminPage() {
       <header>
         <h1 className="text-xl font-semibold">Reviews</h1>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-          Review submitted templates, decide what the shared catalogue serves, and manage who can approve.
+          Review submitted templates, decide what the shared catalogue serves, and manage who may sign in and who can
+          approve.
         </p>
       </header>
 
@@ -53,6 +56,7 @@ export default function CatalogueAdminPage() {
       {tab === 'queue' && <QueueTab />}
       {tab === 'published' && <EntriesTab status="published" />}
       {tab === 'legacy' && <EntriesTab status="legacy_published" />}
+      {tab === 'access' && <DomainsPanel heading={false} />}
       {tab === 'staff' && <StaffTab />}
     </div>
   )

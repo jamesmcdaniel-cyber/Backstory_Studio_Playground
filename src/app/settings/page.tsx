@@ -1,22 +1,67 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+/**
+ * Settings.
+ *
+ * Two things shape this page.
+ *
+ * NAVIGATION: it used to be one long scroll of nine cards, so "change the SSO
+ * policy" meant scrolling past your own password fields. Each group is now a
+ * tab with its own URL (`/settings?tab=security`), which also makes every
+ * section linkable from elsewhere in the product. The tab rail is vertical on
+ * desktop and a scrollable strip on mobile.
+ *
+ * GATING: sections are gated on the PERMISSION the backing route actually
+ * checks, not on `isAdmin`. Those two disagree in a way that mattered — deleting
+ * a workspace needs `workspace.delete`, which only the platform owner holds, so
+ * every admin was shown a Delete workspace button that always answered 403 after
+ * they typed the workspace name to confirm it.
+ */
+
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { Bell, ImagePlus, Trash2, UserMinus } from 'lucide-react'
+import {
+  Bell,
+  Building2,
+  CreditCard,
+  Database,
+  ImagePlus,
+  KeyRound,
+  ShieldCheck,
+  Terminal,
+  Trash2,
+  User as UserIcon,
+  UserMinus,
+  Users,
+} from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { createClient } from '@/lib/supabase/client'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
+import { EnterpriseSecuritySection } from '@/components/settings/enterprise-security-section'
+import { DeveloperApiSection } from '@/components/settings/developer-api-section'
+import { ConfirmDialog, SettingsRow } from '@/components/settings/dialogs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 
 type Organization = { id: string; name: string; slug: string; plan: string; logoUrl?: string | null }
-type Member = { id: string; name: string | null; email: string | null; role: 'ADMIN' | 'USER' | 'OWNER' | 'VIEWER' }
+type MemberRole = 'ADMIN' | 'USER' | 'OWNER' | 'VIEWER'
+type Member = { id: string; name: string | null; email: string | null; role: MemberRole }
 
-const ROLE_LABEL: Record<Member['role'], string> = { OWNER: 'Owner', ADMIN: 'Admin', USER: 'Member', VIEWER: 'Viewer' }
+const ROLE_LABEL: Record<MemberRole, string> = { OWNER: 'Owner', ADMIN: 'Admin', USER: 'Member', VIEWER: 'Viewer' }
+
+/** Roles an admin may assign. OWNER is reserved to the platform owner identity. */
+const ASSIGNABLE_ROLES: Array<{ value: 'ADMIN' | 'USER' | 'VIEWER'; label: string; hint: string }> = [
+  { value: 'ADMIN', label: 'Admin', hint: 'Manages the workspace, members, security, and billing.' },
+  { value: 'USER', label: 'Member', hint: 'Builds and runs flows and agents.' },
+  { value: 'VIEWER', label: 'Viewer', hint: 'Read-only access to flows and agents.' },
+]
 
 const PLAN_LABEL: Record<string, string> = {
   TRIAL: 'Trial',
@@ -39,119 +84,141 @@ function Section({ title, description, children }: { title: string; description?
   )
 }
 
+/* --------------------------------- Tabs ---------------------------------- */
+
+type TabId =
+  | 'account'
+  | 'workspace'
+  | 'members'
+  | 'keys'
+  | 'security'
+  | 'developer'
+  | 'notifications'
+  | 'billing'
+  | 'data'
+
+const TABS: Array<{ id: TabId; label: string; icon: typeof UserIcon; permission?: string }> = [
+  { id: 'account', label: 'Account', icon: UserIcon },
+  { id: 'workspace', label: 'Workspace', icon: Building2 },
+  { id: 'members', label: 'Members', icon: Users },
+  { id: 'keys', label: 'Workspace keys', icon: KeyRound },
+  { id: 'security', label: 'Security', icon: ShieldCheck, permission: 'security.manage' },
+  { id: 'developer', label: 'Developer API', icon: Terminal, permission: 'api.manage' },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'billing', label: 'Billing', icon: CreditCard },
+  { id: 'data', label: 'Data & privacy', icon: Database },
+]
+
 export default function SettingsPage() {
-  const { user, isAdmin, userId } = useAuth()
-  const supabase = createClient()
+  // useSearchParams needs a Suspense boundary for the static shell to prerender.
+  return (
+    <Suspense fallback={<div className="h-64 animate-pulse rounded-xl border bg-muted/40" />}>
+      <SettingsTabs />
+    </Suspense>
+  )
+}
+
+function SettingsTabs() {
+  const { user, isAdmin, userId, can, isLoaded } = useAuth()
+  const supabase = useMemo(() => createClient(), [])
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  // Whether the CALLER has a verified authenticator. Read once here because two
+  // tabs need it: Account shows the personal status, Security uses it to refuse
+  // a policy change that would lock this admin out.
+  const [selfHasMfa, setSelfHasMfa] = useState<boolean | null>(null)
+  const loadFactors = useCallback(async () => {
+    const { data } = await supabase.auth.mfa.listFactors()
+    const factors = data?.totp ?? []
+    setSelfHasMfa(factors.some((factor) => factor.status === 'verified'))
+  }, [supabase])
+  useEffect(() => { void loadFactors().catch(() => setSelfHasMfa(null)) }, [loadFactors])
+
+  // Permission-gated tabs stay hidden until the context resolves, so they don't
+  // flash in and out for a member who will never see them.
+  const visible = TABS.filter((tab) => !tab.permission || (isLoaded && can(tab.permission)))
+  const requested = searchParams.get('tab') as TabId | null
+  const active: TabId = visible.some((tab) => tab.id === requested) ? (requested as TabId) : 'account'
+
+  const select = (id: TabId) => router.replace(id === 'account' ? '/settings' : `/settings?tab=${id}`, { scroll: false })
 
   return (
-    // Settings is a form column, so it keeps a narrower reading measure — but it
-    // narrows INSIDE the shell's container (same left edge and gutters as every
-    // other page) rather than centering itself against a different width.
-    <div className="max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900">Settings</h1>
-        <p className="mt-0.5 text-sm text-gray-500">Manage your account, workspace, and team.</p>
+    <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
+      <div className="lg:w-56 lg:shrink-0">
+        <div className="lg:sticky lg:top-4">
+          <h1 className="text-xl font-semibold text-foreground">Settings</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">Your account, workspace, and team.</p>
+          {/* Horizontal and scrollable below lg, a rail above it. */}
+          <nav
+            aria-label="Settings sections"
+            className="-mx-1 mt-4 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
+          >
+            {visible.map((tab) => {
+              const Icon = tab.icon
+              const isActive = tab.id === active
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => select(tab.id)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full',
+                    isActive
+                      ? 'bg-horizon-50/80 text-horizon-700'
+                      : 'text-graphite-600 hover:bg-accent hover:text-foreground',
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  {tab.label}
+                </button>
+              )
+            })}
+          </nav>
+        </div>
       </div>
 
-      <AccountSection
-        supabase={supabase}
-        firstName={user?.firstName ?? ''}
-        lastName={user?.lastName ?? ''}
-        email={user?.emailAddress ?? ''}
-      />
-      <WorkspaceSection isAdmin={isAdmin} />
-      <WorkspaceCredentialsPanel />
-      {isAdmin && <EnterpriseSecuritySection />}
-      {isAdmin && <DeveloperApiSection />}
-      <MembersSection isAdmin={isAdmin} selfId={userId} />
-      <NotificationsSection />
-      <BillingSection />
-      <DataLifecycleSection isAdmin={isAdmin} email={user?.emailAddress ?? ''} supabase={supabase} />
+      {/* The settings body stays a form column — a narrower reading measure that
+          does NOT re-center, so it keeps the shell's left edge. */}
+      <div className="min-w-0 max-w-2xl flex-1 space-y-6">
+        {active === 'account' && (
+          <AccountSection
+            supabase={supabase}
+            firstName={user?.firstName ?? ''}
+            lastName={user?.lastName ?? ''}
+            email={user?.emailAddress ?? ''}
+            hasMfa={selfHasMfa}
+            onMfaChanged={() => void loadFactors()}
+          />
+        )}
+        {active === 'workspace' && <WorkspaceSection canManage={can('org.manage')} />}
+        {active === 'members' && <MembersSection canManage={can('members.manage')} selfId={userId} />}
+        {active === 'keys' && <WorkspaceCredentialsPanel />}
+        {active === 'security' && (
+          <Section title="Enterprise security" description="SSO, verified domains, SCIM 2.0, and workspace MFA.">
+            <EnterpriseSecuritySection selfHasMfa={selfHasMfa} />
+          </Section>
+        )}
+        {active === 'developer' && (
+          <Section title="Developer API" description="Scoped credentials for the flow import, export, management, and execution APIs.">
+            <DeveloperApiSection />
+          </Section>
+        )}
+        {active === 'notifications' && <NotificationsSection />}
+        {active === 'billing' && <BillingSection />}
+        {active === 'data' && (
+          <DataLifecycleSection
+            canExport={can('data.export')}
+            canDeleteWorkspace={can('workspace.delete')}
+            isAdmin={isAdmin}
+            email={user?.emailAddress ?? ''}
+            supabase={supabase}
+          />
+        )}
+      </div>
     </div>
   )
-}
-
-function EnterpriseSecuritySection() {
-  const [policy, setPolicy] = useState<{ mfaPolicy: string; ssoEnforced: boolean } | null>(null)
-  const [domains, setDomains] = useState<Array<{ id: string; domain: string; status: string; verificationToken: string }>>([])
-  const load = useCallback(async () => {
-    const data = await fetch('/api/organizations/security', { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
-    if (data?.success) { setPolicy(data.policy); setDomains(data.domains ?? []) }
-  }, [])
-  useEffect(() => { void load() }, [load])
-  const update = async (body: Record<string, unknown>) => {
-    const response = await fetch('/api/organizations/security', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) return toast.error(data.error || 'Security policy update failed.')
-    setPolicy(data.policy); toast.success('Security policy saved.')
-  }
-  const claim = async () => {
-    const domain = window.prompt('Domain to claim (for example, example.com)')?.trim()
-    if (!domain) return
-    const response = await fetch('/api/organizations/domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) return toast.error(data.error || 'Could not claim domain.')
-    await navigator.clipboard.writeText(`${data.dns.name} TXT ${data.dns.value}`).catch(() => undefined)
-    toast.success('DNS TXT challenge copied. Add it, then verify.'); void load()
-  }
-  const verify = async (id: string) => {
-    const response = await fetch(`/api/organizations/domains/${id}/verify`, { method: 'POST' })
-    const data = await response.json().catch(() => ({}))
-    if (response.ok) toast.success('Domain verified.')
-    else toast.error(data.error || 'TXT record not found yet.')
-    void load()
-  }
-  const mintScim = async () => {
-    const name = window.prompt('Name this SCIM token')?.trim()
-    if (!name) return
-    const response = await fetch('/api/organizations/scim-tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok) return toast.error(data.error || 'Could not create token.')
-    await navigator.clipboard.writeText(data.token.secret).catch(() => undefined)
-    window.prompt('Copy this token now; it will not be shown again.', data.token.secret)
-  }
-  return (
-    <Section title="Enterprise security" description="SAML/OIDC SSO, verified domains, SCIM 2.0, and workspace MFA.">
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" onClick={() => void update({ mfaPolicy: policy?.mfaPolicy === 'required' ? 'optional' : 'required' })}>MFA: {policy?.mfaPolicy ?? 'loading'}</Button>
-        <Button variant="outline" onClick={() => void update({ ssoEnforced: !policy?.ssoEnforced })}>SSO enforcement: {policy?.ssoEnforced ? 'on' : 'off'}</Button>
-        <Button variant="outline" onClick={claim}>Claim domain</Button>
-        <Button variant="outline" onClick={mintScim}>Create SCIM token</Button>
-      </div>
-      {domains.map((domain) => <div key={domain.id} className="flex items-center justify-between rounded border p-2 text-sm"><span>{domain.domain} · {domain.status}</span>{domain.status !== 'verified' && <Button size="sm" variant="ghost" onClick={() => void verify(domain.id)}>Verify DNS</Button>}</div>)}
-      <p className="text-xs text-gray-500">SCIM base URL: <code>/api/scim/v2</code>. Configure the SAML/OIDC provider in Supabase Auth, then verify a domain here before enforcing SSO.</p>
-    </Section>
-  )
-}
-
-function DeveloperApiSection() {
-  const [keys, setKeys] = useState<Array<{ id: string; name: string; prefix: string; revokedAt: string | null }>>([])
-  const load = useCallback(async () => { const data = await fetch('/api/api-keys', { cache: 'no-store' }).then((r) => r.json()).catch(() => null); if (data?.success) setKeys(data.keys ?? []) }, [])
-  useEffect(() => { void load() }, [load])
-  const create = async () => {
-    const name = window.prompt('Name this API key')?.trim(); if (!name) return
-    const response = await fetch('/api/api-keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, scopes: ['flows:read', 'flows:write', 'flows:run'] }) })
-    const data = await response.json().catch(() => ({})); if (!response.ok) return toast.error(data.error || 'Could not create API key.')
-    await navigator.clipboard.writeText(data.key.secret).catch(() => undefined); window.prompt('Copy this key now; it will not be shown again.', data.key.secret); void load()
-  }
-  return <Section title="Developer API" description="Scoped credentials for native workflow import, export, management, and execution."><Button variant="outline" onClick={create}>Create API key</Button>{keys.filter((key) => !key.revokedAt).map((key) => <div key={key.id} className="text-sm text-gray-600">{key.name} · <code>{key.prefix}…</code></div>)}</Section>
-}
-
-function DataLifecycleSection({ isAdmin, email, supabase }: { isAdmin: boolean; email: string; supabase: ReturnType<typeof createClient> }) {
-  const deleteAccount = async () => {
-    const confirmation = window.prompt(`Type ${email} to permanently delete your account.`); if (!confirmation) return
-    const response = await fetch('/api/privacy/account', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation }) })
-    const data = await response.json().catch(() => ({})); if (!response.ok) return toast.error(data.error || 'Account deletion failed.')
-    await supabase.auth.signOut(); window.location.href = '/auth'
-  }
-  const deleteWorkspace = async () => {
-    const org = await fetch('/api/organizations').then((r) => r.json()).catch(() => null); const name = org?.organizations?.[0]?.name
-    const confirmation = window.prompt(`Type ${name} to permanently delete this workspace.`); if (!confirmation) return
-    const response = await fetch('/api/privacy/workspace', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation }) })
-    const data = await response.json().catch(() => ({})); if (!response.ok) return toast.error(data.error || 'Workspace deletion failed.')
-    await supabase.auth.signOut(); window.location.href = '/auth'
-  }
-  return <Section title="Data lifecycle" description="Export or permanently remove customer data."><div className="flex flex-wrap gap-2">{isAdmin && <Button asChild variant="outline"><a href="/api/privacy/export" download>Export workspace data</a></Button>}<Button variant="destructive" onClick={deleteAccount}>Delete my account</Button>{isAdmin && <Button variant="destructive" onClick={deleteWorkspace}>Delete workspace</Button>}</div></Section>
 }
 
 /* ------------------------------- Account -------------------------------- */
@@ -161,11 +228,15 @@ function AccountSection({
   firstName,
   lastName,
   email,
+  hasMfa,
+  onMfaChanged,
 }: {
   supabase: ReturnType<typeof createClient>
   firstName: string
   lastName: string
   email: string
+  hasMfa: boolean | null
+  onMfaChanged: () => void
 }) {
   const [first, setFirst] = useState(firstName)
   const [last, setLast] = useState(lastName)
@@ -173,6 +244,8 @@ function AccountSection({
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [savingPassword, setSavingPassword] = useState(false)
+  const [disablingMfa, setDisablingMfa] = useState(false)
+  const [confirmDisableMfa, setConfirmDisableMfa] = useState(false)
 
   // Keep local fields in sync once the auth hook resolves the real values.
   useEffect(() => { setFirst(firstName); setLast(lastName) }, [firstName, lastName])
@@ -200,6 +273,23 @@ function AccountSection({
     toast.success('Password updated.')
   }
 
+  // Unenrolling every verified factor. If the workspace requires MFA the next
+  // request will bounce this user to enrollment, which the dialog says plainly.
+  const disableMfa = async () => {
+    setDisablingMfa(true)
+    try {
+      const { data } = await supabase.auth.mfa.listFactors()
+      const factors = (data?.totp ?? []).filter((factor) => factor.status === 'verified')
+      for (const factor of factors) {
+        const { error } = await supabase.auth.mfa.unenroll({ factorId: factor.id })
+        if (error) { toast.error(error.message); return }
+      }
+      setConfirmDisableMfa(false)
+      onMfaChanged()
+      toast.success('Authenticator removed.')
+    } finally { setDisablingMfa(false) }
+  }
+
   return (
     <Section title="Account" description="Your personal profile and sign-in.">
       <div className="grid grid-cols-2 gap-4">
@@ -215,6 +305,7 @@ function AccountSection({
       <div className="space-y-1.5">
         <Label htmlFor="email">Email</Label>
         <Input id="email" value={email} disabled readOnly />
+        <p className="text-xs text-muted-foreground">Your sign-in address is fixed to the identity you joined with.</p>
       </div>
       <Button onClick={saveName} loading={savingName} disabled={!first.trim() || (first === firstName && last === lastName)}>
         Save name
@@ -224,24 +315,61 @@ function AccountSection({
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="new-password">New password</Label>
-            <Input id="new-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" minLength={6} />
+            <Input id="new-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" minLength={6} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="confirm-password">Confirm</Label>
-            <Input id="confirm-password" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" minLength={6} />
+            <Input id="confirm-password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" minLength={6} />
           </div>
         </div>
         <Button type="submit" variant="outline" loading={savingPassword} disabled={!password || !confirm}>
           Update password
         </Button>
       </form>
+
+      {/* Enrollment lives at /auth/mfa; before this, nothing in Settings said so
+          — an admin could require MFA workspace-wide with no path to satisfy it. */}
+      <div className="border-t pt-4">
+        <SettingsRow
+          title="Two-factor authentication"
+          description={
+            hasMfa === null
+              ? 'Checking your authenticator…'
+              : hasMfa
+                ? 'An authenticator app is verified on your account.'
+                : 'Add an authenticator app for a second factor at sign-in.'
+          }
+        >
+          {hasMfa ? (
+            <div className="flex items-center gap-2">
+              <Badge variant="good">Enabled</Badge>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmDisableMfa(true)}>Remove</Button>
+            </div>
+          ) : (
+            <Button asChild variant="outline" size="sm" disabled={hasMfa === null}>
+              <a href="/auth/mfa">Set up</a>
+            </Button>
+          )}
+        </SettingsRow>
+      </div>
+
+      <ConfirmDialog
+        open={confirmDisableMfa}
+        onOpenChange={setConfirmDisableMfa}
+        title="Remove your authenticator?"
+        description="If your workspace requires multi-factor authentication you'll be asked to enroll again on your next request."
+        confirmLabel="Remove authenticator"
+        destructive
+        busy={disablingMfa}
+        onConfirm={disableMfa}
+      />
     </Section>
   )
 }
 
 /* ------------------------------ Workspace ------------------------------- */
 
-function WorkspaceSection({ isAdmin }: { isAdmin: boolean }) {
+function WorkspaceSection({ canManage }: { canManage: boolean }) {
   const [org, setOrg] = useState<Organization | null>(null)
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
@@ -269,7 +397,7 @@ function WorkspaceSection({ isAdmin }: { isAdmin: boolean }) {
   const saveName = async () => {
     setSaving(true)
     try { await patch({ name: name.trim() }); toast.success('Workspace name updated.') }
-    catch (err: any) { toast.error(err.message) }
+    catch (err) { toast.error(err instanceof Error ? err.message : 'Update failed.') }
     finally { setSaving(false) }
   }
 
@@ -279,7 +407,7 @@ function WorkspaceSection({ isAdmin }: { isAdmin: boolean }) {
       const logoUrl = await resizeImageToDataUrl(file)
       await patch({ logoUrl })
       toast.success('Workspace logo updated.')
-    } catch (err: any) { toast.error(err.message || 'Could not upload that image.') }
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Could not upload that image.') }
     finally { setUploading(false) }
   }
 
@@ -288,7 +416,7 @@ function WorkspaceSection({ isAdmin }: { isAdmin: boolean }) {
       <div className="flex items-center gap-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={org?.logoUrl || DEFAULT_ORG_LOGO} alt="" className="h-12 w-12 rounded-lg border object-cover" />
-        {isAdmin && (
+        {canManage && (
           <div className="flex gap-2">
             <Button type="button" variant="outline" size="sm" loading={uploading} onClick={() => logoInput.current?.click()}>
               <ImagePlus className="h-4 w-4" /> {org?.logoUrl ? 'Change logo' : 'Upload logo'}
@@ -311,15 +439,15 @@ function WorkspaceSection({ isAdmin }: { isAdmin: boolean }) {
 
       <div className="space-y-1.5">
         <Label htmlFor="workspace-name">Workspace name</Label>
-        <Input id="workspace-name" value={name} onChange={(e) => setName(e.target.value)} disabled={!isAdmin} readOnly={!isAdmin} />
-        {!isAdmin && <p className="text-xs text-gray-400">Only workspace admins can change this.</p>}
+        <Input id="workspace-name" value={name} onChange={(e) => setName(e.target.value)} disabled={!canManage} readOnly={!canManage} />
+        {!canManage && <p className="text-xs text-muted-foreground">Only workspace admins can change this.</p>}
       </div>
-      {isAdmin && (
+      {canManage && (
         <Button onClick={saveName} loading={saving} disabled={!name.trim() || name === org?.name}>Save workspace name</Button>
       )}
 
       <div className="flex items-center gap-2 border-t pt-4 text-sm">
-        <span className="text-gray-500">Plan</span>
+        <span className="text-muted-foreground">Plan</span>
         <Badge variant="secondary">{PLAN_LABEL[org?.plan ?? ''] ?? org?.plan ?? '—'}</Badge>
       </div>
     </Section>
@@ -328,16 +456,19 @@ function WorkspaceSection({ isAdmin }: { isAdmin: boolean }) {
 
 /* ------------------------------- Members -------------------------------- */
 
-type Invite = { id: string; email: string; role: 'ADMIN' | 'USER'; createdAt: string; expiresAt: string }
+// Viewer invitations are real: /api/organizations/invitations accepts the full
+// role enum and the accept route maps it through INVITABLE_ROLES.
+type Invite = { id: string; email: string; role: MemberRole; createdAt: string; expiresAt: string }
 
-function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string | null }) {
+function MembersSection({ canManage, selfId }: { canManage: boolean; selfId: string | null }) {
   const [members, setMembers] = useState<Member[]>([])
   const [loaded, setLoaded] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [invites, setInvites] = useState<Invite[]>([])
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<'ADMIN' | 'USER'>('USER')
+  const [inviteRole, setInviteRole] = useState<'ADMIN' | 'USER' | 'VIEWER'>('USER')
   const [inviting, setInviting] = useState(false)
+  const [removing, setRemoving] = useState<Member | null>(null)
 
   const load = useCallback(async () => {
     const data = await fetch('/api/organizations/members', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
@@ -345,10 +476,10 @@ function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string 
     setLoaded(true)
   }, [])
   const loadInvites = useCallback(async () => {
-    if (!isAdmin) return
+    if (!canManage) return
     const data = await fetch('/api/organizations/invitations', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
     if (data?.success) setInvites(data.invitations ?? [])
-  }, [isAdmin])
+  }, [canManage])
   useEffect(() => { void load(); void loadInvites() }, [load, loadInvites])
 
   const sendInvite = async (e: React.FormEvent) => {
@@ -383,7 +514,7 @@ function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string 
     } finally { setBusyId(null) }
   }
 
-  const changeRole = async (member: Member, role: 'ADMIN' | 'USER') => {
+  const changeRole = async (member: Member, role: 'ADMIN' | 'USER' | 'VIEWER') => {
     setBusyId(member.id)
     setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, role } : m)))
     try {
@@ -399,51 +530,60 @@ function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string 
   }
 
   const remove = async (member: Member) => {
-    if (!window.confirm(`Remove ${member.name || member.email} from this workspace?`)) return
     setBusyId(member.id)
     try {
       const res = await fetch(`/api/organizations/members/${member.id}`, { method: 'DELETE' })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) toast.error(data.error || 'Could not remove member.')
-      else { setMembers((prev) => prev.filter((m) => m.id !== member.id)); toast.success('Member removed.') }
+      else { setMembers((prev) => prev.filter((m) => m.id !== member.id)); setRemoving(null); toast.success('Member removed.') }
     } finally { setBusyId(null) }
   }
 
   return (
     <Section title="Members" description="People in your workspace.">
       {!loaded ? (
-        <p className="text-sm text-gray-400">Loading members…</p>
+        <p className="text-sm text-muted-foreground">Loading members…</p>
       ) : (
         <ul className="divide-y rounded-lg border">
           {members.map((member) => (
             <li key={member.id} className="flex items-center gap-3 px-3 py-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-600">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-graphite-200 text-xs font-semibold text-graphite-600">
                 {(member.name || member.email || '?').charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">
                   {member.name || member.email}
-                  {member.id === selfId && <span className="ml-1.5 text-xs font-normal text-gray-400">(You)</span>}
+                  {member.id === selfId && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(You)</span>}
                 </div>
-                {member.name && member.email && <div className="truncate text-xs text-gray-400">{member.email}</div>}
+                {member.name && member.email && <div className="truncate text-xs text-muted-foreground">{member.email}</div>}
               </div>
-              {isAdmin && member.id !== selfId && member.role !== 'OWNER' ? (
+              {canManage && member.id !== selfId && member.role !== 'OWNER' ? (
                 <>
-                  <select
+                  {/* Viewer is a real role in the permission registry. The old
+                      two-option native select had no entry for it, so a viewer's
+                      row rendered a select with NO option matching its value —
+                      showing "Admin" for a read-only member — and there was no
+                      way to demote anyone to Viewer from the product. */}
+                  <Select
                     value={member.role}
                     disabled={busyId === member.id}
-                    onChange={(e) => void changeRole(member, e.target.value as 'ADMIN' | 'USER')}
-                    className="rounded-md border bg-white px-2 py-1 text-xs text-gray-700 disabled:opacity-50"
+                    onValueChange={(value) => void changeRole(member, value as 'ADMIN' | 'USER' | 'VIEWER')}
                   >
-                    <option value="ADMIN">Admin</option>
-                    <option value="USER">Member</option>
-                  </select>
+                    <SelectTrigger className="h-8 w-[7.5rem] text-xs" aria-label={`Role for ${member.name || member.email}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ASSIGNABLE_ROLES.map((role) => (
+                        <SelectItem key={role.value} value={role.value}>{role.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <button
                     type="button"
                     disabled={busyId === member.id}
-                    onClick={() => void remove(member)}
-                    className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                    aria-label="Remove member"
+                    onClick={() => setRemoving(member)}
+                    className="rounded-md p-1.5 text-graphite-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                    aria-label={`Remove ${member.name || member.email}`}
                   >
                     <UserMinus className="h-4 w-4" />
                   </button>
@@ -455,36 +595,40 @@ function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string 
           ))}
         </ul>
       )}
-      {isAdmin && (
+      {canManage && (
         <div className="space-y-3 border-t pt-4">
           <form onSubmit={sendInvite} className="flex flex-wrap items-end gap-2">
             <div className="min-w-[12rem] flex-1 space-y-1.5">
               <Label htmlFor="invite-email">Invite by email</Label>
               <Input id="invite-email" type="email" placeholder="teammate@company.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} required />
             </div>
-            <select
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as 'ADMIN' | 'USER')}
-              className="h-9 rounded-md border bg-white px-2 text-sm text-gray-700"
-              aria-label="Invite role"
-            >
-              <option value="USER">Member</option>
-              <option value="ADMIN">Admin</option>
-            </select>
+            <Select value={inviteRole} onValueChange={(value) => setInviteRole(value as 'ADMIN' | 'USER' | 'VIEWER')}>
+              <SelectTrigger className="h-9 w-[8rem]" aria-label="Invite role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ASSIGNABLE_ROLES.map((role) => (
+                  <SelectItem key={role.value} value={role.value}>{role.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button type="submit" loading={inviting} disabled={!inviteEmail.trim()}>Send invite</Button>
           </form>
+          <p className="text-xs text-muted-foreground">
+            {ASSIGNABLE_ROLES.find((role) => role.value === inviteRole)?.hint}
+          </p>
 
           {invites.length > 0 && (
             <ul className="divide-y rounded-lg border">
               {invites.map((invite) => (
                 <li key={invite.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                  <span className="min-w-0 flex-1 truncate text-gray-700">{invite.email}</span>
-                  <Badge variant="outline">Pending · {invite.role === 'ADMIN' ? 'Admin' : 'Member'}</Badge>
+                  <span className="min-w-0 flex-1 truncate text-foreground">{invite.email}</span>
+                  <Badge variant="outline">Pending · {ROLE_LABEL[invite.role] ?? 'Member'}</Badge>
                   <button
                     type="button"
                     disabled={busyId === invite.id}
                     onClick={() => void revokeInvite(invite)}
-                    className="text-xs font-medium text-gray-400 hover:text-red-600 disabled:opacity-50"
+                    className="text-xs font-medium text-graphite-400 hover:text-red-600 disabled:opacity-50"
                   >
                     Revoke
                   </button>
@@ -494,6 +638,17 @@ function MembersSection({ isAdmin, selfId }: { isAdmin: boolean; selfId: string 
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={removing !== null}
+        onOpenChange={(open) => { if (!open) setRemoving(null) }}
+        title={`Remove ${removing?.name || removing?.email || 'this member'}?`}
+        description="They lose access immediately. Their flows, agents, and run history stay in the workspace."
+        confirmLabel="Remove member"
+        destructive
+        busy={busyId === removing?.id}
+        onConfirm={() => removing && remove(removing)}
+      />
     </Section>
   )
 }
@@ -514,10 +669,12 @@ function urlBase64ToUint8Array(base64String: string) {
 function NotificationsSection() {
   const [pushState, setPushState] = useState<PushState>('unknown')
   const [busy, setBusy] = useState(false)
+  const [denied, setDenied] = useState(false)
 
   useEffect(() => {
     const probe = async () => {
       if (!('serviceWorker' in navigator) || !('PushManager' in window)) return setPushState('unavailable')
+      setDenied(typeof Notification !== 'undefined' && Notification.permission === 'denied')
       const res = await fetch('/api/push/key', { cache: 'no-store' }).catch(() => null)
       const data = res && res.ok ? await res.json() : null
       if (!data?.enabled || !data?.publicKey) return setPushState('unavailable')
@@ -534,7 +691,11 @@ function NotificationsSection() {
       const { publicKey } = await (await fetch('/api/push/key', { cache: 'no-store' })).json()
       if (!publicKey) return
       const reg = await navigator.serviceWorker.register('/sw.js')
-      if ((await Notification.requestPermission()) !== 'granted') { toast.error('Notification permission denied.'); return }
+      if ((await Notification.requestPermission()) !== 'granted') {
+        setDenied(Notification.permission === 'denied')
+        toast.error('Notification permission denied.')
+        return
+      }
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) })
       const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh: string; auth: string } }
       await fetch('/api/push/subscribe', {
@@ -548,20 +709,51 @@ function NotificationsSection() {
     finally { setBusy(false) }
   }
 
+  // Turning push OFF had no UI at all, though DELETE /api/push/subscribe has
+  // always existed — so the only way to stop notifications was the browser's
+  // own site settings. Unsubscribe locally AND drop the server row, or the
+  // worker keeps pushing to a dead endpoint.
+  const disablePush = async () => {
+    setBusy(true)
+    try {
+      const reg = await navigator.serviceWorker.getRegistration()
+      const sub = reg ? await reg.pushManager.getSubscription() : null
+      if (sub) {
+        await fetch(`/api/push/subscribe?endpoint=${encodeURIComponent(sub.endpoint)}`, { method: 'DELETE' })
+        await sub.unsubscribe()
+      }
+      setPushState('available')
+      toast.success('Push notifications turned off.')
+    } catch { toast.error('Could not turn off push notifications.') }
+    finally { setBusy(false) }
+  }
+
   return (
     <Section title="Notifications" description="How Backstory reaches you.">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-start gap-2">
-          <Bell className="mt-0.5 h-4 w-4 text-gray-400" />
-          <div>
-            <div className="text-sm font-medium text-gray-900">Browser push</div>
-            <div className="text-xs text-gray-500">Get notified about runs, approvals, and errors even when Backstory isn’t open.</div>
+      <SettingsRow
+        title="Browser push"
+        description={
+          denied
+            ? 'Blocked in your browser — allow notifications for this site in your browser settings, then reload.'
+            : 'Run results, approvals, and errors, even when Backstory isn’t open.'
+        }
+      >
+        {pushState === 'unknown' && <span className="text-xs text-muted-foreground">Checking…</span>}
+        {pushState === 'enabled' && (
+          <div className="flex items-center gap-2">
+            <Badge variant="good">Enabled</Badge>
+            <Button size="sm" variant="ghost" loading={busy} onClick={() => void disablePush()}>Turn off</Button>
           </div>
-        </div>
-        {pushState === 'enabled' && <Badge variant="good">Enabled</Badge>}
-        {pushState === 'available' && <Button size="sm" loading={busy} onClick={enablePush}>Enable</Button>}
-        {pushState === 'unavailable' && <span className="text-xs text-gray-400">Unavailable</span>}
-      </div>
+        )}
+        {pushState === 'available' && (
+          <Button size="sm" loading={busy} disabled={denied} onClick={() => void enablePush()}>Enable</Button>
+        )}
+        {pushState === 'unavailable' && <span className="text-xs text-muted-foreground">Unavailable</span>}
+      </SettingsRow>
+      <p className="text-xs text-muted-foreground">
+        Approval requests and run failures are always shown in-app on the Approvals and Runs surfaces, whether or not
+        push is on.
+      </p>
     </Section>
   )
 }
@@ -580,18 +772,146 @@ function BillingSection() {
   return (
     <Section title="Billing" description="Your plan and usage.">
       <div className="flex items-center gap-2 text-sm">
-        <span className="text-gray-500">Current plan</span>
+        <span className="text-muted-foreground">Current plan</span>
         <Badge variant="secondary">{PLAN_LABEL[plan ?? ''] ?? plan ?? '—'}</Badge>
       </div>
       {/* Honest: no payments provider is configured, so there is no live
           self-serve checkout. We link to a real contact channel rather than
           fake a charge. */}
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-muted-foreground">
         Self-serve upgrades aren’t available yet. To change your plan, reach out and we’ll get you set up.
       </p>
       <Button asChild variant="outline" size="sm">
         <a href="mailto:sales@people.ai?subject=Backstory%20plan%20upgrade">Contact us to upgrade</a>
       </Button>
+    </Section>
+  )
+}
+
+/* ---------------------------- Data & privacy ---------------------------- */
+
+function DataLifecycleSection({
+  canExport,
+  canDeleteWorkspace,
+  isAdmin,
+  email,
+  supabase,
+}: {
+  canExport: boolean
+  canDeleteWorkspace: boolean
+  isAdmin: boolean
+  email: string
+  supabase: ReturnType<typeof createClient>
+}) {
+  const [orgName, setOrgName] = useState<string | null>(null)
+  const [confirmAccount, setConfirmAccount] = useState(false)
+  const [confirmWorkspace, setConfirmWorkspace] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!canDeleteWorkspace) return
+    fetch('/api/organizations', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setOrgName(data?.organizations?.[0]?.name ?? null))
+      .catch(() => {})
+  }, [canDeleteWorkspace])
+
+  const deleteAccount = async () => {
+    setBusy(true)
+    try {
+      const response = await fetch('/api/privacy/account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation: email }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) return toast.error(data.error || 'Account deletion failed.')
+      await supabase.auth.signOut()
+      window.location.href = '/auth'
+    } finally { setBusy(false) }
+  }
+
+  const deleteWorkspace = async () => {
+    if (!orgName) return
+    setBusy(true)
+    try {
+      const response = await fetch('/api/privacy/workspace', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation: orgName }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) return toast.error(data.error || 'Workspace deletion failed.')
+      await supabase.auth.signOut()
+      window.location.href = '/auth'
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Section title="Data & privacy" description="Export or permanently remove your data.">
+      {canExport && (
+        <SettingsRow title="Export workspace data" description="Every flow, agent, run, and connection as newline-delimited JSON.">
+          <Button asChild variant="outline" size="sm">
+            <a href="/api/privacy/export" download>Download export</a>
+          </Button>
+        </SettingsRow>
+      )}
+
+      <SettingsRow
+        title="Delete my account"
+        description="Removes you from this workspace and deletes your personal data. Cannot be undone."
+      >
+        <Button variant="destructive" size="sm" onClick={() => setConfirmAccount(true)}>Delete account</Button>
+      </SettingsRow>
+
+      {/* Gated on workspace.delete, NOT on isAdmin: the route requires the
+          former, which only the platform owner holds, so an admin who clicked
+          the old button always met a 403 — after typing the workspace name. */}
+      {canDeleteWorkspace ? (
+        <SettingsRow
+          title="Delete workspace"
+          description="Permanently deletes the workspace and everything in it for every member."
+        >
+          <Button variant="destructive" size="sm" disabled={!orgName} onClick={() => setConfirmWorkspace(true)}>
+            Delete workspace
+          </Button>
+        </SettingsRow>
+      ) : isAdmin ? (
+        <SettingsRow
+          title="Delete workspace"
+          description="Deleting a whole workspace is handled by Backstory — contact us and we'll confirm it with you first."
+        >
+          <Button asChild variant="outline" size="sm">
+            <a href="mailto:support@people.ai?subject=Delete%20my%20Backstory%20workspace">Contact support</a>
+          </Button>
+        </SettingsRow>
+      ) : null}
+
+      <ConfirmDialog
+        open={confirmAccount}
+        onOpenChange={setConfirmAccount}
+        title="Delete your account?"
+        description="This removes your profile and personal data and signs you out. It cannot be undone."
+        confirmLabel="Delete my account"
+        destructive
+        requireText={email}
+        requireTextLabel={<>Type <span className="font-mono text-foreground">{email}</span> to confirm</>}
+        busy={busy}
+        onConfirm={deleteAccount}
+      />
+
+      <ConfirmDialog
+        open={confirmWorkspace}
+        onOpenChange={setConfirmWorkspace}
+        title="Delete this workspace?"
+        description="Every flow, agent, run, credential, and member of this workspace is permanently deleted."
+        confirmLabel="Delete workspace"
+        destructive
+        requireText={orgName ?? ''}
+        requireTextLabel={<>Type <span className="font-mono text-foreground">{orgName}</span> to confirm</>}
+        busy={busy}
+        onConfirm={deleteWorkspace}
+      />
     </Section>
   )
 }

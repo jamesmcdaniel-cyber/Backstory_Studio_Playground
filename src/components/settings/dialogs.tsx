@@ -110,9 +110,9 @@ export function ConfirmDialog({
   confirmLabel?: string
   destructive?: boolean
   requireText?: string
-  requireTextLabel?: string
+  requireTextLabel?: React.ReactNode
   busy?: boolean
-  onConfirm: () => void | Promise<void>
+  onConfirm: () => unknown
 }) {
   const [typed, setTyped] = useState('')
   // Reopening for a different target must not inherit the previous answer.
@@ -176,7 +176,7 @@ export function PromptDialog({
   placeholder?: string
   confirmLabel?: string
   busy?: boolean
-  onSubmit: (value: string) => void | Promise<void>
+  onSubmit: (value: string) => unknown
   /** Extra fields rendered under the text input (scopes, expiry, …). */
   children?: React.ReactNode
 }) {

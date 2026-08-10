@@ -84,13 +84,28 @@ function AgentHQ() {
     [router],
   )
   // Count for the toggle's Templates badge — fetched up front, then kept in sync
-  // by the embedded TemplatesView as templates are created/removed.
+  // by the embedded TemplatesView as templates are created/removed. The badge
+  // covers the whole Templates view, which holds BOTH sub-tabs, so it sums agent
+  // templates and skill templates; counting agent templates alone under-reported
+  // it by the entire Skills tab. Must stay in step with the equivalent sum in
+  // TemplatesView (src/components/templates/templates-view.tsx), or the number
+  // would jump when the view mounts.
   const [templateCount, setTemplateCount] = useState<number | null>(null)
   useEffect(() => {
-    fetch('/api/agent-templates', { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => { if (data?.templates) setTemplateCount(data.templates.length) })
-      .catch(() => undefined)
+    const countOf = (url: string, key: 'templates' | 'skills') =>
+      fetch(url, { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => (Array.isArray(data?.[key]) ? data[key].length : null))
+        .catch(() => null)
+    Promise.all([
+      countOf('/api/agent-templates', 'templates'),
+      countOf('/api/skills', 'skills'),
+    ]).then((counts) => {
+      // A failed half is left out rather than counted as 0 — but if both fail,
+      // the badge stays hidden instead of claiming an empty library.
+      const loaded = counts.filter((n): n is number => n !== null)
+      if (loaded.length > 0) setTemplateCount(loaded.reduce((a, b) => a + b, 0))
+    })
   }, [])
 
   // Drag-to-resize for the assistant pane's left edge. Grid layout (not the

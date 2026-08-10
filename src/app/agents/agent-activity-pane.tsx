@@ -782,7 +782,6 @@ export function AgentActivityPane({
                   setSelectedId(closing ? null : activity.id)
                 }}
                 onChanged={onChanged}
-                onSuggestionsChanged={refreshSuggestionCount}
               />
             ))}
             {(hiddenCount > 0 || groupExpanded) && items.length > INITIAL_RUNS_PER_GROUP && (

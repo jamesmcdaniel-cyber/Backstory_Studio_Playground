@@ -101,8 +101,9 @@ function categoryIcon(category: string) {
 /**
  * The templates + skills browser. Rendered standalone (its own page header) or
  * `embedded` inside the dashboard behind the Agents/Templates toggle (header
- * suppressed). `onCount` reports the template count up so the toggle can badge
- * it. Sub-tabs (templates/skills) are local state — no route coupling — so it
+ * suppressed). `onCount` reports the combined agent-template + skill-template
+ * count up so the toggle can badge it — the badge covers both sub-tabs.
+ * Sub-tabs (templates/skills) are local state — no route coupling — so it
  * drops into any container.
  */
 export function TemplatesView({ embedded = false, onCount }: { embedded?: boolean; onCount?: (count: number) => void }) {
@@ -232,9 +233,16 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
     setActiveTab(value === 'skills' ? 'skills' : 'templates')
   }
 
-  // Report the template count up (for the dashboard toggle badge) whenever it
-  // changes — initial load, create, or delete.
-  useEffect(() => { onCount?.(templates.length) }, [templates, onCount])
+  // Report the library size up (for the dashboard toggle badge) whenever it
+  // changes — initial load, create, or delete. The badge sits on the single
+  // "Templates" segment that holds BOTH sub-tabs, so it counts agent templates
+  // and skill templates together; counting templates alone under-reported the
+  // library by the whole Skills tab. Held back until the load settles so the
+  // badge never flashes a partial count.
+  useEffect(() => {
+    if (loading) return
+    onCount?.(templates.length + skills.length)
+  }, [templates, skills, loading, onCount])
 
   useEffect(() => {
     let cancelled = false
@@ -508,8 +516,10 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList>
-            <TabsTrigger value="templates">Templates</TabsTrigger>
-            <TabsTrigger value="skills">Skills</TabsTrigger>
+            {/* Counts here are the unfiltered totals, so the two add up to the
+                number on the dashboard's Templates badge. */}
+            <TabsTrigger value="templates">Templates ({templates.length})</TabsTrigger>
+            <TabsTrigger value="skills">Skills ({skills.length})</TabsTrigger>
           </TabsList>
 
           {/* Category filter — derived from the active tab's real categories. */}

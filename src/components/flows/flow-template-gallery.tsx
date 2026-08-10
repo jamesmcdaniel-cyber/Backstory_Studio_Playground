@@ -130,7 +130,7 @@ export function FlowTemplateGallery() {
   return (
     <section className="space-y-4 border-t border-border/60 pt-6">
       <div>
-        <p className="eyebrow">Start from a template</p>
+        <h2 className="text-2xl font-bold leading-9 tracking-tight text-foreground">Start from a template</h2>
         <p className="text-sm text-muted-foreground">
           Complete pipelines, wired and explained step by step. Use one and it lands as a draft you can read before it runs.
         </p>

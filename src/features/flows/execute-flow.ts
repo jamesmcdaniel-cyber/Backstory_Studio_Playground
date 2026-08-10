@@ -1,5 +1,7 @@
+import { randomBytes } from 'node:crypto'
 import type { Job } from 'bullmq'
 import { prisma, tenantTransaction } from '@/lib/prisma'
+import { hashToken } from '@/lib/crypto/secrets'
 import { applyAlwaysOutputData, keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { assertQueueConsumerAlive } from '@/lib/queue/heartbeat'
@@ -1433,14 +1435,39 @@ export async function runFlowExecution(
   const clock = new Date()
   const clockIso = clock.toISOString()
   const now = { iso: clockIso, date: clockIso.slice(0, 10), time: clockIso.slice(11, 19), unix: Math.floor(clock.getTime() / 1000) }
+
+  /**
+   * Capability token for this attempt's `webhook` wait callback.
+   *
+   * A run id is a database identifier, not a credential: it is shown to every
+   * member who can read the run, written to logs, and handed to third parties
+   * inside {{run.resumeUrl}}. Only the hash is stored, so the plaintext exists
+   * solely in the URL the flow itself sends onward.
+   *
+   * Minted per EXECUTION ATTEMPT, not per run: resuming overwrites the hash, so
+   * a delivered callback cannot be replayed, and a second webhook wait later in
+   * the same flow still gets a live URL.
+   */
+  const hasWebhookWait = graph.nodes.some(
+    (node) => node.type === 'wait' && (node.data as { mode?: string }).mode === 'webhook',
+  )
+  let resumeToken: string | null = null
+  if (hasWebhookWait) {
+    resumeToken = randomBytes(24).toString('hex')
+    await prisma.flowRun.update({
+      where: { id: run.id, organizationId: job.organizationId },
+      data: { resumeTokenHash: hashToken(resumeToken) },
+    })
+  }
+
   const runMeta = {
     id: run.id,
     url: `/flows/${run.flowId}?run=${run.id}`,
     // Absolute public callback URL for a `webhook` wait: a pre-wait step sends
-    // this to the external system, which POSTs back to resume the run. The run
-    // id (an unguessable cuid) is the capability. Empty base URL degrades to a
-    // relative path (dev) — harmless, since webhook waits need a real deployment.
-    resumeUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/api/flows/${run.flowId}/runs/${run.id}/resume`,
+    // this to the external system, which POSTs back to resume the run. The
+    // token above is the capability. Empty base URL degrades to a relative path
+    // (dev) — harmless, since webhook waits need a real deployment.
+    resumeUrl: `${process.env.NEXT_PUBLIC_APP_URL || ''}/api/flows/${run.flowId}/runs/${run.id}/resume${resumeToken ? `?token=${resumeToken}` : ''}`,
     trigger: (run.trigger as unknown as { type?: string } | null)?.type ?? 'manual',
     startedAt: run.startedAt.toISOString(),
     flowId: run.flowId,

@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { getSupabaseConfig } from './config'
+import { getSupabaseConfig, SUPABASE_COOKIE_OPTIONS } from './config'
 import { validatedReturnPath } from '@/lib/auth/return-path'
 
 const publicPages = new Set([
@@ -35,6 +35,7 @@ export async function updateSession(request: NextRequest) {
 
   const { url, anonKey } = getSupabaseConfig()
   const supabase = createServerClient(url, anonKey, {
+    cookieOptions: SUPABASE_COOKIE_OPTIONS,
     cookies: {
       getAll: () => request.cookies.getAll(),
       setAll(cookies) {

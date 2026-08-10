@@ -2,11 +2,49 @@ import { ORG_SCOPED_MODELS } from '@/lib/tenant-guard'
 import { systemPrisma } from '@/lib/prisma'
 import { readStoredFile } from '@/lib/files/storage'
 
+/**
+ * Credential-bearing columns, named explicitly.
+ *
+ * This list alone was the whole boundary once, and it failed the way any
+ * hand-kept denylist fails: `Flow.shareToken` — a live, non-expiring token that
+ * opens a flow from ANOTHER workspace, or with no session at all — was never on
+ * it, so every export shipped working share links while its own manifest said
+ * `secretsIncluded: false`. `AgentTask.metadata.triggerSecret` and
+ * `OrganizationDomain.verificationToken` had the same gap.
+ *
+ * The convention rule below is what actually holds the line now; this set
+ * covers names the convention would miss.
+ */
 const OMIT_KEYS = new Set([
   'tokenHash', 'keyHash', 'verificationTokenHash', 'peopleAiWebhookSecret',
   'secretConfig', 'authConfig', 'accessToken', 'refreshToken', 'apiKey',
-  'webhookSecretHash',
+  'webhookSecretHash', 'shareToken', 'verificationToken', 'resumeTokenHash',
+  'triggerSecret',
 ])
+
+/**
+ * Anything NAMED like a credential is omitted even if nobody remembered to add
+ * it above — so a new secret column is safe by default rather than safe only if
+ * someone edits this file. `export-secrets.test.ts` walks the Prisma schema and
+ * fails when a field escapes both this rule and the list above.
+ */
+const SECRET_KEY_PATTERN = /(token|secret|password|passphrase|credential|api[-_]?key|privatekey)/i
+
+/**
+ * Token COUNTERS, which are usage data a customer is entitled to and merely
+ * happen to contain the word "token". Kept explicit so the pattern above can
+ * stay broad.
+ */
+export const NOT_SECRET_KEYS = new Set([
+  'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens',
+  'totalTokens', 'tokenCount', 'maxTokens',
+])
+
+/** Whether this key must never appear in an export. */
+export function isOmittedExportKey(key: string): boolean {
+  if (NOT_SECRET_KEYS.has(key)) return false
+  return OMIT_KEYS.has(key) || SECRET_KEY_PATTERN.test(key)
+}
 
 function portable(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString()
@@ -14,8 +52,10 @@ function portable(value: unknown): unknown {
   if (Buffer.isBuffer(value)) return { encoding: 'base64', data: value.toString('base64') }
   if (Array.isArray(value)) return value.map(portable)
   if (value && typeof value === 'object') {
+    // Recursive, so a secret nested inside a Json column (AgentTask.metadata's
+    // legacy plaintext triggerSecret) is filtered at whatever depth it sits.
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !OMIT_KEYS.has(key))
+      .filter(([key]) => !isOmittedExportKey(key))
       .map(([key, item]) => [key, portable(item)]))
   }
   return value

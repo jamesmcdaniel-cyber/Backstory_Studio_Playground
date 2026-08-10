@@ -379,11 +379,9 @@ function AutoAnswerCard({ question, answer }: { question: string; answer: string
 function SuggestionsCard({
   suggestions,
   agentId,
-  onChanged,
 }: {
   suggestions: SuggestionItem[]
   agentId: string
-  onChanged: () => void
 }) {
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
   const visible = suggestions.filter((suggestion) => !dismissedIds.has(suggestion.memoryId))
@@ -413,9 +411,7 @@ function SuggestionsCard({
         return next
       })
       toast.error('Could not dismiss the suggestion.')
-      return
     }
-    onChanged()
   }
 
   return (
@@ -459,15 +455,12 @@ function RunRow({
   expanded,
   onToggle,
   onChanged,
-  onSuggestionsChanged,
 }: {
   activity: Activity
   agentId: string
   expanded: boolean
   onToggle: () => void
   onChanged: () => void
-  /** Fired after a suggestion is dismissed so the pane's badge count can refresh. */
-  onSuggestionsChanged: () => void
 }) {
   const [details, setDetails] = useState<RunDetails | null>(null)
   const [reply, setReply] = useState('')
@@ -690,7 +683,7 @@ function RunRow({
           </div>
 
           {suggestions.length > 0 && (
-            <SuggestionsCard suggestions={suggestions} agentId={agentId} onChanged={onSuggestionsChanged} />
+            <SuggestionsCard suggestions={suggestions} agentId={agentId} />
           )}
 
           {/* The run's OUTPUT is shown in the assistant pane on the right (that
@@ -719,7 +712,6 @@ export function AgentActivityPane({
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [suggestionCount, setSuggestionCount] = useState(0)
   const [expandedGroups, setExpandedGroups] = useState<Set<ActivityGroup>>(() => new Set())
 
   // A notification/deep link selects the run for the fixed output pane without
@@ -737,28 +729,9 @@ export function AgentActivityPane({
     onSelectRun?.(activities.find((activity) => activity.id === selectedId) ?? null)
   }, [selectedId, activities, onSelectRun])
 
-  // Open-suggestion count for the lightbulb badge: refetched whenever the
-  // selected agent changes, and again after a suggestion is dismissed below.
-  const refreshSuggestionCount = () => {
-    fetch(`/api/agents/${agent.id}/memories?kind=suggestion&status=open`, { cache: 'no-store' })
-      .then((response) => response.json())
-      .then((data) => setSuggestionCount(typeof data.openSuggestions === 'number' ? data.openSuggestions : 0))
-      .catch(() => setSuggestionCount(0))
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { refreshSuggestionCount() }, [agent.id])
-
   const header = (
     <div className="flex items-center gap-2 border-b px-4 py-2">
       <span className="truncate text-sm font-semibold">{agent.title}</span>
-      {suggestionCount > 0 && (
-        <span
-          title="Open suggestions from this agent's runs"
-          className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
-        >
-          <Lightbulb className="h-3 w-3" /> {suggestionCount}
-        </span>
-      )}
     </div>
   )
 

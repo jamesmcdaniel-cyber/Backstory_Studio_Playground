@@ -4,12 +4,16 @@ import { serializeFlow } from '@/lib/flows/serialize'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { prisma } from '@/lib/prisma'
 import { authenticatePublicApi, publicApiJson } from '@/lib/public-api/auth'
+import { agentVisibilityScope } from '@/lib/server/visibility'
 
 export async function GET(request: Request) {
   const auth = await authenticatePublicApi(request, 'flows:read')
   if (auth instanceof Response) return auth
+  // An API key acts as the person who minted it, exactly like an agent does —
+  // so it sees their private flows and nobody else's. Without this, any admin
+  // could mint a key and read every member's private graph through it.
   const flows = await prisma.flow.findMany({
-    where: { organizationId: auth.organizationId },
+    where: { organizationId: auth.organizationId, ...agentVisibilityScope(auth.userId) },
     orderBy: { updatedAt: 'desc' },
     take: 200,
   })

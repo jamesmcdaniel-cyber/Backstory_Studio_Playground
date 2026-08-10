@@ -67,14 +67,23 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // them, so the docs cost concurrency rather than latency.
   const [docs, agents, flows, templates, runs] = await Promise.all([
     retrieveKnowledge(question),
+    // AND, never two spread `OR` keys: the second would overwrite the first in
+    // the same object literal, silently dropping the visibility scope for any
+    // search that carries words — which is every real search.
     prisma.agentTask.findMany({
-      where: { organizationId: org, ...agentVisibilityScope(uid), ...(hasWords ? { OR: orContains(words, ['description', 'objective']) } : {}) },
+      where: {
+        organizationId: org,
+        AND: [agentVisibilityScope(uid), ...(hasWords ? [{ OR: orContains(words, ['description', 'objective']) }] : [])],
+      },
       orderBy: { updatedAt: 'desc' },
       take: 4,
       select: { id: true, description: true, folder: true, metadata: true },
     }),
     prisma.flow.findMany({
-      where: { organizationId: org, ...(hasWords ? { OR: orContains(words, ['name', 'description']) } : {}) },
+      where: {
+        organizationId: org,
+        AND: [agentVisibilityScope(uid), ...(hasWords ? [{ OR: orContains(words, ['name', 'description']) }] : [])],
+      },
       orderBy: { updatedAt: 'desc' },
       take: 4,
       select: { id: true, name: true, description: true, status: true },
@@ -86,7 +95,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       select: { id: true, name: true, description: true },
     }),
     prisma.agentExecution.findMany({
-      where: { organizationId: org, ...executionVisibilityScope(uid), ...(hasWords ? { OR: [...orContains(words, ['agentType']), { agentTask: { is: { OR: orContains(words, ['description', 'objective']) } } }] } : {}) },
+      where: {
+        organizationId: org,
+        AND: [
+          executionVisibilityScope(uid),
+          ...(hasWords
+            ? [{ OR: [...orContains(words, ['agentType']), { agentTask: { is: { OR: orContains(words, ['description', 'objective']) } } }] }]
+            : []),
+        ],
+      },
       orderBy: { startedAt: 'desc' },
       take: 4,
       select: { id: true, agentType: true, status: true, startedAt: true, metadata: true },

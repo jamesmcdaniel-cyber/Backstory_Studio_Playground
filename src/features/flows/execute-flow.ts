@@ -24,7 +24,8 @@ import { applyInputDefaults, missingRequiredInputFields } from '@/lib/flows/inpu
 import { shouldReuseInput, storedRunInput } from '@/lib/flows/reuse-input'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { interpretFlow, FlowCancelledError, type RunAgentFn, type RunActionFn } from './interpret'
-import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout } from './action-reliability'
+import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout, classifyRetry } from './action-reliability'
+import { runHttpWithRetries } from './http-retry'
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
 import { getByPath, setQueryParam, pageItems, optimizeForAi, paginationComplete } from '@/lib/flows/http-pagination'
 import { fileReference, isFileReference, bodyHasFileReference } from '@/lib/flows/file-ref'
@@ -1376,10 +1377,11 @@ export async function runFlowExecution(
             }
           }
           const fetched = await fetchOnePage(pageUrl, page)
-          // Only a SETTLED result is recorded. Once WS3 lands, a retryable
-          // status (429/5xx) will be retried rather than returned, and recording
-          // one here would make the ledger replay that failure forever.
-          if (!isSafeMethod && fetched.ok) {
+          // Only a SETTLED result is recorded. A retryable status (429/5xx) that
+          // exhausted its budget must NOT be recorded — the ledger would replay
+          // that failure forever on every later attempt. A terminal 404 is a
+          // settled answer and is worth recording.
+          if (!isSafeMethod && classifyRetry(null, fetched.status) !== 'retryable') {
             await writeLedger({
               ...ledgerKey,
               organizationId: job.organizationId,
@@ -1392,8 +1394,12 @@ export async function runFlowExecution(
           return fetched
         }
 
+        // runHttpWithRetries, not runWithRetries: a non-2xx response is a VALUE
+        // here, so a 429/503 never reached the retry loop at all. It converts a
+        // retryable status into a throw internally and back into the response
+        // when the budget runs out — retries=0 stays byte-identical.
         const fetchOnePage = (pageUrl: string, page = 0): Promise<FlowHttpOutput> =>
-          runWithRetries(async () => {
+          runHttpWithRetries(async () => {
             await assertPublicUrl(pageUrl)
             const controller = new AbortController()
             let timedOut = false

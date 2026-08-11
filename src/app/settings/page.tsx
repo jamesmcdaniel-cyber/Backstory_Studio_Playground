@@ -27,41 +27,31 @@ import {
   CreditCard,
   Database,
   ImagePlus,
+  Globe2,
   KeyRound,
   ShieldCheck,
   Terminal,
   Trash2,
   User as UserIcon,
-  UserMinus,
   Users,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { createClient } from '@/lib/supabase/client'
 import { resizeImageToDataUrl } from '@/lib/client/image'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
 import { EnterpriseSecuritySection } from '@/components/settings/enterprise-security-section'
 import { DeveloperApiSection } from '@/components/settings/developer-api-section'
+import { PlatformSection } from '@/components/settings/platform-section'
+import { MembersSection } from '@/components/settings/members-section'
+import { Section } from '@/components/settings/section'
 import { ConfirmDialog, SettingsRow } from '@/components/settings/dialogs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 type Organization = { id: string; name: string; slug: string; plan: string; logoUrl?: string | null }
-type MemberRole = 'ADMIN' | 'USER' | 'OWNER' | 'VIEWER'
-type Member = { id: string; name: string | null; email: string | null; role: MemberRole }
-
-const ROLE_LABEL: Record<MemberRole, string> = { OWNER: 'Owner', ADMIN: 'Admin', USER: 'Member', VIEWER: 'Viewer' }
-
-/** Roles an admin may assign. OWNER is reserved to the platform owner identity. */
-const ASSIGNABLE_ROLES: Array<{ value: 'ADMIN' | 'USER' | 'VIEWER'; label: string; hint: string }> = [
-  { value: 'ADMIN', label: 'Admin', hint: 'Manages the workspace, members, security, and billing.' },
-  { value: 'USER', label: 'Member', hint: 'Builds and runs flows and agents.' },
-  { value: 'VIEWER', label: 'Viewer', hint: 'Read-only access to flows and agents.' },
-]
 
 const PLAN_LABEL: Record<string, string> = {
   TRIAL: 'Trial',
@@ -71,18 +61,6 @@ const PLAN_LABEL: Record<string, string> = {
 }
 
 const DEFAULT_ORG_LOGO = '/backstory-symbol-black.png'
-
-function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
-        {description && <CardDescription>{description}</CardDescription>}
-      </CardHeader>
-      <CardContent className="space-y-4">{children}</CardContent>
-    </Card>
-  )
-}
 
 /* --------------------------------- Tabs ---------------------------------- */
 
@@ -96,6 +74,7 @@ type TabId =
   | 'notifications'
   | 'billing'
   | 'data'
+  | 'platform'
 
 const TABS: Array<{ id: TabId; label: string; icon: typeof UserIcon; permission?: string }> = [
   { id: 'account', label: 'Account', icon: UserIcon },
@@ -107,6 +86,11 @@ const TABS: Array<{ id: TabId; label: string; icon: typeof UserIcon; permission?
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'billing', label: 'Billing', icon: CreditCard },
   { id: 'data', label: 'Data & privacy', icon: Database },
+  // Super admins only, and last: it administers the PLATFORM (who reviews the
+  // shared catalogue, how each workspace is tiered), not this workspace. The
+  // catalogue.review gate makes it absent in customer workspaces and in the
+  // customer edition, which never resolves that permission at all.
+  { id: 'platform', label: 'Platform', icon: Globe2, permission: 'catalogue.review' },
 ]
 
 export default function SettingsPage() {
@@ -119,7 +103,7 @@ export default function SettingsPage() {
 }
 
 function SettingsTabs() {
-  const { user, isAdmin, userId, can, isLoaded } = useAuth()
+  const { user, isAdmin, userId, organizationId, can, isLoaded } = useAuth()
   const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -193,7 +177,13 @@ function SettingsTabs() {
           />
         )}
         {active === 'workspace' && <WorkspaceSection canManage={can('org.manage')} />}
-        {active === 'members' && <MembersSection canManage={can('members.manage')} selfId={userId} />}
+        {active === 'members' && (
+          <MembersSection
+            canManage={can('members.manage')}
+            canManageSuperAdmins={can('catalogue.review')}
+            selfId={userId}
+          />
+        )}
         {active === 'keys' && <WorkspaceCredentialsPanel />}
         {active === 'security' && (
           <Section title="Enterprise security" description="SSO, verified domains, SCIM 2.0, and workspace MFA.">
@@ -206,6 +196,7 @@ function SettingsTabs() {
           </Section>
         )}
         {active === 'notifications' && <NotificationsSection />}
+        {active === 'platform' && <PlatformSection organizationId={organizationId} />}
         {active === 'billing' && <BillingSection />}
         {active === 'data' && (
           <DataLifecycleSection
@@ -454,204 +445,6 @@ function WorkspaceSection({ canManage }: { canManage: boolean }) {
   )
 }
 
-/* ------------------------------- Members -------------------------------- */
-
-// Viewer invitations are real: /api/organizations/invitations accepts the full
-// role enum and the accept route maps it through INVITABLE_ROLES.
-type Invite = { id: string; email: string; role: MemberRole; createdAt: string; expiresAt: string }
-
-function MembersSection({ canManage, selfId }: { canManage: boolean; selfId: string | null }) {
-  const [members, setMembers] = useState<Member[]>([])
-  const [loaded, setLoaded] = useState(false)
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [invites, setInvites] = useState<Invite[]>([])
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<'ADMIN' | 'USER' | 'VIEWER'>('USER')
-  const [inviting, setInviting] = useState(false)
-  const [removing, setRemoving] = useState<Member | null>(null)
-
-  const load = useCallback(async () => {
-    const data = await fetch('/api/organizations/members', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
-    if (data?.success) setMembers(data.members ?? [])
-    setLoaded(true)
-  }, [])
-  const loadInvites = useCallback(async () => {
-    if (!canManage) return
-    const data = await fetch('/api/organizations/invitations', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
-    if (data?.success) setInvites(data.invitations ?? [])
-  }, [canManage])
-  useEffect(() => { void load(); void loadInvites() }, [load, loadInvites])
-
-  const sendInvite = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setInviting(true)
-    try {
-      const res = await fetch('/api/organizations/invitations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) { toast.error(data.error || 'Could not send the invitation.'); return }
-      setInviteEmail('')
-      await loadInvites()
-      if (data.emailSent) {
-        toast.success(`Invitation emailed to ${data.invitation.email}.`)
-      } else {
-        // No email provider configured (or send failed): hand the admin the link.
-        try { await navigator.clipboard.writeText(data.link) } catch { /* clipboard blocked */ }
-        toast.success('Invite created — link copied to clipboard to share.')
-      }
-    } finally { setInviting(false) }
-  }
-
-  const revokeInvite = async (invite: Invite) => {
-    setBusyId(invite.id)
-    try {
-      const res = await fetch(`/api/organizations/invitations/${invite.id}`, { method: 'DELETE' })
-      if (!res.ok) toast.error('Could not revoke the invitation.')
-      else { setInvites((prev) => prev.filter((i) => i.id !== invite.id)); toast.success('Invitation revoked.') }
-    } finally { setBusyId(null) }
-  }
-
-  const changeRole = async (member: Member, role: 'ADMIN' | 'USER' | 'VIEWER') => {
-    setBusyId(member.id)
-    setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, role } : m)))
-    try {
-      const res = await fetch(`/api/organizations/members/${member.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) { setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, role: member.role } : m))); toast.error(data.error || 'Could not change role.') }
-      else toast.success('Role updated.')
-    } finally { setBusyId(null) }
-  }
-
-  const remove = async (member: Member) => {
-    setBusyId(member.id)
-    try {
-      const res = await fetch(`/api/organizations/members/${member.id}`, { method: 'DELETE' })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) toast.error(data.error || 'Could not remove member.')
-      else { setMembers((prev) => prev.filter((m) => m.id !== member.id)); setRemoving(null); toast.success('Member removed.') }
-    } finally { setBusyId(null) }
-  }
-
-  return (
-    <Section title="Members" description="People in your workspace.">
-      {!loaded ? (
-        <p className="text-sm text-muted-foreground">Loading members…</p>
-      ) : (
-        <ul className="divide-y rounded-lg border">
-          {members.map((member) => (
-            <li key={member.id} className="flex items-center gap-3 px-3 py-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-graphite-200 text-xs font-semibold text-graphite-600">
-                {(member.name || member.email || '?').charAt(0).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">
-                  {member.name || member.email}
-                  {member.id === selfId && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(You)</span>}
-                </div>
-                {member.name && member.email && <div className="truncate text-xs text-muted-foreground">{member.email}</div>}
-              </div>
-              {canManage && member.id !== selfId && member.role !== 'OWNER' ? (
-                <>
-                  {/* Viewer is a real role in the permission registry. The old
-                      two-option native select had no entry for it, so a viewer's
-                      row rendered a select with NO option matching its value —
-                      showing "Admin" for a read-only member — and there was no
-                      way to demote anyone to Viewer from the product. */}
-                  <Select
-                    value={member.role}
-                    disabled={busyId === member.id}
-                    onValueChange={(value) => void changeRole(member, value as 'ADMIN' | 'USER' | 'VIEWER')}
-                  >
-                    <SelectTrigger className="h-8 w-[7.5rem] text-xs" aria-label={`Role for ${member.name || member.email}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ASSIGNABLE_ROLES.map((role) => (
-                        <SelectItem key={role.value} value={role.value}>{role.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <button
-                    type="button"
-                    disabled={busyId === member.id}
-                    onClick={() => setRemoving(member)}
-                    className="rounded-md p-1.5 text-graphite-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                    aria-label={`Remove ${member.name || member.email}`}
-                  >
-                    <UserMinus className="h-4 w-4" />
-                  </button>
-                </>
-              ) : (
-                <Badge variant={member.role === 'ADMIN' || member.role === 'OWNER' ? 'secondary' : 'outline'}>{ROLE_LABEL[member.role] ?? 'Member'}</Badge>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {canManage && (
-        <div className="space-y-3 border-t pt-4">
-          <form onSubmit={sendInvite} className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[12rem] flex-1 space-y-1.5">
-              <Label htmlFor="invite-email">Invite by email</Label>
-              <Input id="invite-email" type="email" placeholder="teammate@company.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} required />
-            </div>
-            <Select value={inviteRole} onValueChange={(value) => setInviteRole(value as 'ADMIN' | 'USER' | 'VIEWER')}>
-              <SelectTrigger className="h-9 w-[8rem]" aria-label="Invite role">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ASSIGNABLE_ROLES.map((role) => (
-                  <SelectItem key={role.value} value={role.value}>{role.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button type="submit" loading={inviting} disabled={!inviteEmail.trim()}>Send invite</Button>
-          </form>
-          <p className="text-xs text-muted-foreground">
-            {ASSIGNABLE_ROLES.find((role) => role.value === inviteRole)?.hint}
-          </p>
-
-          {invites.length > 0 && (
-            <ul className="divide-y rounded-lg border">
-              {invites.map((invite) => (
-                <li key={invite.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                  <span className="min-w-0 flex-1 truncate text-foreground">{invite.email}</span>
-                  <Badge variant="outline">Pending · {ROLE_LABEL[invite.role] ?? 'Member'}</Badge>
-                  <button
-                    type="button"
-                    disabled={busyId === invite.id}
-                    onClick={() => void revokeInvite(invite)}
-                    className="text-xs font-medium text-graphite-400 hover:text-red-600 disabled:opacity-50"
-                  >
-                    Revoke
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={removing !== null}
-        onOpenChange={(open) => { if (!open) setRemoving(null) }}
-        title={`Remove ${removing?.name || removing?.email || 'this member'}?`}
-        description="They lose access immediately. Their flows, agents, and run history stay in the workspace."
-        confirmLabel="Remove member"
-        destructive
-        busy={busyId === removing?.id}
-        onConfirm={() => removing && remove(removing)}
-      />
-    </Section>
-  )
-}
 
 /* ---------------------------- Notifications ----------------------------- */
 

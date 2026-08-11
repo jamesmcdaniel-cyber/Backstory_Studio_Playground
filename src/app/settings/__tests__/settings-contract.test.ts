@@ -21,6 +21,7 @@ const stripComments = (source: string) =>
 const read = (rel: string) => stripComments(readFileSync(join(process.cwd(), rel), 'utf8'))
 
 const page = read('src/app/settings/page.tsx')
+const members = read('src/components/settings/members-section.tsx')
 const security = read('src/components/settings/enterprise-security-section.tsx')
 const developer = read('src/components/settings/developer-api-section.tsx')
 const permissions = read('src/lib/authz/permissions.ts')
@@ -30,7 +31,7 @@ test('the settings page renders WorkspaceCredentialsPanel', () => {
 })
 
 test('every settings section is reachable as its own tab', () => {
-  for (const tab of ['account', 'workspace', 'members', 'keys', 'security', 'developer', 'notifications', 'billing', 'data']) {
+  for (const tab of ['account', 'workspace', 'members', 'keys', 'security', 'developer', 'notifications', 'billing', 'data', 'platform']) {
     assert.match(page, new RegExp(`id: '${tab}'`), `the ${tab} section must have a tab`)
     assert.match(page, new RegExp(`active === '${tab}'`), `the ${tab} tab must render a panel`)
   }
@@ -67,8 +68,21 @@ test('every role in the registry can be assigned from the members list', () => {
   // A VIEWER member used to render a two-option native select with no matching
   // option, displaying "Admin" for a read-only account.
   for (const role of ['ADMIN', 'USER', 'VIEWER']) {
-    assert.match(page, new RegExp(`value: '${role}'`), `${role} must be assignable`)
+    assert.match(members, new RegExp(`value: '${role}'`), `${role} must be assignable`)
   }
+})
+
+test('super admin is a rank in the members select, not a separate console', () => {
+  // It used to be a tab of the Reviews console, where nobody looking for "make
+  // them an admin" would find it. Members is the one RBAC surface.
+  assert.match(members, /value: 'SUPER_ADMIN'/, 'super admin must be an assignable rank')
+  assert.match(members, /canManageSuperAdmins/, 'the rank must be gated on holding it')
+  assert.match(page, /canManageSuperAdmins=\{can\('catalogue\.review'\)\}/, 'gated on the permission the routes check')
+  // Above Admin: the select is built by prepending it to the ordinary ranks.
+  assert.match(members, /\[SUPER_ADMIN_ROLE, \.\.\.ASSIGNABLE_ROLES\]/, 'super admin must sit above admin')
+  // And the operator console must not carry the old tab any more.
+  const reviews = read('src/app/admin/catalogue/page.tsx')
+  assert.doesNotMatch(reviews, /Super admins/, 'the Reviews console must not administer super admins')
 })
 
 test('the domain TXT challenge is rendered, not only copied', () => {

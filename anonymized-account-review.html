@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Windy City Storage — Strategic Account Review | Backstory</title>
+<meta name="fresh-base" content="2026-08-10">
+<script src="../assets/freshen-dates.js"></script>
+<style>
+  :root {
+    --blue: #1a3a5c;
+    --accent: #0072ce;
+    --light: #e8f1fb;
+    --green: #1a7a4a;
+    --green-bg: #e6f5ee;
+    --red: #c0392b;
+    --red-bg: #fdecea;
+    --amber: #b45309;
+    --amber-bg: #fef3cd;
+    --gray: #6b7280;
+    --border: #d1d9e0;
+    --bg: #f4f7fb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(0,114,206,0.10), transparent 26%),
+      linear-gradient(180deg, #eef4fa 0%, #f5f8fc 24%, #edf3f8 100%);
+    color: #1e2a38;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  /* ── HEADER ── */
+  .report-header {
+    background: linear-gradient(135deg, #1a3a5c 0%, #0f2640 60%, #0a1e35 100%);
+    color: #fff;
+    padding: 40px 48px 34px;
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .report-header::before {
+    content: '';
+    position: absolute;
+    top: -40px; right: -40px;
+    width: 240px; height: 240px;
+    border-radius: 50%;
+    background: rgba(0,114,206,0.15);
+  }
+  .report-header::after {
+    content: '';
+    position: absolute;
+    bottom: -60px; left: 30%;
+    width: 180px; height: 180px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.04);
+  }
+  .header-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .header-brand { font-size: 11px; letter-spacing: 1.8px; text-transform: uppercase; color: rgba(255,255,255,0.58); margin-bottom: 8px; }
+  .header-company { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }
+  .header-sub { font-size: 14px; color: rgba(255,255,255,0.74); margin-top: 4px; }
+  .header-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .badge-white { background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.25); }
+  .badge-green { background: var(--green-bg); color: var(--green); }
+  .badge-amber { background: var(--amber-bg); color: var(--amber); }
+  .badge-red { background: var(--red-bg); color: var(--red); }
+  .badge-blue { background: var(--light); color: var(--accent); }
+  .header-kpis {
+    display: flex;
+    gap: 0;
+    margin-top: 24px;
+    background: rgba(255,255,255,0.09);
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.14);
+    backdrop-filter: blur(10px);
+  }
+  .hkpi {
+    flex: 1;
+    padding: 14px 20px;
+    border-right: 1px solid rgba(255,255,255,0.1);
+    position: relative;
+    z-index: 1;
+  }
+  .hkpi:last-child { border-right: none; }
+  .hkpi-label { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: rgba(255,255,255,0.5); margin-bottom: 4px; }
+  .hkpi-value { font-size: 20px; font-weight: 700; color: #fff; }
+  .hkpi-sub { font-size: 11px; color: rgba(255,255,255,0.55); margin-top: 2px; }
+
+  /* ── LAYOUT ── */
+  .page-nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: rgba(255,255,255,0.9);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(209,217,224,0.9);
+    box-shadow: 0 8px 24px rgba(15,38,64,0.06);
+  }
+  .page-nav-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 12px 48px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .page-link {
+    text-decoration: none;
+    color: var(--blue);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid #dbe5ef;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+  }
+  .page-link:hover {
+    background: var(--light);
+    border-color: rgba(0,114,206,0.28);
+    transform: translateY(-1px);
+  }
+  .content { padding: 32px 48px 60px; max-width: 1200px; margin: 0 auto; }
+
+  /* ── SECTIONS ── */
+  .section { margin-bottom: 40px; scroll-margin-top: 82px; }
+  .section-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--blue);
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent);
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-num {
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  /* ── KPI GRID ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .kpi-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 10px 24px rgba(15,38,64,0.05);
+  }
+  .kpi-label { font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase; color: var(--gray); margin-bottom: 6px; }
+  .kpi-value { font-size: 22px; font-weight: 700; color: var(--blue); line-height: 1; }
+  .kpi-sub { font-size: 11px; color: var(--gray); margin-top: 4px; }
+  .kpi-green .kpi-value { color: var(--green); }
+  .kpi-red .kpi-value { color: var(--red); }
+  .kpi-amber .kpi-value { color: var(--amber); }
+
+  /* ── ALERTS ── */
+  .alert {
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    border-left: 4px solid;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .alert-icon { flex-shrink: 0; font-size: 15px; margin-top: 1px; }
+  .alert-content { flex: 1; }
+  .alert-title { font-weight: 700; margin-bottom: 2px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .alert-red { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+  .alert-amber { background: var(--amber-bg); border-color: #f59e0b; color: var(--amber); }
+  .alert-green { background: var(--green-bg); border-color: #16a34a; color: var(--green); }
+  .alert-blue { background: var(--light); border-color: var(--accent); color: #1e40af; }
+
+  /* ── TABLES ── */
+  .table-wrap { background: rgba(255,255,255,0.96); border-radius: 14px; border: 1px solid var(--border); overflow: hidden; margin-bottom: 16px; box-shadow: 0 12px 26px rgba(15,38,64,0.05); }
+  table { width: 100%; border-collapse: collapse; }
+  thead tr { background: var(--blue); }
+  thead th { color: #fff; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 14px; text-align: left; }
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--bg); }
+  tbody td { padding: 10px 14px; font-size: 13px; vertical-align: top; }
+  .td-label { font-weight: 600; color: var(--blue); white-space: nowrap; }
+  .td-right { text-align: right; }
+  .td-center { text-align: center; }
+
+  /* ── TWO-COL ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .col-block { background: rgba(255,255,255,0.96); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: 0 12px 26px rgba(15,38,64,0.05); }
+  .col-block-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--blue); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+
+  /* ── STAKEHOLDER CARD ── */
+  .stakeholder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .stakeholder-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 12px 26px rgba(15,38,64,0.05);
+    border-left: 4px solid var(--border);
+    position: relative;
+  }
+  .stakeholder-card.champion { border-left-color: var(--green); }
+  .stakeholder-card.risk { border-left-color: var(--red); }
+  .stakeholder-card.neutral { border-left-color: #94a3b8; }
+  .stakeholder-card.sponsor { border-left-color: var(--accent); }
+  .stakeholder-card.unknown { border-left-color: var(--amber); }
+  .sk-name { font-weight: 700; font-size: 14px; color: var(--blue); margin-bottom: 2px; }
+  .sk-title { font-size: 12px; color: var(--gray); margin-bottom: 8px; }
+  .sk-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .sk-tag { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .tag-champion { background: var(--green-bg); color: var(--green); }
+  .tag-risk { background: var(--red-bg); color: var(--red); }
+  .tag-neutral { background: #f1f5f9; color: #475569; }
+  .tag-sponsor { background: var(--light); color: var(--accent); }
+  .tag-unknown { background: var(--amber-bg); color: var(--amber); }
+  .sk-note { font-size: 12px; color: #374151; margin-top: 8px; line-height: 1.4; }
+
+  /* ── TIMELINE (30/60/90) ── */
+  .timeline { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .tl-block {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 12px 26px rgba(15,38,64,0.05);
+  }
+  .tl-header { padding: 12px 16px; font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .tl-30 .tl-header { background: var(--light); color: var(--accent); }
+  .tl-60 .tl-header { background: var(--amber-bg); color: var(--amber); }
+  .tl-90 .tl-header { background: var(--green-bg); color: var(--green); }
+  .tl-body { padding: 14px 16px; }
+  .tl-item { display: flex; gap: 8px; margin-bottom: 10px; font-size: 13px; line-height: 1.4; }
+  .tl-item:last-child { margin-bottom: 0; }
+  .tl-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+  .dot-blue { background: var(--accent); }
+  .dot-amber { background: #f59e0b; }
+  .dot-green { background: #16a34a; }
+
+  /* ── RISK REGISTER ── */
+  .risk-item {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 14px;
+    align-items: start;
+    box-shadow: 0 12px 24px rgba(15,38,64,0.05);
+  }
+  .risk-severity { text-align: center; }
+  .risk-sev-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+  .sev-critical { color: var(--red); }
+  .sev-high { color: #e65c00; }
+  .sev-medium { color: var(--amber); }
+  .sev-low { color: var(--green); }
+  .risk-sev-bar { height: 6px; border-radius: 3px; margin-top: 4px; width: 100%; }
+  .sev-bar-critical { background: var(--red); }
+  .sev-bar-high { background: #e65c00; }
+  .sev-bar-medium { background: #f59e0b; }
+  .sev-bar-low { background: #16a34a; }
+  .risk-title { font-weight: 700; font-size: 13px; color: var(--blue); margin-bottom: 4px; }
+  .risk-desc { font-size: 12px; color: #374151; line-height: 1.45; }
+  .risk-owner { font-size: 11px; font-weight: 600; color: var(--gray); white-space: nowrap; text-align: right; }
+
+  /* ── EXEC SUMMARY ── */
+  .exec-box {
+    background: linear-gradient(135deg, #1a3a5c 0%, #0f2640 100%);
+    color: #fff;
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin-bottom: 20px;
+  }
+  .exec-box h3 { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+  .exec-box p { font-size: 14px; line-height: 1.65; color: rgba(255,255,255,0.85); }
+  .exec-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .exec-pill {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #fff;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* ── PROGRESS BAR ── */
+  .eng-bar-wrap { background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden; margin-top: 4px; }
+  .eng-bar { height: 100%; border-radius: 4px; background: var(--accent); }
+  .eng-bar.high { background: var(--green); }
+  .eng-bar.mid { background: #f59e0b; }
+  .eng-bar.low { background: var(--red); }
+
+  /* ── MISC ── */
+  .card { background: rgba(255,255,255,0.96); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: 0 12px 24px rgba(15,38,64,0.05); margin-bottom: 14px; }
+  ul.check-list { list-style: none; padding: 0; }
+  ul.check-list li { padding: 5px 0; font-size: 13px; display: flex; gap: 8px; align-items: flex-start; }
+  ul.check-list li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
+  ul.x-list li::before { content: '✗'; color: var(--red); }
+  ul.dot-list li::before { content: '→'; color: var(--accent); }
+
+  .footnote { font-size: 11px; color: var(--gray); margin-top: 8px; }
+  .divider { height: 1px; background: var(--border); margin: 28px 0; }
+
+  .opp-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 12px 24px rgba(15,38,64,0.05);
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .opp-amount { font-size: 24px; font-weight: 700; color: var(--green); white-space: nowrap; }
+  .opp-name { font-weight: 700; font-size: 14px; color: var(--blue); }
+  .opp-meta { font-size: 12px; color: var(--gray); margin-top: 3px; }
+  .opp-right { margin-left: auto; text-align: right; }
+
+  @media (max-width: 768px) {
+    .content { padding: 20px; }
+    .report-header { padding: 24px 20px; }
+    .page-nav-inner { padding: 12px 20px; }
+    .header-kpis { flex-direction: column; }
+    .two-col { grid-template-columns: 1fr; }
+    .timeline { grid-template-columns: 1fr; }
+    .risk-item { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ HEADER -->
+<div class="report-header">
+  <div class="header-top">
+    <div>
+      <div class="header-brand">Backstory Revenue Intelligence Platform</div>
+      <div class="header-company">Windy City Storage</div>
+      <div class="header-sub">Strategic account review &nbsp;·&nbsp; Mike Wazowski &nbsp;·&nbsp; Last refreshed August 10, 2026</div>
+    </div>
+    <div class="header-meta">
+      <span class="badge badge-white">Strategic Coverage</span>
+      <span class="badge badge-green">Engagement 100 / 100</span>
+      <span class="badge badge-amber">Renewal Window H1 2027</span>
+    </div>
+  </div>
+  <div class="header-kpis">
+    <div class="hkpi">
+      <div class="hkpi-label">Current ARR</div>
+      <div class="hkpi-value">$2.58M</div>
+      <div class="hkpi-sub">ACV as of latest data</div>
+    </div>
+    <div class="hkpi">
+      <div class="hkpi-label">Open Pipeline</div>
+      <div class="hkpi-value">$1.99M</div>
+      <div class="hkpi-sub">2 live opportunities</div>
+    </div>
+    <div class="hkpi">
+      <div class="hkpi-label">Renewal Date</div>
+      <div class="hkpi-value">May 27, 2027</div>
+      <div class="hkpi-sub">~10 months out</div>
+    </div>
+    <div class="hkpi">
+      <div class="hkpi-label">Churn ACV at Risk</div>
+      <div class="hkpi-value">$807.8K</div>
+      <div class="hkpi-sub">Identified churn signal</div>
+    </div>
+    <div class="hkpi">
+      <div class="hkpi-label">Remaining TAM</div>
+      <div class="hkpi-value">$824.3K</div>
+      <div class="hkpi-sub">White space estimate</div>
+    </div>
+    <div class="hkpi">
+      <div class="hkpi-label">ICP Tier</div>
+      <div class="hkpi-value">Tier 1</div>
+      <div class="hkpi-sub">Focus — B2B Services</div>
+    </div>
+  </div>
+</div>
+
+<nav class="page-nav" aria-label="Page sections">
+  <div class="page-nav-inner">
+    <a class="page-link" href="#company-intel">Company</a>
+    <a class="page-link" href="#contract">Contract</a>
+    <a class="page-link" href="#growth-path">Growth Paths</a>
+    <a class="page-link" href="#stakeholders">Stakeholders</a>
+    <a class="page-link" href="#plan-306090">30-60-90</a>
+    <a class="page-link" href="#risk-register">Risks</a>
+    <a class="page-link" href="#exec-summary">Summary</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════ CONTENT -->
+<div class="content">
+
+  <!-- ─── SECTION 1: Company Intelligence ───────────────────────── -->
+  <div class="section" id="company-intel">
+    <div class="section-title"><span class="section-num">1</span> Company Intelligence &amp; Strategic Alignment</div>
+
+    <div class="two-col">
+      <div class="col-block">
+        <div class="col-block-title">Company Profile</div>
+        <table>
+          <tbody>
+            <tr><td class="td-label">Full Name</td><td>Windy City Storage Incorporated (Sublime)</td></tr>
+            <tr><td class="td-label">HQ</td><td>Boston, MA — US-domiciled, global operations</td></tr>
+            <tr><td class="td-label">Employees</td><td>~29,000 (Salesforce record)</td></tr>
+            <tr><td class="td-label">Revenue (FY25)</td><td>$6.9B (+12.2% YoY) — record year</td></tr>
+            <tr><td class="td-label">2026 Guidance</td><td>$7.625B – $7.775B</td></tr>
+            <tr><td class="td-label">Industry</td><td>Records Mgmt / Data Services / Real Estate REIT</td></tr>
+            <tr><td class="td-label">CRM</td><td>Salesforce (primary), HubSpot, MS Dynamics</td></tr>
+            <tr><td class="td-label">Structure</td><td>REIT — NYSE: IRM</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col-block">
+        <div class="col-block-title">2025–2026 Strategic Momentum</div>
+        <ul class="check-list">
+          <li><strong>Data Center Hyper-Growth:</strong> +30% YoY — flagship growth engine; AI infrastructure demand driving bookings</li>
+          <li><strong>ALM / Asset Lifecycle:</strong> +63% growth — digitalizing physical assets at enterprise scale</li>
+          <li><strong>Digital Business:</strong> $500M+ segment — DXP platform winning AI-adjacent workloads</li>
+          <li><strong>US Treasury Win:</strong> $714M contract announced — validates government go-to-market</li>
+          <li><strong>2026 Priority "2 by Twos" Initiative:</strong> Sales org restructured for speed; August 26 rollout target — AE alignment critical</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="alert alert-blue">
+      <div class="alert-icon">💡</div>
+      <div class="alert-content">
+        <div class="alert-title">Strategic Alignment to Backstory</div>
+        Windy City Storage is undergoing a digital transformation from records storage to data-driven services. Their "2 by Twos" initiative and August 26 sales restructure create a direct tie-in to Backstory's core value proposition: pipeline accuracy, sales activity intelligence, and forecast predictability at scale. The IRM Forecasting opportunity already in motion (closes Sep 9) aligns precisely to this internal urgency.
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="col-block">
+        <div class="col-block-title">Account Team</div>
+        <table>
+          <tbody>
+            <tr><td class="td-label">AE</td><td>Mike Wazowski</td></tr>
+            <tr><td class="td-label">BDR</td><td>Grace Jones</td></tr>
+            <tr><td class="td-label">CS</td><td>David Spade</td></tr>
+            <tr><td class="td-label">Prior AE</td><td>Kevin Bacon (departed → OpenAI) — relationship continuity risk</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col-block">
+        <div class="col-block-title">Account Tier &amp; Segment</div>
+        <table>
+          <tbody>
+            <tr><td class="td-label">Salesforce Tier</td><td>Strategic</td></tr>
+            <tr><td class="td-label">Segment</td><td>Major</td></tr>
+            <tr><td class="td-label">Backstory ICP</td><td>Tier 1 — Focus (B2B, Salesforce CRM, US HQ)</td></tr>
+            <tr><td class="td-label">Closed Won (All Time)</td><td>5 opportunities</td></tr>
+            <tr><td class="td-label">Open Stage 1</td><td>2 opportunities</td></tr>
+            <tr><td class="td-label">Open Stage 2</td><td>2 opportunities</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ─── SECTION 2: Current Contract & Entitlements ────────────── -->
+  <div class="section" id="contract">
+    <div class="section-title"><span class="section-num">2</span> Current Contract &amp; Entitlements</div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card kpi-green">
+        <div class="kpi-label">Current ACV</div>
+        <div class="kpi-value">$2,584,470</div>
+        <div class="kpi-sub">Active contract ARR</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Renewal Date</div>
+        <div class="kpi-value">May 27, 2027</div>
+        <div class="kpi-sub">~10 months runway</div>
+      </div>
+      <div class="kpi-card kpi-amber">
+        <div class="kpi-label">Churn ACV at Risk</div>
+        <div class="kpi-value">$807,840</div>
+        <div class="kpi-sub">Flagged for potential loss</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Open Renewal ACV</div>
+        <div class="kpi-value">$2,769,600</div>
+        <div class="kpi-sub">Renewal pool (incl. expansions)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Engagement Score</div>
+        <div class="kpi-value">100</div>
+        <div class="kpi-sub">Maximum — fully engaged</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">CRM</div>
+        <div class="kpi-value">Salesforce</div>
+        <div class="kpi-sub">+ HubSpot + Dynamics</div>
+      </div>
+    </div>
+
+    <div class="alert alert-red">
+      <div class="alert-icon">⚠</div>
+      <div class="alert-content">
+        <div class="alert-title">Churn Signal — $807.8K at Risk</div>
+        A churn ACV of $807,840 has been identified. This represents ~31% of current contract value. Immediate investigation required: determine which modules or seats are at risk, and whether this is tied to the org reorg flagged by Evan Calder and Adrian Vale (see Risk Register). Protect the base before pursuing expansion.
+      </div>
+    </div>
+
+    <div class="col-block">
+      <div class="col-block-title">Live Opportunities in Pipeline</div>
+      <div class="opp-card">
+        <div>
+          <div class="opp-name">IRM Forecasting</div>
+          <div class="opp-meta">Stage: Active &nbsp;·&nbsp; Engagement: 98 &nbsp;·&nbsp; Owner: Mike Wazowski </div>
+          <div class="opp-meta" style="margin-top:6px;">Next steps: Demo predictive forecast accuracy · Formal proposal to Nora Bennett</div>
+        </div>
+        <div class="opp-right">
+          <div class="opp-amount">$490,000</div>
+          <div class="opp-meta">Closes Sep 9, 2026</div>
+          <span class="badge badge-amber" style="margin-top:6px;display:inline-flex;">Nearest Term</span>
+        </div>
+      </div>
+      <div class="opp-card">
+        <div>
+          <div class="opp-name">Renewal FY28Q4</div>
+          <div class="opp-meta">Stage: Active &nbsp;·&nbsp; Engagement: 100 &nbsp;·&nbsp; Owner: Mike Wazowski</div>
+          <div class="opp-meta" style="margin-top:6px;">Next steps: Call with Owen Mercer &amp; Sam Rowan · European data integration (Camille Arden)</div>
+        </div>
+        <div class="opp-right">
+          <div class="opp-amount">$1,500,000</div>
+          <div class="opp-meta">Closes May 28, 2027</div>
+          <span class="badge badge-blue" style="margin-top:6px;display:inline-flex;">Strategic Renewal</span>
+        </div>
+      </div>
+      <p class="footnote">Next scheduled meeting: July 20, 2026. Both opps have high engagement — momentum must be maintained.</p>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ─── SECTION 3: White Space + Green Space ──────────────────── -->
+  <div class="section" id="growth-path">
+    <div class="section-title"><span class="section-num">3</span> White Space &amp; Green Space Analysis</div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Remaining TAM</div>
+        <div class="kpi-value">$824,280</div>
+        <div class="kpi-sub">Identified expansion capacity</div>
+      </div>
+      <div class="kpi-card kpi-green">
+        <div class="kpi-label">IRM Forecasting Opp</div>
+        <div class="kpi-value">$490,000</div>
+        <div class="kpi-sub">Green space — near-term close</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Pipeline + TAM</div>
+        <div class="kpi-value">~$2.8M</div>
+        <div class="kpi-sub">Upside scenario incl. renewal</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="col-block">
+        <div class="col-block-title">🟢 Green Space — Active Opportunities</div>
+        <ul class="check-list dot-list">
+          <li><strong>Forecasting Module Expansion ($490K):</strong> IRM Forecasting opp is active, high-engagement, closes Sep 9. Demo predictive forecast accuracy is the key next step — tie directly to "2 by Twos" initiative deadline.</li>
+          <li><strong>European Expansion:</strong> Camille Arden is engaged on European data integration. This is a discrete expansion conversation that could add incremental ACV to the renewal structure.</li>
+          <li><strong>Renewal Upsell ($1.5M):</strong> Renewal FY28Q4 creates a structured window for packaging expanded seat counts and new modules as part of a multi-year deal.</li>
+        </ul>
+      </div>
+      <div class="col-block">
+        <div class="col-block-title">⬜ White Space — Unexplored Potential</div>
+        <ul class="check-list dot-list">
+          <li><strong>ALM / Asset Lifecycle Division:</strong> IRM's +63% ALM growth creates a large unattached commercial team. No Backstory coverage detected in this segment — qualified discovery call required.</li>
+          <li><strong>Data Center Business Unit:</strong> +30% growth, significant sales headcount. Likely using separate CRM workflows — potential greenfield for activity intelligence and forecasting at this division.</li>
+          <li><strong>Digital / DXP Platform:</strong> $500M+ revenue segment with its own revenue teams. Not currently in scope — possible strategic expansion target.</li>
+          <li><strong>Government / Federal Vertical:</strong> $714M US Treasury contract suggests a growing federal team — evaluate if Backstory federal coverage applies.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="alert alert-amber">
+      <div class="alert-icon">⚡</div>
+      <div class="alert-content">
+        <div class="alert-title">Competitive Caution — Platform Exploration Underway</div>
+        Adrian Vale and Elena Brooks are actively exploring competing platforms (per Backstory signals). Expansion conversations in white space must not begin until competitive threat in the existing footprint is neutralized. Sequence: defend first, expand second.
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Expansion Area</th>
+            <th>Signal Source</th>
+            <th>Est. Incremental ACV</th>
+            <th>Priority</th>
+            <th>Owner</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>IRM Forecasting Module</strong></td>
+            <td>Live opp — Backstory</td>
+            <td>$490,000</td>
+            <td><span class="badge badge-red">P1 — Close Now</span></td>
+            <td>Mike Wazowski</td>
+          </tr>
+          <tr>
+            <td><strong>Renewal FY28Q4 Expansion</strong></td>
+            <td>Live opp — Backstory</td>
+            <td>$1,500,000</td>
+            <td><span class="badge badge-amber">P1 — Build</span></td>
+            <td>Mike Wazowski</td>
+          </tr>
+          <tr>
+            <td><strong>European Data Integration</strong></td>
+            <td>Backstory next steps</td>
+            <td>TBD — qualify</td>
+            <td><span class="badge badge-blue">P2</span></td>
+            <td>Mike Wazowski / Camille Arden</td>
+          </tr>
+          <tr>
+            <td><strong>ALM Division</strong></td>
+            <td>Public — IRM earnings</td>
+            <td>Est. $200–400K</td>
+            <td><span class="badge badge-blue">P2 — Explore Q4</span></td>
+            <td>Mike Wazowski + BDR</td>
+          </tr>
+          <tr>
+            <td><strong>Data Center BU</strong></td>
+            <td>Public — IRM earnings</td>
+            <td>Est. $150–300K</td>
+            <td><span class="badge badge-green">P3</span></td>
+            <td>Mike Wazowski + BDR</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ─── SECTION 4: Stakeholder Map ───────────────────────────── -->
+  <div class="section" id="stakeholders">
+    <div class="section-title"><span class="section-num">4</span> Stakeholder Map (Director+)</div>
+
+    <div class="alert alert-blue">
+      <div class="alert-icon">ℹ</div>
+      <div class="alert-content">
+        <div class="alert-title">Mapping Methodology</div>
+        Contacts sourced from Backstory conversation intelligence, Salesforce records, and recent account activity signals. Sentiment assessed from communication patterns and topics raised. Roles inferred from context where not explicitly confirmed.
+      </div>
+    </div>
+
+    <div class="stakeholder-grid">
+
+      <div class="stakeholder-card sponsor">
+        <div class="sk-name">Nora Bennett</div>
+        <div class="sk-title">Senior Leader — Revenue / Finance</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-sponsor">Economic Buyer (Likely)</span>
+        </div>
+        <div class="sk-note">Formal proposal to be sent. Likely holds budget authority for IRM Forecasting expansion. No sentiment signal yet — critical to qualify relationship before proposal lands cold.</div>
+      </div>
+
+      <div class="stakeholder-card sponsor">
+        <div class="sk-name">Owen Mercer</div>
+        <div class="sk-title">Sales / Revenue Leadership</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-sponsor">Stakeholder</span>
+        </div>
+        <div class="sk-note">Scheduled call confirmed. Alongside Sam Rowan — likely aligned on "2 by Twos" rollout or renewal structure. Confirm scope of their authority over renewal FY28Q4.</div>
+      </div>
+
+      <div class="stakeholder-card sponsor">
+        <div class="sk-name">Sam Rowan</div>
+        <div class="sk-title">Sales / Revenue Leadership</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-sponsor">Stakeholder</span>
+        </div>
+        <div class="sk-note">Paired with Owen Mercer on upcoming call. Map relationship to Jarrett — determine if co-decision makers or if one leads renewal authority.</div>
+      </div>
+
+      <div class="stakeholder-card risk">
+        <div class="sk-name">Adrian Vale</div>
+        <div class="sk-title">VP / Director — Sales Operations or Strategy</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-risk">Competitive Risk</span>
+          <span class="sk-tag tag-risk">Org Reorg Signal</span>
+        </div>
+        <div class="sk-note">Actively exploring competing platforms. Also raising org reorg concerns. High-priority re-engagement — understand dissatisfaction, re-establish value. Do not let this go dark.</div>
+      </div>
+
+      <div class="stakeholder-card risk">
+        <div class="sk-name">Elena Brooks</div>
+        <div class="sk-title">Operations / Analytics</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-risk">Competitive Risk</span>
+        </div>
+        <div class="sk-note">Also involved in competitive platform exploration alongside Adrian Vale. Likely a day-to-day power user whose dissatisfaction is fueling the competitive evaluation. Prioritize CS outreach.</div>
+      </div>
+
+      <div class="stakeholder-card risk">
+        <div class="sk-name">Evan Calder</div>
+        <div class="sk-title">Senior Leader — Org Transformation</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-risk">Org Reorg Signal</span>
+          <span class="sk-tag tag-unknown">Sentiment Unknown</span>
+        </div>
+        <div class="sk-note">Flagged in org reorg signal. Determine scope of restructuring — could affect contract coverage, seat allocation, or buyer authority for renewal. Map to updated org chart.</div>
+      </div>
+
+      <div class="stakeholder-card neutral">
+        <div class="sk-name">Camille Arden</div>
+        <div class="sk-title">EMEA / European Operations Lead</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-neutral">Expansion Contact</span>
+        </div>
+        <div class="sk-note">Engaged on European data integration discussion — potential expansion path for EMEA seat coverage. Qualify budget authority and timeline before investing heavily.</div>
+      </div>
+
+      <div class="stakeholder-card neutral">
+        <div class="sk-name">Marcus Reed</div>
+        <div class="sk-title">GM / SVP — Entertainment Services</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-neutral">Executive Coverage</span>
+          <span class="sk-tag tag-unknown">Relationship TBD</span>
+        </div>
+        <div class="sk-note">Senior executive in Salesforce contacts. Determine if Entertainment Services division has separate Backstory deployment or if under the current contract. Potential executive sponsor to cultivate.</div>
+      </div>
+
+      <div class="stakeholder-card neutral">
+        <div class="sk-name">Tessa Monroe</div>
+        <div class="sk-title">Manager / Director — IMES Europe</div>
+        <div class="sk-tags">
+          <span class="sk-tag tag-neutral">EMEA Contact</span>
+        </div>
+        <div class="sk-note">IMES Europe lead — may be the operational counterpart to Camille Arden for European data integration discussion. Involve in EMEA expansion qualification.</div>
+      </div>
+
+    </div>
+
+    <p class="footnote" style="margin-top:12px;">⚠ Rachel Stone (prior AE) departed to OpenAI — all relationships built under prior coverage should be treated as warm but requiring re-anchoring. Mike Wazowski must establish direct rapport with all Tier 1 contacts above within 30 days.</p>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ─── SECTION 5: 30/60/90 Day Plan ─────────────────────────── -->
+  <div class="section" id="plan-306090">
+    <div class="section-title"><span class="section-num">5</span> 30 / 60 / 90 Day Plan</div>
+
+    <div class="timeline">
+      <div class="tl-block tl-30">
+        <div class="tl-header">📅 Days 1–30 &nbsp;· Defend &amp; Close</div>
+        <div class="tl-body">
+          <div class="tl-item">
+            <div class="tl-dot dot-blue"></div>
+            <div><strong>Jul 20 meeting:</strong> Confirm agenda covers IRM Forecasting demo and renewal FY28Q4 scoping. Leave with explicit next steps and timeline.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-blue"></div>
+            <div><strong>Formal proposal to Nora Bennett</strong> for IRM Forecasting — $490K. Tie narrative to August 26 "2 by Twos" rollout deadline. Create urgency via IRM's internal transformation.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-blue"></div>
+            <div><strong>Re-engage Adrian Vale &amp; Elena Brooks</strong> — understand competitive evaluation, surface unmet needs. Involve Maya Hart (CS) for value-delivery conversation.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-blue"></div>
+            <div><strong>Map org reorg impact:</strong> Work with Evan Calder to understand how restructuring affects current seat allocation and renewal scope. Protect existing ACV.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-blue"></div>
+            <div><strong>Call with Owen Mercer &amp; Sam Rowan:</strong> Confirm their role in renewal FY28Q4 — qualify as economic buyers or influencers. Anchor to "2 by Twos" initiative where applicable.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-block tl-60">
+        <div class="tl-header">📅 Days 31–60 &nbsp;· Advance Renewal</div>
+        <div class="tl-body">
+          <div class="tl-item">
+            <div class="tl-dot dot-amber"></div>
+            <div><strong>Close IRM Forecasting ($490K)</strong> by Sep 9 — ensure all internal approvals obtained, procurement engaged, and MSA/SOW path clear.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-amber"></div>
+            <div><strong>Begin formal renewal negotiation</strong> for FY28Q4 — build multi-year proposal incorporating Forecasting win, European integration, and expanded seat coverage.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-amber"></div>
+            <div><strong>Churn ACV investigation:</strong> Identify the $807,840 at-risk modules. Develop retention narrative — quantify ROI delivered on those seats, propose right-sizing vs. cancellation.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-amber"></div>
+            <div><strong>European expansion discovery:</strong> Schedule working session with Camille Arden and Tessa Monroe — qualify EMEA seat requirement and data residency needs.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-amber"></div>
+            <div><strong>Executive sponsor identification:</strong> Target Marcus Reed or equivalent for C-level / SVP relationship. QBR invitation or exec briefing — reinforce strategic partnership.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tl-block tl-90">
+        <div class="tl-header">📅 Days 61–90 &nbsp;· Expand &amp; Lock</div>
+        <div class="tl-body">
+          <div class="tl-item">
+            <div class="tl-dot dot-green"></div>
+            <div><strong>Renewal signed:</strong> Target Renewal FY28Q4 contract executed before Q3 begins — locking $1.5M+ with expansion terms for EMEA and ALM if qualified.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-green"></div>
+            <div><strong>White space qualification — ALM Division:</strong> Initiate discovery with ALM commercial team. Scope Backstory fit for their high-growth (63% YoY) sales motion.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-green"></div>
+            <div><strong>Competitive threat neutralized:</strong> Adrian Vale and Elena Brooks should be converted to neutral or champion by Day 90 — track via CS health score improvements.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-green"></div>
+            <div><strong>QBR / Business Review:</strong> Host a formal QBR with IRM's RevOps leadership — present ROI data, usage metrics, Forecasting module outcomes, and roadmap alignment to IRM's 2026 guidance targets.</div>
+          </div>
+          <div class="tl-item">
+            <div class="tl-dot dot-green"></div>
+            <div><strong>Full account plan refresh:</strong> Update ACV, churn status, stakeholder map, and pipeline projections for H1 2027 planning cycle.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ─── SECTION 6: Risk Register ─────────────────────────────── -->
+  <div class="section" id="risk-register">
+    <div class="section-title"><span class="section-num">6</span> Risk Register</div>
+
+    <div class="risk-item">
+      <div class="risk-severity">
+        <div class="risk-sev-label sev-critical">Critical</div>
+        <div class="risk-sev-bar sev-bar-critical"></div>
+      </div>
+      <div>
+        <div class="risk-title">Competitive Platform Evaluation in Progress</div>
+        <div class="risk-desc">Adrian Vale and Elena Brooks are actively exploring competing platforms (confirmed via Backstory signals). This is an in-progress risk — not hypothetical. If not interrupted, it could result in partial or full displacement at renewal.</div>
+      </div>
+      <div class="risk-owner">Owner: Mike Wazowski + Maya Hart (CS)<br><span style="color:var(--red);font-weight:700;">Act: ≤7 days</span></div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-severity">
+        <div class="risk-sev-label sev-critical">Critical</div>
+        <div class="risk-sev-bar sev-bar-critical"></div>
+      </div>
+      <div>
+        <div class="risk-title">$807,840 Churn ACV Signal</div>
+        <div class="risk-desc">Nearly $808K in ACV has been flagged as churn risk. This represents ~31% of the current contract. Root cause unknown — could be tied to org reorg, dissatisfied power users, or unused modules. Must be diagnosed and addressed before renewal negotiations are finalized.</div>
+      </div>
+      <div class="risk-owner">Owner: Mike Wazowski + Maya Hart<br><span style="color:var(--red);font-weight:700;">Diagnose: ≤14 days</span></div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-severity">
+        <div class="risk-sev-label sev-high">High</div>
+        <div class="risk-sev-bar sev-bar-high"></div>
+      </div>
+      <div>
+        <div class="risk-title">Organizational Restructuring Underway</div>
+        <div class="risk-desc">Evan Calder and Adrian Vale have both raised signals of org reorg activity. Reorgs frequently result in budget reallocation, buyer changes, and contract scope reviews. Existing champion relationships and budget ownership may shift materially before renewal.</div>
+      </div>
+      <div class="risk-owner">Owner: Mike Wazowski<br><span style="color:#e65c00;font-weight:700;">Map: ≤21 days</span></div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-severity">
+        <div class="risk-sev-label sev-high">High</div>
+        <div class="risk-sev-bar sev-bar-high"></div>
+      </div>
+      <div>
+        <div class="risk-title">Prior AE Departure (Rachel Stone → OpenAI)</div>
+        <div class="risk-desc">The prior account owner, Rachel Stone, has departed for OpenAI. Any relationships anchored to her — rather than to Backstory as a company — are at risk of cooling. Mike Wazowski must proactively re-introduce and re-anchor relationships with all Director+ contacts, particularly those with whom he has not yet personally engaged.</div>
+      </div>
+      <div class="risk-owner">Owner: Mike Wazowski<br><span style="color:#e65c00;font-weight:700;">Re-intro: ≤30 days</span></div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-severity">
+        <div class="risk-sev-label sev-medium">Medium</div>
+        <div class="risk-sev-bar sev-bar-medium"></div>
+      </div>
+      <div>
+        <div class="risk-title">Activity Matching Issues (Platform)</div>
+        <div class="risk-desc">Backstory platform has flagged activity matching issues at this account. If contacts' emails or meetings are not being matched correctly to CRM records, ROI measurement degrades and competitive displacement arguments become easier. Requires technical triage.</div>
+      </div>
+      <div class="risk-owner">Owner: Maya Hart (CS) + Solutions<br>Triage: ≤30 days</div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-severity">
+        <div class="risk-sev-label sev-medium">Medium</div>
+        <div class="risk-sev-bar sev-bar-medium"></div>
+      </div>
+      <div>
+        <div class="risk-title">IRM Forecasting Deal Slippage (Sep 9 Target)</div>
+        <div class="risk-desc">The $490K Forecasting opportunity targets September 9 close — aligned to IRM's August 26 "2 by Twos" rollout. If internal approval or procurement is delayed, the urgency narrative weakens and close could slip to Q4. Proposal and mutual close plan must be locked within 14 days.</div>
+      </div>
+      <div class="risk-owner">Owner: Mike Wazowski<br>Proposal: ≤14 days</div>
+    </div>
+
+    <div class="risk-item">
+      <div class="risk-severity">
+        <div class="risk-sev-label sev-low">Low</div>
+        <div class="risk-sev-bar sev-bar-low"></div>
+      </div>
+      <div>
+        <div class="risk-title">Multi-CRM Complexity (Salesforce + HubSpot + Dynamics)</div>
+        <div class="risk-desc">IRM operates three CRM systems concurrently. Data quality, activity attribution, and forecast roll-up across platforms creates integration complexity. Ensure Backstory deployment is mapped to the right systems and that Salesforce is confirmed as primary source of truth.</div>
+      </div>
+      <div class="risk-owner">Owner: Solutions / CS<br>Confirm scope in QBR</div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ─── SECTION 7: Executive Summary ─────────────────────────── -->
+  <div class="section" id="exec-summary">
+    <div class="section-title"><span class="section-num">7</span> Executive Summary</div>
+
+    <div class="exec-box">
+      <h3>Windy City Storage — Account at an Inflection Point</h3>
+      <p>
+        Windy City Storage is Backstory's highest-profile account in Mike Wazowski's territory — a $2.58M ARR Strategic account, fully engaged (Eng=100), with $1.99M in live pipeline and a renewal due May 27, 2027. The company is in a period of accelerating transformation: record FY25 revenue of $6.9B, a "2 by Twos" sales initiative launching August 26, and hypergrowth in Data Centers (+30%) and ALM (+63%). This is precisely the environment where Backstory's forecast accuracy and sales activity intelligence should be indispensable.
+      </p>
+      <p style="margin-top:12px;">
+        However, this account carries meaningful risk that must be addressed before expansion is pursued. A $807,840 churn signal, a live competitive evaluation by Adrian Vale and Elena Brooks, an org reorg in progress, and the departure of the prior AE (Rachel Stone to OpenAI) create a fragile foundation. The single most important priority in the next 30 days is defending the existing base — neutralizing competitive risk, diagnosing churn, and re-anchoring relationships — before accelerating pipeline.
+      </p>
+      <p style="margin-top:12px;">
+        If both opportunities close as planned (Forecasting $490K by Sep 9, Renewal $1.5M by May 28), and churn is contained, Mike Wazowski's path to $3M+ ARR on this account is well-structured. The "2 by Twos" urgency, the European expansion with Camille Arden, and the untouched ALM and Data Center divisions provide a credible expansion story through H1 2027 and beyond.
+      </p>
+      <div class="exec-pills">
+        <div class="exec-pill">$2.58M Current ARR</div>
+        <div class="exec-pill">$1.99M Pipeline</div>
+        <div class="exec-pill">$807K Churn Risk</div>
+        <div class="exec-pill">Renewal May 2027</div>
+        <div class="exec-pill">Competitive Eval Active</div>
+        <div class="exec-pill">Org Reorg In Progress</div>
+        <div class="exec-pill">August 26 Initiative Urgency</div>
+        <div class="exec-pill">EMEA Expansion Qualifying</div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="col-block">
+        <div class="col-block-title">🔴 Immediate Actions Required (≤7 days)</div>
+        <ul class="check-list x-list" style="list-style:none;">
+          <li>Re-engage Adrian Vale &amp; Elena Brooks — surface competitive evaluation concerns</li>
+          <li>Begin churn ACV diagnosis ($807,840) — involve CS (Maya Hart)</li>
+          <li>Confirm Jul 20 meeting agenda — Forecasting demo + renewal scoping</li>
+          <li>Deliver formal proposal to Nora Bennett within 14 days</li>
+        </ul>
+      </div>
+      <div class="col-block">
+        <div class="col-block-title">🟢 Wins to Protect &amp; Accelerate</div>
+        <ul class="check-list">
+          <li>Eng=100 — maximum engagement maintained, leverage for expansion conversation</li>
+          <li>IRM Forecasting at Eng=98 — near-term close opportunity timed to IRM's August 26 initiative</li>
+          <li>Renewal FY28Q4 structured with strong stakeholder engagement from Owen Mercer &amp; Sam Rowan</li>
+          <li>EMEA expansion thread active with Camille Arden — qualifying now</li>
+          <li>5 historical Closed Won opportunities — proven track record with this account</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="alert alert-green">
+      <div class="alert-icon">🎯</div>
+      <div class="alert-content">
+        <div class="alert-title">Target Outcome — 90 Days</div>
+        IRM Forecasting closed ($490K) · Churn ACV defended · Renewal negotiation advanced to signed or near-signed · Competitive evaluation neutralized · EMEA expansion scoped · QBR completed · Path to $3M+ ARR documented
+      </div>
+    </div>
+
+    <p class="footnote" style="text-align:center; margin-top:20px;">
+      Windy City Storage strategic account review &nbsp;·&nbsp; Backstory Revenue Intelligence Platform &nbsp;·&nbsp; Account executive: Mike Wazowski &nbsp;·&nbsp; Last refreshed August 10, 2026
+    </p>
+  </div>
+
+</div><!-- /content -->
+</body>
+</html>

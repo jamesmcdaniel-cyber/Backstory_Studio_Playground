@@ -1146,6 +1146,8 @@ model FlowRun {
   @@index([status, resumeAt])
   // Per-org in-flight count — flows and agents share one worker-slot budget.
   @@index([organizationId, status])
+  // Workspace-wide execution log: newest runs for one tenant without a table scan.
+  @@index([organizationId, startedAt])
   @@map("flow_runs")
 }
 

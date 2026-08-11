@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useFlowImport } from '@/components/flows/use-flow-import'
 import { FlowIconInput } from '@/components/flows/flow-icon-input'
 import { FlowTemplateGallery } from '@/components/flows/flow-template-gallery'
+import { FlowExecutionLog } from '@/components/flows/execution-log'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -491,6 +492,8 @@ export default function FlowsPage() {
           )}
         </>
       )}
+
+      {!loading && flows.length > 0 && <FlowExecutionLog />}
 
       {/* The full template catalogue lives on this page — every flow template,
           category-filterable and paged, so nobody has to detour through the

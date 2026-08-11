@@ -10,16 +10,25 @@ import { deadLetterFromFlowJob } from '@/lib/queue/flow-dead-letter'
 import { deadLetterFromTemplateGenerationJob } from '@/lib/queue/template-generation-dead-letter'
 import { executeTemplateGenerationJob } from '@/lib/templates/generation-queue'
 import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
+import { runDispatchTick } from '@/lib/scheduling/dispatch-tick'
 import { assertWorkerEnv } from '@/lib/workers/assert-env'
 import { initSentry, captureError, flushErrorReporting } from '@/lib/observability/sentry'
 import { processOutboxBatch } from '@/lib/outbox'
 import { isCustomerEdition } from '@/lib/edition'
+
+/**
+ * How often the worker drives the scheduling tick. 60s, against the Vercel
+ * cron's 15 minutes — this is what makes the every15min/every30min cadences
+ * real rather than aspirational.
+ */
+const DISPATCH_TICK_INTERVAL_MS = 60_000
 
 class WorkerRuntime {
   private server = Fastify({ logger: true })
   private scheduleTimer?: NodeJS.Timeout
   private outboxTimer?: NodeJS.Timeout
   private heartbeatTimer?: NodeJS.Timeout
+  private dispatchTimer?: NodeJS.Timeout
   // handler is typed as the generic BullMQ Processor so this array (mixing
   // the agent- and flow-job handler signatures) unifies to one element type —
   // each queue is still wired to its own correctly-typed handler at runtime.
@@ -78,6 +87,7 @@ class WorkerRuntime {
       if (this.scheduleTimer) clearInterval(this.scheduleTimer)
       if (this.outboxTimer) clearInterval(this.outboxTimer)
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+      if (this.dispatchTimer) clearInterval(this.dispatchTimer)
       await this.server.close()
       await Promise.all(this.workers.map((worker) => worker.close()))
       await flushErrorReporting()
@@ -123,6 +133,17 @@ class WorkerRuntime {
     this.outboxTimer = setInterval(() => {
       processOutboxBatch().catch((error) => this.server.log.error(error, 'Outbox delivery failed'))
     }, 15_000)
+    // Dispatch tick: the worker plane drives scheduling too, at 60s instead of
+    // the Vercel cron's 15 minutes. Both planes call the SAME function behind a
+    // Redis lock (tick-lock.ts), so running both is safe and either surviving
+    // alone keeps schedules firing.
+    //
+    // Deliberately NOT run at boot the way registerAgentSchedules is: a fleet
+    // rolling three machines would fire three ticks seconds apart. The lock
+    // makes that harmless but pointless — the first interval is soon enough.
+    this.dispatchTimer = setInterval(() => {
+      runDispatchTick().catch((error) => this.server.log.error(error, 'Dispatch tick failed'))
+    }, DISPATCH_TICK_INTERVAL_MS)
     await this.server.listen({ port, host: '0.0.0.0' })
   }
 }

@@ -32,6 +32,14 @@
 # the web app refuses to enqueue flow runs when it is >2 min stale, and
 # /api/health reports its age. A healthy fleet with a stale heartbeat means
 # split-brain Redis — the exact render.yaml trap above.
+#
+# The worker ALSO drives the scheduling tick every 60s (dispatch-tick.ts),
+# behind a Redis lock shared with the Vercel cron entry in vercel.json. Both
+# planes are safe to run together; either surviving alone keeps schedules
+# firing. This is what makes the "every 15 minutes" cadence real — the cron
+# alone could only ever deliver 15-minute granularity with 15 minutes of
+# drift, and a paused cron stopped every scheduled flow silently.
+# /api/health reports the last tick's age as `queueConsumers.tick`.
 
 app = "backstory-worker"
 primary_region = "iad"

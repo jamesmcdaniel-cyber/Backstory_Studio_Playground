@@ -1139,8 +1139,9 @@ model FlowRun {
   organizationId    String    @db.Uuid
   userId            String?
 
-  flow  Flow          @relation(fields: [flowId], references: [id], onDelete: Cascade)
-  steps FlowRunStep[]
+  flow        Flow             @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  steps       FlowRunStep[]
+  sideEffects FlowSideEffect[]
 
   @@index([flowId, startedAt])
   @@index([status, resumeAt])
@@ -1224,6 +1225,41 @@ model FlowRunStep {
 
   @@index([flowRunId, order])
   @@map("flow_run_steps")
+}
+
+/// Ledger of completed flow side effects, so a replayed step returns what the
+/// first attempt produced instead of firing the write a second time.
+///
+/// Idempotency HEADERS only ever reached HTTP steps (one call site), and most
+/// Nango/MCP providers ignore an unrecognized `idempotency-key` anyway. This is
+/// what makes tool writes on every plane — Slack, Gmail, Drive, any delivery
+/// tool — actually replay-safe.
+model FlowSideEffect {
+  id String @id @default(cuid())
+  /// The idempotency SCOPE. Normally the flow run id; for poll-triggered runs
+  /// `${flowId}:${dedupeValue}`, so two runs for the same polled item share
+  /// keys and the second replays instead of re-firing. See runScopeKey.
+  scopeKey       String
+  /// Node id, or `${nodeId}#${index}` inside a per-item/loop step — the same
+  /// key the step-persistence layer uses, so a loop iteration gets its own row.
+  iterationKey   String
+  /// Pagination index for paged HTTP steps; 0 for everything else.
+  page           Int      @default(0)
+  organizationId String   @db.Uuid
+  provider       String
+  tool           String
+  result         Json
+  createdAt      DateTime @default(now())
+
+  /// Nullable + SetNull: a poll-scoped row must OUTLIVE the run that wrote it,
+  /// or deleting that run would silently drop the dedupe protection. Retention
+  /// sweeps these on the ledger's own createdAt — see /api/cron/retention.
+  flowRunId String?
+  run       FlowRun? @relation(fields: [flowRunId], references: [id], onDelete: SetNull)
+
+  @@unique([scopeKey, iterationKey, page])
+  @@index([organizationId, createdAt])
+  @@map("flow_side_effects")
 }
 
 /// A file uploaded as knowledge for an agent. We store the EXTRACTED TEXT (no

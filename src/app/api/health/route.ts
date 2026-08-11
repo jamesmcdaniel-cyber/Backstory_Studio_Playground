@@ -73,6 +73,9 @@ async function runProbes(): Promise<HealthSnapshot> {
           // total > 0 deserves eyes) and worker heartbeat freshness.
           ...('deadLetters' in queueConsumers && queueConsumers.deadLetters ? { deadLetters: queueConsumers.deadLetters } : {}),
           ...('heartbeat' in queueConsumers && queueConsumers.heartbeat ? { heartbeat: queueConsumers.heartbeat } : {}),
+          // Dispatch-tick freshness: a paused/deleted Vercel cron with no worker
+          // plane stops every scheduled flow, and nothing else here would show it.
+          ...('tick' in queueConsumers && queueConsumers.tick ? { tick: queueConsumers.tick } : {}),
         },
         secrets: { encrypted: encryptionConfigured() },
       },

@@ -2,6 +2,7 @@ import { Queue } from 'bullmq'
 import { QUEUE_NAMES, workersEnabled, getRedisConnection } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
 import { workerHeartbeatAgeMs, WORKER_HEARTBEAT_STALE_MS } from '@/lib/queue/heartbeat'
+import { readTickLiveness, tickAge, isTickFresh } from '@/lib/queue/tick-liveness'
 
 /**
  * Health probe for the queue plane's CONSUMER side.
@@ -53,6 +54,13 @@ export interface QueueConsumerCheck {
   deadLetters?: { total: number; queues: string[] }
   /** Worker liveness heartbeat (see heartbeat.ts): age of the newest write. */
   heartbeat?: { ageMs: number | null; fresh: boolean }
+  /**
+   * Dispatch-tick liveness (see tick-liveness.ts): age of the last completed
+   * scheduling tick. Separate from `heartbeat` because the two fail
+   * independently — a healthy worker fleet dispatching nothing, or a cron
+   * dispatching with no worker, are different outages.
+   */
+  tick?: { ageMs: number | null; fresh: boolean }
   error?: string
 }
 
@@ -123,7 +131,7 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
     return { configured: false, ok: true, stranded: [] }
   }
   try {
-    const [reports, deadLetterCounts, heartbeatAge] = await withTimeout(
+    const [reports, deadLetterCounts, heartbeatAge, tickRaw] = await withTimeout(
       Promise.all([
         Promise.all(
           CRITICAL_QUEUES.map(async (name): Promise<QueueConsumerReport> => {
@@ -145,17 +153,26 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
           }),
         ),
         workerHeartbeatAgeMs(),
+        readTickLiveness(),
       ]),
     )
     const heartbeatFresh = heartbeatAge !== null && heartbeatAge <= WORKER_HEARTBEAT_STALE_MS
+    const now = Date.now()
     return {
       configured: true,
+      // Tick liveness is REPORTED, not folded into `ok`: a stale tick with a
+      // healthy fleet is a real alert, but failing this check would make Fly
+      // recycle machines that are consuming jobs perfectly well.
       ...consumerVerdict(reports, heartbeatFresh),
       reports,
       deadLetters: deadLetterVerdict(deadLetterCounts),
       heartbeat: {
         ageMs: heartbeatAge,
         fresh: heartbeatFresh,
+      },
+      tick: {
+        ageMs: tickAge(tickRaw, now),
+        fresh: isTickFresh(tickRaw, now),
       },
     }
   } catch (error) {

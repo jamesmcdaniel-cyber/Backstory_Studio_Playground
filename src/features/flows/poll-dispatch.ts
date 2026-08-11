@@ -5,7 +5,7 @@ import { resolveFlowToolExecutor } from '@/features/agents/tool-planes'
 import { prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
 import { pageItems } from '@/lib/flows/http-pagination'
-import { newPollItems, type PollCursor } from '@/lib/flows/poll'
+import { newPollItems, pollItemKey, type PollCursor } from '@/lib/flows/poll'
 import { dispatchFlowExecution } from './execute-flow'
 
 type PollFlow = {
@@ -63,11 +63,18 @@ export async function runFlowPoll(flow: PollFlow, userId: string, now: Date): Pr
   const result = flowToolOutput(await executor.execute(toolName, args))
   const items = pageItems(result, typeof trigger.itemsPath === 'string' ? trigger.itemsPath : undefined)
   const cursor = (flow.pollCursor && typeof flow.pollCursor === 'object' ? flow.pollCursor : undefined) as PollCursor | undefined
-  const { fresh, nextCursor } = newPollItems(items, String(trigger.dedupeKey || 'id'), cursor)
+  const dedupeKeyField = String(trigger.dedupeKey || 'id')
+  const { fresh, nextCursor } = newPollItems(items, dedupeKeyField, cursor)
 
   // Dispatch first, then persist the cursor — at-least-once, so a crash between
   // the two re-emits (a downstream dedupe is cheaper than silently losing an
   // item). The batch mode starts the flow once with all new items as input.
+  //
+  // That re-emit is what `dedupeValue` covers: the run carries the item's
+  // identity, so runScopeKey scopes its side-effect ledger by the ITEM rather
+  // than the run id, and a second run for the same item REPLAYS its writes
+  // instead of firing them again. The "downstream dedupe" this comment has
+  // always promised is now real.
   if (trigger.emit === 'batch') {
     if (fresh.length) {
       await dispatchFlowExecution({
@@ -76,6 +83,8 @@ export async function runFlowPoll(flow: PollFlow, userId: string, now: Date): Pr
         userId,
         input: fresh,
         usePublished: true,
+        // No dedupeValue: a batch has no single item to key on, so it falls
+        // back to run-scoped keys (today's behavior).
         trigger: { type: 'poll' },
       })
     }
@@ -87,7 +96,7 @@ export async function runFlowPoll(flow: PollFlow, userId: string, now: Date): Pr
         userId,
         input: item,
         usePublished: true,
-        trigger: { type: 'poll' },
+        trigger: { type: 'poll', dedupeValue: pollItemKey(item, dedupeKeyField) },
       })
     }
   }

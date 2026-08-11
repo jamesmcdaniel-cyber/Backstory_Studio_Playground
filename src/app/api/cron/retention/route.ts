@@ -157,6 +157,21 @@ export async function GET(request: Request) {
       where: { createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
     })).count
 
+    // Side-effect ledger rows outlive their run ON PURPOSE (flowRunId is
+    // nullable with ON DELETE SET NULL, so poll-scoped rows keep working after
+    // the run is gone) — which means run retention never reaches them and they
+    // would otherwise grow without bound. Swept on their own age instead.
+    //
+    // The horizon must EXCEED the longest poll cadence, or the duplicate window
+    // reopens: a re-emitted item whose ledger row was already swept fires its
+    // writes again. 30 days is far beyond any cadence the picker offers
+    // (every15min through days-of-week), with room to spare.
+    // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
+    const ledgerDays = Number(process.env.SIDE_EFFECT_RETENTION_DAYS) || 30
+    const sideEffectsPruned = (await systemPrisma.flowSideEffect.deleteMany({
+      where: { createdAt: { lt: new Date(Date.now() - ledgerDays * 24 * 60 * 60 * 1000) } },
+    })).count
+
     // LlmCall detail ages out at 90 days. The denormalized costUsd totals on
     // AgentExecution/FlowRun survive, so historical run cost stays visible
     // after the per-call breakdown is gone.
@@ -165,8 +180,8 @@ export async function GET(request: Request) {
       where: { createdAt: { lt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) } },
     })).count
 
-    apiLogger.info('cron/retention complete', { days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned })
-    return Response.json({ success: true, days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned })
+    apiLogger.info('cron/retention complete', { days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned, sideEffectsPruned })
+    return Response.json({ success: true, days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned, sideEffectsPruned })
   } catch (error) {
     apiLogger.error('cron/retention failed', { error: error instanceof Error ? error.message : String(error) })
     return Response.json({ success: false, error: 'Internal server error' }, { status: 500 })

@@ -122,6 +122,32 @@ if (TEST_DB) {
     assert.equal(row.flowRunId, null)
   })
 
+  test('ledger rows older than the retention horizon are swept', async () => {
+    // Run retention cannot reach these (flowRunId is SetNull, so poll-scoped
+    // rows survive their run), which is exactly why they need their own sweep.
+    const scopeKey = `run-old-${Date.now()}`
+    await write(scopeKey, 'send', { ok: true })
+    await prisma.flowSideEffect.updateMany({
+      where: { scopeKey, organizationId: ids.org },
+      data: { createdAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) },
+    })
+
+    const ledgerDays = 30
+    await prisma.flowSideEffect.deleteMany({
+      where: { createdAt: { lt: new Date(Date.now() - ledgerDays * 24 * 60 * 60 * 1000) }, organizationId: ids.org },
+    })
+    assert.equal(await prisma.flowSideEffect.count({ where: { scopeKey, organizationId: ids.org } }), 0)
+  })
+
+  test('a fresh ledger row survives the retention sweep', async () => {
+    const scopeKey = `run-fresh-keep-${Date.now()}`
+    await write(scopeKey, 'send', { ok: true })
+    await prisma.flowSideEffect.deleteMany({
+      where: { createdAt: { lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }, organizationId: ids.org },
+    })
+    assert.equal(await prisma.flowSideEffect.count({ where: { scopeKey, organizationId: ids.org } }), 1)
+  })
+
   test('a ledger read failure degrades to a miss rather than failing the step', async () => {
     // A malformed key cannot match; the helper must return null, not throw.
     await assert.doesNotReject(

@@ -43,6 +43,7 @@ import { captureError } from '@/lib/observability/sentry'
 import { processOutboxBatch } from '@/lib/outbox'
 import { reapStuckApprovals } from '@/lib/approvals/reap'
 import { sweepMcpConnectionHealth } from '@/lib/mcp/health-sweep'
+import { sweepFlowReflection } from '@/lib/flows/reflection-sweep'
 import { withTickLock } from '@/lib/queue/tick-lock'
 import { writeTickLiveness } from '@/lib/queue/tick-liveness'
 
@@ -74,6 +75,7 @@ export type DispatchTickSummary =
       ranFlows: string[]
       resumedWaits: string[]
       generatedOrgs: string[]
+      reflectedFlows: string[]
       outbox: { delivered: number; retried: number; failed: number }
       reapedApprovals: number
       mcpHealth: { checked: number; unhealthy: number; changed: number }
@@ -618,6 +620,17 @@ export async function runDispatchTick(
       captureError(error, { source: 'cron.dispatch.templateGeneration' })
     }
 
+    // Flow reflection: a daily, per-flow-debounced pass that turns a REPEATED
+    // failure into one proposal instead of N identical failed runs. Isolated so
+    // a reflection failure never aborts the dispatch tick.
+    let reflectedFlows: string[] = []
+    try {
+      reflectedFlows = await sweepFlowReflection(now)
+    } catch (error) {
+      apiLogger.error('cron/dispatch: flow reflection sweep failed', { error: capError(error) })
+      captureError(error, { source: 'cron.dispatch.flowReflection' })
+    }
+
     return {
       success: true,
       due: dueCount,
@@ -625,6 +638,7 @@ export async function runDispatchTick(
       ranFlows: ranFlowIds,
       resumedWaits: resumedWaitIds,
       generatedOrgs,
+      reflectedFlows,
       outbox,
       reapedApprovals,
       mcpHealth,

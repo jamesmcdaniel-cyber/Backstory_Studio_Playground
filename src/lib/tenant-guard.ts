@@ -53,6 +53,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'PeopleAiConnection', 'McpConnection', 'NangoConnection', 'IntegrationSecret',
   'HttpCredential',
   'Flow', 'FlowTemplate', 'FlowTemplateVersion', 'FlowVersion', 'FlowEditSnapshot', 'FlowRun',
+  'FlowSideEffect',
   'HuddleSegment', 'HuddleNote', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
   'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent',
   // PLATFORM config, listed here only because it carries a required

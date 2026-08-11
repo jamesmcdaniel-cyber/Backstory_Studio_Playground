@@ -1129,6 +1129,12 @@ model FlowRun {
   executionManifest Json?
   startedAt         DateTime  @default(now())
   finishedAt        DateTime?
+  /// The scheduled occurrence this run belongs to (see dueOccurrence). Null for
+  /// interactive, signal, webhook, subflow, and poll runs — the unique index
+  /// below therefore binds only scheduled dispatch, so two ticks racing on one
+  /// occurrence produce ONE run and the loser gets P2002. Duplicate protection
+  /// used to be a read-then-act check that could not stop a true race.
+  scheduledFor      DateTime?
   // When a `wait` step pauses the run on a timer, the wall-clock time it should
   // resume. The cron scan wakes waiting runs whose resumeAt is due. Null for
   // runs waiting on a human reply / approval / open-ended webhook callback.
@@ -1143,6 +1149,7 @@ model FlowRun {
   steps       FlowRunStep[]
   sideEffects FlowSideEffect[]
 
+  @@unique([flowId, scheduledFor])
   @@index([flowId, startedAt])
   @@index([status, resumeAt])
   // Per-org in-flight count — flows and agents share one worker-slot budget.

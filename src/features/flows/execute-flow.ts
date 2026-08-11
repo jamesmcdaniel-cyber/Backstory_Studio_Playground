@@ -70,6 +70,13 @@ export type FlowExecutionJob = {
   usePublished?: boolean
   // How this run was started — persisted on the FlowRun for provenance.
   trigger?: { type: 'manual' | 'schedule' | 'webhook' | 'signal' | 'subflow' | 'poll'; [key: string]: unknown }
+  /**
+   * The scheduled occurrence this run belongs to (see dueOccurrence). Set ONLY
+   * by scheduled dispatch; everything else leaves it undefined and is exempt
+   * from the (flowId, scheduledFor) unique index. Two ticks racing on one
+   * occurrence therefore produce one run, and the loser gets P2002.
+   */
+  scheduledFor?: Date | null
   // How many subflow hops deep this run already is (0/omitted = top-level).
   // Each subflow step dispatch passes depth + 1; the guard caps nesting.
   subflowDepth?: number
@@ -312,6 +319,9 @@ async function createFlowRunRow(
       ...(job.overrides && Object.keys(job.overrides).length
         ? { stateOverrides: jsonValue(job.overrides) }
         : {}),
+      // Null for everything except scheduled dispatch, which is what keeps the
+      // unique index bound to scheduled runs only.
+      ...(job.scheduledFor ? { scheduledFor: job.scheduledFor } : {}),
       organizationId: job.organizationId,
       userId: job.userId,
     },

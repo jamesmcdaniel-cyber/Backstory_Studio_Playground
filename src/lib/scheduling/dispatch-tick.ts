@@ -32,7 +32,7 @@ import { resolveRunOwners, type OwnedCandidate } from '@/lib/scheduling/owners'
 import { OrgCapacity, orgMaxInFlightRuns } from '@/lib/queue/org-capacity'
 import { parseFlowInput } from '@/lib/flows/input'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
-import { isDue, type AgentSchedule } from '@/lib/scheduling/due'
+import { isDue, dueOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
 import { workersEnabled } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
@@ -326,19 +326,44 @@ export async function runDispatchTick(
         // system prompt itself, so composing here too would double-apply them.
         const input = agent.objective
 
+        // Occurrence identity for this run. Reuses the EXISTING
+        // @@unique([organizationId, idempotencyKey]) that signal-triggered runs
+        // already use (`${signalId}:${agentId}`) — no migration needed.
+        const schedule = agent.schedule as unknown as AgentSchedule
+        const occurrence = dueOccurrence(schedule, previousLastExecutedAt, now)
+
         // Create the execution row in pending state
-        const execution = await prisma.agentExecution.create({
-          data: {
-            agentType: agent.agentType,
-            agentTaskId: agent.id,
-            status: 'pending',
-            input: { prompt: input },
-            trigger: { type: 'schedule' },
-            metadata: { title: (metadata.title as string) || agent.description },
-            userId: user.id,
-            organizationId: agent.organizationId,
-          },
-        })
+        let execution
+        try {
+          execution = await prisma.agentExecution.create({
+            data: {
+              agentType: agent.agentType,
+              agentTaskId: agent.id,
+              status: 'pending',
+              input: { prompt: input },
+              trigger: { type: 'schedule' },
+              metadata: { title: (metadata.title as string) || agent.description },
+              userId: user.id,
+              organizationId: agent.organizationId,
+              ...(occurrence ? { idempotencyKey: `schedule:${agent.id}:${occurrence.toISOString()}` } : {}),
+            },
+          })
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+            // Another tick already claimed this occurrence. This tick advanced
+            // the marker for a run that belongs to the tick that won, so give
+            // it back rather than consuming an occurrence we never ran.
+            await restoreAgentOccurrence({
+              agentId: agent.id,
+              organizationId: agent.organizationId,
+              executionId: null,
+              previousLastExecutedAt,
+              previousExecutionCount,
+            })
+            continue
+          }
+          throw error
+        }
 
         try {
           // Enqueue rather than run here. Inline (dev/CI) still executes in the
@@ -425,7 +450,15 @@ export async function runDispatchTick(
     // Pass 1 — decide who is due, cheaply and with no side effects, so the cap
     // below is applied to a complete picture rather than to whatever the scan
     // happened to reach first.
-    type DueFlow = { flow: (typeof flowScan.rows)[number]; trigger: FlowTrigger; isPoll: boolean; lastExecuted: Date | null }
+    type DueFlow = {
+      flow: (typeof flowScan.rows)[number]
+      trigger: FlowTrigger
+      isPoll: boolean
+      lastExecuted: Date | null
+      // Null for polls (their cadence is pollCursor.lastPolledAt, not an
+      // occurrence grid) — the ledger is their duplicate protection instead.
+      occurrence: Date | null
+    }
     const dueFlowsAll: DueFlow[] = []
     for (const flow of flowScan.rows) {
       const trigger = flow.trigger as FlowTrigger | null
@@ -456,7 +489,13 @@ export async function runDispatchTick(
         if (!triggerConditionPasses(trigger, parseFlowInput(trigger.input ?? ''))) continue
       }
 
-      dueFlowsAll.push({ flow, trigger, isPoll, lastExecuted })
+      dueFlowsAll.push({
+        flow,
+        trigger,
+        isPoll,
+        lastExecuted,
+        occurrence: isPoll ? null : dueOccurrence(schedule, lastExecuted, now),
+      })
     }
 
     const dueFlows = stalestFirst(dueFlowsAll, (entry) => entry.lastExecuted).slice(0, MAX_FLOWS_PER_TICK)
@@ -479,7 +518,7 @@ export async function runDispatchTick(
 
     // Pass 2 — dispatch.
     const ranFlowIds: string[] = []
-    for (const { flow, trigger, isPoll } of flowPrep ? dueFlows : []) {
+    for (const { flow, trigger, isPoll, occurrence } of flowPrep ? dueFlows : []) {
       try {
         if (!flowCapacity!.tryClaim(flow.organizationId)) continue
         const ownerId = flowOwners!.get(flow.id)
@@ -501,9 +540,14 @@ export async function runDispatchTick(
           input: parseFlowInput(trigger.input ?? ''),
           usePublished: true,
           trigger: { type: 'schedule' },
+          scheduledFor: occurrence,
         })
         ranFlowIds.push(flow.id)
       } catch (error) {
+        // P2002 means another tick already claimed this occurrence — the
+        // constraint doing its job, not a failure. The overlap guard above is
+        // only a cheap pre-filter; this is the authority.
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') continue
         apiLogger.error('cron/dispatch: flow dispatch failed, skipping', {
           flowId: flow.id,
           organizationId: flow.organizationId,

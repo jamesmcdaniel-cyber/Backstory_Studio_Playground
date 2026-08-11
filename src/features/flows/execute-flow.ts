@@ -54,6 +54,7 @@ import { runFlowCode } from './code-runner'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
 import { flowSideEffectKey, withIdempotencyHeader } from '@/lib/flows/idempotency'
+import { runScopeKey, readLedger, writeLedger, LEDGER_REPLAY_WARNING } from '@/lib/flows/side-effect-ledger'
 import { flowSignalOutboxEvent } from '@/lib/outbox'
 
 export type FlowExecutionJob = {
@@ -850,8 +851,19 @@ export async function runFlowExecution(
     }
   }
 
+  // The idempotency scope for every side effect in this run. Normally the run
+  // id; poll-triggered runs scope by the polled item instead, so a re-emitted
+  // item replays rather than firing its writes again. See runScopeKey.
+  const scopeKey = runScopeKey({ id: run.id, flowId: run.flowId, trigger: run.trigger })
+
   // Deterministic steps: MCP tool calls and HTTP requests. Same FlowRunStep
   // bookkeeping as agent steps so the run panel shows their input/output.
+  //
+  // NOTE on keys: the interpreter calls this with `id: stepKey`, which is the
+  // per-iteration `${nodeId}#${index}` inside a loop (see interpret.ts's
+  // runAction call sites). So `node.id` IS the iteration key — using it as the
+  // ledger's iterationKey is per-iteration correct, exactly as the approval
+  // correlation below already relies on.
   const runActionStep: RunActionFn = async (node) => {
     const step = await prisma.flowRunStep.create({
       data: {
@@ -876,7 +888,13 @@ export async function runFlowExecution(
     })
     // Conditional on 'running' for the same reason as agent steps: the
     // end-of-run failure sweep is authoritative over any late adapter write.
-    const finish = async (patch: { status: string; output?: unknown; error?: string; logs?: string[] }) => {
+    const finish = async (patch: {
+      status: string
+      output?: unknown
+      error?: string
+      logs?: string[]
+      warnings?: string[]
+    }) => {
       await prisma.flowRunStep.updateMany({
         where: { id: step.id, status: 'running' },
         data: {
@@ -884,6 +902,10 @@ export async function runFlowExecution(
           output: patch.output !== undefined ? jsonValue(patch.output) : undefined,
           error: patch.error ? patch.error.slice(0, 300) : undefined,
           logs: patch.logs && patch.logs.length ? jsonValue(patch.logs) : undefined,
+          // Degraded-success notes (e.g. a ledger replay): without this the
+          // replay would be invisible in the run panel and the step would read
+          // as a fresh call that never happened.
+          warnings: patch.warnings && patch.warnings.length ? jsonValue(patch.warnings) : undefined,
           finishedAt: new Date(),
         },
       })
@@ -942,6 +964,20 @@ export async function runFlowExecution(
         // cancelled — the write may still land, so retrying could execute the
         // side effect twice. Hard errors keep the retry budget. (HTTP steps
         // below abort the request on timeout, so they may retry.)
+        // Replay guard. A retry, a resumed run, or a re-emitted poll item can
+        // reach this line for a write that ALREADY landed at the provider —
+        // idempotency headers never covered tool planes (one HTTP call site,
+        // and most Nango/MCP providers ignore an unknown header anyway). The
+        // ledger is what makes that a local no-op.
+        const ledgerKey = { scopeKey, iterationKey: node.id, page: 0 }
+        const recorded = await readLedger({ ...ledgerKey, organizationId: job.organizationId })
+        if (recorded) {
+          // Say so rather than pretending the call happened again — no audit
+          // entry either, since no tool call occurred.
+          await finish({ status: 'succeeded', output: recorded.result, warnings: [LEDGER_REPLAY_WARNING] })
+          return { output: recorded.result }
+        }
+
         const output = await runWithRetries(
           async () => flowToolOutput(await executor.execute(toolName, args)),
           {
@@ -954,6 +990,15 @@ export async function runFlowExecution(
               : undefined,
           },
         )
+
+        await writeLedger({
+          ...ledgerKey,
+          organizationId: job.organizationId,
+          provider: executor.provider,
+          tool: toolName,
+          result: output,
+          flowRunId: run.id,
+        })
         // Immutable audit trail, mirroring the agent loop's tool execution:
         // every plane is recorded; write/delivery planes are the consequential
         // ones. Args are hashed by recordAudit, never stored raw.

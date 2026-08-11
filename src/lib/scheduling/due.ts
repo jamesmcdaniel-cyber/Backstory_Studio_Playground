@@ -261,6 +261,69 @@ export function isDue(
 }
 
 /**
+ * WHICH occurrence is owed right now, where `isDue` reports only WHETHER one is.
+ *
+ * Its value becomes `FlowRun.scheduledFor` and the scheduled agent's
+ * idempotency key, so two concurrent ticks that both notice the same owed
+ * occurrence compute the SAME instant and the unique index rejects the second.
+ * Before this, duplicate protection was a read-then-act check (blocksSchedule)
+ * that cannot stop a true race.
+ *
+ * CONTRACT: returns non-null exactly when `isDue` returns true for the same
+ * inputs. The leading `isDue` call guarantees that by construction, and a
+ * property test pins it — if you change one, change both.
+ *
+ * Pure function — no side effects.
+ */
+export function dueOccurrence(
+  schedule: AgentSchedule,
+  lastExecutedAt: Date | null,
+  now: Date,
+): Date | null {
+  if (!isDue(schedule, lastExecutedAt, now)) return null
+  const MINUTE_MS = 60_000
+  const HOUR_MS = 60 * MINUTE_MS
+
+  switch (schedule.type) {
+    case 'once': {
+      const [y, mo, d] = (schedule.runAt ?? '').split('-').map(Number)
+      return instantForDate(y, mo, d, schedule.time || '09:00', schedule.timezone || 'UTC')
+    }
+
+    case 'hourly':
+      // Hourly has NO grid: isDue defines it as "60 real minutes since the last
+      // run", so there is no true occurrence instant to name. The hour-floor of
+      // `now` is stable across ticks minutes apart, which is all the constraint
+      // needs. Documented approximation — see the design doc.
+      return new Date(Math.floor(now.getTime() / HOUR_MS) * HOUR_MS)
+
+    case 'daily':
+    case 'weekly':
+      return todayInstant(schedule.time || '00:00', schedule.timezone || 'UTC', now)
+
+    case 'cron': {
+      // The LATEST matching minute in the same window isDue scanned, so a tick
+      // at 13:07 for "0 9 * * *" reports 09:00 — the occurrence — not 13:07.
+      const tz = schedule.timezone || 'UTC'
+      const DEFAULT_LOOKBACK_MS = 25 * 60 * 60 * 1000
+      const MAX_LOOKBACK_MS = 400 * 24 * 60 * 60 * 1000
+      const last = effectiveLast(schedule, lastExecutedAt)
+      const sinceMs = last ? last.getTime() : now.getTime() - DEFAULT_LOOKBACK_MS
+      const flooredSince = Math.max(sinceMs, now.getTime() - MAX_LOOKBACK_MS)
+      let cursor = Math.floor(now.getTime() / MINUTE_MS) * MINUTE_MS
+      while (cursor > flooredSince) {
+        if (matchesCron(schedule.cron, tz, new Date(cursor))) return new Date(cursor)
+        cursor -= MINUTE_MS
+      }
+      return null
+    }
+
+    default:
+      return null
+  }
+}
+
+/**
  * Returns the next UTC instant strictly after `from` at which the schedule
  * fires, or null if it never will (manual, inactive, or a passed `once`).
  *

@@ -1253,10 +1253,19 @@ export async function runFlowExecution(
             headers: withIdempotencyHeader(
               request.init.headers as Record<string, string>,
               String(request.init.method || 'GET'),
-              flowSideEffectKey(run.id, node.id, page),
+              // Scoped, not run-keyed: a poll run keys by the polled item so a
+              // re-emitted item produces the same header as the first attempt.
+              flowSideEffectKey(scopeKey, node.id, page),
             ),
           },
         })
+        // Safe methods have nothing to record or replay — withIdempotencyHeader
+        // already skips them, and a read has no side effect.
+        const httpMethod = String(request.init.method || 'GET').toUpperCase()
+        const isSafeMethod = httpMethod === 'GET' || httpMethod === 'HEAD' || httpMethod === 'OPTIONS'
+        // Collected across pages: a partially-replayed paginated request should
+        // say so once, not per page.
+        const replayWarnings: string[] = []
         let httpCredential: ResolvedHttpCredential | null = null
         const credentialId = typeof node.config.credentialId === 'string' ? node.config.credentialId.trim() : ''
         if (credentialId) {
@@ -1343,7 +1352,37 @@ export async function runFlowExecution(
 
         // Fetch ONE page (URL overridable for pagination), retried per page. The
         // SSRF guard re-runs before every attempt AND every page.
-        const fetchPage = (pageUrl: string, page = 0): Promise<FlowHttpOutput> =>
+        //
+        // Ledger-guarded for unsafe methods: the idempotency header only helps
+        // with providers that honor it, so a replayed POST is made a local
+        // no-op here regardless. Each PAGE is its own side effect.
+        const fetchPage = async (pageUrl: string, page = 0): Promise<FlowHttpOutput> => {
+          const ledgerKey = { scopeKey, iterationKey: node.id, page }
+          if (!isSafeMethod) {
+            const recorded = await readLedger({ ...ledgerKey, organizationId: job.organizationId })
+            if (recorded) {
+              if (!replayWarnings.length) replayWarnings.push(LEDGER_REPLAY_WARNING)
+              return recorded.result as FlowHttpOutput
+            }
+          }
+          const fetched = await fetchOnePage(pageUrl, page)
+          // Only a SETTLED result is recorded. Once WS3 lands, a retryable
+          // status (429/5xx) will be retried rather than returned, and recording
+          // one here would make the ledger replay that failure forever.
+          if (!isSafeMethod && fetched.ok) {
+            await writeLedger({
+              ...ledgerKey,
+              organizationId: job.organizationId,
+              provider: 'http',
+              tool: node.id,
+              result: fetched,
+              flowRunId: run.id,
+            })
+          }
+          return fetched
+        }
+
+        const fetchOnePage = (pageUrl: string, page = 0): Promise<FlowHttpOutput> =>
           runWithRetries(async () => {
             await assertPublicUrl(pageUrl)
             const controller = new AbortController()
@@ -1427,7 +1466,11 @@ export async function runFlowExecution(
             }),
           }
         }
-        await finish({ status: 'succeeded', output })
+        await finish({
+          status: 'succeeded',
+          output,
+          ...(replayWarnings.length ? { warnings: replayWarnings } : {}),
+        })
         return { output }
       }
       // Exhaustive over RunActionFn's node.kind — this

@@ -81,7 +81,18 @@ export async function updateSession(request: NextRequest) {
   // A signed-in user on an auth page goes where they were headed, not to a
   // blanket /dashboard — an invite or share link opened in an already-signed-in
   // browser used to lose its destination here.
-  if (user && isAuthPage && pathname !== '/auth/callback' && pathname !== '/auth/mfa') {
+  //
+  // /auth/update-password is exempt for the same reason /auth/callback is: a
+  // password recovery link deliberately lands there WITH a session (that is what
+  // the recovery token buys), so bouncing signed-in users would make the reset
+  // link a redirect to the dashboard and the password would never get changed.
+  if (
+    user &&
+    isAuthPage &&
+    pathname !== '/auth/callback' &&
+    pathname !== '/auth/mfa' &&
+    pathname !== '/auth/update-password'
+  ) {
     const carried = validatedReturnPath(request.nextUrl.searchParams.get('return_to'))
     return copyCookies(response, NextResponse.redirect(new URL(carried ?? '/dashboard', request.url)))
   }

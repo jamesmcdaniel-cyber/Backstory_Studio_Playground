@@ -86,7 +86,7 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     platformRole !== undefined && isSuperAdminPlatformRole(platformRole) !== isSuperAdminPlatformRole(target.platformRole)
   if (changesPlatformTier) {
     if (isCustomerEdition()) throw new ApiError('Not found', 404, 'NOT_FOUND')
-    if (!auth.can('catalogue.review')) {
+    if (!auth.can('platform.administer')) {
       throw new ApiError('Only a super admin can grant or revoke super admin.', 403, 'SUPER_ADMIN_REQUIRED')
     }
   }

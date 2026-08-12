@@ -11,7 +11,7 @@
  * admins and Workspace tiers rather than inside a queue-triage tool.
  *
  * Still NOT a workspace-admin surface: it is rendered only under the Platform
- * tab, which is gated on catalogue.review, and /api/admin/domains re-checks that
+ * tab, which is gated on platform.administer, and /api/admin/domains re-checks that
  * server-side. An org admin allowing their own domain would invert the boundary
  * this screen exists to hold — admitting one person is the invitation flow's job.
  */

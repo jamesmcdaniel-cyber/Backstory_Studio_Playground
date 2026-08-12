@@ -25,6 +25,7 @@ export const PERMISSIONS = [
   'security.manage', 'data.export', 'api.manage', 'workspace.delete',
   'template.author', 'template.submit',
   'catalogue.review', 'catalogue.publish', 'catalogue.takedown',
+  'platform.administer',
 ] as const
 
 export type Permission = (typeof PERMISSIONS)[number]
@@ -34,6 +35,19 @@ export type PermissionOrg = { kind: string }
 
 /** Org kinds whose members may DECIDE what the shared catalogue serves. */
 const REVIEWING_ORG_KINDS = new Set(['internal', 'partner'])
+
+/**
+ * Org kinds whose reviewers are ALSO platform operators.
+ *
+ * Deliberately narrower than REVIEWING_ORG_KINDS, and the difference is the
+ * whole point. Catalogue review is moderation of shared content, which a
+ * partner can reasonably do. Platform administration is the operator console:
+ * every workspace's spend, every user's personal details, and the ability to
+ * reset a password or deactivate an account. Reusing catalogue.review for that
+ * would hand a partner-org reviewer the entire platform's user base, which is
+ * how these two tiers came to be told apart.
+ */
+const OPERATING_ORG_KINDS = new Set(['internal'])
 
 // Cumulative bundles: each role adds to the one above it.
 const VIEWER_PERMISSIONS: Permission[] = ['flow.read', 'agent.read']
@@ -86,6 +100,13 @@ export function resolvePermissions(user: PermissionUser, org: PermissionOrg): Re
     granted.add('catalogue.review')
     granted.add('catalogue.publish')
     granted.add('catalogue.takedown')
+  }
+
+  // The operator console. Same reviewer flag, stricter org kind — see
+  // OPERATING_ORG_KINDS. The platform owner already holds it via the identity
+  // short-circuit above, so this branch only ever admits promoted staff.
+  if (OPERATING_ORG_KINDS.has(org.kind) && user.platformRole === 'reviewer') {
+    granted.add('platform.administer')
   }
 
   return granted

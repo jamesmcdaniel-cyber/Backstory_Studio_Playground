@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheGetNumber, cacheIncrBy } from '@/lib/cache'
+import { cacheDelete, cacheGetNumber, cacheIncrBy } from '@/lib/cache'
 
 // Live month-to-date token counter, keyed per org + UTC month. Incremented per
 // turn as tokens are spent, so concurrent runs/workers see each other's spend
@@ -19,6 +19,23 @@ function monthKey(organizationId: string): string {
 export async function recordTokenUsage(organizationId: string, tokens: number): Promise<number | null> {
   if (!Number.isFinite(tokens) || tokens <= 0) return null
   return cacheIncrBy(monthKey(organizationId), Math.floor(tokens), MONTH_TTL_MS)
+}
+
+/**
+ * Clear this workspace's month-to-date token counter, so a workspace stopped by
+ * the monthly ceiling can run again immediately.
+ *
+ * Deliberately WORKSPACE-scoped, because the counter is: the key is per org per
+ * UTC month, and there is no per-person breakdown to clear. An operator screen
+ * offering this per user has to say so, or it reads as "reset one person" while
+ * quietly lifting the ceiling for their whole workspace.
+ *
+ * Lives here rather than in the route so the key format has exactly one owner —
+ * a reset that computed the key itself would silently stop matching the moment
+ * monthKey changed, and the failure mode is a button that appears to work.
+ */
+export async function resetMonthlyTokenUsage(organizationId: string): Promise<void> {
+  await cacheDelete(monthKey(organizationId))
 }
 
 /**

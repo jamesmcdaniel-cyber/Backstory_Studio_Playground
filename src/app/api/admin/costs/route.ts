@@ -66,4 +66,4 @@ export const GET = withAuthenticatedApi(async (request) => {
       calls: row._count,
     })),
   }
-}, { permission: 'catalogue.review', internalOnly: true })
+}, { permission: 'platform.administer', internalOnly: true })

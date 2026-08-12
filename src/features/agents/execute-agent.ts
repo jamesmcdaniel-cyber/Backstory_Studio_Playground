@@ -1125,6 +1125,7 @@ export async function runAgentExecution(
 
       const turnResult = await runner.next(transcript, system, [...tools, ASK_USER_TOOL], {
         organizationId,
+        userId: execution.userId,
         surface: 'agent_turn',
         agentExecutionId: execution.id,
       })

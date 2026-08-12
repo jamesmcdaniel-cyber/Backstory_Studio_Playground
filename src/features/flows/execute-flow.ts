@@ -1054,6 +1054,7 @@ export async function runFlowExecution(
           async () =>
             runner.next(runner.start(user), prompt.system, [], {
               organizationId: job.organizationId,
+              userId: run.userId,
               surface: 'agent_turn',
               flowRunId: run.id,
             }),

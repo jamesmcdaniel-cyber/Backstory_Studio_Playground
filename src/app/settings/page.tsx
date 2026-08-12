@@ -88,9 +88,9 @@ const TABS: Array<{ id: TabId; label: string; icon: typeof UserIcon; permission?
   { id: 'data', label: 'Data & privacy', icon: Database },
   // Super admins only, and last: it administers the PLATFORM (who reviews the
   // shared catalogue, how each workspace is tiered), not this workspace. The
-  // catalogue.review gate makes it absent in customer workspaces and in the
+  // platform.administer gate makes it absent in customer workspaces and in the
   // customer edition, which never resolves that permission at all.
-  { id: 'platform', label: 'Platform', icon: Globe2, permission: 'catalogue.review' },
+  { id: 'platform', label: 'Platform', icon: Globe2, permission: 'platform.administer' },
 ]
 
 export default function SettingsPage() {
@@ -180,7 +180,7 @@ function SettingsTabs() {
         {active === 'members' && (
           <MembersSection
             canManage={can('members.manage')}
-            canManageSuperAdmins={can('catalogue.review')}
+            canManageSuperAdmins={can('platform.administer')}
             selfId={userId}
           />
         )}

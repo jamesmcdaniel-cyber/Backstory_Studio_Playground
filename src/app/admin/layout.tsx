@@ -14,8 +14,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // because the surface should not appear to exist. Middleware refuses this path
   // at the edge too; this is the second layer.
   if (isCustomerEdition()) notFound()
+  // The shell admits both operator tiers because /admin holds two different
+  // surfaces: Reviews is catalogue moderation, which a PARTNER-org reviewer
+  // legitimately does, while Costs/Domains/Users are the operator console and
+  // require platform.administer. Gating the shell on the stricter permission
+  // would lock partners out of the only page they are here for, so the split is
+  // enforced per page (requirePlatformAdmin) and, authoritatively, per route.
   const auth = await requireAuthContext().catch(() => null)
-  if (!auth?.can('catalogue.review')) redirect('/dashboard')
+  if (!auth?.can('catalogue.review') && !auth?.can('platform.administer')) redirect('/dashboard')
   // No container here: /admin is in AppShell's APP_PREFIXES, so the shell
   // already applies PAGE_CONTAINER around these pages like every other route.
   return <>{children}</>

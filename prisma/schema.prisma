@@ -131,6 +131,11 @@ model User {
   organizationId       String?   @db.Uuid
   isActive             Boolean   @default(true)
   lastSeenAt           DateTime? @db.Timestamptz(6)
+  /// Watermark for the per-person daily run cap. The cap counts runs since the
+  /// LATER of midnight UTC and this stamp, so an operator can hand someone a
+  /// fresh allowance mid-day. Null means the plain midnight window applies.
+  /// A stamp cannot be gamed to LENGTHEN the window — see checkDailyRunAllowance.
+  runAllowanceResetAt  DateTime? @db.Timestamptz(6)
   timezone             String    @default("UTC")
   metadata             Json?
   /// Stable identity supplied by SCIM. Unique only inside a workspace.
@@ -181,6 +186,17 @@ model OrganizationDomain {
 model LlmCall {
   id               String   @id @default(cuid())
   organizationId   String   @db.Uuid
+  /// Who this spend belongs to, copied from the parent run at write time.
+  ///
+  /// Denormalized on purpose. This model declares no relations (see above), and
+  /// per-person token totals otherwise need a join the tenant guard cannot see
+  /// through — the operator console would have to fall back to agent-plane
+  /// tokens and silently under-report anyone who mostly runs flows.
+  ///
+  /// Nullable: rows written before this column existed carry no attribution,
+  /// and a run without an owner (system/scheduled dispatch) never had one. The
+  /// historical gap closes on its own once the 90-day retention sweep passes.
+  userId           String?
   agentExecutionId String?
   flowRunId        String?
   flowRunStepId    String?
@@ -199,6 +215,8 @@ model LlmCall {
 
   @@index([organizationId, createdAt])
   @@index([flowRunId])
+  // Per-person spend for the operator console, over a time window.
+  @@index([userId, createdAt])
   @@map("llm_calls")
 }
 

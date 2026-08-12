@@ -18,6 +18,8 @@ export type LlmSurface = 'agent_turn' | 'structured' | 'headline' | 'embedding' 
 
 export type LlmCallInput = {
   organizationId: string
+  /** The run's owner. Null for system dispatch, and for pre-attribution rows. */
+  userId?: string | null
   surface: LlmSurface
   provider: string
   model: string
@@ -34,6 +36,7 @@ export async function recordLlmCall(input: LlmCallInput): Promise<void> {
     await systemPrisma.llmCall.create({
       data: {
         organizationId: input.organizationId,
+        userId: input.userId ?? null,
         agentExecutionId: input.agentExecutionId ?? null,
         flowRunId: input.flowRunId ?? null,
         flowRunStepId: input.flowRunStepId ?? null,

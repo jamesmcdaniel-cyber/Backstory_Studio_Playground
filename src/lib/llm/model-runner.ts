@@ -25,6 +25,8 @@ export type ToolDefinition = {
  */
 export type LedgerContext = {
   organizationId: string
+  /** The run's owner, so spend can be attributed to a person, not just a tenant. */
+  userId?: string | null
   surface?: 'agent_turn' | 'structured' | 'headline' | 'embedding' | 'eval_judge'
   agentExecutionId?: string | null
   flowRunId?: string | null
@@ -248,6 +250,7 @@ class AgentRunner implements ModelRunner {
         if (ledger) {
           void recordLlmCall({
             organizationId: ledger.organizationId,
+            userId: ledger.userId ?? null,
             surface: ledger.surface ?? 'agent_turn',
             provider: turn.provider,
             model: turn.servedModel,
@@ -369,6 +372,7 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
     if (ledger) {
       void recordLlmCall({
         organizationId: ledger.organizationId,
+        userId: ledger.userId ?? null,
         surface: 'headline',
         provider: target.target === 'qwen' ? 'qwen' : 'anthropic',
         model: target.model,
@@ -494,6 +498,7 @@ async function anthropicWireStructured(
   if (opts.ledger) {
     void recordLlmCall({
       organizationId: opts.ledger.organizationId,
+      userId: opts.ledger.userId ?? null,
       surface: opts.ledger.surface ?? 'structured',
       provider,
       model,

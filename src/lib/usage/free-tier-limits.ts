@@ -41,6 +41,23 @@ export function startOfUtcDay(now: Date = new Date()): Date {
 }
 
 /**
+ * Where the daily-cap window starts for this person: midnight UTC, or the
+ * operator's reset stamp when that is LATER.
+ *
+ * The `later of` is the safety property, not a detail. The cap is counted from
+ * run rows, which cannot be un-counted, so a reset can only move the window
+ * forward. Taking the earlier value would let a stale stamp from a previous day
+ * widen the window and count runs the cap should already have forgotten —
+ * turning a one-off grant into a permanent exemption.
+ *
+ * Pure, so the rule is unit-testable without a database or a clock.
+ */
+export function runWindowStart(resetAt: Date | null | undefined, now: Date = new Date()): Date {
+  const midnight = startOfUtcDay(now)
+  return resetAt && resetAt > midnight ? resetAt : midnight
+}
+
+/**
  * True when this actor is exempt from every ceiling here.
  *
  * Pure — the caller supplies the two facts, so the rule is unit-testable and
@@ -79,7 +96,13 @@ export async function checkDailyRunAllowance(
   const limit = kind === 'agent' ? FREE_TIER_LIMITS.agentRunsPerDay : FREE_TIER_LIMITS.flowRunsPerDay
   if (isUnlimitedActor(args)) return { over: false, used: 0, limit: 0 }
 
-  const since = startOfUtcDay()
+  // One extra read, only for people who are actually capped: an operator may
+  // have granted this person a fresh allowance part-way through the day.
+  const actor = await prisma.user.findUnique({
+    where: { id: args.userId },
+    select: { runAllowanceResetAt: true },
+  })
+  const since = runWindowStart(actor?.runAllowanceResetAt)
   const where = { organizationId: args.organizationId, userId: args.userId, startedAt: { gte: since } }
   const used =
     kind === 'agent'

@@ -15,7 +15,7 @@
  *     super-admin grant resolves at all
  *
  * Both talk to the same /api/catalogue/staff route, which re-checks
- * catalogue.review and is internalOnly.
+ * platform.administer and is internalOnly.
  *
  * Domain access followed the same way out of Reviews (its "Access" tab): who may
  * sign in at all is permissions administration too. It keeps its own component

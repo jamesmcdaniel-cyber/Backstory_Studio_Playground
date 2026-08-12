@@ -10,7 +10,7 @@
  * a rank is deliberate: "make them a super admin" is one decision to the person
  * making it, and it was previously buried in a tab of the Reviews console.
  *
- * The rank is only offered to a caller who already holds it (catalogue.review),
+ * The rank is only offered to a caller who already holds it (platform.administer),
  * and both routes re-check that — this is affordance, not authorization.
  */
 

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RecentFlows } from '@/components/dashboard/recent-flows'
 
 type LibrarianResult = {
   /** `doc` is a help-centre article (an external link); the rest are workspace items. */
@@ -170,18 +171,23 @@ export default function AssistantHome() {
       {/* Suggestion chips (empty state only). One row on a wide screen, spread
           edge to edge under the composer; they wrap only when it gets narrow. */}
       {!started && (
-        <div className="mt-5 flex flex-wrap gap-3 lg:flex-nowrap lg:justify-between">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => void ask(s)}
-              className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-4 py-2.5 font-mono text-sm text-gray-600 shadow-1 transition-[transform,border-color,box-shadow,color] duration-base hover:-translate-y-0.5 hover:border-horizon-200 hover:text-horizon-700 hover:shadow-2 active:translate-y-0"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="mt-5 flex flex-wrap gap-3 lg:flex-nowrap lg:justify-between">
+            {SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => void ask(s)}
+                className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-4 py-2.5 font-mono text-sm text-gray-600 shadow-1 transition-[transform,border-color,box-shadow,color] duration-base hover:-translate-y-0.5 hover:border-horizon-200 hover:text-horizon-700 hover:shadow-2 active:translate-y-0"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          {/* Straight back into the canvas of whatever you were last editing —
+              the landing state's other job besides answering a question. */}
+          <RecentFlows />
+        </>
       )}
 
       {/* Conversation */}

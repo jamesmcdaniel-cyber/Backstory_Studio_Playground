@@ -17,7 +17,10 @@ const g = globalThis as unknown as Record<string, unknown>
 // and both point at the same jsdom Storage instance.
 // Element/ShadowRoot/DOMRect are what Radix's popover positioning (floating-ui)
 // reaches for as bare globals — same rationale as NodeFilter above.
-const keys = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'ShadowRoot', 'DOMRect', 'Node', 'NodeFilter', 'TreeWalker', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'PointerEvent', 'FocusEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'localStorage']
+// `self` is what next/link reaches for when it schedules prefetching via
+// requestIdleCallback, so it belongs here for any test that renders a Link —
+// IntersectionObserver below is the other half of that same path.
+const keys = ['window', 'self', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'ShadowRoot', 'DOMRect', 'Node', 'NodeFilter', 'TreeWalker', 'Event', 'CustomEvent', 'KeyboardEvent', 'InputEvent', 'MouseEvent', 'PointerEvent', 'FocusEvent', 'getComputedStyle', 'DocumentFragment', 'Range', 'Text', 'MutationObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'localStorage']
 g.window = dom.window
 for (const key of keys) {
   if (key === 'window') continue
@@ -33,6 +36,16 @@ if (!g.ResizeObserver) {
     observe() {}
     unobserve() {}
     disconnect() {}
+  }
+}
+// Nor an IntersectionObserver; next/link watches visibility with one to decide
+// when to prefetch. A no-op keeps it off the requestIdleCallback fallback path.
+if (!g.IntersectionObserver) {
+  g.IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() { return [] }
   }
 }
 

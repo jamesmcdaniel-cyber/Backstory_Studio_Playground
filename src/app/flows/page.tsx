@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound } from 'lucide-react'
+import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound, ScrollText } from 'lucide-react'
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -107,6 +107,9 @@ export default function FlowsPage() {
   const [creating, setCreating] = useState(false)
   const [folderFilter, setFolderFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  // Run history is a sibling view, not a slab under the grid — it used to push
+  // the template gallery below the fold on any workspace with real run volume.
+  const [view, setView] = useState<'flows' | 'log'>('flows')
   const flowImport = useFlowImport()
 
   const folders = Array.from(new Set(flows.map((flow) => flow.folder?.trim() || ''))).filter(Boolean).sort()
@@ -319,6 +322,13 @@ export default function FlowsPage() {
       <div className="flex items-start justify-between gap-4">
         <PageHeader eyebrow="Pipelines" title="Flows" description="Wire your agents into deterministic multi-step pipelines." />
         <div className="flex items-center gap-2">
+          <Button
+            variant={view === 'log' ? 'default' : 'outline'}
+            aria-pressed={view === 'log'}
+            onClick={() => setView((current) => (current === 'log' ? 'flows' : 'log'))}
+          >
+            <ScrollText className="mr-1.5 h-4 w-4" /> Execution log
+          </Button>
           {/* The credentials bank grew into its own page — connect once there,
               every flow reuses it; expired or leaked credentials rotate there too. */}
           <Button asChild variant="outline">
@@ -338,6 +348,10 @@ export default function FlowsPage() {
         </div>
       </div>
 
+      {view === 'log' ? (
+        <FlowExecutionLog />
+      ) : (
+      <>
       {loading ? (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -493,12 +507,12 @@ export default function FlowsPage() {
         </>
       )}
 
-      {!loading && flows.length > 0 && <FlowExecutionLog />}
-
       {/* The full template catalogue lives on this page — every flow template,
           category-filterable and paged, so nobody has to detour through the
           Agents → Templates library to find one. */}
       <FlowTemplateGallery />
+      </>
+      )}
 
       <Dialog open={editDialog !== null} onOpenChange={(open) => { if (!open) setEditDialog(null) }}>
         <DialogContent className="max-w-lg">

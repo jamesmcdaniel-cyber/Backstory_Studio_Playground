@@ -77,6 +77,7 @@ if (TEST_DB) {
     { name: 'GET /api/mcp-connections/[id]/tools', run: async () => (await import('../mcp-connections/[id]/tools/route')).GET(req('/api/mcp-connections/nonexistent/tools')) },
     { name: 'GET /api/mcp-connections/oauth/start', run: async () => (await import('../mcp-connections/oauth/start/route')).GET(req('/api/mcp-connections/oauth/start')) },
     { name: 'GET /api/organizations/members', run: async () => (await import('../organizations/members/route')).GET(req('/api/organizations/members')) },
+    { name: 'GET /api/quarantine', run: async () => (await import('../quarantine/route')).GET(req('/api/quarantine')) },
     { name: 'GET /api/organizations/invitations', run: async () => (await import('../organizations/invitations/route')).GET(req('/api/organizations/invitations')) },
     // nango/integrations, nango/status: skipped — no NANGO_SECRET_KEY in the
     // test env, so both deliberately throw a 503 ApiError (NANGO_UNAVAILABLE)

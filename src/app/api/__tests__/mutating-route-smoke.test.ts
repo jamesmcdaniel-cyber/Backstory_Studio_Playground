@@ -164,6 +164,7 @@ if (TEST_DB) {
     { route: 'organizations/invitations/[id]', method: 'DELETE', run: async () => (await import('../organizations/invitations/[id]/route')).DELETE(rq('/api/organizations/invitations/x', 'DELETE', {})) },
     { route: 'organizations/members/[id]', method: 'PATCH', run: async () => (await import('../organizations/members/[id]/route')).PATCH(rq('/api/organizations/members/x', 'PATCH', { role: 'USER' })) },
     { route: 'organizations/members/[id]', method: 'DELETE', run: async () => (await import('../organizations/members/[id]/route')).DELETE(rq('/api/organizations/members/x', 'DELETE', {})) },
+    { route: 'quarantine/[id]/claim', method: 'POST', run: async () => (await import('../quarantine/[id]/claim/route')).POST(rq('/api/quarantine/x/claim', 'POST', { kind: 'flow' })) },
     { route: 'invitations/accept', method: 'POST', run: async () => (await import('../invitations/accept/route')).POST(rq('/api/invitations/accept', 'POST', { token: 'missing' })) },
 
     { route: 'signal-subscriptions', method: 'POST', run: async () => (await import('../signal-subscriptions/route')).POST(rq('/api/signal-subscriptions', 'POST', {})) },

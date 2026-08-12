@@ -109,8 +109,11 @@ export default function PlatformUsersPage() {
       }
       const label = user.email ?? user.name ?? 'the account'
       toast.success(
-        action === 'deactivate' ? `Deactivated ${label}.`
-        : action === 'reactivate' ? `Reactivated ${label}.`
+        // Deactivating revokes credentials and stops the work they owned;
+        // reactivating restores neither, because the OAuth grants were deleted
+        // at the provider. Both say so, or correct behaviour reads as a bug.
+        action === 'deactivate' ? `Deactivated ${label}. Their integrations were revoked and any flows they owned are waiting for a new owner.`
+        : action === 'reactivate' ? body?.notice ? `Reactivated ${label}. ${body.notice}` : `Reactivated ${label}.`
         : action === 'reset-password' ? `Password reset email sent to ${label}.`
         : action === 'reset-monthly-tokens' ? `Monthly token counter cleared for ${user.organizationName ?? 'the workspace'}.`
         : `${label} has a fresh set of runs for today.`,

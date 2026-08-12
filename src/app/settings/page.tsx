@@ -43,6 +43,7 @@ import { EnterpriseSecuritySection } from '@/components/settings/enterprise-secu
 import { DeveloperApiSection } from '@/components/settings/developer-api-section'
 import { PlatformSection } from '@/components/settings/platform-section'
 import { MembersSection } from '@/components/settings/members-section'
+import { QuarantinePanel } from '@/components/settings/quarantine-panel'
 import { Section } from '@/components/settings/section'
 import { ConfirmDialog, SettingsRow } from '@/components/settings/dialogs'
 import { Button } from '@/components/ui/button'
@@ -178,11 +179,16 @@ function SettingsTabs() {
         )}
         {active === 'workspace' && <WorkspaceSection canManage={can('org.manage')} />}
         {active === 'members' && (
-          <MembersSection
-            canManage={can('members.manage')}
-            canManageSuperAdmins={can('platform.administer')}
-            selfId={userId}
-          />
+          <>
+            <MembersSection
+              canManage={can('members.manage')}
+              canManageSuperAdmins={can('platform.administer')}
+              selfId={userId}
+            />
+            {/* Beside Members because removing someone is what creates it, and
+                the same permission resolves it. Renders nothing when empty. */}
+            {can('members.manage') && <QuarantinePanel />}
+          </>
         )}
         {active === 'keys' && <WorkspaceCredentialsPanel />}
         {active === 'security' && (

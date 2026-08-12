@@ -242,7 +242,9 @@ export async function runDispatchTick(
     // systemPrisma: global scheduling scan — reads active agents across all orgs by design (CRON_SECRET-gated).
     const agentScan = await scanAll((cursorId, take) =>
       systemPrisma.agentTask.findMany({
-        where: { status: 'ACTIVE' },
+        // quarantinedAt: work whose owner was deprovisioned. systemPrisma
+        // bypasses the credential owner guard, so the exclusion is explicit here.
+        where: { status: 'ACTIVE', quarantinedAt: null },
         orderBy: { id: 'asc' },
         take,
         ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
@@ -425,7 +427,9 @@ export async function runDispatchTick(
         // a stored JSON null, matching the `publishedGraph == null` test this
         // replaces. Doing it here also keeps publishedGraph — the largest column
         // on the table — out of the result set entirely.
-        where: { status: 'ACTIVE', publishedGraph: { not: Prisma.AnyNull } },
+        // quarantinedAt: work whose owner was deprovisioned. systemPrisma
+        // bypasses the credential owner guard, so the exclusion is explicit here.
+        where: { status: 'ACTIVE', publishedGraph: { not: Prisma.AnyNull }, quarantinedAt: null },
         // Explicit select, NOT include: this scan now reads every active flow,
         // and pulling whole rows (graph JSON and all) into memory once per tick
         // would trade the starvation bug for a memory one. These are the only

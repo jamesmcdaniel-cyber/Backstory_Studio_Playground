@@ -321,6 +321,8 @@ model AgentTask {
   visibility     String    @default("shared")
   organizationId String    @db.Uuid
   userId         String?
+  /// See Flow.quarantinedAt — set when the owner was deprovisioned.
+  quarantinedAt  DateTime? @db.Timestamptz(6)
   metadata       Json?
   lastExecutedAt DateTime?
   executionCount Int       @default(0)
@@ -919,6 +921,11 @@ model Flow {
   importNotes    Json?
   organizationId String   @db.Uuid
   userId         String?
+  /// Set when the owner was deprovisioned. Quarantined work never dispatches
+  /// and appears in the admin claim queue until someone takes ownership.
+  /// Deliberately ORTHOGONAL to `status`: overwriting status would destroy the
+  /// prior value, so a claimed draft would come back as ACTIVE.
+  quarantinedAt  DateTime? @db.Timestamptz(6)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

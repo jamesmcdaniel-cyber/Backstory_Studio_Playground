@@ -120,8 +120,11 @@ export async function getPeopleAiClientForUser(
   organizationId: string,
   options: PeopleAiClientOptions = {},
 ): Promise<PeopleAiClient | null> {
-  const connection = await prisma.peopleAiConnection.findUnique({
-    where: { organizationId_userId: { organizationId, userId } },
+  const connection = await prisma.peopleAiConnection.findFirst({
+    // findFirst, not findUnique: the credential owner guard injects an
+    // owner-liveness filter, and findUnique's where clause accepts only unique
+    // fields so it cannot carry one. The compound unique is spelled out here.
+    where: { organizationId, userId },
   })
   if (!connection || connection.status === 'revoked') return null
   try {

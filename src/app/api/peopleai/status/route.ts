@@ -17,8 +17,10 @@ export async function GET() {
   }
 
   const [connection, org] = await Promise.all([
-    prisma.peopleAiConnection.findUnique({
-      where: { organizationId_userId: { organizationId: auth.organizationId, userId: auth.dbUser.id } },
+    prisma.peopleAiConnection.findFirst({
+      // findFirst: see getPeopleAiClientForUser — the owner-liveness filter
+      // cannot be injected into a findUnique where clause.
+      where: { organizationId: auth.organizationId, userId: auth.dbUser.id },
       select: { status: true, teamId: true, membershipId: true, lastVerifiedAt: true },
     }),
     prisma.organization.findUnique({

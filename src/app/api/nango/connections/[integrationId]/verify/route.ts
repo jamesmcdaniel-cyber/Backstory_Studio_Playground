@@ -56,12 +56,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   await Promise.all(
     results.map(async (result) => {
-      const row = await prisma.nangoConnection.findUnique({
+      const row = await prisma.nangoConnection.findFirst({
+        // findFirst: the owner-liveness filter cannot be injected into a
+        // findUnique where clause.
         where: {
-          organizationId_connectionId: {
-            organizationId: auth.organizationId,
-            connectionId: result.connectionId,
-          },
+          organizationId: auth.organizationId,
+          connectionId: result.connectionId,
         },
       })
       if (!row) return

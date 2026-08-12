@@ -4,20 +4,52 @@ import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { Prisma } from '@prisma/client'
 import { applyOwnerLiveness, OWNER_LIVENESS_MODELS, UnfilterableCredentialReadError } from '../credential-owner-guard'
+import { assertOrgScoped } from '@/lib/tenant-guard'
 
-const LIVENESS = { OR: [{ userId: null }, { user: { is: { isActive: true } } }] }
+const OWNER_ACTIVE = { user: { is: { isActive: true } } }
+/** McpConnection/NangoConnection allow a null userId, meaning org-owned. */
+const NULLABLE_LIVENESS = { OR: [{ userId: null }, OWNER_ACTIVE] }
+/** Integration/PeopleAiConnection require userId, so there is no org-owned branch. */
+const REQUIRED_LIVENESS = OWNER_ACTIVE
 
-test('a credential read gains the owner-liveness filter', () => {
+test('a credential read on a nullable-owner model gains the org-owned branch', () => {
   const args = applyOwnerLiveness('McpConnection', 'findMany', { where: { organizationId: 'org-1' } })
 
-  assert.deepEqual(args, { where: { AND: [{ organizationId: 'org-1' }, LIVENESS] } })
+  assert.deepEqual(args, { where: { AND: [{ organizationId: 'org-1' }, NULLABLE_LIVENESS] } })
+})
+
+test('a model with a REQUIRED userId gets no null branch — Prisma rejects one', () => {
+  // Integration.userId is non-nullable, and filtering `{ userId: null }` on a
+  // required field is not merely redundant: Prisma refuses the query outright
+  // with "Argument `userId` is missing". A single shared filter cannot serve
+  // both shapes, which is why the filter is derived per model from the DMMF.
+  const args = applyOwnerLiveness('Integration', 'findMany', { where: { organizationId: 'org-1' } })
+
+  assert.deepEqual(args, { where: { AND: [{ organizationId: 'org-1' }, REQUIRED_LIVENESS] } })
 })
 
 test('a read with no where clause still gets filtered', () => {
   // Otherwise the least-scoped query in the codebase is the one that leaks.
   const args = applyOwnerLiveness('Integration', 'findMany', {})
 
-  assert.deepEqual(args, { where: LIVENESS })
+  assert.deepEqual(args, { where: REQUIRED_LIVENESS })
+})
+
+test('the injected filter never satisfies the tenant guard on its own', () => {
+  // The two guards compose in one $allOperations hook. If the owner-liveness
+  // filter happened to look like org scope to assertOrgScoped, an unscoped
+  // credential read would start passing and leak across tenants.
+  const rewritten = applyOwnerLiveness('McpConnection', 'findMany', { where: { name: 'anything' } })
+
+  assert.throws(() => assertOrgScoped('McpConnection', 'findMany', rewritten), /Tenant guard/)
+})
+
+test('a genuinely scoped read still satisfies the tenant guard after rewriting', () => {
+  // The other direction: wrapping the caller's where in an AND must not hide the
+  // organizationId that was legitimately there.
+  const rewritten = applyOwnerLiveness('McpConnection', 'findMany', { where: { organizationId: 'org-1' } })
+
+  assert.doesNotThrow(() => assertOrgScoped('McpConnection', 'findMany', rewritten))
 })
 
 test('models outside the registry are untouched', () => {

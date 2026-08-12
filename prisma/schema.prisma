@@ -151,6 +151,7 @@ model User {
   ownedAgents         AgentTask[]
   peopleAiConnections PeopleAiConnection[]
   mcpConnections      McpConnection[]
+  nangoConnections    NangoConnection[]
   apiKeys             ApiKey[]
 
   @@index([organizationId])
@@ -837,6 +838,15 @@ model NangoConnection {
   updatedAt         DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // userId was a dangling column for a long time: no relation, no foreign key,
+  // so nothing guaranteed it pointed at a real user and it could not be joined.
+  // The owner-liveness guard needs the join, and an unattributable credential is
+  // the exact thing the revocation spine exists to eliminate.
+  //
+  // Cascade, NOT SetNull: `userId: null` MEANS org-shared here, so nulling a
+  // departed person's row would silently promote their personal connection into
+  // one the whole workspace can use — the opposite of revoking it.
+  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, connectionId])
   @@index([organizationId, providerConfigKey])

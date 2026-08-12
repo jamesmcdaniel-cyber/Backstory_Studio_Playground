@@ -21,6 +21,7 @@ if (ENABLED) {
 
   // Loaded in before() — tsx compiles tests as CJS, so no top-level await.
   let prisma: any
+  let systemPrisma: any
   let completeConnect: any
   let extractIdentity: any
   let TeamMismatchError: any
@@ -41,7 +42,7 @@ if (ENABLED) {
   })
 
   before(async () => {
-    ;({ prisma } = await import('@/lib/prisma'))
+    ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     ;({ completeConnect, extractIdentity, TeamMismatchError } = await import('../connect-service'))
     ;({ decryptSecret } = await import('@/lib/crypto/secrets'))
 
@@ -89,7 +90,9 @@ if (ENABLED) {
     })
     assert.deepEqual(identity, { teamId: 'team-77', membershipId: 'member-9' })
 
-    const connection = await prisma.peopleAiConnection.findUnique({
+    // systemPrisma: asserting on the stored row itself, deliberately bypassing
+    // the owner-liveness filter the app path is subject to.
+    const connection = await systemPrisma.peopleAiConnection.findUnique({
       where: { organizationId_userId: { organizationId: ids.orgA!, userId: ids.user! } },
     })
     assert.ok(connection)
@@ -128,7 +131,9 @@ if (ENABLED) {
     const moved = await prisma.user.findUnique({ where: { id: userC.id } })
     assert.equal(moved!.organizationId, ids.orgA, 'user should join the team workspace')
 
-    const connection = await prisma.peopleAiConnection.findUnique({
+    // systemPrisma: asserting on the stored row itself, deliberately bypassing
+    // the owner-liveness filter the app path is subject to.
+    const connection = await systemPrisma.peopleAiConnection.findUnique({
       where: { organizationId_userId: { organizationId: ids.orgA!, userId: userC.id } },
     })
     assert.ok(connection, 'connection should be scoped to the team workspace')

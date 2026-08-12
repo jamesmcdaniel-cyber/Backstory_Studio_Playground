@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client'
 import type { ITXClientDenyList } from '@prisma/client/runtime/library'
 import { assertOrgScoped, ORG_SCOPED_MODELS } from '@/lib/tenant-guard'
+import { applyOwnerLiveness } from '@/lib/authz/credential-owner-guard'
 import { exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
 
 const globalForPrisma = globalThis as unknown as {
@@ -24,22 +25,28 @@ function createGuardedClient(base: PrismaClient) {
       $allModels: {
         async $allOperations({ model, operation, args, query }) {
           assertOrgScoped(model, operation, args)
+          // AFTER the tenant guard, so it judges the caller's OWN where clause
+          // rather than one this has already rewritten. The injected filter
+          // carries no organizationId, so letting the guard see it first would
+          // change nothing it accepts — but the ordering is load-bearing if that
+          // ever stops being true. See src/lib/authz/credential-owner-guard.ts.
+          const guardedArgs = applyOwnerLiveness(model, operation, args) as typeof args
           if (process.env.DATABASE_RLS_ENABLED === 'true' && model && ORG_SCOPED_MODELS.has(model)) {
-            const organizationId = exactOrganizationId(args)
+            const organizationId = exactOrganizationId(guardedArgs)
             if (!organizationId) throw new Error(`RLS context: ${model}.${operation} requires one exact organizationId.`)
             const active = tenantDatabaseContext.getStore()
             if (active) {
               if (active.organizationId !== organizationId) throw new Error('RLS context: cross-workspace query rejected.')
               const delegate = (active.transaction as unknown as Record<string, Record<string, (value: unknown) => unknown>>)[model.charAt(0).toLowerCase() + model.slice(1)]
-              return delegate[operation](args)
+              return delegate[operation](guardedArgs)
             }
             return appPrismaBase.$transaction(async (tx) => {
               await tx.$queryRaw`SELECT set_config('app.organization_id', ${organizationId}, true)`
               const delegate = (tx as unknown as Record<string, Record<string, (value: unknown) => unknown>>)[model.charAt(0).toLowerCase() + model.slice(1)]
-              return delegate[operation](args)
+              return delegate[operation](guardedArgs)
             })
           }
-          return query(args)
+          return query(guardedArgs)
         },
       },
     },

@@ -25,6 +25,8 @@
  * these rows in order to clean them up.
  */
 
+import { Prisma } from '@prisma/client'
+
 /**
  * Models carrying BOTH a `userId` and a credential. `userId: null` on these
  * means org-owned (a shared MCP server, a workspace Nango connection) and stays
@@ -61,8 +63,44 @@ const FILTERABLE_READS = new Set([
 /** Reads whose `where` accepts only unique fields, so the filter cannot go in. */
 const UNFILTERABLE_READS = new Set(['findUnique', 'findUniqueOrThrow'])
 
-/** The filter itself: org-owned rows, or rows whose owner is still active. */
-const OWNER_IS_LIVE = { OR: [{ userId: null }, { user: { is: { isActive: true } } }] } as const
+/**
+ * The filter, per model — because the right one depends on whether `userId` is
+ * nullable, and it is not uniform across the registry.
+ *
+ * `Integration` and `PeopleAiConnection` require `userId`; `McpConnection` and
+ * `NangoConnection` allow null (meaning org-owned). Prisma REJECTS a
+ * `{ userId: null }` filter on a required field outright — "Argument `userId` is
+ * missing" — so a single shared filter cannot work, and hardcoding two lists
+ * would silently rot the first time a column's nullability changes.
+ *
+ * Derived from the DMMF at module load so it tracks the schema by construction.
+ */
+const OWNER_IS_LIVE_BY_MODEL: ReadonlyMap<string, object> = new Map(
+  [...OWNER_LIVENESS_MODELS].map((modelName) => {
+    const model = Prisma.dmmf.datamodel.models.find((candidate) => candidate.name === modelName)
+    const userId = model?.fields.find((field) => field.name === 'userId')
+    if (!userId) {
+      throw new Error(
+        `Credential owner guard: ${modelName} is registered but has no userId field. ` +
+          `Remove it from OWNER_LIVENESS_MODELS, or register a model that is actually user-owned.`,
+      )
+    }
+    // The filter is a JOIN, so the relation must exist — a bare userId column is
+    // not enough. NangoConnection carried exactly that shape (a dangling userId
+    // with no relation and no foreign key) and silently could not be filtered.
+    if (!model?.fields.some((field) => field.name === 'user' && field.kind === 'object')) {
+      throw new Error(
+        `Credential owner guard: ${modelName} has a userId column but no \`user\` relation, ` +
+          `so its owner's liveness cannot be joined. Add the relation (with a foreign key) ` +
+          `before registering it — a userId that references nothing cannot be enforced.`,
+      )
+    }
+    const ownerIsActive = { user: { is: { isActive: true } } }
+    // A required userId cannot be null, so the org-owned branch is not merely
+    // unnecessary there — it is invalid.
+    return [modelName, userId.isRequired ? ownerIsActive : { OR: [{ userId: null }, ownerIsActive] }]
+  }),
+)
 
 export class UnfilterableCredentialReadError extends Error {
   constructor(model: string, operation: string) {
@@ -89,10 +127,11 @@ export function applyOwnerLiveness(model: string | undefined, operation: string,
   if (UNFILTERABLE_READS.has(operation)) throw new UnfilterableCredentialReadError(model, operation)
   if (!FILTERABLE_READS.has(operation)) return args
 
+  const ownerIsLive = OWNER_IS_LIVE_BY_MODEL.get(model)!
   const record = (args ?? {}) as { where?: unknown }
   const where = record.where
   return {
     ...record,
-    where: where ? { AND: [where, OWNER_IS_LIVE] } : OWNER_IS_LIVE,
+    where: where ? { AND: [where, ownerIsLive] } : ownerIsLive,
   }
 }

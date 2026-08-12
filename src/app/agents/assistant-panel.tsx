@@ -7,6 +7,10 @@ import { toast } from 'sonner'
 import { ArrowRight, Check, Clock, Loader2, MessageSquare, Play, Plus, Send, Sparkles, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+<<<<<<< Updated upstream
+=======
+import { Input } from '@/components/ui/input'
+>>>>>>> Stashed changes
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { Markdown } from '@/components/ui/markdown'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'

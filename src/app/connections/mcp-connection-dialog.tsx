@@ -133,7 +133,10 @@ export function McpConnectionDialog({
   onSave,
   editingConnection,
   initialName,
+<<<<<<< Updated upstream
   returnTo = '/integrations?tab=servers',
+=======
+>>>>>>> Stashed changes
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -141,8 +144,11 @@ export function McpConnectionDialog({
   editingConnection?: SerializedConnection | null
   /** Pre-fills the name when adding — used when a template asks for a server by name. */
   initialName?: string
+<<<<<<< Updated upstream
   /** Where the SSO redirect chain lands back — must be wherever this dialog is mounted. */
   returnTo?: string
+=======
+>>>>>>> Stashed changes
 }) {
   const [draft, setDraft] = useState<McpConnectionDraft>(emptyDraft)
   const [saving, setSaving] = useState(false)

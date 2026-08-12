@@ -11,11 +11,14 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
+<<<<<<< Updated upstream
 import { FlowGraphPreview } from '@/components/flows/flow-graph-preview'
 import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
 import { useAuth } from '@/hooks/use-auth'
 import { createFlowFromTemplate } from '@/lib/client/flow-from-template'
 import type { FlowGraph } from '@/lib/flows/graph'
+=======
+>>>>>>> Stashed changes
 import { cn } from '@/lib/utils'
 
 type StepNote = { nodeId: string; title: string; what: string; why?: string }
@@ -67,6 +70,7 @@ export default function FlowTemplateDetails() {
   const [loadError, setLoadError] = useState(false)
   const [using, setUsing] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
+<<<<<<< Updated upstream
   const [versions, setVersions] = useState<TemplateVersion[]>([])
   const [restoring, setRestoring] = useState<number | null>(null)
   const [submission, setSubmission] = useState<SubmissionStatus | null>(null)
@@ -91,6 +95,8 @@ export default function FlowTemplateDetails() {
   }, [canSubmit, id])
 
   useEffect(() => { loadSubmission() }, [loadSubmission])
+=======
+>>>>>>> Stashed changes
 
   useEffect(() => {
     let cancelled = false
@@ -299,6 +305,7 @@ export default function FlowTemplateDetails() {
               </Button>
             )}
           </div>
+<<<<<<< Updated upstream
         </section>
       )}
 
@@ -306,6 +313,8 @@ export default function FlowTemplateDetails() {
         <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-1">
           <p className="eyebrow mb-3">The shape of it</p>
           <FlowGraphPreview graph={template.graph} />
+=======
+>>>>>>> Stashed changes
         </section>
       )}
 
@@ -382,6 +391,7 @@ export default function FlowTemplateDetails() {
         </section>
       )}
 
+<<<<<<< Updated upstream
       {versions.length > 0 && (
         <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-1">
           <p className="eyebrow mb-3">History</p>
@@ -412,6 +422,8 @@ export default function FlowTemplateDetails() {
         </section>
       )}
 
+=======
+>>>>>>> Stashed changes
       <IntegrationConnectDialog
         open={connectOpen}
         onOpenChange={setConnectOpen}

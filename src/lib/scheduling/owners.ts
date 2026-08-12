@@ -19,10 +19,19 @@ export interface OwnedCandidate {
   userId: string | null
 }
 
-/** An active user row, as both lookups below select it. */
+/**
+ * A user row, as both lookups below select it.
+ *
+ * `isActive` is carried explicitly rather than filtered in SQL because the two
+ * lookups need it for opposite reasons: the fallback list wants only active
+ * members, while the explicit-owner list MUST include inactive ones so
+ * attributeOwners can tell a deprovisioned owner (stop the work) from an absent
+ * one (fall back). Filtering both in SQL is what made those indistinguishable.
+ */
 export interface ActiveMember {
   id: string
   organizationId: string | null
+  isActive: boolean
 }
 
 /**
@@ -42,22 +51,33 @@ export function attributeOwners(
   members: ActiveMember[],
 ): Map<string, string> {
   const owners = new Map<string, string>()
-  const explicitById = new Map(explicitOwners.map((user) => [user.id, user.organizationId]))
+  const explicitById = new Map(explicitOwners.map((user) => [user.id, user]))
 
   const fallbackByOrg = new Map<string, string>()
   for (const member of members) {
-    if (member.organizationId && !fallbackByOrg.has(member.organizationId)) {
+    if (member.isActive && member.organizationId && !fallbackByOrg.has(member.organizationId)) {
       fallbackByOrg.set(member.organizationId, member.id)
     }
   }
 
   for (const candidate of candidates) {
+    const explicit = candidate.userId ? explicitById.get(candidate.userId) : undefined
+
+    // A named owner who was DEPROVISIONED stops the work entirely. Falling back
+    // here would hand a suspended person's automation to an unrelated colleague
+    // and keep running it under THEIR identity — the exact failure the
+    // revocation spine exists to close. Absent from the map = callers skip it.
+    //
+    // Note this is deliberately narrower than "no active explicit owner": a
+    // dangling userId with no row, or an owner who moved workspaces, still falls
+    // back, because neither means someone was suspended.
+    if (explicit && !explicit.isActive) continue
+
     // The named owner counts only if they are still in THIS org. Without that
     // check, someone who moved workspaces would keep being credited with — and
     // have their identity used for — runs in the org they left.
-    const explicitOrg = candidate.userId ? explicitById.get(candidate.userId) : undefined
     const owner =
-      explicitOrg === candidate.organizationId
+      explicit?.organizationId === candidate.organizationId
         ? candidate.userId!
         : fallbackByOrg.get(candidate.organizationId)
     if (owner) owners.set(candidate.id, owner)
@@ -78,13 +98,17 @@ export async function resolveRunOwners(candidates: OwnedCandidate[]): Promise<Ma
   const [explicitOwners, members] = await Promise.all([
     explicitIds.length
       ? systemPrisma.user.findMany({
-          where: { id: { in: explicitIds }, isActive: true },
-          select: { id: true, organizationId: true },
+          // NOT filtered on isActive: attributeOwners must be able to tell a
+          // DEACTIVATED owner (stop the work) from an ABSENT one (fall back).
+          // Filtering here collapsed both into "missing", which is how a
+          // suspended person's scheduled work kept running under a colleague.
+          where: { id: { in: explicitIds } },
+          select: { id: true, organizationId: true, isActive: true },
         })
       : Promise.resolve([] as ActiveMember[]),
     systemPrisma.user.findMany({
       where: { organizationId: { in: orgIds }, isActive: true },
-      select: { id: true, organizationId: true },
+      select: { id: true, organizationId: true, isActive: true },
       orderBy: { createdAt: 'asc' },
     }),
   ])

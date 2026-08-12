@@ -1,8 +1,10 @@
 import { Prisma } from '@prisma/client'
 import { systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
+import { recordAudit } from '@/lib/audit'
 
 export const OUTBOX_TOPIC_FLOW_SIGNAL = 'flow.signal'
+export const OUTBOX_TOPIC_CREDENTIAL_REVOKE = 'credential.revoke'
 const MAX_ATTEMPTS = 8
 const CLAIM_TIMEOUT_MS = 10 * 60_000
 
@@ -11,6 +13,38 @@ export type FlowSignalPayload = {
   payload: unknown
   sourceFlowId?: string
   depth?: number
+}
+
+/**
+ * Deleting a revoked user's OAuth grant at Nango, durably.
+ *
+ * Not done inline during deprovisioning on purpose: it is a network call, and
+ * an admin suspending a hostile account must never be blocked by a vendor
+ * outage. The local revocation commits immediately; this catches up.
+ *
+ * On exhaustion the row survives in `failed` status carrying the connection id
+ * in aggregateId — that row IS the record that a grant is still live upstream,
+ * which is what makes an un-revoked credential visible instead of silent.
+ */
+export function credentialRevokeOutboxEvent(input: {
+  organizationId: string
+  connectionId: string
+  providerConfigKey: string
+  userId: string
+}) {
+  return {
+    organizationId: input.organizationId,
+    topic: OUTBOX_TOPIC_CREDENTIAL_REVOKE,
+    aggregateId: input.connectionId,
+    // A revoke HAS a natural idempotency key, unlike provider events: deleting
+    // the same grant twice is meaningless.
+    dedupeKey: `credential-revoke:${input.connectionId}`,
+    payload: {
+      connectionId: input.connectionId,
+      providerConfigKey: input.providerConfigKey,
+      userId: input.userId,
+    } as Prisma.InputJsonValue,
+  }
 }
 
 export function flowSignalOutboxEvent(input: {
@@ -81,6 +115,11 @@ function parseSignalPayload(value: Prisma.JsonValue): FlowSignalPayload {
 }
 
 async function deliver(event: { id: string; organizationId: string; topic: string; payload: Prisma.JsonValue }) {
+  if (event.topic === OUTBOX_TOPIC_CREDENTIAL_REVOKE) {
+    const { handleCredentialRevoke } = await import('@/lib/nango/revoke-connection')
+    await handleCredentialRevoke(event.organizationId, event.payload)
+    return
+  }
   if (event.topic !== OUTBOX_TOPIC_FLOW_SIGNAL) throw new Error(`Unsupported outbox topic: ${event.topic}`)
   const signal = parseSignalPayload(event.payload)
   const { emitFlowSignal } = await import('@/features/flows/signals')
@@ -135,6 +174,20 @@ export async function processOutboxBatch(limit = 50, now = new Date()): Promise<
           lastError: message,
         },
       })
+      if (terminal && event.topic === OUTBOX_TOPIC_CREDENTIAL_REVOKE) {
+        // The grant is STILL LIVE at the provider. The failed row carries the
+        // connection id in aggregateId, so this is recoverable rather than lost
+        // — but it has to be VISIBLE. A silently un-revoked OAuth grant is the
+        // exact thing the revocation spine exists to make impossible.
+        await recordAudit({
+          organizationId: event.organizationId,
+          action: 'credential.revoke_failed',
+          actorKind: 'system',
+          resourceType: 'nango_connection',
+          resourceId: event.aggregateId,
+          detail: { attempts, lastError: message },
+        })
+      }
       if (terminal) failed += 1
       else retried += 1
       apiLogger.warn('outbox delivery failed', { outboxEventId: event.id, topic: event.topic, attempts, terminal, error: message })

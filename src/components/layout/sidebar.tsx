@@ -22,6 +22,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  UsersRound,
   Trash2,
   Workflow,
 } from 'lucide-react'
@@ -81,6 +82,12 @@ const navigation = [
 // org-kind double-gate in resolvePermissions), so the entry is absent there
 // rather than shown-and-refused — one check covers both edition and role.
 const reviewsNavItem = { name: 'Reviews', href: '/admin/catalogue', icon: ShieldCheck }
+
+// A STRICTER gate than Reviews, and not an oversight: catalogue.review is also
+// held by reviewers in partner workspaces, while this page carries every user's
+// personal details and the account actions. platform.administer is the operator
+// tier alone. The route re-checks it — this only decides whether to draw a link.
+const usersNavItem = { name: 'Users', href: '/admin/users', icon: UsersRound }
 
 function planLabel(plan: string) {
   const lower = plan.toLowerCase()
@@ -477,7 +484,11 @@ export function Sidebar() {
         {/* Nav + agent tree */}
         <div className="flex-1 overflow-y-auto px-2 py-2">
           <nav className="mb-2 space-y-0.5">
-            {(can('catalogue.review') ? [...navigation, reviewsNavItem] : navigation).map((item) => {
+            {[
+              ...navigation,
+              ...(can('catalogue.review') ? [reviewsNavItem] : []),
+              ...(can('platform.administer') ? [usersNavItem] : []),
+            ].map((item) => {
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
               return (
                 <Link

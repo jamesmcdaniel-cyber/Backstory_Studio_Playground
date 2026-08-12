@@ -1,7 +1,10 @@
 import { systemPrisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
-import { listConnectedProviders, countableIntegrations } from '@/lib/integrations/connected'
+import { listConnectedProviders } from '@/lib/integrations/connected'
+// The same "what counts against the 3-integration cap" rule the enforcement
+// path uses, so the console cannot disagree with the limit it is reporting on.
+import { countableIntegrations } from '@/lib/usage/free-tier-limits'
 
 /**
  * Cross-workspace user observability for platform operators.

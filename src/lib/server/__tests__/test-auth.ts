@@ -9,6 +9,15 @@ export interface SeedOverrides {
   orgKind?: string
   role?: UserRole
   platformRole?: string | null
+  /**
+   * Explicit creation timestamp, only ever needed by INTERNAL fixtures.
+   *
+   * resolveInternalOrgId picks the OLDEST internal org, so a test that seeds one
+   * can silently become "the platform" for whichever other test file is running
+   * concurrently. Dating a fixture far in the future keeps it out of that
+   * selection while leaving its permissions exactly as they are.
+   */
+  orgCreatedAt?: Date
 }
 
 /** Seed an org + active user and return an AuthContext bound to them. */
@@ -17,7 +26,12 @@ export async function seedTestOrg(
   overrides: SeedOverrides = {},
 ): Promise<{ organizationId: string; userId: string; auth: AuthContext; cleanup: () => Promise<void> }> {
   const org = await prisma.organization.create({
-    data: { name: 'Smoke', slug: `smoke-${crypto.randomUUID()}`, kind: overrides.orgKind ?? 'customer' },
+    data: {
+      name: 'Smoke',
+      slug: `smoke-${crypto.randomUUID()}`,
+      kind: overrides.orgKind ?? 'customer',
+      ...(overrides.orgCreatedAt ? { createdAt: overrides.orgCreatedAt } : {}),
+    },
   })
   const user = await prisma.user.create({
     data: {

@@ -40,10 +40,17 @@ if (TEST_DB) {
   before(async () => {
     ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     const testAuth = await import('@/lib/server/__tests__/test-auth')
-    // Partner + reviewer, as in staff-emails.db.test: review rights resolve the
-    // same for internal|partner, and seeding another INTERNAL org would race
-    // whichever concurrent test file resolves "the oldest internal org".
-    reviewer = await testAuth.seedTestOrg(prisma, { orgKind: 'partner', platformRole: 'reviewer' })
+    // INTERNAL + reviewer. This used to be a partner org, on the grounds that
+    // review rights resolve the same either way — no longer true, and that is
+    // the point: /api/admin now requires platform.administer, which a partner
+    // reviewer deliberately does not hold (see platform-administer.test.ts).
+    // Far-future createdAt so this internal org never wins resolveInternalOrgId
+    // (oldest internal) out from under a concurrently running catalogue test.
+    reviewer = await testAuth.seedTestOrg(prisma, {
+      orgKind: 'internal',
+      platformRole: 'reviewer',
+      orgCreatedAt: new Date('2099-01-01T00:00:00.000Z'),
+    })
     testAuth.installTestAuth(reviewer.auth)
     route = await import('../domains/route')
   })

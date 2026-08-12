@@ -30,11 +30,16 @@ if (TEST_DB) {
     const testAuth = await import('@/lib/server/__tests__/test-auth')
     installTestAuth = testAuth.installTestAuth
     partner = await testAuth.seedTestOrg(prisma, { orgKind: 'partner' })
-    // Reviewer in a PARTNER org on purpose: review rights resolve identically
-    // (internal|partner × reviewer), and seeding another internal org here
-    // would race review.db.test's resolveInternalOrgId (oldest internal wins)
-    // when test files run concurrently.
-    backstory = await testAuth.seedTestOrg(prisma, { orgKind: 'partner', platformRole: 'reviewer' })
+    // INTERNAL reviewer: /api/catalogue/staff mints super admins, so it now
+    // requires platform.administer, which a PARTNER reviewer deliberately does
+    // not hold. The far-future createdAt keeps this org out of
+    // resolveInternalOrgId (oldest internal wins), which is what the partner
+    // workaround was avoiding when review rights still resolved identically.
+    backstory = await testAuth.seedTestOrg(prisma, {
+      orgKind: 'internal',
+      platformRole: 'reviewer',
+      orgCreatedAt: new Date('2099-01-01T00:00:00.000Z'),
+    })
     await prisma.user.update({ where: { id: partner.userId }, data: { email: 'author@people.ai' } })
   })
 

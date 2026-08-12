@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import {
   Sparkles, TrendingUp, CalendarClock, ShieldAlert, Target,
-  Inbox, LineChart, Bell, Plus, Pencil, Trash2, X, Loader2,
+  Inbox, LineChart, Bell, Plus, Pencil, Trash2, X,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
@@ -23,6 +23,8 @@ import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import type { WorkspaceConnections } from '@/components/integrations/integration-match'
 import { accentFor } from '@/components/templates/accents'
+import { LibraryFilterBar, ALL_FILTER } from '@/components/templates/library-filter-bar'
+import { hasRole } from '@/lib/templates/roles'
 import { cn } from '@/lib/utils'
 
 /** Cards per page on the Templates and Skills grids. */
@@ -116,16 +118,13 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   const [error, setError] = useState<string | null>(null)
   // One search box filters whichever tab is active (name/description/category/tags).
   const [search, setSearch] = useState('')
-  // AI template finder: same search box, but Enter/"Ask AI" asks the model to
-  // match the typed goal against the loaded catalog instead of substring-filtering.
-  const [aiResults, setAiResults] = useState<{ id: string; kind: string; reason: string }[] | null>(null)
-  const [aiLoading, setAiLoading] = useState(false)
-  const [aiError, setAiError] = useState<string | null>(null)
   // Card grids cap at 9 per page; each tab pages independently.
   const [templatesPage, setTemplatesPage] = useState(1)
   const [skillsPage, setSkillsPage] = useState(1)
-  // Category filter chips (per tab). 'All' shows everything.
-  const [category, setCategory] = useState('All')
+  // Category is per tab (the two vocabularies differ); role spans both, since a
+  // CSM looking for their work wants it whether it ships as a template or a skill.
+  const [category, setCategory] = useState(ALL_FILTER)
+  const [role, setRole] = useState(ALL_FILTER)
   // Track which skill's dropdown is open
   const [openSkillMenu, setOpenSkillMenu] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -138,7 +137,6 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   // Write/Preview toggle for the dialog's example-output field. Reset whenever
   // a different asset is opened so a stale preview never greets a new draft.
   const [previewExample, setPreviewExample] = useState(false)
-  const aiRequestSeq = useRef(0)
 
   useEffect(() => { setPreviewExample(false) }, [dialog?.id, dialog?.kind])
 
@@ -229,7 +227,8 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
 
   const handleTabChange = (value: string) => {
     // Categories differ per tab, so a filter from one tab shouldn't linger.
-    setCategory('All')
+    // Role is the same taxonomy on both sides, so it deliberately does.
+    setCategory(ALL_FILTER)
     setActiveTab(value === 'skills' ? 'skills' : 'templates')
   }
 
@@ -289,71 +288,24 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   const q = search.trim().toLowerCase()
   const matches = (item: { name: string; description: string; category: string; tags?: string[] }) =>
     !q || `${item.name} ${item.description} ${item.category} ${(item.tags || []).join(' ')}`.toLowerCase().includes(q)
-  const inCategory = (item: { category: string }) => category === 'All' || item.category === category
-  // Category chips are derived from the active tab's real categories (sorted,
-  // deduped) — so they always reflect what's actually in the library.
+  const inCategory = (item: { category: string }) => category === ALL_FILTER || item.category === category
+  // A skill states its audience; a template has only its category and tags —
+  // hasRole reads whichever the item carries.
+  const inRole = (item: { category: string; tags?: string[]; audience?: string[] }) => hasRole(item, role)
+  // The Category dropdown is derived from the active tab's real categories
+  // (sorted, deduped) — so it always reflects what's actually in the library.
   const categoriesFor = (items: { category: string }[]) =>
-    ['All', ...Array.from(new Set(items.map((i) => i.category).filter(Boolean))).sort()]
+    Array.from(new Set(items.map((i) => i.category).filter(Boolean))).sort()
   const activeCategories = categoriesFor(activeTab === 'skills' ? skills : templates)
-  const filteredTemplates = templates.filter(matches).filter(inCategory)
-  const filteredSkills = skills.filter(matches).filter(inCategory)
+  const filteredTemplates = templates.filter(matches).filter(inCategory).filter(inRole)
+  const filteredSkills = skills.filter(matches).filter(inCategory).filter(inRole)
 
-  const onSearch = (value: string) => {
-    setSearch(value)
-    setTemplatesPage(1)
-    setSkillsPage(1)
-  }
-
-  const onCategory = (value: string) => {
-    setCategory(value)
-    setTemplatesPage(1)
-    setSkillsPage(1)
-  }
-
-  // Asks the model to match the typed goal against the already-loaded catalog.
-  // Setting aiResults to [] immediately (rather than leaving it null) opens the
-  // suggestions section right away so the loading spinner has somewhere to render.
-  const runAiSearch = async () => {
-    const goal = search.trim()
-    if (goal.length < 3 || aiLoading) return
-    const seq = ++aiRequestSeq.current
-    setAiResults([])
-    setAiError(null)
-    setAiLoading(true)
-    try {
-      const items = [
-        ...templates.map((t) => ({ id: t.id, kind: 'template' as const, name: t.name, description: t.description, category: t.category, tags: t.tags })),
-        ...skills.map((s) => ({ id: s.id, kind: 'skill' as const, name: s.name, description: s.description, category: s.category, tags: s.tags })),
-      ]
-      const res = await fetch('/api/templates/ai-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: goal, items }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        if (seq === aiRequestSeq.current) setAiError(data.error || 'Could not find matches for that goal.')
-        return
-      }
-      if (seq === aiRequestSeq.current) setAiResults(data.matches || [])
-    } catch {
-      if (seq === aiRequestSeq.current) setAiError('Could not find matches for that goal.')
-    } finally {
-      if (seq === aiRequestSeq.current) setAiLoading(false)
-    }
-  }
-
-  const closeAiResults = () => {
-    aiRequestSeq.current++
-    setAiResults(null)
-    setAiError(null)
-    setAiLoading(false)
-  }
-
-  const jumpToMatch = (match: { id: string; kind: string }, name: string) => {
-    handleTabChange(match.kind === 'skill' ? 'skills' : 'templates')
-    onSearch(name)
-  }
+  // Any filter change returns both grids to page one — otherwise a narrower
+  // result set leaves you on a page that no longer exists.
+  const resetPages = () => { setTemplatesPage(1); setSkillsPage(1) }
+  const onSearch = (value: string) => { setSearch(value); resetPages() }
+  const onCategory = (value: string) => { setCategory(value); resetPages() }
+  const onRole = (value: string) => { setRole(value); resetPages() }
 
   const addSkillToAgent = async (skill: SkillItem, agent: AgentItem) => {
     setOpenSkillMenu(null)
@@ -426,93 +378,18 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
       <div className="max-w-6xl mx-auto p-6 space-y-6">
         {!embedded && <PageHeader eyebrow="Library" title="Templates" />}
 
-        <div className="relative w-full">
-          <Input
-            value={search}
-            onChange={(event) => onSearch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') runAiSearch()
-            }}
-            placeholder="Describe what you want to accomplish — press Enter for AI matches…"
-            className="h-11 w-full pr-28"
-          />
-          <button
-            type="button"
-            disabled={search.trim().length < 3 || aiLoading}
-            onClick={runAiSearch}
-            className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700 disabled:pointer-events-none disabled:opacity-50"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            {aiLoading ? 'Asking…' : 'Ask AI'}
-          </button>
-        </div>
-
-        {aiResults !== null && (
-          <div className="space-y-3 rounded-xl border border-indigo-200/60 bg-indigo-50/40 p-4 dark:border-indigo-500/20 dark:bg-indigo-500/5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-300" />
-                <h3 className="text-sm font-semibold">AI suggestions</h3>
-              </div>
-              <button
-                type="button"
-                aria-label="Dismiss AI suggestions"
-                onClick={closeAiResults}
-                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {aiLoading ? (
-              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Finding templates for your goal…
-              </div>
-            ) : aiError ? (
-              <p className="text-sm text-red-600 dark:text-red-400">{aiError}</p>
-            ) : aiResults.length === 0 ? (
-              <EmptyState
-                icon={Sparkles}
-                title="No templates match that goal yet."
-                description="You can create one."
-                action={
-                  <Button size="sm" onClick={() => openCreate(activeTab === 'skills' ? 'skill' : 'template')}>
-                    <Plus className="mr-1.5 h-4 w-4" />
-                    {activeTab === 'skills' ? 'Create skill' : 'Create template'}
-                  </Button>
-                }
-              />
-            ) : (
-              <div className="space-y-2">
-                {aiResults.map((match) => {
-                  const item =
-                    match.kind === 'skill'
-                      ? skills.find((s) => s.id === match.id)
-                      : templates.find((t) => t.id === match.id)
-                  if (!item) return null
-                  return (
-                    <div
-                      key={`${match.kind}-${match.id}`}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-card p-3"
-                    >
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-sm font-medium">{item.name}</span>
-                          <Badge variant="outline" className="text-[11px]">{item.category}</Badge>
-                        </div>
-                        <p className="text-xs italic text-muted-foreground">{match.reason}</p>
-                      </div>
-                      <Button size="sm" variant="outline" onClick={() => jumpToMatch(match, item.name)}>
-                        View
-                      </Button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
+        {/* One simple search box plus two dropdowns — the same bar the flow
+            gallery uses, so the two libraries filter identically. */}
+        <LibraryFilterBar
+          search={search}
+          onSearchChange={onSearch}
+          searchLabel="Search templates and skills"
+          categories={activeCategories}
+          category={category}
+          onCategoryChange={onCategory}
+          role={role}
+          onRoleChange={onRole}
+        />
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList>
@@ -521,27 +398,6 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
             <TabsTrigger value="templates">Templates ({templates.length})</TabsTrigger>
             <TabsTrigger value="skills">Skills ({skills.length})</TabsTrigger>
           </TabsList>
-
-          {/* Category filter — derived from the active tab's real categories. */}
-          {activeCategories.length > 2 && (
-            <div className="mt-5 flex flex-wrap gap-2">
-              {activeCategories.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => onCategory(c)}
-                  className={cn(
-                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                    category === c
-                      ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-300'
-                      : 'border-border/70 text-muted-foreground hover:border-border hover:bg-accent hover:text-foreground',
-                  )}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          )}
 
           {/* ── Templates tab ─────────────────────────────────────────────── */}
           <TabsContent value="templates" className="mt-6">

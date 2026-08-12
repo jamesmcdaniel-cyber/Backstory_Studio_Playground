@@ -5,6 +5,7 @@ import {
   countableIntegrations,
   isUnlimitedActor,
   limitMessage,
+  runWindowStart,
   startOfUtcDay,
 } from '../free-tier-limits'
 
@@ -50,6 +51,30 @@ test('the daily window starts at midnight UTC', () => {
   assert.equal(start.toISOString(), '2026-08-09T00:00:00.000Z')
   // A time already at midnight is its own window start.
   assert.equal(startOfUtcDay(new Date('2026-08-09T00:00:00.000Z')).toISOString(), '2026-08-09T00:00:00.000Z')
+})
+
+test('an operator reset moves the daily window forward to the reset moment', () => {
+  const now = new Date('2026-08-09T17:00:00.000Z')
+  const reset = new Date('2026-08-09T14:30:00.000Z')
+  assert.equal(runWindowStart(reset, now).toISOString(), '2026-08-09T14:30:00.000Z')
+})
+
+test('no reset stamp leaves the plain midnight window', () => {
+  const now = new Date('2026-08-09T17:00:00.000Z')
+  assert.equal(runWindowStart(null, now).toISOString(), '2026-08-09T00:00:00.000Z')
+  assert.equal(runWindowStart(undefined, now).toISOString(), '2026-08-09T00:00:00.000Z')
+})
+
+test('a stale reset stamp cannot widen the window into previous days', () => {
+  // The safety property. Taking the EARLIER value would make a single reset a
+  // permanent exemption: yesterday's stamp would keep counting from yesterday,
+  // and today's runs would never fill the cap.
+  const now = new Date('2026-08-09T17:00:00.000Z')
+  const yesterday = new Date('2026-08-08T09:00:00.000Z')
+  assert.equal(runWindowStart(yesterday, now).toISOString(), '2026-08-09T00:00:00.000Z')
+
+  const lastMonth = new Date('2026-07-01T00:00:00.000Z')
+  assert.equal(runWindowStart(lastMonth, now).toISOString(), '2026-08-09T00:00:00.000Z')
 })
 
 test('refusal messages say what to do next, without quota jargon', () => {

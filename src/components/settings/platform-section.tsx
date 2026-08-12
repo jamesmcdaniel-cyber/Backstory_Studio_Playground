@@ -16,6 +16,10 @@
  *
  * Both talk to the same /api/catalogue/staff route, which re-checks
  * catalogue.review and is internalOnly.
+ *
+ * Domain access followed the same way out of Reviews (its "Access" tab): who may
+ * sign in at all is permissions administration too. It keeps its own component
+ * and its own route — see domain-access-section.tsx.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -27,6 +31,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SUPER_ADMIN_PLATFORM_ROLE } from '@/lib/authz/platform-roles'
+import { DomainAccessSection } from '@/components/settings/domain-access-section'
 
 type StaffOrg = { id: string; name: string; slug: string; kind: string }
 type StaffUser = {
@@ -260,6 +265,8 @@ export function PlatformSection({ organizationId }: { organizationId: string | n
           )}
         </CardContent>
       </Card>
+
+      <DomainAccessSection />
     </>
   )
 }

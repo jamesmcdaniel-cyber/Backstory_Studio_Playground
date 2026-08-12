@@ -3,20 +3,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { SubmissionQueue, type QueuedSubmission } from '@/components/admin/submission-queue'
 import { SubmissionDetail, type DetailSubmission } from '@/components/admin/submission-detail'
-import { DomainsPanel } from '@/components/admin/domains-panel'
 
-// Who holds super admin, and how each workspace is tiered, used to be a fifth
-// tab here. Both are permissions administration, so they live in Settings →
-// Platform now (src/components/settings/platform-section.tsx) — and promoting
-// someone already in this workspace is just the top rank of the Members role
-// select. This console is back to deciding what the catalogue serves.
-type Tab = 'queue' | 'published' | 'legacy' | 'access'
+// Who holds super admin, how each workspace is tiered, and which email domains
+// may sign in were all tabs here once. Every one of them is permissions
+// administration, so they live in Settings → Platform now
+// (src/components/settings/platform-section.tsx) — and promoting someone already
+// in this workspace is just the top rank of the Members role select. This
+// console is back to deciding what the catalogue serves, and nothing else.
+type Tab = 'queue' | 'published' | 'legacy'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'queue', label: 'Queue' },
   { id: 'published', label: 'Published' },
   { id: 'legacy', label: 'Legacy' },
-  { id: 'access', label: 'Access' },
 ]
 
 const KIND_LABELS: Record<string, string> = {
@@ -35,8 +34,8 @@ export default function CatalogueAdminPage() {
       <header>
         <h1 className="text-xl font-semibold">Reviews</h1>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-          Review submitted templates, decide what the shared catalogue serves, and manage who may sign in. Super
-          admins and workspace tiers are in Settings → Platform.
+          Review submitted templates and decide what the shared catalogue serves. Platform administration — reviewer
+          grants, workspace tiers, and which email domains may sign in — is in Settings → Platform.
         </p>
       </header>
 
@@ -57,7 +56,6 @@ export default function CatalogueAdminPage() {
       {tab === 'queue' && <QueueTab />}
       {tab === 'published' && <EntriesTab status="published" />}
       {tab === 'legacy' && <EntriesTab status="legacy_published" />}
-      {tab === 'access' && <DomainsPanel heading={false} />}
     </div>
   )
 }

@@ -20,7 +20,7 @@ import { isCompanyEmail, isPublicEmailProvider, normalizeDomain } from '@/lib/au
  * Deploy-level allowlist, read from `ALLOWED_EMAIL_DOMAINS` (comma-separated).
  *
  * This exists because the PlatformAllowedDomain table is administered ONLY from
- * `/admin/domains`, which the customer edition gates off — leaving a customer
+ * Settings → Platform, which the customer edition gates off — leaving a customer
  * deployment with no way to admit anyone but hardcoded staff, and no in-product
  * way to fix it. The env var is owned by whoever deploys, so it grants no power
  * to a customer org admin and inverts no boundary.
@@ -95,7 +95,8 @@ export async function isAllowedEmail(email: string | null | undefined): Promise<
  * row at all, while THIS function still needs a row to know which workspace its
  * people belong in. Without one, every employee is provisioned into a solo
  * workspace of their own and cannot see a colleague's org-scoped flows or
- * agents — so /admin/domains accepts a company domain as a routing-only entry.
+ * agents — so the domain-access screen accepts a company domain as a
+ * routing-only entry.
  */
 export async function allowedDomainOrg(email: string | null | undefined): Promise<string | null> {
   return (await activeRow(email))?.organizationId ?? null

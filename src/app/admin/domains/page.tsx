@@ -1,10 +1,9 @@
-'use client'
+import { redirect } from 'next/navigation'
 
-import { DomainsPanel } from '@/components/admin/domains-panel'
-
-// Kept as its own URL so existing links and bookmarks still resolve; the same
-// panel is the Access tab of the Reviews console, which is how it is reached
-// in the UI. /admin/layout.tsx is the gate for both.
+// Domain access moved to Settings → Platform, beside the other permissions
+// administration. This URL stays so existing links and bookmarks still land on
+// it — a redirect rather than a second copy of the panel, because two surfaces
+// for one decision is how they drift. /admin/layout.tsx still gates the path.
 export default function DomainsPage() {
-  return <DomainsPanel />
+  redirect('/settings?tab=platform')
 }

@@ -102,6 +102,7 @@ export function ConfirmDialog({
   requireTextLabel,
   busy = false,
   onConfirm,
+  children,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -113,6 +114,8 @@ export function ConfirmDialog({
   requireTextLabel?: React.ReactNode
   busy?: boolean
   onConfirm: () => unknown
+  /** Extra choices the confirmation itself carries (a modifier toggle, …). */
+  children?: React.ReactNode
 }) {
   const [typed, setTyped] = useState('')
   // Reopening for a different target must not inherit the previous answer.
@@ -140,6 +143,7 @@ export function ConfirmDialog({
             />
           </div>
         )}
+        {children}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
           <Button

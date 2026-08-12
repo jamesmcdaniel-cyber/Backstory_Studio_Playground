@@ -85,6 +85,29 @@ test('super admin is a rank in the members select, not a separate console', () =
   assert.doesNotMatch(reviews, /Super admins/, 'the Reviews console must not administer super admins')
 })
 
+test('domain access is administered from Settings, not from the Reviews console', () => {
+  // Who may sign in is permissions administration; Reviews decides what the
+  // catalogue serves. It used to be the "Access" tab there, which is also why
+  // /admin/domains now redirects instead of rendering a second copy.
+  const platform = read('src/components/settings/platform-section.tsx')
+  const access = read('src/components/settings/domain-access-section.tsx')
+  assert.match(platform, /<DomainAccessSection \/>/, 'the Platform tab must render domain access')
+  assert.match(access, /'\/api\/admin\/domains'/, 'the section must talk to the platform domains route')
+  const reviews = read('src/app/admin/catalogue/page.tsx')
+  assert.doesNotMatch(reviews, /id: 'access'/, 'the Reviews console must not carry the access tab any more')
+  assert.doesNotMatch(reviews, /DomainsPanel|DomainAccessSection/, 'nor render the panel by another route')
+  assert.match(read('src/app/admin/domains/page.tsx'), /redirect\('\/settings\?tab=platform'\)/, 'the old URL must still resolve')
+})
+
+test('blocking a domain does not decide two things with one native confirm', () => {
+  // window.confirm collapsed "block new sign-ins" and "deactivate the accounts
+  // already signed in" into OK/Cancel, so Cancel meant block-only, not cancel.
+  const access = read('src/components/settings/domain-access-section.tsx')
+  assert.doesNotMatch(access, /window\.confirm/, 'the block confirmation must be an in-app dialog')
+  assert.match(access, /ConfirmDialog/, 'blocking must confirm through the settings dialog')
+  assert.match(access, /deactivateUsers/, 'deactivating the accounts must stay a separate choice')
+})
+
 test('the domain TXT challenge is rendered, not only copied', () => {
   // The clipboard write is the ONLY place the token used to go, and it rejects
   // outside a secure context — leaving a claimed domain that could never verify.

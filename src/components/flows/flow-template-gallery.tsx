@@ -2,16 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Input } from '@/components/ui/input'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
 import { FlowTemplateCard, type FlowTemplateItem } from '@/components/templates/flow-template-card'
+import { LibraryFilterBar, ALL_FILTER } from '@/components/templates/library-filter-bar'
 import { accentFor } from '@/components/templates/accents'
+import { hasRole } from '@/lib/templates/roles'
 import { createFlowFromTemplate } from '@/lib/client/flow-from-template'
 
 /** Cards per page — same rhythm as the flows grid above the gallery. */
@@ -28,6 +28,8 @@ export function FlowTemplateGallery() {
   const router = useRouter()
   const [templates, setTemplates] = useState<FlowTemplateItem[]>([])
   const [search, setSearch] = useState('')
+  const [category, setCategory] = useState(ALL_FILTER)
+  const [role, setRole] = useState(ALL_FILTER)
   const [page, setPage] = useState(1)
   // Which template card is mid-instantiate, so only that card spins.
   const [pendingId, setPendingId] = useState<string | null>(null)
@@ -103,23 +105,29 @@ export function FlowTemplateGallery() {
 
   if (templates.length === 0) return null
 
-  // Search is the only filter — substring across everything a user might
-  // remember a template by (name, description, category, tags, and required
-  // integrations), so nobody pages through the library hunting for "renewal"
-  // or "slack". Category still colours the cards, it just isn't a filter chip.
+  // Search is a substring across everything a user might remember a template by
+  // (name, description, category, tags, and required integrations), so nobody
+  // pages through the library hunting for "renewal" or "slack". Category and
+  // role narrow it further, from the same bar the Templates library uses.
   const q = search.trim().toLowerCase()
+  const categories = Array.from(new Set(templates.map((t) => t.category).filter(Boolean))).sort()
   const visible = templates.filter(
     (t) =>
-      !q ||
-      [t.name, t.description, t.category, ...(t.tags ?? []), ...(t.integrations ?? [])]
-        .join(' ')
-        .toLowerCase()
-        .includes(q),
+      (!q ||
+        [t.name, t.description, t.category, ...(t.tags ?? []), ...(t.integrations ?? [])]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)) &&
+      (category === ALL_FILTER || t.category === category) &&
+      hasRole(t, role),
   )
-  const onSearch = (value: string) => {
-    setSearch(value)
-    setPage(1)
-  }
+  // Every filter returns to page one — a narrower result set otherwise leaves
+  // you on a page that no longer exists.
+  const onSearch = (value: string) => { setSearch(value); setPage(1) }
+  const onCategory = (value: string) => { setCategory(value); setPage(1) }
+  const onRole = (value: string) => { setRole(value); setPage(1) }
+  const filtering = q !== '' || category !== ALL_FILTER || role !== ALL_FILTER
+  const clearFilters = () => { setSearch(''); setCategory(ALL_FILTER); setRole(ALL_FILTER); setPage(1) }
   const { pageItems, pageCount, page: current } = paginate(visible, page, PAGE_SIZE)
 
   return (
@@ -131,37 +139,23 @@ export function FlowTemplateGallery() {
         </p>
       </div>
 
-      <div className="relative max-w-md">
-        <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          // type/name/autoComplete: without these, browser autofill treats a
-          // bare text input as an identity field and pre-fills the user's
-          // saved email — which silently filters the gallery to nothing.
-          type="search"
-          name="flow-template-search"
-          autoComplete="off"
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder="Search templates…"
-          aria-label="Search flow templates"
-          className="h-10 w-full pl-9 pr-9 [&::-webkit-search-cancel-button]:hidden"
-        />
-        {search && (
-          <button
-            type="button"
-            aria-label="Clear search"
-            onClick={() => onSearch('')}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+      <LibraryFilterBar
+        search={search}
+        onSearchChange={onSearch}
+        searchPlaceholder="Search templates…"
+        searchLabel="Search flow templates"
+        categories={categories}
+        category={category}
+        onCategoryChange={onCategory}
+        role={role}
+        onRoleChange={onRole}
+      />
 
       {visible.length === 0 && (
         <EmptyState
-          title="No templates match your search"
-          description="Try a different name, tag, or integration."
+          title="No templates match those filters"
+          description="Try a different name, tag, category, or role."
+          action={filtering ? <Button variant="outline" size="sm" onClick={clearFilters}>Clear filters</Button> : undefined}
         />
       )}
 

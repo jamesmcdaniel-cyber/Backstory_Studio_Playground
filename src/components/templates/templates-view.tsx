@@ -307,6 +307,11 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   const onCategory = (value: string) => { setCategory(value); resetPages() }
   const onRole = (value: string) => { setRole(value); resetPages() }
 
+  // An empty grid means two different things — nothing published yet, or
+  // nothing left after filtering — and only one of them has a way out.
+  const filtering = q !== '' || category !== ALL_FILTER || role !== ALL_FILTER
+  const clearFilters = () => { setSearch(''); setCategory(ALL_FILTER); setRole(ALL_FILTER); resetPages() }
+
   const addSkillToAgent = async (skill: SkillItem, agent: AgentItem) => {
     setOpenSkillMenu(null)
     const updatedSkills = Array.from(new Set([...(agent.skills || []), skill.id]))
@@ -412,8 +417,13 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
             {filteredTemplates.length === 0 ? (
               <EmptyState
                 icon={Sparkles}
-                title="No templates available yet"
-                description="Templates published to your workspace appear here."
+                title={filtering ? 'No templates match those filters' : 'No templates available yet'}
+                description={
+                  filtering
+                    ? 'Try another search term, category, or role.'
+                    : 'Templates published to your workspace appear here.'
+                }
+                action={filtering ? <Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button> : undefined}
               />
             ) : (
               <div className="stagger-children grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -496,8 +506,13 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
             {filteredSkills.length === 0 ? (
               <EmptyState
                 icon={Sparkles}
-                title="No skills available yet"
-                description="Skills published to your workspace appear here."
+                title={filtering ? 'No skills match those filters' : 'No skills available yet'}
+                description={
+                  filtering
+                    ? 'Try another search term, category, or role.'
+                    : 'Skills published to your workspace appear here.'
+                }
+                action={filtering ? <Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button> : undefined}
               />
             ) : (
               <div className="stagger-children grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

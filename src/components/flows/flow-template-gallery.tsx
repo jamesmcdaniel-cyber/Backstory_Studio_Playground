@@ -13,14 +13,13 @@ import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
 import { FlowTemplateCard, type FlowTemplateItem } from '@/components/templates/flow-template-card'
 import { accentFor } from '@/components/templates/accents'
 import { createFlowFromTemplate } from '@/lib/client/flow-from-template'
-import { cn } from '@/lib/utils'
 
 /** Cards per page — same rhythm as the flows grid above the gallery. */
 const PAGE_SIZE = 9
 
 /**
  * The full flow-template catalogue, on the Flows page itself: every template
- * (built-in, community, and AI-suggested), filterable by category and paged.
+ * (built-in, community, and AI-suggested), searchable and paged.
  * This replaced both the six-card teaser strip and the Flows tab that used to
  * live under Agents → Templates — one surface, no round-trip to another page
  * to see the rest of the library.
@@ -28,7 +27,6 @@ const PAGE_SIZE = 9
 export function FlowTemplateGallery() {
   const router = useRouter()
   const [templates, setTemplates] = useState<FlowTemplateItem[]>([])
-  const [category, setCategory] = useState('All')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   // Which template card is mid-instantiate, so only that card spins.
@@ -105,21 +103,18 @@ export function FlowTemplateGallery() {
 
   if (templates.length === 0) return null
 
-  // Category chips are derived from the catalogue's real categories (sorted,
-  // deduped) — so they always reflect what's actually in the library.
-  const categories = ['All', ...Array.from(new Set(templates.map((t) => t.category).filter(Boolean))).sort()]
-  // Substring search across everything a user might remember a template by —
-  // name, description, category, tags, and required integrations — so nobody
-  // pages through the library hunting for "renewal" or "slack".
+  // Search is the only filter — substring across everything a user might
+  // remember a template by (name, description, category, tags, and required
+  // integrations), so nobody pages through the library hunting for "renewal"
+  // or "slack". Category still colours the cards, it just isn't a filter chip.
   const q = search.trim().toLowerCase()
   const visible = templates.filter(
     (t) =>
-      (category === 'All' || t.category === category) &&
-      (!q ||
-        [t.name, t.description, t.category, ...(t.tags ?? []), ...(t.integrations ?? [])]
-          .join(' ')
-          .toLowerCase()
-          .includes(q)),
+      !q ||
+      [t.name, t.description, t.category, ...(t.tags ?? []), ...(t.integrations ?? [])]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
   )
   const onSearch = (value: string) => {
     setSearch(value)
@@ -163,30 +158,10 @@ export function FlowTemplateGallery() {
         )}
       </div>
 
-      {categories.length > 2 && (
-        <div className="flex flex-wrap gap-1.5">
-          {categories.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => { setCategory(c); setPage(1) }}
-              className={cn(
-                'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                category === c
-                  ? 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-300'
-                  : 'border-border text-muted-foreground hover:bg-muted',
-              )}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-      )}
-
       {visible.length === 0 && (
         <EmptyState
           title="No templates match your search"
-          description={category === 'All' ? 'Try a different name, tag, or integration.' : 'Try a different search, or switch back to All categories.'}
+          description="Try a different name, tag, or integration."
         />
       )}
 

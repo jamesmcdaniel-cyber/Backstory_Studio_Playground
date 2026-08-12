@@ -55,7 +55,7 @@ if (TEST_DB) {
     assert.equal(await isAllowedEmail('person@people.ai.attacker.example'), false)
   })
 
-  test('allowedDomainOrg returns the shared workspace, and null for company domains', async () => {
+  test('allowedDomainOrg returns the shared workspace, and null without an active row', async () => {
     assert.equal(await allowedDomainOrg(`person@${ids.activeDomain}`), ids.org)
     assert.equal(await allowedDomainOrg('person@people.ai'), null)
     assert.equal(await allowedDomainOrg(`person@${ids.disabledDomain}`), null)
@@ -148,7 +148,7 @@ if (TEST_DB) {
     assert.equal(await allowedDomainOrg(invited), null)
   })
 
-  test('a user from a company domain still gets their own workspace', async () => {
+  test('a company domain with no routing row still gets its people their own workspace', async () => {
     const { provisionUserForTest } = await import('@/lib/supabase/auth-utils')
     const created = await provisionUserForTest({
       id: crypto.randomUUID(),
@@ -159,5 +159,42 @@ if (TEST_DB) {
     assert.ok(created, 'provisioning returned nothing')
     assert.notEqual(created.organizationId, ids.org)
     assert.equal(created.role, 'ADMIN')
+  })
+
+  // The bug this pins: a company domain is admitted by the hardcoded list, so
+  // /admin/domains refused to store a row for it — and with no row,
+  // allowedDomainOrg returned null and every employee was provisioned into a
+  // solo workspace. Colleagues then could not see each other's flows or agents,
+  // which is org-scoped by design. A company domain now takes a routing row
+  // like any other, and admission stays hardcoded either way.
+  test('a company domain WITH a routing row sends its people to the shared workspace', async () => {
+    const { provisionUserForTest } = await import('@/lib/supabase/auth-utils')
+    // systemPrisma: platform_allowed_domains is a platform-wide table with no
+    // organizationId of its own, which is exactly what the tenant guard refuses
+    // on the tenant client — the routes that own it use systemPrisma too.
+    const { systemPrisma } = await import('@/lib/prisma')
+    const row = await systemPrisma.platformAllowedDomain.create({
+      data: { domain: 'people.ai', organizationId: ids.org },
+    })
+    try {
+      assert.equal(await allowedDomainOrg('staff@people.ai'), ids.org)
+
+      const created = await provisionUserForTest({
+        id: crypto.randomUUID(),
+        email: `routed-${Date.now()}@people.ai`,
+        user_metadata: { full_name: 'Routed Staff' },
+      } as any)
+      assert.ok(created, 'provisioning returned nothing')
+      assert.equal(created.organizationId, ids.org, 'company staff join the routed workspace')
+      assert.equal(created.role, 'USER', 'joining an existing workspace never makes them its admin')
+
+      // Blocking the row stops auto-join without touching admission — the
+      // hardcoded company list is what admits them.
+      await systemPrisma.platformAllowedDomain.update({ where: { id: row.id }, data: { disabledAt: new Date() } })
+      assert.equal(await allowedDomainOrg('staff@people.ai'), null)
+      assert.equal(await isAllowedEmail('staff@people.ai'), true)
+    } finally {
+      await systemPrisma.platformAllowedDomain.delete({ where: { id: row.id } }).catch(() => {})
+    }
   })
 }

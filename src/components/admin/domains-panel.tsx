@@ -74,7 +74,20 @@ export function DomainsPanel({ heading = true }: { heading?: boolean }) {
 
   const setDisabled = async (row: DomainRow, disabled: boolean) => {
     let deactivateUsers = false
-    if (disabled) {
+    // A company domain's row is routing only — its people are admitted by the
+    // hardcoded list whether or not it is blocked — so the sign-in wording and
+    // the deactivate-accounts offer would both be lies here.
+    const isCompany = companyDomains.includes(row.domain)
+    if (disabled && isCompany) {
+      if (
+        !window.confirm(
+          `${row.domain} is a company domain: its people can always sign in.\n\n` +
+            'Blocking only stops new accounts from joining the chosen workspace — they will land in a solo workspace of their own instead. Continue?',
+        )
+      ) {
+        return
+      }
+    } else if (disabled) {
       deactivateUsers = window.confirm(
         `Blocking ${row.domain} stops new sign-ins immediately, but people already signed in keep their session until it expires.\n\n` +
           'Click OK to also sign out and deactivate their accounts now. Click Cancel to block new sign-ins only.',
@@ -106,13 +119,14 @@ export function DomainsPanel({ heading = true }: { heading?: boolean }) {
         <header>
           <h1 className="text-2xl font-semibold">Platform access</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Which email domains may sign in. {companyDomains.join(' and ')} always have access and cannot be removed here.
+            Which email domains may sign in, and which workspace their people join. {companyDomains.join(' and ')} can
+            always sign in — list one below only to send its people into a shared workspace instead of a solo one each.
           </p>
         </header>
       )}
 
       <section className="space-y-3 rounded-lg border p-4">
-        <h2 className="text-sm font-medium">Allow a customer domain</h2>
+        <h2 className="text-sm font-medium">Allow a domain</h2>
         <div className="grid gap-3 sm:grid-cols-3">
           <input
             value={domain}
@@ -140,9 +154,10 @@ export function DomainsPanel({ heading = true }: { heading?: boolean }) {
           />
         </div>
         <p className="text-xs text-muted-foreground">
-          Everyone signing in from this domain joins the chosen workspace as a member. Public email providers such as
-          gmail.com are refused — allowing one would let anyone with an email address in. To admit one person instead,
-          invite them from that workspace&apos;s members screen.
+          Everyone signing in from this domain joins the chosen workspace as a member. Applies to accounts created from
+          now on — people who already signed in keep the workspace they landed in, so move them with an invitation from
+          that workspace&apos;s members screen. Public email providers such as gmail.com are refused — allowing one would
+          let anyone with an email address in. To admit one person instead, invite them.
         </p>
         <button
           onClick={() => void add()}
@@ -155,7 +170,7 @@ export function DomainsPanel({ heading = true }: { heading?: boolean }) {
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Allowed domains</h2>
-        {domains.length === 0 && <p className="text-sm text-muted-foreground">No customer domains yet.</p>}
+        {domains.length === 0 && <p className="text-sm text-muted-foreground">No domains listed yet.</p>}
         {domains.length > 0 && (
           <ul className="divide-y rounded-lg border">
             {domains.map((row) => (
@@ -164,6 +179,9 @@ export function DomainsPanel({ heading = true }: { heading?: boolean }) {
                   <p className="truncate text-sm font-medium">
                     {row.domain}
                     {row.disabledAt && <span className="ml-2 text-xs text-muted-foreground">blocked</span>}
+                    {companyDomains.includes(row.domain) && (
+                      <span className="ml-2 text-xs text-muted-foreground">company domain — routing only</span>
+                    )}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
                     joins {row.organization?.name ?? 'unknown workspace'}

@@ -62,9 +62,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       'PUBLIC_EMAIL_PROVIDER',
     )
   }
-  if ((COMPANY_EMAIL_DOMAINS as readonly string[]).includes(domain)) {
-    throw new ApiError('That domain already has permanent access and does not need an entry.', 400, 'COMPANY_DOMAIN')
-  }
+  // A company domain IS accepted here, and this used to be refused ("already
+  // has permanent access"). That reasoning missed half of what a row does: it
+  // grants admission AND names the workspace its people join. Company staff
+  // were admitted by the hardcoded list but had no row, so allowedDomainOrg
+  // returned null and EVERY employee was provisioned into their own solo
+  // workspace — invisible to each other, with org-scoped flows and agents that
+  // no colleague could see. For a company domain the row is routing only:
+  // admission stays hardcoded and is unaffected by adding, blocking, or
+  // deleting it.
 
   const organization = await systemPrisma.organization.findUnique({
     where: { id: data.organizationId },
@@ -107,6 +113,20 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     select: { id: true, domain: true, organizationId: true },
   })
   if (!row) throw new ApiError('That domain entry no longer exists.', 404, 'NOT_FOUND')
+
+  // Refused BEFORE the row is touched, so a rejected request changes nothing:
+  // blocking a company domain's row stops auto-join only — isAllowedEmail
+  // admits them from the hardcoded list either way — so a bulk deactivation
+  // here would lock out staff who can still sign in, on a screen whose confirm
+  // dialog says it is blocking them. Deactivate an employee from their
+  // workspace's members screen instead.
+  if (data.disabled && data.deactivateUsers && (COMPANY_EMAIL_DOMAINS as readonly string[]).includes(row.domain)) {
+    throw new ApiError(
+      `${row.domain} is a company domain: blocking it stops auto-join, but its people can always sign in. Deactivate the accounts from the workspace's members screen instead.`,
+      400,
+      'COMPANY_DOMAIN_DEACTIVATION',
+    )
+  }
 
   await systemPrisma.platformAllowedDomain.update({
     where: { id: data.id },

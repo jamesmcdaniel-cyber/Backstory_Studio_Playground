@@ -87,8 +87,15 @@ export async function isAllowedEmail(email: string | null | undefined): Promise<
 
 /**
  * The shared workspace a newly provisioned user from this domain should join,
- * or null when the domain has no allowlist row (company staff included — they
- * keep the existing invite/solo-workspace provisioning path).
+ * or null when the domain has no ACTIVE allowlist row — in which case they take
+ * the invite/solo-workspace provisioning path.
+ *
+ * Admission and routing are separate questions, and a company domain answers
+ * them differently: `isAllowedEmail` admits it from the hardcoded list with no
+ * row at all, while THIS function still needs a row to know which workspace its
+ * people belong in. Without one, every employee is provisioned into a solo
+ * workspace of their own and cannot see a colleague's org-scoped flows or
+ * agents — so /admin/domains accepts a company domain as a routing-only entry.
  */
 export async function allowedDomainOrg(email: string | null | undefined): Promise<string | null> {
   return (await activeRow(email))?.organizationId ?? null

@@ -1,5 +1,6 @@
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 
 /**
  * The picker and the runtime must agree on what "connected" means.
@@ -111,6 +112,46 @@ if (TEST_DB) {
         data: { status: 'error' },
       })
       assert.equal(await resolveDeliveryConnection(s.organizationId, 'gmail', s.userId), null)
+    } finally {
+      await s.cleanup()
+    }
+  })
+
+  test('one member never executes through another member’s personal connection', async () => {
+    // agents-act-as-user: borrowing a colleague's OAuth token makes the action
+    // unattributable and posts as someone who never consented to this run. The
+    // resolver used to end its fallback chain with `candidates[0]`, which is
+    // whichever personal connection the database happened to return first.
+    const s = await seedTestOrg(prisma)
+    try {
+      const colleague = await prisma.user.create({
+        data: {
+          supabaseId: crypto.randomUUID(),
+          email: `colleague-${crypto.randomUUID()}@example.com`,
+          organizationId: s.organizationId,
+        },
+      })
+      await connect(s.organizationId, 'slack', colleague.id)
+
+      const resolved = await resolveNangoConnection(s.organizationId, ['slack'], s.userId)
+
+      assert.equal(resolved, null, 'must resolve nothing rather than borrow a colleague’s token')
+    } finally {
+      await s.cleanup()
+    }
+  })
+
+  test('an org-shared connection is still resolvable by any member', async () => {
+    // The legitimate case the fallback removal must NOT break: userId === null
+    // means the workspace owns it.
+    const s = await seedTestOrg(prisma)
+    try {
+      await connect(s.organizationId, 'slack', null)
+
+      const resolved = await resolveNangoConnection(s.organizationId, ['slack'], s.userId)
+
+      assert.ok(resolved, 'org-shared connections remain available to everyone')
+      assert.equal(resolved.scope, 'org')
     } finally {
       await s.cleanup()
     }

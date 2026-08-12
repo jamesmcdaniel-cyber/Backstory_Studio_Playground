@@ -130,7 +130,16 @@ export async function resolveNangoConnection(
   if (candidates.length === 0) return null
 
   const own = userId ? candidates.find((connection) => connection.userId === userId) : undefined
-  const chosen = own ?? candidates.find((connection) => !connection.userId) ?? candidates[0]
+  const chosen = own ?? candidates.find((connection) => !connection.userId)
+
+  // No `?? candidates[0]`. That fallback picked an ARBITRARY OTHER MEMBER's
+  // personal connection, so one person's flow executed through a colleague's
+  // OAuth token — unattributable, and posting as someone who never consented to
+  // this run. It also meant a suspended person's token stayed a live fallback
+  // for the whole workspace. Resolving nothing surfaces "connect your account"
+  // instead of silently acting as somebody else.
+  if (!chosen) return null
+
   return {
     connectionId: chosen.connectionId,
     providerConfigKey: chosen.providerConfigKey,

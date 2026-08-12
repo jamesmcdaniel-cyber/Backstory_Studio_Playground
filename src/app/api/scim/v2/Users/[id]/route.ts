@@ -43,6 +43,21 @@ export async function PATCH(request: Request) {
     })
     if (identity.error) return scimError(identity.error.message, 502)
   }
+  if (data.isActive === false) {
+    // Identity-provider deprovisioning must revoke, not just flip a column.
+    // SCIM has no acting user — the caller is a provisioning token — so the
+    // audit row records the path rather than a person.
+    const { deprovisionUser } = await import('@/lib/revoke-user-access')
+    await deprovisionUser({
+      userId: existing.id,
+      organizationId: auth.organizationId,
+      reason: 'scim_deprovisioned',
+      actorUserId: null,
+    })
+    // isActive is already written; leave it out so the update below cannot
+    // re-assert it over a row deprovisionUser just handled.
+    delete data.isActive
+  }
   const updated = await systemPrisma.user.update({ where: { id: existing.id }, data })
   return scimJson(scimUser(updated))
 }
@@ -54,6 +69,13 @@ export async function DELETE(request: Request) {
   if (!existing) return new Response(null, { status: 204 })
   if (isPlatformOwnerEmail(existing.email)) return scimError('This account is the platform owner and cannot be deleted.', 403)
   await supabaseAdmin().updateUserById(existing.supabaseId, { ban_duration: '876000h' }).catch(() => undefined)
-  await systemPrisma.user.update({ where: { id: existing.id }, data: { isActive: false } })
+  // Deprovision, not a bare isActive flip — see the PATCH path above.
+  const { deprovisionUser } = await import('@/lib/revoke-user-access')
+  await deprovisionUser({
+    userId: existing.id,
+    organizationId: auth.organizationId,
+    reason: 'scim_deprovisioned',
+    actorUserId: null,
+  })
   return new Response(null, { status: 204 })
 }

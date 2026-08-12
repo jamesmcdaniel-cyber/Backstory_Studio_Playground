@@ -1,4 +1,7 @@
 import type { Prisma } from '@prisma/client'
+import { systemPrisma } from '@/lib/prisma'
+import { recordAudit } from '@/lib/audit'
+import { credentialRevokeOutboxEvent } from '@/lib/outbox'
 
 /**
  * Revoke everything one person holds in one workspace.
@@ -94,4 +97,77 @@ export async function revokeUserAccess(
     quarantined: { flows: flows.count, agentTasks: agentTasks.count },
     pendingUpstreamRevokes: nangoRows,
   }
+}
+
+/**
+ * Deactivate + revoke + enqueue the upstream deletions, atomically.
+ *
+ * Every deprovision path calls THIS, not revokeUserAccess directly, so no path
+ * can deactivate without revoking. That is the failure this whole sub-project
+ * exists to close: the revocation logic already existed in org-transfer.ts, and
+ * deactivation simply never called it.
+ *
+ * systemPrisma: revocation must not be subject to the owner-liveness filter it
+ * exists to make true — see the note on revokeUserAccess. It is also a
+ * cross-workspace operator path (the admin console deprovisions users in other
+ * orgs), which the guarded client would reject outright.
+ *
+ * Does NOT touch Supabase — session banning differs per caller (the operator
+ * console bans before flipping the column; SCIM bans as part of its own update)
+ * and belongs to them.
+ */
+export async function deprovisionUser(params: {
+  userId: string
+  organizationId: string
+  reason: RevocationReason
+  actorUserId?: string | null
+}): Promise<RevocationResult> {
+  const { userId, organizationId, reason, actorUserId } = params
+
+  const result = await systemPrisma.$transaction(async (tx) => {
+    const revocation = await revokeUserAccess(tx, { userId, organizationId, reason })
+
+    await tx.user.update({ where: { id: userId }, data: { isActive: false } })
+
+    // Enqueued in the SAME transaction as the local revocation, so there is no
+    // window where the row is gone but nothing remembers to delete the grant.
+    for (const grant of revocation.pendingUpstreamRevokes) {
+      await tx.outboxEvent.create({
+        data: credentialRevokeOutboxEvent({ organizationId, userId, ...grant }),
+      })
+    }
+
+    return revocation
+  })
+
+  await recordAudit({
+    organizationId,
+    action: 'member.deprovisioned',
+    actorUserId: actorUserId ?? null,
+    resourceType: 'user',
+    resourceId: userId,
+    detail: {
+      reason,
+      credentials: result.credentials,
+      apiKeysRevoked: result.apiKeysRevoked,
+      quarantined: result.quarantined,
+      upstreamRevokesQueued: result.pendingUpstreamRevokes.length,
+    },
+  })
+
+  // A separate row, not just a field on the one above: the claim queue is an
+  // operational surface, and "what got quarantined and when" is the question an
+  // admin asks weeks later without wanting to reconstruct a deprovisioning.
+  if (result.quarantined.flows > 0 || result.quarantined.agentTasks > 0) {
+    await recordAudit({
+      organizationId,
+      action: 'work.quarantined',
+      actorUserId: actorUserId ?? null,
+      resourceType: 'user',
+      resourceId: userId,
+      detail: { reason, ...result.quarantined },
+    })
+  }
+
+  return result
 }

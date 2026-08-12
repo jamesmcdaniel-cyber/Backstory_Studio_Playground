@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
+import { deprovisionUser } from '@/lib/revoke-user-access'
 import { isCustomerEdition } from '@/lib/edition'
 import {
   isPlatformOwnerEmail,
@@ -135,6 +136,15 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   // The platform owner cannot be removed from a workspace by anyone.
   if (isPlatformOwnerEmail(target.email)) throw new ApiError(OWNER_PROTECTED_MESSAGE, 403, OWNER_PROTECTED_CODE)
   if (administrative(target.role)) await assertNotLastAdmin(auth.organizationId, target.id)
-  await prisma.user.update({ where: { id: target.id }, data: { isActive: false } })
-  return { success: true }
+  // Deprovision, not a bare isActive flip. Removing someone used to leave every
+  // credential they held live — their OAuth grants kept working at the provider,
+  // and the flows they owned kept running under whoever the scheduler picked
+  // next. It also left no audit row at all.
+  const revocation = await deprovisionUser({
+    userId: target.id,
+    organizationId: auth.organizationId,
+    reason: 'member_removed',
+    actorUserId: auth.dbUser.id,
+  })
+  return { success: true, revocation }
 }, { permission: 'members.manage' })

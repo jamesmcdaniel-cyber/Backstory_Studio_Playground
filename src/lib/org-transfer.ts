@@ -1,4 +1,5 @@
 import type { Prisma, UserRole } from '@prisma/client'
+import { revokeUserAccess } from '@/lib/revoke-user-access'
 
 /**
  * Move a user into another workspace.
@@ -37,6 +38,9 @@ export const REVOKED_ON_TRANSFER = [
   'integration',
   'peopleAiConnection',
   'mcpConnection',
+  // Was missing: a transferred user's Nango connection stayed behind in the
+  // workspace they left, readable by people they no longer worked with.
+  'nangoConnection',
   'pushSubscription',
 ] as const
 
@@ -64,7 +68,7 @@ export async function transferUserToOrganization(
   },
 ): Promise<TransferResult> {
   const { userId, fromOrganizationId, toOrganizationId, role } = params
-  const empty = { integration: 0, peopleAiConnection: 0, mcpConnection: 0, pushSubscription: 0 }
+  const empty = { integration: 0, peopleAiConnection: 0, mcpConnection: 0, nangoConnection: 0, pushSubscription: 0 }
 
   if (fromOrganizationId === toOrganizationId) {
     return { moved: false, revoked: empty }
@@ -78,26 +82,23 @@ export async function transferUserToOrganization(
   // Nothing to revoke for a user who had no workspace yet (fresh provision).
   if (!fromOrganizationId) return { moved: true, revoked: empty }
 
-  const scope = { organizationId: fromOrganizationId, userId }
+  // One revocation implementation, shared with deprovisioning, rather than two
+  // that drift. This module's copy was the one that already worked — and the
+  // fact that deactivation never called it is the entire reason the revocation
+  // spine exists.
+  const revocation = await revokeUserAccess(tx, {
+    userId,
+    organizationId: fromOrganizationId,
+    reason: 'org_transfer',
+  })
 
-  // Each delete is org-scoped, so the tenant guard is satisfied and a bug in
-  // this function can only ever touch the workspace being left.
-  const [integration, peopleAiConnection, mcpConnection, pushSubscription] = await Promise.all([
-    tx.integration.deleteMany({ where: scope }),
-    tx.peopleAiConnection.deleteMany({ where: scope }),
-    // Personal MCP rows only. `userId: null` marks an org-shared server added
-    // via the connections page — that belongs to the workspace, not the leaver.
-    tx.mcpConnection.deleteMany({ where: scope }),
-    tx.pushSubscription.deleteMany({ where: scope }),
+  // A transfer is NOT a deprovisioning: the person is still employed and still
+  // owns their work. revokeUserAccess quarantines because its usual caller is a
+  // suspension; here that would stop flows nobody asked to stop.
+  await Promise.all([
+    tx.flow.updateMany({ where: { organizationId: fromOrganizationId, userId }, data: { quarantinedAt: null } }),
+    tx.agentTask.updateMany({ where: { organizationId: fromOrganizationId, userId }, data: { quarantinedAt: null } }),
   ])
 
-  return {
-    moved: true,
-    revoked: {
-      integration: integration.count,
-      peopleAiConnection: peopleAiConnection.count,
-      mcpConnection: mcpConnection.count,
-      pushSubscription: pushSubscription.count,
-    },
-  }
+  return { moved: true, revoked: revocation.credentials }
 }

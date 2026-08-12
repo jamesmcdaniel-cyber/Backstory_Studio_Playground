@@ -6,6 +6,7 @@ import { recordAudit } from '@/lib/audit'
 import { supabaseAdmin } from '@/lib/scim/server'
 import { resetMonthlyTokenUsage } from '@/lib/usage/budget'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
+import { deprovisionUser } from '@/lib/revoke-user-access'
 
 /**
  * Operator actions on one account.
@@ -91,7 +92,20 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         .catch(() => {
           throw new ApiError('Could not deactivate the account in Supabase.', 502, 'SUPABASE_ERROR')
         })
-      await systemPrisma.user.update({ where: { id: target.id }, data: { isActive: false } })
+      // Deprovision, not a bare isActive flip: a suspended account used to keep
+      // every credential it held, so its OAuth grants stayed live at the
+      // provider and its scheduled work kept running under a colleague.
+      if (target.organizationId) {
+        await deprovisionUser({
+          userId: target.id,
+          organizationId: target.organizationId,
+          reason: 'deactivated',
+          actorUserId: auth.userId,
+        })
+      } else {
+        // No workspace means no org-scoped credentials to revoke.
+        await systemPrisma.user.update({ where: { id: target.id }, data: { isActive: false } })
+      }
       await audit({})
       return { success: true, isActive: false }
     }
@@ -104,7 +118,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         })
       await systemPrisma.user.update({ where: { id: target.id }, data: { isActive: true } })
       await audit({})
-      return { success: true, isActive: true }
+      return {
+        success: true,
+        isActive: true,
+        // Deactivation deleted the OAuth grants at the provider, not just our
+        // copy, so there is nothing to restore. The operator has to know the
+        // person will land in an app with no integrations connected — otherwise
+        // correct behaviour reads as a bug.
+        credentialsRestored: false,
+        notice:
+          'Their integrations were revoked when the account was deactivated. They will need to reconnect each one.',
+      }
     }
 
     case 'reset-password': {

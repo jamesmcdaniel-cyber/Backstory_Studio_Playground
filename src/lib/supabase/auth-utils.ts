@@ -14,6 +14,19 @@ function findDbUser(supabaseId: string) {
   })
 }
 
+/**
+ * The row for this identity WITHOUT the isActive filter, so a deactivated
+ * account can be told apart from one that was never provisioned. Only
+ * resolveAuthUser may use it — every other reader wants findDbUser, which
+ * refuses inactive rows.
+ */
+function findUserRow(supabaseId: string) {
+  return prisma.user.findUnique({
+    where: { supabaseId },
+    include: { organization: true },
+  })
+}
+
 type DbUserRow = Awaited<ReturnType<typeof findDbUser>>
 
 /**
@@ -201,6 +214,36 @@ async function provisionUser(user: User) {
   }
 }
 
+export type ResolvedAuthUser = { dbUser: DbUserRow; deactivated: boolean }
+
+/**
+ * Resolve the application user behind an already-verified Supabase identity.
+ *
+ * A deactivated row short-circuits: no provisioning, no bootstrap, null dbUser
+ * and `deactivated` true.
+ *
+ * Skipping provisioning is the point. Deactivation was already enforced — the
+ * findDbUser lookup filters isActive, so the fall-through to provisionUser hit
+ * the unique supabaseId and rolled back — but only by accident of a constraint
+ * violation, which cost a full write transaction (org create included) on EVERY
+ * request from a banned account and surfaced as the same "Organization access
+ * required" a user with no workspace gets. Now the state is named, so
+ * requireAuthContext can answer ACCOUNT_DEACTIVATED and the write never starts.
+ *
+ * The platform owner can never reach that branch: the users-table trigger
+ * (20260806090000_platform_owner_protection) refuses to set isActive false on
+ * an owner row and forces it true on insert.
+ */
+export async function resolveAuthUser(user: User): Promise<ResolvedAuthUser> {
+  const existing = await findUserRow(user.id)
+  if (existing && !existing.isActive) return { dbUser: null, deactivated: true }
+
+  const resolved = existing ?? (await provisionUser(user))
+  const bootstrapped = resolved ? await applyOwnerBootstrap(resolved) : resolved
+  const dbUser = bootstrapped ? await applyStaffBootstrap(bootstrapped) : bootstrapped
+  return { dbUser, deactivated: false }
+}
+
 export async function getAuthWithUser() {
   const supabase = await createClient()
 
@@ -242,14 +285,13 @@ export async function getAuthWithUser() {
     assuranceLevel = user.factors?.some((factor) => factor.status === 'verified') ? 'aal2' : 'aal1'
   }
 
-  const resolved = (await findDbUser(user.id)) ?? (await provisionUser(user))
-  const bootstrapped = resolved ? await applyOwnerBootstrap(resolved) : resolved
-  const dbUser = bootstrapped ? await applyStaffBootstrap(bootstrapped) : bootstrapped
+  const { dbUser, deactivated } = await resolveAuthUser(user)
 
   return {
     user,
     userId: user.id,
     dbUser,
+    deactivated,
     organizationId: dbUser?.organizationId ?? null,
     assuranceLevel,
     authMethods,

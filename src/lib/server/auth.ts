@@ -98,6 +98,19 @@ export async function requireAuthContext(
     throw new AuthContextError('Authentication required', 401)
   }
 
+  // Checked BEFORE the dbUser test, which a deactivated account also fails —
+  // the generic message there reads as "you have no workspace" and sends the
+  // person to support instead of telling them what happened. Deactivation takes
+  // effect on the next request, not when the access token expires, because this
+  // runs per request against the live row (see resolveAuthUser).
+  if (auth.deactivated) {
+    throw new AuthContextError(
+      'This account has been deactivated. Contact your workspace administrator.',
+      403,
+      'ACCOUNT_DEACTIVATED',
+    )
+  }
+
   if (!auth.dbUser || !auth.organizationId) {
     throw new AuthContextError('Organization access required', 403)
   }

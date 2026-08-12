@@ -276,6 +276,9 @@ if (TEST_DB) {
     // src/lib/auth/__tests__/allowed-domain.test.ts.
     'admin/domains:POST': 'reviewer-only — 403 for the smoke org by design',
     'admin/domains:PATCH': 'reviewer-only — 403 for the smoke org by design',
+    // Operator-only, and every branch acts on someone else's account. Covered
+    // by admin/__tests__/users-route.db.test.ts with a real operator context.
+    'admin/users/[id]/actions:POST': 'operator-only — 403 for the smoke org by design',
   }
 
   test('every mutating handler is either smoke-tested or documented as skipped', () => {

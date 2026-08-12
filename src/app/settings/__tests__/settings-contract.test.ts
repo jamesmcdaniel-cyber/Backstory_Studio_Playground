@@ -77,7 +77,9 @@ test('super admin is a rank in the members select, not a separate console', () =
   // them an admin" would find it. Members is the one RBAC surface.
   assert.match(members, /value: 'SUPER_ADMIN'/, 'super admin must be an assignable rank')
   assert.match(members, /canManageSuperAdmins/, 'the rank must be gated on holding it')
-  assert.match(page, /canManageSuperAdmins=\{can\('catalogue\.review'\)\}/, 'gated on the permission the routes check')
+  // platform.administer, not catalogue.review: granting super admin is an
+  // operator action, and a PARTNER-org reviewer holds catalogue.review.
+  assert.match(page, /canManageSuperAdmins=\{can\('platform\.administer'\)\}/, 'gated on the permission the routes check')
   // Above Admin: the select is built by prepending it to the ordinary ranks.
   assert.match(members, /\[SUPER_ADMIN_ROLE, \.\.\.ASSIGNABLE_ROLES\]/, 'super admin must sit above admin')
   // And the operator console must not carry the old tab any more.

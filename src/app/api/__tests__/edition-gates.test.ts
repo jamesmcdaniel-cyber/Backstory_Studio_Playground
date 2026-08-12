@@ -27,6 +27,10 @@ export const INTERNAL_ONLY_ROUTES = [
   // the staff console does.
   'admin/costs',
   'admin/domains',
+  // The user console reaches furthest of the three: every account on the
+  // platform, their personal details, and the account actions.
+  'admin/users',
+  'admin/users/[id]/actions',
 ]
 
 const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>; methods: string[] }> = [
@@ -40,6 +44,8 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'catalogue/entries/[id]', load: () => import('../catalogue/entries/[id]/route'), methods: ['DELETE'] },
   { name: 'admin/costs', load: () => import('../admin/costs/route'), methods: ['GET'] },
   { name: 'admin/domains', load: () => import('../admin/domains/route'), methods: ['GET', 'POST', 'PATCH'] },
+  { name: 'admin/users', load: () => import('../admin/users/route'), methods: ['GET'] },
+  { name: 'admin/users/[id]/actions', load: () => import('../admin/users/[id]/actions/route'), methods: ['POST'] },
 ]
 
 const BODYLESS = new Set(['GET', 'DELETE'])

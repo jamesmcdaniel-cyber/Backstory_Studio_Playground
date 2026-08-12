@@ -1,12 +1,7 @@
 'use client'
 
-<<<<<<< Updated upstream
 import { useCallback, useMemo, useState } from 'react'
 import { CheckCircle2, RefreshCw, Search, ShieldCheck, X } from 'lucide-react'
-=======
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { CheckCircle2, Loader2, RefreshCw, ShieldCheck, Sparkles, X } from 'lucide-react'
->>>>>>> Stashed changes
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -51,17 +46,6 @@ export function OAuthIntegrationsGrid() {
   const integrations = useMemo(() => integrationsData?.integrations ?? [], [integrationsData])
   const connections = statusData?.connections ?? {}
   const loading = loadingIntegrations || loadingStatus
-<<<<<<< Updated upstream
-=======
-
-  const refreshAll = useCallback(async () => {
-    await Promise.all([refreshIntegrations(), refreshStatus()])
-  }, [refreshIntegrations, refreshStatus])
-
-  // The connect/verify/disconnect round-trip is shared with the in-context
-  // connect dialog templates open (see use-nango-connect).
-  const { busy, verifying, connect, verify, disconnect } = useNangoConnect(refreshAll)
->>>>>>> Stashed changes
 
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshIntegrations(), refreshStatus()])
@@ -86,40 +70,6 @@ export function OAuthIntegrationsGrid() {
     setPage(1)
   }
 
-<<<<<<< Updated upstream
-=======
-  const runAiSearch = async () => {
-    const goal = search.trim()
-    if (goal.length < 3 || aiLoading || !integrations.length) return
-    const seq = ++aiSeq.current
-    setAiResults([])
-    setAiError(null)
-    setAiLoading(true)
-    try {
-      const res = await fetch('/api/integrations/ai-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: goal, items: integrations.map((i) => ({ id: i.id, name: i.name, provider: i.provider })) }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (seq !== aiSeq.current) return
-      if (!res.ok) setAiError(data.error || 'Could not find integrations for that goal.')
-      else setAiResults(data.matches || [])
-    } catch {
-      if (seq === aiSeq.current) setAiError('Could not find integrations for that goal.')
-    } finally {
-      if (seq === aiSeq.current) setAiLoading(false)
-    }
-  }
-
-  const closeAiResults = () => {
-    aiSeq.current++
-    setAiResults(null)
-    setAiError(null)
-    setAiLoading(false)
-  }
-
->>>>>>> Stashed changes
   const { pageItems, pageCount, page: currentPage } = paginate(filtered, page, PAGE_SIZE)
 
   return (

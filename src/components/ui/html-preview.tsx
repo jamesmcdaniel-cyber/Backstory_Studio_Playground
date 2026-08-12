@@ -52,7 +52,6 @@ export function unwrapHtmlFence(value: string): string {
   return inner && looksLikeHtml(inner) ? inner : value
 }
 
-<<<<<<< Updated upstream
 const PREVIEW_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:"
 const PREVIEW_CSP_META = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">`
 
@@ -65,14 +64,6 @@ export function toPreviewDocument(html: string): string {
     return `<!doctype html>${PREVIEW_CSP_META}${withoutDoctype}`
   }
   return `<!doctype html><html><head>${PREVIEW_CSP_META}<meta charset="utf-8"><style>body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${html}</body></html>`
-=======
-/** Wraps a raw HTML fragment in a minimal document skeleton so it renders
- *  with sane defaults (font, color, wrapping) inside the sandboxed iframe.
- *  Skipped when the content already declares its own `<html>` root. */
-function toDocument(html: string): string {
-  if (/<html[\s>]/i.test(html)) return html
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${html}</body></html>`
->>>>>>> Stashed changes
 }
 
 // Auto-size bounds: a report shorter than the collapse limit renders at its

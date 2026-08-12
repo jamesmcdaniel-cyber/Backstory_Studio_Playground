@@ -10,16 +10,12 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationConnectDialog } from '@/components/integrations/integration-connect-dialog'
-<<<<<<< Updated upstream
 import { unmetRequirements, type WorkspaceConnections } from '@/components/integrations/integration-match'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { createAgentFromTemplate } from '@/lib/client/agent-from-template'
 import { useAuth } from '@/hooks/use-auth'
-=======
-import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
->>>>>>> Stashed changes
 
 type Template = {
   id: string
@@ -45,7 +41,6 @@ export default function TemplateDetails() {
   const [creating, setCreating] = useState(false)
   const [deploying, setDeploying] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
-<<<<<<< Updated upstream
   const [submission, setSubmission] = useState<SubmissionStatus | null>(null)
   // What this workspace has actually connected. Null until it answers — the
   // banner stays hidden rather than flashing a "connect these" list that
@@ -53,8 +48,6 @@ export default function TemplateDetails() {
   const [workspace, setWorkspace] = useState<WorkspaceConnections | null>(null)
   const { can } = useAuth()
   const canSubmit = can('template.submit')
-=======
->>>>>>> Stashed changes
 
   useEffect(() => {
     let cancelled = false
@@ -215,7 +208,6 @@ export default function TemplateDetails() {
               </div>
             </div>
 
-<<<<<<< Updated upstream
             {/* Only what's actually MISSING. A workspace that already has these
                 connected sees nothing here — a banner that keeps asking for
                 tools you've connected is a banner people stop reading. */}
@@ -228,26 +220,11 @@ export default function TemplateDetails() {
                     <IntegrationChip
                       key={requirement.name}
                       name={requirement.name}
-=======
-            {template.integrations.length > 0 && (
-              <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-                  <Info className="h-4 w-4 shrink-0" />
-                  <span>This template uses</span>
-                  {template.integrations.map((integration) => (
-                    <IntegrationChip
-                      key={integration}
-                      name={integration}
->>>>>>> Stashed changes
                       onClick={() => setConnectOpen(true)}
                       className="border-amber-300/70 bg-amber-100/70 text-amber-900 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100 dark:hover:bg-amber-400/20"
                     />
                   ))}
-<<<<<<< Updated upstream
                   <span>— connect {missing.length === 1 ? 'it' : 'them'} so every step can run.</span>
-=======
-                  <span>— connect them so every step can run.</span>
->>>>>>> Stashed changes
                 </div>
                 <Button
                   size="sm"

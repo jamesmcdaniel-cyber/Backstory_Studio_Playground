@@ -231,7 +231,7 @@ export function DomainAccessSection() {
         description={
           blockingCompanyDomain
             ? `${blocking?.domain} is a company domain: its people can always sign in. Blocking only stops new accounts from joining the chosen workspace — they will land in a solo workspace of their own instead.`
-            : 'New sign-ins stop immediately, but people already signed in keep their session until it expires.'
+            : 'Access stops on their next request — both new sign-ins and anyone currently signed in. Their accounts stay intact.'
         }
         confirmLabel="Block domain"
         destructive
@@ -241,9 +241,10 @@ export function DomainAccessSection() {
         {!blockingCompanyDomain && (
           <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
             <Label htmlFor="deactivate-users" className="text-sm font-normal">
-              Also sign out and deactivate their accounts
+              Also deactivate their accounts
               <span className="mt-0.5 block text-xs text-muted-foreground">
-                Leave off to block new sign-ins only.
+                Leave off to revoke platform access only — reversible by
+                re-enabling the domain.
               </span>
             </Label>
             <Switch id="deactivate-users" checked={deactivateUsers} onCheckedChange={setDeactivateUsers} />

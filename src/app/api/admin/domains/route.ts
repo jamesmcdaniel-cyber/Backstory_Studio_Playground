@@ -133,9 +133,14 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     data: { disabledAt: data.disabled ? new Date() : null },
   })
 
-  // Disabling blocks NEW sign-ins at once, but live sessions survive until they
-  // expire. Deactivating the domain's users is therefore a separate, explicit
-  // choice rather than a silent side effect of a config edit.
+  // Disabling now revokes access on the domain's NEXT REQUEST, live sessions
+  // included: resolveAuthUser re-asks the revocation question per request, so a
+  // blocked domain cannot keep minting or riding sessions (it previously could,
+  // via the password grant, which never reaches the OAuth callback where the
+  // admission gate used to live alone). Deactivating the accounts remains a
+  // separate, explicit choice: revocation is reversible by re-enabling the
+  // domain, whereas deactivation also revokes their credentials and quarantines
+  // owned work.
   let deactivated = 0
   if (data.disabled && data.deactivateUsers) {
     const result = await systemPrisma.user.updateMany({

@@ -112,16 +112,23 @@ function maskValue(raw: string): string {
 function scanString(path: string, key: string, raw: string, found: SecretFinding[]): void {
   // `{{step.token}}` is a REFERENCE resolved at run time, not a literal — the
   // whole point of the token syntax. Never report one as a leaked credential.
-  if (raw.includes('{{')) return
+  //
+  // The references are REMOVED and the remainder scanned, rather than the whole
+  // string being skipped when one appears. Skipping was a bypass of exactly the
+  // shape a real template has: `Bearer sk-ant-REAL {{step.id}}` carries a live
+  // credential AND a reference, so one `{{` anywhere hid the literal beside it.
+  // A string that is only references reduces to whitespace and matches nothing,
+  // which preserves the original intent.
+  const literal = raw.replace(/\{\{[^}]*\}\}/g, ' ')
 
   for (const { pattern, reason } of SECRET_VALUE_PATTERNS) {
-    if (pattern.test(raw)) {
+    if (pattern.test(literal)) {
       found.push({ path, reason: `Looks like ${reason}.`, preview: maskValue(raw) })
       return
     }
   }
 
-  if (SECRET_KEY_PATTERN.test(key) && OPAQUE_VALUE.test(raw.trim())) {
+  if (SECRET_KEY_PATTERN.test(key) && OPAQUE_VALUE.test(literal.trim())) {
     found.push({
       path,
       reason: `"${key}" holds a long literal value rather than a reference.`,

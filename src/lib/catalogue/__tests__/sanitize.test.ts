@@ -75,6 +75,31 @@ test('token references are never reported as leaked credentials', () => {
   assert.deepEqual(findings, [])
 })
 
+test('a literal credential beside a token reference is still reported', () => {
+  // The bypass this pins: the scanner used to skip any string containing `{{`,
+  // so co-locating a live key with a reference hid it completely — and that is
+  // what a real authenticated step looks like.
+  const findings = findSecretCandidates({
+    headers: { Authorization: 'Bearer sk-ant-api03-AAAAAAAAAAAAAAAAAAAA {{step.suffix}}' },
+  })
+  assert.equal(findings.length, 1)
+  // Classified as a Bearer token rather than an Anthropic key: SECRET_VALUE_PATTERNS
+  // is first-match-wins and Bearer is ordered ahead. Either reason is a report.
+  assert.match(findings[0].reason, /Bearer token/)
+  // The preview still locates the value in the ORIGINAL string.
+  assert.match(findings[0].preview, /^Bea/)
+
+  // A bare provider key with no Bearer prefix keeps its specific classification.
+  const anthropic = findSecretCandidates({ header: 'sk-ant-api03-AAAAAAAAAAAAAAAAAAAA {{step.suffix}}' })
+  assert.equal(anthropic.length, 1)
+  assert.match(anthropic[0].reason, /Anthropic API key/)
+
+  // Same for the opaque-value-under-a-secret-key rule.
+  const opaque = findSecretCandidates({ apiKey: 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6{{env.REGION}}' })
+  assert.equal(opaque.length, 1)
+  assert.match(opaque[0].reason, /long literal value/)
+})
+
 test('a clean snapshot produces no findings', () => {
   const findings = findSecretCandidates({
     graph: { nodes: [{ data: { url: 'https://api.example.com/orders', method: 'POST', label: 'Create order' } }] },

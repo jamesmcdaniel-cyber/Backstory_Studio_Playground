@@ -10,11 +10,12 @@ if (TEST_DB) {
   let prisma: any
   let isAllowedEmail: any
   let allowedDomainOrg: any
+  let isDomainAccessRevoked: any
   const ids: Record<string, string> = {}
 
   before(async () => {
     ;({ prisma } = await import('@/lib/prisma'))
-    ;({ isAllowedEmail, allowedDomainOrg } = await import('@/lib/auth/allowed-domain'))
+    ;({ isAllowedEmail, allowedDomainOrg, isDomainAccessRevoked } = await import('@/lib/auth/allowed-domain'))
 
     const stamp = Date.now()
     const org = await prisma.organization.create({
@@ -48,6 +49,45 @@ if (TEST_DB) {
   test('an unlisted domain is refused', async () => {
     assert.equal(await isAllowedEmail('person@stranger.example'), false)
     assert.equal(await isAllowedEmail(null), false)
+  })
+
+  // isDomainAccessRevoked is the per-request half of admission (the full
+  // isAllowedEmail gate runs only at provisioning). It must answer "was this
+  // domain explicitly BLOCKED", never "is this domain listed" — an externally
+  // invited person's domain is never listed at all, and re-refusing them every
+  // request would lock out every accepted invitation in the product.
+  test('a disabled domain is revoked per request', async () => {
+    assert.equal(await isDomainAccessRevoked(`person@${ids.disabledDomain}`), true)
+  })
+
+  test('an active domain is not revoked', async () => {
+    assert.equal(await isDomainAccessRevoked(`person@${ids.activeDomain}`), false)
+  })
+
+  test('an unlisted domain is NOT revoked — accepted invitees keep access', async () => {
+    // The regression this guards: an invited external person is admitted by an
+    // invitation that provisioning CONSUMES, after which their user row carries
+    // their access. They have no domain row, so a per-request check that asked
+    // "is this listed" would sign them out permanently.
+    assert.equal(await isDomainAccessRevoked('invited@stranger.example'), false)
+    assert.equal(await isDomainAccessRevoked(null), false)
+    assert.equal(await isDomainAccessRevoked('not-an-email'), false)
+  })
+
+  test('the platform owner and company staff are never revoked', async () => {
+    const { systemPrisma } = await import('@/lib/prisma')
+    // Even with people.ai explicitly blocked, admission comes from the hardcoded
+    // company list and the owner invariant — neither is configuration.
+    const row = await systemPrisma.platformAllowedDomain.create({
+      data: { domain: 'people.ai', organizationId: ids.org, disabledAt: new Date() },
+    })
+    try {
+      assert.equal(await isDomainAccessRevoked('james.mcdaniel@people.ai'), false)
+      assert.equal(await isDomainAccessRevoked('james.mcdaniel@backstory.ai'), false)
+      assert.equal(await isDomainAccessRevoked('staff@people.ai'), false)
+    } finally {
+      await systemPrisma.platformAllowedDomain.delete({ where: { id: row.id } }).catch(() => {})
+    }
   })
 
   test('lookalike domains do not inherit access', async () => {

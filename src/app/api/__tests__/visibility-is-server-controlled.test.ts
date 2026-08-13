@@ -24,6 +24,22 @@ test('no template route accepts visibility from a request body', () => {
   }
 })
 
+// The private-flow invariant held in four of the five places that resolve a flow
+// by id: the v1 run route filtered on organizationId alone, so an API key could
+// EXECUTE a colleague's private flow (firing its side effects under the
+// workspace's credentials) while being unable to read, edit, or delete it. A
+// static guard, because the gap was an omission in one route rather than a
+// disagreement about the rule.
+test('every public API v1 flow route applies the owner visibility scope', () => {
+  for (const route of ['v1/flows/route.ts', 'v1/flows/[id]/route.ts', 'v1/flows/[id]/run/route.ts']) {
+    const source = readFileSync(path.join(apiDir, route), 'utf8')
+    assert.ok(
+      /agentVisibilityScope\(auth\.userId\)/.test(source),
+      `${route} resolves a flow without agentVisibilityScope — an API key must reach only its minter's private flows`,
+    )
+  }
+})
+
 const TEST_DB = process.env.TEST_DATABASE_URL
 if (TEST_DB) {
   process.env.DATABASE_URL = TEST_DB

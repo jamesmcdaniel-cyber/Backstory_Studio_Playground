@@ -5,6 +5,109 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { NextRequest } from 'next/server'
 
+// ── Static route-auth guards ──────────────────────────────────────────────
+//
+// These read the route tree as SOURCE and need no database, so they sit outside
+// the TEST_DB block below: they are the check that a new unauthenticated route
+// cannot ship, and a guard that only runs in CI-mode is not running on the gate
+// most edits are made against.
+
+const staticApiDir = fileURLToPath(new URL('..', import.meta.url))
+
+const walkRouteFiles = (dir: string): string[] => {
+  const out: string[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === '__tests__') continue
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...walkRouteFiles(full))
+    else if (entry.name === 'route.ts') out.push(full)
+  }
+  return out
+}
+
+const routeNames = () =>
+  walkRouteFiles(staticApiDir).map((file) => ({
+    route: path.relative(staticApiDir, path.dirname(file)),
+    source: readFileSync(file, 'utf8'),
+  }))
+
+// POST/PUT/PATCH/DELETE handlers that authenticate by signature/secret/bearer/
+// OAuth state instead of a session — each vetted in a security audit.
+const mutatingExempt = new Set([
+  'nango/webhook',       // Nango webhook signature (verifyIncomingWebhookRequest)
+  'flows/[id]/trigger',  // per-flow webhook secret (constant-time)
+  'agents/[id]/trigger', // per-agent trigger secret (constant-time)
+  'cron/dispatch',       // CRON_SECRET, fail-closed
+  'cron/retention',      // CRON_SECRET, fail-closed
+  'signals/people-ai',   // People.ai HMAC signature, verified against the TARGET org's secret
+  'flows/[id]/runs/[runId]/resume', // wait-node webhook callback: hashed resume token is the capability (never the run id), consumed atomically
+  // SCIM 2.0 provisioning: every handler calls authenticateScim(request),
+  // which validates a hashed bearer ScimToken and resolves the org from it.
+  'scim/v2/Users',
+  'scim/v2/Users/[id]',
+  'scim/v2/Groups/[id]',
+  // Public API: every handler calls authenticatePublicApi(request, scope),
+  // which validates a hashed ApiKey and enforces a per-route scope.
+  'v1/flows',
+  'v1/flows/[id]',
+  'v1/flows/[id]/run',
+])
+
+// GET handlers that are deliberately not wrapped in withAuthenticatedApi. Reads
+// were previously unchecked here, which left the read half of the surface to
+// convention — a new unauthenticated GET could disclose tenant data unnoticed.
+const readExempt = new Set([
+  'health',                         // public readiness probe: no tenant data
+  'invitations/lookup',             // public invite preview: token length clamped + fail-closed per-client budget
+  'cron/dispatch',                  // CRON_SECRET, fail-closed
+  'cron/retention',                 // CRON_SECRET, fail-closed
+  'mcp-connections/oauth/callback', // OAuth state/PKCE cookie minted by the authenticated start route
+  'peopleai/callback',              // authenticated-encryption state cookie, bound to user + org
+  // Session-authenticated, but deliberately NOT through withAuthenticatedApi:
+  // both must answer for a user who has not yet cleared the entitlement /
+  // Backstory MCP gates, since resolving that is what these two surfaces are
+  // FOR. Each calls getAuthWithUser() and 401s (or bounces) without a session.
+  'peopleai/status',
+  'peopleai/connect',
+  // Hashed bearer credentials that resolve the tenant from the token itself.
+  'scim/v2/Users',
+  'scim/v2/Users/[id]',
+  'scim/v2/Groups',
+  'scim/v2/Groups/[id]',
+  'v1/flows',
+  'v1/flows/[id]',
+])
+
+test('every mutating route is authenticated or an allowlisted signature/secret route', () => {
+  const offenders: string[] = []
+  for (const { route, source } of routeNames()) {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      if (!new RegExp(`export (const ${method}\\b|async function ${method}\\b)`).test(source)) continue
+      const authed = new RegExp(`export const ${method} = withAuthenticatedApi`).test(source)
+      if (!authed && !mutatingExempt.has(route)) offenders.push(`${route}:${method}`)
+    }
+  }
+  assert.deepEqual(
+    offenders.sort(),
+    [],
+    `Unauthenticated mutating route(s): ${offenders.join(', ')}. Wrap in withAuthenticatedApi, or add to mutatingExempt with justification.`,
+  )
+})
+
+test('every GET route is authenticated or an allowlisted public/secret route', () => {
+  const offenders: string[] = []
+  for (const { route, source } of routeNames()) {
+    if (!/export (const GET\b|async function GET\b)/.test(source)) continue
+    if (/export const GET = withAuthenticatedApi/.test(source)) continue
+    if (!readExempt.has(route)) offenders.push(route)
+  }
+  assert.deepEqual(
+    offenders.sort(),
+    [],
+    `Unauthenticated GET route(s): ${offenders.join(', ')}. Wrap in withAuthenticatedApi, or add to readExempt with a justification comment.`,
+  )
+})
+
 const TEST_DB = process.env.TEST_DATABASE_URL
 if (TEST_DB) {
   process.env.DATABASE_URL = TEST_DB
@@ -186,58 +289,4 @@ if (TEST_DB) {
     )
   })
 
-  // Mutation guard: every exported POST/PUT/PATCH/DELETE must be
-  // withAuthenticatedApi OR an allowlisted signature/secret-authed route. Closes
-  // the blind spot that the GET completeness check above leaves for mutating
-  // handlers — a new unauthenticated write route can't ship unnoticed.
-  test('every mutating route is authenticated or an allowlisted signature/secret route', () => {
-    const apiDir = fileURLToPath(new URL('..', import.meta.url))
-    const walkRoutes = (dir: string): string[] => {
-      const out: string[] = []
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name === '__tests__') continue
-        const full = path.join(dir, entry.name)
-        if (entry.isDirectory()) out.push(...walkRoutes(full))
-        else if (entry.name === 'route.ts') out.push(full)
-      }
-      return out
-    }
-    // POST/PUT/PATCH/DELETE handlers that authenticate by signature/secret/OAuth
-    // state instead of a session — each vetted in the pre-launch security audit.
-    const signatureAuthed = new Set([
-      'nango/webhook',       // Nango webhook signature (verifyIncomingWebhookRequest)
-      'flows/[id]/trigger',  // per-flow webhook secret (constant-time)
-      'agents/[id]/trigger', // per-agent trigger secret (constant-time)
-      'cron/dispatch',       // CRON_SECRET, fail-closed
-      'cron/retention',      // CRON_SECRET, fail-closed
-      'signals/people-ai',   // People.ai HMAC signature
-      'flows/[id]/runs/[runId]/resume', // wait-node webhook callback: unguessable run id + must be waiting on a webhook wait (capability URL, like flows/[id]/trigger)
-      // SCIM 2.0 provisioning: every handler calls authenticateScim(request),
-      // which validates a hashed bearer ScimToken and resolves the org from it.
-      'scim/v2/Users',
-      'scim/v2/Users/[id]',
-      'scim/v2/Groups/[id]',
-      // Public API: every handler calls authenticatePublicApi(request, scope),
-      // which validates a hashed ApiKey and enforces a per-route scope.
-      'v1/flows',
-      'v1/flows/[id]',
-      'v1/flows/[id]/run',
-    ])
-    const METHODS = ['POST', 'PUT', 'PATCH', 'DELETE']
-    const offenders: string[] = []
-    for (const file of walkRoutes(apiDir)) {
-      const src = readFileSync(file, 'utf8')
-      const route = path.relative(apiDir, path.dirname(file))
-      for (const m of METHODS) {
-        if (!new RegExp(`export (const ${m}\\b|async function ${m}\\b)`).test(src)) continue
-        const authed = new RegExp(`export const ${m} = withAuthenticatedApi`).test(src)
-        if (!authed && !signatureAuthed.has(route)) offenders.push(`${route}:${m}`)
-      }
-    }
-    assert.deepEqual(
-      offenders.sort(),
-      [],
-      `Unauthenticated mutating route(s): ${offenders.join(', ')}. Wrap in withAuthenticatedApi, or add to signatureAuthed with justification.`,
-    )
-  })
 }

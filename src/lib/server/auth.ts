@@ -111,6 +111,18 @@ export async function requireAuthContext(
     )
   }
 
+  // Platform admission, re-asked per request by resolveAuthUser because the
+  // password grant never passes through the OAuth callback that used to be the
+  // only place it was checked. Distinct from ACCOUNT_DEACTIVATED: the account is
+  // intact, its DOMAIN no longer has platform access (or never did).
+  if (auth.accessRevoked) {
+    throw new AuthContextError(
+      'Your organization no longer has access to this platform. Contact your administrator.',
+      403,
+      'PLATFORM_ACCESS_REVOKED',
+    )
+  }
+
   if (!auth.dbUser || !auth.organizationId) {
     throw new AuthContextError('Organization access required', 403)
   }

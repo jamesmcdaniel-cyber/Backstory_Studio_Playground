@@ -15,6 +15,7 @@
 import { systemPrisma } from '@/lib/prisma'
 import { emailDomain } from '@/lib/auth/enterprise-policy'
 import { isCompanyEmail, isPublicEmailProvider, normalizeDomain } from '@/lib/auth/company-domain'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 
 /**
  * Deploy-level allowlist, read from `ALLOWED_EMAIL_DOMAINS` (comma-separated).
@@ -83,6 +84,55 @@ export async function isAllowedEmail(email: string | null | undefined): Promise<
   if (envAllowsEmail(email)) return true
   if ((await activeRow(email)) !== null) return true
   return hasLiveInvitation(email)
+}
+
+/**
+ * True when this email's domain was explicitly BLOCKED on the domain-access
+ * screen and nothing else admits it.
+ *
+ * This is the narrow, per-request half of admission, and it exists because
+ * `isAllowedEmail` cannot be re-run per request: an externally invited person's
+ * admission comes from an invitation that is CONSUMED at provisioning, after
+ * which "the user row itself carries their access". Re-asking the full question
+ * every request would lock those accounts out the moment they were provisioned.
+ *
+ * So the two halves are asked at the two moments each is correct for:
+ *   - provisioning (no user row yet) → the full `isAllowedEmail` gate
+ *   - every request thereafter      → this, the revocation dimension only
+ *
+ * What it closes: disabling a domain row is advertised as blocking new sign-ins
+ * at once, and it did — but only on the OAuth callback, the one path that calls
+ * `isAllowedEmail`. The password grant mints its session against Supabase
+ * directly and never reaches that callback, so a revoked domain's members kept
+ * getting brand-new sessions indefinitely. Deactivating their accounts is the
+ * companion action on that screen, but it is explicitly OPTIONAL, so it cannot
+ * be what holds this line.
+ *
+ * A row that is present and ACTIVE, or absent entirely, both return false: the
+ * former is a live grant, the latter is an account whose access came from
+ * somewhere other than a domain rule (an invitation, a company domain).
+ *
+ * Cost: one indexed point-read on a unique column, and only for addresses that
+ * are neither company nor env-allowed — platform staff short-circuit before it.
+ * Same tradeoff `resolveAuthUser` already accepts for the user row: cheaper than
+ * the class of bug it removes, and never cached, because a cached revocation is
+ * indistinguishable from no revocation at all.
+ */
+export async function isDomainAccessRevoked(email: string | null | undefined): Promise<boolean> {
+  // The owner can never be locked out by configuration — the same invariant the
+  // users-table trigger enforces against deactivation and deletion.
+  if (isPlatformOwnerEmail(email)) return false
+  if (isCompanyEmail(email)) return false
+  if (envAllowsEmail(email)) return false
+  const domain = emailDomain(email)
+  if (!domain) return false
+  // systemPrisma: platform config, read before any tenant context exists — and
+  // platform_allowed_domains denies the tenant role outright.
+  const row = await systemPrisma.platformAllowedDomain.findUnique({
+    where: { domain },
+    select: { disabledAt: true },
+  })
+  return row?.disabledAt != null
 }
 
 /**

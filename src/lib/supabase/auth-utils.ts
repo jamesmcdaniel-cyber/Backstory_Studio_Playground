@@ -1,7 +1,7 @@
 import type { User } from '@supabase/supabase-js'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { createClient } from '@/lib/supabase/server'
-import { allowedDomainOrg } from '@/lib/auth/allowed-domain'
+import { allowedDomainOrg, isAllowedEmail, isDomainAccessRevoked } from '@/lib/auth/allowed-domain'
 import { amrMethods } from '@/lib/auth/enterprise-policy'
 import { normalizeStaffEmail, staffBootstrapAllowlist } from '@/lib/catalogue/staff-emails'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
@@ -214,7 +214,7 @@ async function provisionUser(user: User) {
   }
 }
 
-export type ResolvedAuthUser = { dbUser: DbUserRow; deactivated: boolean }
+export type ResolvedAuthUser = { dbUser: DbUserRow; deactivated: boolean; accessRevoked: boolean }
 
 /**
  * Resolve the application user behind an already-verified Supabase identity.
@@ -233,15 +233,47 @@ export type ResolvedAuthUser = { dbUser: DbUserRow; deactivated: boolean }
  * The platform owner can never reach that branch: the users-table trigger
  * (20260806090000_platform_owner_protection) refuses to set isActive false on
  * an owner row and forces it true on insert.
+ *
+ * PLATFORM ADMISSION IS ENFORCED HERE, not only at the OAuth callback.
+ *
+ * It used to live solely in src/app/auth/callback/route.ts, which meant it
+ * governed exactly one way in. `signInWithPassword` mints its session against
+ * Supabase directly and never touches that callback — and passwords are a live
+ * credential in this product (Settings sets one, the admin console mails
+ * resets), so the gate was reachable-around rather than theoretical. Two
+ * consequences, both closed below: a non-allowlisted address could be
+ * provisioned a fresh ADMIN workspace, and members of a domain whose access had
+ * been REVOKED kept minting new sessions forever.
+ *
+ * The two halves are asked where each is the correct question (see
+ * src/lib/auth/allowed-domain.ts): the full gate at provisioning, the revocation
+ * dimension on every request after it. Both fail closed to `dbUser: null`, so
+ * the routes that call `getAuthWithUser` directly rather than through
+ * `requireAuthContext` (peopleai/status, peopleai/connect) inherit the refusal
+ * as the 401 they already return for an absent user.
  */
 export async function resolveAuthUser(user: User): Promise<ResolvedAuthUser> {
   const existing = await findUserRow(user.id)
-  if (existing && !existing.isActive) return { dbUser: null, deactivated: true }
+  if (existing && !existing.isActive) return { dbUser: null, deactivated: true, accessRevoked: false }
+
+  // Existing account: the revocation dimension only. Asking the full question
+  // would lock out every externally invited person, whose admitting invitation
+  // was consumed the moment they were provisioned.
+  if (existing) {
+    if (await isDomainAccessRevoked(existing.email)) {
+      return { dbUser: null, deactivated: false, accessRevoked: true }
+    }
+  } else if (!(await isAllowedEmail(user.email))) {
+    // No row yet, so this is provisioning — the same moment, and the same
+    // question, as the OAuth callback. Refused BEFORE provisionUser runs, so a
+    // rejected identity never creates an organization or a user row.
+    return { dbUser: null, deactivated: false, accessRevoked: true }
+  }
 
   const resolved = existing ?? (await provisionUser(user))
   const bootstrapped = resolved ? await applyOwnerBootstrap(resolved) : resolved
   const dbUser = bootstrapped ? await applyStaffBootstrap(bootstrapped) : bootstrapped
-  return { dbUser, deactivated: false }
+  return { dbUser, deactivated: false, accessRevoked: false }
 }
 
 export async function getAuthWithUser() {
@@ -285,13 +317,14 @@ export async function getAuthWithUser() {
     assuranceLevel = user.factors?.some((factor) => factor.status === 'verified') ? 'aal2' : 'aal1'
   }
 
-  const { dbUser, deactivated } = await resolveAuthUser(user)
+  const { dbUser, deactivated, accessRevoked } = await resolveAuthUser(user)
 
   return {
     user,
     userId: user.id,
     dbUser,
     deactivated,
+    accessRevoked,
     organizationId: dbUser?.organizationId ?? null,
     assuranceLevel,
     authMethods,

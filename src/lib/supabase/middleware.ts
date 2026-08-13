@@ -61,7 +61,14 @@ export async function updateSession(request: NextRequest) {
   // invitee's deep link MUST survive this bounce — clearing the search string
   // here is what dropped invited people into a fresh solo workspace instead of
   // the workspace (and flow) they were invited to.
-  if (pathname === '/auth/signup' && process.env.AUTH_ALLOW_PASSWORD === 'false') {
+  //
+  // Compared against 'true', not against 'false': the old check only closed the
+  // page when the variable was set to the exact string 'false', so an UNSET
+  // variable — the default everywhere — left it open, inverting the sentence
+  // above. This is defence in depth either way; the page is not the boundary,
+  // since Supabase's token endpoint is reachable directly with the public anon
+  // key. resolveAuthUser is what actually refuses a non-allowlisted identity.
+  if (pathname === '/auth/signup' && process.env.AUTH_ALLOW_PASSWORD !== 'true') {
     const carried = validatedReturnPath(request.nextUrl.searchParams.get('return_to'))
     const url = request.nextUrl.clone()
     url.pathname = '/auth/login'

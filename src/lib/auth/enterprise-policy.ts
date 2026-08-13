@@ -33,3 +33,14 @@ export function amrMethods(amr: unknown): string[] {
 export function satisfiesMfaPolicy(policy: string, assuranceLevel: string | null): boolean {
   return policy !== 'required' || assuranceLevel === 'aal2'
 }
+
+/**
+ * Minimum password length, shared by every surface that sets one.
+ *
+ * Defined once because it was defined twice: the recovery page required 8 while
+ * Settings required 6, so the weaker rule governed the path people actually use
+ * to choose a password and the stricter one only applied to resets. Client-side
+ * validation is a courtesy either way — Supabase's own project policy is the
+ * enforcing boundary, and this should not be looser than it.
+ */
+export const MIN_PASSWORD_LENGTH = 8

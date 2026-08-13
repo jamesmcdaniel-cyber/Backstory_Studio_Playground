@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { createClient } from '@/lib/supabase/client'
+import { MIN_PASSWORD_LENGTH } from '@/lib/auth/enterprise-policy'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
 import { EnterpriseSecuritySection } from '@/components/settings/enterprise-security-section'
@@ -259,7 +260,10 @@ function AccountSection({
 
   const savePassword = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (password.length < 6) return toast.error('Password must be at least 6 characters.')
+    // Matches MIN_PASSWORD_LENGTH on the recovery page. These disagreed (6 here,
+    // 8 there), and the weaker of the two was the one people actually used to
+    // SET a password — so the stricter rule only ever applied to resets.
+    if (password.length < MIN_PASSWORD_LENGTH) return toast.error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
     if (password !== confirm) return toast.error('Passwords do not match.')
     setSavingPassword(true)
     const { error } = await supabase.auth.updateUser({ password })
@@ -312,11 +316,11 @@ function AccountSection({
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <Label htmlFor="new-password">New password</Label>
-            <Input id="new-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" minLength={6} />
+            <Input id="new-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" minLength={MIN_PASSWORD_LENGTH} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="confirm-password">Confirm</Label>
-            <Input id="confirm-password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" minLength={6} />
+            <Input id="confirm-password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" minLength={MIN_PASSWORD_LENGTH} />
           </div>
         </div>
         <Button type="submit" variant="outline" loading={savingPassword} disabled={!password || !confirm}>
@@ -354,7 +358,7 @@ function AccountSection({
         open={confirmDisableMfa}
         onOpenChange={setConfirmDisableMfa}
         title="Remove your authenticator?"
-        description="If your workspace requires multi-factor authentication you'll be asked to enroll again on your next request."
+        description="If your workspace requires multi-factor authentication — or your account holds platform administrator rights, which always require it — you'll be asked to enroll again on your next request."
         confirmLabel="Remove authenticator"
         destructive
         busy={disablingMfa}

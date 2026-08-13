@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PERMISSIONS, resolvePermissions } from '../permissions'
+import { readFileSync } from 'node:fs'
+import { PERMISSIONS, PLATFORM_PRIVILEGED_PERMISSIONS, isPlatformPrivileged, resolvePermissions } from '../permissions'
+import { satisfiesMfaPolicy } from '@/lib/auth/enterprise-policy'
 
 const customer = { kind: 'customer' }
 const partner = { kind: 'partner' }
@@ -136,4 +138,57 @@ test('every resolved permission is a declared one', () => {
       }
     }
   }
+})
+
+/* ---------------------- cross-workspace privilege ------------------------ */
+
+test('platform privilege is held by the owner, operators, and reviewers', () => {
+  // OWNER and the platform-owner identity hold every permission, so both satisfy
+  // the predicate without being named in it — that is the point of deriving it
+  // from permissions rather than from a second list of role strings.
+  assert.ok(isPlatformPrivileged(resolvePermissions({ role: 'OWNER', platformRole: null }, internal)))
+  assert.ok(isPlatformPrivileged(resolvePermissions({ role: 'USER', platformRole: null, email: 'james.mcdaniel@people.ai' }, customer)))
+  assert.ok(isPlatformPrivileged(resolvePermissions(reviewer, internal)), 'operator console')
+  assert.ok(isPlatformPrivileged(resolvePermissions(reviewer, partner)), 'catalogue reviewer')
+})
+
+test('a customer workspace admin is NOT platform privileged', () => {
+  // Their reach ends at their own tenant, so whether to require MFA there stays
+  // that workspace's decision. Widening this would impose our policy on theirs.
+  assert.ok(!isPlatformPrivileged(resolvePermissions(admin, customer)))
+  assert.ok(!isPlatformPrivileged(resolvePermissions(member, customer)))
+  assert.ok(!isPlatformPrivileged(resolvePermissions(viewer, customer)))
+  // Including an admin carrying a stale reviewer flag in a customer org, who
+  // resolves no review rights at all.
+  assert.ok(!isPlatformPrivileged(resolvePermissions({ role: 'ADMIN', platformRole: 'reviewer' }, customer)))
+})
+
+test('privileged accounts fail an MFA policy of "optional" without aal2', () => {
+  // The gate composes these two: privilege forces the policy to 'required',
+  // which then demands aal2 regardless of what the workspace stored.
+  const privileged = isPlatformPrivileged(resolvePermissions({ role: 'OWNER', platformRole: null }, internal))
+  const policy = privileged ? 'required' : 'optional'
+  assert.equal(satisfiesMfaPolicy(policy, 'aal1'), false, 'a password-only session must not pass')
+  assert.equal(satisfiesMfaPolicy(policy, null), false)
+  assert.equal(satisfiesMfaPolicy(policy, 'aal2'), true, 'an enrolled authenticator passes')
+
+  // An ordinary customer admin keeps their workspace's choice.
+  const ordinary = isPlatformPrivileged(resolvePermissions(admin, customer)) ? 'required' : 'optional'
+  assert.equal(satisfiesMfaPolicy(ordinary, 'aal1'), true)
+})
+
+test('every privileged permission is a declared one', () => {
+  for (const permission of PLATFORM_PRIVILEGED_PERMISSIONS) {
+    assert.ok((PERMISSIONS as readonly string[]).includes(permission), `${permission} is not in PERMISSIONS`)
+  }
+})
+
+test('requireAuthContext applies the privileged override to the MFA gate', () => {
+  // The ORDERING (permissions resolved before the gate) is enforced by the
+  // compiler — a const used before its declaration does not build. What a
+  // compiler cannot catch is someone reinstating the bare workspace policy and
+  // dropping the override, which is exactly the state this fix replaced.
+  const source = readFileSync('src/lib/server/auth.ts', 'utf8')
+  assert.match(source, /isPlatformPrivileged\(permissions\)/, 'the MFA gate must consult platform privilege')
+  assert.match(source, /privileged \? 'required'/, 'privilege must force the policy to required')
 })

@@ -20,8 +20,9 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { MIN_PASSWORD_LENGTH } from '@/lib/auth/enterprise-policy'
 
-const MIN_LENGTH = 8
+const MIN_LENGTH = MIN_PASSWORD_LENGTH
 
 export default function UpdatePasswordPage() {
   const router = useRouter()

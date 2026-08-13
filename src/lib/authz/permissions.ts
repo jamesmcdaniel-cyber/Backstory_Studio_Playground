@@ -111,3 +111,31 @@ export function resolvePermissions(user: PermissionUser, org: PermissionOrg): Re
 
   return granted
 }
+
+/**
+ * Permissions that reach BEYOND the holder's own workspace.
+ *
+ * `platform.administer` is the operator console — every workspace's spend, every
+ * user's personal details, password resets, deactivations. `catalogue.review`
+ * decides what the shared catalogue serves to every other workspace.
+ *
+ * Membership is deliberately expressed as PERMISSIONS rather than as roles, so
+ * it tracks the privilege model by construction. Both `role: OWNER` and the
+ * platform-owner identity short-circuit hold every permission, so both are
+ * already covered here without naming them — and a future tier that is granted
+ * one of these is covered the day it is added, rather than whenever someone
+ * remembers to extend a second list of role strings.
+ */
+export const PLATFORM_PRIVILEGED_PERMISSIONS = ['platform.administer', 'catalogue.review'] as const
+
+/**
+ * Whether this caller holds cross-workspace privilege, and must therefore
+ * authenticate with MFA whatever their own workspace's policy says.
+ *
+ * A customer workspace's ADMIN is deliberately NOT privileged by this
+ * definition: their reach ends at their own tenant, so whether to require MFA
+ * there is their workspace's decision to make.
+ */
+export function isPlatformPrivileged(permissions: ReadonlySet<Permission>): boolean {
+  return PLATFORM_PRIVILEGED_PERMISSIONS.some((permission) => permissions.has(permission))
+}

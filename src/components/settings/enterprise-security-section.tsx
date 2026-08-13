@@ -186,7 +186,7 @@ export function EnterpriseSecuritySection({ selfHasMfa }: { selfHasMfa: boolean 
           description={
             mfaWouldLockOut
               ? 'Set up your own authenticator first — this policy would lock you out of the workspace immediately.'
-              : 'Members without a verified authenticator are sent to enrollment before they can use Backstory.'
+              : 'Members without a verified authenticator are sent to enrollment before they can use Backstory. Platform administrator accounts always require it, whatever this is set to.'
           }
         >
           <div className="flex items-center gap-2">

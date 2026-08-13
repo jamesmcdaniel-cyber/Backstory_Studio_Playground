@@ -1,7 +1,7 @@
 import { getAuthWithUser } from '@/lib/supabase/auth-utils'
 import { resolveEntitlement } from '@/lib/entitlement'
 import { backstoryGateEnabled, backstoryMcpReady, ensureBackstoryConnection } from '@/lib/mcp/backstory-connection'
-import { resolvePermissions, type Permission } from '@/lib/authz/permissions'
+import { isPlatformPrivileged, resolvePermissions, type Permission } from '@/lib/authz/permissions'
 import { emailDomain, isEnterpriseIdentity, satisfiesMfaPolicy } from '@/lib/auth/enterprise-policy'
 import { prisma } from '@/lib/prisma'
 
@@ -128,8 +128,38 @@ export async function requireAuthContext(
   }
 
   const organization = auth.dbUser.organization
-  if (!options?.skipMfaGate && !satisfiesMfaPolicy(organization?.mfaPolicy ?? 'optional', auth.assuranceLevel)) {
-    throw new AuthContextError('Multi-factor authentication is required by this workspace.', 403, 'MFA_REQUIRED')
+
+  // Resolved BEFORE the MFA gate, which needs to know whether this caller holds
+  // cross-workspace privilege. It is pure and costs no query (getAuthWithUser
+  // already included the organization on dbUser), so hoisting it is free.
+  const permissions = resolvePermissions(
+    { role: auth.dbUser.role, platformRole: auth.dbUser.platformRole, email: auth.dbUser.email },
+    { kind: organization?.kind ?? 'customer' },
+  )
+
+  // Privileged accounts are held to MFA whatever their workspace policy says.
+  //
+  // OWNER is the platform root tier — every permission in every workspace,
+  // including customer workspaces — and platform.administer is the operator
+  // console. Both were following the ordinary workspace policy, which DEFAULTS
+  // to 'optional' and, for the owner's auto-provisioned workspace
+  // (applyOwnerBootstrap), was never going to be anything else. So the single
+  // most privileged credential on the platform could be a password with no
+  // second factor.
+  //
+  // Recovery is the existing one and needs no exemption here: /auth/mfa is a
+  // public page that enrolls through Supabase directly rather than through a
+  // gated route, so an account that trips this can always reach enrollment.
+  const privileged = isPlatformPrivileged(permissions)
+  const mfaPolicy = privileged ? 'required' : (organization?.mfaPolicy ?? 'optional')
+  if (!options?.skipMfaGate && !satisfiesMfaPolicy(mfaPolicy, auth.assuranceLevel)) {
+    throw new AuthContextError(
+      privileged
+        ? 'Multi-factor authentication is required for platform administrator accounts.'
+        : 'Multi-factor authentication is required by this workspace.',
+      403,
+      'MFA_REQUIRED',
+    )
   }
   if (!options?.skipSsoGate && organization?.ssoEnforced) {
     const domain = emailDomain(auth.dbUser.email)
@@ -162,13 +192,6 @@ export async function requireAuthContext(
       )
     }
   }
-
-  // `getAuthWithUser` already includes the organization on dbUser, so resolving
-  // permissions costs no extra query.
-  const permissions = resolvePermissions(
-    { role: auth.dbUser.role, platformRole: auth.dbUser.platformRole, email: auth.dbUser.email },
-    { kind: organization?.kind ?? 'customer' },
-  )
 
   return {
     user: auth.user,

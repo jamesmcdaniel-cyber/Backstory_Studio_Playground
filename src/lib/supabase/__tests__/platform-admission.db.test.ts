@@ -121,17 +121,25 @@ if (ENABLED) {
   })
 
   test('a non-allowlisted stranger is refused AND provisions nothing', async () => {
-    const before = {
-      users: await prisma.user.count(),
-      orgs: await prisma.organization.count(),
-    }
-    const result = await resolveAuthUser(identity(crypto.randomUUID(), `stranger-${stamp}@nobody-${stamp}.example`))
+    const supabaseId = crypto.randomUUID()
+    const result = await resolveAuthUser(identity(supabaseId, `stranger-${stamp}@nobody-${stamp}.example`))
     assert.equal(result.accessRevoked, true)
     assert.equal(result.dbUser, null)
     // The gate runs BEFORE provisionUser, so a refused identity never creates an
     // organization it would then be ADMIN of.
-    assert.equal(await prisma.user.count(), before.users, 'no user row may be created')
-    assert.equal(await prisma.organization.count(), before.orgs, 'no organization may be created')
+    //
+    // Asserted against THIS identity rather than against global row counts: the
+    // suite runs its files concurrently against one database, so a before/after
+    // count is a race with whatever else is inserting at the time (it caught a
+    // neighbouring suite's row and failed for the wrong reason). provisionUser
+    // derives the workspace slug from the Supabase id, so both halves are
+    // checkable exactly.
+    assert.equal(await prisma.user.findUnique({ where: { supabaseId } }), null, 'no user row may be created')
+    assert.equal(
+      await prisma.organization.findFirst({ where: { slug: `org-${supabaseId}` } }),
+      null,
+      'no organization may be created',
+    )
   })
 
   test('an active allowed domain still provisions a new member normally', async () => {
@@ -142,26 +150,33 @@ if (ENABLED) {
     assert.equal(result.dbUser?.role, 'USER', 'joining an existing workspace never makes them its admin')
   })
 
-  test('the admission gate precedes provisioning', () => {
-    // Ordering is the mechanism, exactly as in deactivated-account.test.ts: if
-    // the gate moves below provisionUser, a refused identity gets a workspace
-    // first and the assertion above becomes the only thing catching it.
-    const source = readFileSync('src/lib/supabase/auth-utils.ts', 'utf8')
-    const body = source.slice(source.indexOf('export async function resolveAuthUser'))
-    const gate = body.indexOf('isAllowedEmail')
-    const revoked = body.indexOf('isDomainAccessRevoked')
-    const provision = body.indexOf('provisionUser(user)')
-    assert.ok(gate > 0, 'resolveAuthUser must apply the full admission gate')
-    assert.ok(revoked > 0, 'resolveAuthUser must re-check revocation per request')
-    assert.ok(gate < provision, 'the admission gate must precede provisioning')
-    assert.ok(revoked < provision, 'the revocation check must precede provisioning')
-  })
-
-  test('requireAuthContext answers PLATFORM_ACCESS_REVOKED, not the generic org error', async () => {
-    const source = readFileSync('src/lib/server/auth.ts', 'utf8')
-    const revokedAt = source.indexOf('PLATFORM_ACCESS_REVOKED')
-    const genericAt = source.indexOf('Organization access required')
-    assert.ok(revokedAt > 0, 'requireAuthContext must raise PLATFORM_ACCESS_REVOKED')
-    assert.ok(revokedAt < genericAt, 'it must run before the generic dbUser check')
-  })
 }
+
+/* -------------------------- static ordering guards ------------------------ */
+//
+// Outside the TEST_DATABASE_URL block on purpose — see the same note in
+// deactivated-account.test.ts. These read source and need no database, so
+// gating them meant they never ran on the local gate.
+
+test('the admission gate precedes provisioning', () => {
+  // Ordering is the mechanism: if the gate moves below provisionUser, a refused
+  // identity gets a workspace first, and the behavioural assertion that no rows
+  // are created becomes the only thing catching it.
+  const source = readFileSync('src/lib/supabase/auth-utils.ts', 'utf8')
+  const body = source.slice(source.indexOf('export async function resolveAuthUser'))
+  const gate = body.indexOf('isAllowedEmail')
+  const revoked = body.indexOf('isDomainAccessRevoked')
+  const provision = body.indexOf('provisionUser(user)')
+  assert.ok(gate > 0, 'resolveAuthUser must apply the full admission gate')
+  assert.ok(revoked > 0, 'resolveAuthUser must re-check revocation per request')
+  assert.ok(gate < provision, 'the admission gate must precede provisioning')
+  assert.ok(revoked < provision, 'the revocation check must precede provisioning')
+})
+
+test('requireAuthContext answers PLATFORM_ACCESS_REVOKED, not the generic org error', () => {
+  const source = readFileSync('src/lib/server/auth.ts', 'utf8')
+  const revokedAt = source.indexOf('PLATFORM_ACCESS_REVOKED')
+  const genericAt = source.indexOf('Organization access required')
+  assert.ok(revokedAt > 0, 'requireAuthContext must raise PLATFORM_ACCESS_REVOKED')
+  assert.ok(revokedAt < genericAt, 'it must run before the generic dbUser check')
+})

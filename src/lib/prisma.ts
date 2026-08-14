@@ -67,6 +67,30 @@ function createGuardedClient(base: PrismaClient) {
  * call site carries a one-line justification comment. User-facing code uses
  * `prisma`.
  */
+/**
+ * Refuse to boot in the one configuration that silently recreates the third
+ * 2026-08-09 outage.
+ *
+ * `systemPrisma` falls back to DATABASE_URL when SYSTEM_DATABASE_URL is unset.
+ * That fallback is correct while RLS is off (both are the privileged role) and
+ * catastrophic the moment it is on: DATABASE_URL is then the non-owner
+ * `backstory_app` role, so every "system" path — cron sweeps, tenant resolution,
+ * auth bootstrap, and the platform tables carrying deny-all `tenant_no_access`
+ * policies — runs as a role those policies reject. Last time that surfaced as
+ * every workspace reporting "Your workspace is still provisioning".
+ *
+ * Nothing about it is loud: `??` produces a working connection, and the failure
+ * appears later as empty reads. Fail at boot instead.
+ */
+if (rlsActive() && !process.env.SYSTEM_DATABASE_URL) {
+  throw new Error(
+    'DATABASE_RLS_ENABLED is set but SYSTEM_DATABASE_URL is not. systemPrisma would fall back to ' +
+      'DATABASE_URL — the non-owner role — and every system path, including the deny-all platform ' +
+      'tables, would read as a role its policies reject. Set SYSTEM_DATABASE_URL to the privileged ' +
+      'connection before enabling RLS.',
+  )
+}
+
 export const systemPrisma = globalForPrisma.systemPrisma ?? createPrismaClient(process.env.SYSTEM_DATABASE_URL ?? process.env.DATABASE_URL)
 globalForPrisma.systemPrisma = systemPrisma
 

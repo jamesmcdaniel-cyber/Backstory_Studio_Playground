@@ -37,4 +37,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     content = (await extractTextAuto(buffer, saved.mimeType, file.name).catch(() => '')).slice(0, CONTENT_PREVIEW_MAX_CHARS) || undefined
   }
   return { success: true, file: { ...saved, url: `/api/files/${saved.id}`, content } }
-}, { permission: 'flow.write' })
+// The wrapper's 1 MB default would reject legitimate uploads well under the
+// product's own 10 MB ceiling. Raised to that ceiling (plus multipart framing
+// slack) rather than switched off, so an upload still meets a limit before the
+// bytes are read — STORED_FILE_MAX_BYTES then enforces the exact size, and the
+// per-org quota enforces the total.
+}, { permission: 'flow.write', maxBodyBytes: STORED_FILE_MAX_BYTES + 100_000 })

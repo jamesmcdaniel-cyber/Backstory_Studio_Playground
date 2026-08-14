@@ -62,4 +62,6 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
   return { success: true, transcribed: true }
-}, { permission: 'flow.read' })
+// Multipart audio segment — raised above the wrapper's 1 MB JSON default to this
+// route's own SEGMENT_MAX_BYTES ceiling (plus multipart framing slack).
+}, { permission: 'flow.read', maxBodyBytes: SEGMENT_MAX_BYTES + 100_000 })

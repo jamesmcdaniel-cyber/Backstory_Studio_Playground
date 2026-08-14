@@ -3,6 +3,7 @@ import type { ITXClientDenyList } from '@prisma/client/runtime/library'
 import { assertOrgScoped, ORG_SCOPED_MODELS } from '@/lib/tenant-guard'
 import { applyOwnerLiveness } from '@/lib/authz/credential-owner-guard'
 import { exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
+import { rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: ReturnType<typeof createGuardedClient>
@@ -31,7 +32,9 @@ function createGuardedClient(base: PrismaClient) {
           // change nothing it accepts — but the ordering is load-bearing if that
           // ever stops being true. See src/lib/authz/credential-owner-guard.ts.
           const guardedArgs = applyOwnerLiveness(model, operation, args) as typeof args
-          if (process.env.DATABASE_RLS_ENABLED === 'true' && model && ORG_SCOPED_MODELS.has(model)) {
+          // Per-model, not a global boolean: see src/lib/authz/rls-rollout.ts
+          // for why enabling every table at once is what caused the outages.
+          if (rlsAppliesTo(model) && model && ORG_SCOPED_MODELS.has(model)) {
             const organizationId = exactOrganizationId(guardedArgs)
             if (!organizationId) throw new Error(`RLS context: ${model}.${operation} requires one exact organizationId.`)
             const active = tenantDatabaseContext.getStore()
@@ -62,7 +65,10 @@ function createGuardedClient(base: PrismaClient) {
 export const systemPrisma = globalForPrisma.systemPrisma ?? createPrismaClient(process.env.SYSTEM_DATABASE_URL ?? process.env.DATABASE_URL)
 globalForPrisma.systemPrisma = systemPrisma
 
-const appPrismaBase = globalForPrisma.appPrismaBase ?? (process.env.DATABASE_RLS_ENABLED === 'true'
+// The non-owner application role is only worth a second pool once at least one
+// model is actually on the RLS path; before that every query would take the
+// same connections through a role with nothing to enforce.
+const appPrismaBase = globalForPrisma.appPrismaBase ?? (rlsActive()
   ? createPrismaClient(process.env.DATABASE_URL)
   : systemPrisma)
 globalForPrisma.appPrismaBase = appPrismaBase
@@ -72,7 +78,7 @@ export const prisma = globalForPrisma.prisma ?? createGuardedClient(appPrismaBas
 /** Run an atomic tenant operation with SET LOCAL so PostgreSQL RLS is the final boundary. */
 export function tenantTransaction<T>(organizationId: string, callback: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
   return appPrismaBase.$transaction(async (tx) => {
-    if (process.env.DATABASE_RLS_ENABLED === 'true') {
+    if (rlsActive()) {
       await tx.$queryRaw`SELECT set_config('app.organization_id', ${organizationId}, true)`
     }
     return tenantDatabaseContext.run({ organizationId, transaction: tx }, () => callback(tx))

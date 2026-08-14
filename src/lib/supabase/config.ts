@@ -18,7 +18,17 @@ export function getSupabaseConfig() {
  * `httpOnly` is deliberately absent: the browser client reads the session via
  * `document.cookie` (createBrowserClient), so forcing it here would sign
  * everyone out. Script access is therefore contained by CSP, not by the cookie
- * flag — see next.config.js.
+ * flag — specifically by the nonce-based `script-src 'strict-dynamic'` built in
+ * src/lib/security/csp.ts and attached per-request in src/middleware.ts.
+ *
+ * That dependency is real, not decorative: this cookie holds the access AND
+ * refresh token in a place any executing script can read, so the CSP is the only
+ * thing standing between an XSS and a full session takeover. Weakening
+ * script-src (adding 'unsafe-inline', a wildcard host, or a static duplicate
+ * policy) re-opens that path. Do not do it without making the cookie httpOnly
+ * first, which means moving session reads server-side.
+ *
+ * Applied at EVERY client, browser and server — see ./client.ts.
  *
  * `secure` is conditional so local http development still holds a session;
  * every deployed environment runs https and gets the flag.

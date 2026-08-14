@@ -21,8 +21,12 @@ function appOrigin(): string {
 type SupabaseContext = {
   user: User | null
   loading: boolean
-  signIn: (email: string, password: string) => ReturnType<typeof supabase.auth.signInWithPassword>
-  signUp: (email: string, password: string, options?: { data?: Record<string, unknown> }) => ReturnType<typeof supabase.auth.signUp>
+  /** `captchaToken` comes from useTurnstile(). Supabase — not this app — is what
+   *  verifies it; see src/lib/auth/captcha.ts for why it cannot be enforced here. */
+  signIn: (email: string, password: string, captchaToken?: string) => ReturnType<typeof supabase.auth.signInWithPassword>
+  signUp: (email: string, password: string, options?: { data?: Record<string, unknown>; captchaToken?: string }) => ReturnType<typeof supabase.auth.signUp>
+  /** Send a password-recovery email. Carries a captcha token for the same reason. */
+  resetPassword: (email: string, captchaToken?: string) => ReturnType<typeof supabase.auth.resetPasswordForEmail>
   /** Start the Google OAuth redirect. `nextPath` (a same-origin path) is carried
    *  through the callback so the user lands where they intended after auth. */
   signInWithGoogle: (nextPath?: string) => ReturnType<typeof supabase.auth.signInWithOAuth>
@@ -113,20 +117,26 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<SupabaseContext>(() => ({
     user,
     loading,
-    signIn: (email, password) => supabase.auth.signInWithPassword({
+    signIn: (email, password, captchaToken) => supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password,
+      options: { captchaToken },
     }),
     signUp: (email, password, options) => supabase.auth.signUp({
       email: email.trim().toLowerCase(),
       password,
       options: {
         data: options?.data,
+        captchaToken: options?.captchaToken,
         // Prefer the configured production URL so confirmation links never point
         // at localhost or a preview origin; fall back to the current origin.
         emailRedirectTo: `${appOrigin()}/auth/callback`,
       },
     }),
+    resetPassword: (email, captchaToken) => supabase.auth.resetPasswordForEmail(
+      email.trim().toLowerCase(),
+      { captchaToken, redirectTo: `${appOrigin()}/auth/update-password` },
+    ),
     signInWithGoogle: (nextPath) => {
       // Redirect back through our own callback (which exchanges the code for a
       // session), carrying `next` so invitees resume their deep-linked page.

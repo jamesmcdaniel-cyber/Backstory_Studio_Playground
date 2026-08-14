@@ -23,6 +23,7 @@
  * sweep. There is no per-workspace rotation.
  */
 
+import { Prisma } from '@prisma/client'
 import { systemPrisma } from '../src/lib/prisma'
 import { activeKeyId, decryptSecret, encryptSecret, isCurrentKeyPayload } from '../src/lib/crypto/secrets'
 
@@ -149,7 +150,9 @@ async function main() {
     await rotateJsonConfig(
       'mcp_connections',
       await systemPrisma.mcpConnection.findMany({ select: { id: true, authConfig: true } }),
-      (id, authConfig) => systemPrisma.mcpConnection.update({ where: { id }, data: { authConfig } }),
+      // Cast: the blob is plain JSON by construction, but Prisma's InputJsonValue
+      // does not accept an open Record<string, unknown>.
+      (id, authConfig) => systemPrisma.mcpConnection.update({ where: { id }, data: { authConfig: authConfig as Prisma.InputJsonValue } }),
     ),
   ])
 
@@ -158,7 +161,7 @@ async function main() {
     await rotateJsonConfig(
       'integration_secrets',
       await systemPrisma.integrationSecret.findMany({ select: { id: true, authConfig: true } }),
-      (id, authConfig) => systemPrisma.integrationSecret.update({ where: { id }, data: { authConfig } }),
+      (id, authConfig) => systemPrisma.integrationSecret.update({ where: { id }, data: { authConfig: authConfig as Prisma.InputJsonValue } }),
     ),
   ])
 

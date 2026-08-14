@@ -21,8 +21,26 @@ function copyCookies(source: NextResponse, target: NextResponse) {
   return target
 }
 
-export async function updateSession(request: NextRequest) {
-  let response = NextResponse.next({ request })
+/**
+ * @param requestHeaders Headers to forward to the renderer — carries the CSP
+ * nonce minted in src/middleware.ts. Every `NextResponse.next()` below has to
+ * pass them through, or the nonce is lost on whichever branch drops it and
+ * Next's own scripts render without one.
+ */
+export async function updateSession(request: NextRequest, requestHeaders?: Headers) {
+  // Rebuilt on each call rather than snapshotted once: the Supabase client's
+  // setAll() mutates request.cookies to carry a refreshed session, and the
+  // renderer only sees that refresh if the forwarded headers are re-read AFTER
+  // the mutation. A single captured Headers object would forward the pre-refresh
+  // cookie and silently undo the token rotation.
+  const nextInit = () => {
+    const headers = new Headers(request.headers)
+    // Injected headers (the CSP nonce) win over anything the client sent under
+    // the same name — a caller must not be able to choose its own nonce.
+    requestHeaders?.forEach((value, key) => headers.set(key, value))
+    return { request: { headers } }
+  }
+  let response = NextResponse.next(nextInit())
   const pathname = request.nextUrl.pathname
   const isApi = pathname.startsWith('/api/')
 
@@ -40,7 +58,7 @@ export async function updateSession(request: NextRequest) {
       getAll: () => request.cookies.getAll(),
       setAll(cookies) {
         cookies.forEach(({ name, value }) => request.cookies.set(name, value))
-        response = NextResponse.next({ request })
+        response = NextResponse.next(nextInit())
         cookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
       },
     },

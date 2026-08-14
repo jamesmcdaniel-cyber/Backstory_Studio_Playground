@@ -40,7 +40,9 @@ test('with ENCRYPTION_KEY set: encrypt/decrypt round-trips', async () => {
   setNodeEnv('production')
   const { encryptSecret, decryptSecret } = await freshSecrets()
   const payload = encryptSecret('grn_abc123')
-  assert.match(payload, /^v1:/)
+  // v2 — the key-id-prefixed format that makes ENCRYPTION_KEY rotatable.
+  // v1 payloads stay readable; see key-rotation.test.ts.
+  assert.match(payload, /^v2:[0-9a-f]{8}:/)
   assert.equal(decryptSecret(payload), 'grn_abc123')
 })
 

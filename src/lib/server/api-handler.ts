@@ -34,6 +34,27 @@ const DEFAULT_WRITE_RATE_LIMIT: RateLimitOptions = {
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
+/**
+ * Default request-body ceiling for a mutating route, in bytes.
+ *
+ * Most routes parse their body through a zod schema whose field bounds cap the
+ * size implicitly. A handful legitimately accept free-form JSON — a signal
+ * payload, a resume payload, an agent trigger input — where there is no schema
+ * to bound and the body becomes whatever the caller sends. Rejecting on the
+ * declared length costs nothing and puts a ceiling under every route rather than
+ * only the ones someone remembered.
+ *
+ * Deliberately NOT as tight as FLOW_WEBHOOK_MAX_BODY_BYTES (1 MB). The webhook
+ * path enforces its own limit in-route, whereas this ceiling sits under the flow
+ * autosave PUT, which serialises the entire graph — pinned node data included —
+ * on every save. A 1 MB wrapper default would reject legitimate saves of a large
+ * flow. 4 MB is far above any real graph and still bounds an abusive body.
+ */
+const DEFAULT_MAX_BODY_BYTES = Math.max(
+  1024,
+  Number(process.env.API_MAX_BODY_BYTES) || 4_000_000,
+)
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -79,12 +100,31 @@ export function withAuthenticatedApi(
      * never told that an internal route is there to be authenticated against.
      */
     internalOnly?: boolean
+    /**
+     * Override the default request-body ceiling, or pass `false` to opt out
+     * (file uploads, which enforce their own quota-aware limit).
+     */
+    maxBodyBytes?: number | false
   },
 ) {
   return async (request: NextRequest, context?: unknown): Promise<Response> => {
     try {
       if (options?.internalOnly && isCustomerEdition()) {
         return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
+      }
+
+      // Before auth: an oversized body is refused without doing session work
+      // for it, and the check reads a header rather than the stream, so it
+      // cannot consume the body the handler is about to parse.
+      const bodyLimit = options?.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+      if (bodyLimit !== false && !READ_METHODS.has(request.method)) {
+        const declared = Number(request.headers.get('content-length'))
+        if (Number.isFinite(declared) && declared > bodyLimit) {
+          return NextResponse.json(
+            { success: false, error: 'Request body is too large.', code: 'BODY_TOO_LARGE' },
+            { status: 413 },
+          )
+        }
       }
 
       const auth = await requireAuthContext(options)

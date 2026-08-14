@@ -69,7 +69,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (error instanceof UnsupportedFileError) throw new ApiError(error.message, 415, 'UNSUPPORTED_TYPE')
     throw error
   }
-}, { permission: 'agent.write' })
+// Multipart upload — raised above the wrapper's 1 MB JSON default to this
+// route's own MAX_UPLOAD_BYTES ceiling (plus multipart framing slack), which
+// the handler then enforces exactly.
+}, { permission: 'agent.write', maxBodyBytes: MAX_UPLOAD_BYTES + 100_000 })
 
 // DELETE — remove a knowledge document (and its chunks, via cascade).
 export const DELETE = withAuthenticatedApi(async (request, auth) => {

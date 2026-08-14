@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Maximize2, Search, ZoomIn, ZoomOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -28,9 +28,11 @@ export function CanvasRail({
   }, [nodes, query])
 
   const stop = (event: React.MouseEvent) => event.stopPropagation()
+  const focusOnMount = useCallback((element: HTMLInputElement | null) => element?.focus(), [])
 
   return (
     <div
+      role="presentation"
       className="absolute bottom-6 left-4 z-10 flex flex-col items-stretch overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.12)]"
       onClick={stop}
     >
@@ -91,15 +93,16 @@ export function CanvasRail({
         </button>
         {searchOpen && (
           <div
+            role="presentation"
             className="absolute bottom-0 left-full ml-2 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.12)]"
             onClick={stop}
           >
             <input
-              autoFocus
+              ref={focusOnMount}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search steps..."
-              className="w-full border-b border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-slate-400"
+              className="w-full border-b border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-blue-500"
             />
             <div className="max-h-56 overflow-y-auto py-1">
               {results.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">No matching steps.</p>}

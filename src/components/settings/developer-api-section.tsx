@@ -151,6 +151,7 @@ export function DeveloperApiSection() {
             <label key={scope.value} className="flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm">
               <input
                 type="checkbox"
+                aria-label={scope.label}
                 className="mt-0.5 h-4 w-4 rounded border-input accent-[hsl(var(--primary))]"
                 checked={scopes.includes(scope.value)}
                 onChange={(event) =>

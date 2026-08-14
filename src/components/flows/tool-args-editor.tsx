@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { Code2, ListTree, List } from 'lucide-react'
 import { DataTree } from '@/components/flows/data-tree'
@@ -207,6 +207,7 @@ export function ToolArgsEditor({
     return callback
   }
   const rawElRef = useRef<HTMLTextAreaElement | null>(null)
+  const rawArgsId = useId()
 
   const values = parseArgs(args)
   const setValue = (name: string, value: string) => onChange(serializeArgs({ ...values, [name]: value }, fields))
@@ -243,7 +244,7 @@ export function ToolArgsEditor({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <label className={`${labelClass} mb-0`}>Arguments</label>
+        <label className={`${labelClass} mb-0`} htmlFor={rawArgsId}>Arguments</label>
         {fields.length > 0 && (
           <button
             type="button"
@@ -259,6 +260,7 @@ export function ToolArgsEditor({
       {raw || fields.length === 0 ? (
         <div className="space-y-2">
           <textarea
+            id={rawArgsId}
             ref={rawElRef}
             rows={5}
             onKeyDown={indentOnTab}

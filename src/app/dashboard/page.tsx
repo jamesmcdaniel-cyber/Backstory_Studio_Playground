@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useReducedMotion } from 'motion/react'
 import { indentOnTab } from '@/components/ui/textarea'
 import Link from 'next/link'
 import { toast } from 'sonner'
@@ -40,6 +41,7 @@ function greeting(): string {
 }
 
 export default function AssistantHome() {
+  const reduced = useReducedMotion()
   const [input, setInput] = useState('')
   const [thread, setThread] = useState<Turn[]>([])
   const [busy, setBusy] = useState(false)
@@ -54,7 +56,7 @@ export default function AssistantHome() {
 
   // Compute the time-of-day greeting on the client to avoid an SSR mismatch.
   useEffect(() => setHello(greeting()), [])
-  useEffect(() => { threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [thread, busy])
+  useEffect(() => { threadEndRef.current?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth' }) }, [thread, busy, reduced])
 
   // Grows with the content; the CSS min-height keeps the empty composer tall.
   const grow = (el: HTMLTextAreaElement) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 240)}px` }

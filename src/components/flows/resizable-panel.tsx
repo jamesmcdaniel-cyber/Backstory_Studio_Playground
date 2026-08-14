@@ -60,9 +60,27 @@ export function ResizablePanel({
   return (
     <div className="relative shrink-0 animate-slide-in-right" style={{ width }}>
       <div
-        role="separator"
+        role="slider"
         aria-orientation="vertical"
+        aria-label="Resize panel"
+        aria-valuenow={width}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        tabIndex={0}
         onMouseDown={onMouseDown}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          // Panel is on the right, so moving the separator LEFT widens it.
+          const next = Math.min(max, Math.max(min, widthRef.current + (event.key === 'ArrowLeft' ? 16 : -16)))
+          widthRef.current = next
+          setWidth(next)
+          try {
+            window.localStorage.setItem(storageKey, String(next))
+          } catch {
+            /* storage unavailable */
+          }
+        }}
         onDoubleClick={() => {
           widthRef.current = defaultWidth
           setWidth(defaultWidth)

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useReducedMotion } from 'motion/react'
 
 export const RUNNING_WORDS = [
   'Working', 'Thinking', 'Reasoning', 'Analyzing', 'Pondering', 'Crunching',
@@ -8,11 +9,13 @@ export const RUNNING_WORDS = [
 ]
 
 export function TypewriterStatus({ seed = 0 }: { seed?: number }) {
+  const reduced = useReducedMotion()
   const [wordIndex, setWordIndex] = useState(seed % RUNNING_WORDS.length)
   const [text, setText] = useState('')
   const [phase, setPhase] = useState<'typing' | 'holding' | 'deleting'>('typing')
 
   useEffect(() => {
+    if (reduced) return
     const word = RUNNING_WORDS[wordIndex]
     let timer: number
     if (phase === 'typing') {
@@ -28,11 +31,11 @@ export function TypewriterStatus({ seed = 0 }: { seed?: number }) {
       }
     }
     return () => window.clearTimeout(timer)
-  }, [text, phase, wordIndex])
+  }, [text, phase, wordIndex, reduced])
 
   return (
     <span>
-      {text}
+      {reduced ? RUNNING_WORDS[wordIndex] : text}
       <span className="animate-pulse">…</span>
     </span>
   )

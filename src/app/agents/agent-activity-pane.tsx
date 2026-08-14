@@ -591,7 +591,7 @@ function RunRow({
           </div>
         </div>
         <time className="shrink-0 font-mono text-xs tabular-nums text-gray-400">{new Date(activity.startedAt).toLocaleString()}</time>
-        <span className="flex shrink-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
+        <span role="presentation" className="flex shrink-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
           {isCancellable && (
             <button
               type="button"

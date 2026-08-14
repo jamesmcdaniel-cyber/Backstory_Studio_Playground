@@ -198,6 +198,8 @@ function connectionToolKey(connection: Connection): string {
   return toolConnectionBrand(connection).slug
 }
 
+const focusOnMount = (element: HTMLInputElement | null) => element?.focus()
+
 export function FlowPicker({
   mode,
   agents,
@@ -504,14 +506,14 @@ export function FlowPicker({
           </>
         )}
         {drillSubtitle && <p className="mt-1 text-sm text-slate-500">{drillSubtitle}</p>}
-        <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2">
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
           <Search className="h-4 w-4 text-slate-400" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             className="min-w-0 flex-1 bg-transparent text-sm text-slate-950 outline-none placeholder:text-slate-400"
             placeholder={mode === 'trigger' ? 'Search triggers' : 'Search agents, actions, or connectors'}
-            autoFocus
+            ref={focusOnMount}
           />
         </div>
       </div>

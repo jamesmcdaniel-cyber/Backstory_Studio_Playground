@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useReducedMotion } from 'motion/react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { Sparkles, Send, Square, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
@@ -42,6 +43,7 @@ export function CopilotPanel({
    *  workspace, which is the wrong org for a shared flow. */
   external?: boolean
 }) {
+  const reduced = useReducedMotion()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -62,8 +64,8 @@ export function CopilotPanel({
   const emptyCanvas = graph.nodes.length <= 1 && !external
 
   useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, loading])
+    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: reduced ? 'auto' : 'smooth' })
+  }, [messages, loading, reduced])
 
   // The composer grows with its content up to a quarter of the panel's height,
   // then scrolls internally so a long prompt stays fully reviewable.

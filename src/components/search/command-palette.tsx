@@ -116,7 +116,6 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
         <div className="flex items-center gap-2 border-b px-4 py-3">
           {searching ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : <Search className="h-4 w-4 text-gray-400" />}
           <input
-            autoFocus
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
             placeholder="Search agents and runs..."
             value={query}

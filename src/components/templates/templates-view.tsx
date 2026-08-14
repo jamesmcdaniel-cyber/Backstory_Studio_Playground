@@ -635,17 +635,17 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
             <div className="-mx-1 max-h-[65vh] space-y-3 overflow-y-auto px-1 py-1">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Name</label>
-                  <Input value={dialog.name} onChange={(e) => setDialog({ ...dialog, name: e.target.value })} placeholder="e.g. Concise email replies" />
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-name">Name</label>
+                  <Input id="template-dialog-name" value={dialog.name} onChange={(e) => setDialog({ ...dialog, name: e.target.value })} placeholder="e.g. Concise email replies" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Category</label>
-                  <Input value={dialog.category} onChange={(e) => setDialog({ ...dialog, category: e.target.value })} />
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-category">Category</label>
+                  <Input id="template-dialog-category" value={dialog.category} onChange={(e) => setDialog({ ...dialog, category: e.target.value })} />
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Description</label>
-                <Input value={dialog.description} onChange={(e) => setDialog({ ...dialog, description: e.target.value })} placeholder="One line shown on the card" />
+                <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-description">Description</label>
+                <Input id="template-dialog-description" value={dialog.description} onChange={(e) => setDialog({ ...dialog, description: e.target.value })} placeholder="One line shown on the card" />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">
@@ -654,13 +654,13 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                 <Textarea rows={8} value={dialog.instructions} onChange={(e) => setDialog({ ...dialog, instructions: e.target.value })} placeholder="What the agent should do…" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Tags (comma-separated)</label>
-                <Input value={dialog.tags} onChange={(e) => setDialog({ ...dialog, tags: e.target.value })} placeholder="sales, email" />
+                <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-tags">Tags (comma-separated)</label>
+                <Input id="template-dialog-tags" value={dialog.tags} onChange={(e) => setDialog({ ...dialog, tags: e.target.value })} placeholder="sales, email" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Integrations</label>
+                <span id="template-dialog-integrations" className="mb-1 block text-xs font-medium text-muted-foreground">Integrations</span>
                 {availableIntegrations ? (
-                  <div className="flex flex-wrap gap-2">
+                  <div role="group" aria-labelledby="template-dialog-integrations" className="flex flex-wrap gap-2">
                     {availableIntegrations.tools.map((t) => {
                       const selected = dialog.integrations.includes(t.key)
                       return (
@@ -728,7 +728,7 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
               {dialog.kind === 'template' && (
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label className="block text-xs font-medium text-muted-foreground">Example output (optional)</label>
+                    <label className="block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-example-output">Example output (optional)</label>
                     {dialog.exampleOutput.trim() !== '' && (
                       <div className="flex rounded-md border border-border p-0.5">
                         {(['Write', 'Preview'] as const).map((mode) => (
@@ -756,7 +756,7 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                       <p className="whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-3 text-sm leading-relaxed text-muted-foreground">{dialog.exampleOutput}</p>
                     )
                   ) : (
-                    <Textarea rows={5} value={dialog.exampleOutput} onChange={(e) => setDialog({ ...dialog, exampleOutput: e.target.value })} placeholder="Illustrative output shown on the detail page — paste HTML to show a formatted report" />
+                    <Textarea id="template-dialog-example-output" rows={5} value={dialog.exampleOutput} onChange={(e) => setDialog({ ...dialog, exampleOutput: e.target.value })} placeholder="Illustrative output shown on the detail page — paste HTML to show a formatted report" />
                   )}
                   <p className="mt-1 text-xs text-muted-foreground">HTML is supported: it renders as the formatted report on the template&apos;s detail page.</p>
                 </div>

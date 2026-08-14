@@ -1,5 +1,6 @@
 'use client'
 
+import { useId } from 'react'
 import type { TriggerInputField } from '@/lib/flows/graph'
 import { indentOnTab } from '@/components/ui/textarea'
 import { fieldValuesFromFlowInput, flowInputFromFieldValues } from '@/lib/flows/test-input'
@@ -112,6 +113,7 @@ export function TestInputPanel({
   value: string
   onChange: (value: string) => void
 }) {
+  const rawPayloadId = useId()
   const usableFields = fields.filter((field) => field.name.trim())
   const values = fieldValuesFromFlowInput(value, usableFields)
   if (!usableFields.length) return null
@@ -151,8 +153,9 @@ export function TestInputPanel({
           })}
         </div>
         <div>
-          <label className={labelClass}>Raw payload</label>
+          <label className={labelClass} htmlFor={rawPayloadId}>Raw payload</label>
           <textarea
+            id={rawPayloadId}
             rows={8}
             onKeyDown={indentOnTab}
             className={`${fieldClass} min-h-[160px] resize-y font-mono text-xs`}

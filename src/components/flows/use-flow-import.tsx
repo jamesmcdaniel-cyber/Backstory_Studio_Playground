@@ -112,7 +112,6 @@ export function useFlowImport() {
             onChange={(event) => setUrl(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') void submitUrl() }}
             placeholder="https://n8n.io/workflows/…"
-            autoFocus
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setUrlOpen(false)} disabled={importing}>Cancel</Button>

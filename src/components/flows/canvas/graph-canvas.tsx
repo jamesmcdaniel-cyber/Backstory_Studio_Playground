@@ -747,7 +747,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
 
       {picker && (
         <>
-          <div className="absolute inset-0 z-30" onClick={() => setPicker(null)} />
+          <div aria-hidden="true" className="absolute inset-0 z-30" onClick={() => setPicker(null)} />
           {/* Anchored to the canvas's top-right, deliberately covering the
               floating + button (same right-4/top-4 corner): the panel IS that
               button's expanded state, and a fixed home means it never lands on

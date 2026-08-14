@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin } from 'lucide-react'
 import { toast } from 'sonner'
@@ -108,13 +108,15 @@ function PerItemSection({
   focusEditor: (key: string) => () => void
   insertToken: (token: string) => void
 }) {
+  const uid = useId()
   const perItem = (node.data as { perItem?: PerItemConfigLike }).perItem
   const enabled = Boolean(perItem)
   const patch = (next: PerItemConfigLike | undefined) => onChange({ ...node, data: { ...node.data, perItem: next } } as FlowNode)
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-3">
-      <label className={labelClass}>Run this step</label>
+      <label className={labelClass} htmlFor={`${uid}-per-item-mode`}>Run this step</label>
       <select
+        id={`${uid}-per-item-mode`}
         className={fieldClass}
         value={enabled ? 'each' : 'once'}
         onChange={(e) => patch(e.target.value === 'each' ? { over: perItem?.over ?? '', itemError: perItem?.itemError, concurrency: perItem?.concurrency } : undefined)}
@@ -125,7 +127,7 @@ function PerItemSection({
       {enabled && perItem && (
         <div className="mt-3 space-y-3">
           <div>
-            <label className={labelClass}>For each item in</label>
+            <span className={labelClass}>For each item in</span>
             <TokenTextEditor
               ref={registerEditor('perItem.over')}
               value={perItem.over}
@@ -141,8 +143,9 @@ function PerItemSection({
             <p className="mt-1.5 text-xs text-muted-foreground">This step runs once per item; use {'{{item}}'} in its fields. Outputs are collected into a list.</p>
           </div>
           <div>
-            <label className={labelClass}>If an item fails</label>
+            <label className={labelClass} htmlFor={`${uid}-per-item-error`}>If an item fails</label>
             <select
+              id={`${uid}-per-item-error`}
               className={fieldClass}
               value={perItem.itemError ?? 'fail'}
               onChange={(e) => patch({ ...perItem, itemError: e.target.value === 'fail' ? undefined : (e.target.value as 'skip' | 'collect') })}
@@ -153,8 +156,9 @@ function PerItemSection({
             </select>
           </div>
           <div>
-            <label className={labelClass}>At a time</label>
+            <label className={labelClass} htmlFor={`${uid}-per-item-concurrency`}>At a time</label>
             <input
+              id={`${uid}-per-item-concurrency`}
               type="number"
               min={1}
               max={20}
@@ -433,6 +437,7 @@ function ToolConfigurationSection({
   labelCtx: TokenLabelContext
   onChange: (node: FlowNode) => void
 }) {
+  const uid = useId()
   const { connection, tool, brand, actionLabel } = selectedToolPresentation(
     toolCatalog,
     node.data.connectionId,
@@ -447,8 +452,9 @@ function ToolConfigurationSection({
     <div className="space-y-3">
       {!connection ? (
         <div>
-          <label className={labelClass}>Connector</label>
+          <label className={labelClass} htmlFor={`${uid}-connector`}>Connector</label>
           <select
+            id={`${uid}-connector`}
             className={fieldClass}
             value=""
             onChange={(event) => {
@@ -492,8 +498,9 @@ function ToolConfigurationSection({
             </button>
           </div>
           <div>
-            <label className={labelClass}>Action</label>
+            <label className={labelClass} htmlFor={`${uid}-action`}>Action</label>
             <select
+              id={`${uid}-action`}
               className={fieldClass}
               value={selectedAction?.key ?? ''}
               onChange={(event) => {
@@ -620,6 +627,7 @@ export function StepDrawer({
   onDelete: () => void
   onClose: () => void
 }) {
+  const uid = useId()
   const isWorkspace = layout === 'workspace'
   const [httpCredentials, setHttpCredentials] = useState<HttpCredentialSummary[]>([])
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
@@ -896,13 +904,14 @@ export function StepDrawer({
             {node.type !== 'http' && (
               <>
                 <div>
-                  <label className={labelClass}>Label (optional)</label>
-                  <input className={fieldClass} value={(node.data as { label?: string }).label ?? ''} placeholder="A short name for this step" onFocus={blockActive} onBlur={unblockActive} onChange={(e) => setLabel(e.target.value)} />
+                  <label className={labelClass} htmlFor={`${uid}-step-label`}>Label (optional)</label>
+                  <input id={`${uid}-step-label`} className={fieldClass} value={(node.data as { label?: string }).label ?? ''} placeholder="A short name for this step" onFocus={blockActive} onBlur={unblockActive} onChange={(e) => setLabel(e.target.value)} />
                 </div>
                 {typeof (node.data as { note?: string }).note === 'string' ? (
                   <div>
-                    <label className={labelClass}>Notes</label>
+                    <label className={labelClass} htmlFor={`${uid}-step-note`}>Notes</label>
                     <textarea
+                      id={`${uid}-step-note`}
                       rows={2}
                       className={fieldClass}
                       onKeyDown={indentOnTab}
@@ -945,8 +954,8 @@ export function StepDrawer({
         {node.type === 'agent' && (
           <>
             <div>
-              <label className={labelClass}>Agent</label>
-              <select className={fieldClass} value={node.data.agentId} onChange={(e) => onChange({ ...node, data: { ...node.data, agentId: e.target.value } })}>
+              <label className={labelClass} htmlFor={`${uid}-agent`}>Agent</label>
+              <select id={`${uid}-agent`} className={fieldClass} value={node.data.agentId} onChange={(e) => onChange({ ...node, data: { ...node.data, agentId: e.target.value } })}>
                 <option value="">Select an agent…</option>
                 {agents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
@@ -964,7 +973,7 @@ export function StepDrawer({
               />
             )}
             <div>
-              <label className={labelClass}>Message to agent</label>
+              <span className={labelClass}>Message to agent</span>
               <TokenTextEditor
                 ref={registerEditor('agent.input')}
                 previewCtx={previewCtx}
@@ -982,8 +991,9 @@ export function StepDrawer({
               </div>
             </div>
             <div>
-              <label className={labelClass}>Data from earlier steps</label>
+              <label className={labelClass} htmlFor={`${uid}-upstream`}>Data from earlier steps</label>
               <select
+                id={`${uid}-upstream`}
                 className={fieldClass}
                 value={node.data.includeUpstreamContext === true ? 'on' : 'off'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, includeUpstreamContext: e.target.value === 'on' } })}
@@ -1006,8 +1016,9 @@ export function StepDrawer({
             </p>
             <AdvancedParamsSection node={node} onChange={onChange} />
             <div>
-              <label className={labelClass}>Human assistance</label>
+              <label className={labelClass} htmlFor={`${uid}-human-assist`}>Human assistance</label>
               <select
+                id={`${uid}-human-assist`}
                 className={fieldClass}
                 value={node.data.humanAssistance === false ? 'off' : 'on'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, humanAssistance: e.target.value === 'off' ? false : undefined } })}
@@ -1017,8 +1028,9 @@ export function StepDrawer({
               </select>
             </div>
             <div>
-              <label className={labelClass}>Agent response</label>
+              <label className={labelClass} htmlFor={`${uid}-response-format`}>Agent response</label>
               <select
+                id={`${uid}-response-format`}
                 className={fieldClass}
                 value={node.data.responseFormat ?? 'text'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, responseFormat: e.target.value === 'structured' ? 'structured' : undefined } })}
@@ -1042,8 +1054,8 @@ export function StepDrawer({
         {node.type === 'ai' && (
           <>
             <div>
-              <label className={labelClass}>Operation</label>
-              <select className={fieldClass} value={node.data.aiOp} onChange={(e) => onChange({ ...node, data: { ...node.data, aiOp: e.target.value as AiOp } })}>
+              <label className={labelClass} htmlFor={`${uid}-ai-op`}>Operation</label>
+              <select id={`${uid}-ai-op`} className={fieldClass} value={node.data.aiOp} onChange={(e) => onChange({ ...node, data: { ...node.data, aiOp: e.target.value as AiOp } })}>
                 {AI_OPS.map((op) => (
                   <option key={op} value={op}>
                     {AI_OP_LABELS[op]}
@@ -1066,7 +1078,7 @@ export function StepDrawer({
               />
             </div>
             <div>
-              <label className={labelClass}>Input</label>
+              <span className={labelClass}>Input</span>
               <TokenTextEditor
                 ref={registerEditor('ai.input')}
                 previewCtx={previewCtx}
@@ -1084,8 +1096,9 @@ export function StepDrawer({
               </div>
             </div>
             <div>
-              <label className={labelClass}>Model</label>
+              <label className={labelClass} htmlFor={`${uid}-ai-model`}>Model</label>
               <select
+                id={`${uid}-ai-model`}
                 className={fieldClass}
                 value={node.data.model ?? 'fast'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, model: e.target.value === 'smart' ? 'smart' : undefined } })}
@@ -1104,7 +1117,7 @@ export function StepDrawer({
             )}
             {node.data.aiOp === 'categorize' && (
               <div>
-                <label className={labelClass}>Categories</label>
+                <span className={labelClass}>Categories</span>
                 <div className="space-y-1.5">
                   {(node.data.categories ?? []).map((category, i) => (
                     <div key={i} className="flex gap-1.5">
@@ -1138,8 +1151,9 @@ export function StepDrawer({
             {node.data.aiOp === 'score' && (
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className={labelClass}>Lowest score</label>
+                  <label className={labelClass} htmlFor={`${uid}-score-min`}>Lowest score</label>
                   <input
+                    id={`${uid}-score-min`}
                     type="number"
                     className={fieldClass}
                     value={node.data.scoreMin ?? 1}
@@ -1148,8 +1162,9 @@ export function StepDrawer({
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Highest score</label>
+                  <label className={labelClass} htmlFor={`${uid}-score-max`}>Highest score</label>
                   <input
+                    id={`${uid}-score-max`}
                     type="number"
                     className={fieldClass}
                     value={node.data.scoreMax ?? 10}
@@ -1166,7 +1181,7 @@ export function StepDrawer({
         {node.type === 'knowledge' && (
           <>
             <div>
-              <label className={labelClass}>What to look for</label>
+              <span className={labelClass}>What to look for</span>
               <TokenTextEditor
                 ref={registerEditor('knowledge.query')}
                 multiline
@@ -1183,8 +1198,9 @@ export function StepDrawer({
               </div>
             </div>
             <div>
-              <label className={labelClass}>How many passages</label>
+              <label className={labelClass} htmlFor={`${uid}-topk`}>How many passages</label>
               <input
+                id={`${uid}-topk`}
                 type="number"
                 min={1}
                 max={20}
@@ -1205,8 +1221,9 @@ export function StepDrawer({
         {node.type === 'condition' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass}>Match</label>
+              <label className={labelClass} htmlFor={`${uid}-cond-match`}>Match</label>
               <select
+                id={`${uid}-cond-match`}
                 className={fieldClass}
                 value={node.data.match ?? 'all'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, match: e.target.value as 'all' | 'any', clauses: clausesOf(node.data), left: undefined, op: undefined, right: undefined } })}
@@ -1273,7 +1290,7 @@ export function StepDrawer({
         {node.type === 'loop' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass}>Items to process</label>
+              <span className={labelClass}>Items to process</span>
               <TokenTextEditor
                 ref={registerEditor('loop.over')}
                 value={node.data.over}
@@ -1289,8 +1306,9 @@ export function StepDrawer({
               <p className="mt-1.5 text-xs text-muted-foreground">Accepts a JSON list, a newline list, or a comma-separated list. Nested steps run once for each item.</p>
             </div>
             <div>
-              <label className={labelClass}>At a time</label>
+              <label className={labelClass} htmlFor={`${uid}-loop-concurrency`}>At a time</label>
               <input
+                id={`${uid}-loop-concurrency`}
                 type="number"
                 min={1}
                 max={20}
@@ -1302,8 +1320,9 @@ export function StepDrawer({
               />
             </div>
             <div>
-              <label className={labelClass}>If an item fails</label>
+              <label className={labelClass} htmlFor={`${uid}-loop-item-error`}>If an item fails</label>
               <select
+                id={`${uid}-loop-item-error`}
                 className={fieldClass}
                 value={node.data.itemError ?? 'fail'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, itemError: e.target.value === 'fail' ? undefined : (e.target.value as 'skip' | 'collect') } })}
@@ -1348,8 +1367,9 @@ export function StepDrawer({
               </Button>
             </div>
             <div>
-              <label className={labelClass}>Method</label>
+              <label className={labelClass} htmlFor={`${uid}-http-method`}>Method</label>
               <select
+                id={`${uid}-http-method`}
                 className={fieldClass}
                 value={node.data.method}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, method: e.target.value as typeof node.data.method } })}
@@ -1362,8 +1382,9 @@ export function StepDrawer({
               </select>
             </div>
             <div>
-              <label className={labelClass}>URL</label>
+              <label className={labelClass} htmlFor={`${uid}-http-url`}>URL</label>
               <input
+                id={`${uid}-http-url`}
                 type="url"
                 inputMode="url"
                 autoCapitalize="none"
@@ -1380,8 +1401,9 @@ export function StepDrawer({
             </div>
 
             <div>
-              <label className={labelClass}>Authentication</label>
+              <label className={labelClass} htmlFor={`${uid}-http-auth`}>Authentication</label>
               <select
+                id={`${uid}-http-auth`}
                 className={fieldClass}
                 value={httpAuthMode}
                 onChange={(event) => {
@@ -1408,7 +1430,7 @@ export function StepDrawer({
 
             {httpAuthMode === 'predefined' && (
               <div>
-                <label className={labelClass}>Connected server</label>
+                <label className={labelClass} htmlFor={`${uid}-http-connection`}>Connected server</label>
                 {predefinedConnections.length === 0 ? (
                   <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
                     No MCP servers with an injectable token are connected. App integrations (Slack, Salesforce, …)
@@ -1417,6 +1439,7 @@ export function StepDrawer({
                   </p>
                 ) : (
                   <select
+                    id={`${uid}-http-connection`}
                     className={fieldClass}
                     value={node.data.connectionId ?? ''}
                     onChange={(event) => onChange({ ...node, data: { ...node.data, connectionId: event.target.value || undefined, credentialId: undefined } })}
@@ -1432,8 +1455,9 @@ export function StepDrawer({
 
             {httpAuthMode === 'generic' && (
               <div>
-                <label className={labelClass}>Generic Auth Type</label>
+                <label className={labelClass} htmlFor={`${uid}-http-auth-type`}>Generic Auth Type</label>
                 <select
+                  id={`${uid}-http-auth-type`}
                   className={fieldClass}
                   value={httpCredentials.find((credential) => credential.id === node.data.credentialId)?.authType ?? ''}
                   onChange={(event) => {
@@ -1452,9 +1476,10 @@ export function StepDrawer({
 
             {httpAuthMode === 'generic' && (node.data.credentialId || httpCredentials.length > 0) && (
               <div>
-                <label className={labelClass}>Credential</label>
+                <label className={labelClass} htmlFor={`${uid}-http-credential`}>Credential</label>
                 <div className="flex gap-2">
                   <select
+                    id={`${uid}-http-credential`}
                     className={`${fieldClass} min-w-0 flex-1`}
                     value={node.data.credentialId ?? ''}
                     onChange={(event) => onChange({
@@ -1615,8 +1640,9 @@ export function StepDrawer({
               {(node.data.sendBody ?? Boolean(node.data.body?.trim())) && node.data.method !== 'GET' && node.data.method !== 'HEAD' && (
                 <>
                   <div>
-                    <label className={labelClass}>Body content type</label>
+                    <label className={labelClass} htmlFor={`${uid}-http-body-mode`}>Body content type</label>
                     <select
+                      id={`${uid}-http-body-mode`}
                       className={fieldClass}
                       value={node.data.bodyMode === 'text' ? 'raw' : (node.data.bodyMode ?? 'json')}
                       onChange={(event) => onChange({
@@ -1652,8 +1678,9 @@ export function StepDrawer({
                     <div>
                       {(node.data.bodyMode === 'raw' || node.data.bodyMode === 'text') && (
                         <div className="mb-3">
-                          <label className={labelClass}>Content type</label>
+                          <label className={labelClass} htmlFor={`${uid}-http-content-type`}>Content type</label>
                           <input
+                            id={`${uid}-http-content-type`}
                             className={fieldClass}
                             value={node.data.contentType ?? ''}
                             placeholder="text/plain"
@@ -1894,8 +1921,8 @@ export function StepDrawer({
 
         {node.type === 'stop' && (
           <div>
-            <label className={labelClass}>Reason (optional)</label>
-            <input className={fieldClass} value={node.data.reason ?? ''} placeholder="Why the flow stops here" onChange={(e) => onChange({ ...node, data: { ...node.data, reason: e.target.value } })} />
+            <label className={labelClass} htmlFor={`${uid}-stop-reason`}>Reason (optional)</label>
+            <input id={`${uid}-stop-reason`} className={fieldClass} value={node.data.reason ?? ''} placeholder="Why the flow stops here" onChange={(e) => onChange({ ...node, data: { ...node.data, reason: e.target.value } })} />
             <p className="mt-1.5 text-xs text-muted-foreground">Ends the flow early; later steps are skipped.</p>
           </div>
         )}
@@ -1932,7 +1959,7 @@ export function StepDrawer({
         {node.type === 'humanReview' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass}>Message</label>
+              <span className={labelClass}>Message</span>
               <TokenTextEditor
                 ref={registerEditor('hr.message')}
                 multiline
@@ -1949,11 +1976,12 @@ export function StepDrawer({
               </div>
             </div>
             <div>
-              <label className={labelClass}>Assign to (optional)</label>
+              <label className={labelClass} htmlFor={`${uid}-hr-assignee`}>Assign to (optional)</label>
               {/* Empty value = engine default (the run owner is asked). A stored
                   assignee missing from the roster (departed member) stays selected
                   as "Former member" so opening the editor never rewrites data. */}
               <select
+                id={`${uid}-hr-assignee`}
                 className={fieldClass}
                 value={node.data.assigneeUserId ?? ''}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, assigneeUserId: e.target.value || undefined } })}
@@ -1990,15 +2018,16 @@ export function StepDrawer({
         {node.type === 'code' && (
           <>
             <div>
-              <label className={labelClass}>Mode</label>
-              <select className={fieldClass} value={node.data.mode} onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value === 'each' ? 'each' : 'all' } })}>
+              <label className={labelClass} htmlFor={`${uid}-code-mode`}>Mode</label>
+              <select id={`${uid}-code-mode`} className={fieldClass} value={node.data.mode} onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value === 'each' ? 'each' : 'all' } })}>
                 <option value="all">Run once for all input</option>
                 <option value="each">Run once for each item</option>
               </select>
             </div>
             <div>
-              <label className={labelClass}>Language</label>
+              <label className={labelClass} htmlFor={`${uid}-code-language`}>Language</label>
               <select
+                id={`${uid}-code-language`}
                 className={fieldClass}
                 value={node.data.language}
                 onChange={(e) => {
@@ -2012,7 +2041,7 @@ export function StepDrawer({
               </select>
             </div>
             <div>
-              <label className={labelClass}>Input</label>
+              <span className={labelClass}>Input</span>
               <TokenTextEditor
                 ref={registerEditor('code.input')}
                 multiline
@@ -2055,8 +2084,9 @@ export function StepDrawer({
         {node.type === 'note' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass}>Note</label>
+              <label className={labelClass} htmlFor={`${uid}-note-text`}>Note</label>
               <textarea
+                id={`${uid}-note-text`}
                 rows={6}
                 className={areaClass}
                 onKeyDown={indentOnTab}
@@ -2068,8 +2098,8 @@ export function StepDrawer({
               />
             </div>
             <div>
-              <label className={labelClass}>Color</label>
-              <select className={fieldClass} value={node.data.color ?? 'yellow'} onChange={(e) => onChange({ ...node, data: { ...node.data, color: e.target.value as 'yellow' | 'blue' | 'green' | 'pink' } })}>
+              <label className={labelClass} htmlFor={`${uid}-note-color`}>Color</label>
+              <select id={`${uid}-note-color`} className={fieldClass} value={node.data.color ?? 'yellow'} onChange={(e) => onChange({ ...node, data: { ...node.data, color: e.target.value as 'yellow' | 'blue' | 'green' | 'pink' } })}>
                 <option value="yellow">Yellow</option>
                 <option value="blue">Blue</option>
                 <option value="green">Green</option>
@@ -2083,8 +2113,9 @@ export function StepDrawer({
         {node.type === 'wait' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass}>Wait for</label>
+              <label className={labelClass} htmlFor={`${uid}-wait-mode`}>Wait for</label>
               <select
+                id={`${uid}-wait-mode`}
                 className={fieldClass}
                 value={node.data.mode ?? 'duration'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value as 'duration' | 'until' | 'webhook' } })}
@@ -2097,7 +2128,7 @@ export function StepDrawer({
             {(node.data.mode ?? 'duration') === 'duration' && (
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className={labelClass}>Amount</label>
+                  <span className={labelClass}>Amount</span>
                   <TokenTextEditor
                     ref={registerEditor('wait.amount')}
                     value={node.data.amount ?? ''}
@@ -2109,8 +2140,9 @@ export function StepDrawer({
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Unit</label>
+                  <label className={labelClass} htmlFor={`${uid}-wait-unit`}>Unit</label>
                   <select
+                    id={`${uid}-wait-unit`}
                     className={fieldClass}
                     value={node.data.unit ?? 'minutes'}
                     onChange={(e) => onChange({ ...node, data: { ...node.data, unit: e.target.value as 'seconds' | 'minutes' | 'hours' | 'days' } })}
@@ -2125,7 +2157,7 @@ export function StepDrawer({
             )}
             {node.data.mode === 'until' && (
               <div>
-                <label className={labelClass}>Wait until</label>
+                <span className={labelClass}>Wait until</span>
                 <TokenTextEditor
                   ref={registerEditor('wait.until')}
                   value={node.data.until ?? ''}
@@ -2146,8 +2178,9 @@ export function StepDrawer({
                   The run pauses until an external system POSTs to its resume URL. Use the <span className="font-medium">Run resume link</span> value (from the data menu) in a step before this one to hand the URL to that system. The callback body becomes this step&apos;s output.
                 </p>
                 <div>
-                  <label className={labelClass}>Give up after (minutes, optional)</label>
+                  <label className={labelClass} htmlFor={`${uid}-wait-timeout`}>Give up after (minutes, optional)</label>
                   <input
+                    id={`${uid}-wait-timeout`}
                     type="number"
                     min={1}
                     className={fieldClass}
@@ -2169,8 +2202,9 @@ export function StepDrawer({
         {node.type === 'join' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass}>How to merge branches</label>
+              <label className={labelClass} htmlFor={`${uid}-join-mode`}>How to merge branches</label>
               <select
+                id={`${uid}-join-mode`}
                 className={fieldClass}
                 value={node.data.mode ?? 'passthrough'}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, mode: e.target.value === 'passthrough' ? undefined : (e.target.value as 'append' | 'combineByKey' | 'combineByPosition' | 'allCombinations') } })}
@@ -2194,8 +2228,9 @@ export function StepDrawer({
             )}
             {node.data.mode === 'combineByKey' && (
               <div>
-                <label className={labelClass}>Matching field</label>
+                <label className={labelClass} htmlFor={`${uid}-join-key`}>Matching field</label>
                 <input
+                  id={`${uid}-join-key`}
                   className={fieldClass}
                   value={node.data.key ?? ''}
                   placeholder="e.g. email"
@@ -2260,7 +2295,7 @@ export function StepDrawer({
               {mockData !== undefined ? (
                 <div className="space-y-2">
                   <textarea
-                    className="min-h-40 w-full resize-y rounded-lg border border-amber-500/40 bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100 outline-none"
+                    className="min-h-40 w-full resize-y rounded-lg border border-amber-500/40 bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/50"
                     value={mockDraft}
                     spellCheck={false}
                     onKeyDown={indentOnTab}
@@ -2367,6 +2402,7 @@ function VariableEditor({
   variableNames: string[]
   onChange: (node: FlowNode) => void
 } & TokenEditorPlumbing) {
+  const uid = useId()
   const isInitialize = node.data.op === 'initialize'
   const currentName = node.data.name.trim()
   // Mutation ops pick from variables initialized earlier; keep a name that is
@@ -2377,8 +2413,8 @@ function VariableEditor({
   return (
     <div className="space-y-3">
       <div>
-        <label className={labelClass}>Operation</label>
-        <select className={fieldClass} value={node.data.op} onChange={(e) => setOp(e.target.value as VariableOp)}>
+        <label className={labelClass} htmlFor={`${uid}-var-op`}>Operation</label>
+        <select id={`${uid}-var-op`} className={fieldClass} value={node.data.op} onChange={(e) => setOp(e.target.value as VariableOp)}>
           {VARIABLE_OPS.map((op) => (
             <option key={op} value={op}>
               {VARIABLE_OP_LABELS[op]}
@@ -2387,9 +2423,10 @@ function VariableEditor({
         </select>
       </div>
       <div>
-        <label className={labelClass}>Name</label>
+        <label className={labelClass} htmlFor={`${uid}-var-name`}>Name</label>
         {isInitialize || nameOptions.length === 0 ? (
           <input
+            id={`${uid}-var-name`}
             className={fieldClass}
             value={node.data.name}
             placeholder="Enter variable name"
@@ -2400,6 +2437,7 @@ function VariableEditor({
           />
         ) : (
           <select
+            id={`${uid}-var-name`}
             className={fieldClass}
             value={currentName}
             onChange={(e) => onChange({ ...node, data: { ...node.data, name: e.target.value } })}
@@ -2419,8 +2457,9 @@ function VariableEditor({
       </div>
       {isInitialize && (
         <div>
-          <label className={labelClass}>Type</label>
+          <label className={labelClass} htmlFor={`${uid}-var-type`}>Type</label>
           <select
+            id={`${uid}-var-type`}
             className={fieldClass}
             value={node.data.varType ?? 'string'}
             onChange={(e) => onChange({ ...node, data: { ...node.data, varType: e.target.value as VariableType } })}
@@ -2467,6 +2506,7 @@ function DataEditor({
   node: Extract<FlowNode, { type: 'data' }>
   onChange: (node: FlowNode) => void
 } & TokenEditorPlumbing) {
+  const uid = useId()
   const op = node.data.op
   const clauses = node.data.clauses?.length ? node.data.clauses : [{ left: '', op: 'contains' as ConditionOp, right: '' }]
   const fields = node.data.fields?.length ? node.data.fields : [{ name: '', value: '' }]
@@ -2482,8 +2522,8 @@ function DataEditor({
   return (
     <div className="space-y-3">
       <div>
-        <label className={labelClass}>Operation</label>
-        <select className={fieldClass} value={op} onChange={(e) => setOp(e.target.value as DataOp)}>
+        <label className={labelClass} htmlFor={`${uid}-data-op`}>Operation</label>
+        <select id={`${uid}-data-op`} className={fieldClass} value={op} onChange={(e) => setOp(e.target.value as DataOp)}>
           {DATA_OPS.map((entry) => (
             <option key={entry} value={entry}>
               {DATA_OP_LABELS[entry]}
@@ -2492,7 +2532,7 @@ function DataEditor({
         </select>
       </div>
       <div>
-        <label className={labelClass}>Input</label>
+        <span className={labelClass}>Input</span>
         <TokenTextEditor
           ref={registerEditor('data.input')}
           value={node.data.input ?? ''}
@@ -2520,8 +2560,9 @@ function DataEditor({
       {op === 'replace' && (
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className={labelClass}>Find</label>
+            <label className={labelClass} htmlFor={`${uid}-data-find`}>Find</label>
             <input
+              id={`${uid}-data-find`}
               className={fieldClass}
               value={node.data.find ?? ''}
               placeholder="Text to find"
@@ -2532,8 +2573,9 @@ function DataEditor({
             />
           </div>
           <div>
-            <label className={labelClass}>Replace with</label>
+            <label className={labelClass} htmlFor={`${uid}-data-replace`}>Replace with</label>
             <input
+              id={`${uid}-data-replace`}
               className={fieldClass}
               value={node.data.replaceWith ?? ''}
               placeholder="Leave empty to remove it"
@@ -2547,8 +2589,9 @@ function DataEditor({
       )}
       {op === 'getItem' && (
         <div>
-          <label className={labelClass}>Position</label>
+          <label className={labelClass} htmlFor={`${uid}-data-index`}>Position</label>
           <input
+            id={`${uid}-data-index`}
             className={fieldClass}
             value={node.data.index ?? ''}
             placeholder="0 is the first item; -1 is the last"
@@ -2562,8 +2605,9 @@ function DataEditor({
       {op === 'trim' && (
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className={labelClass}>Items to remove</label>
+            <label className={labelClass} htmlFor={`${uid}-trim-count`}>Items to remove</label>
             <input
+              id={`${uid}-trim-count`}
               className={fieldClass}
               value={node.data.count ?? ''}
               placeholder="Defaults to 1"
@@ -2574,8 +2618,9 @@ function DataEditor({
             />
           </div>
           <div>
-            <label className={labelClass}>From</label>
+            <label className={labelClass} htmlFor={`${uid}-trim-from`}>From</label>
             <select
+              id={`${uid}-trim-from`}
               className={fieldClass}
               value={node.data.fromEnd ? 'end' : 'start'}
               onChange={(e) => onChange({ ...node, data: { ...node.data, fromEnd: e.target.value === 'end' ? true : undefined } })}
@@ -2589,8 +2634,9 @@ function DataEditor({
       )}
       {op === 'parseJson' && (
         <div>
-          <label className={labelClass}>Schema (optional)</label>
+          <label className={labelClass} htmlFor={`${uid}-data-schema`}>Schema (optional)</label>
           <textarea
+            id={`${uid}-data-schema`}
             rows={4}
             className={`${areaClass} font-mono text-xs`}
             onKeyDown={indentOnTab}
@@ -2607,8 +2653,9 @@ function DataEditor({
       {op === 'filterArray' && (
         <div className="space-y-3">
           <div>
-            <label className={labelClass}>Keep items where</label>
+            <label className={labelClass} htmlFor={`${uid}-filter-match`}>Keep items where</label>
             <select
+              id={`${uid}-filter-match`}
               className={fieldClass}
               value={node.data.match === 'any' ? 'any' : 'all'}
               onChange={(e) => onChange({ ...node, data: { ...node.data, match: e.target.value === 'any' ? 'any' : undefined } })}
@@ -2618,7 +2665,7 @@ function DataEditor({
               <option value="any">Any condition passes</option>
             </select>
           </div>
-          <label className={labelClass}>Conditions</label>
+          <span className={labelClass}>Conditions</span>
           {clauses.map((clause, i) => (
             <div key={i} className="space-y-1.5 rounded-lg border border-border/70 p-2">
               <TokenTextEditor
@@ -2682,8 +2729,9 @@ function DataEditor({
       )}
       {op === 'flatten' && (
         <div>
-          <label className={labelClass}>Field holding the list (optional)</label>
+          <label className={labelClass} htmlFor={`${uid}-flatten-by`}>Field holding the list (optional)</label>
           <input
+            id={`${uid}-flatten-by`}
             className={fieldClass}
             value={node.data.by ?? ''}
             placeholder="Leave empty to unnest lists inside lists"
@@ -2696,8 +2744,9 @@ function DataEditor({
       )}
       {op === 'formatDate' && (
         <div>
-          <label className={labelClass}>Pattern</label>
+          <label className={labelClass} htmlFor={`${uid}-date-format`}>Pattern</label>
           <input
+            id={`${uid}-date-format`}
             className={fieldClass}
             value={node.data.format ?? ''}
             placeholder="YYYY-MM-DD — tokens: YYYY, MM, DD, HH, mm, ss"
@@ -2711,8 +2760,9 @@ function DataEditor({
       {op === 'dateShift' && (
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className={labelClass}>Amount</label>
+            <label className={labelClass} htmlFor={`${uid}-shift-amount`}>Amount</label>
             <input
+              id={`${uid}-shift-amount`}
               className={fieldClass}
               value={node.data.amount ?? ''}
               placeholder="3 — negative subtracts"
@@ -2723,8 +2773,9 @@ function DataEditor({
             />
           </div>
           <div>
-            <label className={labelClass}>Unit</label>
+            <label className={labelClass} htmlFor={`${uid}-shift-unit`}>Unit</label>
             <select
+              id={`${uid}-shift-unit`}
               className={fieldClass}
               value={node.data.unit ?? 'days'}
               onChange={(e) => onChange({ ...node, data: { ...node.data, unit: e.target.value } })}
@@ -2740,7 +2791,7 @@ function DataEditor({
       {op === 'dateDiff' && (
         <>
           <div>
-            <label className={labelClass}>End date</label>
+            <span className={labelClass}>End date</span>
             <TokenTextEditor
               ref={registerEditor('data.to')}
               value={node.data.to ?? ''}
@@ -2752,8 +2803,9 @@ function DataEditor({
             />
           </div>
           <div>
-            <label className={labelClass}>Count in</label>
+            <label className={labelClass} htmlFor={`${uid}-diff-unit`}>Count in</label>
             <select
+              id={`${uid}-diff-unit`}
               className={fieldClass}
               value={node.data.unit ?? 'days'}
               onChange={(e) => onChange({ ...node, data: { ...node.data, unit: e.target.value } })}
@@ -2768,8 +2820,9 @@ function DataEditor({
       )}
       {op === 'datePart' && (
         <div>
-          <label className={labelClass}>Part to pick</label>
+          <label className={labelClass} htmlFor={`${uid}-date-part`}>Part to pick</label>
           <select
+            id={`${uid}-date-part`}
             className={fieldClass}
             value={node.data.part ?? 'date'}
             onChange={(e) => onChange({ ...node, data: { ...node.data, part: e.target.value } })}
@@ -2804,8 +2857,9 @@ function DataEditor({
       {op === 'limit' && (
         <>
           <div>
-            <label className={labelClass}>How many to keep</label>
+            <label className={labelClass} htmlFor={`${uid}-limit-count`}>How many to keep</label>
             <input
+              id={`${uid}-limit-count`}
               className={fieldClass}
               value={node.data.count ?? ''}
               placeholder="10"
@@ -2826,8 +2880,9 @@ function DataEditor({
       )}
       {op === 'aggregate' && (
         <div>
-          <label className={labelClass}>Field to collect</label>
+          <label className={labelClass} htmlFor={`${uid}-aggregate-by`}>Field to collect</label>
           <input
+            id={`${uid}-aggregate-by`}
             className={fieldClass}
             value={node.data.by ?? ''}
             placeholder="Leave empty to keep the whole list as one value"
@@ -2839,7 +2894,7 @@ function DataEditor({
       )}
       {op === 'summarize' && (
         <div className="space-y-2">
-          <label className={labelClass}>Calculate</label>
+          <span className={labelClass}>Calculate</span>
           {(node.data.aggregations ?? [{ field: '', op: 'sum' as const }]).map((entry, i) => {
             const rows = node.data.aggregations ?? [{ field: '', op: 'sum' as const }]
             const setRows = (next: typeof rows) => onChange({ ...node, data: { ...node.data, aggregations: next } })
@@ -3039,7 +3094,7 @@ function OutputFieldsEditor({
 }) {
   return (
     <div>
-      <label className={labelClass}>Output fields (optional)</label>
+      <span className={labelClass}>Output fields (optional)</span>
       <p className="-mt-1 mb-2 text-[11px] text-muted-foreground">Declare what this step returns so later steps can map its fields. Fields also appear once the step has run.</p>
       <div className="space-y-1.5">
         {fields.map((field, i) => (
@@ -3093,6 +3148,7 @@ function SubflowDrawerSection({
   dataFields: DataField[]
   insertToken: (token: string) => void
 }) {
+  const uid = useId()
   const { flows, loading } = useWorkspaceFlows()
   const selectable = flows.filter((flow) => flow.id !== flowId)
   const selected = flows.find((flow) => flow.id === node.data.flowId)
@@ -3106,8 +3162,9 @@ function SubflowDrawerSection({
   return (
     <>
       <div>
-        <label className={labelClass}>Flow to run</label>
+        <label className={labelClass} htmlFor={`${uid}-subflow-flow`}>Flow to run</label>
         <select
+          id={`${uid}-subflow-flow`}
           className={fieldClass}
           value={node.data.flowId}
           onChange={(e) => onChange({ ...node, data: { ...node.data, flowId: e.target.value, inputs: undefined } })}
@@ -3127,7 +3184,7 @@ function SubflowDrawerSection({
       </div>
       {childFields.length > 0 ? (
         <div className="space-y-2">
-          <label className={labelClass}>Inputs it expects</label>
+          <span className={labelClass}>Inputs it expects</span>
           {childFields.map((field) => (
             <div key={field.name}>
               <p className="mb-1 text-[11px] font-medium text-muted-foreground">{field.name}{field.required ? ' (required)' : ''}</p>
@@ -3146,7 +3203,7 @@ function SubflowDrawerSection({
         </div>
       ) : (
         <div>
-          <label className={labelClass}>Input to send it</label>
+          <span className={labelClass}>Input to send it</span>
           <TokenTextEditor
             ref={registerEditor('subflow.input')}
             multiline
@@ -3173,7 +3230,7 @@ function SubflowDrawerSection({
 function InputFieldsEditor({ fields, onChange }: { fields: TriggerInputField[]; onChange: (fields: TriggerInputField[]) => void }) {
   return (
     <div className="rounded-lg border border-border/70 bg-muted/30 p-3">
-      <label className={labelClass}>Expected input fields</label>
+      <span className={labelClass}>Expected input fields</span>
       <p className="-mt-1 mb-2 text-[11px] text-muted-foreground">
         Name the values this flow expects. Downstream steps can pick them as Run input fields instead of typing template paths.
       </p>

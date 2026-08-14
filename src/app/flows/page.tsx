@@ -472,17 +472,18 @@ export default function FlowsPage() {
             <DialogDescription>The name, description, and icon shown on this flow’s card.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <label className="block space-y-1.5 text-sm">
+            <label className="block space-y-1.5 text-sm" htmlFor="edit-flow-name">
               <span className="font-medium">Name</span>
               <Input
+                id="edit-flow-name"
                 value={editDialog?.name ?? ''}
                 onChange={(event) => setEditDialog((current) => (current ? { ...current, name: event.target.value } : current))}
-                autoFocus
               />
             </label>
-            <label className="block space-y-1.5 text-sm">
+            <label className="block space-y-1.5 text-sm" htmlFor="edit-flow-description">
               <span className="font-medium">Description</span>
               <Textarea
+                id="edit-flow-description"
                 rows={3}
                 value={editDialog?.description ?? ''}
                 onChange={(event) => setEditDialog((current) => (current ? { ...current, description: event.target.value } : current))}
@@ -518,7 +519,6 @@ export default function FlowsPage() {
             onKeyDown={(event) => { if (event.key === 'Enter') void commitFolder() }}
             placeholder="Folder name"
             maxLength={60}
-            autoFocus
           />
           {folders.length > 0 && (
             <div className="flex flex-wrap gap-1.5">

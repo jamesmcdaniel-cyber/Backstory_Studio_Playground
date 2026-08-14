@@ -1,6 +1,9 @@
+import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { requireAuthContext } from '@/lib/server/auth'
 import { isCustomerEdition } from '@/lib/edition'
+
+export const metadata: Metadata = { title: 'Admin' }
 
 /**
  * The admin surface is invisible to customer workspaces: no nav entry, and a

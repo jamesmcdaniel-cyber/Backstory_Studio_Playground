@@ -58,6 +58,7 @@ function InsertMenu({
   return (
     <div
       ref={menuRef}
+      role="presentation"
       className={cn('relative flex flex-col items-center', compact && 'items-start')}
       onClick={(event) => event.stopPropagation()}
       onDragOver={(event) => {
@@ -411,7 +412,7 @@ export function FlowCanvas({
   const stranded = strandedIds.map((strandedId) => byId.get(strandedId)).filter((node): node is FlowNode => Boolean(node))
 
   return (
-    <div className="mx-auto flex w-full max-w-[760px] flex-col items-center py-8" onClick={() => onBackgroundClick?.()}>
+    <div role="presentation" className="mx-auto flex w-full max-w-[760px] flex-col items-center py-8" onClick={() => onBackgroundClick?.()}>
       <div className="mb-6 flex items-center gap-2 self-start rounded-full border border-blue-100 bg-white/85 px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm">
         <Sparkles className="h-3.5 w-3.5" />
         Designer
@@ -425,6 +426,7 @@ export function FlowCanvas({
         {trigger && card(trigger)}
         {trigger && !first && (
           <div
+            role="presentation"
             className="mt-4 w-full max-w-[620px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
             onClick={(event) => event.stopPropagation()}
           >

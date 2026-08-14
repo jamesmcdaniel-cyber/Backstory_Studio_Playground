@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { ChevronRight, Download, Pencil, Play, RotateCcw, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -404,6 +404,7 @@ function RunInputSection({
 }) {
   const usableFields = fields.filter((field) => field.name.trim())
   const values = fieldValuesFromFlowInput(value, usableFields)
+  const runInputId = useId()
   const setField = (name: string, nextValue: string) => {
     onChange(flowInputFromFieldValues(usableFields, { ...values, [name]: nextValue }))
   }
@@ -439,8 +440,9 @@ function RunInputSection({
         </>
       ) : (
         <div>
-          <label className={labelClass}>Run input</label>
+          <label className={labelClass} htmlFor={runInputId}>Run input</label>
           <textarea
+            id={runInputId}
             rows={4}
             onKeyDown={indentOnTab}
             className={`${fieldClass} min-h-[80px] resize-y font-mono text-xs`}

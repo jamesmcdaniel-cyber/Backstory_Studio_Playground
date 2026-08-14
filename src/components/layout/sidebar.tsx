@@ -172,6 +172,17 @@ export function Sidebar() {
   useDismissOnOutsidePointer(orgMenuOpen, () => setOrgMenuOpen(false), [orgMenuRef, orgButtonRef])
 
   useEffect(() => {
+    if (!orgMenuOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOrgMenuOpen(false)
+      orgButtonRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [orgMenuOpen])
+
+  useEffect(() => {
     try {
       setDesktopCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true')
     } catch {
@@ -339,7 +350,7 @@ export function Sidebar() {
   return (
     <TooltipProvider delayDuration={250}>
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 bg-graphite-900/40 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} />
+        <div role="presentation" className="fixed inset-0 z-40 bg-graphite-900/40 backdrop-blur-sm lg:hidden" onClick={() => setMobileOpen(false)} />
       )}
 
       <div className="fixed left-4 top-4 z-50 lg:hidden">
@@ -350,7 +361,7 @@ export function Sidebar() {
         </Button>
       </div>
 
-      <div
+      <aside
         className={cn(
           'fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-graphite-200/80 bg-white/95 shadow-2 backdrop-blur-xl transition-all duration-200 lg:relative lg:translate-x-0 lg:shadow-none',
           desktopCollapsed && 'lg:w-16',
@@ -367,6 +378,8 @@ export function Sidebar() {
                 desktopCollapsed && 'lg:w-full lg:flex-none lg:justify-center lg:px-0',
               )}
               onClick={() => setOrgMenuOpen((open) => !open)}
+              aria-haspopup="true"
+              aria-expanded={orgMenuOpen}
               aria-label={`Workspace: ${activeOrg?.name || 'Workspace'}`}
               title={desktopCollapsed ? activeOrg?.name || 'Workspace' : undefined}
             >
@@ -483,7 +496,7 @@ export function Sidebar() {
 
         {/* Nav + agent tree */}
         <div className="flex-1 overflow-y-auto px-2 py-2">
-          <nav className="mb-2 space-y-0.5">
+          <nav aria-label="Main navigation" className="mb-2 space-y-0.5">
             {[
               ...navigation,
               ...(can('catalogue.review') ? [reviewsNavItem] : []),
@@ -616,7 +629,7 @@ export function Sidebar() {
             )}
           </Link>
         </div>
-      </div>
+      </aside>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </TooltipProvider>

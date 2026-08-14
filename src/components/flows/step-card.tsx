@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'motion/react'
@@ -495,9 +495,9 @@ export function StepCard({
           <div className="flex flex-wrap items-center gap-2">
             {typeof index === 'number' && <span className="text-xs font-semibold text-slate-400">{index}</span>}
             {renaming ? (
-              <span className="flex items-center gap-1.5" onClick={stopEvent}>
+              <span role="presentation" className="flex items-center gap-1.5" onClick={stopEvent}>
                 <input
-                  autoFocus
+                  ref={(el) => el?.focus()}
                   value={label}
                   onChange={(event) => setLabel(event.target.value)}
                   onKeyDown={(event) => {
@@ -643,7 +643,7 @@ export function StepCard({
             transition={{ duration: 0.18, ease: 'easeOut' }}
             className="overflow-hidden"
           >
-            <div onClick={stopEvent} onFocus={stopEvent} className="border-t border-slate-200 px-5 py-4">
+            <div role="presentation" onClick={stopEvent} onFocus={stopEvent} className="border-t border-slate-200 px-5 py-4">
               {renderNodeBody({ node, agents, members, toolCatalog, dataFields, update, onRefreshAgents, tokenWiring, showErrors, variableNames, flowId, published, onFlowPersisted })}
             </div>
           </motion.div>
@@ -654,7 +654,7 @@ export function StepCard({
         )}
       </AnimatePresence>
       {codeOpen && (
-        <div onClick={stopEvent} className="border-t border-slate-200 px-5 py-4">
+        <div role="presentation" onClick={stopEvent} className="border-t border-slate-200 px-5 py-4">
           <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Code view</p>
             <div className="flex items-center gap-3">
@@ -672,6 +672,7 @@ export function StepCard({
       {selected && tokenPopover && dataFields && dataFields.length > 0 &&
         createPortal(
           <div
+            role="presentation"
             ref={tokenPopoverRef}
             style={{ position: 'fixed', top: tokenPopover.top, left: tokenPopover.left, width: tokenPopover.width, zIndex: 60 }}
             className="max-h-72 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_16px_48px_rgba(15,23,42,0.18)]"
@@ -684,6 +685,7 @@ export function StepCard({
       {issuesPopover && issueItems.length > 0 &&
         createPortal(
           <div
+            role="presentation"
             ref={issuesPopoverRef}
             style={{ position: 'fixed', top: issuesPopover.top, left: issuesPopover.left, zIndex: 60 }}
             className="w-max max-w-xs rounded-xl border border-slate-200 bg-white p-3 shadow-[0_16px_48px_rgba(15,23,42,0.18)]"
@@ -1002,10 +1004,11 @@ function KnowledgeBody({
   tokenWiring: TokenEditorWiring
 }) {
   const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const topKId = useId()
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <label className={labelClass}>What to look for</label>
+        <span className={labelClass}>What to look for</span>
         <TokenTextEditor
           ref={registerEditor('knowledge.query')}
           multiline
@@ -1020,8 +1023,9 @@ function KnowledgeBody({
         />
       </div>
       <div className="grid gap-2">
-        <label className={labelClass}>How many passages</label>
+        <label className={labelClass} htmlFor={topKId}>How many passages</label>
         <input
+          id={topKId}
           type="number"
           min={1}
           max={20}
@@ -1052,6 +1056,7 @@ function SubflowBody({
   showErrors?: boolean
 }) {
   const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const flowSelectId = useId()
   const { flows, loading } = useWorkspaceFlows()
   const selectable = flows.filter((flow) => flow.id !== flowId)
   const selected = flows.find((flow) => flow.id === node.data.flowId)
@@ -1065,8 +1070,9 @@ function SubflowBody({
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <label className={labelClass}>Flow to run <span className="text-red-500">*</span></label>
+        <label className={labelClass} htmlFor={flowSelectId}>Flow to run <span className="text-red-500">*</span></label>
         <select
+          id={flowSelectId}
           value={node.data.flowId}
           onChange={(event) => update({ ...node, data: { ...node.data, flowId: event.target.value, inputs: undefined } })}
           className={cn(controlClass, showErrors && !node.data.flowId && 'border-red-400 focus:border-red-500')}
@@ -1086,7 +1092,7 @@ function SubflowBody({
       </div>
       {childFields.length > 0 ? (
         <div className="grid gap-2">
-          <label className={labelClass}>Inputs it expects</label>
+          <span className={labelClass}>Inputs it expects</span>
           {childFields.map((field) => (
             <div key={field.name} className="grid gap-1">
               <p className="text-xs font-medium text-slate-600">{field.name}{field.required ? ' (required)' : ''}</p>
@@ -1105,7 +1111,7 @@ function SubflowBody({
         </div>
       ) : (
         <div className="grid gap-2">
-          <label className={labelClass}>Input to send it</label>
+          <span className={labelClass}>Input to send it</span>
           <TokenTextEditor
             ref={registerEditor('subflow.input')}
             multiline
@@ -1138,6 +1144,7 @@ function AiBody({
   showErrors?: boolean
 }) {
   const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const id = useId()
   const aiOp = node.data.aiOp
   const outputFields = node.data.outputFields ?? []
   const categories = node.data.categories ?? []
@@ -1148,8 +1155,9 @@ function AiBody({
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <label className={labelClass}>Operation</label>
+        <label className={labelClass} htmlFor={`${id}-op`}>Operation</label>
         <select
+          id={`${id}-op`}
           value={aiOp}
           onChange={(event) => update({ ...node, data: { ...node.data, aiOp: event.target.value as AiOp } })}
           className={controlClass}
@@ -1177,7 +1185,7 @@ function AiBody({
         />
       </div>
       <div className="grid gap-2">
-        <label className={labelClass}>Input</label>
+        <span className={labelClass}>Input</span>
         <TokenTextEditor
           ref={registerEditor('ai.input')}
           multiline
@@ -1192,8 +1200,9 @@ function AiBody({
         />
       </div>
       <div className="grid gap-2">
-        <label className={labelClass}>Model</label>
+        <label className={labelClass} htmlFor={`${id}-model`}>Model</label>
         <select
+          id={`${id}-model`}
           value={node.data.model ?? 'fast'}
           onChange={(event) => update({ ...node, data: { ...node.data, model: event.target.value === 'smart' ? 'smart' : undefined } })}
           className={controlClass}
@@ -1204,7 +1213,7 @@ function AiBody({
       </div>
       {aiOp === 'extract' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Fields to extract</label>
+          <span className={labelClass}>Fields to extract</span>
           <div className="space-y-2">
             {outputFields.map((field, index) => (
               <div key={index} className="grid gap-2 sm:grid-cols-[1fr_120px_36px]">
@@ -1250,7 +1259,7 @@ function AiBody({
       )}
       {aiOp === 'categorize' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Categories</label>
+          <span className={labelClass}>Categories</span>
           <div className="space-y-2">
             {categories.map((category, index) => (
               <div key={index} className="grid gap-2 sm:grid-cols-[1fr_36px]">
@@ -1286,8 +1295,9 @@ function AiBody({
       {aiOp === 'score' && (
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="grid gap-2">
-            <label className={labelClass}>Lowest score</label>
+            <label className={labelClass} htmlFor={`${id}-score-min`}>Lowest score</label>
             <input
+              id={`${id}-score-min`}
               type="number"
               value={node.data.scoreMin ?? 1}
               onChange={(event) => update({ ...node, data: { ...node.data, scoreMin: Number(event.target.value) } })}
@@ -1298,8 +1308,9 @@ function AiBody({
             />
           </div>
           <div className="grid gap-2">
-            <label className={labelClass}>Highest score</label>
+            <label className={labelClass} htmlFor={`${id}-score-max`}>Highest score</label>
             <input
+              id={`${id}-score-max`}
               type="number"
               value={node.data.scoreMax ?? 10}
               onChange={(event) => update({ ...node, data: { ...node.data, scoreMax: Number(event.target.value) } })}
@@ -1334,6 +1345,7 @@ function AgentBody({
   showErrors?: boolean
 }) {
   const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const id = useId()
   const isDefaultInput = defaultAgentInput(node.data.input)
   const responseFormat = node.data.responseFormat ?? 'text'
   const outputFields = node.data.outputFields ?? []
@@ -1342,9 +1354,10 @@ function AgentBody({
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <label className={labelClass}>Agent <span className="text-red-500">*</span></label>
+        <label className={labelClass} htmlFor={`${id}-agent`}>Agent <span className="text-red-500">*</span></label>
         <div className="flex items-center gap-2">
           <select
+            id={`${id}-agent`}
             value={node.data.agentId}
             onChange={(event) => update({ ...node, data: { ...node.data, agentId: event.target.value } })}
             className={cn(controlClass, 'min-w-0 flex-1', showErrors && !node.data.agentId && 'border-red-400 focus:border-red-500')}
@@ -1387,7 +1400,7 @@ function AgentBody({
         />
       )}
       <div className="grid gap-2">
-        <label className={labelClass}>Message to agent</label>
+        <span className={labelClass}>Message to agent</span>
         <TokenTextEditor
           ref={registerEditor('agent.input')}
           multiline
@@ -1427,13 +1440,14 @@ function AgentBody({
       </div>
       <div className="grid gap-2">
         <div className="flex items-center justify-between">
-          <label className={labelClass}>Agent response</label>
+          <label className={labelClass} htmlFor={`${id}-response`}>Agent response</label>
           <select
+            id={`${id}-response`}
             value={responseFormat}
             onChange={(event) =>
               update({ ...node, data: { ...node.data, responseFormat: event.target.value === 'structured' ? 'structured' : undefined } })
             }
-            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none"
+            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
             <option value="text">Text only</option>
             <option value="structured">Structured</option>
@@ -1510,6 +1524,7 @@ function AgentConfigSection({
   tokenWiring: TokenEditorWiring
 }) {
   const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const id = useId()
   const memory = node.data.memory
   const attached = node.data.toolConnectionIds ?? []
   const providerGroups = groupToolConnections(toolCatalog)
@@ -1532,8 +1547,9 @@ function AgentConfigSection({
       <summary className="cursor-pointer text-sm font-semibold text-slate-900">Model, memory &amp; tools for this step</summary>
       <div className="mt-3 space-y-3">
       <div className="grid gap-2">
-        <label className={labelClass}>Chat model</label>
+        <label className={labelClass} htmlFor={`${id}-model`}>Chat model</label>
         <select
+          id={`${id}-model`}
           value={node.data.model ?? ''}
           onChange={(event) => update({ ...node, data: { ...node.data, model: event.target.value || undefined } })}
           className={controlClass}
@@ -1548,15 +1564,16 @@ function AgentConfigSection({
       </div>
       <div className="grid gap-2">
         <div className="flex items-center justify-between">
-          <label className={labelClass}>Memory</label>
+          <label className={labelClass} htmlFor={`${id}-memory`}>Memory</label>
           <select
+            id={`${id}-memory`}
             value={memory ? memory.store ?? 'postgres' : ''}
             onChange={(event) => {
               const value = event.target.value
               if (!value) return setMemory(undefined)
               setMemory({ ...(memory ?? {}), store: value as NonNullable<typeof memory>['store'] })
             }}
-            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none"
+            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
           >
             <option value="">Off</option>
             <option value="postgres">Postgres (built-in)</option>
@@ -1584,7 +1601,7 @@ function AgentConfigSection({
         )}
       </div>
       <div className="grid gap-2">
-        <label className={labelClass}>Tools granted for this step</label>
+        <span className={labelClass}>Tools granted for this step</span>
         {providerGroups.length === 0 ? (
           <p className="text-xs text-slate-500">No tool connections available yet — connect apps under Integrations.</p>
         ) : (
@@ -1643,6 +1660,7 @@ function ToolBody({
     node.data.connectionId,
     node.data.toolName,
   )
+  const id = useId()
   const providerGroups = groupToolConnections(toolCatalog)
   const actions = connection ? toolActionChoices(toolCatalog, connection) : []
   const selectedAction = actions.find(
@@ -1652,8 +1670,9 @@ function ToolBody({
     <div className="space-y-4">
       {!connection ? (
         <div className="grid gap-2">
-          <label className={labelClass}>Connector <span className="text-red-500">*</span></label>
+          <label className={labelClass} htmlFor={`${id}-connector`}>Connector <span className="text-red-500">*</span></label>
           <select
+            id={`${id}-connector`}
             value=""
             onChange={(event) => {
               const group = providerGroups.find((entry) => entry.brand.key === event.target.value)
@@ -1697,8 +1716,9 @@ function ToolBody({
             </button>
           </div>
           <div className="grid gap-2">
-            <label className={labelClass}>Action <span className="text-red-500">*</span></label>
+            <label className={labelClass} htmlFor={`${id}-action`}>Action <span className="text-red-500">*</span></label>
             <select
+              id={`${id}-action`}
               value={selectedAction?.key ?? ''}
               onChange={(event) => {
                 const next = actions.find((choice) => choice.key === event.target.value)
@@ -1752,6 +1772,7 @@ function ConditionBody({
   tokenWiring: TokenEditorWiring
 }) {
   const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const matchId = useId()
   const clauses = conditionClauses(node)
   const setClauses = (next: ConditionClause[]) =>
     update({
@@ -1767,8 +1788,9 @@ function ConditionBody({
     <div className="space-y-3">
       <p className="text-sm text-slate-600">{node.type === 'condition' ? 'Route the flow based on a rule.' : 'Continue only when this rule is true.'}</p>
       <div className="grid gap-2 sm:grid-cols-[180px_1fr] sm:items-center">
-        <label className={labelClass}>Match</label>
+        <label className={labelClass} htmlFor={matchId}>Match</label>
         <select
+          id={matchId}
           value={node.data.match ?? 'all'}
           onChange={(event) => {
             const match = event.target.value as 'all' | 'any'
@@ -2037,10 +2059,12 @@ function SwitchBody({
 }
 
 function StopBody({ node, update }: { node: Extract<FlowNode, { type: 'stop' }>; update: (node: FlowNode) => void }) {
+  const reasonId = useId()
   return (
     <div className="grid gap-2">
-      <label className={labelClass}>Message</label>
+      <label className={labelClass} htmlFor={reasonId}>Message</label>
       <input
+        id={reasonId}
         value={node.data.reason ?? ''}
         onChange={(event) => update({ ...node, data: { ...node.data, reason: event.target.value } })}
         className={controlClass}
@@ -2064,6 +2088,7 @@ function VariableBody({
   showErrors?: boolean
 }) {
   const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const id = useId()
   const isInitialize = node.data.op === 'initialize'
   const currentName = node.data.name.trim()
   // Mutation ops pick from variables initialized earlier; keep a name that is
@@ -2076,8 +2101,8 @@ function VariableBody({
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <label className={labelClass}>Operation</label>
-        <select value={node.data.op} onChange={(event) => setOp(event.target.value as VariableOp)} className={controlClass}>
+        <label className={labelClass} htmlFor={`${id}-op`}>Operation</label>
+        <select id={`${id}-op`} value={node.data.op} onChange={(event) => setOp(event.target.value as VariableOp)} className={controlClass}>
           {VARIABLE_OPS.map((op) => (
             <option key={op} value={op}>
               {VARIABLE_OP_LABELS[op]}
@@ -2086,9 +2111,10 @@ function VariableBody({
         </select>
       </div>
       <div className="grid gap-2">
-        <label className={labelClass}>Name <span className="text-red-500">*</span></label>
+        <label className={labelClass} htmlFor={`${id}-name`}>Name <span className="text-red-500">*</span></label>
         {isInitialize || nameOptions.length === 0 ? (
           <input
+            id={`${id}-name`}
             value={node.data.name}
             onChange={(event) => update({ ...node, data: { ...node.data, name: event.target.value } })}
             onFocus={blockActive}
@@ -2099,6 +2125,7 @@ function VariableBody({
           />
         ) : (
           <select
+            id={`${id}-name`}
             value={currentName}
             onChange={(event) => update({ ...node, data: { ...node.data, name: event.target.value } })}
             className={cn(controlClass, nameInvalid && 'border-red-400 focus:border-red-500')}
@@ -2118,8 +2145,9 @@ function VariableBody({
       </div>
       {isInitialize && (
         <div className="grid gap-2">
-          <label className={labelClass}>Type <span className="text-red-500">*</span></label>
+          <label className={labelClass} htmlFor={`${id}-type`}>Type <span className="text-red-500">*</span></label>
           <select
+            id={`${id}-type`}
             value={node.data.varType ?? 'string'}
             onChange={(event) => update({ ...node, data: { ...node.data, varType: event.target.value as VariableType } })}
             className={controlClass}
@@ -2164,6 +2192,7 @@ function DataBody({
   showErrors?: boolean
 }) {
   const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const id = useId()
   const op = node.data.op
   const setOp = (next: DataOp) => {
     // Ops with required list config start with one empty row so the editor
@@ -2180,8 +2209,8 @@ function DataBody({
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <label className={labelClass}>Operation</label>
-        <select value={op} onChange={(event) => setOp(event.target.value as DataOp)} className={controlClass}>
+        <label className={labelClass} htmlFor={`${id}-op`}>Operation</label>
+        <select id={`${id}-op`} value={op} onChange={(event) => setOp(event.target.value as DataOp)} className={controlClass}>
           {DATA_OPS.map((entry) => (
             <option key={entry} value={entry}>
               {DATA_OP_LABELS[entry]}
@@ -2190,7 +2219,7 @@ function DataBody({
         </select>
       </div>
       <div className="grid gap-2">
-        <label className={labelClass}>Input <span className="text-red-500">*</span></label>
+        <span className={labelClass}>Input <span className="text-red-500">*</span></span>
         <TokenTextEditor
           ref={registerEditor('data.input')}
           value={node.data.input ?? ''}
@@ -2220,8 +2249,9 @@ function DataBody({
       {op === 'replace' && (
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="grid gap-2">
-            <label className={labelClass}>Find <span className="text-red-500">*</span></label>
+            <label className={labelClass} htmlFor={`${id}-find`}>Find <span className="text-red-500">*</span></label>
             <input
+              id={`${id}-find`}
               value={node.data.find ?? ''}
               onChange={(event) => update({ ...node, data: { ...node.data, find: event.target.value || undefined } })}
               onFocus={blockActive}
@@ -2232,8 +2262,9 @@ function DataBody({
             />
           </div>
           <div className="grid gap-2">
-            <label className={labelClass}>Replace with</label>
+            <label className={labelClass} htmlFor={`${id}-replace`}>Replace with</label>
             <input
+              id={`${id}-replace`}
               value={node.data.replaceWith ?? ''}
               onChange={(event) => update({ ...node, data: { ...node.data, replaceWith: event.target.value || undefined } })}
               onFocus={blockActive}
@@ -2247,8 +2278,9 @@ function DataBody({
       )}
       {op === 'getItem' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Position</label>
+          <label className={labelClass} htmlFor={`${id}-position`}>Position</label>
           <input
+            id={`${id}-position`}
             value={node.data.index ?? ''}
             onChange={(event) => update({ ...node, data: { ...node.data, index: event.target.value || undefined } })}
             onFocus={blockActive}
@@ -2262,8 +2294,9 @@ function DataBody({
       {op === 'trim' && (
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="grid gap-2">
-            <label className={labelClass}>Items to remove</label>
+            <label className={labelClass} htmlFor={`${id}-count`}>Items to remove</label>
             <input
+              id={`${id}-count`}
               value={node.data.count ?? ''}
               onChange={(event) => update({ ...node, data: { ...node.data, count: event.target.value || undefined } })}
               onFocus={blockActive}
@@ -2274,8 +2307,9 @@ function DataBody({
             />
           </div>
           <div className="grid gap-2">
-            <label className={labelClass}>From</label>
+            <label className={labelClass} htmlFor={`${id}-from`}>From</label>
             <select
+              id={`${id}-from`}
               value={node.data.fromEnd ? 'end' : 'start'}
               onChange={(event) => update({ ...node, data: { ...node.data, fromEnd: event.target.value === 'end' ? true : undefined } })}
               className={controlClass}
@@ -2289,8 +2323,9 @@ function DataBody({
       )}
       {op === 'parseJson' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Schema <span className="font-normal normal-case text-slate-400">(optional)</span></label>
+          <label className={labelClass} htmlFor={`${id}-schema`}>Schema <span className="font-normal normal-case text-slate-400">(optional)</span></label>
           <textarea
+            id={`${id}-schema`}
             rows={4}
             onKeyDown={indentOnTab}
             value={node.data.schema ?? ''}
@@ -2306,8 +2341,9 @@ function DataBody({
       )}
       {op === 'filterArray' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Keep items where</label>
+          <label className={labelClass} htmlFor={`${id}-keep`}>Keep items where</label>
           <select
+            id={`${id}-keep`}
             value={node.data.match === 'any' ? 'any' : 'all'}
             onChange={(event) => update({ ...node, data: { ...node.data, match: event.target.value === 'any' ? 'any' : undefined } })}
             onFocus={blockActive}
@@ -2318,7 +2354,7 @@ function DataBody({
             <option value="all">Every condition passes</option>
             <option value="any">Any condition passes</option>
           </select>
-          <label className={labelClass}>Conditions <span className="text-red-500">*</span></label>
+          <span className={labelClass}>Conditions <span className="text-red-500">*</span></span>
           {(clauses.length ? clauses : [{ left: '', op: 'contains' as ConditionOp, right: '' }]).map((clause, index, list) => (
             <div key={index} className="grid gap-2 sm:grid-cols-[1fr_130px_1fr_36px]">
               <TokenTextEditor
@@ -2374,8 +2410,9 @@ function DataBody({
       )}
       {op === 'flatten' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Field holding the list <span className="font-normal normal-case text-slate-400">(optional)</span></label>
+          <label className={labelClass} htmlFor={`${id}-by`}>Field holding the list <span className="font-normal normal-case text-slate-400">(optional)</span></label>
           <input
+            id={`${id}-by`}
             value={node.data.by ?? ''}
             onChange={(event) => update({ ...node, data: { ...node.data, by: event.target.value || undefined } })}
             onFocus={blockActive}
@@ -2388,8 +2425,9 @@ function DataBody({
       )}
       {op === 'formatDate' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Pattern</label>
+          <label className={labelClass} htmlFor={`${id}-pattern`}>Pattern</label>
           <input
+            id={`${id}-pattern`}
             value={node.data.format ?? ''}
             onChange={(event) => update({ ...node, data: { ...node.data, format: event.target.value || undefined } })}
             onFocus={blockActive}
@@ -2403,8 +2441,9 @@ function DataBody({
       {op === 'dateShift' && (
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="grid gap-2">
-            <label className={labelClass}>Amount <span className="text-red-500">*</span></label>
+            <label className={labelClass} htmlFor={`${id}-amount`}>Amount <span className="text-red-500">*</span></label>
             <input
+              id={`${id}-amount`}
               value={node.data.amount ?? ''}
               onChange={(event) => update({ ...node, data: { ...node.data, amount: event.target.value || undefined } })}
               onFocus={blockActive}
@@ -2415,8 +2454,9 @@ function DataBody({
             />
           </div>
           <div className="grid gap-2">
-            <label className={labelClass}>Unit</label>
+            <label className={labelClass} htmlFor={`${id}-shift-unit`}>Unit</label>
             <select
+              id={`${id}-shift-unit`}
               value={node.data.unit ?? 'days'}
               onChange={(event) => update({ ...node, data: { ...node.data, unit: event.target.value } })}
               onFocus={blockActive}
@@ -2434,7 +2474,7 @@ function DataBody({
       {op === 'dateDiff' && (
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="grid gap-2">
-            <label className={labelClass}>End date <span className="text-red-500">*</span></label>
+            <span className={labelClass}>End date <span className="text-red-500">*</span></span>
             <TokenTextEditor
               ref={registerEditor('data.to')}
               value={node.data.to ?? ''}
@@ -2447,8 +2487,9 @@ function DataBody({
             />
           </div>
           <div className="grid gap-2">
-            <label className={labelClass}>Count in</label>
+            <label className={labelClass} htmlFor={`${id}-diff-unit`}>Count in</label>
             <select
+              id={`${id}-diff-unit`}
               value={node.data.unit ?? 'days'}
               onChange={(event) => update({ ...node, data: { ...node.data, unit: event.target.value } })}
               onFocus={blockActive}
@@ -2465,8 +2506,9 @@ function DataBody({
       )}
       {op === 'datePart' && (
         <div className="grid gap-2">
-          <label className={labelClass}>Part to pick</label>
+          <label className={labelClass} htmlFor={`${id}-part`}>Part to pick</label>
           <select
+            id={`${id}-part`}
             value={node.data.part ?? 'date'}
             onChange={(event) => update({ ...node, data: { ...node.data, part: event.target.value } })}
             onFocus={blockActive}
@@ -2564,11 +2606,12 @@ function HumanReviewBody({
   showErrors?: boolean
 }) {
   const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const assigneeId = useId()
   const messageInvalid = Boolean(showErrors && !node.data.message.trim())
   return (
     <div className="space-y-4">
       <div className="grid gap-2">
-        <label className={labelClass}>Message <span className="text-red-500">*</span></label>
+        <span className={labelClass}>Message <span className="text-red-500">*</span></span>
         <TokenTextEditor
           ref={registerEditor('hr.message')}
           multiline
@@ -2584,11 +2627,12 @@ function HumanReviewBody({
         />
       </div>
       <div className="grid gap-2">
-        <label className={labelClass}>Assign to (optional)</label>
+        <label className={labelClass} htmlFor={assigneeId}>Assign to (optional)</label>
         {/* Empty value = engine default (the run owner is asked). A stored
             assignee missing from the roster (departed member) stays selected
             as "Former member" so opening the editor never rewrites data. */}
         <select
+          id={assigneeId}
           value={node.data.assigneeUserId ?? ''}
           onChange={(event) => update({ ...node, data: { ...node.data, assigneeUserId: event.target.value || undefined } })}
           onFocus={blockActive}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { toast } from 'sonner'
 import { Loader2, Sparkles } from 'lucide-react'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -49,6 +49,7 @@ export function SaveAsTemplateDialog({
   const [drafting, setDrafting] = useState(false)
   const [draftError, setDraftError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const uid = useId()
 
   useEffect(() => {
     if (!open) return
@@ -153,19 +154,20 @@ export function SaveAsTemplateDialog({
 
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
+            <label className="space-y-1.5 text-sm" htmlFor={`${uid}-name`}>
               <span className="font-medium">Name</span>
-              <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Churn-risk scorecard" />
+              <Input id={`${uid}-name`} value={name} onChange={(event) => setName(event.target.value)} placeholder="Churn-risk scorecard" />
             </label>
-            <label className="space-y-1.5 text-sm">
+            <label className="space-y-1.5 text-sm" htmlFor={`${uid}-category`}>
               <span className="font-medium">Category</span>
-              <Input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Customer Success" />
+              <Input id={`${uid}-category`} value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Customer Success" />
             </label>
           </div>
 
-          <label className="block space-y-1.5 text-sm">
+          <label className="block space-y-1.5 text-sm" htmlFor={`${uid}-description`}>
             <span className="font-medium">Description</span>
             <Textarea
+              id={`${uid}-description`}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               rows={2}
@@ -174,13 +176,13 @@ export function SaveAsTemplateDialog({
           </label>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
+            <label className="space-y-1.5 text-sm" htmlFor={`${uid}-tags`}>
               <span className="font-medium">Tags</span>
-              <Input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="weekly, scoring" />
+              <Input id={`${uid}-tags`} value={tags} onChange={(event) => setTags(event.target.value)} placeholder="weekly, scoring" />
             </label>
-            <label className="space-y-1.5 text-sm">
+            <label className="space-y-1.5 text-sm" htmlFor={`${uid}-integrations`}>
               <span className="font-medium">Integrations it needs</span>
-              <Input value={integrations} onChange={(event) => setIntegrations(event.target.value)} placeholder="Slack, Salesforce" />
+              <Input id={`${uid}-integrations`} value={integrations} onChange={(event) => setIntegrations(event.target.value)} placeholder="Slack, Salesforce" />
             </label>
           </div>
 
@@ -200,9 +202,9 @@ export function SaveAsTemplateDialog({
               <p className="text-sm text-muted-foreground">Drafting an explanation of each step from the graph. You can edit everything before saving.</p>
             ) : (
               <div className="space-y-4">
-                <label className="block space-y-1.5 text-sm">
+                <label className="block space-y-1.5 text-sm" htmlFor={`${uid}-objective`}>
                   <span className="font-medium">What it achieves</span>
-                  <Textarea value={notes.objective} onChange={(event) => setNotes({ ...notes, objective: event.target.value })} rows={3} />
+                  <Textarea id={`${uid}-objective`} value={notes.objective} onChange={(event) => setNotes({ ...notes, objective: event.target.value })} rows={3} />
                 </label>
 
                 <div className="space-y-2">
@@ -220,9 +222,10 @@ export function SaveAsTemplateDialog({
                   ))}
                 </div>
 
-                <label className="block space-y-1.5 text-sm">
+                <label className="block space-y-1.5 text-sm" htmlFor={`${uid}-decision-rules`}>
                   <span className="font-medium">Decision rules</span>
                   <Textarea
+                    id={`${uid}-decision-rules`}
                     value={notes.decisionRules ?? ''}
                     onChange={(event) => setNotes({ ...notes, decisionRules: event.target.value })}
                     rows={2}
@@ -230,9 +233,10 @@ export function SaveAsTemplateDialog({
                   />
                 </label>
 
-                <label className="block space-y-1.5 text-sm">
+                <label className="block space-y-1.5 text-sm" htmlFor={`${uid}-failure-handling`}>
                   <span className="font-medium">When things go wrong</span>
                   <Textarea
+                    id={`${uid}-failure-handling`}
                     value={notes.failureHandling ?? ''}
                     onChange={(event) => setNotes({ ...notes, failureHandling: event.target.value })}
                     rows={2}
@@ -258,7 +262,7 @@ export function SaveAsTemplateDialog({
           </div>
 
           {canSubmit && (
-            <label className="flex items-start gap-2 text-sm">
+            <label className="flex items-start gap-2 text-sm" aria-label="Send to Backstory for review">
               <input type="checkbox" checked={submit} onChange={(event) => setSubmit(event.target.checked)} className="mt-1" />
               <span>
                 <span className="font-medium">Send to Backstory for review</span>

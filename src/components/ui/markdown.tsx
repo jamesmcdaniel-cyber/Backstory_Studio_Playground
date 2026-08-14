@@ -64,17 +64,17 @@ export function Markdown({ children, className }: { children: string; className?
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: (props) => <h1 className="mt-5 text-lg font-semibold tracking-tight first:mt-0" {...props} />,
-          h2: (props) => <h2 className="mt-5 text-base font-semibold tracking-tight first:mt-0" {...props} />,
-          h3: (props) => <h3 className="mt-4 text-sm font-semibold first:mt-0" {...props} />,
-          h4: (props) => <h4 className="mt-3 text-sm font-semibold text-muted-foreground first:mt-0" {...props} />,
+          h1: ({ children, ...props }) => <h1 className="mt-5 text-lg font-semibold tracking-tight first:mt-0" {...props}>{children}</h1>,
+          h2: ({ children, ...props }) => <h2 className="mt-5 text-base font-semibold tracking-tight first:mt-0" {...props}>{children}</h2>,
+          h3: ({ children, ...props }) => <h3 className="mt-4 text-sm font-semibold first:mt-0" {...props}>{children}</h3>,
+          h4: ({ children, ...props }) => <h4 className="mt-3 text-sm font-semibold text-muted-foreground first:mt-0" {...props}>{children}</h4>,
           p: (props) => <p className="whitespace-pre-wrap" {...props} />,
           strong: (props) => <strong className="font-semibold" {...props} />,
           ul: (props) => <ul className="list-disc space-y-1.5 pl-5 marker:text-muted-foreground [&_ul]:mt-1.5 [&_ol]:mt-1.5" {...props} />,
           ol: (props) => <ol className="list-decimal space-y-1.5 pl-5 marker:text-muted-foreground [&_ul]:mt-1.5 [&_ol]:mt-1.5" {...props} />,
           li: (props) => <li className="pl-0.5 [&>input]:mr-1.5 [&>input]:h-3.5 [&>input]:w-3.5 [&>input]:translate-y-0.5 [&>input]:accent-indigo-600" {...props} />,
-          a: (props) => (
-            <a className="font-medium text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary" target="_blank" rel="noreferrer" {...props} />
+          a: ({ children, ...props }) => (
+            <a className="font-medium text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary" target="_blank" rel="noreferrer" {...props}>{children}</a>
           ),
           code: (props) => <code className="rounded-md border border-border/60 bg-muted px-1.5 py-0.5 font-mono text-[0.85em]" {...props} />,
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
@@ -91,7 +91,9 @@ export function Markdown({ children, className }: { children: string; className?
           img: ({ src, alt }) => safeInlineImageSource(src)
             // eslint-disable-next-line @next/next/no-img-element
             ? <img src={src} alt={alt ?? ''} className="max-w-full rounded-lg border border-border" />
-            : <a href={typeof src === 'string' ? src : undefined} target="_blank" rel="noreferrer">{alt || 'External image'}</a>,
+            : typeof src === 'string'
+              ? <a href={src} target="_blank" rel="noreferrer">{alt || 'External image'}</a>
+              : <span>{alt || 'External image'}</span>,
         }}
       >
         {children}

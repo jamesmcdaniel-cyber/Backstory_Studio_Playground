@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
+import { useReducedMotion } from 'motion/react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, FileText, FileWarning, BookmarkPlus, Workflow } from 'lucide-react'
@@ -223,6 +224,7 @@ function downloadBlob(content: string, mime: string, filename: string): void {
 
 function FlowBuilder() {
   const { id } = useParams<{ id: string }>()
+  const reduced = useReducedMotion()
   const router = useRouter()
   const searchParams = useSearchParams()
   // Importing always creates a NEW draft flow and navigates there — it never
@@ -1107,8 +1109,8 @@ function FlowBuilder() {
       setFocusRequest((prev) => ({ id: nodeId, nonce: (prev?.nonce ?? 0) + 1 }))
       return
     }
-    document.querySelector(`[data-node-id="${nodeId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [viewingVersion, view])
+    document.querySelector(`[data-node-id="${nodeId}"]`)?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+  }, [viewingVersion, view, reduced])
   const inputFields = useMemo(() => triggerInputFields(graph), [graph])
   const selectedNode = graph.nodes.find((n) => n.id === selectedId) ?? null
   // Inline opens the drawer whenever a step is selected. Canvas needs an
@@ -2537,6 +2539,7 @@ function FlowBuilder() {
 
         <div
           ref={canvasScrollRef}
+          role="presentation"
           className={`min-w-0 flex-1 overflow-auto bg-white p-8 ${view === 'canvas' ? 'hidden' : ''} ${canvasPan.panning ? 'cursor-grabbing select-none' : 'cursor-grab'}`}
           onClick={() => { if (!canvasPan.consumeMoved()) setSelectedId(null) }}
           {...canvasPan.handlers}
@@ -2678,7 +2681,7 @@ function FlowBuilder() {
           onZoom={setZoom}
           onFit={() => {
             setZoom(1)
-            canvasScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+            canvasScrollRef.current?.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })
           }}
           nodes={canvasGraph.nodes.filter((n) => n.type !== 'trigger').map((n) => ({ id: n.id, title: labelForNode(n.id) }))}
           onJump={jumpToNode}
@@ -2687,12 +2690,18 @@ function FlowBuilder() {
 
         {drawerNode && !viewingVersion && (
           <div
+            role="presentation"
             className="fixed inset-0 z-50 animate-fade-in bg-slate-950/55 p-2 backdrop-blur-sm md:p-3"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) setSelectedId(null)
             }}
           >
-            <div className="mx-auto h-full w-full max-w-[1800px] animate-scale-in" onMouseDown={(event) => event.stopPropagation()}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Step settings: ${labelForNode(drawerNode.id)}`}
+              className="mx-auto h-full w-full max-w-[1800px] animate-scale-in"
+            >
               <StepDrawer
                 layout="workspace"
                 node={drawerNode}
@@ -2896,9 +2905,10 @@ function FlowBuilder() {
                 onChange={(event) => setSettingsDraft((current) => ({ ...current, name: event.target.value }))}
               />
             </label>
-            <label className="block space-y-1.5 text-sm">
+            <label className="block space-y-1.5 text-sm" htmlFor="flow-settings-description">
               <span className="font-medium">Description</span>
               <Textarea
+                id="flow-settings-description"
                 rows={3}
                 value={settingsDraft.description}
                 onChange={(event) => setSettingsDraft((current) => ({ ...current, description: event.target.value }))}
@@ -2945,15 +2955,29 @@ function FlowBuilder() {
           cursor = edge ? edge.target : null
         }
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" onClick={() => setSubflowDraft(null)}>
-            <div className="w-full max-w-md rounded-2xl border border-border bg-background p-4 shadow-xl" onClick={(event) => event.stopPropagation()}>
-              <p className="text-sm font-semibold">Make a subflow</p>
+          <div
+            role="presentation"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setSubflowDraft(null)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setSubflowDraft(null)
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="subflow-draft-title"
+              className="w-full max-w-md rounded-2xl border border-border bg-background p-4 shadow-xl"
+            >
+              <p id="subflow-draft-title" className="text-sm font-semibold">Make a subflow</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Moves the selected steps into their own flow and runs it here as one step.
               </p>
               <div className="mt-3 space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium">From</label>
+                  <span className="mb-1 block text-xs font-medium">From</span>
                   <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-sm">{labelForNode(subflowDraft.startId)}</p>
                 </div>
                 <div>

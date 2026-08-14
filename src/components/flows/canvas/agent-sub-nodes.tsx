@@ -1,6 +1,6 @@
 'use client'
 
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useId, useRef, useState } from 'react'
 import { Brain, Plus, Sparkles, Wrench, X } from 'lucide-react'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { TokenTextEditor } from '@/components/flows/token-text-editor'
@@ -42,6 +42,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
   // 'model' | 'memory' | 'tool-add' | `tool:<connectionId>`
   const [panel, setPanel] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const uid = useId()
 
   useEffect(() => {
     if (!panel) return
@@ -115,7 +116,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
       )}
       <span className={captionClass}>{opts.caption}</span>
       {panel === opts.key && (
-        <div className={panelClass} onClick={(event) => event.stopPropagation()}>
+        <div role="presentation" className={panelClass} onClick={(event) => event.stopPropagation()}>
           {opts.panelBody}
         </div>
       )}
@@ -137,7 +138,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
         <Plus className="h-3.5 w-3.5" />
       </button>
       {panel === key && (
-        <div className={panelClass} onClick={(event) => event.stopPropagation()}>
+        <div role="presentation" className={panelClass} onClick={(event) => event.stopPropagation()}>
           {menuBody}
         </div>
       )}
@@ -169,8 +170,9 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
               onRemove: () => update({ model: undefined }),
               panelBody: (
                 <div>
-                  <label className={panelLabelClass}>Chat model for this step</label>
+                  <label className={panelLabelClass} htmlFor={`${uid}-model`}>Chat model for this step</label>
                   <select
+                    id={`${uid}-model`}
                     className={panelFieldClass}
                     value={node.data.model ?? ''}
                     disabled={readOnly}
@@ -192,7 +194,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
                 'model',
                 'Add chat model',
                 <>
-                  <label className={panelLabelClass}>Chat model for this step</label>
+                  <span className={panelLabelClass}>Chat model for this step</span>
                   {modelChoices.map((model) => (
                     <button
                       key={model}
@@ -229,8 +231,9 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
               panelBody: (
                 <div className="space-y-2">
                   <div>
-                    <label className={panelLabelClass}>Store</label>
+                    <label className={panelLabelClass} htmlFor={`${uid}-store`}>Store</label>
                     <select
+                      id={`${uid}-store`}
                       className={panelFieldClass}
                       value={memory.store ?? 'postgres'}
                       disabled={readOnly}
@@ -244,7 +247,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
                     </select>
                   </div>
                   <div>
-                    <label className={panelLabelClass}>Session key</label>
+                    <span className={panelLabelClass}>Session key</span>
                     <TokenTextEditor
                       value={memory.sessionKey ?? ''}
                       labelCtx={labelCtx ?? { stepLabels: {} }}
@@ -256,8 +259,9 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
                     <p className="mt-1 text-[10px] leading-4 text-slate-500">Runs with the same key share one conversation thread.</p>
                   </div>
                   <div>
-                    <label className={panelLabelClass}>Replay window</label>
+                    <label className={panelLabelClass} htmlFor={`${uid}-window`}>Replay window</label>
                     <input
+                      id={`${uid}-window`}
                       type="number"
                       min={1}
                       max={20}
@@ -282,7 +286,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
                 'memory',
                 'Add memory',
                 <>
-                  <label className={panelLabelClass}>Remember past runs</label>
+                  <span className={panelLabelClass}>Remember past runs</span>
                   {MEMORY_STORES.map((store) => (
                     <button
                       key={store.value}
@@ -320,7 +324,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
               },
               panelBody: (
                 <div>
-                  <label className={panelLabelClass}>Tool connection</label>
+                  <span className={panelLabelClass}>Tool connection</span>
                   <p className="flex items-center gap-1.5 text-[11px] font-medium text-slate-700 dark:text-slate-200">
                     {connection ? (
                       <IntegrationLogo slug={connection.slug} name={connection.name} className="h-3.5 w-3.5 shrink-0" />
@@ -356,7 +360,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
               'Grant a tool connection',
               grantable.length ? (
                 <>
-                  <label className={panelLabelClass}>Grant for this step</label>
+                  <span className={panelLabelClass}>Grant for this step</span>
                   {grantable.map((connection) => (
                     <button
                       key={connection.id}

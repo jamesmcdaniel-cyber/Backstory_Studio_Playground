@@ -291,6 +291,7 @@ export const TokenTextEditor = forwardRef<TokenTextEditorHandle, TokenTextEditor
         ref={editorRef}
         contentEditable
         role="textbox"
+        tabIndex={0}
         aria-multiline={multiline}
         aria-label={ariaLabel}
         aria-invalid={invalid || undefined}

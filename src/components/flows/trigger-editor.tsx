@@ -124,6 +124,7 @@ export function TriggerEditor({
   const { field, label, smallField } = { field: fieldClass, label: labelClass, smallField: smallFieldDefault, ...classes }
   const typeSelectId = useId()
   const replyModeSelectId = useId()
+  const uid = useId()
   const [webhook, setWebhook] = useState<{ url: string; secret: string | null; hasSecret: boolean } | null>(null)
   const [minting, setMinting] = useState(false)
   const type = trigger.type ?? 'manual'
@@ -301,8 +302,8 @@ export function TriggerEditor({
       {type === 'schedule' && (
         <div className="space-y-3">
           <div>
-            <label className={label}>Frequency</label>
-            <select className={field} value={cadence} onChange={(e) => setCadence(e.target.value as Cadence)}>
+            <label className={label} htmlFor={`${uid}-frequency`}>Frequency</label>
+            <select id={`${uid}-frequency`} className={field} value={cadence} onChange={(e) => setCadence(e.target.value as Cadence)}>
               {CADENCES.map((f) => (
                 <option key={f.value} value={f.value}>
                   {f.label}
@@ -312,8 +313,8 @@ export function TriggerEditor({
           </div>
           {cadence === 'daysofweek' && (
             <div>
-              <label className={label}>Repeat on</label>
-              <div className="flex flex-wrap gap-1.5">
+              <span id={`${uid}-repeat-on`} className={label}>Repeat on</span>
+              <div role="group" aria-labelledby={`${uid}-repeat-on`} className="flex flex-wrap gap-1.5">
                 {DAY_LABELS.map((dayLabel, day) => (
                   <DayToggle key={day} label={dayLabel} on={selectedDays.includes(day)} onToggle={() => toggleDay(day)} />
                 ))}
@@ -322,23 +323,23 @@ export function TriggerEditor({
           )}
           {['daily', 'daysofweek', 'once'].includes(cadence) && (
             <div>
-              <label className={label}>Time (HH:MM)</label>
-              <input className={field} value={scheduleTime} placeholder="09:00" onChange={(e) => setTime(e.target.value)} />
+              <label className={label} htmlFor={`${uid}-time`}>Time (HH:MM)</label>
+              <input id={`${uid}-time`} className={field} value={scheduleTime} placeholder="09:00" onChange={(e) => setTime(e.target.value)} />
             </div>
           )}
           {cadence === 'once' && (
             <div>
-              <label className={label}>Date (YYYY-MM-DD)</label>
-              <input className={field} value={schedule.runAt ?? ''} placeholder="2026-07-15" onChange={(e) => setSchedule({ runAt: e.target.value })} />
+              <label className={label} htmlFor={`${uid}-date`}>Date (YYYY-MM-DD)</label>
+              <input id={`${uid}-date`} className={field} value={schedule.runAt ?? ''} placeholder="2026-07-15" onChange={(e) => setSchedule({ runAt: e.target.value })} />
             </div>
           )}
           <div>
-            <label className={label}>Timezone</label>
-            <input className={field} value={schedule.timezone ?? 'UTC'} placeholder="America/Denver" onChange={(e) => setSchedule({ timezone: e.target.value })} />
+            <label className={label} htmlFor={`${uid}-timezone`}>Timezone</label>
+            <input id={`${uid}-timezone`} className={field} value={schedule.timezone ?? 'UTC'} placeholder="America/Denver" onChange={(e) => setSchedule({ timezone: e.target.value })} />
           </div>
           <div>
-            <label className={label}>Run input for scheduled runs (optional)</label>
-            <textarea rows={2} onKeyDown={indentOnTab} className={field} value={trigger.input ?? ''} placeholder="Text or JSON passed to the flow each time it runs" onChange={(e) => onChange({ ...trigger, input: e.target.value || undefined })} />
+            <label className={label} htmlFor={`${uid}-run-input`}>Run input for scheduled runs (optional)</label>
+            <textarea id={`${uid}-run-input`} rows={2} onKeyDown={indentOnTab} className={field} value={trigger.input ?? ''} placeholder="Text or JSON passed to the flow each time it runs" onChange={(e) => onChange({ ...trigger, input: e.target.value || undefined })} />
           </div>
           <p className="text-xs text-muted-foreground">
             {nextRunLabel ? `Next run: ${nextRunLabel}` : 'Next run: on this flow’s saved custom schedule'}
@@ -350,8 +351,9 @@ export function TriggerEditor({
       {type === 'poll' && (
         <div className="space-y-3">
           <div>
-            <label className={label}>Check this app</label>
+            <label className={label} htmlFor={`${uid}-poll-connection`}>Check this app</label>
             <select
+              id={`${uid}-poll-connection`}
               className={field}
               value={trigger.connectionId ?? ''}
               onChange={(e) => onChange({ ...trigger, connectionId: e.target.value || undefined, toolName: undefined })}
@@ -363,8 +365,9 @@ export function TriggerEditor({
             </select>
           </div>
           <div>
-            <label className={label}>For new items from</label>
+            <label className={label} htmlFor={`${uid}-poll-tool`}>For new items from</label>
             <select
+              id={`${uid}-poll-tool`}
               className={field}
               value={trigger.toolName ?? ''}
               onChange={(e) => onChange({ ...trigger, toolName: e.target.value || undefined })}
@@ -379,25 +382,25 @@ export function TriggerEditor({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className={label}>New-item id field</label>
-              <input className={field} value={trigger.dedupeKey ?? ''} placeholder="id" onChange={(e) => onChange({ ...trigger, dedupeKey: e.target.value || undefined })} />
+              <label className={label} htmlFor={`${uid}-dedupe-key`}>New-item id field</label>
+              <input id={`${uid}-dedupe-key`} className={field} value={trigger.dedupeKey ?? ''} placeholder="id" onChange={(e) => onChange({ ...trigger, dedupeKey: e.target.value || undefined })} />
             </div>
             <div>
-              <label className={label}>List field (optional)</label>
-              <input className={field} value={trigger.itemsPath ?? ''} placeholder="data" onChange={(e) => onChange({ ...trigger, itemsPath: e.target.value || undefined })} />
+              <label className={label} htmlFor={`${uid}-items-path`}>List field (optional)</label>
+              <input id={`${uid}-items-path`} className={field} value={trigger.itemsPath ?? ''} placeholder="data" onChange={(e) => onChange({ ...trigger, itemsPath: e.target.value || undefined })} />
             </div>
           </div>
           <div>
-            <label className={label}>Start the flow</label>
-            <select className={field} value={trigger.emit ?? 'perItem'} onChange={(e) => onChange({ ...trigger, emit: e.target.value as 'perItem' | 'batch' })}>
+            <label className={label} htmlFor={`${uid}-emit`}>Start the flow</label>
+            <select id={`${uid}-emit`} className={field} value={trigger.emit ?? 'perItem'} onChange={(e) => onChange({ ...trigger, emit: e.target.value as 'perItem' | 'batch' })}>
               <option value="perItem">Once per new item</option>
               <option value="batch">Once with all new items</option>
             </select>
           </div>
           <div>
-            <label className={label}>Check every</label>
+            <label className={label} htmlFor={`${uid}-poll-cadence`}>Check every</label>
             {/* A one-time check makes no sense for a poll, so 'once' is omitted. */}
-            <select className={field} value={cadence === 'once' ? 'hourly' : cadence} onChange={(e) => setCadence(e.target.value as Cadence)}>
+            <select id={`${uid}-poll-cadence`} className={field} value={cadence === 'once' ? 'hourly' : cadence} onChange={(e) => setCadence(e.target.value as Cadence)}>
               {CADENCES.filter((f) => f.value !== 'once').map((f) => (
                 <option key={f.value} value={f.value}>{f.label}</option>
               ))}
@@ -405,8 +408,8 @@ export function TriggerEditor({
           </div>
           {cadence === 'daysofweek' && (
             <div>
-              <label className={label}>Check on</label>
-              <div className="flex flex-wrap gap-1.5">
+              <span id={`${uid}-check-on`} className={label}>Check on</span>
+              <div role="group" aria-labelledby={`${uid}-check-on`} className="flex flex-wrap gap-1.5">
                 {DAY_LABELS.map((dayLabel, day) => (
                   <DayToggle key={day} label={dayLabel} on={selectedDays.includes(day)} onToggle={() => toggleDay(day)} />
                 ))}
@@ -415,8 +418,8 @@ export function TriggerEditor({
           )}
           {['daily', 'daysofweek'].includes(cadence) && (
             <div>
-              <label className={label}>Time (HH:MM)</label>
-              <input className={field} value={scheduleTime} placeholder="09:00" onChange={(e) => setTime(e.target.value)} />
+              <label className={label} htmlFor={`${uid}-poll-time`}>Time (HH:MM)</label>
+              <input id={`${uid}-poll-time`} className={field} value={scheduleTime} placeholder="09:00" onChange={(e) => setTime(e.target.value)} />
             </div>
           )}
           <p className="text-xs text-muted-foreground">Polls the <strong>published</strong> version. The first check just learns what already exists; new items after that start the flow.</p>
@@ -426,8 +429,9 @@ export function TriggerEditor({
       {type === 'signal' && (
         <div className="space-y-3">
           <div>
-            <label className={label}>Signal name</label>
+            <label className={label} htmlFor={`${uid}-signal`}>Signal name</label>
             <input
+              id={`${uid}-signal`}
               className={field}
               list="known-signals"
               value={trigger.signal ?? ''}
@@ -564,8 +568,9 @@ export function TriggerEditor({
           {trigger.condition && (
             <div className="space-y-3">
               <div>
-                <label className={label}>Match</label>
+                <label className={label} htmlFor={`${uid}-match`}>Match</label>
                 <select
+                  id={`${uid}-match`}
                   className={field}
                   value={trigger.condition.match ?? 'all'}
                   onChange={(e) => onChange({ ...trigger, condition: { ...trigger.condition, match: e.target.value as 'all' | 'any' } })}

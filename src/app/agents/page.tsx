@@ -563,7 +563,6 @@ function AgentHQ() {
                       placeholder={"Describe an agent to build — e.g. “Every Monday, summarize last week’s GitHub activity and post it to Slack”"}
                       value={describe}
                       disabled={building}
-                      autoFocus
                       onChange={(event) => setDescribe(event.target.value)}
                       onKeyDown={(event) => event.key === 'Enter' && buildFromDescription()}
                     />
@@ -691,9 +690,8 @@ function AgentHQ() {
 
         {/* ── Right pane: persistent assistant chat for the selected agent ── */}
         <section className="relative flex h-[70dvh] min-w-0 flex-col bg-white lg:h-auto lg:min-h-0">
-          <div
-            role="separator"
-            aria-orientation="vertical"
+          <button
+            type="button"
             aria-label="Resize assistant panel"
             onMouseDown={onAssistantResizeStart}
             onDoubleClick={resetAssistantWidth}

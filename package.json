@@ -68,7 +68,7 @@
     "motion": "^12.42.2",
     "neo4j-driver": "^6.2.0",
     "next": "^15.5.19",
-    "openai": "^5.20.1",
+    "openai": "^7.4.0",
     "pyodide": "^314.0.3",
     "quickjs-emscripten": "^0.32.0",
     "react": "^18.2.0",

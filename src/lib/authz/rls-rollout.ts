@@ -49,6 +49,64 @@ export function rlsEnabledModels(env: NodeJS.ProcessEnv = process.env): Readonly
 const EMPTY: ReadonlySet<string> = new Set()
 
 /**
+ * Models whose RLS policy reads `app.organization_id` but which the tenant guard
+ * does NOT route — they carry no `organizationId` column of their own, so their
+ * policy resolves tenancy through a required parent (a flow run, a flow, an
+ * agent execution).
+ *
+ * ── The failure this exists to stop ──────────────────────────────────────
+ * Their policies are of the form:
+ *
+ *   EXISTS (SELECT 1 FROM flow_runs r
+ *           WHERE r.id = "flowRunId"
+ *             AND r."organizationId" = nullif(current_setting('app.organization_id', true), '')::uuid)
+ *
+ * With the setting unset, `nullif(...)` is NULL, `col = NULL` is NULL, and the
+ * EXISTS is false. PostgreSQL then returns **zero rows — with no error**.
+ *
+ * Because these models are absent from ORG_SCOPED_MODELS, the guard in
+ * src/lib/prisma.ts never enters the RLS transaction path for them, so a plain
+ * `prisma.flowRunStep.findMany(...)` outside a `tenantTransaction` never sets
+ * the value at all. Every read silently comes back empty: run history, step
+ * output, collaborator lists and agent execution messages all appear to have
+ * been deleted while the application logs nothing.
+ *
+ * Verified against PostgreSQL 18 with the real migration history and a
+ * non-owner role: without the setting, `flow_run_steps` returned 0 rows; with
+ * it, 1. No error either way.
+ *
+ * Silently wrong data is worse than a failed request, so `assertRlsContext`
+ * turns the empty result into a loud throw. That is the difference between a
+ * staging rollout that reveals a missing `tenantTransaction` in minutes and a
+ * production rollout that quietly serves empty history.
+ */
+export const RLS_PARENT_SCOPED_MODELS: ReadonlySet<string> = new Set([
+  'FlowRunStep',
+  'FlowCollaborator',
+  'ExecutionMessage',
+  'WorkflowStep',
+  'WorkflowEvent',
+])
+
+/**
+ * Fail closed when a parent-scoped model is queried with RLS active but no
+ * tenant context. Called from the Prisma guard extension.
+ *
+ * A no-op while RLS is off, so it costs nothing before the rollout starts and
+ * cannot itself cause the outage it is guarding against.
+ */
+export function assertRlsContext(model: string | undefined, operation: string, hasContext: boolean): void {
+  if (!model || hasContext) return
+  if (!rlsActive()) return
+  if (!RLS_PARENT_SCOPED_MODELS.has(model)) return
+  throw new Error(
+    `RLS context: ${model}.${operation} resolves tenancy through its parent row, so it must run ` +
+      'inside tenantTransaction(organizationId, …). Without the tenant setting PostgreSQL returns ' +
+      'zero rows rather than an error, which would look like missing data instead of a bug.',
+  )
+}
+
+/**
  * Cached per process. Reading the environment on every query would put a string
  * split on the hot path of every database call in the app.
  */

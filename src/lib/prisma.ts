@@ -3,7 +3,7 @@ import type { ITXClientDenyList } from '@prisma/client/runtime/library'
 import { assertOrgScoped, ORG_SCOPED_MODELS } from '@/lib/tenant-guard'
 import { applyOwnerLiveness } from '@/lib/authz/credential-owner-guard'
 import { exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
-import { rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
+import { assertRlsContext, rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: ReturnType<typeof createGuardedClient>
@@ -32,6 +32,11 @@ function createGuardedClient(base: PrismaClient) {
           // change nothing it accepts — but the ordering is load-bearing if that
           // ever stops being true. See src/lib/authz/credential-owner-guard.ts.
           const guardedArgs = applyOwnerLiveness(model, operation, args) as typeof args
+          // Parent-scoped models (flow run steps, collaborators, execution
+          // messages) are NOT routed below — they have no organizationId to
+          // route on — but their policies still read app.organization_id. Absent
+          // it, PostgreSQL returns zero rows with no error. Throw instead.
+          assertRlsContext(model, operation, tenantDatabaseContext.getStore() !== undefined)
           // Per-model, not a global boolean: see src/lib/authz/rls-rollout.ts
           // for why enabling every table at once is what caused the outages.
           if (rlsAppliesTo(model) && model && ORG_SCOPED_MODELS.has(model)) {
@@ -73,7 +78,26 @@ const appPrismaBase = globalForPrisma.appPrismaBase ?? (rlsActive()
   : systemPrisma)
 globalForPrisma.appPrismaBase = appPrismaBase
 
-export const prisma = globalForPrisma.prisma ?? createGuardedClient(appPrismaBase)
+/**
+ * Built on `systemPrisma`, NOT `appPrismaBase`.
+ *
+ * The base client serves every query the RLS branch does not explicitly route —
+ * that is, every model not yet named in DATABASE_RLS_ENABLED. Those must keep
+ * using the owner connection, which bypasses RLS, exactly as they did before the
+ * rollout began.
+ *
+ * Building on `appPrismaBase` instead put the whole client on the non-owner role
+ * the moment a SINGLE model was staged, while only that staged model had
+ * `app.organization_id` set. Every other org-scoped table then matched its
+ * tenant_isolation policy against an unset setting and returned zero rows —
+ * so staging one table emptied all the others. Measured: with
+ * DATABASE_RLS_ENABLED=Flow, `Flow.findMany` returned 1 row and
+ * `FlowRun.findMany` returned 0 for the same tenant.
+ *
+ * That is the whole point of a staged rollout inverted: it made enabling one
+ * model strictly more dangerous than enabling all of them.
+ */
+export const prisma = globalForPrisma.prisma ?? createGuardedClient(systemPrisma)
 
 /** Run an atomic tenant operation with SET LOCAL so PostgreSQL RLS is the final boundary. */
 export function tenantTransaction<T>(organizationId: string, callback: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {

@@ -69,18 +69,54 @@ rotation.
 
 Resolver: [`src/lib/authz/rls-rollout.ts`](../../src/lib/authz/rls-rollout.ts).
 
-Enabling every table at once is what caused the three outages: it moves every
-query onto the transaction path at the same moment, and against a pgbouncer
-transaction pooler with `connection_limit=1` that is a different concurrency
-profile than the app was load-tested under.
+### What testing against a real database found
 
-`DATABASE_RLS_ENABLED` accepts:
+The rollout was validated against PostgreSQL 18 with the full migration history
+and a real non-owner (`NOBYPASSRLS`) role. Three defects surfaced that no
+TypeScript-level test could see. All are fixed; the procedure below assumes those
+fixes are deployed.
+
+**1. `flow_side_effects` had no RLS at all.** It was created nine days after the
+RLS migration enumerated its tenant tables by hand, so it shipped as a
+required-`organizationId` model with row security disabled — the guard set the
+tenant context and PostgreSQL enforced nothing. Fixed by migration
+`20260813150000_rls_flow_side_effects`.
+
+**2. Five parent-scoped tables returned zero rows, silently.**
+`flow_run_steps`, `flow_collaborators`, `execution_messages`, `workflow_steps`
+and `workflow_events` have no `organizationId` of their own; their policies
+resolve tenancy through a parent via `EXISTS (… AND r."organizationId" =
+nullif(current_setting('app.organization_id', true), '')::uuid)`. With the
+setting unset that comparison is NULL, so the `EXISTS` is false and **PostgreSQL
+returns no rows and no error** — run history and step output look deleted.
+Because these models are absent from `ORG_SCOPED_MODELS`, nothing set the value
+for them. Measured: `flow_run_steps` returned 0 rows without the setting and 1
+with it. They are now declared in `RLS_PARENT_SCOPED_MODELS` and the guard throws
+rather than serving an empty result.
+
+**3. Staging a single model emptied every model that was not staged.** The
+guarded client was built on the non-owner connection, so naming one model in
+`DATABASE_RLS_ENABLED` moved *all* queries onto the RLS-enforcing role while only
+that model received tenant context. Measured: with `DATABASE_RLS_ENABLED=Flow`,
+`Flow.findMany` returned 1 row and `FlowRun.findMany` returned 0 for the same
+tenant. This made the staged path strictly more dangerous than the boolean it
+replaced. The guarded client is now built on `systemPrisma`, so unstaged models
+keep the owner connection they had before the rollout began.
+`src/lib/__tests__/rls-staged-rollout.db.test.ts` fails if this regresses.
+
+### How the flag behaves
+
+`DATABASE_RLS_ENABLED` controls **both** the connection role and the tenant
+context, and they cannot drift apart: with the flag off the app uses the owner
+connection (which bypasses RLS), and the non-owner role is only reached for
+models the flag names. There is no configuration that puts the app on the
+enforcing role without also setting tenant context for the models it enforces.
 
 | Value | Meaning |
 | --- | --- |
 | unset / `false` | Off. The app-layer tenant guard is the only boundary. |
 | `Model,Model2` | Exactly these Prisma models. **The staged path.** |
-| `true` | Every org-scoped model. Correct end state, bad first step. |
+| `true` | Every org-scoped model. Correct end state. |
 
 Names are Prisma model names from `ORG_SCOPED_MODELS`
 ([`src/lib/tenant-guard.ts`](../../src/lib/tenant-guard.ts)) — `FlowRun`, not
@@ -89,16 +125,37 @@ nothing.
 
 ### Procedure
 
-1. In **staging**, set `DATABASE_RLS_ENABLED` to two or three low-traffic models.
-   Confirm `DATABASE_URL` uses the non-owner, non-`BYPASSRLS` application role
-   and `SYSTEM_DATABASE_URL` the privileged one.
-2. Load-test. Watch **pool checkout time and connection saturation**, not just
-   error rate — the outages were a connection-exhaustion signature, not a policy
-   failure.
-3. Promote that same set to production. Hold for a full traffic cycle.
-4. Repeat with the next few models. Roll back by removing a model from the list —
-   one table, not all of them.
-5. Once the list covers `ORG_SCOPED_MODELS`, replace it with `true`.
+1. Confirm `DATABASE_URL` uses a non-owner, non-`BYPASSRLS` role and
+   `SYSTEM_DATABASE_URL` the privileged one. Both are needed before any model is
+   staged — the flag switches between them per query.
+2. In **staging**, start with two or three low-traffic models. Verify that
+   unstaged surfaces still return data (that was defect 3), not just that the
+   staged ones do.
+3. Load-test. Watch **pool checkout time and connection saturation**, not error
+   rate — every staged model's query now takes a transaction, and the original
+   outages were a connection-exhaustion signature against a pgbouncer transaction
+   pooler at `connection_limit=1`.
+4. Promote the same set to production. Hold for a full traffic cycle.
+5. Repeat. Roll back by removing a model from the list — one table, not all.
+6. When the list covers `ORG_SCOPED_MODELS`, replace it with `true`.
+
+Watch for `RLS context: <Model>.<op> resolves tenancy through its parent row` in
+logs during staging. That is defect 2's guard firing: a code path reading a
+parent-scoped model outside `tenantTransaction`. It is a bug to fix, and finding
+it in staging is the entire reason the guard throws instead of returning `[]`.
+
+### Reproducing the test environment locally
+
+```bash
+createdb rls_probe
+DATABASE_URL=postgresql://$USER@localhost:5432/rls_probe \
+DIRECT_URL=postgresql://$USER@localhost:5432/rls_probe \
+  npx prisma migrate deploy
+TEST_DATABASE_URL=postgresql://$USER@localhost:5432/rls_probe npm test
+```
+
+The DB-backed suites create their own `NOBYPASSRLS` role and skip cleanly if the
+database forbids `CREATE ROLE`.
 
 ## 4. PostgREST exposure
 

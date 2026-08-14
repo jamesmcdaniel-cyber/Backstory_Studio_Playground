@@ -3,6 +3,7 @@ import type { UserRole } from '@prisma/client'
 import { hashToken } from '@/lib/crypto/secrets'
 import { systemPrisma } from '@/lib/prisma'
 import { rateLimit } from '@/lib/ratelimit'
+import { clientIp, recordSecurityEvent, recordTokenRejection, requestPath } from '@/lib/security/events'
 
 export const SCIM_USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User'
 export const SCIM_LIST_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:ListResponse'
@@ -21,16 +22,33 @@ export function scimError(detail: string, status: number): Response {
 export async function authenticateScim(request: Request): Promise<ScimContext | Response> {
   const authorization = request.headers.get('authorization') ?? ''
   const match = /^Bearer\s+(.+)$/i.exec(authorization)
-  if (!match || match[1].length > 256) return scimError('Invalid bearer token.', 401)
+  if (!match || match[1].length > 256) {
+    await recordTokenRejection(request, { surface: 'scim', reason: 'malformed_authorization' })
+    return scimError('Invalid bearer token.', 401)
+  }
   const token = await systemPrisma.scimToken.findFirst({
     // systemPrisma: the bearer digest resolves the tenant before a tenant
     // context exists. Only active, unexpired credentials are accepted.
     where: { tokenHash: hashToken(match[1]), revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
     select: { id: true, organizationId: true },
   })
-  if (!token) return scimError('Invalid bearer token.', 401)
+  if (!token) {
+    await recordTokenRejection(request, { surface: 'scim', reason: 'unknown_token' })
+    return scimError('Invalid bearer token.', 401)
+  }
   const limited = await rateLimit(`scim:${token.id}`, { limit: 600, windowMs: 60_000, failureMode: 'closed' })
-  if (!limited.ok) return scimError('Rate limit exceeded.', 429)
+  if (!limited.ok) {
+    await recordSecurityEvent({
+      kind: 'abuse.rate_limited',
+      path: requestPath(request),
+      method: request.method,
+      ip: clientIp(request),
+      organizationId: token.organizationId,
+      subject: `scim:${token.id}`,
+      detail: { surface: 'scim' },
+    })
+    return scimError('Rate limit exceeded.', 429)
+  }
   await systemPrisma.scimToken.update({ where: { id: token.id }, data: { lastUsedAt: new Date() } })
   return { organizationId: token.organizationId, tokenId: token.id }
 }

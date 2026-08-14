@@ -215,3 +215,91 @@ codebase is on that request path. See
 The product currently has **no password form** — sign-in is Google OAuth and SSO
 only. `src/lib/auth/__tests__/password-auth-guard.test.ts` fails if a password
 auth call site is added without wiring `useTurnstile()`.
+
+## 6. Attack detection and alerting
+
+Rejections used to be silent. A 401, a 403, a 429 or a bad webhook signature
+returned its status and left nothing behind — no log line, no audit row, no
+counter — and 4xx never reached Sentry (which by design only receives 5xx). That
+made an attack the one class of traffic the platform could not see.
+
+### What is recorded
+
+[`src/lib/security/events.ts`](../../src/lib/security/events.ts) is the single
+entry point. Every rejection produces:
+
+1. **A structured log line**, always — `security.<kind>` at WARN. This works
+   with no database, no Redis and no email configured, so it is the layer that
+   must never be conditional. It is the grep and log-alert-rule anchor.
+2. **An audit row** when the actor's organization is known, with
+   `action = security.*`. Anonymous 401s have no organization to attach to.
+3. **A threshold count**, per subject (user id when known, else IP).
+
+| Kind | Raised by | Alerts at |
+|---|---|---|
+| `auth.failed` | 401 from `withAuthenticatedApi` | 20 / 5 min |
+| `auth.forbidden` | 403 — permission, entitlement, MFA, SSO, API-key scope | 20 / 5 min |
+| `auth.token_invalid` | trigger secret, HMAC webhook, SCIM bearer, API key, cron secret | 10 / 5 min |
+| `abuse.rate_limited` | 429 from the write budget, the AI guard, or a route limiter | 60 / 5 min |
+| `abuse.body_too_large` | 413 from the wrapper's body ceiling | 20 / 5 min |
+
+`auth.forbidden` sits low because a legitimate user does not walk into twenty
+permission denials in five minutes — a script enumerating routes does.
+`abuse.rate_limited` sits high because a runaway client loop trips it harmlessly
+and repeatedly; only sustained pressure is interesting.
+
+### Turning alerts on
+
+```
+SECURITY_ALERT_EMAIL=security@yourdomain.com,ops@yourdomain.com
+```
+
+That is the only required variable. `RESEND_API_KEY` is already set for
+invitation mail and is reused. With `SECURITY_ALERT_EMAIL` unset the system is
+log-only — a deliberate no-op, so a fresh clone and every preview deploy run
+without it.
+
+Optional: `SECURITY_ALERT_COOLDOWN_MS` (default 1h) is the per-(kind, subject)
+silence window. An attack sustained for an hour produces one email per subject
+per kind, not one per request — the point is to be told something is happening,
+and the audit log holds the detail.
+
+### Investigating an alert
+
+The email names the event kind, the subject, the last path and the last IP.
+From there:
+
+```sql
+-- everything that subject tripped, most recent first
+SELECT "createdAt", action, "resourceId", ip, detail
+FROM audit_events
+WHERE action LIKE 'security.%'
+ORDER BY "createdAt" DESC
+LIMIT 200;
+```
+
+Anonymous events (no organization) are in the server logs only — filter on
+`security.` in the Vercel/Fly log drain.
+
+### Caveat: counting is only global with a shared limiter backend
+
+Thresholds are counted through [`src/lib/ratelimit.ts`](../../src/lib/ratelimit.ts).
+With `UPSTASH_REDIS_REST_*` or `REDIS_URL` set the count is global; without one
+it falls back to per-instance memory and an attack spread across lambda
+instances alerts later than it should. `assertServerEnv()` already refuses to
+boot production without one — see [`src/lib/env.ts`](../../src/lib/env.ts).
+
+## 7. Health endpoint detail
+
+`/api/health` returns liveness to anyone and detail only to a token holder. The
+`checks` block names queue topology, dead-letter counts, worker heartbeat
+freshness and whether secret encryption is configured — a live infrastructure
+map that used to be readable by anyone who knew the URL.
+
+The **status code is unchanged for everyone** (200 / 503), so an uptime monitor
+needs no credential to learn up-or-down. Only the body narrows.
+
+For the detailed body, send `Authorization: Bearer <token>` where the token is
+`HEALTH_DETAIL_TOKEN`, falling back to `CRON_SECRET` — so existing monitors that
+already carry the cron secret keep their detailed view with no new
+configuration. In development, with neither variable set, detail is open.

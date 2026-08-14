@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { cachePing } from '@/lib/cache'
@@ -83,23 +84,51 @@ async function runProbes(): Promise<HealthSnapshot> {
   }
 }
 
-export async function GET() {
+/**
+ * Whether this caller may see the detailed body.
+ *
+ * The `checks` block names queue topology, dead-letter counts, worker heartbeat
+ * freshness and whether secret encryption is configured — a live infrastructure
+ * map, and it used to be readable by anyone who knew the URL. Detail now needs
+ * a token; liveness does not.
+ *
+ * Falls back to CRON_SECRET so existing uptime monitors that already carry it
+ * keep their detailed view without new configuration. With neither variable set
+ * (development, a fresh clone) detail is open, because there is no secret to
+ * check against and nothing sensitive to protect.
+ */
+function detailAuthorized(request: Request): boolean {
+  const secret = process.env.HEALTH_DETAIL_TOKEN || process.env.CRON_SECRET
+  if (!secret) return process.env.NODE_ENV !== 'production'
+  const header = request.headers.get('authorization') || ''
+  const provided = header.startsWith('Bearer ') ? header.slice(7) : ''
+  const a = Buffer.from(provided)
+  const b = Buffer.from(secret)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+export async function GET(request: Request) {
   const now = Date.now()
-  if (lastProbe && now - lastProbe.at < PROBE_TTL_MS) {
-    return NextResponse.json(lastProbe.snapshot.body, { status: lastProbe.snapshot.healthy ? 200 : 503 })
+  const snapshot =
+    lastProbe && now - lastProbe.at < PROBE_TTL_MS
+      ? lastProbe.snapshot
+      : await (inFlight ??= runProbes()
+          .then((probed) => {
+            lastProbe = { at: Date.now(), snapshot: probed }
+            return probed
+          })
+          .finally(() => {
+            inFlight = null
+          }))
+
+  const status = snapshot.healthy ? 200 : 503
+  // The STATUS CODE is unchanged for everyone — an uptime monitor needs no
+  // credential to learn up-or-down, which is the whole job of a liveness probe.
+  // Only the body narrows.
+  if (!detailAuthorized(request)) {
+    return NextResponse.json({ status: snapshot.body.status, timestamp: snapshot.body.timestamp }, { status })
   }
-
-  inFlight ??= runProbes()
-    .then((snapshot) => {
-      lastProbe = { at: Date.now(), snapshot }
-      return snapshot
-    })
-    .finally(() => {
-      inFlight = null
-    })
-
-  const snapshot = await inFlight
-  return NextResponse.json(snapshot.body, { status: snapshot.healthy ? 200 : 503 })
+  return NextResponse.json(snapshot.body, { status })
 }
 
 async function probe(fn: () => Promise<void>): Promise<{ ok: boolean; ms?: number }> {

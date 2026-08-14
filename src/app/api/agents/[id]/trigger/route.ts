@@ -8,6 +8,7 @@ import { runAgentExecution } from '@/features/agents/execute-agent'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { rateLimit } from '@/lib/ratelimit'
+import { recordTokenRejection } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
 export const maxDuration = 800
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest) {
       request.headers.get('x-trigger-secret') ||
       (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
     if (!id || !provided) {
+      await recordTokenRejection(request, { surface: 'agent-trigger', reason: 'missing_secret' })
       return NextResponse.json({ success: false, error: 'Missing trigger secret' }, { status: 401 })
     }
 
@@ -49,6 +51,11 @@ export async function POST(request: NextRequest) {
   const agent = await systemPrisma.agentTask.findFirst({ where: { id, status: 'ACTIVE' } })
     const metadata = agent?.metadata && typeof agent.metadata === 'object' ? agent.metadata as Record<string, unknown> : {}
     if (!agent || !triggerSecretValid(provided, metadata)) {
+      await recordTokenRejection(request, {
+        surface: 'agent-trigger',
+        reason: agent ? 'invalid_secret' : 'unknown_agent',
+        organizationId: agent?.organizationId ?? null,
+      })
       return NextResponse.json({ success: false, error: 'Invalid trigger secret' }, { status: 401 })
     }
 

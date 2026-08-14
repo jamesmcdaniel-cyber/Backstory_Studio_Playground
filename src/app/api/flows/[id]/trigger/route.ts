@@ -4,6 +4,7 @@ import { apiLogger } from '@/lib/logger'
 import { runFlowExecution, startFlowExecution } from '@/features/flows/execute-flow'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { rateLimit } from '@/lib/ratelimit'
+import { recordTokenRejection } from '@/lib/security/events'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
 import { ApiError } from '@/lib/server/api-handler'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
@@ -11,6 +12,7 @@ import { Prisma } from '@prisma/client'
 import {
   FLOW_WEBHOOK_MAX_BODY_BYTES,
   parseWebhookBody,
+  WebhookBodyError,
   parseWebhookReplayHeaders,
   webhookPayloadHash,
 } from '@/lib/flows/webhook-security'
@@ -35,7 +37,10 @@ export async function POST(request: NextRequest) {
     const provided =
       request.headers.get('x-trigger-secret') ||
       (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    if (!id || !provided) return NextResponse.json({ success: false, error: 'Missing trigger secret' }, { status: 401 })
+    if (!id || !provided) {
+      await recordTokenRejection(request, { surface: 'flow-trigger', reason: 'missing_secret' })
+      return NextResponse.json({ success: false, error: 'Missing trigger secret' }, { status: 401 })
+    }
 
     // systemPrisma: session-less webhook trigger (per-flow secret, no org context); flow id is globally unique.
     // Looked up WITHOUT a status filter: the secret is verified first, and only
@@ -46,6 +51,11 @@ export async function POST(request: NextRequest) {
     const trigger = (flow?.trigger && typeof flow.trigger === 'object' && !Array.isArray(flow.trigger) ? flow.trigger : {}) as Record<string, unknown>
     const hash = typeof trigger.webhookSecretHash === 'string' ? trigger.webhookSecretHash : null
     if (!flow || !hash || !timingSafeEqualHex(hashToken(provided), hash)) {
+      await recordTokenRejection(request, {
+        surface: 'flow-trigger',
+        reason: !flow ? 'unknown_flow' : !hash ? 'no_secret_configured' : 'invalid_secret',
+        organizationId: flow?.organizationId ?? null,
+      })
       return NextResponse.json({ success: false, error: 'Invalid trigger secret' }, { status: 401 })
     }
     if (trigger.type !== 'webhook') {
@@ -78,7 +88,18 @@ export async function POST(request: NextRequest) {
     try {
       body = parseWebhookBody(bytes, request.headers.get('content-type') || '')
     } catch (error) {
-      return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Invalid webhook body.' }, { status: 400 })
+      // Only messages parseWebhookBody wrote deliberately are echoed. This
+      // endpoint is unauthenticated, so anything else — a decoder fault, a
+      // Prisma error — would be internal detail handed to an anonymous caller.
+      if (!(error instanceof WebhookBodyError)) {
+        apiLogger.error('flow webhook body parse failed', {
+          flowId: flow.id,
+          organizationId: flow.organizationId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+      const message = error instanceof WebhookBodyError ? error.message : 'Invalid webhook body.'
+      return NextResponse.json({ success: false, error: message }, { status: 400 })
     }
     const input = flowInputFromWebhookBody(body)
     if (!triggerConditionPasses(trigger, input)) {

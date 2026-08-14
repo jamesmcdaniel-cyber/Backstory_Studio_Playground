@@ -1,5 +1,6 @@
 import { SOURCE_LABEL, type KnowledgeDoc } from '@/lib/help-center/retrieve'
 import type { LibrarianResult } from '@/lib/librarian/relevance'
+import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 
 /**
  * What the Assistant is told, and how a question's context is laid out for it.
@@ -35,7 +36,9 @@ Never write URLs, links, or a "Sources" section yourself. The product appends th
 
 End your reply with one final line, exactly this shape and nothing after it:
 RELEVANT: 1, 3
-listing the numbers of every candidate and source you drew on — every source that informed the answer belongs on this line, and so does any workspace item you named. Use "RELEVANT: none" only when the answer genuinely stands on its own. This line is stripped before the user sees it; the items and links you list are what they see.`
+listing the numbers of every candidate and source you drew on — every source that informed the answer belongs on this line, and so does any workspace item you named. Use "RELEVANT: none" only when the answer genuinely stands on its own. This line is stripped before the user sees it; the items and links you list are what they see.
+
+${UNTRUSTED_DATA_RULE}`
 
 /**
  * The user-turn context: the workspace candidates, then the retrieved passages,
@@ -47,10 +50,18 @@ listing the numbers of every candidate and source you drew on — every source t
  * numbered independently, or a citation would point at the wrong thing.
  */
 export function buildPrompt(question: string, workspaceItems: LibrarianResult[], docs: KnowledgeDoc[]): string {
+  // Titles and subtitles here are free text a workspace member typed into a
+  // flow, agent, or run — so a colleague can write "ignore previous
+  // instructions" into a flow description and have it arrive in this prompt.
+  // Fenced, not filtered: the numbering the citations resolve against must
+  // survive untouched, and the envelope wraps around it without renumbering.
   const itemBlock = workspaceItems.length
-    ? `CANDIDATE items from this workspace (keyword match — judge relevance yourself):\n${workspaceItems
-        .map((r, i) => `${i + 1}. [${r.type}] ${r.title} — ${r.subtitle}`)
-        .join('\n')}`
+    ? fenceUntrusted(
+        'workspace library',
+        `CANDIDATE items from this workspace (keyword match — judge relevance yourself):\n${workspaceItems
+          .map((r, i) => `${i + 1}. [${r.type}] ${r.title} — ${r.subtitle}`)
+          .join('\n')}`,
+      )
     : 'This workspace has no items matching the question.'
   const docBlock = docs.length
     ? `\n\nSOURCES — excerpts from the public Backstory documentation (authoritative), numbered in the same list:\n\n${docs

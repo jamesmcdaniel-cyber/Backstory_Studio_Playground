@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { apiLogger } from '@/lib/logger'
+import { captureError } from '@/lib/observability/sentry'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { flowGraphSchema, emptyGraph } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
@@ -133,9 +135,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
     return { success: true, message, ops, needsAttention }
   } catch (error) {
+    // Same reasoning as /api/flows/copilot: only unexpected failures reach here,
+    // and their messages are internal detail rather than user guidance.
+    apiLogger.error('flow copilot chat failed', {
+      organizationId: auth.organizationId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    captureError(error, { path: '/api/flows/copilot/chat' })
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Could not apply that change.',
+      error: 'Could not apply that change. Try rephrasing what you want.',
     }
   }
 }, { permission: 'flow.write' })

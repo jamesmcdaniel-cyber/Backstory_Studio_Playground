@@ -5,11 +5,17 @@ import { DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
 import { qwenClient, qwenModel } from '@/lib/llm/qwen'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { executionVisibilityScope } from '@/lib/server/visibility'
+import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 
-const SYSTEM_PROMPT =
-  'Answer questions about an AI agent run. Be precise about its output, tool calls, and errors. Do not claim actions not present in the run data.'
+// The run record folded into the prompt below carries whatever the agent's
+// tools returned — email bodies, ticket text, fetched pages. That is
+// attacker-influenceable content, so the rule travels with the prompt.
+const SYSTEM_PROMPT = [
+  'Answer questions about an AI agent run. Be precise about its output, tool calls, and errors. Do not claim actions not present in the run data.',
+  UNTRUSTED_DATA_RULE,
+].join('\n\n')
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const { executionId, question } = z.object({
@@ -27,7 +33,13 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   // The raw model transcript is large and internal; answer from the run record.
   const run = { ...execution, transcript: undefined }
-  const prompt = JSON.stringify({ question, execution: run })
+  // The user's question stays outside the fence (it IS the instruction); the
+  // run record goes inside it (it is evidence, and it is not the user's text).
+  const prompt = [
+    `Question: ${question}`,
+    '',
+    fenceUntrusted('agent run record', JSON.stringify(run)),
+  ].join('\n')
 
   // Both endpoints speak the Anthropic Messages API. Prefer Claude when its key
   // is present; otherwise use Qwen (DashScope's Anthropic-compatible endpoint).

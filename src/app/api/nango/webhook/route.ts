@@ -6,6 +6,7 @@ import { maybeGenerateOnGateClear } from '@/lib/templates/generation-queue'
 import { apiLogger } from '@/lib/logger'
 import { systemPrisma } from '@/lib/prisma'
 import { providerSignalOutboxEvent } from '@/lib/outbox'
+import { recordTokenRejection } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
 
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest) {
     verified = false
   }
   if (!verified) {
+    await recordTokenRejection(request, { surface: 'nango-webhook', reason: 'invalid_hmac' })
     return NextResponse.json({ ok: false, error: 'Invalid webhook signature' }, { status: 401 })
   }
 

@@ -10,6 +10,7 @@ import { routeSignal } from '@/lib/signals/router'
 import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { captureError } from '@/lib/observability/sentry'
 import { decryptSecret } from '@/lib/crypto/secrets'
+import { recordTokenRejection } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
 export const maxDuration = 800
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
     )
   }
   if (!verifySignature({ rawBody, header, secret })) {
+    await recordTokenRejection(request, { surface: 'signals-webhook', reason: 'invalid_hmac' })
     return NextResponse.json({ success: false, error: 'Invalid signature' }, { status: 401 })
   }
 

@@ -2,14 +2,14 @@ import type { AgentChatMessage, Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { generateStructured } from '@/lib/llm/model-runner'
-import { qwenConfigured } from '@/lib/llm/qwen'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { buildAssistantContext } from '@/features/agents/assistant-context'
 import { runAgentExecution } from '@/features/agents/execute-agent'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { rateLimit } from '@/lib/ratelimit'
-import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
+import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
+import { recordTokenUsage } from '@/lib/usage/budget'
 import {
   agentIdFromRequest,
   requireAgent,
@@ -169,19 +169,21 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 }, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  if (!process.env.ANTHROPIC_API_KEY && !qwenConfigured()) {
-    throw new ApiError('No model provider is configured', 503, 'AI_UNAVAILABLE')
-  }
   const agentId = agentIdFromRequest(request)
   const { message, sessionId: requestedSessionId } = z
     .object({ message: z.string().min(1).max(4000), sessionId: z.string().optional() })
     .parse(await request.json())
   const agent = await requireAgent(agentId, auth)
 
-  // Assistant chat counts against the workspace token budget too — block when
-  // the org is already over so chat can't bypass the ceiling.
-  const budget = await checkMonthlyTokenBudget(auth.organizationId)
-  if (budget.over) throw new ApiError('Monthly token budget reached for this workspace.', 429, 'BUDGET_EXCEEDED')
+  // Provider check, per-user rate limit, and monthly ceiling — BEFORE the model
+  // call below. The `agent-run:` limiter further down guards only the spawning
+  // of a run, so until this was added the assistant's own model call was capped
+  // by nothing tighter than the wrapper's 240 writes/min.
+  await assertAiCallAllowed({
+    organizationId: auth.organizationId,
+    rateKey: `agent-chat:${auth.dbUser.id}`,
+    limit: 20,
+  })
 
   // Resolve the target conversation. An explicit, owned session is reused;
   // otherwise (absent, legacy, or unknown) a new session starts — the legacy

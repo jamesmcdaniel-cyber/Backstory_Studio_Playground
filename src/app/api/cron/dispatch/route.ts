@@ -16,6 +16,7 @@
 import { timingSafeEqual } from 'crypto'
 import { apiLogger } from '@/lib/logger'
 import { runDispatchTick } from '@/lib/scheduling/dispatch-tick'
+import { recordTokenRejection } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
 export const maxDuration = 800
@@ -28,7 +29,7 @@ export const dynamic = 'force-dynamic'
  *
  * Returns null when authorized, or a Response to short-circuit with.
  */
-function checkAuthorized(request: Request): Response | null {
+async function checkAuthorized(request: Request): Promise<Response | null> {
   const secret = process.env.CRON_SECRET
   if (!secret) {
     return Response.json(
@@ -44,13 +45,14 @@ function checkAuthorized(request: Request): Response | null {
   const b = Buffer.from(secret)
   const authorized = a.length === b.length && timingSafeEqual(a, b)
   if (!authorized) {
+    await recordTokenRejection(request, { surface: 'cron', reason: 'invalid_cron_secret' })
     return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   return null
 }
 
 export async function GET(request: Request) {
-  const unauthorized = checkAuthorized(request)
+  const unauthorized = await checkAuthorized(request)
   if (unauthorized) return unauthorized
 
   try {

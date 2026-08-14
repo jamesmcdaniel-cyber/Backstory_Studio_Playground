@@ -2,9 +2,9 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
 import { DEFAULT_AGENT_MODEL, generateStructured } from '@/lib/llm/model-runner'
-import { qwenConfigured } from '@/lib/llm/qwen'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
-import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
+import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
+import { recordTokenUsage } from '@/lib/usage/budget'
 
 const DRAFT_SCHEMA = {
   type: 'object',
@@ -50,17 +50,21 @@ type Draft = {
 // Den-style natural-language agent builder: describe the job, get a ready
 // agent config. Pass { create: true } to save it immediately.
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  if (!process.env.ANTHROPIC_API_KEY && !qwenConfigured()) {
-    throw new ApiError('No model provider is configured', 503, 'AI_UNAVAILABLE')
-  }
   const { description, create } = z.object({
     description: z.string().min(10).max(4000),
     create: z.boolean().default(false),
   }).parse(await request.json())
 
-  // Counts against the workspace token budget — block when already over.
-  const budget = await checkMonthlyTokenBudget(auth.organizationId)
-  if (budget.over) throw new ApiError('Monthly token budget reached for this workspace.', 429, 'BUDGET_EXCEEDED')
+  // Provider check, per-user rate limit, and monthly ceiling — the same gate
+  // every other interactive LLM endpoint uses. This route previously checked
+  // only the monthly budget, so its effective ceiling was the wrapper's generic
+  // 240 writes/min: 240 model calls a minute from one account. 10/min matches
+  // the flow copilot, the other "generate me a whole config" endpoint.
+  await assertAiCallAllowed({
+    organizationId: auth.organizationId,
+    rateKey: `agent-draft:${auth.dbUser.id}`,
+    limit: 10,
+  })
 
   const text = await generateStructured({
     schemaName: 'agent_draft',

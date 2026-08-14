@@ -41,14 +41,30 @@ export function webhookPayloadHash(body: Buffer): string {
   return createHash('sha256').update(body).digest('hex')
 }
 
+/**
+ * A rejection whose message is written FOR the caller.
+ *
+ * The webhook trigger route is unauthenticated, so it must not echo arbitrary
+ * error text back — a Prisma or decoder failure would hand an anonymous caller
+ * internal detail. This class is the marker that separates "a sentence we wrote
+ * for a webhook integrator" from "whatever happened to blow up", so the route
+ * can pass the first through and swallow the second.
+ */
+export class WebhookBodyError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WebhookBodyError'
+  }
+}
+
 export function parseWebhookBody(bytes: Buffer, contentType: string): unknown {
-  if (bytes.length > FLOW_WEBHOOK_MAX_BODY_BYTES) throw new Error('Webhook body is too large.')
+  if (bytes.length > FLOW_WEBHOOK_MAX_BODY_BYTES) throw new WebhookBodyError('Webhook body is too large.')
   const text = bytes.toString('utf8')
   if (contentType.toLowerCase().includes('application/json')) {
     try {
       return text ? JSON.parse(text) : {}
     } catch {
-      throw new Error('Webhook body is not valid JSON.')
+      throw new WebhookBodyError('Webhook body is not valid JSON.')
     }
   }
   return text

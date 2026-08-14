@@ -17,6 +17,7 @@ import { systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { removeRetiredFromGraph } from '@/lib/rag/indexer'
 import { deleteStoredFile } from '@/lib/files/storage'
+import { recordTokenRejection } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -24,7 +25,7 @@ export const dynamic = 'force-dynamic'
 
 const CAP = 5000
 
-function checkAuthorized(request: Request): Response | null {
+async function checkAuthorized(request: Request): Promise<Response | null> {
   const secret = process.env.CRON_SECRET
   if (!secret) return Response.json({ success: false, error: 'CRON_SECRET not configured' }, { status: 503 })
   const authHeader = request.headers.get('authorization') || ''
@@ -32,13 +33,14 @@ function checkAuthorized(request: Request): Response | null {
   const a = Buffer.from(provided)
   const b = Buffer.from(secret)
   if (!(a.length === b.length && timingSafeEqual(a, b))) {
+    await recordTokenRejection(request, { surface: 'cron', reason: 'invalid_cron_secret' })
     return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   return null
 }
 
 export async function GET(request: Request) {
-  const unauthorized = checkAuthorized(request)
+  const unauthorized = await checkAuthorized(request)
   if (unauthorized) return unauthorized
 
   const days = Number(process.env.RETENTION_DAYS) || 90

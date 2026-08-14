@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { apiLogger } from '@/lib/logger'
+import { captureError } from '@/lib/observability/sentry'
 import { emptyGraph } from '@/lib/flows/graph'
 import { generateFlowGraph } from '@/lib/flows/generate-flow-graph'
 import { assertAiCallAllowed, recordEstimatedUsage } from '@/lib/usage/ai-guard'
@@ -23,9 +25,20 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     const needsAttention = [...validation.errors, ...validation.warnings].map((issue) => ({ nodeId: issue.nodeId, message: issue.message }))
     return { success: true, graph, validation, needsAttention }
   } catch (error) {
+    // Nothing in generateFlowGraph throws deliberately, so everything landing
+    // here is an unexpected failure — a model timeout, a Prisma error, an
+    // undici socket error. Their messages carry hosts, connection strings and
+    // internal identifiers, and none of them tell the user anything useful, so
+    // the real cause goes to the logs and Sentry while the client gets one
+    // fixed sentence.
+    apiLogger.error('flow copilot generation failed', {
+      organizationId: auth.organizationId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    captureError(error, { path: '/api/flows/copilot' })
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Could not generate a runnable flow.',
+      error: 'Could not generate a runnable flow. Try rephrasing the description.',
       graph: emptyGraph(),
     }
   }

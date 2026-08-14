@@ -44,8 +44,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
+      # Production deps gate at `moderate`, not `high`: a moderate CVE in a
+      # dependency that handles peer-controlled input (HTTP responses, uploaded
+      # files, webhook bodies) is not a "later" item here.
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --omit=dev --audit-level=moderate
+      # Dev dependencies are the build-chain supply-chain surface — a compromised
+      # bundler or test runner ships whatever it likes into the production build.
+      # Reported, but non-blocking: dev-only advisories should not be able to
+      # wedge a security fix from merging.
+      - name: Development dependency audit (advisory)
+        run: npm audit --audit-level=moderate || echo "::warning::dev dependency advisories present — review npm audit output"
       - run: npx prisma migrate deploy
       - run: npm run typecheck
       - run: npm run lint

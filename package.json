@@ -28,6 +28,7 @@
     "eval:rag:generate": "tsx src/lib/eval/rag/generate.ts",
     "load:flow": "k6 run scripts/load/flow-webhook.js",
     "load:platform": "k6 run scripts/load/platform.js",
+    "secrets:rotate": "tsx scripts/rotate-encryption-key.ts",
     "backup:create": "node scripts/backup/create.mjs",
     "backup:restore": "node scripts/backup/restore.mjs",
     "backup:verify": "node scripts/backup/verify.mjs",

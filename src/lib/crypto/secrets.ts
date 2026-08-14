@@ -1,11 +1,31 @@
 /**
- * MCP Connection secret encryption/decryption utilities.
+ * Secret encryption/decryption utilities (MCP connections, HTTP credentials,
+ * integration secrets, People.ai tokens, OAuth state cookies).
  *
- * Storage format (encrypted): v1:<ivB64>:<tagB64>:<ctB64>
- * Storage format (fallback):  b64:<base64payload>
+ * Storage format (current):  v2:<keyId>:<ivB64>:<tagB64>:<ctB64>
+ * Storage format (legacy):   v1:<ivB64>:<tagB64>:<ctB64>
+ * Storage format (fallback): b64:<base64payload>
  *
- * Set ENCRYPTION_KEY to any non-empty string (64-char hex or base64 32-byte).
- * The key is normalised via SHA-256 so any non-empty string works.
+ * ── Key rotation ─────────────────────────────────────────────────────────
+ * v1 carried no key identifier, which meant a compromised ENCRYPTION_KEY could
+ * not be replaced: every stored secret was tied to it with nothing to say which
+ * key it was, so a rotation would have silently bricked every credential in the
+ * database with no way to tell rows apart.
+ *
+ * v2 prefixes each payload with a short, non-secret key id. That makes a
+ * dual-read / single-write rotation possible:
+ *
+ *   1. Set ENCRYPTION_KEY_PREVIOUS to the current key, and ENCRYPTION_KEY to
+ *      the new one. Both are now readable; all new writes use the new key.
+ *   2. Run `npm run secrets:rotate` to re-encrypt every stored payload onto the
+ *      new key (`--dry-run` first to see the counts).
+ *   3. Once the script reports zero remaining, unset ENCRYPTION_KEY_PREVIOUS.
+ *
+ * ENCRYPTION_KEY_PREVIOUS accepts a comma-separated list, so an interrupted
+ * rotation can be resumed without stranding rows on an intermediate key.
+ *
+ * Keys may be any non-empty string (64-char hex, base64 32-byte, or a
+ * passphrase) — each is normalised to 32 bytes via SHA-256.
  */
 
 import crypto from 'crypto'
@@ -13,6 +33,22 @@ import crypto from 'crypto'
 // ── Key derivation ─────────────────────────────────────────────────────────
 
 let _warned = false
+
+/**
+ * Short, stable, non-secret identifier for a derived key.
+ *
+ * A second SHA-256 pass, so the id is a digest OF the key rather than a prefix
+ * of it — publishing the id in the ciphertext must not leak key material. 8 hex
+ * characters is 32 bits: ample to tell apart the two or three keys a rotation
+ * ever has in flight at once.
+ */
+function keyIdFor(key: Buffer): string {
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 8)
+}
+
+function deriveKey(raw: string): Buffer {
+  return crypto.createHash('sha256').update(raw).digest()
+}
 
 function getDerivedKey(): Buffer | null {
   const raw = process.env.ENCRYPTION_KEY
@@ -29,7 +65,53 @@ function getDerivedKey(): Buffer | null {
     return null
   }
   // Derive a 32-byte key regardless of input format/length
-  return crypto.createHash('sha256').update(raw).digest()
+  return deriveKey(raw)
+}
+
+/**
+ * Every key this process can DECRYPT with: the primary first, then any
+ * retired keys still named in ENCRYPTION_KEY_PREVIOUS.
+ *
+ * Read from the environment on each call rather than cached at module load —
+ * the rotation script and the tests both change these variables at runtime, and
+ * a cached ring would serve a stale answer to exactly the code that needs it to
+ * be current.
+ */
+function decryptionRing(): Array<{ id: string; key: Buffer }> {
+  const ring: Array<{ id: string; key: Buffer }> = []
+  const seen = new Set<string>()
+
+  for (const raw of [process.env.ENCRYPTION_KEY, ...(process.env.ENCRYPTION_KEY_PREVIOUS ?? '').split(',')]) {
+    const trimmed = raw?.trim()
+    if (!trimmed) continue
+    const key = deriveKey(trimmed)
+    const id = keyIdFor(key)
+    if (seen.has(id)) continue
+    seen.add(id)
+    ring.push({ id, key })
+  }
+
+  return ring
+}
+
+/**
+ * The key id new writes are stamped with, or null when no key is configured.
+ * Exposed for the rotation script and the health probe, so "which key is this
+ * deployment writing with" is answerable without printing key material.
+ */
+export function activeKeyId(): string | null {
+  const key = getDerivedKey()
+  return key ? keyIdFor(key) : null
+}
+
+/**
+ * Whether a stored payload is already encrypted under the ACTIVE key. The
+ * rotation script uses this to decide what still needs re-encrypting; false for
+ * legacy v1/b64 payloads, which always need rewriting.
+ */
+export function isCurrentKeyPayload(payload: string): boolean {
+  const active = activeKeyId()
+  return Boolean(active) && payload.startsWith(`v2:${active}:`)
 }
 
 /**
@@ -83,7 +165,8 @@ export function encryptSecret(plaintext: string): string {
   const tag = cipher.getAuthTag() // 128-bit authentication tag
 
   return [
-    'v1',
+    'v2',
+    keyIdFor(key),
     iv.toString('base64'),
     tag.toString('base64'),
     ciphertext.toString('base64'),
@@ -102,33 +185,66 @@ export function decryptSecret(payload: string): string {
     return Buffer.from(payload.slice(4), 'base64').toString('utf8')
   }
 
-  if (payload.startsWith('v1:')) {
-    const key = getDerivedKey()
-    if (!key) {
+  if (payload.startsWith('v2:')) {
+    const [, keyId, ivB64, tagB64, ctB64] = payload.split(':')
+    if (!keyId || !ivB64 || !tagB64 || !ctB64) {
+      throw new Error('Malformed v2 encrypted secret payload')
+    }
+
+    const ring = decryptionRing()
+    if (!ring.length) {
+      throw new Error('ENCRYPTION_KEY is required to decrypt v2 secrets but is not set')
+    }
+
+    const match = ring.find((entry) => entry.id === keyId)
+    if (!match) {
+      // Named a key this process does not hold. Say which one: the id is not
+      // secret, and "which key am I missing" is the entire question during a
+      // half-finished rotation.
       throw new Error(
-        'ENCRYPTION_KEY is required to decrypt v1 secrets but is not set',
+        `No configured key matches id ${keyId} — add the retired key to ENCRYPTION_KEY_PREVIOUS`,
       )
     }
 
+    return gcmDecrypt(match.key, ivB64, tagB64, ctB64)
+  }
+
+  if (payload.startsWith('v1:')) {
     const [, ivB64, tagB64, ctB64] = payload.split(':')
     if (!ivB64 || !tagB64 || !ctB64) {
       throw new Error('Malformed v1 encrypted secret payload')
     }
 
-    const iv = Buffer.from(ivB64, 'base64')
-    const tag = Buffer.from(tagB64, 'base64')
-    const ciphertext = Buffer.from(ctB64, 'base64')
+    const ring = decryptionRing()
+    if (!ring.length) {
+      throw new Error(
+        'ENCRYPTION_KEY is required to decrypt v1 secrets but is not set',
+      )
+    }
 
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
-    decipher.setAuthTag(tag)
-
-    return Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]).toString('utf8')
+    // v1 carries no key id, so the only way to identify the key is to try each
+    // one. GCM's auth tag makes that safe and unambiguous: a wrong key fails
+    // the tag check rather than returning plausible garbage.
+    for (const { key } of ring) {
+      try {
+        return gcmDecrypt(key, ivB64, tagB64, ctB64)
+      } catch {
+        continue
+      }
+    }
+    throw new Error('No configured key can decrypt this v1 secret')
   }
 
   throw new Error(`Unknown secret payload format: ${payload.slice(0, 10)}`)
+}
+
+function gcmDecrypt(key: Buffer, ivB64: string, tagB64: string, ctB64: string): string {
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64'))
+  decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
+  return Buffer.concat([
+    decipher.update(Buffer.from(ctB64, 'base64')),
+    decipher.final(),
+  ]).toString('utf8')
 }
 
 // ── authConfig assembly ───────────────────────────────────────────────────

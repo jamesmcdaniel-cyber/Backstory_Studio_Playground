@@ -1,0 +1,41 @@
+version: 2
+
+# Nothing opened dependency PRs before this: `npm audit` in CI only told us a
+# CVE existed, never moved us off it. Security updates are ungrouped so each one
+# lands as its own reviewable PR; routine version bumps are grouped so the weekly
+# noise is two PRs rather than forty.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 10
+    groups:
+      production-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+    ignore:
+      # Pinned by the runtime contract, not by semver: React 18 is required by
+      # @react-three/fiber@8 (see the motion/depth system), and pyodide's wasm
+      # payload is smoke-tested against a known-good build at release time.
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+      - dependency-name: pyodide
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    groups:
+      actions:
+        patterns: ['*']

@@ -1,5 +1,6 @@
 import type { Job } from 'bullmq'
 import { createHash } from 'node:crypto'
+import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
@@ -522,6 +523,19 @@ export async function runAgentExecution(
   // treeTokens is likewise inline-only: a shared mutable counter for the whole
   // sub-agent run tree (see below). Sub-runs always execute inline, so passing a
   // live object is safe; the queue never carries it.
+  data: AgentExecutionJob & {
+    onExecutionCreated?: (executionId: string) => void | Promise<void>
+    treeTokens?: { used: number }
+  },
+) {
+  // WorkflowStep / WorkflowEvent / ExecutionMessage resolve tenancy through the
+  // parent execution rather than a column of their own. Establishing the job's
+  // tenant here lets the Prisma guard scope those writes under RLS without
+  // threading a transaction through every call site. See src/lib/prisma.ts.
+  return ambientOrganization.run(data.organizationId, () => runAgentExecutionInner(data))
+}
+
+async function runAgentExecutionInner(
   data: AgentExecutionJob & {
     onExecutionCreated?: (executionId: string) => void | Promise<void>
     treeTokens?: { used: number }

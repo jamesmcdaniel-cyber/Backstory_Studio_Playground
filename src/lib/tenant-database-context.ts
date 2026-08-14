@@ -8,6 +8,30 @@ export type TenantDatabaseContext = {
 
 export const tenantDatabaseContext = new AsyncLocalStorage<TenantDatabaseContext>()
 
+/**
+ * The organization the current work belongs to, without holding a transaction.
+ *
+ * `tenantDatabaseContext` carries an OPEN transaction, so it can only be
+ * established around an atomic unit of work. Parent-scoped models
+ * (FlowRunStep, WorkflowStep, ExecutionMessage, WorkflowEvent,
+ * FlowCollaborator) need a tenant id for a single query, in code that has no
+ * reason to open a transaction — the flow execution engine writing a step row,
+ * an API route reading step history.
+ *
+ * Without this the only options were to thread `tenantTransaction` through
+ * ~43 call sites across the execution engine and nine API routes, or to route
+ * them all through the unguarded system client and give up the database
+ * boundary for them entirely. This is neither: the guard in src/lib/prisma.ts
+ * reads this and opens a correctly-scoped transaction for exactly the query
+ * that needs one.
+ *
+ * Set by `withAuthenticatedApi` (from the caller's own auth context) and by the
+ * flow and agent execution engines (from the job's organizationId). It is a
+ * hint about WHICH tenant, never a grant of access: every read still goes
+ * through the tenant guard, and PostgreSQL's policy is still what enforces.
+ */
+export const ambientOrganization = new AsyncLocalStorage<string>()
+
 export function exactOrganizationId(value: unknown): string | null {
   const found = new Set<string>()
   const visit = (node: unknown) => {

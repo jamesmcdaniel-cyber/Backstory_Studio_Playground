@@ -6,6 +6,8 @@ import { AuthContextError, PermissionDeniedError, requireAuthContext, type AuthC
 import type { Permission } from '@/lib/authz/permissions'
 import { rateLimit, type RateLimitOptions } from '@/lib/ratelimit'
 import { isCustomerEdition } from '@/lib/edition'
+import { clientIp, recordSecurityEvent } from '@/lib/security/events'
+import { ambientOrganization } from '@/lib/tenant-database-context'
 
 /**
  * Default write budget, per user per minute, applied to every mutating request.
@@ -108,6 +110,11 @@ export function withAuthenticatedApi(
   },
 ) {
   return async (request: NextRequest, context?: unknown): Promise<Response> => {
+    // Held outside the try so the catch can attribute a 403 to the account that
+    // earned it. A 401 never reaches this — there is no identity to record.
+    let authContext: AuthContext | null = null
+    const where = { path: request.nextUrl.pathname, method: request.method, ip: clientIp(request) }
+
     try {
       if (options?.internalOnly && isCustomerEdition()) {
         return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
@@ -120,6 +127,11 @@ export function withAuthenticatedApi(
       if (bodyLimit !== false && !READ_METHODS.has(request.method)) {
         const declared = Number(request.headers.get('content-length'))
         if (Number.isFinite(declared) && declared > bodyLimit) {
+          await recordSecurityEvent({
+            ...where,
+            kind: 'abuse.body_too_large',
+            detail: { declaredBytes: declared, limitBytes: bodyLimit },
+          })
           return NextResponse.json(
             { success: false, error: 'Request body is too large.', code: 'BODY_TOO_LARGE' },
             { status: 413 },
@@ -128,6 +140,7 @@ export function withAuthenticatedApi(
       }
 
       const auth = await requireAuthContext(options)
+      authContext = auth
       // The gate runs BEFORE the handler, so a rejected call has no side effects.
       if (options?.permission && !auth.can(options.permission)) {
         throw new PermissionDeniedError(options.permission)
@@ -139,6 +152,13 @@ export function withAuthenticatedApi(
       if (writeLimit !== false && !READ_METHODS.has(request.method)) {
         const limited = await rateLimit(`write:${auth.userId}`, writeLimit)
         if (!limited.ok) {
+          await recordSecurityEvent({
+            ...where,
+            kind: 'abuse.rate_limited',
+            userId: auth.userId,
+            organizationId: auth.organizationId,
+            detail: { gate: 'write-budget', limit: writeLimit.limit, windowMs: writeLimit.windowMs },
+          })
           return NextResponse.json(
             { success: false, error: 'Too many requests — please slow down.', code: 'RATE_LIMITED' },
             {
@@ -149,11 +169,35 @@ export function withAuthenticatedApi(
         }
       }
 
-      const result = await handler(request, auth, context)
+      // Establish the caller's tenant for the whole handler. Parent-scoped
+      // models (FlowRunStep, WorkflowStep, ExecutionMessage, WorkflowEvent,
+      // FlowCollaborator) resolve tenancy through a parent row, so under RLS
+      // they need `app.organization_id` set for a query that has no
+      // organizationId of its own to route on. The guard in src/lib/prisma.ts
+      // reads this and opens a correctly-scoped transaction for exactly those
+      // queries. A hint about WHICH tenant, not a grant: the permission gate
+      // above already decided the caller may be here, and PostgreSQL's policy
+      // is still what enforces.
+      const result = await ambientOrganization.run(auth.organizationId, () =>
+        handler(request, auth, context),
+      )
 
       return result instanceof Response ? result : NextResponse.json(result)
     } catch (error) {
       if (error instanceof AuthContextError) {
+        // 401 is anonymous by definition; 403 always has an identity behind it,
+        // which is what makes a permission sweep attributable to an account
+        // rather than smeared across the IPs it dialled from.
+        await recordSecurityEvent({
+          ...where,
+          kind: error.status === 403 ? 'auth.forbidden' : 'auth.failed',
+          userId: authContext?.userId ?? null,
+          organizationId: authContext?.organizationId ?? null,
+          detail: {
+            code: error.code,
+            ...(error instanceof PermissionDeniedError && { required: error.required }),
+          },
+        })
         return NextResponse.json(
           {
             success: false,
@@ -179,6 +223,17 @@ export function withAuthenticatedApi(
             cause: error.cause instanceof Error ? error.cause.message : error.cause ? String(error.cause) : undefined,
           })
           captureError(error.cause ?? error, { path: request.nextUrl.pathname, code: error.code })
+        }
+        // The AI guard and the per-route limiters throw 429 rather than
+        // returning it, so this is where interactive LLM abuse becomes visible.
+        if (error.status === 429) {
+          await recordSecurityEvent({
+            ...where,
+            kind: 'abuse.rate_limited',
+            userId: authContext?.userId ?? null,
+            organizationId: authContext?.organizationId ?? null,
+            detail: { gate: error.code },
+          })
         }
         return NextResponse.json(
           { success: false, error: error.message, code: error.code },

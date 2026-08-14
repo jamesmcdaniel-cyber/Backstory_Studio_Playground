@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { Job } from 'bullmq'
+import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { hashToken } from '@/lib/crypto/secrets'
 import { applyAlwaysOutputData, keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
@@ -349,6 +350,16 @@ async function failPreparedRun(flowRunId: string, organizationId: string, messag
  * poll live per-step status. Returns the terminal run status + output.
  */
 export async function runFlowExecution(
+  job: FlowExecutionJob,
+): Promise<{ flowRunId: string; status: string; output: unknown }> {
+  // The engine writes FlowRunStep rows, which resolve tenancy through their
+  // parent run rather than a column of their own. Establishing the job's tenant
+  // here lets the Prisma guard scope those writes under RLS without threading a
+  // transaction through ~20 call sites in this file.
+  return ambientOrganization.run(job.organizationId, () => runFlowExecutionInner(job))
+}
+
+async function runFlowExecutionInner(
   job: FlowExecutionJob,
 ): Promise<{ flowRunId: string; status: string; output: unknown }> {
   const flow = await prisma.flow.findFirst({ where: { id: job.flowId, organizationId: job.organizationId } })

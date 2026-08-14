@@ -2,8 +2,8 @@ import { Prisma, PrismaClient } from '@prisma/client'
 import type { ITXClientDenyList } from '@prisma/client/runtime/library'
 import { assertOrgScoped, ORG_SCOPED_MODELS } from '@/lib/tenant-guard'
 import { applyOwnerLiveness } from '@/lib/authz/credential-owner-guard'
-import { exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
-import { assertRlsContext, rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
+import { ambientOrganization, exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
+import { assertRlsContext, RLS_PARENT_SCOPED_MODELS, rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: ReturnType<typeof createGuardedClient>
@@ -33,10 +33,27 @@ function createGuardedClient(base: PrismaClient) {
           // ever stops being true. See src/lib/authz/credential-owner-guard.ts.
           const guardedArgs = applyOwnerLiveness(model, operation, args) as typeof args
           // Parent-scoped models (flow run steps, collaborators, execution
-          // messages) are NOT routed below — they have no organizationId to
-          // route on — but their policies still read app.organization_id. Absent
-          // it, PostgreSQL returns zero rows with no error. Throw instead.
-          assertRlsContext(model, operation, tenantDatabaseContext.getStore() !== undefined)
+          // messages) have no organizationId to route on, but their policies
+          // still read app.organization_id. Absent it, PostgreSQL returns zero
+          // rows with no error.
+          //
+          // Inside a tenantTransaction the setting is already there. Otherwise
+          // fall back to the ambient organization the API wrapper or execution
+          // engine established, and open a transaction for just this query.
+          // Only when there is neither is the query genuinely unattributable,
+          // and assertRlsContext throws rather than let it return empty.
+          if (model && rlsActive() && RLS_PARENT_SCOPED_MODELS.has(model)) {
+            const active = tenantDatabaseContext.getStore()
+            if (!active) {
+              const organizationId = ambientOrganization.getStore()
+              assertRlsContext(model, operation, Boolean(organizationId))
+              return appPrismaBase.$transaction(async (tx) => {
+                await tx.$queryRaw`SELECT set_config('app.organization_id', ${organizationId!}, true)`
+                const delegate = (tx as unknown as Record<string, Record<string, (value: unknown) => unknown>>)[model.charAt(0).toLowerCase() + model.slice(1)]
+                return delegate[operation](guardedArgs)
+              })
+            }
+          }
           // Per-model, not a global boolean: see src/lib/authz/rls-rollout.ts
           // for why enabling every table at once is what caused the outages.
           if (rlsAppliesTo(model) && model && ORG_SCOPED_MODELS.has(model)) {

@@ -99,7 +99,24 @@ export function buildContentSecurityPolicy({ nonce, isDevelopment = false }: Csp
     "base-uri 'self'",
     "object-src 'none'",
     "form-action 'self'",
+    // Both spellings on purpose. `report-uri` is deprecated but is what Safari
+    // and older Chrome/Firefox actually send; `report-to` is the modern one and
+    // needs the Reporting-Endpoints response header (set in src/middleware.ts).
+    // Sending only the modern directive would collect nothing from a large share
+    // of real browsers — precisely the ones whose violations we most need.
+    `report-uri ${CSP_REPORT_PATH}`,
+    `report-to ${CSP_REPORT_GROUP}`,
   ].join('; ')
+}
+
+/** Where violation reports are collected. See src/app/api/csp-report/route.ts. */
+export const CSP_REPORT_PATH = '/api/csp-report'
+/** Reporting API group name, shared by `report-to` and Reporting-Endpoints. */
+export const CSP_REPORT_GROUP = 'csp'
+
+/** Value for the `Reporting-Endpoints` header that `report-to` resolves against. */
+export function reportingEndpointsHeader(): string {
+  return `${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`
 }
 
 /** The Sentry ingest origin derived from the DSN, or null when unparseable. */

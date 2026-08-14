@@ -116,6 +116,11 @@ const cases = (): Case[] => [
   { route: 'agents/[id]/chat', method: 'PATCH', run: async () => (await import('../agents/[id]/chat/route')).PATCH(rq(`/api/agents/${agentId}/chat`, 'PATCH', { sessionId: 'missing', title: 'x' })) },
   { route: 'agents/[id]/runs/[runId]', method: 'DELETE', run: async () => (await import('../agents/[id]/runs/[runId]/route')).DELETE(rq(`/api/agents/${agentId}/runs/${executionId}`, 'DELETE', {})) },
 
+  // Unauthenticated by design — a browser posts violation reports with no
+  // credentials. Must answer 204 to anything, including junk: a collector that
+  // errors gets retried by the browser.
+  { route: 'csp-report', method: 'POST', run: async () => (await import('../csp-report/route')).POST(rq('/api/csp-report', 'POST', { 'csp-report': { 'effective-directive': 'script-src', 'blocked-uri': 'inline' } })) },
+
   { route: 'agent-templates', method: 'POST', run: async () => (await import('../agent-templates/route')).POST(rq('/api/agent-templates', 'POST', { name: 'Smoke', instructions: 'do it' })) },
   { route: 'agent-templates', method: 'PUT', run: async () => (await import('../agent-templates/route')).PUT(rq('/api/agent-templates', 'PUT', { id: 'missing' })) },
   { route: 'agent-templates', method: 'DELETE', run: async () => (await import('../agent-templates/route')).DELETE(rq('/api/agent-templates', 'DELETE', { id: 'missing' })) },

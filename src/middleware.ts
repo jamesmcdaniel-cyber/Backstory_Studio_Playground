@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 import { isEditionBlockedPath } from '@/lib/edition'
-import { buildContentSecurityPolicy, cspHeaderName, generateNonce } from '@/lib/security/csp'
+import {
+  buildContentSecurityPolicy,
+  cspHeaderName,
+  generateNonce,
+  reportingEndpointsHeader,
+} from '@/lib/security/csp'
 
 export async function middleware(request: NextRequest) {
   // Refused at the edge, before any session work: in the customer edition the
@@ -32,6 +37,10 @@ export async function middleware(request: NextRequest) {
 
   const response = await updateSession(request, requestHeaders)
   response.headers.set(headerName, policy)
+  // Resolves the policy's `report-to csp` group. Without this header the modern
+  // directive names a group the browser has never heard of and silently drops
+  // the report.
+  response.headers.set('Reporting-Endpoints', reportingEndpointsHeader())
   return response
 }
 

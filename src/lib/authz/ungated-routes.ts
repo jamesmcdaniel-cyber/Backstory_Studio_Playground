@@ -12,6 +12,10 @@ export const UNGATED_ROUTES: readonly string[] = [
   'cron/dispatch',                        // CRON_SECRET header
   'invitations/lookup',                   // pre-auth: resolves an invite token
   'health',                               // public liveness probe
+  // Browsers post CSP violation reports with no credentials, and a violation can
+  // fire on a page whose session is what broke. Treated as untrusted anonymous
+  // input: rate limited, size capped, never echoed.
+  'csp-report',
   'peopleai/callback',                    // OAuth redirect, validated by state
   // Session-only by design: the wrapper's entitlement gate would 403 exactly
   // the users who need this page to tell them they are not yet entitled.

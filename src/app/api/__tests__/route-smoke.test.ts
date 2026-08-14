@@ -34,6 +34,11 @@ const routeNames = () =>
 // POST/PUT/PATCH/DELETE handlers that authenticate by signature/secret/bearer/
 // OAuth state instead of a session — each vetted in a security audit.
 const mutatingExempt = new Set([
+  // CSP violation reports: browsers post these with no credentials, and a
+  // violation can fire on a page whose session is exactly what broke. Carries no
+  // authority — it only writes a log line — and is rate limited fail-closed per
+  // client, size capped, and never echoes input back.
+  'csp-report',
   'nango/webhook',       // Nango webhook signature (verifyIncomingWebhookRequest)
   'flows/[id]/trigger',  // per-flow webhook secret (constant-time)
   'agents/[id]/trigger', // per-agent trigger secret (constant-time)

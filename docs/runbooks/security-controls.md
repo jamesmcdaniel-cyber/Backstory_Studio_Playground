@@ -19,10 +19,30 @@ static policy in `next.config.js`) re-opens that path.
 1. Deploy with `CSP_REPORT_ONLY=true`. The browser sends
    `Content-Security-Policy-Report-Only`: violations are reported, nothing is
    blocked.
-2. Watch browser consoles and Sentry for `Refused to …` reports for a full
-   release cycle, exercising the flow builder, huddle, integrations and MCP
-   screens — those pull in the most third-party client code.
-3. Unset `CSP_REPORT_ONLY` to enforce.
+2. Watch the logs for `CSP violation reported`. Reports are collected by
+   [`/api/csp-report`](../../src/app/api/csp-report/route.ts) and logged at
+   `warn` with the directive, blocked URI, document URI and a 100-character
+   script sample. Give it a full release cycle, and exercise the flow builder,
+   huddle, integrations and MCP screens — those pull in the most third-party
+   client code.
+3. Triage each distinct directive/blocked-URI pair. Add legitimate origins to
+   `buildContentSecurityPolicy`; anything unexplained is the finding the
+   report-only period exists to surface.
+4. Unset `CSP_REPORT_ONLY` to enforce.
+
+The collector is deliberately unauthenticated — a browser posts reports with no
+credentials, and a violation can fire on a page whose session is exactly what
+broke. It carries no authority (it only writes a log line) and is rate limited
+fail-closed per client, size capped at 16 KB, and never echoes input back. It
+answers `204` to everything including malformed bodies: a collector that errors
+gets retried by the browser.
+
+The policy carries **both** `report-uri` and `report-to`. `report-uri` is
+deprecated but is what Safari and older Chrome/Firefox actually send, so shipping
+only the modern directive would collect nothing from a large share of real
+browsers. `report-to` additionally needs the `Reporting-Endpoints` response
+header, set alongside the policy in `src/middleware.ts`; without it the browser
+silently drops the report.
 
 ### Adding a new external origin
 

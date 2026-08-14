@@ -65,6 +65,42 @@ test('the policy is nonce-based, per-response, and has no unsafe script sources'
   expect(nonceOf(secondPolicy!)).not.toEqual(nonceOf(policy!))
 })
 
+test('violation reports have somewhere to land', async ({ page, request }) => {
+  const response = await page.goto('/auth')
+  const policy = response!.headers()['content-security-policy']
+
+  // Both spellings: report-uri is deprecated but is what Safari and older
+  // Chrome/Firefox actually send. Shipping only report-to would collect nothing
+  // from a large share of real browsers.
+  expect(policy).toContain('report-uri /api/csp-report')
+  expect(policy).toContain('report-to csp')
+
+  // report-to names a group that only exists if this header defines it.
+  expect(response!.headers()['reporting-endpoints']).toContain('csp="/api/csp-report"')
+
+  // The collector accepts an unauthenticated report — a violation can fire on a
+  // page whose session is exactly what broke.
+  const posted = await request.post('/api/csp-report', {
+    headers: { 'content-type': 'application/csp-report' },
+    data: {
+      'csp-report': {
+        'document-uri': 'https://example.test/auth',
+        'effective-directive': 'script-src',
+        'blocked-uri': 'inline',
+        disposition: 'report',
+      },
+    },
+  })
+  expect(posted.status()).toBe(204)
+
+  // Malformed input must not 500 — an erroring collector gets retried.
+  const junk = await request.post('/api/csp-report', {
+    headers: { 'content-type': 'application/csp-report' },
+    data: 'not json at all',
+  })
+  expect(junk.status()).toBe(204)
+})
+
 test('exactly one CSP header is sent', async ({ page }) => {
   // Two policies are enforced as their INTERSECTION, so a static header left in
   // next.config.js would quietly neuter the nonced one.

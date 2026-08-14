@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { TURNSTILE_ORIGIN } from '../captcha'
 
 /**
  * Password authentication may not be reintroduced without bot protection.
@@ -76,7 +77,6 @@ test('password auth has no call site, or the one it has carries a captcha token'
 
 test('the captcha origin is a single pinned host', () => {
   // The CSP allow-lists this exact value; a wildcard here would widen script-src.
-  const { TURNSTILE_ORIGIN } = require('../captcha') as typeof import('../captcha')
   assert.equal(TURNSTILE_ORIGIN, 'https://challenges.cloudflare.com')
   assert.ok(!TURNSTILE_ORIGIN.includes('*'))
 })

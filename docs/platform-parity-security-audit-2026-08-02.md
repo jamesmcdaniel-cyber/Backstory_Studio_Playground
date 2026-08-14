@@ -127,13 +127,17 @@ token length and applies a fail-closed per-client request budget.
 
 ## Residual security and operational risk
 
+> **Update 2026-08-13.** The rows marked ✅ below were closed in the hardening
+> pass of that date. Operational procedures for the new controls are in
+> [`runbooks/security-controls.md`](runbooks/security-controls.md).
+
 | Priority | Residual item | Required action |
 | --- | --- | --- |
-| P1 | No PostgreSQL row-level security | Design RLS with Prisma transaction pooling, a non-owner app role, forced policies, and a narrow audited system bypass; load-test before rollout |
+| P1 | ✅ No PostgreSQL row-level security — **mechanism closed, rollout pending** | RLS is built and now stages per-model via `DATABASE_RLS_ENABLED` (`src/lib/authz/rls-rollout.ts`) instead of the all-at-once boolean that caused three outages. Enabling it in production remains an ops task; follow the runbook |
 | P1 | Production configuration is not proven by source | Verify Redis is shared, worker/web use the same queue, `CRON_SECRET`, scanner, encryption key, provider keys, Sentry, webhook replay protection, and separate DB pool limits in deployed environments |
 | P1 | Backup/restore and incident recovery are unproven | Define RPO/RTO, automate backups, run a restore drill, document secret rotation and worker/queue recovery |
-| P2 | Parent-page CSP has no script/style source restrictions | Add per-request nonces and a strict Next.js-compatible CSP; keep the preview iframe policy independently restrictive |
-| P2 | Encryption format has no key id/rotation ring | Add versioned key identifiers, dual-read/single-write rotation, and a re-encryption job before rotating production keys |
+| P2 | ✅ Parent-page CSP has no script/style source restrictions | Closed. Per-request nonce + `script-src 'strict-dynamic'` built in `src/lib/security/csp.ts`, attached in `src/middleware.ts`, ships behind `CSP_REPORT_ONLY`. Required forcing dynamic rendering app-wide — a static page carries no nonce. Verified in a real browser against a production build (`e2e/csp.spec.ts`) |
+| P2 | ✅ Encryption format has no key id/rotation ring | Closed. `v2:<keyId>:…` format with a dual-read key ring (`ENCRYPTION_KEY_PREVIOUS`) and `npm run secrets:rotate`. A new encrypted column fails `sensitive-columns.test.ts` until it is added to the rotation script |
 | P2 | Anonymous flow share tokens are plaintext bearer values in the DB | Consider a hashed lookup token or separately stored digest; continue treating URLs and DB access as credential-bearing |
 | P2 | No automated browser E2E/security journey | Add authenticated Playwright journeys for invite, template-use, flow publish/trigger, integration/MCP selection, history restore, approvals, and cross-role access |
 | P2 | DNS rebinding is narrowed, not eliminated | For the highest-risk outbound calls, pin the validated IP through connection establishment or use an egress proxy with network policy |
@@ -168,3 +172,76 @@ Before calling the product universally “fully built,” decide its launch tier
   existing Supabase dynamic-require and optional BullMQ Valkey-module warnings
 - Largest client entry is the flow builder (705 kB first load in this build); bundle
   splitting the builder is a P2 performance follow-up before broad low-bandwidth use
+
+## Hardening pass — 2026-08-13
+
+Closed against a 20-point application-security checklist. Full detail in
+[`runbooks/security-controls.md`](runbooks/security-controls.md).
+
+### H-01 — published anon key had unrevoked table privileges — high — fixed
+
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` ships in the browser bundle by design, but no
+migration had ever revoked the `anon` / `authenticated` grants that Supabase's
+project defaults apply to objects created in `public` — and Prisma creates every
+table there. With RLS off there were no row policies behind those grants, so the
+published key was potentially a full cross-tenant read over PostgREST.
+Migration `20260813120000_revoke_postgrest_grants` revokes them and the default
+privileges that would re-grant them on the next `migrate deploy`. Safe because
+the Supabase client is used for Auth and Realtime only — there is no
+`supabase.from(...)` anywhere in `src/`.
+
+### H-02 — session cookie readable by scripts with no script-src — high — fixed
+
+The Supabase session cookie omits `httpOnly` (the browser client reads it via
+`document.cookie`), and `src/lib/supabase/config.ts` documented CSP as the
+compensating control. That control did not exist: the shipped policy set
+`frame-ancestors`, `base-uri` and `object-src` and left `script-src` unset, so
+any XSS could read the access **and** refresh token. Now a per-request nonce with
+`'strict-dynamic'`.
+
+Separately, the **browser** client was constructed without `SUPABASE_COOKIE_OPTIONS`
+at all, so every token refresh rewrote the session cookie with library defaults —
+no `secure`, no `sameSite` — overwriting the server's flags. Fixed in
+`src/lib/supabase/client.ts`.
+
+### H-03 — unbounded request bodies on mutating routes — medium — fixed
+
+`withAuthenticatedApi` enforced auth, permission and rate limit but no body size.
+Routes taking free-form JSON by design (signal payload, resume payload, agent
+trigger input) had no ceiling. Now a wrapper-level `content-length` check
+(`API_MAX_BODY_BYTES`, default 4 MB), checked before session work, with explicit
+higher ceilings on the three multipart upload routes.
+
+### H-04 — dependency updates were never proposed — low — fixed
+
+CI audited dependencies but nothing opened update PRs, so a CVE was discovered
+only when a gate broke. Added Dependabot (npm + GitHub Actions), tightened the
+production audit gate from `high` to `moderate`, and added a non-blocking dev
+dependency audit for the build-chain supply-chain surface.
+
+### Assessed and found already sound
+
+Parameterized queries (all raw SQL is tagged-template or static-literal, with an
+existing guard test), output escaping (no `dangerouslySetInnerHTML`, no
+`innerHTML`, no `rehype-raw`; agent HTML is isolated in a script-less sandboxed
+iframe behind `default-src 'none'`), password hashing (delegated to Supabase),
+HTTPS/HSTS, git secret scanning (gitleaks over full history), and server-side
+authorization.
+
+Input validation was **better than a file-level `zod` count suggests**: of 138
+route files, only three read a body without a schema, and in all three the
+payload is free-form by design — the real exposure there was size, not shape
+(H-03).
+
+### Scope correction
+
+An earlier reading of this checklist described login rate limiting and bot
+protection as open gaps against a password sign-in form. There is no password
+form: `signIn`, `signUp` and `resetPassword` exist on the Supabase provider
+context with **zero callers**, and sign-in is Google OAuth and SSO only. The
+residual exposure is that Supabase's password endpoints stay reachable with the
+published anon key for any account that has acquired a password through the
+admin-initiated recovery flow. The effective control is Supabase-side CAPTCHA
+(a dashboard setting, since those requests never touch this app); the client
+plumbing and an enforcing guard test are in place so password auth cannot be
+reintroduced without it.

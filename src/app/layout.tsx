@@ -33,6 +33,27 @@ export const metadata: Metadata = {
   description: 'Build, run, and review AI agents connected to your tools.',
 }
 
+/**
+ * Every page renders per-request so the CSP nonce can be stamped onto Next's
+ * inline bootstrap scripts.
+ *
+ * A statically prerendered page is HTML built before any request exists, so
+ * there is no per-request nonce to put in it — Chrome refuses its inline scripts
+ * outright and the page renders blank under the enforced policy. (Verified: the
+ * static routes served 0 nonces while the dynamic ones served theirs correctly.)
+ * This is the documented Next.js consequence of nonce-based CSP, not a
+ * workaround.
+ *
+ * The cost is small here: src/lib/supabase/middleware.ts already sends
+ * `Cache-Control: no-store` on every non-public page, so the authenticated
+ * surface was never being served from a cache anyway — prerendering only saved
+ * server render time on a shell whose data all arrives via API calls. The
+ * marketing pages ('/', '/privacy', '/terms') give up static prerender, which is
+ * the real trade, accepted so the whole origin gets one strict policy rather
+ * than a strong policy on some paths and 'unsafe-inline' on others.
+ */
+export const dynamic = 'force-dynamic'
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${waldenburg.variable} ${anonymousPro.variable}`}>

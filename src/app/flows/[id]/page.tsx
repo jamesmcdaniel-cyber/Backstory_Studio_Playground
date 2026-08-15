@@ -5,7 +5,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, FileText, FileWarning, BookmarkPlus, Workflow } from 'lucide-react'
+import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, FileText, FileWarning, BookmarkPlus, Workflow, SlidersHorizontal } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { HuddleJamPill } from '@/components/flows/huddle-jam-pill'
 import { useSupabase } from '@/components/providers/supabase-provider'
@@ -2265,10 +2265,10 @@ function FlowBuilder() {
             {saving ? 'Saving…' : dirty ? 'Unsaved details' : published ? `Published v${version}` : 'Draft saved'}
           </p>
         </div>
-        <Button variant="ghost" size="icon" onClick={undo} aria-label="Undo" title="Undo (⌘Z)">
+        <Button variant="ghost" size="icon" onClick={undo} aria-label="Undo" title="Undo (⌘Z)" className="hidden sm:inline-flex">
           <Undo2 className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={redo} aria-label="Redo" title="Redo (⌘⇧Z)">
+        <Button variant="ghost" size="icon" onClick={redo} aria-label="Redo" title="Redo (⌘⇧Z)" className="hidden sm:inline-flex">
           <Redo2 className="h-4 w-4" />
         </Button>
         <DropdownMenu>
@@ -2346,6 +2346,33 @@ function FlowBuilder() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        {!external && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" className="lg:hidden" aria-label="Open flow actions">
+                <Play className="mr-1.5 h-4 w-4" /> Actions
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>{dirty ? 'Unsaved details' : published ? `Published v${version}` : 'Draft saved'}</DropdownMenuLabel>
+              <DropdownMenuItem disabled={saving} onSelect={() => void save()}>
+                <Save className="h-4 w-4" /> Save now
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={publishing} onSelect={() => void publish(published && !dirty && !unpublishedChanges ? 'unpublish' : undefined)}>
+                <ShieldCheck className="h-4 w-4" /> {published && !dirty && !unpublishedChanges ? 'Unpublish' : 'Publish'}
+              </DropdownMenuItem>
+              {published && (dirty || unpublishedChanges) && (
+                <DropdownMenuItem onSelect={() => void publish('revert')}>
+                  <Undo2 className="h-4 w-4" /> Revert to published
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={running} onSelect={() => void run()}>
+                <Play className="h-4 w-4" /> Run flow
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {flowImport.fileInput}
         <input
           ref={replaceInputRef}
@@ -2376,9 +2403,45 @@ function FlowBuilder() {
             </button>
           ))}
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="lg:hidden" aria-label="Open builder panels">
+              <SlidersHorizontal className="mr-1.5 h-4 w-4" /> Panels
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {!external && (
+              <>
+                <DropdownMenuItem onSelect={() => togglePanel('runs')}>
+                  <ListChecks className="h-4 w-4" /> {showRuns ? '✓ ' : ''}Runs
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => togglePanel('versions')}>
+                  <History className="h-4 w-4" /> {showVersions ? '✓ ' : ''}History
+                </DropdownMenuItem>
+              </>
+            )}
+            {canEdit && (
+              <DropdownMenuItem onSelect={() => togglePanel('copilot')}>
+                <Sparkles className="h-4 w-4" /> {showCopilot ? '✓ ' : ''}Copilot
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => togglePanel('checker')}>
+              <ShieldCheck className="h-4 w-4" /> {showChecker ? '✓ ' : ''}Checker
+              {validation.errors.length > 0 && <Badge variant="risk" className="ml-auto">{validation.errors.length}</Badge>}
+            </DropdownMenuItem>
+            {!external && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => router.push(`/flows/${id}/activity`)}>
+                  <ScrollText className="h-4 w-4" /> Activity
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
         {/* Panel toggles — one cluster, and the open panel reads as pressed,
             so the toolbar says which workspace surfaces are showing. */}
-        <div className="flex items-center gap-0.5 rounded-lg border border-border p-0.5">
+        <div className="hidden items-center gap-0.5 rounded-lg border border-border p-0.5 lg:flex">
           {!external && (
             <>
               <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => togglePanel('runs')} className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
@@ -2413,7 +2476,7 @@ function FlowBuilder() {
           )}
         </div>
         {!external && (
-          <Button variant="ghost" size="sm" onClick={() => router.push(`/flows/${id}/activity`)}>
+          <Button variant="ghost" size="sm" onClick={() => router.push(`/flows/${id}/activity`)} className="hidden lg:inline-flex">
             <ScrollText className="mr-1.5 h-4 w-4" /> Activity
           </Button>
         )}
@@ -2437,7 +2500,7 @@ function FlowBuilder() {
           </div>
         )}
         {!external && (
-          <>
+          <div className="hidden items-center gap-2 lg:flex">
             <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
             <Button variant="outline" size="sm" onClick={save} loading={saving} className="relative">
               <Save className="mr-1.5 h-4 w-4" /> Save now
@@ -2472,7 +2535,7 @@ function FlowBuilder() {
             <Button size="sm" onClick={run} disabled={running}>
               {running ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />} Run
             </Button>
-          </>
+          </div>
         )}
       </div>
 

@@ -106,6 +106,8 @@ export function Sidebar() {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false)
   const orgMenuRef = useRef<HTMLDivElement>(null)
   const orgButtonRef = useRef<HTMLButtonElement>(null)
+  const mobileSidebarRef = useRef<HTMLElement>(null)
+  const mobileTriggerRef = useRef<HTMLButtonElement>(null)
   const [organizations, setOrganizations] = useState<Organization[]>(() => sidebarCache?.organizations ?? [])
   const [uploadingLogo, setUploadingLogo] = useState(false)
   const logoInputRef = useRef<HTMLInputElement>(null)
@@ -169,6 +171,53 @@ export function Sidebar() {
   useEffect(() => {
     setMobileOpen(false)
   }, [pathname])
+
+  useEffect(() => {
+    const sidebar = mobileSidebarRef.current
+    if (!sidebar) return
+    const mobile = window.matchMedia('(max-width: 1023px)')
+    const updateInert = () => { sidebar.inert = mobile.matches && !mobileOpen }
+    updateInert()
+    mobile.addEventListener('change', updateInert)
+    return () => {
+      sidebar.inert = false
+      mobile.removeEventListener('change', updateInert)
+    }
+  }, [mobileOpen])
+
+  useEffect(() => {
+    if (!mobileOpen) return
+    const sidebar = mobileSidebarRef.current
+    const focusable = () => Array.from(sidebar?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), [tabindex="0"]') ?? [])
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setMobileOpen(false)
+        mobileTriggerRef.current?.focus()
+        return
+      }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      if (!items.length) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    window.requestAnimationFrame(() => focusable()[0]?.focus())
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [mobileOpen])
 
   // No backdrop element: this sidebar's backdrop-blur + translate make it the
   // containing block for fixed children, so one rendered here covered only the
@@ -370,7 +419,7 @@ export function Sidebar() {
       )}
 
       <div className="fixed left-4 top-4 z-50 lg:hidden">
-        <Button variant="outline" size="icon" onClick={() => setMobileOpen(true)} className="bg-white shadow-2" aria-label="Open navigation">
+        <Button ref={mobileTriggerRef} variant="outline" size="icon" onClick={() => setMobileOpen(true)} className="bg-white shadow-2" aria-label="Open navigation" aria-expanded={mobileOpen}>
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
           </svg>
@@ -378,6 +427,10 @@ export function Sidebar() {
       </div>
 
       <aside
+        ref={mobileSidebarRef}
+        role={mobileOpen ? 'dialog' : undefined}
+        aria-modal={mobileOpen ? true : undefined}
+        aria-label={mobileOpen ? 'Workspace navigation' : undefined}
         className={cn(
           'fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-graphite-200/80 bg-white/95 shadow-2 backdrop-blur-xl transition-all duration-200 lg:relative lg:translate-x-0 lg:shadow-none',
           desktopCollapsed && 'lg:w-16',

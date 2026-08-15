@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { describeSchedule } from '@/lib/scheduling/cadence'
 import { toast } from 'sonner'
-import { ArrowRight, Check, Clock, Loader2, MessageSquare, Play, Plus, Send, Sparkles, Square } from 'lucide-react'
+import { ArrowRight, Check, Clock, Loader2, MessageSquare, Play, Plus, Send, Settings2, Sparkles, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
@@ -434,15 +434,15 @@ export function AssistantPanel({
 
   // Task-oriented starters that reflect what these agents do (run it, research,
   // briefing) plus quick config — not just "what did the last run do".
-  const suggestions = agent
+  const suggestions: Array<{ text: string; kind: 'action' | 'question' }> = agent
     ? [
-        'Run this agent now',
-        'Summarize the key findings from the latest run',
+        { text: 'Run this agent now', kind: 'action' },
+        { text: 'Change the schedule to run daily at 9am', kind: 'action' },
+        { text: 'Summarize the key findings from the latest run', kind: 'question' },
         ...(hasFailedRun
-          ? ['Why did the last run fail?']
-          : ['Draft a short brief from the most recent run']),
-        'What should I follow up on next?',
-        'Change the schedule to run daily at 9am',
+          ? [{ text: 'Why did the last run fail?', kind: 'question' as const }]
+          : [{ text: 'Draft a short brief from the most recent run', kind: 'question' as const }]),
+        { text: 'What should I follow up on next?', kind: 'question' },
       ]
     : []
 
@@ -519,7 +519,7 @@ export function AssistantPanel({
         </p>
       </div>
 
-      <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto" role="log" aria-live="polite" aria-busy={sending} aria-relevant="additions">
         {!agent && (
           <div className="flex flex-1 items-center justify-center p-4">
             <div className="max-w-sm text-center">
@@ -541,18 +541,38 @@ export function AssistantPanel({
               <p className="mt-2 text-sm text-gray-500">
                 Backstory grounds answers in this agent&apos;s configuration and recent runs — and runs the agent for you when you ask.
               </p>
-              <div className="mt-4 space-y-2">
-                {suggestions.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    disabled={sending}
-                    onClick={() => send(suggestion)}
-                    className="w-full rounded-lg border bg-white px-3 py-2 text-left text-sm text-gray-700 transition-colors duration-150 hover:border-indigo-200 hover:bg-indigo-50"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
+              <div className="mt-4 space-y-4 text-left">
+                {(['action', 'question'] as const).map((kind) => {
+                  const items = suggestions.filter((suggestion) => suggestion.kind === kind)
+                  if (!items.length) return null
+                  return (
+                    <div key={kind}>
+                      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                        {kind === 'action' ? <Settings2 className="h-3.5 w-3.5" /> : <MessageSquare className="h-3.5 w-3.5" />}
+                        {kind === 'action' ? 'Quick actions' : 'Ask about this agent'}
+                      </p>
+                      <div className="space-y-2">
+                        {items.map((suggestion) => (
+                          <button
+                            key={suggestion.text}
+                            type="button"
+                            disabled={sending}
+                            onClick={() => send(suggestion.text)}
+                            className={cn(
+                              'flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors duration-150',
+                              kind === 'action'
+                                ? 'border-horizon-200 bg-horizon-50/60 text-horizon-800 hover:border-horizon-400 hover:bg-horizon-50'
+                                : 'bg-white text-gray-700 hover:border-indigo-200 hover:bg-indigo-50',
+                            )}
+                          >
+                            {kind === 'action' && <Play className="h-3.5 w-3.5 shrink-0" />}
+                            {suggestion.text}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>
@@ -605,7 +625,7 @@ export function AssistantPanel({
               </div>
             ))}
             {sending && (
-              <div className="mr-8 flex items-center gap-2 rounded-lg border bg-gray-50 p-3 text-sm text-gray-500">
+              <div className="mr-8 flex items-center gap-2 rounded-lg border bg-gray-50 p-3 text-sm text-gray-500" role="status">
                 <Loader2 className="h-4 w-4 animate-spin" /> Working — a live run can take a few minutes…
               </div>
             )}

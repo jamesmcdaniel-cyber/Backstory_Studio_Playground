@@ -102,15 +102,8 @@ function categoryIcon(category: string) {
   return Sparkles
 }
 
-/**
- * The templates + skills browser. Rendered standalone (its own page header) or
- * `embedded` inside the dashboard behind the Agents/Templates toggle (header
- * suppressed). `onCount` reports the combined agent-template + skill-template
- * count up so the toggle can badge it — the badge covers both sub-tabs.
- * Sub-tabs (templates/skills) are local state — no route coupling — so it
- * drops into any container.
- */
-export function TemplatesView({ embedded = false, onCount }: { embedded?: boolean; onCount?: (count: number) => void }) {
+/** The canonical templates + skills browser at /templates. */
+export function TemplatesView() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [activeTab, setActiveTab] = useState<'templates' | 'skills'>(() => searchParams.get('asset') === 'skills' ? 'skills' : 'templates')
@@ -248,26 +241,31 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   // Standalone Library URLs retain the active collection and filters, making a
   // refined view shareable and preserving context when a detail page is closed.
   useEffect(() => {
-    if (embedded) return
-    const params = new URLSearchParams()
-    if (activeTab === 'skills') params.set('asset', 'skills')
-    if (search.trim()) params.set('q', search.trim())
-    if (category !== ALL_FILTER) params.set('category', category)
-    if (role !== ALL_FILTER) params.set('role', role)
-    const queryString = params.toString()
-    router.replace(queryString ? `/templates?${queryString}` : '/templates', { scroll: false })
-  }, [activeTab, category, embedded, role, router, search])
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams()
+      if (activeTab === 'skills') params.set('asset', 'skills')
+      if (search.trim()) params.set('q', search.trim())
+      if (category !== ALL_FILTER) params.set('category', category)
+      if (role !== ALL_FILTER) params.set('role', role)
+      const queryString = params.toString()
+      router.replace(queryString ? `/templates?${queryString}` : '/templates', { scroll: false })
+    }, 180)
+    return () => window.clearTimeout(timer)
+  }, [activeTab, category, role, router, search])
 
-  // Report the library size up (for the dashboard toggle badge) whenever it
-  // changes — initial load, create, or delete. The badge sits on the single
-  // "Templates" segment that holds BOTH sub-tabs, so it counts agent templates
-  // and skill templates together; counting templates alone under-reported the
-  // library by the whole Skills tab. Held back until the load settles so the
-  // badge never flashes a partial count.
   useEffect(() => {
-    if (loading) return
-    onCount?.(templates.length + skills.length)
-  }, [templates, skills, loading, onCount])
+    const restoreFromHistory = () => {
+      const params = new URLSearchParams(window.location.search)
+      setActiveTab(params.get('asset') === 'skills' ? 'skills' : 'templates')
+      setSearch(params.get('q') || '')
+      setCategory(params.get('category') || ALL_FILTER)
+      setRole(params.get('role') || ALL_FILTER)
+      setTemplatesPage(1)
+      setSkillsPage(1)
+    }
+    window.addEventListener('popstate', restoreFromHistory)
+    return () => window.removeEventListener('popstate', restoreFromHistory)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -386,8 +384,8 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   if (loading || error) {
     return (
       <>
-        <div className={cn('space-y-6', embedded && 'mx-auto max-w-6xl p-6')}>
-          {!embedded && <PageHeader eyebrow="Workspace" title="Library" />}
+        <div className="space-y-6">
+          <PageHeader eyebrow="Workspace" title="Library" />
           {loading && (
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               <Skeleton className="h-56 rounded-xl" />
@@ -406,8 +404,8 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
 
   return (
     <>
-      <div className={cn('space-y-6', embedded && 'mx-auto max-w-6xl p-6')}>
-        {!embedded && <PageHeader eyebrow="Workspace" title="Library" />}
+      <div className="space-y-6">
+        <PageHeader eyebrow="Workspace" title="Library" />
 
         {/* One simple search box plus two dropdowns — the same bar the flow
             gallery uses, so the two libraries filter identically. */}

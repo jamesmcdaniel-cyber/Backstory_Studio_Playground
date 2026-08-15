@@ -13,9 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AGENTS_CHANGED_EVENT, notifyAgentsChanged } from '@/components/layout/sidebar'
 import { getSnapshot, SnapshotError } from '@/lib/client/snapshot'
-import { TemplatesView } from '@/components/templates/templates-view'
 import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
-import { ViewToggle, type DashboardView } from './view-toggle'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { cn } from '@/lib/utils'
 
@@ -80,9 +78,6 @@ function AgentHQ() {
   // refresh and not an endless loop.
   const deepLinkMiss = useRef<string | null>(null)
 
-  // Agents / Templates view, driven by the URL (?view=templates) so it's
-  // linkable and the old /templates route can redirect straight into it.
-  const view: DashboardView = searchParams.get('view') === 'templates' ? 'templates' : 'agents'
   const navigateWithDirtyGuard = useCallback((action: () => void) => {
     if (configDirty) {
       setPendingNavigation(() => action)
@@ -90,10 +85,12 @@ function AgentHQ() {
     }
     action()
   }, [configDirty])
-  const setView = useCallback(
-    (next: DashboardView) => navigateWithDirtyGuard(() => router.replace(next === 'templates' ? '/agents?view=templates' : '/agents', { scroll: false })),
-    [navigateWithDirtyGuard, router],
-  )
+
+  // Phase one established /templates as the canonical Library. Preserve old
+  // bookmarked Agents URLs without maintaining a second, competing Library UI.
+  useEffect(() => {
+    if (searchParams.get('view') === 'templates') router.replace('/templates')
+  }, [router, searchParams])
 
   // Next.js client navigation does not trigger beforeunload. Capture links
   // while the form is dirty so sidebar, Library, and integration links receive
@@ -113,31 +110,6 @@ function AgentHQ() {
     document.addEventListener('click', guardLink, true)
     return () => document.removeEventListener('click', guardLink, true)
   }, [configDirty])
-  // Count for the toggle's Templates badge — fetched up front, then kept in sync
-  // by the embedded TemplatesView as templates are created/removed. The badge
-  // covers the whole Templates view, which holds BOTH sub-tabs, so it sums agent
-  // templates and skill templates; counting agent templates alone under-reported
-  // it by the entire Skills tab. Must stay in step with the equivalent sum in
-  // TemplatesView (src/components/templates/templates-view.tsx), or the number
-  // would jump when the view mounts.
-  const [templateCount, setTemplateCount] = useState<number | null>(null)
-  useEffect(() => {
-    const countOf = (url: string, key: 'templates' | 'skills') =>
-      fetch(url, { cache: 'no-store' })
-        .then((response) => (response.ok ? response.json() : null))
-        .then((data) => (Array.isArray(data?.[key]) ? data[key].length : null))
-        .catch(() => null)
-    Promise.all([
-      countOf('/api/agent-templates', 'templates'),
-      countOf('/api/skills', 'skills'),
-    ]).then((counts) => {
-      // A failed half is left out rather than counted as 0 — but if both fail,
-      // the badge stays hidden instead of claiming an empty library.
-      const loaded = counts.filter((n): n is number => n !== null)
-      if (loaded.length > 0) setTemplateCount(loaded.reduce((a, b) => a + b, 0))
-    })
-  }, [])
-
   // Drag-to-resize for the assistant pane's left edge. Grid layout (not the
   // flex row `ResizablePanel` assumes), so the drag math is inlined here and
   // drives `assistantWidth`, which the grid's gridTemplateColumns reads.
@@ -441,19 +413,9 @@ function AgentHQ() {
     // made the shell taller than the window — a page-level scrollbar, the
     // sidebar's footer clipped, and dead canvas showing at the edges.
     <div className="flex h-full min-h-0 flex-col overflow-y-auto lg:overflow-hidden">
-      {/* Agents / Templates toggle — folds the former Templates page into Home. */}
-      <div className="flex shrink-0 items-center justify-center border-b bg-white/80 px-4 py-2.5 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
-        <ViewToggle view={view} onChange={setView} templateCount={templateCount} />
-      </div>
-
-      {view === 'templates' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <TemplatesView embedded onCount={setTemplateCount} />
-        </div>
-      ) : (
-      /* lg: rows locked to the viewport (minmax(0,1fr)) — an implicit auto row
-         would grow with content and clip each pane's bottom (form buttons,
-         chat composer) behind the grid's overflow-hidden. */
+      {/* lg: rows locked to the viewport (minmax(0,1fr)) — an implicit auto row
+          would grow with content and clip each pane's bottom (form buttons,
+          chat composer) behind the grid's overflow-hidden. */}
       <div
         className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden"
         style={{ gridTemplateColumns: `minmax(0,1fr) clamp(${ASSISTANT_WIDTH_MIN}px, ${assistantWidth}px, 50%)` }}
@@ -775,7 +737,6 @@ function AgentHQ() {
           />
         </section>
       </div>
-      )}
       <ConfirmDialog
         open={pendingNavigation !== null}
         onOpenChange={(open) => !open && setPendingNavigation(null)}

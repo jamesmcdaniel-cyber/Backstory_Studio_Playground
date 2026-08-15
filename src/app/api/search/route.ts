@@ -6,15 +6,15 @@ function metadataOf(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, any>) : {}
 }
 
-// Global ⌘K search across agents and runs. Agent titles live in metadata,
-// but description always mirrors the title at create time, so text columns
-// cover them.
+// Global ⌘K search across the workspace's primary working objects. Agent
+// titles live in metadata, but description mirrors the title at create time,
+// so searchable text columns still cover them.
 export const GET = withAuthenticatedApi(async (request, auth) => {
   const query = (request.nextUrl.searchParams.get('q') || '').trim()
-  if (query.length < 2) return { success: true, agents: [], runs: [] }
+  if (query.length < 2) return { success: true, agents: [], flows: [], runs: [] }
 
   const text = { contains: query, mode: 'insensitive' as const }
-  const [agents, runs] = await Promise.all([
+  const [agents, flows, runs] = await Promise.all([
     prisma.agentTask.findMany({
       where: {
         organizationId: auth.organizationId,
@@ -24,6 +24,18 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
           agentVisibilityScope(auth.dbUser.id),
         ],
       },
+      orderBy: { updatedAt: 'desc' },
+      take: 8,
+    }),
+    prisma.flow.findMany({
+      where: {
+        organizationId: auth.organizationId,
+        AND: [
+          { OR: [{ name: text }, { description: text }, { folder: text }] },
+          agentVisibilityScope(auth.dbUser.id),
+        ],
+      },
+      select: { id: true, name: true, description: true, icon: true, folder: true, status: true },
       orderBy: { updatedAt: 'desc' },
       take: 8,
     }),
@@ -59,6 +71,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         visibility: agent.visibility,
       }
     }),
+    flows,
     runs: runs.map((run) => {
       const metadata = metadataOf(run.metadata)
       return {

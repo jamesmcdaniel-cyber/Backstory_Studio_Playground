@@ -79,7 +79,7 @@ export function LibraryFilterBar({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-2">
           <FilterSelect
             id="library-category"
             label="Category"
@@ -87,7 +87,7 @@ export function LibraryFilterBar({
             onChange={onCategoryChange}
             allLabel="All categories"
             options={categories}
-            className="w-[13rem]"
+            className="sm:w-[13rem]"
           />
           <FilterSelect
             id="library-role"
@@ -96,7 +96,7 @@ export function LibraryFilterBar({
             onChange={onRoleChange}
             allLabel="All roles"
             options={[...ROLES]}
-            className="w-[10rem]"
+            className="sm:w-[10rem]"
           />
         </div>
       </div>
@@ -122,14 +122,14 @@ function FilterSelect({
   className?: string
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2 sm:w-auto">
       {/* A real label element, not decorative text: the trigger is a button, so
           without this the dropdown is announced with no name at all. */}
       <span id={`${id}-label`} className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </span>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger id={id} aria-labelledby={`${id}-label ${id}`} className={`h-10 shrink-0 rounded-full ${className ?? ''}`}>
+        <SelectTrigger id={id} aria-labelledby={`${id}-label ${id}`} className={`h-10 min-w-0 flex-1 rounded-full sm:flex-none ${className ?? ''}`}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

@@ -606,6 +606,7 @@ export function AgentConfigForm({
   // Published flows for the "Call flows" picker (published = runnable by agents).
   const [orgFlows, setOrgFlows] = useState<{ id: string; name: string }[]>([])
   const [showMoreConfig, setShowMoreConfig] = useState(false)
+  const [showCapabilities, setShowCapabilities] = useState(false)
 
   useEffect(() => {
     if (!active) return
@@ -772,6 +773,14 @@ export function AgentConfigForm({
   }
 
   const dirty = JSON.stringify(draft) !== baselineRef.current
+  const enabledCapabilityCount = [
+    draft.allowSubagents,
+    draft.allowFlows,
+    draft.schedule.isActive,
+    draft.autoAnswerFromMemory,
+    draft.alwaysStrategize,
+    draft.requireApproval,
+  ].filter(Boolean).length
 
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -1115,6 +1124,28 @@ export function AgentConfigForm({
         )}
       </div>
 
+      <section className="overflow-hidden rounded-xl border border-border">
+        <button
+          type="button"
+          onClick={() => setShowCapabilities((open) => !open)}
+          aria-expanded={showCapabilities}
+          aria-controls="agent-capabilities"
+          className="flex w-full items-center justify-between gap-4 bg-muted/30 px-4 py-3 text-left transition-colors hover:bg-muted/60"
+        >
+          <span>
+            <span className="block text-sm font-semibold text-foreground">Automation and delegation</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">Scheduling, agent handoffs, callable flows, and run safeguards.</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            {enabledCapabilityCount > 0 && (
+              <Badge variant="outline" className="bg-background">{enabledCapabilityCount} enabled</Badge>
+            )}
+            <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', showCapabilities && 'rotate-180')} />
+          </span>
+        </button>
+
+        {showCapabilities && (
+        <div id="agent-capabilities" className="space-y-4 border-t border-border p-4">
       {/* ── Multi-agent handoff ─────────────────────────────────────── */}
       <div className="rounded-lg border p-3">
         <div className="flex items-center justify-between gap-3">
@@ -1125,6 +1156,7 @@ export function AgentConfigForm({
             </p>
           </div>
           <Switch
+            aria-label="Allow this agent to run other agents"
             checked={draft.allowSubagents === true}
             onCheckedChange={(on) => setDraft({ ...draft, allowSubagents: on })}
           />
@@ -1182,6 +1214,7 @@ export function AgentConfigForm({
             </p>
           </div>
           <Switch
+            aria-label="Allow this agent to call flows"
             checked={draft.allowFlows === true}
             onCheckedChange={(on) => setDraft({ ...draft, allowFlows: on })}
           />
@@ -1351,6 +1384,7 @@ export function AgentConfigForm({
                   </p>
                 </div>
                 <Switch
+                  aria-label="Answer from memory automatically"
                   checked={draft.autoAnswerFromMemory === true}
                   onCheckedChange={(on) => setDraft({ ...draft, autoAnswerFromMemory: on })}
                 />
@@ -1365,6 +1399,7 @@ export function AgentConfigForm({
                   </p>
                 </div>
                 <Switch
+                  aria-label="Always strategize before running"
                   checked={draft.alwaysStrategize === true}
                   onCheckedChange={(on) => setDraft({ ...draft, alwaysStrategize: on })}
                 />
@@ -1379,6 +1414,7 @@ export function AgentConfigForm({
                   </p>
                 </div>
                 <Switch
+                  aria-label="Require approval before sending messages"
                   checked={draft.requireApproval === true}
                   onCheckedChange={(on) => setDraft({ ...draft, requireApproval: on })}
                 />
@@ -1387,6 +1423,9 @@ export function AgentConfigForm({
           </div>
         )}
       </div>
+        </div>
+        )}
+      </section>
 
       {/* ── Compact Skills display ───────────────────────────────────── */}
       <div>
@@ -1416,7 +1455,7 @@ export function AgentConfigForm({
         <p className="mt-1.5 text-xs text-muted-foreground">
           Add skills from the{' '}
           <Link href="/templates?asset=skills" className="text-primary hover:underline">
-            Templates page
+            Library
           </Link>
           .
         </p>

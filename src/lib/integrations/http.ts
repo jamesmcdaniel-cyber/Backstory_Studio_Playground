@@ -79,7 +79,10 @@ export class HttpToolClient {
         select: { id: true },
       })
       if (!row) return null
-      return await resolveHttpCredential(row.id, this.organizationId)
+      return await resolveHttpCredential(row.id, this.organizationId, {
+        actorUserId: this.userId ?? null,
+        consumer: 'agent.http_tool_host_match',
+      })
     } catch (error) {
       // A missing/undecryptable credential must not fail the call — the request
       // still goes out unauthenticated and the API's own 401 tells the model.
@@ -132,7 +135,10 @@ export class HttpToolClient {
     let boundCredential: Awaited<ReturnType<typeof resolveHttpCredential>> | null = null
     let bearerToken: string | undefined
     if (endpoint.credentialId && this.organizationId) {
-      boundCredential = await resolveHttpCredential(endpoint.credentialId, this.organizationId)
+      boundCredential = await resolveHttpCredential(endpoint.credentialId, this.organizationId, {
+        actorUserId: this.userId ?? null,
+        consumer: 'agent.http_endpoint',
+      })
     } else if (endpoint.connectionId && this.organizationId) {
       bearerToken = await resolveHttpConnectionToken({
         connectionId: endpoint.connectionId,

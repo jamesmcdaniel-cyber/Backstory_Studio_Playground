@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
 import {
   buildAuthConfig,
   mergeAuthConfig,
@@ -142,6 +143,19 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
 
+  if (data.authType !== 'none') {
+    await recordCredentialGrant({
+      organizationId: auth.organizationId,
+      kind: 'mcp_connection',
+      credentialId: connection.id,
+      provider: connection.provider ?? data.name,
+      ownerUserId: connection.userId,
+      actorUserId: auth.userId,
+      scopes: data.scopes ?? null,
+      method: `mcp_${data.authType}`,
+    })
+  }
+
   return {
     success: true,
     connection: serializeConnection(connection),
@@ -229,6 +243,21 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
       ...(verifiedAt && { lastVerifiedAt: verifiedAt }),
     },
   })
+
+  // A PUT re-runs buildAuthConfig over the submitted fields, so any secret the
+  // caller supplied is new material — a rotation, recorded as one.
+  if (newAuthType !== 'none') {
+    await recordCredentialRotation({
+      organizationId: auth.organizationId,
+      kind: 'mcp_connection',
+      credentialId: connection.id,
+      provider: connection.provider ?? connection.name,
+      ownerUserId: connection.userId,
+      actorUserId: auth.userId,
+      method: `mcp_${newAuthType}`,
+      reason: 'updated_by_user',
+    })
+  }
 
   // Bust cached tool discovery so a changed serverUrl/auth is picked up now,
   // not after the TTL.

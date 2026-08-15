@@ -1292,7 +1292,11 @@ async function runFlowExecutionInner(
         let httpCredential: ResolvedHttpCredential | null = null
         const credentialId = typeof node.config.credentialId === 'string' ? node.config.credentialId.trim() : ''
         if (credentialId) {
-          httpCredential = await resolveHttpCredential(credentialId, job.organizationId)
+          httpCredential = await resolveHttpCredential(credentialId, job.organizationId, {
+            actorUserId: job.userId,
+            executionId: run.id,
+            consumer: 'flow.http_step',
+          })
         }
         // Optional connection auth: resolve a fresh token server-side and inject
         // it as the Authorization header — unless the user set their own, which

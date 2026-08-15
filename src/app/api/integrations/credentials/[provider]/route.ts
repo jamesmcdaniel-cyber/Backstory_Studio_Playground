@@ -12,6 +12,8 @@ import {
   type CredentialProvider,
 } from '@/lib/integrations/credential-providers'
 import { readOrgSecret, envFallbackAllowed } from '@/lib/integrations/org-credential'
+import { recordAudit } from '@/lib/audit'
+import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
 
 export const runtime = 'nodejs'
 
@@ -88,7 +90,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const authConfig = buildAuthConfig({ authType: 'api_key', apiKey: credential }) as Prisma.InputJsonObject
 
-  await prisma.integrationSecret.upsert({
+  const existing = await prisma.integrationSecret.findUnique({
+    where: { organizationId_provider: { organizationId: auth.organizationId, provider } },
+    select: { id: true },
+  })
+
+  const secret = await prisma.integrationSecret.upsert({
     where: { organizationId_provider: { organizationId: auth.organizationId, provider } },
     update: { authType: 'api_key', authConfig, isActive: true },
     create: {
@@ -100,6 +107,20 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
 
+  // This is a workspace-SHARED credential — every agent in the org acts through
+  // it — so who introduced it is the single most useful thing to be able to
+  // look up later.
+  const record = existing ? recordCredentialRotation : recordCredentialGrant
+  await record({
+    organizationId: auth.organizationId,
+    kind: 'integration_secret',
+    credentialId: secret.id,
+    provider,
+    ownerUserId: null,
+    actorUserId: auth.userId,
+    method: 'api_key_entry',
+  })
+
   return { success: true, ...(await state(auth.organizationId, provider)) }
 }, { permission: 'integration.manage' })
 
@@ -107,9 +128,23 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const provider = providerFrom(request)
+  const existing = await prisma.integrationSecret.findUnique({
+    where: { organizationId_provider: { organizationId: auth.organizationId, provider } },
+    select: { id: true },
+  })
   await prisma.integrationSecret.deleteMany({
     where: { organizationId: auth.organizationId, provider },
   })
+  if (existing) {
+    await recordAudit({
+      organizationId: auth.organizationId,
+      action: 'credential.revoked',
+      actorUserId: auth.userId,
+      resourceType: 'integration_secret',
+      resourceId: existing.id,
+      detail: { provider, reason: 'deleted_by_user' },
+    })
+  }
   // For a customer workspace this turns the integration OFF — there is no env
   // fallback to catch it, by design. `state` reports that honestly.
   return { success: true, ...(await state(auth.organizationId, provider)) }

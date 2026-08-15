@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getNangoClient, NANGO_ORG_TAG } from './client'
+import { recordCredentialGrant } from '@/lib/credentials/audit'
 
 export type NangoConnectionStatus = {
   connected: boolean
@@ -91,7 +92,9 @@ export async function syncOrgNangoConnections(
       },
     } satisfies Prisma.InputJsonObject
 
-    await prisma.nangoConnection.upsert({
+    const isNewToUs = !existingByConnectionId.has(connection.connection_id)
+
+    const row = await prisma.nangoConnection.upsert({
       where: {
         organizationId_connectionId: {
           organizationId,
@@ -116,6 +119,28 @@ export async function syncOrgNangoConnections(
         metadata,
       },
     })
+
+    // Only the FIRST time we see a connection. This sync re-runs on every
+    // webhook and every connections-page load, so auditing each upsert would
+    // emit a grant event for connections that have existed for months and
+    // drown the ones that are actually new.
+    //
+    // Nango holds the credential itself, so this is where an authorization it
+    // brokered becomes visible to us at all — without it, a connected account
+    // appears in the workspace with no record of when or by whom.
+    if (isNewToUs) {
+      await recordCredentialGrant({
+        organizationId,
+        kind: 'nango_connection',
+        credentialId: row.id,
+        provider: connection.provider ?? key,
+        ownerUserId: endUser?.id ?? null,
+        // The end user Nango attributes the connection to. Null means it was
+        // established as an org-shared connection, which is itself worth seeing.
+        actorUserId: endUser?.id ?? null,
+        method: 'nango_oauth',
+      })
+    }
   }
 
   // Drop mirror rows for connections that no longer exist in Nango — but ONLY

@@ -213,12 +213,20 @@ export interface TokenResponse {
   access_token: string
   refresh_token?: string
   expires_in?: number
+  /**
+   * Scopes the provider ACTUALLY granted, which is not always what was asked
+   * for — a server may narrow a request or, more importantly, widen it. This
+   * was previously parsed and thrown away, which made an over-scoped grant
+   * invisible: the stored connection looks identical either way.
+   */
+  scope?: string
 }
 
 interface RawTokenResponse {
   access_token?: string
   refresh_token?: string
   expires_in?: number
+  scope?: string
 }
 
 /**
@@ -294,6 +302,7 @@ export async function exchangeCode(
     access_token: data.access_token,
     refresh_token: data.refresh_token,
     expires_in: data.expires_in,
+    scope: data.scope,
   }
 }
 
@@ -349,5 +358,6 @@ export async function refreshAccessToken(
     access_token: data.access_token,
     refresh_token: data.refresh_token,
     expires_in: data.expires_in,
+    scope: data.scope,
   }
 }

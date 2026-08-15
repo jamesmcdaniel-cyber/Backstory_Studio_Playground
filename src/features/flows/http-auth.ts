@@ -6,6 +6,7 @@ import { mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import { mcpConnectionScope } from '@/lib/flows/tool-catalog'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { assertPublicUrl } from '@/lib/net/ssrf'
+import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentials/audit'
 
 export const HTTP_AUTH_TYPES = [
   'basic',
@@ -321,9 +322,21 @@ export async function fetchWithHttpCredential(
   return response
 }
 
+/**
+ * Who is reading the credential. Optional so the many existing call sites keep
+ * compiling, but every path that HAS a run behind it should pass one — an
+ * unattributed credential read is exactly what the audit gap was.
+ */
+export interface HttpCredentialUseContext {
+  actorUserId?: string | null
+  executionId?: string | null
+  consumer?: string
+}
+
 export async function resolveHttpCredential(
   credentialId: string,
   organizationId: string,
+  context?: HttpCredentialUseContext,
 ): Promise<ResolvedHttpCredential> {
   // 'error' rows are still resolved (a run may recover, matching how a flagged
   // credential keeps being tried) — the picker surfaces the last error so it
@@ -336,8 +349,32 @@ export async function resolveHttpCredential(
   try {
     config = JSON.parse(decryptSecret(row.secretConfig)) as HttpCredentialConfig
   } catch {
+    // Recorded before throwing: an undecryptable credential is indistinguishable
+    // from a revoked one at the call site, and the audit trail is where the
+    // difference (a wrong ENCRYPTION_KEY affects every row at once) shows up.
+    await recordCredentialUseFailure({
+      organizationId,
+      kind: 'http_credential',
+      credentialId: row.id,
+      provider: row.allowedHost,
+      actorUserId: context?.actorUserId ?? null,
+      executionId: context?.executionId ?? null,
+      consumer: context?.consumer ?? 'flow.http_step',
+      reason: 'decrypt_failed',
+    })
     throw new Error('The selected HTTP credential could not be decrypted. Recreate it.')
   }
+
+  await recordCredentialUse({
+    organizationId,
+    kind: 'http_credential',
+    credentialId: row.id,
+    provider: row.allowedHost,
+    actorUserId: context?.actorUserId ?? null,
+    executionId: context?.executionId ?? null,
+    consumer: context?.consumer ?? 'flow.http_step',
+  })
+
   return {
     id: row.id,
     organizationId: row.organizationId,

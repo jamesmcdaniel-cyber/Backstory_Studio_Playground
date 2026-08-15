@@ -18,6 +18,7 @@ import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secrets'
 import { refreshAccessToken, type TokenResponse } from '@/lib/mcp/oauth-authcode'
+import { recordCredentialRotation } from '@/lib/credentials/audit'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,9 +74,25 @@ export async function persistRefreshedAuthcodeTokens(
   }
 
   // systemPrisma: OAuth token refresh keyed by globally-unique connection id (resolved org-scoped upstream).
-  await systemPrisma.mcpConnection.update({
+  const updated = await systemPrisma.mcpConnection.update({
     where: { id: connectionId },
     data: { authConfig: newAuthConfig as Prisma.InputJsonValue },
+    select: { organizationId: true, userId: true, provider: true },
+  })
+
+  // A refresh replaces live credential material, so it is a rotation and is
+  // recorded as one. Without this, the only trace of a token changing hands is
+  // an opaque `updatedAt` bump — and a refresh_token that the provider rotated
+  // out from under us looks identical to one that was never touched.
+  await recordCredentialRotation({
+    organizationId: updated.organizationId,
+    kind: 'mcp_connection',
+    credentialId: connectionId,
+    provider: updated.provider,
+    ownerUserId: updated.userId,
+    actorUserId: null,
+    method: 'oauth_refresh',
+    reason: tokens.refresh_token ? 'provider_rotated_refresh_token' : 'access_token_expiry',
   })
 
   return newAuthConfig

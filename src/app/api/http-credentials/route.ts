@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { decryptSecret, encryptSecret } from '@/lib/crypto/secrets'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { recordAudit } from '@/lib/audit'
 import {
   HTTP_AUTH_TYPES,
   fetchWithHttpCredential,
@@ -10,6 +11,7 @@ import {
   type HttpAuthType,
   type HttpCredentialConfig,
 } from '@/features/flows/http-auth'
+import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
 
 // Fire a live request with the credential applied and classify the outcome.
 // Throws ApiError on rejection; returns cleanly when the credential works.
@@ -106,6 +108,19 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     : await prisma.httpCredential.create({
         data: { organizationId: auth.organizationId, ...data },
       })
+
+  // Updating an existing row REPLACES its secret material (the whole payload is
+  // re-encrypted above), so it is a rotation — not a config edit.
+  const record = payload.id ? recordCredentialRotation : recordCredentialGrant
+  await record({
+    organizationId: auth.organizationId,
+    kind: 'http_credential',
+    credentialId: credential.id,
+    provider: credential.allowedHost,
+    actorUserId: auth.userId,
+    method: `http_${credential.authType}`,
+  })
+
   return { success: true, credential: redactedCredential(credential) }
 }, { permission: 'integration.manage' })
 
@@ -167,6 +182,24 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const id = new URL(request.url).searchParams.get('id')
   if (!id) throw new ApiError('Credential id is required.', 400, 'MISSING_ID')
+  const deleted = await prisma.httpCredential.findFirst({
+    where: { id, organizationId: auth.organizationId },
+    select: { id: true, allowedHost: true },
+  })
   await prisma.httpCredential.deleteMany({ where: { id, organizationId: auth.organizationId } })
+
+  // Deleting a credential IS a revocation — the flows bound to it stop
+  // authenticating. It belongs in the same log as every other revoke so
+  // "when did this stop working, and who did it" has one answer.
+  if (deleted) {
+    await recordAudit({
+      organizationId: auth.organizationId,
+      action: 'credential.revoked',
+      actorUserId: auth.userId,
+      resourceType: 'http_credential',
+      resourceId: deleted.id,
+      detail: { provider: deleted.allowedHost, reason: 'deleted_by_user' },
+    })
+  }
   return { success: true }
 }, { permission: 'integration.manage' })

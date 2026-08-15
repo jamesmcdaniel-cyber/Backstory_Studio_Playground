@@ -11,6 +11,7 @@
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { decryptSecret, encryptSecret } from '@/lib/crypto/secrets'
 import { apiLogger } from '@/lib/logger'
+import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentials/audit'
 import { StreamableHttpMcpClient, type McpToolDescriptor } from '@/lib/mcp/streamable-http'
 import { discoverMetadata, envOAuthConfig, refreshTokens, PEOPLE_AI_MCP_BASE_URL } from './oauth'
 
@@ -128,7 +129,7 @@ export async function getPeopleAiClientForUser(
   })
   if (!connection || connection.status === 'revoked') return null
   try {
-    return new PeopleAiClient(
+    const client = new PeopleAiClient(
       {
         kind: 'user',
         connectionId: connection.id,
@@ -137,7 +138,27 @@ export async function getPeopleAiClientForUser(
       },
       options,
     )
+    await recordCredentialUse({
+      organizationId,
+      kind: 'people_ai_connection',
+      credentialId: connection.id,
+      provider: 'people_ai',
+      ownerUserId: userId,
+      actorUserId: userId,
+      consumer: 'peopleai.client',
+    })
+    return client
   } catch (error) {
+    await recordCredentialUseFailure({
+      organizationId,
+      kind: 'people_ai_connection',
+      credentialId: connection.id,
+      provider: 'people_ai',
+      ownerUserId: userId,
+      actorUserId: userId,
+      consumer: 'peopleai.client',
+      reason: 'decrypt_failed',
+    })
     apiLogger.warn('People.ai connection unusable (decrypt failed)', {
       connectionId: connection.id,
       error: error instanceof Error ? error.message : String(error),

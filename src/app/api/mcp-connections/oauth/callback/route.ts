@@ -23,6 +23,7 @@ import { decryptSecret, encryptSecret } from '@/lib/crypto/secrets'
 import { OAUTH_COOKIE, exchangeCode, safeReturnToPath } from '@/lib/mcp/oauth-authcode'
 import { bustBackstoryReadyCache } from '@/lib/mcp/backstory-connection'
 import { verifyMcpConfig } from '@/lib/mcp/verify-connection'
+import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
 
 interface OAuthCookiePayload {
   state: string
@@ -120,8 +121,22 @@ export async function GET(request: NextRequest) {
       })
       if (updated.count !== 1) throw new Error('Connection to re-authorize was not found')
       if (payload.userId) bustBackstoryReadyCache(payload.organizationId, payload.userId)
+      // Re-authorizing an existing connection replaces its tokens: a rotation,
+      // not a new grant. Distinguishing the two matters — a burst of rotations
+      // on one connection reads very differently from a burst of new grants.
+      await recordCredentialRotation({
+        organizationId: payload.organizationId,
+        kind: 'mcp_connection',
+        credentialId: payload.connectionId,
+        provider: payload.name,
+        ownerUserId: payload.userId ?? null,
+        actorUserId: payload.userId ?? null,
+        scopes: tokens.scope ?? null,
+        method: 'oauth_authcode',
+        reason: 'reauthorized',
+      })
     } else {
-      await prisma.mcpConnection.create({
+      const created = await prisma.mcpConnection.create({
         data: {
           organizationId: payload.organizationId,
           name: payload.name,
@@ -131,6 +146,18 @@ export async function GET(request: NextRequest) {
           isActive: true,
           lastVerifiedAt: verification.verifiedAt,
         },
+      })
+      await recordCredentialGrant({
+        organizationId: payload.organizationId,
+        kind: 'mcp_connection',
+        credentialId: created.id,
+        provider: payload.name,
+        ownerUserId: created.userId,
+        actorUserId: payload.userId ?? null,
+        // What the provider actually granted, which can exceed what we asked
+        // for — the only place that difference is ever visible.
+        scopes: tokens.scope ?? null,
+        method: 'oauth_authcode',
       })
     }
 

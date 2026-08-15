@@ -12,6 +12,7 @@ import { encryptSecret } from '@/lib/crypto/secrets'
 import { revalidateEntitlement } from '@/lib/entitlement'
 import { captureError } from '@/lib/observability/sentry'
 import { ensureOrgWebhookSecret } from './webhook-secret'
+import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
 import {
   buildAuthorizeUrl,
   discoverMetadata,
@@ -184,7 +185,15 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Peop
     captureError(error, { source: 'peopleai.connect.webhookSecret', organizationId })
   }
 
-  await prisma.peopleAiConnection.upsert({
+  // findFirst, not findUnique: the credential owner guard injects an
+  // owner-liveness filter, and findUnique's where clause accepts only unique
+  // fields so it cannot carry one. A guard test fails loudly on findUnique here.
+  const existing = await prisma.peopleAiConnection.findFirst({
+    where: { organizationId, userId: input.userId },
+    select: { id: true },
+  })
+
+  const connection = await prisma.peopleAiConnection.upsert({
     where: { organizationId_userId: { organizationId, userId: input.userId } },
     create: {
       organizationId,
@@ -206,6 +215,21 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Peop
       status: 'active',
       lastVerifiedAt: new Date(),
     },
+  })
+
+  // Reconnecting an existing People.ai account replaces live tokens; a first
+  // connection authorizes new access. The audit log has to tell those apart —
+  // only one of them widens what the platform can reach.
+  const record = existing ? recordCredentialRotation : recordCredentialGrant
+  await record({
+    organizationId,
+    kind: 'people_ai_connection',
+    credentialId: connection.id,
+    provider: 'people_ai',
+    ownerUserId: input.userId,
+    actorUserId: input.userId,
+    scopes: input.config.scope ?? null,
+    method: 'oauth_authcode',
   })
 
   if (identity.membershipId) {

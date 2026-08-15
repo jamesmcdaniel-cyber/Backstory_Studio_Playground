@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { decryptSecret } from '@/lib/crypto/secrets'
+import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentials/audit'
 
 /**
  * Per-workspace credentials for the built-in integrations, and the narrow rule
@@ -47,11 +48,23 @@ export function chooseCredential(
   return null
 }
 
+/**
+ * Who is reading the credential, for the audit trail. Optional: several callers
+ * are platform-internal with no acting user, and a missing actor is recorded as
+ * such rather than blocking the read.
+ */
+export interface OrgSecretUseContext {
+  actorUserId?: string | null
+  executionId?: string | null
+  consumer?: string
+}
+
 /** The org's stored secret for `provider`, decrypted, or null. */
 export async function readOrgSecret(
   organizationId: string,
   provider: string,
   field = 'apiKey',
+  context?: OrgSecretUseContext,
 ): Promise<string | null> {
   const secret = await prisma.integrationSecret.findUnique({
     where: { organizationId_provider: { organizationId, provider } },
@@ -66,10 +79,32 @@ export async function readOrgSecret(
   if (typeof stored !== 'string' || !stored) return null
 
   try {
-    return decryptSecret(stored)
+    const value = decryptSecret(stored)
+    await recordCredentialUse({
+      organizationId,
+      kind: 'integration_secret',
+      credentialId: secret.id,
+      provider,
+      actorUserId: context?.actorUserId ?? null,
+      executionId: context?.executionId ?? null,
+      consumer: context?.consumer ?? `integration.${provider}`,
+    })
+    return value
   } catch {
     // Undecryptable payload (e.g. a rotated ENCRYPTION_KEY). Treat as absent so
-    // the caller degrades to "not configured" rather than throwing mid-run.
+    // the caller degrades to "not configured" rather than throwing mid-run —
+    // but record it, because silently behaving as "not configured" is exactly
+    // how a botched key rotation stays invisible for days.
+    await recordCredentialUseFailure({
+      organizationId,
+      kind: 'integration_secret',
+      credentialId: secret.id,
+      provider,
+      actorUserId: context?.actorUserId ?? null,
+      executionId: context?.executionId ?? null,
+      consumer: context?.consumer ?? `integration.${provider}`,
+      reason: 'decrypt_failed',
+    })
     return null
   }
 }
@@ -83,8 +118,9 @@ export async function resolveOrgCredential(params: {
   provider: string
   field?: string
   envValue: string | undefined
+  context?: OrgSecretUseContext
 }): Promise<ResolvedCredential | null> {
-  const orgSecret = await readOrgSecret(params.organizationId, params.provider, params.field)
+  const orgSecret = await readOrgSecret(params.organizationId, params.provider, params.field, params.context)
   if (orgSecret) return { value: orgSecret, source: 'org' }
 
   if (!params.envValue) return null
@@ -93,5 +129,24 @@ export async function resolveOrgCredential(params: {
     where: { id: params.organizationId },
     select: { kind: true },
   })
-  return chooseCredential(null, params.envValue, organization?.kind)
+  const resolved = chooseCredential(null, params.envValue, organization?.kind)
+
+  // The env fallback is the one genuinely SHARED credential left in the system —
+  // internal and partner orgs acting through Backstory's own account. It has no
+  // row to point at, so it is audited under a synthetic id: "which workspace
+  // used the platform's Slack token, and when" is precisely the question the
+  // shared-credential risk raises, and it would otherwise leave no trace at all.
+  if (resolved?.source === 'env') {
+    await recordCredentialUse({
+      organizationId: params.organizationId,
+      kind: 'integration_secret',
+      credentialId: `env:${params.provider}`,
+      provider: params.provider,
+      actorUserId: params.context?.actorUserId ?? null,
+      executionId: params.context?.executionId ?? null,
+      consumer: params.context?.consumer ?? `integration.${params.provider}.platform_fallback`,
+    })
+  }
+
+  return resolved
 }

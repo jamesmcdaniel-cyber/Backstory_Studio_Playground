@@ -2,6 +2,8 @@ import { z } from 'zod'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { buildAuthConfig } from '@/lib/crypto/secrets'
+import { recordAudit } from '@/lib/audit'
+import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
 import { getGranolaApiKey, testGranolaApiKey } from '@/lib/integrations/granola'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 
@@ -38,7 +40,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const authConfig = buildAuthConfig({ authType: 'api_key', apiKey }) as Prisma.InputJsonObject
 
-  await prisma.integrationSecret.upsert({
+  const existing = await prisma.integrationSecret.findUnique({
+    where: {
+      organizationId_provider: { organizationId: auth.organizationId, provider: 'granola' },
+    },
+    select: { id: true },
+  })
+
+  const secret = await prisma.integrationSecret.upsert({
     where: {
       organizationId_provider: { organizationId: auth.organizationId, provider: 'granola' },
     },
@@ -52,15 +61,42 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     },
   })
 
+  const record = existing ? recordCredentialRotation : recordCredentialGrant
+  await record({
+    organizationId: auth.organizationId,
+    kind: 'integration_secret',
+    credentialId: secret.id,
+    provider: 'granola',
+    ownerUserId: null,
+    actorUserId: auth.userId,
+    method: 'api_key_entry',
+  })
+
   return { success: true, ...(await granolaState(auth.organizationId)) }
 }, { permission: 'integration.manage' })
 
 // ── DELETE — remove the org key (env fallback still applies, if set) ──────
 
 export const DELETE = withAuthenticatedApi(async (_request, auth) => {
+  const existing = await prisma.integrationSecret.findUnique({
+    where: {
+      organizationId_provider: { organizationId: auth.organizationId, provider: 'granola' },
+    },
+    select: { id: true },
+  })
   await prisma.integrationSecret.deleteMany({
     where: { organizationId: auth.organizationId, provider: 'granola' },
   })
+  if (existing) {
+    await recordAudit({
+      organizationId: auth.organizationId,
+      action: 'credential.revoked',
+      actorUserId: auth.userId,
+      resourceType: 'integration_secret',
+      resourceId: existing.id,
+      detail: { provider: 'granola', reason: 'deleted_by_user' },
+    })
+  }
 
   return { success: true, ...(await granolaState(auth.organizationId)) }
 }, { permission: 'integration.manage' })

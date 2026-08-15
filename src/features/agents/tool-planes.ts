@@ -33,6 +33,7 @@ import type { AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { EmailToolClient, emailTools, getEmailCredential } from '@/lib/integrations/email'
 import { BUILTIN_CONNECTORS, isSelected, nangoConnector, type ConnectorDescriptor } from '@/lib/connectors/registry'
 import { formatFlowToolConnectionId, type FlowToolPlane } from '@/lib/flows/tool-connection-id'
+import { recordCredentialUse } from '@/lib/credentials/audit'
 
 // Minimal interface every plane's execution client satisfies (McpClient,
 // BackstoryMcpClient, the built-in ToolClients, and adapters).
@@ -282,6 +283,21 @@ export async function loadMcpConnectionPlaneGroups(
     try {
       const fresh = await ensureFreshConnectionToken(conn)
       const config = mcpConfigFromConnection(fresh)
+      // Audited here rather than inside mcpConfigFromConnection: that function
+      // is synchronous and takes a three-field row with no id or org on it, so
+      // it cannot say WHICH credential was read or for whom. This is the
+      // narrowest point that knows all three.
+      if (config.authType !== 'none') {
+        await recordCredentialUse({
+          organizationId,
+          kind: 'mcp_connection',
+          credentialId: conn.id,
+          provider: conn.provider ?? slug,
+          ownerUserId: conn.userId ?? null,
+          actorUserId: ownerUserId ?? null,
+          consumer: 'agent.mcp_tool_plane',
+        })
+      }
       // For authcode connections, let a mid-run token refresh persist the
       // rotated tokens back to this row so the next run reuses them.
       if (config.flow === 'authcode') {

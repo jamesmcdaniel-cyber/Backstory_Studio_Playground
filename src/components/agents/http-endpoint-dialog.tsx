@@ -148,7 +148,7 @@ export function AgentHttpEndpointDialog({
 
   useEffect(() => {
     if (!open) return
-    fetch('/api/http-credentials', { cache: 'no-store' })
+    fetch('/api/http-credentials?scope=bindable', { cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => setCredentials(Array.isArray(data?.credentials) ? data.credentials : []))
       .catch(() => setCredentials([]))

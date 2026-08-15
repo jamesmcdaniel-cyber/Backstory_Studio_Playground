@@ -458,7 +458,7 @@ function FlowBuilder() {
         if (!cancelled && data.success) setToolCatalog(data.connections)
       })
       .catch(() => undefined)
-    fetch('/api/http-credentials', { cache: 'no-store' })
+    fetch('/api/http-credentials?scope=bindable', { cache: 'no-store' })
       .then((r) => r.json())
       .then((data) => {
         if (!cancelled && data.success) setHttpCredentials(data.credentials)

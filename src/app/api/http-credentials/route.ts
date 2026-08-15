@@ -68,9 +68,27 @@ function safeError(error: unknown) {
 // (never the secret), and flow authors need the picker, the editor's
 // UNKNOWN_HTTP_CREDENTIAL validation, and the credentials bank to work without
 // admin rights. Create/re-verify/delete stay admin-gated below.
-export const GET = withAuthenticatedApi(async (_request, auth) => {
+export const GET = withAuthenticatedApi(async (request, auth) => {
+  // `scope=bindable` is what a flow editor's credential picker asks for: the
+  // credentials this person may ATTACH to a step. Everything else (the
+  // credentials inventory page) still lists the whole workspace, because
+  // seeing that a credential exists is not the same as being able to act with
+  // it — and hiding them would make the inventory lie.
+  //
+  // Binding rights were previously identical to flow-edit rights: any member
+  // who could open a flow could attach any workspace credential to a step and
+  // act as it. Host-binding stopped them pointing it somewhere new, but not
+  // from using it.
+  const bindableOnly = new URL(request.url).searchParams.get('scope') === 'bindable'
+
   const credentials = await prisma.httpCredential.findMany({
-    where: { organizationId: auth.organizationId },
+    where: {
+      organizationId: auth.organizationId,
+      // Own credentials, plus the legacy workspace-shared ones (userId null),
+      // which stay bindable so this does not break every flow that already
+      // uses them. They are flagged "Unowned" for exactly that reason.
+      ...(bindableOnly ? { OR: [{ userId: auth.dbUser.id }, { userId: null }] } : {}),
+    },
     orderBy: [{ name: 'asc' }, { createdAt: 'desc' }],
   })
   return {

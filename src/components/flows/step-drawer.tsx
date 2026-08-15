@@ -725,7 +725,7 @@ export function StepDrawer({
   }, [isWorkspace, onClose, onNavigate, navigation])
   useEffect(() => {
     if (node.type !== 'http') return
-    fetch('/api/http-credentials', { cache: 'no-store' })
+    fetch('/api/http-credentials?scope=bindable', { cache: 'no-store' })
       .then((response) => response.json())
       .then((data) => {
         if (data?.success && Array.isArray(data.credentials)) setHttpCredentials(data.credentials)

@@ -47,6 +47,9 @@ export function serializeFlow(flow: {
   /// Persisted import report ({notes, blocking}) — null/absent when cleared
   /// or for flows that weren't imported.
   importNotes?: unknown
+  /// Save-time secret scan: literal credentials found in the graph.
+  secretFindings?: unknown
+  secretScanAt?: Date | null
   createdAt: Date
   updatedAt: Date
 }, viewerId?: string, access?: FlowViewerAccess) {
@@ -66,6 +69,10 @@ export function serializeFlow(flow: {
     trigger: publicTrigger(flow.trigger),
     graph,
     visibility: flow.visibility,
+    // A flow carrying a hardcoded credential says so wherever it is listed.
+    // `null` means NOT SCANNED (a flow untouched since scanning shipped), which
+    // is not the same as clean — the UI must not present one as the other.
+    secrets: summarizeSecretFindings(flow.secretFindings, flow.secretScanAt ?? null),
     // Whether THIS viewer may edit. Role-aware callers (share/single-flow/list
     // routes) pass `access`; legacy org-only callers keep the v1 derivation.
     canEdit: access
@@ -97,5 +104,40 @@ export function serializeFlow(flow: {
     unpublishedChanges: !published || JSON.stringify(flow.publishedGraph) !== JSON.stringify(graph),
     createdAt: flow.createdAt,
     updatedAt: flow.updatedAt,
+  }
+}
+
+
+export interface FlowSecretSummary {
+  /** null = never scanned. Distinct from `count: 0`, which means scanned clean. */
+  scannedAt: string | null
+  count: number
+  /** Masked previews (3 chars + length), never the matched literal. */
+  findings: Array<{ path: string; reason: string; preview: string }>
+}
+
+/**
+ * Shape the stored scan for the UI.
+ *
+ * The important distinction is "not scanned" versus "scanned and clean". A flow
+ * saved before scanning existed has no findings, and showing it as clean would
+ * be a claim we cannot support — the reassuring answer is the one that must be
+ * earned.
+ */
+function summarizeSecretFindings(raw: unknown, scanAt: Date | null): FlowSecretSummary {
+  const findings = Array.isArray(raw)
+    ? (raw as Array<{ path?: unknown; reason?: unknown; preview?: unknown }>)
+        .filter((entry) => entry && typeof entry === 'object')
+        .map((entry) => ({
+          path: String(entry.path ?? ''),
+          reason: String(entry.reason ?? ''),
+          preview: String(entry.preview ?? ''),
+        }))
+    : []
+
+  return {
+    scannedAt: scanAt ? scanAt.toISOString() : null,
+    count: findings.length,
+    findings,
   }
 }

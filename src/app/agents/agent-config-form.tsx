@@ -198,7 +198,7 @@ function HttpCredentialsPanel({ active }: { active: boolean }) {
   const [busyId, setBusyId] = useState<string | null>(null)
 
   const load = useCallback(() => {
-    fetch('/api/http-credentials', { cache: 'no-store' })
+    fetch('/api/http-credentials?scope=bindable', { cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : null))
       // Listing needs only flow.read; on any failure show the section as
       // empty rather than erroring at the user.

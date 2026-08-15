@@ -4,7 +4,11 @@
  *
  * Storage format (current):  v2:<keyId>:<ivB64>:<tagB64>:<ctB64>
  * Storage format (legacy):   v1:<ivB64>:<tagB64>:<ctB64>
- * Storage format (fallback): b64:<base64payload>
+ * Storage format (legacy):   b64:<base64payload>  — READ-ONLY, see below
+ *
+ * `b64:` is reversible and is no longer written outside `NODE_ENV=test`. It
+ * stays readable so rows written before that change can still be decrypted and
+ * re-encrypted by `npm run secrets:rotate`.
  *
  * ── Key rotation ─────────────────────────────────────────────────────────
  * v1 carried no key identifier, which meant a compromised ENCRYPTION_KEY could
@@ -53,13 +57,24 @@ function deriveKey(raw: string): Buffer {
 function getDerivedKey(): Buffer | null {
   const raw = process.env.ENCRYPTION_KEY
   if (!raw) {
-    // Secrets at rest must never silently degrade to reversible base64 in
-    // production — refuse to operate instead.
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('ENCRYPTION_KEY is required in production')
+    // Secrets at rest must never silently degrade to reversible base64 — refuse
+    // to operate instead.
+    //
+    // This once threw only in production, which meant a staging or development
+    // box wrote real, working credentials to a real database as reversible
+    // base64 and said so in a single startup warning nobody re-reads. "Not
+    // production" is not a property of the DATA: the same Slack token opens the
+    // same workspace whatever NODE_ENV called it. So the only environment still
+    // allowed the fallback is `test`, where the values are fixtures by
+    // construction and there is no database to leave them in.
+    if (process.env.NODE_ENV !== 'test') {
+      throw new Error(
+        'ENCRYPTION_KEY is required to store secrets. Generate one with `openssl rand -hex 32` ' +
+          'and set it in your environment (see .env.example).',
+      )
     }
     if (!_warned) {
-      console.warn('ENCRYPTION_KEY not set — MCP secrets stored unencrypted')
+      console.warn('ENCRYPTION_KEY not set — test-mode fixtures stored unencrypted')
       _warned = true
     }
     return null

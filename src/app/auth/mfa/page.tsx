@@ -34,18 +34,25 @@ export default function MfaPage() {
     if (!loading && !user) router.replace('/auth/login')
   }, [loading, router, user])
 
-  // Company Workspaces federate Google sign-in to Okta, so re-running the
-  // Google flow (prompt=login) IS the Okta verification for those accounts.
-  // Other orgs go through their registered SAML connection by domain.
+  // Direct Okta SAML by domain. Company accounts fall back to Google (itself
+  // Okta-federated at the Workspace layer) until the Okta<->Supabase SAML
+  // connection is registered (docs/okta-saml-setup.md), so this path never
+  // dead-ends.
   const continueWithOkta = async () => {
     if (!domain) return
     setSsoBusy(true)
-    const { error } = company
-      ? await signInWithGoogle('/dashboard')
-      : await signInWithSSO(domain, '/dashboard')
-    if (error) {
+    const { error } = await signInWithSSO(domain, '/dashboard')
+    if (!error) return
+    if (!company) {
       setSsoBusy(false)
       toast.error(error.message)
+      return
+    }
+    toast.info('Okta SSO is not connected yet — continuing with Google.')
+    const fallback = await signInWithGoogle('/dashboard')
+    if (fallback.error) {
+      setSsoBusy(false)
+      toast.error(fallback.error.message)
     }
   }
 

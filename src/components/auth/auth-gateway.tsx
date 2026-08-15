@@ -5,11 +5,14 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'motion/react'
 import { Check, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react'
+import { toast } from 'sonner'
 import { GoogleButton } from '@/components/auth/google-button'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { COMPANY_EMAIL_DOMAINS } from '@/lib/auth/company-domain'
 import { validatedReturnPath } from '@/lib/auth/return-path'
+import { isInternalEdition } from '@/lib/edition'
 
 const traceRows = [
   { label: 'Account signals', detail: 'Connected', delay: 0.55 },
@@ -24,7 +27,7 @@ function safeReturnTo(): string {
 }
 
 export function AuthGateway() {
-  const { user, loading: authLoading, signInWithSSO } = useSupabase()
+  const { user, loading: authLoading, signInWithGoogle, signInWithSSO } = useSupabase()
   const router = useRouter()
   const [ssoDomain, setSsoDomain] = useState('')
   const [ssoLoading, setSsoLoading] = useState(false)
@@ -32,6 +35,24 @@ export function AuthGateway() {
   // ?sso_required=<domain>. The domain is prefilled so one click resumes
   // through the identity provider.
   const [ssoRequired, setSsoRequired] = useState(false)
+
+  // Direct Okta SAML for the company domains. Until the Okta<->Supabase SAML
+  // connection is registered (docs/okta-saml-setup.md), signInWithSSO answers
+  // an error for these domains — fall back to Google (itself Okta-federated at
+  // the Workspace layer) with a visible notice, so sign-in never dead-ends and
+  // the buttons start hitting Okta directly the moment the connection exists.
+  const startCompanySso = async (domain: string) => {
+    setSsoDomain(domain)
+    setSsoLoading(true)
+    const { error } = await signInWithSSO(domain, safeReturnTo())
+    if (!error) return
+    toast.info('Okta SSO is not connected yet — continuing with Google.')
+    const fallback = await signInWithGoogle(safeReturnTo())
+    if (fallback.error) {
+      setSsoLoading(false)
+      toast.error(fallback.error.message)
+    }
+  }
 
   useEffect(() => {
     const required = new URLSearchParams(window.location.search).get('sso_required')
@@ -176,7 +197,9 @@ export function AuthGateway() {
                   <span className="block text-graphite-500">you left off.</span>
                 </h2>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
-                  Continue with your company Google account, secured by Okta through Google Workspace.
+                  {isInternalEdition()
+                    ? 'Sign in through Okta with your company account.'
+                    : "Continue with your Google account, or through your organization's identity provider below."}
                 </p>
               </div>
 
@@ -187,21 +210,57 @@ export function AuthGateway() {
                 </div>
               )}
 
-              <div className="mt-10">
-                {authLoading ? (
-                  <Button disabled loading variant="outline" className="h-14 w-full rounded-xl text-base">
-                    Checking session…
-                  </Button>
-                ) : (
-                  <GoogleButton
-                    label="Continue with Google"
-                    className="h-14 rounded-xl border-graphite-200 bg-white text-base font-semibold shadow-2 hover:border-horizon-200 hover:bg-white hover:shadow-3 [&_svg]:size-5"
-                  />
-                )}
-              </div>
-              <p className="mt-3 text-xs text-graphite-500">
-                Company accounts are secured by Okta through Google Workspace.
-              </p>
+              {isInternalEdition() ? (
+                <>
+                  <div className="mt-10 grid gap-2 sm:grid-cols-2">
+                    {COMPANY_EMAIL_DOMAINS.map((domain) => (
+                      <Button
+                        key={domain}
+                        type="button"
+                        loading={ssoLoading && ssoDomain === domain}
+                        disabled={authLoading || ssoLoading}
+                        onClick={() => startCompanySso(domain)}
+                        className="h-14 rounded-xl text-base font-semibold shadow-2 hover:shadow-3"
+                      >
+                        Sign in with Okta · @{domain}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs text-graphite-500">
+                    Okta verifies every company sign-in.
+                  </p>
+                  <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
+                    <span className="h-px flex-1 bg-graphite-200" /> or <span className="h-px flex-1 bg-graphite-200" />
+                  </div>
+                  <div>
+                    {authLoading ? (
+                      <Button disabled loading variant="outline" className="h-12 w-full rounded-xl text-sm">
+                        Checking session…
+                      </Button>
+                    ) : (
+                      <GoogleButton
+                        label="Continue with Google"
+                        className="h-12 rounded-xl border-graphite-200 bg-white text-sm font-semibold shadow-1 hover:border-horizon-200 hover:bg-white hover:shadow-2 [&_svg]:size-4"
+                      />
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mt-10">
+                    {authLoading ? (
+                      <Button disabled loading variant="outline" className="h-14 w-full rounded-xl text-base">
+                        Checking session…
+                      </Button>
+                    ) : (
+                      <GoogleButton
+                        label="Continue with Google"
+                        className="h-14 rounded-xl border-graphite-200 bg-white text-base font-semibold shadow-2 hover:border-horizon-200 hover:bg-white hover:shadow-3 [&_svg]:size-5"
+                      />
+                    )}
+                  </div>
+                </>
+              )}
 
               <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
                 <span className="h-px flex-1 bg-graphite-200" /> Enterprise SSO <span className="h-px flex-1 bg-graphite-200" />
@@ -226,14 +285,16 @@ export function AuthGateway() {
                 <Button type="submit" variant="outline" loading={ssoLoading} disabled={!ssoDomain.trim()}>Continue</Button>
               </form>
 
-              <div className="mt-6 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-graphite-500">Approved accounts:</span>
-                {['people.ai', 'backstory.ai'].map((domain) => (
-                  <span key={domain} className="rounded-full border border-graphite-200 bg-white px-3 py-1 font-mono text-[11px] text-graphite-700 shadow-1">
-                    @{domain}
-                  </span>
-                ))}
-              </div>
+              {!isInternalEdition() && (
+                <div className="mt-6 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-graphite-500">Approved accounts:</span>
+                  {COMPANY_EMAIL_DOMAINS.map((domain) => (
+                    <span key={domain} className="rounded-full border border-graphite-200 bg-white px-3 py-1 font-mono text-[11px] text-graphite-700 shadow-1">
+                      @{domain}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               <div className="mt-10 grid gap-3 border-t border-graphite-200 pt-6 sm:grid-cols-2">
                 <div className="flex items-start gap-3">

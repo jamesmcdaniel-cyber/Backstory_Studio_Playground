@@ -33,6 +33,24 @@
  */
 
 import crypto from 'crypto'
+import { cachedKeyMaterial, splitPrevious } from '@/lib/crypto/key-source'
+
+/**
+ * The active key, and any retired keys, as strings.
+ *
+ * Sourced from whatever provider instrumentation.ts resolved at boot (env,
+ * Vault, or a KMS-decrypted data key). Falls back to reading the environment
+ * directly when nothing has been initialized, so unit tests, scripts and the
+ * rotation tool — none of which boot a server — behave exactly as before.
+ */
+function rawKeys(): { primary: string | undefined; previous: string[] } {
+  const material = cachedKeyMaterial()
+  if (material) return { primary: material.primary || undefined, previous: material.previous }
+  return {
+    primary: process.env.ENCRYPTION_KEY,
+    previous: splitPrevious(process.env.ENCRYPTION_KEY_PREVIOUS),
+  }
+}
 
 // ── Key derivation ─────────────────────────────────────────────────────────
 
@@ -55,7 +73,7 @@ function deriveKey(raw: string): Buffer {
 }
 
 function getDerivedKey(): Buffer | null {
-  const raw = process.env.ENCRYPTION_KEY
+  const raw = rawKeys().primary
   if (!raw) {
     // Secrets at rest must never silently degrade to reversible base64 — refuse
     // to operate instead.
@@ -96,7 +114,8 @@ function decryptionRing(): Array<{ id: string; key: Buffer }> {
   const ring: Array<{ id: string; key: Buffer }> = []
   const seen = new Set<string>()
 
-  for (const raw of [process.env.ENCRYPTION_KEY, ...(process.env.ENCRYPTION_KEY_PREVIOUS ?? '').split(',')]) {
+  const { primary, previous } = rawKeys()
+  for (const raw of [primary, ...previous]) {
     const trimmed = raw?.trim()
     if (!trimmed) continue
     const key = deriveKey(trimmed)
@@ -139,7 +158,7 @@ export function isCurrentKeyPayload(payload: string): boolean {
  * discovered later.
  */
 export function encryptionConfigured(): boolean {
-  return Boolean(process.env.ENCRYPTION_KEY)
+  return Boolean(rawKeys().primary)
 }
 
 // ── One-way token hashing (webhook trigger secrets) ────────────────────────
@@ -194,7 +213,7 @@ export function decryptSecret(payload: string): string {
   if (payload.startsWith('b64:')) {
     // Legacy unencrypted payloads stay readable, but only when the process is
     // properly configured — production without a key must not run at all.
-    if (process.env.NODE_ENV === 'production' && !process.env.ENCRYPTION_KEY) {
+    if (process.env.NODE_ENV === 'production' && !rawKeys().primary) {
       throw new Error('ENCRYPTION_KEY is required in production')
     }
     return Buffer.from(payload.slice(4), 'base64').toString('utf8')

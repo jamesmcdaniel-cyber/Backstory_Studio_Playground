@@ -72,7 +72,9 @@ export async function transferUserToOrganization(
   },
 ): Promise<TransferResult> {
   const { userId, fromOrganizationId, toOrganizationId, role } = params
-  const empty = { integration: 0, peopleAiConnection: 0, mcpConnection: 0, nangoConnection: 0, pushSubscription: 0 }
+  // Derived from the manifest rather than written out, so adding a credential
+  // class to REVOKED_ON_TRANSFER cannot leave a stale zero-map behind.
+  const empty = Object.fromEntries(REVOKED_ON_TRANSFER.map((name) => [name, 0])) as TransferResult['revoked']
 
   if (fromOrganizationId === toOrganizationId) {
     return { moved: false, revoked: empty }

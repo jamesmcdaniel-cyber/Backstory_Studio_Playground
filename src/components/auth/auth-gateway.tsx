@@ -176,7 +176,7 @@ export function AuthGateway() {
                   <span className="block text-graphite-500">you left off.</span>
                 </h2>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
-                  Continue with your company Google account — Okta verifies every sign-in.
+                  Continue with your company Google account, secured by Okta through Google Workspace.
                 </p>
               </div>
 
@@ -200,7 +200,7 @@ export function AuthGateway() {
                 )}
               </div>
               <p className="mt-3 text-xs text-graphite-500">
-                Company accounts are verified through Okta on every sign-in.
+                Company accounts are secured by Okta through Google Workspace.
               </p>
 
               <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">

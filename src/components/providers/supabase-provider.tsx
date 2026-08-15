@@ -146,12 +146,16 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
         provider: 'google',
         options: {
           redirectTo: redirect.toString(),
-          // Force Google to re-verify the account on EVERY sign-in instead of
-          // silently reusing its remembered session. For the company domains,
-          // Google Workspace federates authentication to Okta, so this is what
-          // makes Okta verification happen each time someone signs in here
-          // rather than only the first time.
-          queryParams: { prompt: 'login' },
+          // The strongest re-auth signal Google honors. Google deliberately
+          // does NOT implement OIDC's prompt=login (only none / consent /
+          // select_account), so a live Google session cannot be forced back
+          // through the Workspace IdP (Okta) from here — select_account at
+          // least surfaces an explicit account choice on every sign-in
+          // instead of a silent pass-through. Okta-on-every-sign-in requires
+          // either a shorter Google session (Workspace Admin session control)
+          // or a direct Supabase<->Okta SAML connection with an Okta
+          // every-sign-in policy.
+          queryParams: { prompt: 'select_account' },
         },
       })
     },

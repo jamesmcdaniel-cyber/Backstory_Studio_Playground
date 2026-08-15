@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getNangoClient, NANGO_ORG_TAG } from './client'
 import { recordCredentialGrant } from '@/lib/credentials/audit'
+import { reviewScopes, type ScopeReview } from '@/lib/credentials/scopes'
 
 export type NangoConnectionStatus = {
   connected: boolean
@@ -10,6 +11,12 @@ export type NangoConnectionStatus = {
   error?: string
   lastSync?: string
   verifiedAt?: string
+  /**
+   * Scope review for the grant Nango holds. Empty `granted` means "not
+   * recorded" — Nango only reveals the scope when a connection is verified —
+   * rather than "this connection has no scopes".
+   */
+  scopes?: ScopeReview
 }
 
 /**
@@ -39,9 +46,10 @@ export async function syncOrgNangoConnections(
   const seen: string[] = []
   const existingRows = await prisma.nangoConnection.findMany({
     where: { organizationId },
-    select: { connectionId: true, metadata: true },
+    select: { connectionId: true, metadata: true, grantedScopes: true },
   })
   const existingByConnectionId = new Map(existingRows.map((row) => [row.connectionId, row.metadata]))
+  const scopesByConnectionId = new Map(existingRows.map((row) => [row.connectionId, row.grantedScopes]))
 
   for (const connection of response.connections ?? []) {
     seen.push(connection.connection_id)
@@ -72,6 +80,12 @@ export async function syncOrgNangoConnections(
     const key = connection.provider_config_key
 
     const existing = connections[key]
+    // Merge scopes across every connection under one provider key: the review
+    // has to reflect the widest access the workspace actually holds, not
+    // whichever connection happened to be listed last.
+    const mergedScopes = [
+      ...new Set([...(existing?.scopes?.granted ?? []), ...(scopesByConnectionId.get(connection.connection_id) ?? [])]),
+    ]
     connections[key] = {
       connected: existing ? existing.connected || connected : connected,
       connectionIds: [...(existing?.connectionIds ?? []), connection.connection_id],
@@ -79,6 +93,7 @@ export async function syncOrgNangoConnections(
       error: existing?.error ?? error,
       lastSync: connection.created,
       verifiedAt: existing?.verifiedAt ?? verifiedAt,
+      scopes: reviewScopes(connection.provider ?? key, mergedScopes),
     }
 
     const metadata = {

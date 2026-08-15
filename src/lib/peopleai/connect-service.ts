@@ -12,7 +12,8 @@ import { encryptSecret } from '@/lib/crypto/secrets'
 import { revalidateEntitlement } from '@/lib/entitlement'
 import { captureError } from '@/lib/observability/sentry'
 import { ensureOrgWebhookSecret } from './webhook-secret'
-import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
+import { recordCredentialGrant, recordCredentialRotation, normalizeScopes } from '@/lib/credentials/audit'
+import { reviewScopes, scopeViolationMessage } from '@/lib/credentials/scopes'
 import {
   buildAuthorizeUrl,
   discoverMetadata,
@@ -95,6 +96,14 @@ export function extractIdentity(tokens: TokenSet): PeopleAiIdentity {
 }
 
 // ── Callback completion ─────────────────────────────────────────────────────
+
+/** An OAuth grant carrying more access than the provider's declared policy allows. */
+export class ScopePolicyError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ScopePolicyError'
+  }
+}
 
 export class TeamMismatchError extends Error {
   constructor() {
@@ -188,6 +197,16 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Peop
   // findFirst, not findUnique: the credential owner guard injects an
   // owner-liveness filter, and findUnique's where clause accepts only unique
   // fields so it cannot carry one. A guard test fails loudly on findUnique here.
+  // People.ai HAS a declared scope policy, so an over-scoped grant is refused
+  // rather than recorded — see SCOPE_POLICY in lib/credentials/scopes.ts. Sales
+  // AI is read-only for us, and a token that can write back to a customer's CRM
+  // is not something to discover later on a review page.
+  const grantedScopes = normalizeScopes(input.config.scope) ?? []
+  const scopeReview = reviewScopes('people_ai', grantedScopes)
+  if (!scopeReview.permitted) {
+    throw new ScopePolicyError(scopeViolationMessage('people_ai', scopeReview))
+  }
+
   const existing = await prisma.peopleAiConnection.findFirst({
     where: { organizationId, userId: input.userId },
     select: { id: true },
@@ -201,6 +220,7 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Peop
       teamId: identity.teamId,
       membershipId: identity.membershipId,
       scope: input.config.scope ?? null,
+      grantedScopes,
       accessToken: encryptSecret(tokens.accessToken),
       refreshToken: tokens.refreshToken ? encryptSecret(tokens.refreshToken) : null,
       status: 'active',
@@ -210,6 +230,7 @@ export async function completeConnect(input: CompleteConnectInput): Promise<Peop
       teamId: identity.teamId,
       membershipId: identity.membershipId,
       scope: input.config.scope ?? null,
+      grantedScopes,
       accessToken: encryptSecret(tokens.accessToken),
       refreshToken: tokens.refreshToken ? encryptSecret(tokens.refreshToken) : null,
       status: 'active',

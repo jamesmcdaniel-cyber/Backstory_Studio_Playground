@@ -778,6 +778,9 @@ model PeopleAiConnection {
   teamId         String?
   membershipId   String?
   scope          String?
+  /// Normalised form of `scope`, for the same review surface as the other
+  /// credential kinds. `scope` stays as the provider sent it.
+  grantedScopes  String[] @default([])
   accessToken    String // encrypted (src/lib/crypto/secrets.ts)
   refreshToken   String? // encrypted
   status         String    @default("active") // 'active' | 'refresh_failed' | 'revoked'
@@ -805,6 +808,10 @@ model McpConnection {
   serverUrl      String
   authType       String    @default("none") // 'none' | 'api_key' | 'oauth2'
   authConfig     Json      @default("{}") // encrypted secret blob + non-secret fields
+  /// Scopes the provider ACTUALLY granted, recorded so an over-scoped
+  /// connection is visible. Previously parsed from the token response and
+  /// thrown away, which made a read-only and a full-write grant identical rows.
+  grantedScopes  String[]  @default([])
   isActive       Boolean   @default(true)
   lastVerifiedAt DateTime?
   healthStatus   String    @default("unknown") // unknown | healthy | unhealthy | schema_changed
@@ -832,6 +839,9 @@ model NangoConnection {
   providerConfigKey String
   provider          String?
   status            String   @default("connected")
+  /// See McpConnection.grantedScopes. Nango holds the credential, so this is
+  /// the only place the granted scope is visible to us at all.
+  grantedScopes     String[] @default([])
   lastError         String?  @db.Text
   metadata          Json     @default("{}")
   createdAt         DateTime @default(now())

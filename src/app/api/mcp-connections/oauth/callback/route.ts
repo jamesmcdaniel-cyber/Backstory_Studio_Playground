@@ -23,7 +23,8 @@ import { decryptSecret, encryptSecret } from '@/lib/crypto/secrets'
 import { OAUTH_COOKIE, exchangeCode, safeReturnToPath } from '@/lib/mcp/oauth-authcode'
 import { bustBackstoryReadyCache } from '@/lib/mcp/backstory-connection'
 import { verifyMcpConfig } from '@/lib/mcp/verify-connection'
-import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
+import { recordCredentialGrant, recordCredentialRotation, normalizeScopes } from '@/lib/credentials/audit'
+import { reviewScopes, scopeViolationMessage } from '@/lib/credentials/scopes'
 
 interface OAuthCookiePayload {
   state: string
@@ -109,12 +110,23 @@ export async function GET(request: NextRequest) {
       expiresAt,
     }
 
+    const grantedScopes = normalizeScopes(tokens.scope) ?? []
+    const scopeReview = reviewScopes(payload.name, grantedScopes)
+    if (!scopeReview.permitted) {
+      // A declared policy is enforced. Thrown rather than stored-and-flagged:
+      // once the tokens are persisted the over-scoped access is live, and the
+      // point of a declared policy is that this specific integration was
+      // examined and this much access decided to be wrong.
+      throw new Error(scopeViolationMessage(payload.name, scopeReview))
+    }
+
     if (payload.connectionId) {
       const updated = await prisma.mcpConnection.updateMany({
         where: { id: payload.connectionId, organizationId: payload.organizationId },
         data: {
           authType: 'oauth2',
           authConfig: authConfig as Prisma.InputJsonValue,
+          grantedScopes,
           isActive: true,
           lastVerifiedAt: verification.verifiedAt,
         },
@@ -143,6 +155,7 @@ export async function GET(request: NextRequest) {
           serverUrl: payload.serverUrl,
           authType: 'oauth2',
           authConfig: authConfig as Prisma.InputJsonValue,
+          grantedScopes,
           isActive: true,
           lastVerifiedAt: verification.verifiedAt,
         },

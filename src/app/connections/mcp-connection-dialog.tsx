@@ -58,6 +58,18 @@ export type SerializedConnection = {
     /** Present when the connection was established via the SSO redirect. */
     flow?: 'authcode'
   }
+  /**
+   * Scope review computed server-side. Absent on connections stored before
+   * scopes were recorded — which reads as "not recorded", not "no scopes".
+   */
+  scopes?: {
+    granted: string[]
+    writeScopes: string[]
+    excessScopes: string[]
+    policyDeclared: boolean
+    permitted: boolean
+    needsReview: boolean
+  }
 }
 
 // ── Draft → wire payload ──────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import { getNangoClient } from '@/lib/nango/client'
 import { syncOrgNangoConnections } from '@/lib/nango/mirror'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { normalizeScopes } from '@/lib/credentials/audit'
 
 export const runtime = 'nodejs'
 
@@ -16,6 +17,25 @@ function safeError(error: unknown): string {
  * A connection is only "verified" after this succeeds; merely completing the
  * Connect UI is not treated as proof that the provider token is usable.
  */
+/**
+ * Pull the granted scope out of a Nango connection record. Nango normalises
+ * OAuth2 credentials but passes the provider's raw token response through, and
+ * providers put scope in either place — so both are checked before giving up.
+ */
+function scopesFromNangoConnection(connection: unknown): string[] {
+  if (!connection || typeof connection !== 'object') return []
+  const credentials = (connection as { credentials?: unknown }).credentials
+  if (!credentials || typeof credentials !== 'object') return []
+
+  const direct = (credentials as { scope?: unknown }).scope
+  const raw = (credentials as { raw?: unknown }).raw
+  const fromRaw = raw && typeof raw === 'object' ? (raw as { scope?: unknown }).scope : undefined
+
+  return normalizeScopes(
+    typeof direct === 'string' ? direct : typeof fromRaw === 'string' ? fromRaw : null,
+  ) ?? []
+}
+
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const segments = request.nextUrl.pathname.split('/').filter(Boolean)
   const integrationId = decodeURIComponent(segments.at(-2) ?? '')
@@ -46,10 +66,13 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       try {
         // forceRefresh + refreshToken make Nango resolve the current provider
         // credential instead of returning a stale cached connection record.
-        await client.getConnection(integrationId, connectionId, true, true)
-        return { connectionId, ok: true as const }
+        const connection = await client.getConnection(integrationId, connectionId, true, true)
+        // The one point where Nango hands us the resolved credential. It holds
+        // the secret — by design — so this is the only place the granted scope
+        // is observable at all; listConnections does not carry it.
+        return { connectionId, ok: true as const, scopes: scopesFromNangoConnection(connection) }
       } catch (error) {
-        return { connectionId, ok: false as const, error: safeError(error) }
+        return { connectionId, ok: false as const, error: safeError(error), scopes: [] as string[] }
       }
     }),
   )
@@ -81,6 +104,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           status: result.ok ? 'connected' : 'error',
           lastError: result.ok ? null : result.error,
           metadata,
+          // Only overwrite when we actually observed scopes: a failed verify
+          // returns none, and blanking a previously recorded grant would make
+          // the review surface read "no scopes" for a live connection.
+          ...(result.scopes.length ? { grantedScopes: result.scopes } : {}),
         },
       })
     }),

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
+import { reviewScopes } from '@/lib/credentials/scopes'
 import {
   buildAuthConfig,
   mergeAuthConfig,
@@ -62,6 +63,7 @@ function serializeConnection(conn: {
   serverUrl: string
   authType: string
   authConfig: unknown
+  grantedScopes: string[]
   isActive: boolean
   lastVerifiedAt: Date | null
   createdAt: Date
@@ -80,6 +82,9 @@ function serializeConnection(conn: {
     createdAt: conn.createdAt,
     updatedAt: conn.updatedAt,
     auth: redactConfig(conn.authType, conn.authConfig),
+    // The scope review travels with the connection so the credentials page can
+    // flag an over-broad grant without re-deriving policy in the browser.
+    scopes: reviewScopes(conn.provider ?? conn.name, conn.grantedScopes),
   }
 }
 

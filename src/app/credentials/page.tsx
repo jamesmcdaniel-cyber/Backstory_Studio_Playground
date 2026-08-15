@@ -17,6 +17,7 @@ import {
 import { PageHeader } from '@/components/ui/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { ScopeBadge, type ScopeReviewView } from '@/components/integrations/scope-badge'
 import {
   ConnectIntegrationDialog,
   type ConnectableIntegration,
@@ -60,6 +61,8 @@ type OauthRow = {
   connected: boolean
   verifiedAt?: string
   error?: string
+  /** Scope review from the mirror; see components/integrations/scope-badge. */
+  scopes?: ScopeReviewView
 }
 
 type CatalogIntegration = ConnectableIntegration
@@ -123,7 +126,7 @@ export default function CredentialsPage() {
     ])
     const connections = (nango?.connections ?? {}) as Record<
       string,
-      { provider?: string; connected?: boolean; error?: string; verifiedAt?: string }
+      { provider?: string; connected?: boolean; error?: string; verifiedAt?: string; scopes?: ScopeReviewView }
     >
     const integrations = Array.isArray(catalogData?.integrations) ? (catalogData.integrations as CatalogIntegration[]) : []
     const byId = new Map(integrations.map((integration) => [integration.id, integration]))
@@ -137,6 +140,7 @@ export default function CredentialsPage() {
         connected: Boolean(status.connected),
         verifiedAt: status.verifiedAt,
         error: status.error,
+        scopes: status.scopes,
       })),
     )
     setMcp(Array.isArray(servers?.connections) ? (servers.connections as McpRow[]) : [])
@@ -362,11 +366,16 @@ export default function CredentialsPage() {
                   name={row.name}
                   detail={row.error}
                   badge={
-                    row.connected ? (
-                      <Badge variant={row.verifiedAt ? 'good' : 'warn'}>{row.verifiedAt ? 'Verified' : 'Unverified'}</Badge>
-                    ) : (
-                      <Badge variant="warn">Needs reconnect</Badge>
-                    )
+                    <span className="flex items-center gap-1.5">
+                      {row.connected ? (
+                        <Badge variant={row.verifiedAt ? 'good' : 'warn'}>{row.verifiedAt ? 'Verified' : 'Unverified'}</Badge>
+                      ) : (
+                        <Badge variant="warn">Needs reconnect</Badge>
+                      )}
+                      {/* What this account can actually DO, next to whether it
+                          works — the two questions are always asked together. */}
+                      <ScopeBadge review={row.scopes} />
+                    </span>
                   }
                   actions={
                     canManage && (
@@ -501,11 +510,16 @@ export default function CredentialsPage() {
                     name={row.name}
                     detail={hostOf(row.serverUrl) + (row.userId ? ' · personal' : '')}
                     badge={
-                      row.isActive ? (
-                        <Badge variant="good">Active</Badge>
-                      ) : (
-                        <Badge variant="warn">{row.provider ? 'Needs authorization' : 'Inactive'}</Badge>
-                      )
+                      <span className="flex items-center gap-1.5">
+                        {row.isActive ? (
+                          <Badge variant="good">Active</Badge>
+                        ) : (
+                          <Badge variant="warn">{row.provider ? 'Needs authorization' : 'Inactive'}</Badge>
+                        )}
+                        {/* Only for authenticated servers — an unauthenticated
+                            MCP server holds no grant to review. */}
+                        {row.auth?.authType !== 'none' && <ScopeBadge review={row.scopes} />}
+                      </span>
                     }
                     actions={
                       canManage && (

@@ -9,6 +9,7 @@ import {
   resolveIdentityProviderForEmail,
 } from '@/lib/auth/identity-providers'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
+import { DEFAULT_FEATURES, resolveFeatures, type Feature } from '@/lib/authz/features'
 import { prisma } from '@/lib/prisma'
 
 type AuthResult = NonNullable<Awaited<ReturnType<typeof getAuthWithUser>>>
@@ -21,6 +22,16 @@ export interface AuthContext {
   /** Everything this caller may do, resolved once per request. */
   permissions: ReadonlySet<Permission>
   can(permission: Permission): boolean
+  /**
+   * Everything switched ON for this caller, resolved once per request from
+   * workspace / team / user grants.
+   *
+   * Separate from `permissions` on purpose: authority and entitlement are
+   * different questions, and merging them makes it easy to gate authority on a
+   * billing flag — or a purchase on a role.
+   */
+  features: ReadonlySet<Feature>
+  hasFeature(feature: Feature): boolean
 }
 
 // Production-inert test seam: mirrors src/lib/observability/sentry.ts's
@@ -178,6 +189,8 @@ export async function requireAuthContext(
     }
   }
 
+  const features = await resolveUserFeatures(auth.organizationId, auth.dbUser.id)
+
   const privileged = isPlatformPrivileged(permissions)
   const mfaPolicy = privileged ? 'required' : (organization?.mfaPolicy ?? 'optional')
   if (!options?.skipMfaGate && !satisfiesMfaPolicy(mfaPolicy, auth.assuranceLevel, auth.authMethods, auth.dbUser.email)) {
@@ -228,5 +241,41 @@ export async function requireAuthContext(
     organizationId: auth.organizationId,
     permissions,
     can: (permission) => permissions.has(permission),
+    features,
+    // Deliberately a separate predicate from `can`. A permission asks whether
+    // someone has the AUTHORITY to do something; a feature asks whether it is
+    // switched on for them. Merging them into one call would make it easy to
+    // gate authority on a billing flag, or a purchase on a role.
+    hasFeature: (feature) => features.has(feature),
+  }
+}
+
+/**
+ * The features this person holds, resolved from workspace / team / user grants.
+ *
+ * One query, joined on membership, rather than three. Failures resolve to the
+ * defaults rather than throwing: a feature-flag lookup must never be able to
+ * take down a request that authentication already approved — the failure would
+ * present as a total outage rather than a missing feature.
+ */
+async function resolveUserFeatures(
+  organizationId: string,
+  userId: string,
+): Promise<Set<Feature>> {
+  try {
+    const [memberships, grants] = await Promise.all([
+      prisma.teamMember.findMany({ where: { userId }, select: { teamId: true } }),
+      prisma.featureGrant.findMany({
+        where: { organizationId },
+        select: { feature: true, enabled: true, teamId: true, userId: true },
+      }),
+    ])
+    return resolveFeatures({
+      grants,
+      userId,
+      teamIds: memberships.map((membership) => membership.teamId),
+    })
+  } catch {
+    return new Set(DEFAULT_FEATURES)
   }
 }

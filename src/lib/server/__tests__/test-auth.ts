@@ -3,6 +3,7 @@ import { setTestAuthContext } from '../auth'
 import type { AuthContext } from '../auth'
 import { resolvePermissions } from '@/lib/authz/permissions'
 import type { UserRole } from '@prisma/client'
+import { DEFAULT_FEATURES } from '@/lib/authz/features'
 
 export interface SeedOverrides {
   /** 'customer' (default) | 'partner' | 'internal' */
@@ -59,6 +60,8 @@ export async function seedTestOrg(
     user: { id: user.supabaseId } as never,
     permissions,
     can: (permission) => permissions.has(permission),
+    features: DEFAULT_FEATURES,
+    hasFeature: (feature) => DEFAULT_FEATURES.has(feature),
   }
   const cleanup = async () => {
     setTestAuthContext(null)

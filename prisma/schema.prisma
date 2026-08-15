@@ -85,6 +85,8 @@ model Organization {
   apiKeys              ApiKey[]
   apiAccessTokens      ApiAccessToken[]
   identityProviders    IdentityProvider[]
+  teams                Team[]
+  featureGrants        FeatureGrant[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
@@ -162,6 +164,8 @@ model User {
   mcpConnections      McpConnection[]
   nangoConnections    NangoConnection[]
   httpCredentials     HttpCredential[]
+  teamMemberships     TeamMember[]
+  featureGrants       FeatureGrant[]
   apiKeys             ApiKey[]
 
   @@index([organizationId])
@@ -170,6 +174,83 @@ model User {
 }
 
 /// A domain becomes authoritative only after its DNS TXT challenge verifies.
+/// A group of people inside a workspace.
+///
+/// Distinct from ROLE, which says what someone may do. A team says who they
+/// work with, and is what feature entitlements are granted to in practice —
+/// "enable this for the enterprise sales team" is the request that actually
+/// arrives, not "enable it for these fourteen user ids".
+model Team {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  name           String
+  description    String   @default("")
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members      TeamMember[]
+  features     FeatureGrant[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  /// Team-local standing. Does NOT confer workspace permissions — a team lead
+  /// is not an admin. Keeping the two separate is what stops team membership
+  /// becoming a back door to authority.
+  teamRole  String   @default("member") // 'member' | 'lead'
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
+}
+
+/// A feature switched on (or explicitly off) for a workspace, a team, or one
+/// person.
+///
+/// Three scopes rather than one because that is how the request arrives:
+/// pilots go to a team, exceptions go to a person, and the plan goes to the
+/// workspace. Collapsing them would mean re-granting a whole team one user at
+/// a time and losing the reason it was granted.
+model FeatureGrant {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  /// Registry key from src/lib/authz/features.ts.
+  feature        String
+  /// Exactly one of teamId / userId is set for a scoped grant; both null means
+  /// the grant applies to the whole workspace.
+  teamId         String?
+  userId         String?
+  /// false is an explicit DENY, which beats any grant. An exception has to be
+  /// expressible, or the only way to exclude one person from a workspace-wide
+  /// feature is to stop granting it to everyone.
+  enabled        Boolean  @default(true)
+  /// Why. Read months later when deciding whether it can be removed.
+  reason         String   @default("")
+  grantedById    String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team         Team?        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, feature, teamId, userId])
+  @@index([organizationId, feature])
+  @@index([userId])
+  @@map("feature_grants")
+}
+
 /// A customer-owned identity provider federated into this workspace.
 ///
 /// Okta is the platform's own IdP, but a customer accessing the platform

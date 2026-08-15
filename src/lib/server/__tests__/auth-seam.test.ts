@@ -2,11 +2,19 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { setTestAuthContext, requireAuthContext } from '../auth'
 import type { Permission } from '@/lib/authz/permissions'
+import type { Feature } from '@/lib/authz/features'
 
 // This suite is about the seam's gating, not authorization — an empty
 // permission set keeps the contexts minimal without weakening what is tested.
 const noPermissions = new Set<Permission>()
-const grants = { permissions: noPermissions, can: () => false }
+// Same rationale for features: this suite tests the seam, not entitlement.
+const noFeatures = new Set<Feature>()
+const grants = {
+  permissions: noPermissions,
+  can: () => false,
+  features: noFeatures,
+  hasFeature: () => false,
+}
 
 test('setTestAuthContext override is ignored in production', async () => {
   const prev = process.env.NODE_ENV

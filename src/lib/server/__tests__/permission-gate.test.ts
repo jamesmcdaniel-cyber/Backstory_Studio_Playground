@@ -5,6 +5,7 @@ import { withAuthenticatedApi } from '../api-handler'
 import { setTestAuthContext } from '../auth'
 import { resolvePermissions } from '@/lib/authz/permissions'
 import type { AuthContext } from '../auth'
+import { DEFAULT_FEATURES } from '@/lib/authz/features'
 
 function contextFor(role: 'USER' | 'ADMIN' | 'VIEWER', orgKind: string, platformRole: string | null): AuthContext {
   const permissions = resolvePermissions({ role, platformRole }, { kind: orgKind })
@@ -15,6 +16,8 @@ function contextFor(role: 'USER' | 'ADMIN' | 'VIEWER', orgKind: string, platform
     user: { id: 'sb-1' } as never,
     permissions,
     can: (permission) => permissions.has(permission),
+    features: DEFAULT_FEATURES,
+    hasFeature: (feature) => DEFAULT_FEATURES.has(feature),
   }
 }
 

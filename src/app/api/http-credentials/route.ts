@@ -98,6 +98,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     secretConfig: encryptSecret(JSON.stringify(payload.config)),
     status: 'verified',
     lastVerifiedAt: new Date(),
+    // Both create and update re-encrypt the whole payload, so either way the
+    // secret is new material as of now. This is what staleness is measured from.
+    lastRotatedAt: new Date(),
     lastError: null,
   }
   const credential = payload.id

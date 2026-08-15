@@ -51,13 +51,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     where: {
       organizationId_provider: { organizationId: auth.organizationId, provider: 'granola' },
     },
-    update: { authType: 'api_key', authConfig, isActive: true },
+    update: { authType: 'api_key', authConfig, isActive: true, lastRotatedAt: new Date() },
     create: {
       organizationId: auth.organizationId,
       provider: 'granola',
       authType: 'api_key',
       authConfig,
       isActive: true,
+      lastRotatedAt: new Date(),
     },
   })
 

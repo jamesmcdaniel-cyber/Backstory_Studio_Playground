@@ -872,6 +872,9 @@ model IntegrationSecret {
   provider       String
   authType       String   @default("api_key") // 'none' | 'api_key' | 'oauth2'
   authConfig     Json     @default("{}") // encrypted secret blob + non-secret fields
+  /// See HttpCredential.lastRotatedAt.
+  lastRotatedAt  DateTime?
+  expiresAt      DateTime?
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -895,6 +898,13 @@ model HttpCredential {
   allowedHost    String
   secretConfig   String    @db.Text
   status         String    @default("verified")
+  /// When the SECRET was last replaced — not when the row was last touched.
+  /// Staleness is measured from here, so a credential rotated last week reads
+  /// as fresh however old the row is.
+  lastRotatedAt  DateTime?
+  /// Optional: we cannot rotate a third party's key on their behalf, so forcing
+  /// an expiry here would break the integration on a date nobody chose.
+  expiresAt      DateTime?
   lastVerifiedAt DateTime?
   lastError      String?   @db.Text
   createdAt      DateTime  @default(now())

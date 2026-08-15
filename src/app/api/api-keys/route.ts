@@ -5,6 +5,7 @@ import { hashToken } from '@/lib/crypto/secrets'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
 import { recordCredentialGrant } from '@/lib/credentials/audit'
+import { resolveTokenExpiry } from '@/lib/credentials/lifetime'
 
 const scopes = z.enum(['flows:read', 'flows:write', 'flows:run'])
 
@@ -15,9 +16,13 @@ export const GET = withAuthenticatedApi(async (_request, auth) => ({
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const input = z.object({ name: z.string().trim().min(1).max(80), scopes: z.array(scopes).min(1), expiresAt: z.coerce.date().optional() }).parse(await request.json())
+  // Always bounded: an API key acts as its minter, so an unbounded one grants
+  // their permissions forever. Omitting expiresAt now yields the default
+  // lifetime instead of no expiry at all.
+  const expiresAt = resolveTokenExpiry(input.expiresAt)
   const plaintext = `bsk_${randomBytes(32).toString('base64url')}`
   const key = await prisma.apiKey.create({
-    data: { organizationId: auth.organizationId, userId: auth.dbUser.id, name: input.name, scopes: input.scopes, expiresAt: input.expiresAt, keyHash: hashToken(plaintext), prefix: plaintext.slice(0, 12) },
+    data: { organizationId: auth.organizationId, userId: auth.dbUser.id, name: input.name, scopes: input.scopes, expiresAt, keyHash: hashToken(plaintext), prefix: plaintext.slice(0, 12) },
     select: { id: true, name: true, prefix: true, scopes: true, expiresAt: true, createdAt: true },
   })
   // An API key acts as its minter (it carries their permissions), so who minted

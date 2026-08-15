@@ -29,6 +29,13 @@ export const HTTP_AUTH_OPTIONS = [
 ] as const
 
 export type HttpAuthOption = (typeof HTTP_AUTH_OPTIONS)[number]['value']
+export type CredentialStaleness = {
+  level: 'fresh' | 'aging' | 'stale' | 'expired'
+  ageDays: number
+  expiresInDays: number | null
+  summary: string
+}
+
 export type HttpCredentialSummary = {
   id: string
   name: string
@@ -37,6 +44,10 @@ export type HttpCredentialSummary = {
   status: string
   lastVerifiedAt: string | null
   lastError: string | null
+  lastRotatedAt?: string | null
+  expiresAt?: string | null
+  /** Computed server-side; null on rows predating rotation tracking. */
+  staleness?: CredentialStaleness | null
 }
 
 const inputClass = 'h-10'

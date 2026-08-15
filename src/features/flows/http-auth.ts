@@ -7,6 +7,7 @@ import { mcpConnectionScope } from '@/lib/flows/tool-catalog'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentials/audit'
+import { assessStaleness } from '@/lib/credentials/lifetime'
 
 export const HTTP_AUTH_TYPES = [
   'basic',
@@ -393,6 +394,9 @@ export function redactedCredential(row: {
   status: string
   lastVerifiedAt: Date | null
   lastError?: string | null
+  lastRotatedAt?: Date | null
+  expiresAt?: Date | null
+  createdAt?: Date
 }) {
   return {
     id: row.id,
@@ -402,6 +406,17 @@ export function redactedCredential(row: {
     status: row.status,
     lastVerifiedAt: row.lastVerifiedAt?.toISOString() ?? null,
     lastError: row.lastError ?? null,
+    lastRotatedAt: row.lastRotatedAt?.toISOString() ?? null,
+    expiresAt: row.expiresAt?.toISOString() ?? null,
+    // Computed server-side so the policy thresholds live in one place rather
+    // than being re-derived (and drifting) in the browser.
+    staleness: row.createdAt
+      ? assessStaleness({
+          lastRotatedAt: row.lastRotatedAt ?? null,
+          createdAt: row.createdAt,
+          expiresAt: row.expiresAt ?? null,
+        })
+      : null,
   }
 }
 

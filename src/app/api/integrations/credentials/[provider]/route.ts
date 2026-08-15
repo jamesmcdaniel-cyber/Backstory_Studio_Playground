@@ -97,13 +97,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const secret = await prisma.integrationSecret.upsert({
     where: { organizationId_provider: { organizationId: auth.organizationId, provider } },
-    update: { authType: 'api_key', authConfig, isActive: true },
+    update: { authType: 'api_key', authConfig, isActive: true, lastRotatedAt: new Date() },
     create: {
       organizationId: auth.organizationId,
       provider,
       authType: 'api_key',
       authConfig,
       isActive: true,
+      lastRotatedAt: new Date(),
     },
   })
 

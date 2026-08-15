@@ -18,6 +18,7 @@ import { PageHeader } from '@/components/ui/page-header'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { ScopeBadge, type ScopeReviewView } from '@/components/integrations/scope-badge'
+import { StalenessBadge } from '@/components/integrations/staleness-badge'
 import {
   ConnectIntegrationDialog,
   type ConnectableIntegration,
@@ -436,7 +437,15 @@ export default function CredentialsPage() {
                   logoSlug={row.allowedHost.split('.').slice(-2, -1)[0]}
                   name={row.name}
                   detail={`${row.allowedHost} · ${AUTH_TYPE_LABEL[row.authType] ?? row.authType}${row.status !== 'verified' && row.lastError ? ` — ${row.lastError}` : ''}`}
-                  badge={row.status === 'verified' ? <Badge variant="good">Verified</Badge> : <Badge variant="warn">Needs attention</Badge>}
+                  badge={
+                    <span className="flex items-center gap-1.5">
+                      {row.status === 'verified' ? <Badge variant="good">Verified</Badge> : <Badge variant="warn">Needs attention</Badge>}
+                      {/* Silent while the credential is fresh — a badge on every
+                          row is wallpaper, and wallpaper is how an unrotated
+                          two-year-old secret stayed invisible. */}
+                      <StalenessBadge staleness={row.staleness} />
+                    </span>
+                  }
                   actions={
                     canManage && (
                       <>

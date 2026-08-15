@@ -23,7 +23,7 @@ test('production without ENCRYPTION_KEY: encryptSecret throws', async () => {
   delete process.env.ENCRYPTION_KEY
   setNodeEnv('production')
   const { encryptSecret } = await freshSecrets()
-  assert.throws(() => encryptSecret('top-secret'), /ENCRYPTION_KEY is required in production/)
+  assert.throws(() => encryptSecret('top-secret'), /ENCRYPTION_KEY is required to store secrets/)
 })
 
 test('production without ENCRYPTION_KEY: decrypting a b64 legacy payload throws', async () => {
@@ -46,13 +46,33 @@ test('with ENCRYPTION_KEY set: encrypt/decrypt round-trips', async () => {
   assert.equal(decryptSecret(payload), 'grn_abc123')
 })
 
-test('development without ENCRYPTION_KEY: falls back to reversible b64', async () => {
+test('development without ENCRYPTION_KEY: encryptSecret throws rather than storing plaintext', async () => {
   delete process.env.ENCRYPTION_KEY
   setNodeEnv('development')
+  const { encryptSecret } = await freshSecrets()
+  // A development box writes real credentials to a real database — "not
+  // production" says nothing about whether the token is live.
+  assert.throws(() => encryptSecret('dev-secret'), /ENCRYPTION_KEY is required to store secrets/)
+})
+
+test('test env without ENCRYPTION_KEY: falls back to b64 so fixtures need no key', async () => {
+  delete process.env.ENCRYPTION_KEY
+  setNodeEnv('test')
   const { encryptSecret, decryptSecret } = await freshSecrets()
-  const payload = encryptSecret('dev-secret')
+  const payload = encryptSecret('fixture-secret')
   assert.match(payload, /^b64:/)
-  assert.equal(decryptSecret(payload), 'dev-secret')
+  assert.equal(decryptSecret(payload), 'fixture-secret')
+})
+
+test('legacy b64 rows stay readable once a key is configured, so rotation can re-encrypt them', async () => {
+  setNodeEnv('test')
+  const { encryptSecret } = await freshSecrets()
+  const legacy = encryptSecret('written-before-the-key-existed')
+
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const { decryptSecret } = await freshSecrets()
+  assert.equal(decryptSecret(legacy), 'written-before-the-key-existed')
 })
 
 // ── authConfig merging across auth types ────────────────────────────────────

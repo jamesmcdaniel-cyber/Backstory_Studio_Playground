@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import type { AuthContext } from '@/lib/server/auth'
 import { nativeFlowPackageSchema } from '@/lib/flows/native-package'
+import { recordAudit } from '@/lib/audit'
+import { extractFlowCapabilities, requiresCapabilityReview, summarizeCapabilities } from '@/lib/flows/import/capabilities'
 import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type FlowImportNote, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
@@ -198,7 +200,27 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         ...(importNotes.notes.length || importNotes.blocking ? { importNotes } : {}),
       },
     })
-    return { success: true, flow: serializeFlow(flow), warnings, blocking: importNotes.blocking, source: 'n8n' }
+    // What the flow is asking to be ALLOWED to do, as distinct from whether it
+    // converted cleanly. An imported workflow is executable code written by a
+    // stranger; the notes above answer "will it work", and only this answers
+    // "what will it do with my workspace's access".
+    //
+    // The flow is created as a DRAFT either way — it cannot run until someone
+    // publishes it — so this informs that decision rather than blocking the
+    // import and losing the author's work.
+    const capabilities = extractFlowCapabilities(graph)
+    await recordImportCapabilities(auth.organizationId, auth.dbUser.id, flow.id, capabilities)
+
+    return {
+      success: true,
+      flow: serializeFlow(flow),
+      warnings,
+      blocking: importNotes.blocking,
+      source: 'n8n',
+      capabilities,
+      requiresReview: requiresCapabilityReview(capabilities),
+      capabilitySummary: summarizeCapabilities(capabilities),
+    }
   }
 
   const parsed = nativeFlowPackageSchema.safeParse(payload)
@@ -219,5 +241,49 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       trigger: JSON.parse(JSON.stringify(triggerFromGraph(input.flow.graph))),
     },
   })
-  return { success: true, flow: serializeFlow(flow), source: 'native' }
+  // Native packages get the same review. A flow exported from another
+  // workspace is no more trustworthy than one exported from n8n — the format
+  // says nothing about the author.
+  const capabilities = extractFlowCapabilities(input.flow.graph)
+  await recordImportCapabilities(auth.organizationId, auth.dbUser.id, flow.id, capabilities)
+
+  return {
+    success: true,
+    flow: serializeFlow(flow),
+    source: 'native',
+    capabilities,
+    requiresReview: requiresCapabilityReview(capabilities),
+    capabilitySummary: summarizeCapabilities(capabilities),
+  }
 }, { permission: 'flow.write' })
+
+/**
+ * Record what an imported flow asked for, at import time.
+ *
+ * Written whether or not anyone reads the review screen: "who imported the flow
+ * that turned out to have a public webhook, and did they see that it did"
+ * is an incident question, and it cannot be reconstructed later from a graph
+ * that has since been edited.
+ */
+async function recordImportCapabilities(
+  organizationId: string,
+  actorUserId: string,
+  flowId: string,
+  capabilities: ReturnType<typeof extractFlowCapabilities>,
+): Promise<void> {
+  await recordAudit({
+    organizationId,
+    action: 'flow.imported',
+    actorUserId,
+    resourceType: 'flow',
+    resourceId: flowId,
+    detail: {
+      requiresReview: requiresCapabilityReview(capabilities),
+      capabilities: capabilities.map((capability) => ({
+        kind: capability.kind,
+        risk: capability.risk,
+        subjects: capability.subjects.slice(0, 20),
+      })),
+    },
+  })
+}

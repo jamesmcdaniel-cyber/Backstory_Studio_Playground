@@ -176,7 +176,7 @@ export function AuthGateway() {
                   <span className="block text-graphite-500">you left off.</span>
                 </h2>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
-                  Sign in through Okta with your company account — your identity provider handles MFA.
+                  Continue with your company Google account — Okta verifies every sign-in.
                 </p>
               </div>
 
@@ -187,31 +187,24 @@ export function AuthGateway() {
                 </div>
               )}
 
-              <div className="mt-10 grid gap-2 sm:grid-cols-2">
-                {['people.ai', 'backstory.ai'].map((domain) => (
-                  <Button
-                    key={domain}
-                    type="button"
-                    loading={ssoLoading && ssoDomain === domain}
-                    disabled={authLoading || ssoLoading}
-                    onClick={async () => {
-                      setSsoDomain(domain)
-                      setSsoLoading(true)
-                      const { error } = await signInWithSSO(domain, safeReturnTo())
-                      if (error) setSsoLoading(false)
-                    }}
-                    className="h-14 rounded-xl text-base font-semibold shadow-2 hover:shadow-3"
-                  >
-                    Sign in with Okta · @{domain}
+              <div className="mt-10">
+                {authLoading ? (
+                  <Button disabled loading variant="outline" className="h-14 w-full rounded-xl text-base">
+                    Checking session…
                   </Button>
-                ))}
+                ) : (
+                  <GoogleButton
+                    label="Continue with Google"
+                    className="h-14 rounded-xl border-graphite-200 bg-white text-base font-semibold shadow-2 hover:border-horizon-200 hover:bg-white hover:shadow-3 [&_svg]:size-5"
+                  />
+                )}
               </div>
               <p className="mt-3 text-xs text-graphite-500">
-                Company accounts sign in through Okta — your identity provider handles verification and MFA.
+                Company accounts are verified through Okta on every sign-in.
               </p>
 
               <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
-                <span className="h-px flex-1 bg-graphite-200" /> Another organization? <span className="h-px flex-1 bg-graphite-200" />
+                <span className="h-px flex-1 bg-graphite-200" /> Enterprise SSO <span className="h-px flex-1 bg-graphite-200" />
               </div>
               <form
                 className="flex gap-2"
@@ -230,23 +223,16 @@ export function AuthGateway() {
                   placeholder="company.com"
                   className="h-12 min-w-0 flex-1 rounded-xl border border-graphite-200 bg-white px-4 text-sm outline-none focus:border-horizon-500"
                 />
-                <Button type="submit" variant="outline" loading={ssoLoading && ssoDomain !== 'people.ai' && ssoDomain !== 'backstory.ai'} disabled={!ssoDomain.trim()}>Continue</Button>
+                <Button type="submit" variant="outline" loading={ssoLoading} disabled={!ssoDomain.trim()}>Continue</Button>
               </form>
 
-              <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
-                <span className="h-px flex-1 bg-graphite-200" /> or <span className="h-px flex-1 bg-graphite-200" />
-              </div>
-              <div>
-                {authLoading ? (
-                  <Button disabled loading variant="outline" className="h-12 w-full rounded-xl text-sm">
-                    Checking session…
-                  </Button>
-                ) : (
-                  <GoogleButton
-                    label="Continue with Google"
-                    className="h-12 rounded-xl border-graphite-200 bg-white text-sm font-semibold shadow-1 hover:border-horizon-200 hover:bg-white hover:shadow-2 [&_svg]:size-4"
-                  />
-                )}
+              <div className="mt-6 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-graphite-500">Approved accounts:</span>
+                {['people.ai', 'backstory.ai'].map((domain) => (
+                  <span key={domain} className="rounded-full border border-graphite-200 bg-white px-3 py-1 font-mono text-[11px] text-graphite-700 shadow-1">
+                    @{domain}
+                  </span>
+                ))}
               </div>
 
               <div className="mt-10 grid gap-3 border-t border-graphite-200 pt-6 sm:grid-cols-2">

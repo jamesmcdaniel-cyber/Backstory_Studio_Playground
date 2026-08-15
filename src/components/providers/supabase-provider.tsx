@@ -144,7 +144,15 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
       if (nextPath && /^\/(?!\/)/.test(nextPath)) redirect.searchParams.set('next', nextPath)
       return supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: redirect.toString() },
+        options: {
+          redirectTo: redirect.toString(),
+          // Force Google to re-verify the account on EVERY sign-in instead of
+          // silently reusing its remembered session. For the company domains,
+          // Google Workspace federates authentication to Okta, so this is what
+          // makes Okta verification happen each time someone signs in here
+          // rather than only the first time.
+          queryParams: { prompt: 'login' },
+        },
       })
     },
     signInWithSSO: (domain, nextPath) => {

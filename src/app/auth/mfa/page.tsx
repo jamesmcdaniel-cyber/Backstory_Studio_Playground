@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { emailDomain } from '@/lib/auth/enterprise-policy'
+import { isCompanyEmail } from '@/lib/auth/company-domain'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -18,7 +19,7 @@ function qrImageSrc(qr: string): string {
 }
 
 export default function MfaPage() {
-  const { user, loading, mfa, signInWithSSO } = useSupabase()
+  const { user, loading, mfa, signInWithGoogle, signInWithSSO } = useSupabase()
   const router = useRouter()
   const [factorId, setFactorId] = useState('')
   const [qr, setQr] = useState('')
@@ -27,15 +28,21 @@ export default function MfaPage() {
   const [busy, setBusy] = useState(false)
   const [ssoBusy, setSsoBusy] = useState(false)
   const domain = emailDomain(user?.email)
+  const company = isCompanyEmail(user?.email)
 
   useEffect(() => {
     if (!loading && !user) router.replace('/auth/login')
   }, [loading, router, user])
 
+  // Company Workspaces federate Google sign-in to Okta, so re-running the
+  // Google flow (prompt=login) IS the Okta verification for those accounts.
+  // Other orgs go through their registered SAML connection by domain.
   const continueWithOkta = async () => {
     if (!domain) return
     setSsoBusy(true)
-    const { error } = await signInWithSSO(domain, '/dashboard')
+    const { error } = company
+      ? await signInWithGoogle('/dashboard')
+      : await signInWithSSO(domain, '/dashboard')
     if (error) {
       setSsoBusy(false)
       toast.error(error.message)
@@ -76,7 +83,7 @@ export default function MfaPage() {
       {domain && (
         <div className="space-y-3">
           <Button className="w-full" onClick={continueWithOkta} loading={ssoBusy} disabled={!user}>
-            Sign in with Okta ({domain})
+            {company ? 'Verify with Okta' : `Sign in with your identity provider (${domain})`}
           </Button>
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span className="h-px flex-1 bg-border" /> or use an authenticator app <span className="h-px flex-1 bg-border" />

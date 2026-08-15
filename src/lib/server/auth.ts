@@ -152,7 +152,7 @@ export async function requireAuthContext(
   // gated route, so an account that trips this can always reach enrollment.
   const privileged = isPlatformPrivileged(permissions)
   const mfaPolicy = privileged ? 'required' : (organization?.mfaPolicy ?? 'optional')
-  if (!options?.skipMfaGate && !satisfiesMfaPolicy(mfaPolicy, auth.assuranceLevel, auth.authMethods)) {
+  if (!options?.skipMfaGate && !satisfiesMfaPolicy(mfaPolicy, auth.assuranceLevel, auth.authMethods, auth.dbUser.email)) {
     throw new AuthContextError(
       privileged
         ? 'Multi-factor authentication is required for platform administrator accounts.'

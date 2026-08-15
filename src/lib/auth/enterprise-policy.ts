@@ -1,3 +1,5 @@
+import { isCompanyEmail } from '@/lib/auth/company-domain'
+
 export function emailDomain(email: string | null | undefined): string | null {
   const normalized = email?.trim().toLowerCase()
   const at = normalized?.lastIndexOf('@') ?? -1
@@ -35,16 +37,26 @@ export function amrMethods(amr: unknown): string[] {
  * IdP (Okta) enforces its own MFA policy at sign-in, so demanding a TOTP
  * factor on top forces employees to carry an authenticator app for a session
  * that already passed a second factor. TOTP (aal2) remains the path for
- * accounts outside the IdP — password and social sign-ins carry no such
- * guarantee, so they still must enroll.
+ * accounts outside the IdP — password sign-ins carry no such guarantee, so
+ * they still must enroll.
+ *
+ * Company-domain Google OAuth counts as enterprise here: the company Google
+ * Workspaces federate authentication to Okta, so a Google session for a
+ * people.ai / backstory.ai account cannot exist without having passed Okta
+ * (and its MFA). Scoped to COMPANY_EMAIL_DOMAINS only — for any other domain
+ * we cannot know what stands behind a Google account, so OAuth alone never
+ * satisfies the policy there.
  */
 export function satisfiesMfaPolicy(
   policy: string,
   assuranceLevel: string | null,
   methods: readonly string[] = [],
+  email?: string | null,
 ): boolean {
   if (policy !== 'required') return true
-  return assuranceLevel === 'aal2' || isEnterpriseIdentity(methods)
+  if (assuranceLevel === 'aal2') return true
+  if (isEnterpriseIdentity(methods)) return true
+  return isCompanyEmail(email) && methods.some((method) => method.toLowerCase() === 'oauth')
 }
 
 /**

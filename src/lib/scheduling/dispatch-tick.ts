@@ -24,6 +24,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
+import { sweepCredentialAnomalies } from '@/lib/credentials/anomaly'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { dispatchFlowExecution, dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
 import { runFlowPoll, lastPolledAt } from '@/features/flows/poll-dispatch'
@@ -79,6 +80,8 @@ export type DispatchTickSummary =
       outbox: { delivered: number; retried: number; failed: number }
       reapedApprovals: number
       mcpHealth: { checked: number; unhealthy: number; changed: number }
+      /** Credential-use anomalies raised this tick, per workspace swept. */
+      credentialAnomalies: { organizations: number; anomalies: number }
     }
   | { skipped: 'locked' }
 
@@ -183,6 +186,16 @@ export async function runDispatchTick(
     // cancellable or terminal) and 'pending' (queued but never claimed by a
     // worker). All three carry a `startedAt` (defaults to now()), so the age
     // filter applies uniformly. A stranded cancel resolves to 'cancelled'.
+    // Credential-use anomalies. A leaked credential keeps working — that is the
+    // whole problem — so what changes is the PATTERN of use, not the credential.
+    // Runs here rather than inline at credential-read time: detecting inline
+    // means a baseline query inside every flow step, to catch something that is
+    // not urgent to the millisecond.
+    const anomalies = await sweepCredentialAnomalies().catch((error) => {
+      apiLogger.error('cron/dispatch: credential anomaly sweep failed', { error: capError(error) })
+      return { organizations: 0, anomalies: 0 }
+    })
+
     const stranded = new Date(Date.now() - STUCK_RUN_TIMEOUT_MS)
     await systemPrisma.agentExecution.updateMany({
       where: { status: { in: ['running', 'pending'] }, startedAt: { lt: stranded } },
@@ -646,6 +659,7 @@ export async function runDispatchTick(
       outbox,
       reapedApprovals,
       mcpHealth,
+      credentialAnomalies: anomalies,
     }
   })
 

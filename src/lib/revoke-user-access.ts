@@ -38,6 +38,7 @@ export interface RevocationResult {
     peopleAiConnection: number
     mcpConnection: number
     nangoConnection: number
+    httpCredential: number
     pushSubscription: number
   }
   apiKeysRevoked: number
@@ -65,13 +66,19 @@ export async function revokeUserAccess(
   // one person in this one workspace. `userId` in the scope is also what keeps
   // org-owned rows (userId: null) — shared MCP servers, workspace Nango
   // connections — out of the blast radius.
-  const [integration, peopleAiConnection, mcpConnection, nangoConnection, pushSubscription] = await Promise.all([
-    tx.integration.deleteMany({ where: scope }),
-    tx.peopleAiConnection.deleteMany({ where: scope }),
-    tx.mcpConnection.deleteMany({ where: scope }),
-    tx.nangoConnection.deleteMany({ where: scope }),
-    tx.pushSubscription.deleteMany({ where: scope }),
-  ])
+  const [integration, peopleAiConnection, mcpConnection, nangoConnection, httpCredential, pushSubscription] =
+    await Promise.all([
+      tx.integration.deleteMany({ where: scope }),
+      tx.peopleAiConnection.deleteMany({ where: scope }),
+      tx.mcpConnection.deleteMany({ where: scope }),
+      tx.nangoConnection.deleteMany({ where: scope }),
+      // Personal HTTP credentials only. `userId` in the scope is what keeps the
+      // workspace's own (userId: null) credentials out of the blast radius —
+      // deleting those would take the org's integrations down because one
+      // person left.
+      tx.httpCredential.deleteMany({ where: scope }),
+      tx.pushSubscription.deleteMany({ where: scope }),
+    ])
 
   // These already fail closed at authentication (public-api/auth.ts re-checks
   // isActive). Marking them revoked is what makes a credential inventory honest.
@@ -91,6 +98,7 @@ export async function revokeUserAccess(
       peopleAiConnection: peopleAiConnection.count,
       mcpConnection: mcpConnection.count,
       nangoConnection: nangoConnection.count,
+      httpCredential: httpCredential.count,
       pushSubscription: pushSubscription.count,
     },
     apiKeysRevoked: apiKeys.count,

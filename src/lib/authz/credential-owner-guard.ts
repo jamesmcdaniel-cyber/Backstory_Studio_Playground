@@ -44,6 +44,7 @@ export const OWNER_LIVENESS_MODELS: ReadonlySet<string> = new Set([
   'PeopleAiConnection',
   'McpConnection',
   'NangoConnection',
+  'HttpCredential',
 ])
 
 /**

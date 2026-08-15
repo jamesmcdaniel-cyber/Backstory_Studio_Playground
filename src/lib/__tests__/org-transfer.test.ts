@@ -41,6 +41,7 @@ function fakeTx(counts: Record<string, number> = {}) {
     // Reads its rows before deleting them, so the caller can revoke the grants
     // upstream: deprovisioning enqueues that list, a transfer discards it.
     nangoConnection: { ...model('nangoConnection'), findMany: async () => [] },
+    httpCredential: model('httpCredential'),
     pushSubscription: model('pushSubscription'),
     apiKey: bulkUpdatable('apiKey'),
     flow: bulkUpdatable('flow'),
@@ -59,6 +60,7 @@ test('moving orgs revokes every per-user credential row, scoped to the org being
     peopleAiConnection: 1,
     mcpConnection: 3,
     nangoConnection: 2,
+    httpCredential: 1,
     pushSubscription: 1,
   })
 
@@ -75,6 +77,7 @@ test('moving orgs revokes every per-user credential row, scoped to the org being
     peopleAiConnection: 1,
     mcpConnection: 3,
     nangoConnection: 2,
+    httpCredential: 1,
     pushSubscription: 1,
   })
 

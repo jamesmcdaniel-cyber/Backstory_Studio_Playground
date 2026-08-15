@@ -48,6 +48,9 @@ export type HttpCredentialSummary = {
   expiresAt?: string | null
   /** Computed server-side; null on rows predating rotation tracking. */
   staleness?: CredentialStaleness | null
+  userId?: string | null
+  /** No owner — a legacy workspace-shared credential, flagged for migration. */
+  isSharedLegacy?: boolean
 }
 
 const inputClass = 'h-10'

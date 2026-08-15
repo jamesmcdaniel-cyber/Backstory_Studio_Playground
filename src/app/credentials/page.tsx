@@ -440,6 +440,15 @@ export default function CredentialsPage() {
                   badge={
                     <span className="flex items-center gap-1.5">
                       {row.status === 'verified' ? <Badge variant="good">Verified</Badge> : <Badge variant="warn">Needs attention</Badge>}
+                      {/* An unowned credential is one that no offboarding can
+                          revoke and no audit entry can attribute to a person.
+                          Flagged rather than auto-assigned: guessing an owner
+                          would put someone's name on actions they never took. */}
+                      {row.isSharedLegacy && (
+                        <Badge variant="warn" title="Shared by the whole workspace — recreate it so it has an owner">
+                          Unowned
+                        </Badge>
+                      )}
                       {/* Silent while the credential is fresh — a badge on every
                           row is wallpaper, and wallpaper is how an unrotated
                           two-year-old secret stayed invisible. */}

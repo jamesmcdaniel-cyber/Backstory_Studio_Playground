@@ -41,6 +41,10 @@ export const REVOKED_ON_TRANSFER = [
   // Was missing: a transferred user's Nango connection stayed behind in the
   // workspace they left, readable by people they no longer worked with.
   'nangoConnection',
+  // Personal HTTP credentials, once http_credentials gained an owner. Org-shared
+  // rows (userId: null) are deliberately untouched — they belong to the
+  // workspace, not to the person leaving it.
+  'httpCredential',
   'pushSubscription',
 ] as const
 

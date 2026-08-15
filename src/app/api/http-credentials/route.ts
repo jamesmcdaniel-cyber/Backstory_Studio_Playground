@@ -73,7 +73,16 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     where: { organizationId: auth.organizationId },
     orderBy: [{ name: 'asc' }, { createdAt: 'desc' }],
   })
-  return { success: true, credentials: credentials.map(redactedCredential) }
+  return {
+    success: true,
+    credentials: credentials.map((row) => ({
+      ...redactedCredential(row),
+      // Surfaced so the page can mark legacy workspace-shared rows: an
+      // unowned credential is one no offboarding can revoke.
+      userId: row.userId,
+      isSharedLegacy: row.userId === null,
+    })),
+  }
 }, { permission: 'flow.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -109,7 +118,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         data,
       })
     : await prisma.httpCredential.create({
-        data: { organizationId: auth.organizationId, ...data },
+        // Owned by its creator from the start. A credential nobody owns is one
+        // no offboarding can revoke and no audit entry can attribute.
+        data: { organizationId: auth.organizationId, userId: auth.dbUser.id, ...data },
       })
 
   // Updating an existing row REPLACES its secret material (the whole payload is

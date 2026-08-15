@@ -7,7 +7,7 @@ import { applyOwnerLiveness, OWNER_LIVENESS_MODELS, UnfilterableCredentialReadEr
 import { assertOrgScoped } from '@/lib/tenant-guard'
 
 const OWNER_ACTIVE = { user: { is: { isActive: true } } }
-/** McpConnection/NangoConnection allow a null userId, meaning org-owned. */
+/** McpConnection/NangoConnection/HttpCredential allow a null userId, meaning org-owned. */
 const NULLABLE_LIVENESS = { OR: [{ userId: null }, OWNER_ACTIVE] }
 /** Integration/PeopleAiConnection require userId, so there is no org-owned branch. */
 const REQUIRED_LIVENESS = OWNER_ACTIVE
@@ -53,12 +53,24 @@ test('a genuinely scoped read still satisfies the tenant guard after rewriting',
 })
 
 test('models outside the registry are untouched', () => {
-  // HttpCredential and IntegrationSecret are workspace-owned and have no userId.
-  // Filtering them would break the org when any one person leaves.
+  // IntegrationSecret is genuinely workspace-owned — it has no userId, and
+  // filtering it would break the org when any one person leaves. HttpCredential
+  // used to be in this list for the same reason; it gained an owner, so it
+  // moved into the registry instead.
   const original = { where: { organizationId: 'org-1' } }
 
-  assert.equal(applyOwnerLiveness('HttpCredential', 'findMany', original), original)
+  assert.equal(applyOwnerLiveness('IntegrationSecret', 'findMany', original), original)
   assert.equal(applyOwnerLiveness('Flow', 'findMany', original), original)
+})
+
+test('an org-shared HttpCredential survives its creator being deactivated', () => {
+  // The nullable-userId branch matters more here than anywhere else: legacy
+  // rows are userId: null and are the workspace's, not any person's. If the
+  // filter dropped them, adding an owner column would have silently broken
+  // every pre-existing credential in every workspace.
+  const args = applyOwnerLiveness('HttpCredential', 'findMany', { where: { organizationId: 'org-1' } })
+
+  assert.deepEqual(args, { where: { AND: [{ organizationId: 'org-1' }, NULLABLE_LIVENESS] } })
 })
 
 test('writes are untouched — this layer prevents USE, not removal', () => {
@@ -80,10 +92,13 @@ test('findUnique on a registry model throws rather than silently skipping the fi
   )
 })
 
-test('the registry is exactly the four user-owned credential models', () => {
+test('the registry is exactly the five user-owned credential models', () => {
+  // Pinned deliberately: this list growing is a security-relevant decision, not
+  // an implementation detail. A model appearing here without the accompanying
+  // relation + revocation wiring is the failure the other tests catch.
   assert.deepEqual(
     [...OWNER_LIVENESS_MODELS].sort(),
-    ['Integration', 'McpConnection', 'NangoConnection', 'PeopleAiConnection'],
+    ['HttpCredential', 'Integration', 'McpConnection', 'NangoConnection', 'PeopleAiConnection'],
   )
 })
 

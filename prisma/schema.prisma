@@ -152,6 +152,7 @@ model User {
   peopleAiConnections PeopleAiConnection[]
   mcpConnections      McpConnection[]
   nangoConnections    NangoConnection[]
+  httpCredentials     HttpCredential[]
   apiKeys             ApiKey[]
 
   @@index([organizationId])
@@ -893,6 +894,11 @@ model IntegrationSecret {
 model HttpCredential {
   id             String    @id @default(cuid())
   organizationId String    @db.Uuid
+  /// Owning person. Null = a legacy workspace-shared credential: every agent in
+  /// the org acted through it, so no action taken with it was attributable to
+  /// anyone. New credentials are always owned; null exists only for rows that
+  /// predate ownership and is what the /credentials page flags for migration.
+  userId         String?
   name           String
   authType       String
   allowedHost    String
@@ -911,8 +917,14 @@ model HttpCredential {
   updatedAt      DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Cascade, NOT SetNull — same reasoning as NangoConnection: `userId: null`
+  // MEANS org-shared here, so nulling a departed person's row would silently
+  // promote their personal credential into one the whole workspace can use,
+  // the exact opposite of revoking it.
+  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, authType, allowedHost])
+  @@index([userId])
   @@map("http_credentials")
 }
 

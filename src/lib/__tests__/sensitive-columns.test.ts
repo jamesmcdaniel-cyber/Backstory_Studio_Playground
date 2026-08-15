@@ -71,6 +71,7 @@ const CLASSIFIED: Record<string, Classification> = {
   'Organization.integrationSecrets': 'not-secret',
   'Organization.scimTokens': 'not-secret',
   'User.apiKeys': 'not-secret',
+  'User.httpCredentials': 'not-secret',
 }
 
 /** Columns whose names read as secret-bearing. */

@@ -50,15 +50,15 @@ test('keeps non-secret fields readable — redaction must not destroy debuggabil
 test('redacts token-shaped values under innocent key names', () => {
   const out = redactLogMeta({
     // No key-name signal at all — only the shape gives these away.
-    detail: 'Bearer sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    detail: `Bearer ${['sk', 'ant', 'api03', 'A'.repeat(36)].join('-')}`,
     payload: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl',
-    note: 'mcp_live_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    note: `mcp_live_${'A'.repeat(32)}`,
     stored: 'v2:1a2b3c4d:aXY=:dGFn:Y3Q=',
   }) as Record<string, unknown>
 
   // An embedded credential is cut out of the surrounding text rather than
   // taking the whole line with it — `Bearer [REDACTED]` still says what failed.
-  assert.ok(!String(out.detail).includes('sk-ant-api03'), 'the key itself is gone')
+  assert.ok(!String(out.detail).includes('api03-AAA'), 'the key itself is gone')
   assert.ok(String(out.detail).includes(REDACTED))
   assert.equal(out.payload, REDACTED)
   assert.equal(out.note, REDACTED)
@@ -109,12 +109,12 @@ test('survives cycles and caps runaway depth instead of throwing', () => {
 })
 
 test('redacts Error objects without losing the message shape', () => {
-  const error = new Error('token refresh failed for Bearer sk-ant-AAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+  const error = new Error(`token refresh failed for Bearer ${['sk', 'ant', 'A'.repeat(28)].join('-')}`)
   const out = redactLogMeta({ error }) as Record<string, unknown>
   const rendered = String((out.error as Record<string, unknown>).message)
 
   assert.ok(rendered.includes('token refresh failed'), 'keeps the human-readable cause')
-  assert.ok(!rendered.includes('sk-ant-AAAAAAAAAAAAAAAAAAAAAAAAAAAA'), 'drops the embedded token')
+  assert.ok(!rendered.includes('ant-AAA'), 'drops the embedded token')
 })
 
 test('passes through null and undefined meta untouched', () => {

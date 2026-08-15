@@ -4,6 +4,7 @@ import { assertOrgScoped, ORG_SCOPED_MODELS } from '@/lib/tenant-guard'
 import { applyOwnerLiveness } from '@/lib/authz/credential-owner-guard'
 import { ambientOrganization, exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
 import { assertRlsContext, RLS_PARENT_SCOPED_MODELS, rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
+import { applyFlowSecretScan, applyRunDataRedaction } from '@/lib/flows/run-data-guard'
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: ReturnType<typeof createGuardedClient>
@@ -31,7 +32,20 @@ function createGuardedClient(base: PrismaClient) {
           // carries no organizationId, so letting the guard see it first would
           // change nothing it accepts — but the ordering is load-bearing if that
           // ever stops being true. See src/lib/authz/credential-owner-guard.ts.
-          const guardedArgs = applyOwnerLiveness(model, operation, args) as typeof args
+          const ownerScoped = applyOwnerLiveness(model, operation, args) as typeof args
+          // Run data (step input/output/logs, run trigger/output) is redacted on
+          // the way IN. Written from ~8 places in the executor, so redacting at
+          // each call site means the ninth added later silently reopens it —
+          // and a read-time filter would leave the plaintext in every backup and
+          // replica anyway. The value of a secret in run history is that it is
+          // stored, not that it is displayed.
+          const runScoped = applyRunDataRedaction(model, operation, ownerScoped) as typeof args
+          // Same chokepoint, opposite direction: run data is REDACTED on the way
+          // in, and a flow graph is ANNOTATED with the literal credentials it
+          // appears to carry. Advisory — the save always succeeds — but computed
+          // in the same write, so the findings can never describe a graph that
+          // is no longer stored.
+          const guardedArgs = applyFlowSecretScan(model, operation, runScoped) as typeof args
           // Parent-scoped models (flow run steps, collaborators, execution
           // messages) have no organizationId to route on, but their policies
           // still read app.organization_id. Absent it, PostgreSQL returns zero

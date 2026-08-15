@@ -74,6 +74,10 @@ const CLASSIFIED: Record<string, Classification> = {
   'Organization.scimTokens': 'not-secret',
   'User.apiKeys': 'not-secret',
   'User.httpCredentials': 'not-secret',
+  // Findings ABOUT secrets, not secrets: findSecretCandidates stores a masked
+  // preview (maskValue), never the literal it matched on.
+  'Flow.secretFindings': 'not-secret',
+  'Flow.secretScanAt': 'not-secret',
   'ApiKey.accessTokens': 'not-secret',
   'ApiAccessToken.apiKey': 'not-secret',
   'Organization.apiAccessTokens': 'not-secret',

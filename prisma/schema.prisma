@@ -983,6 +983,13 @@ model Flow {
   trigger        Json     @default("{}") // { type: 'manual'|'schedule'|'signal', ... }
   graph          Json     @default("{}") // working draft: { nodes, edges }
   publishedGraph Json? // the live version scheduled/triggered runs execute
+  /// Literal credentials the save-time scanner found in the graph. Advisory:
+  /// a save is never blocked (that reads as data loss to the author), but a
+  /// flow carrying a hardcoded key says so on its own card until it is fixed.
+  /// Written by the Prisma extension on every graph write, so it cannot go
+  /// stale relative to the graph it describes.
+  secretFindings Json?
+  secretScanAt   DateTime?
   version        Int      @default(1) // bumped on each publish
   visibility     String   @default("shared")
   shareToken     String?  @unique // rotatable cross-workspace share-link token

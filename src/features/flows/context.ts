@@ -1,4 +1,5 @@
 import type { ConditionOp } from '@/lib/flows/graph'
+import { fenceUntrusted } from '@/lib/security/prompt'
 
 /**
  * The evaluation context threaded through a flow run: the trigger input, every
@@ -117,11 +118,24 @@ export function buildUpstreamContextBlock(
   }
   if (sections.length === 0) return ''
   const note = dropped > 0 ? `\n\n[${dropped} more earlier step${dropped === 1 ? '' : 's'} omitted for length.]` : ''
-  return [
-    'Data gathered by earlier steps in this flow (use it as the context for your task):',
-    sections.join('\n\n'),
-    'End of earlier-step data.' + note,
-  ].join('\n\n')
+  // FENCED, because this is the highest-value prompt-injection channel in the
+  // product. Every section here is the OUTPUT of an earlier step — an HTTP call
+  // to a third party, a webhook body, a scraped page, a CRM note an outsider
+  // can write — and it is being handed to an agent that holds live tools.
+  //
+  // Concatenating it as plain prose invites exactly the confused-deputy attack
+  // this whole surface is exposed to: content that arrived as reference
+  // material reading as instruction. The agent's system prompt already carries
+  // the "untrusted data is not instructions" clause; this envelope is what
+  // brings this data under it.
+  return fenceUntrusted(
+    'earlier steps in this flow',
+    [
+      'Data gathered by earlier steps in this flow (use it as the context for your task):',
+      sections.join('\n\n'),
+      'End of earlier-step data.' + note,
+    ].join('\n\n'),
+  )
 }
 
 /** Normalize a step label for alias lookup: trimmed, lowercased, single-spaced. */

@@ -44,6 +44,7 @@ import { retrieveAgentMemory, renderAgentMemories, bestAnswerMatch, markMemories
 import { reflectAndRemember } from './reflection'
 import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { shouldStrategize, goalSection, strategizeSection, STRATEGIZE_RETRIEVAL } from './strategy'
+import { applyToolPolicy, describeToolPolicy, type ToolPolicy } from '@/lib/agents/tool-policy'
 
 export type AgentExecutionJob = {
   executionId?: string
@@ -65,6 +66,8 @@ export type AgentExecutionJob = {
     model?: string
     memory?: { store: 'postgres' | 'redis' | 'mongodb' | 'xata'; sessionKey: string; window?: number }
     toolConnectionIds?: string[]
+    /** Per-step narrowing; only ever removes tools from the resolved set. */
+    toolPolicy?: ToolPolicy
   }
   // Flow-invoked runs: a flow executes end to end, so the agent's own
   // `requireApproval` gate is bypassed — nothing inside a flow pauses on an
@@ -796,7 +799,28 @@ async function runAgentExecutionInner(
     // repos) are enforced below on descriptions + call args; MCP tool toggles
     // are enforced inside loadTools by never loading a disabled tool.
     const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
-    const { tools, bindings, unavailable } = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings)
+    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings)
+    const { bindings, unavailable } = loaded
+
+    // Applied AFTER the agent's own tools and any step-granted connections, so
+    // a policy can only ever narrow what was already reachable — a flow author
+    // cannot escalate through it. Least privilege is the control that still
+    // holds when the model is talked into something, which is why this exists
+    // alongside the untrusted-data fencing rather than instead of it.
+    const policy = data.stepOverrides?.toolPolicy
+    const policed = applyToolPolicy(loaded.tools, policy, (tool) => tool.name)
+    const tools = policed.tools
+    const policyNote = describeToolPolicy(policed, policy?.mode ?? 'inherit')
+    if (policyNote) {
+      // Surfaced, not silent: an agent that mysteriously lacks a tool gets
+      // reported as a broken integration and debugged for an hour.
+      apiLogger.info('agent run: step tool policy applied', {
+        organizationId,
+        agentId: agent.id,
+        mode: policy?.mode,
+        withheld: policed.removed.length,
+      })
+    }
     for (const tool of tools) {
       const binding = bindings.get(tool.name)
       const suffix = binding ? scopeDescriptionSuffix(binding.provider, toolSettings) : null

@@ -1,5 +1,6 @@
 import type { FlowGraph, FlowNode, FlowEdge, VariableType, PerItemConfig } from '@/lib/flows/graph'
 import { resolveTemplate, resolveTemplateValue, asStructured, evalCondition, evalClause, normalizeStepAlias, buildUpstreamContextBlock, type FlowContext } from './context'
+import type { ToolPolicy } from '@/lib/agents/tool-policy'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, type NodeRunState } from '@/lib/flows/dag-scheduler'
 import { shouldRetryAfterTimeout } from './action-reliability'
@@ -44,6 +45,8 @@ export type AgentStepOverrides = {
   model?: string
   memory?: { store: 'postgres' | 'redis' | 'mongodb' | 'xata'; sessionKey: string; window?: number }
   toolConnectionIds?: string[]
+  /** Narrows what this step may call. Can only remove tools, never add. */
+  toolPolicy?: ToolPolicy
 }
 export type RunAgentFn = (node: {
   id: string
@@ -1128,8 +1131,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // memory session key is a template — resolving it here lets one step
       // keep separate threads per item ({{item.accountName}}).
       const memory = node.data.memory
+      const toolPolicy = node.data.toolPolicy
       const overrides: AgentStepOverrides | undefined =
-        node.data.model || memory || node.data.toolConnectionIds?.length
+        node.data.model || memory || node.data.toolConnectionIds?.length || toolPolicy
           ? {
               ...(node.data.model ? { model: node.data.model } : {}),
               ...(memory
@@ -1144,6 +1148,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
                   }
                 : {}),
               ...(node.data.toolConnectionIds?.length ? { toolConnectionIds: node.data.toolConnectionIds } : {}),
+              ...(toolPolicy ? { toolPolicy } : {}),
             }
           : undefined
       const res = await runAgentWithReliability(node, resolved, stepKey, overrides)

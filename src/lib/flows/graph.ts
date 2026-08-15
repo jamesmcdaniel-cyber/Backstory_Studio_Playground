@@ -152,6 +152,30 @@ const agentNode = z.object({
     // Extra tool connections granted to the agent for THIS step's runs, on top
     // of the tools the agent already owns (flow tool-catalog connection ids).
     toolConnectionIds: z.array(z.string().max(200)).max(20).optional(),
+    /**
+     * Narrow what this step's agent may CALL. Until this existed the only
+     * per-step control was additive (`toolConnectionIds`), so a step that
+     * merely summarises data still held every write tool its agent owns — and
+     * an agent reading attacker-influenceable content with a send/delete tool
+     * in reach is the confused-deputy shape this product is most exposed to.
+     *
+     *   inherit   (default) every tool the agent owns — previous behaviour,
+     *             so no existing flow changes.
+     *   readonly  drops tools whose names imply a write. The cheap, correct
+     *             setting for the common "read and summarise" step.
+     *   allowlist only `allowedTools`, matched exactly.
+     *   none      no tools at all — a pure reasoning step.
+     *
+     * A narrowing policy can only ever REMOVE tools. It is applied after the
+     * agent's own tool set and any step-granted connections are resolved, so
+     * it cannot be used to reach something the agent was not already allowed.
+     */
+    toolPolicy: z
+      .object({
+        mode: z.enum(['inherit', 'readonly', 'allowlist', 'none']).default('inherit'),
+        allowedTools: z.array(z.string().max(200)).max(100).optional(),
+      })
+      .optional(),
     // Run this agent once per item of a list, collecting the outputs (see perItemSchema).
     perItem: perItemSchema.optional(),
   }),

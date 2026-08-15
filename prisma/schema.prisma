@@ -84,6 +84,14 @@ model Organization {
   scimTokens           ScimToken[]
   apiKeys              ApiKey[]
   apiAccessTokens      ApiAccessToken[]
+  identityProviders    IdentityProvider[]
+  /// How this workspace's people must sign in.
+  ///   optional (default) — any admitted method, exactly as before.
+  ///   required — only an identity brokered by a federated IdP. Password and
+  ///     social sign-in are refused for this workspace's verified domains.
+  /// Defaulted to `optional` so enabling it is always a deliberate act: a
+  /// default of `required` would lock every existing workspace out on deploy.
+  ssoEnforcement       String            @default("optional")
 
   @@map("organizations")
 }
@@ -162,6 +170,38 @@ model User {
 }
 
 /// A domain becomes authoritative only after its DNS TXT challenge verifies.
+/// A customer-owned identity provider federated into this workspace.
+///
+/// Okta is the platform's own IdP, but a customer accessing the platform
+/// externally brings their own — that is the whole point of an external
+/// delivery surface. The SAML/OIDC connection itself lives in Supabase (which
+/// brokers the protocol); this row is the record of WHICH provider serves which
+/// workspace, so the mapping is manageable, auditable and enforceable from
+/// inside the product rather than only from a Supabase dashboard.
+model IdentityProvider {
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
+  /// Display name shown on the sign-in surface ("Acme Okta").
+  name           String
+  protocol       String    @default("saml") // 'saml' | 'oidc'
+  /// Supabase SSO provider id. Null until an operator finishes provisioning it
+  /// there — the row exists first so the intent is recorded and reviewable.
+  supabaseSsoId  String?   @unique
+  /// SAML entity id / OIDC issuer, for operator reference and de-duplication.
+  issuer         String?
+  status         String    @default("pending") // pending | active | disabled
+  createdById    String?
+  lastUsedAt     DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domains      OrganizationDomain[]
+
+  @@index([organizationId, status])
+  @@map("identity_providers")
+}
+
 model OrganizationDomain {
   id                    String    @id @default(cuid())
   organizationId        String    @db.Uuid
@@ -171,10 +211,18 @@ model OrganizationDomain {
   status                String    @default("pending") // pending | verified
   verifiedAt            DateTime? @db.Timestamptz(6)
   createdAt             DateTime  @default(now()) @db.Timestamptz(6)
+  /// Which IdP signs in this domain's people. Null = the platform default
+  /// (Okta / social), which is what every existing domain keeps.
+  identityProviderId    String?
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // SetNull, not Cascade: removing an IdP must not delete the customer's
+  // verified domain — that would silently un-verify their whole workspace and
+  // is far harder to recover from than re-pointing the domain.
+  identityProvider IdentityProvider? @relation(fields: [identityProviderId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status])
+  @@index([identityProviderId])
   @@map("organization_domains")
 }
 

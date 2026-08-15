@@ -3,6 +3,12 @@ import { resolveEntitlement } from '@/lib/entitlement'
 import { backstoryGateEnabled, backstoryMcpReady, ensureBackstoryConnection } from '@/lib/mcp/backstory-connection'
 import { isPlatformPrivileged, resolvePermissions, type Permission } from '@/lib/authz/permissions'
 import { emailDomain, isEnterpriseIdentity, satisfiesMfaPolicy } from '@/lib/auth/enterprise-policy'
+import {
+  evaluateSsoRequirement,
+  markIdentityProviderUsed,
+  resolveIdentityProviderForEmail,
+} from '@/lib/auth/identity-providers'
+import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { prisma } from '@/lib/prisma'
 
 type AuthResult = NonNullable<Awaited<ReturnType<typeof getAuthWithUser>>>
@@ -150,6 +156,28 @@ export async function requireAuthContext(
   // Recovery is the existing one and needs no exemption here: /auth/mfa is a
   // public page that enrolls through Supabase directly rather than through a
   // gated route, so an account that trips this can always reach enrollment.
+  // Per-workspace SSO enforcement, checked per request for the same reason the
+  // platform admission check is: the password grant never passes through the
+  // OAuth callback, so a gate that lives only there governs one way in. That is
+  // exactly the hole the 2026-08-13 admission fix closed, and re-creating it
+  // here would be repeating a known mistake.
+  //
+  // Deliberately NOT applied to the platform owner: every other lockout in this
+  // file exempts them, because a configuration mistake must never leave the
+  // platform with nobody able to correct it.
+  if (!isPlatformOwnerEmail(auth.dbUser.email)) {
+    const identityProvider = await resolveIdentityProviderForEmail(auth.dbUser.email)
+    const ssoDecision = evaluateSsoRequirement({ provider: identityProvider, methods: auth.authMethods })
+    if (!ssoDecision.allowed) {
+      throw new AuthContextError(ssoDecision.message, 403, 'SSO_REQUIRED')
+    }
+    if (identityProvider && isEnterpriseIdentity(auth.authMethods)) {
+      // Fire and forget: an unused or dead IdP should be visible, but recording
+      // that must never delay or fail a sign-in that already succeeded.
+      void markIdentityProviderUsed(identityProvider.id)
+    }
+  }
+
   const privileged = isPlatformPrivileged(permissions)
   const mfaPolicy = privileged ? 'required' : (organization?.mfaPolicy ?? 'optional')
   if (!options?.skipMfaGate && !satisfiesMfaPolicy(mfaPolicy, auth.assuranceLevel, auth.authMethods, auth.dbUser.email)) {

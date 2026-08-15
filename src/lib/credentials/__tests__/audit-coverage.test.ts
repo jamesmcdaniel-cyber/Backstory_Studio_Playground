@@ -55,11 +55,6 @@ const GRANT_EXEMPT: Record<string, string> = {
     'browser. No credential exists yet — the grant it leads to is audited in the callback.',
   'app/api/peopleai/connect/route.ts':
     'Same: encrypts its own OAuth state cookie. The grant is audited in connect-service.ts.',
-  'app/api/mcp-connections/oauth/callback/route.ts':
-    'Audited, but via recordCredentialGrant/Rotation directly — listed so the read guard ' +
-    'and grant guard agree about it.',
-  'app/api/peopleai/callback/route.ts': 'Delegates persistence, and the audit, to connect-service.ts.',
-  'app/api/signals/people-ai/route.ts': 'Inbound signature verification; stores no credential.',
 }
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
@@ -93,11 +88,11 @@ test('every file that decrypts a stored secret also records that it read one', (
     [],
     `these files decrypt a stored credential without recording the read: ${offenders.join(', ')}. ` +
       'Call recordCredentialUse (and recordCredentialUseFailure on the decrypt-failure branch), ' +
-      'or add the file to ALLOWED_WITHOUT_AUDIT with a reason.',
+      'or add the file to READ_EXEMPT with a reason.',
   )
 })
 
-test('the allowlist only names files that still exist and still decrypt', () => {
+test('each allowlist only names files that still exist and still match its rule', () => {
   // An allowlist entry that no longer applies is a silent hole: the file it
   // named may have been split, and the replacement inherits the exemption
   // without anyone deciding it should.

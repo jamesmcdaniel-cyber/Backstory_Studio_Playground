@@ -83,6 +83,7 @@ model Organization {
   allowedDomains       PlatformAllowedDomain[]
   scimTokens           ScimToken[]
   apiKeys              ApiKey[]
+  apiAccessTokens      ApiAccessToken[]
 
   @@map("organizations")
 }
@@ -293,6 +294,13 @@ model ApiKey {
   organizationId String    @db.Uuid
   userId         String?
   name           String
+  /// Public half of a client-credentials pair. Non-secret: safe to display,
+  /// log and put in a support ticket, which is exactly why it exists — the
+  /// single-token scheme forced people to paste the secret to identify a key.
+  /// Null on keys minted before the pair existed; those still authenticate
+  /// with the bearer token alone.
+  clientId       String?   @unique
+  /// Hash of the single bearer token (legacy) or of the client SECRET (pairs).
   keyHash        String    @unique
   prefix         String
   scopes         Json      @default("[]")
@@ -301,11 +309,44 @@ model ApiKey {
   revokedAt      DateTime? @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  accessTokens ApiAccessToken[]
 
   @@index([organizationId, revokedAt])
   @@map("api_keys")
+}
+
+/// A short-lived access token issued from a client-credentials exchange.
+///
+/// The persistent key stops being the thing sent on every request: callers
+/// exchange the pair once for a token that expires in minutes. A leaked
+/// request log or proxy trace then exposes something already dead rather than a
+/// credential valid until someone notices.
+///
+/// Stored and hashed rather than signed and stateless, deliberately: a
+/// stateless token cannot be revoked before it expires, and immediate
+/// revocation is the property the rest of this system is built around. The
+/// lookup is one indexed read on a hash we already compute.
+model ApiAccessToken {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  apiKeyId       String
+  tokenHash      String   @unique
+  /// Snapshotted at issue: narrowing a key's scopes must not silently widen a
+  /// token already in flight, and a token must never outrank its key.
+  scopes         Json     @default("[]")
+  expiresAt      DateTime @db.Timestamptz(6)
+  revokedAt      DateTime? @db.Timestamptz(6)
+  lastUsedAt     DateTime? @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey       @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([apiKeyId, revokedAt])
+  @@index([expiresAt])
+  @@map("api_access_tokens")
 }
 
 model AgentTask {

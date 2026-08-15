@@ -44,6 +44,8 @@ const CLASSIFIED: Record<string, Classification> = {
 
   // ── One-way hashes; plaintext shown once at creation/rotation ────────────
   'ApiKey.keyHash': 'hash',
+  // Hash of the client SECRET on paired keys, of the bearer token on legacy ones.
+  'ApiAccessToken.tokenHash': 'hash',
   'FlowRun.resumeTokenHash': 'hash',
   'Invitation.tokenHash': 'hash',
   'OrganizationDomain.verificationTokenHash': 'hash',
@@ -72,6 +74,11 @@ const CLASSIFIED: Record<string, Classification> = {
   'Organization.scimTokens': 'not-secret',
   'User.apiKeys': 'not-secret',
   'User.httpCredentials': 'not-secret',
+  'ApiKey.accessTokens': 'not-secret',
+  'ApiAccessToken.apiKey': 'not-secret',
+  'Organization.apiAccessTokens': 'not-secret',
+  // A foreign key, not a credential — it identifies which key issued the token.
+  'ApiAccessToken.apiKeyId': 'not-secret',
 }
 
 /** Columns whose names read as secret-bearing. */

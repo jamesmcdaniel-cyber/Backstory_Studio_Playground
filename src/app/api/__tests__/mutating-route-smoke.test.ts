@@ -233,6 +233,7 @@ test('cron/dispatch and cron/retention refuse a wrong secret', { skip: !TEST_DB 
  * in `cases` and not listed here fails the completeness test below.
  */
 const SKIPS: Record<string, string> = {
+  'v1/token:POST': 'client-credentials grant; covered by client-credentials.db.test.ts',
   'agents/[id]/execute:POST': 'runs an agent against a live model',
   'agents/[id]/chat:POST': 'streams a live model turn',
   'agents/[id]/runs/[runId]:POST': 'resumes a run against a live model',

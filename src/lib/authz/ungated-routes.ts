@@ -11,6 +11,12 @@ export const UNGATED_ROUTES: readonly string[] = [
   'cron/retention',                       // CRON_SECRET header
   'cron/dispatch',                        // CRON_SECRET header
   'invitations/lookup',                   // pre-auth: resolves an invite token
+  // The OAuth client-credentials token endpoint. It cannot sit behind
+  // authentication because it IS the authentication step — it takes a client
+  // id + secret and returns a short-lived access token. Self-authenticating:
+  // constant-time secret comparison, one uniform invalid_client response so it
+  // cannot be used to enumerate client ids, IP rate limiting that fails closed.
+  'v1/token',
   'health',                               // public liveness probe
   // Browsers post CSP violation reports with no credentials, and a violation can
   // fire on a page whose session is what broke. Treated as untrusted anonymous

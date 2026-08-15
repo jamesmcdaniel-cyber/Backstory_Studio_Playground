@@ -34,6 +34,11 @@ const routeNames = () =>
 // POST/PUT/PATCH/DELETE handlers that authenticate by signature/secret/bearer/
 // OAuth state instead of a session — each vetted in a security audit.
 const mutatingExempt = new Set([
+  // The token endpoint IS the authentication step, so it cannot sit behind
+  // authentication. It authenticates the caller itself: constant-time client
+  // secret comparison, one uniform invalid_client answer so it cannot be used
+  // to enumerate client ids, and IP rate limiting that fails closed.
+  'v1/token',
   // CSP violation reports: browsers post these with no credentials, and a
   // violation can fire on a page whose session is exactly what broke. Carries no
   // authority — it only writes a log line — and is rate limited fail-closed per

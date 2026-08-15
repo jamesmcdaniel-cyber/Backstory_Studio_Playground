@@ -11,10 +11,15 @@ type Handler = (payload: { payload?: Record<string, unknown>; key?: string }) =>
 export class FakeRealtime {
   rooms = new Map<string, Set<FakeChannel>>()
   denyWrite = new Set<string>()
+  /** Every channel instance ever created, so tests can assert that recovery
+   *  happens on a FRESH instance rather than by re-subscribing a dead one. */
+  created: FakeChannel[] = []
   realtime = { setAuth: async () => {} }
 
   channel(topic: string): FakeChannel {
-    return new FakeChannel(this, topic)
+    const channel = new FakeChannel(this, topic)
+    this.created.push(channel)
+    return channel
   }
 
   removeChannel(channel: FakeChannel) {
@@ -29,6 +34,9 @@ export class FakeRealtime {
 export class FakeChannel {
   handlers: { type: string; event: string; handler: Handler }[] = []
   presence: Record<string, Record<string, unknown>[]> = {}
+  /** Mirrors realtime-js: subscribe() is one-shot per instance. */
+  joinedOnce = false
+  private callback?: (status: string, error?: Error) => void
 
   constructor(readonly hub: FakeRealtime, readonly topic: string) {}
 
@@ -37,12 +45,33 @@ export class FakeChannel {
     return this
   }
 
-  subscribe(callback?: (status: string) => void): FakeChannel {
+  subscribe(callback?: (status: string, error?: Error) => void): FakeChannel {
+    // Real realtime-js throws this exact way (a string, not an Error) when a
+    // channel instance is subscribed twice; the fake enforces it so hooks that
+    // "retry" by re-subscribing a dead instance fail here like they do in prod.
+    if (this.joinedOnce) {
+      throw `tried to subscribe multiple times. 'subscribe' can only be called a single time per channel instance`
+    }
+    this.joinedOnce = true
+    this.callback = callback
     const room = this.hub.rooms.get(this.topic) ?? new Set<FakeChannel>()
     room.add(this)
     this.hub.rooms.set(this.topic, room)
     callback?.('SUBSCRIBED')
     return this
+  }
+
+  /** The server closing the channel (Realtime restart, idle kick). Like the
+   *  real client, a closed channel leaves the room and will NOT rejoin itself. */
+  serverClose() {
+    this.hub.rooms.get(this.topic)?.delete(this)
+    this.callback?.('CLOSED')
+  }
+
+  /** A channel-level failure (join refused, transport error). */
+  serverError() {
+    this.hub.rooms.get(this.topic)?.delete(this)
+    this.callback?.('CHANNEL_ERROR', new Error('fake channel error'))
   }
 
   send(message: { type: string; event: string; payload: Record<string, unknown> }) {

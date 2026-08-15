@@ -63,50 +63,95 @@ export function useJamChannel(options: {
     let cancelled = false
     let attempt = 0
     let retryTimer: ReturnType<typeof setTimeout> | null = null
-    let channel: JamChannel
-    try {
-      channel = client.channel(topic, { config: { private: true, presence: { key: presenceKey } } })
-    } catch {
-      setStatus('error') // Supabase not configured — the jam is simply unavailable.
-      return
+    let channel: JamChannel | null = null
+
+    const teardown = () => {
+      const old = channel
+      channel = null
+      if (!old) return
+      if (channelRef.current === old) channelRef.current = null
+      try { void Promise.resolve(old.untrack()).catch(() => undefined) } catch { /* already gone */ }
+      try { client.removeChannel(old) } catch { /* already gone */ }
     }
-    channelRef.current = channel
-    bindRef.current(channel)
+
+    const scheduleRetry = () => {
+      if (cancelled || retryTimer) return
+      retryTimer = setTimeout(() => {
+        retryTimer = null
+        join()
+      }, retryDelayMs(attempt++))
+    }
 
     const join = () => {
+      if (cancelled) return
+      // Every attempt gets a FRESH channel: realtime-js allows exactly one
+      // subscribe() per instance, and a server-closed channel is removed from
+      // the socket for good — re-subscribing the dead instance throws and the
+      // jam would stay down until a full page reload.
+      teardown()
+      let next: JamChannel
+      try {
+        next = client.channel(topic, { config: { private: true, presence: { key: presenceKey } } })
+      } catch {
+        setStatus('error') // Supabase not configured — the jam is simply unavailable.
+        return
+      }
+      channel = next
+      channelRef.current = next
+      bindRef.current(next)
       // setAuth attaches the current JWT; without it a private channel is
       // refused outright.
       void Promise.resolve(client.realtime?.setAuth?.())
         .catch(() => undefined)
         .then(() => {
-          if (cancelled) return
-          channel.subscribe((subscribeStatus) => {
-            if (cancelled) return
-            setStatus((current) => nextJamStatus(current, subscribeStatus))
-            if (subscribeStatus === 'SUBSCRIBED') {
-              attempt = 0
-              onSubscribedRef.current?.()
-              return
-            }
-            if (subscribeStatus === 'CHANNEL_ERROR' || subscribeStatus === 'TIMED_OUT' || subscribeStatus === 'CLOSED') {
-              reportChannelIssue(topic, subscribeStatus)
-              if (retryTimer) return
-              retryTimer = setTimeout(() => {
-                retryTimer = null
-                join()
-              }, retryDelayMs(attempt++))
-            }
-          })
+          if (cancelled || channel !== next) return
+          try {
+            next.subscribe((subscribeStatus) => {
+              if (cancelled || channel !== next) return
+              setStatus((current) => nextJamStatus(current, subscribeStatus))
+              if (subscribeStatus === 'SUBSCRIBED') {
+                attempt = 0
+                onSubscribedRef.current?.()
+                return
+              }
+              if (subscribeStatus === 'CHANNEL_ERROR' || subscribeStatus === 'TIMED_OUT' || subscribeStatus === 'CLOSED') {
+                reportChannelIssue(topic, subscribeStatus)
+                scheduleRetry()
+              }
+            })
+          } catch {
+            // subscribe() itself threw (library state guard). Count it as a
+            // failed attempt rather than letting it escape as an unhandled
+            // rejection that kills the retry loop.
+            reportChannelIssue(topic, 'SUBSCRIBE_THREW')
+            scheduleRetry()
+          }
         })
     }
     join()
 
+    // Waking from laptop sleep or regaining network is when channels are most
+    // likely dead AND the user is looking: if a retry is pending, fire it now
+    // with the backoff reset instead of making them wait out up to 30s.
+    const kick = () => {
+      if (cancelled || !retryTimer) return
+      clearTimeout(retryTimer)
+      retryTimer = null
+      attempt = 0
+      join()
+    }
+    const onVisible = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') kick()
+    }
+    window.addEventListener('online', kick)
+    document.addEventListener('visibilitychange', onVisible)
+
     return () => {
       cancelled = true
       if (retryTimer) clearTimeout(retryTimer)
-      channelRef.current = null
-      try { void Promise.resolve(channel.untrack()).catch(() => undefined) } catch { /* already gone */ }
-      try { client.removeChannel(channel) } catch { /* already gone */ }
+      window.removeEventListener('online', kick)
+      document.removeEventListener('visibilitychange', onVisible)
+      teardown()
     }
   }, [client, topic, enabled, presenceKey, channelRef])
 

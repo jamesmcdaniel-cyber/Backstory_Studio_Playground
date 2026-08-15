@@ -8,6 +8,15 @@ test('workspace MFA fails closed unless the session is AAL2', () => {
   assert.equal(satisfiesMfaPolicy('optional', null), true)
 })
 
+test('an IdP-brokered session satisfies required MFA — Okta enforces the second factor', () => {
+  assert.equal(satisfiesMfaPolicy('required', 'aal1', ['sso/saml']), true)
+  assert.equal(satisfiesMfaPolicy('required', null, ['password', 'saml']), true)
+  // Social OAuth is not enterprise identity: no IdP policy stands behind it.
+  assert.equal(satisfiesMfaPolicy('required', 'aal1', ['oauth']), false)
+  assert.equal(satisfiesMfaPolicy('required', 'aal1', ['password']), false)
+  assert.equal(satisfiesMfaPolicy('required', 'aal1', []), false)
+})
+
 test('enterprise identity and domains normalize safely', () => {
   assert.equal(emailDomain(' User@Example.COM '), 'example.com')
   assert.equal(emailDomain('invalid'), null)

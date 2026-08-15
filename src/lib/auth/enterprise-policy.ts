@@ -30,8 +30,21 @@ export function amrMethods(amr: unknown): string[] {
   })
 }
 
-export function satisfiesMfaPolicy(policy: string, assuranceLevel: string | null): boolean {
-  return policy !== 'required' || assuranceLevel === 'aal2'
+/**
+ * An enterprise-brokered session satisfies an MFA requirement: the workspace
+ * IdP (Okta) enforces its own MFA policy at sign-in, so demanding a TOTP
+ * factor on top forces employees to carry an authenticator app for a session
+ * that already passed a second factor. TOTP (aal2) remains the path for
+ * accounts outside the IdP — password and social sign-ins carry no such
+ * guarantee, so they still must enroll.
+ */
+export function satisfiesMfaPolicy(
+  policy: string,
+  assuranceLevel: string | null,
+  methods: readonly string[] = [],
+): boolean {
+  if (policy !== 'required') return true
+  return assuranceLevel === 'aal2' || isEnterpriseIdentity(methods)
 }
 
 /**

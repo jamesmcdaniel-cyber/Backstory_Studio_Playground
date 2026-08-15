@@ -634,11 +634,13 @@ export function StepDrawer({
   const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
   const [curlDialogOpen, setCurlDialogOpen] = useState(false)
   const [reverifyingCredential, setReverifyingCredential] = useState(false)
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<'input' | 'configure' | 'output'>('configure')
   // Editable draft of the pinned mock JSON. Reset from the graph's pinData when
   // the selected node changes; in-node edits are owned by the textarea/handlers.
   const [mockDraft, setMockDraft] = useState('')
   useEffect(() => {
     setMockDraft(mockData === undefined ? '' : JSON.stringify(mockData, null, 2))
+    setMobileWorkspaceTab('configure')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.id])
 
@@ -763,7 +765,7 @@ export function StepDrawer({
       )}
       data-node-configuration={layout}
     >
-      <div className={cn('flex items-center justify-between border-b border-border', isWorkspace ? 'px-6 py-4' : 'px-4 py-3')}>
+      <div className={cn('flex items-center justify-between gap-3 overflow-x-auto border-b border-border', isWorkspace ? 'px-4 py-3 sm:px-6 sm:py-4' : 'px-4 py-3')}>
         <div className="flex min-w-0 items-center gap-3">
           {isWorkspace && (
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
@@ -825,9 +827,26 @@ export function StepDrawer({
         </div>
       </div>
 
+      {isWorkspace && (
+        <div className="grid shrink-0 grid-cols-3 border-b border-border bg-slate-50/70 p-1 lg:hidden" role="tablist" aria-label="Step workspace">
+          {(['input', 'configure', 'output'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={mobileWorkspaceTab === tab}
+              onClick={() => setMobileWorkspaceTab(tab)}
+              className={cn('rounded-md px-2 py-2 text-xs font-semibold capitalize', mobileWorkspaceTab === tab ? 'bg-white text-indigo-700 shadow-1' : 'text-muted-foreground')}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className={cn('min-h-0 flex-1', isWorkspace && 'grid lg:grid-cols-[minmax(250px,0.8fr)_minmax(480px,1.25fr)_minmax(250px,0.8fr)]')}>
         {isWorkspace && (
-          <aside className="hidden min-h-0 flex-col border-r border-border bg-slate-50/70 lg:flex">
+          <aside className={cn('min-h-0 flex-col border-r border-border bg-slate-50/70', mobileWorkspaceTab === 'input' ? 'flex' : 'hidden', 'lg:flex')}>
             <div className="border-b border-border px-4 py-3">
               <div className="flex items-center gap-2">
                 <Database className="h-4 w-4 text-indigo-600" />
@@ -853,7 +872,7 @@ export function StepDrawer({
           </aside>
         )}
 
-        <div className="flex min-h-0 min-w-0 flex-col">
+        <div className={cn('min-h-0 min-w-0 flex-col', !isWorkspace || mobileWorkspaceTab === 'configure' ? 'flex' : 'hidden', 'lg:flex')}>
           <div
             className={cn(
               'flex-1 space-y-5 overflow-y-auto',
@@ -2262,7 +2281,7 @@ export function StepDrawer({
           )}
         </div>
         {isWorkspace && (
-          <aside className="hidden min-h-0 flex-col border-l border-border bg-slate-50/70 lg:flex">
+          <aside className={cn('min-h-0 flex-col border-l border-border bg-slate-50/70', mobileWorkspaceTab === 'output' ? 'flex' : 'hidden', 'lg:flex')}>
             <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3">
               <div>
                 <div className="flex items-center gap-2">

@@ -50,8 +50,7 @@ export function FlowTemplateCard({
 }) {
   const readyNow = template.setupCount === 0
   return (
-    <Link href={`/flow-templates/${template.id}`} className="block">
-      <Card
+    <Card
         className={cn(
           'group relative h-full overflow-hidden border-border/60 transition-[transform,box-shadow,border-color] duration-300 ease-out-quart',
           'hover:-translate-y-1 hover:shadow-4 hover:ring-1',
@@ -60,13 +59,13 @@ export function FlowTemplateCard({
       >
         <div className={cn('absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r opacity-80 transition-opacity group-hover:opacity-100', accent.bar)} />
         {template.mine && (onEdit || onDelete) && (
-          <div className="absolute right-2 top-2 z-10 hidden gap-1 group-hover:flex">
+          <div className="absolute right-2 top-2 z-20 flex gap-1 opacity-75 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
             {onEdit && (
               <button
                 type="button"
-                aria-label="Edit flow template"
-                onClick={(e) => { e.preventDefault(); onEdit(template) }}
-                className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-1 hover:text-indigo-600"
+                aria-label={`Edit ${template.name}`}
+                onClick={() => onEdit(template)}
+                className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-indigo-600"
               >
                 <Pencil className="h-3.5 w-3.5" />
               </button>
@@ -74,9 +73,9 @@ export function FlowTemplateCard({
             {onDelete && (
               <button
                 type="button"
-                aria-label="Delete flow template"
-                onClick={(e) => { e.preventDefault(); onDelete(template) }}
-                className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-1 hover:text-red-600"
+                aria-label={`Delete ${template.name}`}
+                onClick={() => onDelete(template)}
+                className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-red-600"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -84,12 +83,13 @@ export function FlowTemplateCard({
           </div>
         )}
 
+        <Link href={`/flow-templates/${template.id}`} className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
         <CardHeader className="space-y-2.5 pt-5">
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="outline" className={cn('text-[11px] font-medium', accent.badge)}>{template.category}</Badge>
             {template.custom && (
               <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-[11px] font-medium text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">
-                Community
+                {template.mine ? 'Workspace' : 'Community'}
               </Badge>
             )}
             {template.source === 'ai_generated' && (
@@ -127,25 +127,28 @@ export function FlowTemplateCard({
               </div>
             </div>
           )}
-          {onUse ? (
+          {!onUse && (
+            <div className="flex items-center gap-1 pt-1 text-sm font-medium text-indigo-600 dark:text-indigo-300">
+              View template
+              <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
+            </div>
+          )}
+        </CardContent>
+        </Link>
+          {onUse && (
+            <div className="px-6 pb-6">
             <Button
               size="sm"
               variant="outline"
               className="w-full"
               disabled={useDisabled}
               loading={usePending}
-              onClick={(event) => { event.preventDefault(); event.stopPropagation(); onUse(template) }}
+              onClick={() => onUse(template)}
             >
-              Use this template
+              Create flow draft
             </Button>
-          ) : (
-            <div className="flex items-center gap-1 pt-1 text-sm font-medium text-indigo-600 opacity-0 transition-opacity group-hover:opacity-100 dark:text-indigo-300">
-              Use this flow
-              <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
             </div>
           )}
-        </CardContent>
       </Card>
-    </Link>
   )
 }

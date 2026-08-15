@@ -60,6 +60,7 @@ import { CheckerPanel } from '@/components/flows/checker-panel'
 import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
 import { FlowIconInput } from '@/components/flows/flow-icon-input'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
+import { ConfirmDialog } from '@/components/settings/dialogs'
 import { useCanvasPan } from '@/components/flows/use-canvas-pan'
 import { VersionsPanel } from '@/components/flows/versions-panel'
 import type { StepStatus } from '@/lib/flows/node-presentation'
@@ -240,6 +241,8 @@ function FlowBuilder() {
   const [settingsDraft, setSettingsDraft] = useState({ name: '', description: '', icon: '', folder: '' })
   const [graph, setGraph] = useState<FlowGraph>(emptyGraph())
   const [savingTemplate, setSavingTemplate] = useState(false)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [deletingFlow, setDeletingFlow] = useState(false)
   // Lifecycle status is owned by publish/unpublish (server-side); the client
   // only mirrors it for exports — there is no manual status control.
   const [, setStatus] = useState('draft')
@@ -292,6 +295,17 @@ function FlowBuilder() {
   const closePanel = useCallback((panel: NonNullable<typeof activePanel>) => {
     setActivePanel((current) => (current === panel ? null : current))
   }, [])
+
+  // Creation launchers can deep-link directly into the relevant builder aid.
+  // Consume the parameter once so refreshing does not keep reopening a panel.
+  useEffect(() => {
+    const requested = searchParams.get('panel')
+    if (!['copilot', 'runs', 'checker', 'importNotes', 'versions'].includes(requested || '')) return
+    setActivePanel(requested as NonNullable<typeof activePanel>)
+    const next = new URLSearchParams(searchParams.toString())
+    next.delete('panel')
+    router.replace(`/flows/${id}${next.size ? `?${next.toString()}` : ''}`, { scroll: false })
+  }, [id, router, searchParams])
   // Persisted import report (Flow.importNotes) — null once cleared or for
   // flows that weren't imported; the toggle only renders when a report exists.
   const [importReport, setImportReport] = useState<FlowImportReport | null>(null)
@@ -944,13 +958,12 @@ function FlowBuilder() {
     // swallows the drag. Single-click opens live in canvasNodeClick below.
     setOpenNodeId(null)
   }, [])
-  // Single-clicking the TRIGGER opens its drawer immediately — "where do I
-  // configure the webhook?" was unanswerable while a single click on the
-  // trigger appeared to do nothing. Safe here because onNodeClick only fires
-  // when the pointer didn't travel: dragging the trigger never opens it.
+  // A click that did not become a drag opens every step consistently. Double
+  // click remains supported by the canvas, but is no longer required to learn
+  // that a regular step is configurable.
   const canvasNodeClick = useCallback((nodeId: string) => {
     const node = graph.nodes.find((candidate) => candidate.id === nodeId)
-    if (node?.type === 'trigger') setOpenNodeId(node.id)
+    if (node) setOpenNodeId(node.id)
   }, [graph])
   const canvasOpenNode = useCallback((nodeId: string) => {
     setSelectedId(nodeId)
@@ -2121,21 +2134,24 @@ function FlowBuilder() {
   }, [name, description, graph, agents, exportCredentials])
 
   const deleteFlow = useCallback(async () => {
-    const flowName = name.trim() || 'this flow'
-    if (!window.confirm(`Delete "${flowName}"? This cannot be undone.`)) return
-    const response = await fetch('/api/flows', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id }),
-    })
-    const data = await response.json().catch(() => ({}))
-    if (response.ok) {
-      toast.success('Flow deleted.')
-      router.push('/flows')
-    } else {
-      toast.error(data.error || 'Could not delete the flow.')
+    setDeletingFlow(true)
+    try {
+      const response = await fetch('/api/flows', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (response.ok) {
+        toast.success('Flow deleted.')
+        router.push('/flows')
+      } else {
+        toast.error(data.error || 'Could not delete the flow.')
+      }
+    } finally {
+      setDeletingFlow(false)
     }
-  }, [id, name, router])
+  }, [id, router])
 
   const refreshAgents = useCallback(async () => {
     const data = await fetch('/api/agents', { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
@@ -2216,7 +2232,7 @@ function FlowBuilder() {
   return (
     <div className="flex h-full flex-col">
       {/* Top bar */}
-      <div className="flex items-center gap-3 border-b border-border bg-card px-4 py-2.5">
+      <div className="flex shrink-0 items-center gap-3 overflow-x-auto border-b border-border bg-card px-4 py-2.5">
         <Button variant="ghost" size="icon" onClick={() => router.push('/flows')} aria-label="Back to flows">
           <ArrowLeft className="h-4 w-4" />
         </Button>
@@ -2237,12 +2253,18 @@ function FlowBuilder() {
             {icon ? <span aria-hidden>{icon}</span> : <Workflow className="h-4 w-4 text-muted-foreground" />}
           </span>
         )}
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="min-w-0 flex-1 rounded-lg bg-transparent px-2 py-1 text-base font-semibold outline-none hover:bg-muted focus:bg-muted"
-          placeholder="Untitled flow"
-        />
+        <div className="w-44 shrink-0 sm:w-56">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full min-w-0 rounded-lg bg-transparent px-2 py-1 text-base font-semibold outline-none hover:bg-muted focus:bg-muted"
+            placeholder="Untitled flow"
+            aria-label="Flow name"
+          />
+          <p className={cn('px-2 text-[11px]', dirty ? 'text-amber-600' : 'text-muted-foreground')} aria-live="polite">
+            {saving ? 'Saving…' : dirty ? 'Unsaved details' : published ? `Published v${version}` : 'Draft saved'}
+          </p>
+        </div>
         <Button variant="ghost" size="icon" onClick={undo} aria-label="Undo" title="Undo (⌘Z)">
           <Undo2 className="h-4 w-4" />
         </Button>
@@ -2317,7 +2339,7 @@ function FlowBuilder() {
             {!external && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={deleteFlow} className="text-red-600 focus:text-red-700">
+                <DropdownMenuItem onSelect={() => setConfirmDeleteOpen(true)} className="text-red-600 focus:text-red-700">
                   <Trash2 className="h-4 w-4" /> Delete flow
                 </DropdownMenuItem>
               </>
@@ -2418,7 +2440,7 @@ function FlowBuilder() {
           <>
             <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
             <Button variant="outline" size="sm" onClick={save} loading={saving} className="relative">
-              <Save className="mr-1.5 h-4 w-4" /> Save
+              <Save className="mr-1.5 h-4 w-4" /> Save now
               {dirty && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400" title="Unsaved changes" />}
             </Button>
             {published && !dirty && !unpublishedChanges ? (
@@ -2689,19 +2711,9 @@ function FlowBuilder() {
         )}
 
         {drawerNode && !viewingVersion && (
-          <div
-            role="presentation"
-            className="fixed inset-0 z-50 animate-fade-in bg-slate-950/55 p-2 backdrop-blur-sm md:p-3"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setSelectedId(null)
-            }}
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-label={`Step settings: ${labelForNode(drawerNode.id)}`}
-              className="mx-auto h-full w-full max-w-[1800px] animate-scale-in"
-            >
+          <Dialog open onOpenChange={(open) => !open && closeDrawer()}>
+            <DialogContent className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-[1800px] gap-0 overflow-hidden border-0 bg-transparent p-0 shadow-none sm:rounded-2xl md:h-[calc(100dvh-1.5rem)] md:w-[calc(100vw-1.5rem)] [&>button:last-child]:hidden">
+              <DialogTitle className="sr-only">Step settings: {labelForNode(drawerNode.id)}</DialogTitle>
               <StepDrawer
                 layout="workspace"
                 node={drawerNode}
@@ -2756,8 +2768,8 @@ function FlowBuilder() {
                 }}
                 onClose={closeDrawer}
               />
-            </div>
-          </div>
+            </DialogContent>
+          </Dialog>
         )}
 
         {showCopilot && canEdit && (
@@ -2889,6 +2901,16 @@ function FlowBuilder() {
         flowName={name}
         flowDescription={description}
         graph={graph}
+      />
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onOpenChange={setConfirmDeleteOpen}
+        title={`Delete ${name.trim() || 'this flow'}?`}
+        description="The flow and its run history will be permanently removed. This cannot be undone."
+        confirmLabel="Delete flow"
+        destructive
+        busy={deletingFlow}
+        onConfirm={() => void deleteFlow()}
       />
 
       <Dialog open={showFlowSettings} onOpenChange={setShowFlowSettings}>

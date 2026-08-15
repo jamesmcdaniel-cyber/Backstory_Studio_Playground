@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { indentOnTab } from '@/components/ui/textarea'
 import Link from 'next/link'
-import { toast } from 'sonner'
-import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, Paperclip, PenSquare, RotateCcw, Sparkles, Workflow } from 'lucide-react'
+import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, PenSquare, RotateCcw, Sparkles, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -28,9 +27,9 @@ type Turn = { question: string; answer: string; results: LibrarianResult[]; sour
 // the connected data (MCP), and the skills layer — rather than five variations
 // on "how do I".
 const SUGGESTIONS = [
-  'Which template generates meeting briefs?',
-  'What can I do with Backstory MCP?',
-  'Which skills turn account plans into actionable insights?',
+  'Help me create a meeting brief workflow',
+  'Show me what I can automate with my integrations',
+  'Find the best skill for an account plan',
 ]
 
 const RESULT_ICON = { flow: Workflow, agent: Bot, template: FileText, run: History, doc: BookOpen }
@@ -143,17 +142,7 @@ export default function AssistantHome() {
           />
         </div>
 
-        <div className="flex items-center justify-between px-5 py-3.5">
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => toast('Attachments are coming soon.')}
-              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-              aria-label="Attach"
-            >
-              <Paperclip className="h-4 w-4" />
-            </button>
-          </div>
+        <div className="flex items-center justify-end px-5 py-3.5">
           <button
             type="button"
             onClick={() => void ask(input)}
@@ -194,7 +183,7 @@ export default function AssistantHome() {
 
       {/* Conversation */}
       {started && (
-        <div className="mt-8 space-y-8">
+        <div className="mt-8 space-y-8" role="log" aria-live="polite" aria-relevant="additions" aria-busy={busy}>
           {thread.map((turn, i) => (
             <div key={i} className="space-y-3">
               <p className="text-right text-sm font-medium text-gray-900">{turn.question}</p>

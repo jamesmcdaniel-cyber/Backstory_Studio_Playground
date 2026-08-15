@@ -16,6 +16,7 @@ import { getSnapshot, SnapshotError } from '@/lib/client/snapshot'
 import { TemplatesView } from '@/components/templates/templates-view'
 import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
 import { ViewToggle, type DashboardView } from './view-toggle'
+import { ConfirmDialog } from '@/components/settings/dialogs'
 import { cn } from '@/lib/utils'
 
 import type { Agent, Activity } from '@/lib/types'
@@ -71,6 +72,9 @@ function AgentHQ() {
   // The initial split is identical on the server, during hydration, and after
   // hydration. It changes only in direct response to a drag in this session.
   const [assistantWidth, setAssistantWidth] = useState<number>(ASSISTANT_WIDTH_DEFAULT)
+  const [mobilePane, setMobilePane] = useState<'agent' | 'assistant'>('agent')
+  const [configDirty, setConfigDirty] = useState(false)
+  const [pendingNavigation, setPendingNavigation] = useState<null | (() => void)>(null)
   const assistantWidthRef = useRef(assistantWidth)
   // The ?agent= id we already refetched for, so a genuinely unknown id costs one
   // refresh and not an endless loop.
@@ -79,10 +83,36 @@ function AgentHQ() {
   // Agents / Templates view, driven by the URL (?view=templates) so it's
   // linkable and the old /templates route can redirect straight into it.
   const view: DashboardView = searchParams.get('view') === 'templates' ? 'templates' : 'agents'
+  const navigateWithDirtyGuard = useCallback((action: () => void) => {
+    if (configDirty) {
+      setPendingNavigation(() => action)
+      return
+    }
+    action()
+  }, [configDirty])
   const setView = useCallback(
-    (next: DashboardView) => router.replace(next === 'templates' ? '/agents?view=templates' : '/agents', { scroll: false }),
-    [router],
+    (next: DashboardView) => navigateWithDirtyGuard(() => router.replace(next === 'templates' ? '/agents?view=templates' : '/agents', { scroll: false })),
+    [navigateWithDirtyGuard, router],
   )
+
+  // Next.js client navigation does not trigger beforeunload. Capture links
+  // while the form is dirty so sidebar, Library, and integration links receive
+  // the same protection as switching agents inside this page.
+  useEffect(() => {
+    if (!configDirty) return
+    const guardLink = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null
+      if (!target || target.target === '_blank' || target.hasAttribute('download')) return
+      const destination = new URL(target.href, window.location.href)
+      if (destination.href === window.location.href) return
+      event.preventDefault()
+      event.stopPropagation()
+      setPendingNavigation(() => () => window.location.assign(destination.href))
+    }
+    document.addEventListener('click', guardLink, true)
+    return () => document.removeEventListener('click', guardLink, true)
+  }, [configDirty])
   // Count for the toggle's Templates badge — fetched up front, then kept in sync
   // by the embedded TemplatesView as templates are created/removed. The badge
   // covers the whole Templates view, which holds BOTH sub-tabs, so it sums agent
@@ -288,9 +318,11 @@ function AgentHQ() {
   const editingAgent = showSetup && selectedAgent && selectedAgentId !== NEW_AGENT ? selectedAgent : null
 
   const selectAgent = (id: string) => {
-    setSelectedAgentId(id)
-    setConfigureOpen(false)
-    setFocusRunId(null)
+    navigateWithDirtyGuard(() => {
+      setSelectedAgentId(id)
+      setConfigureOpen(false)
+      setFocusRunId(null)
+    })
   }
 
   const saveAgent = async (draft: AgentDraft) => {
@@ -426,8 +458,26 @@ function AgentHQ() {
         className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden"
         style={{ gridTemplateColumns: `minmax(0,1fr) clamp(${ASSISTANT_WIDTH_MIN}px, ${assistantWidth}px, 50%)` }}
       >
+        <div className="grid grid-cols-2 border-b bg-white p-1 lg:hidden">
+          <button
+            type="button"
+            onClick={() => setMobilePane('agent')}
+            className={cn('rounded-md px-3 py-2 text-sm font-medium', mobilePane === 'agent' ? 'bg-horizon-50 text-horizon-700' : 'text-muted-foreground')}
+            aria-pressed={mobilePane === 'agent'}
+          >
+            Agent workspace
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobilePane('assistant')}
+            className={cn('rounded-md px-3 py-2 text-sm font-medium', mobilePane === 'assistant' ? 'bg-horizon-50 text-horizon-700' : 'text-muted-foreground')}
+            aria-pressed={mobilePane === 'assistant'}
+          >
+            Assistant
+          </button>
+        </div>
         {/* ── Left pane: activity for the selected agent, or the setup flow ── */}
-        <section className="min-w-0 border-b bg-white lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+        <section className={cn('min-w-0 border-b bg-white lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r', mobilePane !== 'agent' && 'hidden lg:block')}>
           <div className="sticky top-0 z-10 border-b bg-white/80 p-4 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0 flex-1">
@@ -462,7 +512,7 @@ function AgentHQ() {
                     <Button
                       variant="outline"
                       size="icon"
-                      onClick={() => setConfigureOpen((open) => !open)}
+                      onClick={() => navigateWithDirtyGuard(() => setConfigureOpen((open) => !open))}
                       aria-label={configureOpen ? 'Back to activity' : 'Configure agent'}
                       title={configureOpen ? 'Back to activity' : 'Configure agent'}
                       className={cn('transition-colors duration-150', configureOpen && 'bg-indigo-50 text-indigo-700')}
@@ -473,7 +523,7 @@ function AgentHQ() {
                 )}
                 <Button
                   variant="outline"
-                  onClick={() => { setSelectedAgentId(NEW_AGENT); setSetupMode('choice'); setConfigureOpen(false); setFocusRunId(null) }}
+                  onClick={() => navigateWithDirtyGuard(() => { setSelectedAgentId(NEW_AGENT); setSetupMode('choice'); setConfigureOpen(false); setFocusRunId(null) })}
                 >
                   <Plus className="mr-1.5 h-4 w-4" /> New agent
                 </Button>
@@ -661,6 +711,7 @@ function AgentHQ() {
                   onRunAgent={editingAgent ? runAgent : undefined}
                   runningId={runningId}
                   onOpenRun={(runId) => { setConfigureOpen(false); setFocusRunId(runId) }}
+                  onDirtyChange={setConfigDirty}
                 />
               </div>
               )}
@@ -689,14 +740,23 @@ function AgentHQ() {
         </section>
 
         {/* ── Right pane: persistent assistant chat for the selected agent ── */}
-        <section className="relative flex h-[70dvh] min-w-0 flex-col bg-white lg:h-auto lg:min-h-0">
+        <section className={cn('relative h-[calc(100dvh-8rem)] min-w-0 flex-col bg-white lg:flex lg:h-auto lg:min-h-0', mobilePane === 'assistant' ? 'flex' : 'hidden')}>
           <button
             type="button"
             aria-label="Resize assistant panel"
             onMouseDown={onAssistantResizeStart}
             onDoubleClick={resetAssistantWidth}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home') return
+              event.preventDefault()
+              const next = event.key === 'Home'
+                ? ASSISTANT_WIDTH_DEFAULT
+                : clampAssistantWidth(assistantWidthRef.current + (event.key === 'ArrowLeft' ? 24 : -24))
+              assistantWidthRef.current = next
+              setAssistantWidth(next)
+            }}
             title="Drag to resize · double-click to reset"
-            className="absolute left-0 top-0 z-20 hidden h-full w-1.5 -translate-x-1/2 cursor-col-resize transition-colors hover:bg-indigo-200 lg:block"
+            className="absolute left-0 top-0 z-20 hidden h-full w-2 -translate-x-1/2 cursor-col-resize transition-colors hover:bg-indigo-200 focus-visible:bg-indigo-300 focus-visible:outline-none lg:block"
           />
           <AssistantPanel
             key={selectedAgent?.id ?? 'none'}
@@ -716,6 +776,20 @@ function AgentHQ() {
         </section>
       </div>
       )}
+      <ConfirmDialog
+        open={pendingNavigation !== null}
+        onOpenChange={(open) => !open && setPendingNavigation(null)}
+        title="Discard unsaved agent changes?"
+        description="Your edits have not been saved. Leaving this configuration will discard them."
+        confirmLabel="Discard changes"
+        destructive
+        onConfirm={() => {
+          const action = pendingNavigation
+          setPendingNavigation(null)
+          setConfigDirty(false)
+          action?.()
+        }}
+      />
     </div>
   )
 }

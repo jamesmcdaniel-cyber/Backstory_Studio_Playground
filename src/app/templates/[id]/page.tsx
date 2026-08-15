@@ -172,12 +172,12 @@ export default function TemplateDetails() {
           <EmptyState
             title="Template not found"
             description="It may have been removed or is no longer shared."
-            action={<Button variant="outline" onClick={() => router.push('/agents?view=templates')}>Back to templates</Button>}
+            action={<Button variant="outline" onClick={() => router.push('/templates')}>Back to Library</Button>}
           />
         ) : (
           <>
-            <Link href="/agents?view=templates" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
-              <ArrowLeft className="h-4 w-4" /> Back to templates
+            <Link href="/templates" className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+              <ArrowLeft className="h-4 w-4" /> Back to Library
             </Link>
 
             <div className="flex animate-fade-in-up flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
@@ -197,12 +197,12 @@ export default function TemplateDetails() {
               <div className="flex shrink-0 gap-2">
                 <Button variant={template.playbook ? 'outline' : 'default'} onClick={createAgent} loading={creating}>
                   <Bot className="mr-1.5 h-4 w-4" />
-                  {creating ? 'Creating…' : 'Connect to agent'}
+                  {creating ? 'Creating…' : 'Create agent'}
                 </Button>
                 {template.playbook && (
                   <Button onClick={deployPlaybook} loading={deploying}>
                     <Workflow className="mr-1.5 h-4 w-4" />
-                    {deploying ? 'Deploying…' : 'Connect to flow'}
+                    {deploying ? 'Creating…' : 'Create flow'}
                   </Button>
                 )}
               </div>

@@ -27,7 +27,7 @@ function safeReturnTo(): string {
 }
 
 export function AuthGateway() {
-  const { user, loading: authLoading, signInWithGoogle, signInWithSSO } = useSupabase()
+  const { user, loading: authLoading, signInWithSSO } = useSupabase()
   const router = useRouter()
   const [ssoDomain, setSsoDomain] = useState('')
   const [ssoLoading, setSsoLoading] = useState(false)
@@ -36,22 +36,19 @@ export function AuthGateway() {
   // through the identity provider.
   const [ssoRequired, setSsoRequired] = useState(false)
 
-  // Direct Okta SAML for the company domains. Until the Okta<->Supabase SAML
-  // connection is registered (docs/okta-saml-setup.md), signInWithSSO answers
-  // an error for these domains — fall back to Google (itself Okta-federated at
-  // the Workspace layer) with a visible notice, so sign-in never dead-ends and
-  // the buttons start hitting Okta directly the moment the connection exists.
+  // Direct Okta SAML for the company domains. An Okta failure must stay an Okta
+  // failure: silently starting Google after the user chose a named identity
+  // provider is surprising, can select the wrong account, and makes the error
+  // impossible to diagnose. Google remains an explicit choice below.
   const startCompanySso = async (domain: string) => {
     setSsoDomain(domain)
     setSsoLoading(true)
     const { error } = await signInWithSSO(domain, safeReturnTo())
     if (!error) return
-    toast.info('Okta SSO is not connected yet — continuing with Google.')
-    const fallback = await signInWithGoogle(safeReturnTo())
-    if (fallback.error) {
-      setSsoLoading(false)
-      toast.error(fallback.error.message)
-    }
+    setSsoLoading(false)
+    toast.error(error.message || `Could not start Okta sign-in for @${domain}.`, {
+      description: 'Try again, use another sign-in option, or contact your workspace administrator.',
+    })
   }
 
   useEffect(() => {
@@ -83,8 +80,8 @@ export function AuthGateway() {
 
   return (
     <TooltipProvider delayDuration={250}>
-      <div className="min-h-screen bg-graphite-950 p-2 sm:p-3 lg:h-screen lg:p-4">
-        <main className="mx-auto grid min-h-[calc(100vh-1rem)] max-w-[1800px] overflow-hidden rounded-[26px] border border-white/10 bg-white shadow-[0_30px_100px_rgba(0,0,0,0.42)] sm:min-h-[calc(100vh-1.5rem)] lg:h-[calc(100vh-2rem)] lg:min-h-[680px] lg:grid-cols-[1.06fr_0.94fr]">
+      <div className="min-h-screen bg-graphite-950 p-2 sm:p-3 lg:p-4">
+        <main className="mx-auto grid min-h-[calc(100vh-1rem)] max-w-[1800px] overflow-hidden rounded-[26px] border border-white/10 bg-white shadow-[0_30px_100px_rgba(0,0,0,0.42)] sm:min-h-[calc(100vh-1.5rem)] lg:min-h-[max(680px,calc(100vh-2rem))] lg:grid-cols-[1.06fr_0.94fr]">
           <section className="auth-grid relative hidden overflow-hidden bg-graphite-950 px-10 py-9 text-white lg:flex lg:flex-col xl:px-16 xl:py-12">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_14%_35%,rgba(68,124,147,0.48),transparent_36%),radial-gradient(circle_at_75%_88%,rgba(43,97,120,0.4),transparent_34%)]" />
             <motion.div
@@ -117,10 +114,10 @@ export function AuthGateway() {
                   <Sparkles className="h-4 w-4" />
                   Your operational story, in focus
                 </p>
-                <h1 className="max-w-xl text-5xl font-medium leading-[1.03] tracking-[-0.04em] xl:text-6xl">
+                <h2 className="max-w-xl text-5xl font-medium leading-[1.03] tracking-[-0.04em] xl:text-6xl">
                   See what&apos;s coming.
                   <span className="mt-1 block text-horizon-200">Know what to do.</span>
-                </h1>
+                </h2>
                 <p className="mt-7 max-w-lg text-lg leading-8 text-white/60">
                   Build, run, and review intelligent workflows with every decision and tool call in plain sight.
                 </p>
@@ -167,7 +164,7 @@ export function AuthGateway() {
             </div>
           </section>
 
-          <section className="relative flex min-h-[calc(100vh-1rem)] items-center overflow-hidden bg-[#fcfbf9] px-6 py-12 sm:min-h-[calc(100vh-1.5rem)] sm:px-12 lg:min-h-0 lg:px-16 xl:px-24">
+          <section className="relative flex min-h-[calc(100vh-1rem)] items-center bg-[#fcfbf9] px-6 py-12 sm:min-h-[calc(100vh-1.5rem)] sm:px-12 lg:min-h-[680px] lg:px-12 xl:px-16 2xl:px-24">
             <div aria-hidden="true" className="absolute right-0 top-0 h-72 w-72 -translate-y-1/3 translate-x-1/3 rounded-full bg-horizon-100/70 blur-3xl" />
             <motion.div
               className="relative mx-auto w-full max-w-xl"
@@ -192,10 +189,10 @@ export function AuthGateway() {
                 <p className="mb-3 font-mono text-[11px] uppercase tracking-[0.2em] text-horizon-600">
                   Welcome back
                 </p>
-                <h2 className="text-4xl font-semibold leading-[1.08] tracking-[-0.035em] text-graphite-900 sm:text-5xl">
+                <h1 className="text-4xl font-semibold leading-[1.08] tracking-[-0.035em] text-graphite-900 sm:text-5xl">
                   Pick up where
                   <span className="block text-graphite-500">you left off.</span>
-                </h2>
+                </h1>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
                   {isInternalEdition()
                     ? 'Sign in through Okta with your company account.'
@@ -212,7 +209,7 @@ export function AuthGateway() {
 
               {isInternalEdition() ? (
                 <>
-                  <div className="mt-10 grid gap-2 sm:grid-cols-2">
+                  <div className="mt-10 grid gap-2 2xl:grid-cols-2">
                     {COMPANY_EMAIL_DOMAINS.map((domain) => (
                       <Button
                         key={domain}
@@ -220,7 +217,7 @@ export function AuthGateway() {
                         loading={ssoLoading && ssoDomain === domain}
                         disabled={authLoading || ssoLoading}
                         onClick={() => startCompanySso(domain)}
-                        className="h-14 rounded-xl text-base font-semibold shadow-2 hover:shadow-3"
+                        className="h-14 min-w-0 rounded-xl px-3 text-sm font-semibold shadow-2 hover:shadow-3 sm:text-base"
                       >
                         Sign in with Okta · @{domain}
                       </Button>
@@ -266,23 +263,25 @@ export function AuthGateway() {
                 <span className="h-px flex-1 bg-graphite-200" /> Enterprise SSO <span className="h-px flex-1 bg-graphite-200" />
               </div>
               <form
-                className="flex gap-2"
+                className="space-y-2"
                 onSubmit={async (event) => {
                   event.preventDefault()
                   if (!ssoDomain.trim()) return
-                  setSsoLoading(true)
-                  const { error } = await signInWithSSO(ssoDomain, safeReturnTo())
-                  if (error) setSsoLoading(false)
+                  await startCompanySso(ssoDomain)
                 }}
               >
-                <input
-                  aria-label="Company domain"
-                  value={ssoDomain}
-                  onChange={(event) => setSsoDomain(event.target.value)}
-                  placeholder="company.com"
-                  className="h-12 min-w-0 flex-1 rounded-xl border border-graphite-200 bg-white px-4 text-sm outline-none focus:border-horizon-500"
-                />
-                <Button type="submit" variant="outline" loading={ssoLoading} disabled={!ssoDomain.trim()}>Continue</Button>
+                <label htmlFor="sso-company-domain" className="block text-sm font-medium text-graphite-800">Company domain</label>
+                <div className="flex gap-2">
+                  <input
+                    id="sso-company-domain"
+                    value={ssoDomain}
+                    onChange={(event) => setSsoDomain(event.target.value)}
+                    placeholder="company.com"
+                    autoComplete="organization"
+                    className="h-12 min-w-0 flex-1 rounded-xl border border-graphite-200 bg-white px-4 text-sm outline-none focus:border-horizon-500 focus:ring-2 focus:ring-horizon-500/20"
+                  />
+                  <Button type="submit" variant="outline" loading={ssoLoading} disabled={!ssoDomain.trim()}>Continue</Button>
+                </div>
               </form>
 
               {!isInternalEdition() && (

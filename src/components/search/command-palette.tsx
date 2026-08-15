@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertCircle, Bot, Brain, CheckCircle2, CircleDashed, FileText, HelpCircle, KeyRound, Loader2, Plug, Search } from 'lucide-react'
+import { AlertCircle, Bot, Brain, CheckCircle2, CircleDashed, FileText, HelpCircle, KeyRound, Loader2, Plug, Search, Settings, Workflow } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
@@ -20,9 +20,11 @@ type Result =
 const NAV_ITEMS: NavResult[] = [
   { label: 'Home', href: '/dashboard', icon: Brain },
   { label: 'Agents', href: '/agents', icon: Bot },
+  { label: 'Flows', href: '/flows', icon: Workflow },
+  { label: 'Library', href: '/templates', icon: FileText },
   { label: 'Integrations', href: '/integrations', icon: Plug },
   { label: 'Credentials', href: '/credentials', icon: KeyRound },
-  { label: 'Templates', href: '/agents?view=templates', icon: FileText },
+  { label: 'Settings', href: '/settings', icon: Settings },
 ]
 
 function runStatusIcon(status: string) {
@@ -112,12 +114,12 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="top-[20%] max-w-lg translate-y-0 gap-0 p-0">
-        <DialogTitle className="sr-only">Search agents and runs</DialogTitle>
+        <DialogTitle className="sr-only">Search workspace</DialogTitle>
         <div className="flex items-center gap-2 border-b px-4 py-3">
           {searching ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : <Search className="h-4 w-4 text-gray-400" />}
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
-            placeholder="Search agents and runs..."
+            placeholder="Search navigation, agents, and runs…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
@@ -181,7 +183,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <p className="px-2 py-6 text-center text-sm text-gray-500">No results for “{query.trim()}”.</p>
           )}
           {query.trim().length < 2 && (
-            <p className="px-2 pb-2 pt-4 text-center text-xs text-gray-400">Type at least 2 characters to search agents and runs.</p>
+            <p className="px-2 pb-2 pt-4 text-center text-xs text-gray-400">Choose a destination or type at least 2 characters to search.</p>
           )}
         </div>
       </DialogContent>

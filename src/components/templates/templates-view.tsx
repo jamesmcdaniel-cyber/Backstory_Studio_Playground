@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import {
   Sparkles, TrendingUp, CalendarClock, ShieldAlert, Target,
@@ -21,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
+import { ConfirmDialog } from '@/components/settings/dialogs'
 import type { WorkspaceConnections } from '@/components/integrations/integration-match'
 import { accentFor } from '@/components/templates/accents'
 import { LibraryFilterBar, ALL_FILTER } from '@/components/templates/library-filter-bar'
@@ -109,7 +111,9 @@ function categoryIcon(category: string) {
  * drops into any container.
  */
 export function TemplatesView({ embedded = false, onCount }: { embedded?: boolean; onCount?: (count: number) => void }) {
-  const [activeTab, setActiveTab] = useState<'templates' | 'skills'>('templates')
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const [activeTab, setActiveTab] = useState<'templates' | 'skills'>(() => searchParams.get('asset') === 'skills' ? 'skills' : 'templates')
 
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [skills, setSkills] = useState<SkillItem[]>([])
@@ -117,20 +121,22 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // One search box filters whichever tab is active (name/description/category/tags).
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(() => searchParams.get('q') || '')
   // Card grids cap at 9 per page; each tab pages independently.
   const [templatesPage, setTemplatesPage] = useState(1)
   const [skillsPage, setSkillsPage] = useState(1)
   // Category is per tab (the two vocabularies differ); role spans both, since a
   // CSM looking for their work wants it whether it ships as a template or a skill.
-  const [category, setCategory] = useState(ALL_FILTER)
-  const [role, setRole] = useState(ALL_FILTER)
+  const [category, setCategory] = useState(() => searchParams.get('category') || ALL_FILTER)
+  const [role, setRole] = useState(() => searchParams.get('role') || ALL_FILTER)
   // Track which skill's dropdown is open
   const [openSkillMenu, setOpenSkillMenu] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   // Create/edit dialog for community templates + skills.
   const [dialog, setDialog] = useState<AssetDraft | null>(null)
   const [savingAsset, setSavingAsset] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: 'template' | 'skill'; id: string; name: string } | null>(null)
+  const [deletingAsset, setDeletingAsset] = useState(false)
   // The platform's attachable tools, for the dialog's integration picker.
   // Fetched lazily the first time a dialog opens; null until then.
   const [availableIntegrations, setAvailableIntegrations] = useState<WorkspaceConnections | null>(null)
@@ -214,15 +220,22 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
     }
   }
 
-  const deleteAsset = async (kind: 'template' | 'skill', id: string, name: string) => {
-    if (!confirm(`Remove "${name}" from your workspace?`)) return
+  const deleteAsset = async (kind: 'template' | 'skill', id: string) => {
+    setDeletingAsset(true)
     const url = kind === 'template' ? '/api/agent-templates' : '/api/skills'
-    const res = await fetch(url, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    if (res.ok) {
+    try {
+      const res = await fetch(url, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Could not remove the item.')
       if (kind === 'template') setTemplates((prev) => prev.filter((t) => t.id !== id))
       else setSkills((prev) => prev.filter((s) => s.id !== id))
-      toast.success('Removed')
-    } else toast.error('Could not remove')
+      setDeleteTarget(null)
+      toast.success('Removed from workspace')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not remove the item.')
+    } finally {
+      setDeletingAsset(false)
+    }
   }
 
   const handleTabChange = (value: string) => {
@@ -231,6 +244,19 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
     setCategory(ALL_FILTER)
     setActiveTab(value === 'skills' ? 'skills' : 'templates')
   }
+
+  // Standalone Library URLs retain the active collection and filters, making a
+  // refined view shareable and preserving context when a detail page is closed.
+  useEffect(() => {
+    if (embedded) return
+    const params = new URLSearchParams()
+    if (activeTab === 'skills') params.set('asset', 'skills')
+    if (search.trim()) params.set('q', search.trim())
+    if (category !== ALL_FILTER) params.set('category', category)
+    if (role !== ALL_FILTER) params.set('role', role)
+    const queryString = params.toString()
+    router.replace(queryString ? `/templates?${queryString}` : '/templates', { scroll: false })
+  }, [activeTab, category, embedded, role, router, search])
 
   // Report the library size up (for the dashboard toggle badge) whenever it
   // changes — initial load, create, or delete. The badge sits on the single
@@ -360,8 +386,8 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
   if (loading || error) {
     return (
       <>
-        <div className="max-w-6xl mx-auto p-6 space-y-6">
-          {!embedded && <PageHeader eyebrow="Library" title="Templates" />}
+        <div className={cn('space-y-6', embedded && 'mx-auto max-w-6xl p-6')}>
+          {!embedded && <PageHeader eyebrow="Workspace" title="Library" />}
           {loading && (
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               <Skeleton className="h-56 rounded-xl" />
@@ -380,8 +406,8 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
 
   return (
     <>
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
-        {!embedded && <PageHeader eyebrow="Library" title="Templates" />}
+      <div className={cn('space-y-6', embedded && 'mx-auto max-w-6xl p-6')}>
+        {!embedded && <PageHeader eyebrow="Workspace" title="Library" />}
 
         {/* One simple search box plus two dropdowns — the same bar the flow
             gallery uses, so the two libraries filter identically. */}
@@ -406,10 +432,10 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
 
           {/* ── Templates tab ─────────────────────────────────────────────── */}
           <TabsContent value="templates" className="mt-6">
-            <div className="flex items-center justify-between mb-6">
+            <div className="mb-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
               <div>
                 <h2 className="text-lg font-semibold">Templates</h2>
-                <p className="text-sm text-muted-foreground">Built-in + community templates. Yours are shared publicly.</p>
+                <p className="text-sm text-muted-foreground">Built-in, community, and workspace templates. Items you create stay in this workspace.</p>
               </div>
               <Button size="sm" onClick={() => openCreate('template')}><Plus className="mr-1.5 h-4 w-4" /> Create template</Button>
             </div>
@@ -431,23 +457,23 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                   const accent = accentFor(t.category)
                   const Icon = categoryIcon(t.category)
                   return (
-                    <Link key={t.id} href={`/templates/${t.id}`} className="block">
-                      <Card variant="interactive" className={cn(
-                        'group relative h-full overflow-hidden border-border/60 hover:ring-1',
-                        accent.ring,
-                      )}>
+                    <Card key={t.id} variant="interactive" className={cn(
+                      'group relative h-full overflow-hidden border-border/60 hover:ring-1',
+                      accent.ring,
+                    )}>
                         {/* colored accent bar that brightens on hover */}
                         <div className={cn('absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r opacity-80 transition-opacity group-hover:opacity-100', accent.bar)} />
                         {t.mine && (
-                          <div className="absolute right-2 top-2 z-10 hidden gap-1 group-hover:flex">
-                            <button type="button" aria-label="Edit template" onClick={(e) => { e.preventDefault(); openEditTemplate(t) }} className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-1 hover:text-indigo-600"><Pencil className="h-3.5 w-3.5" /></button>
-                            <button type="button" aria-label="Delete template" onClick={(e) => { e.preventDefault(); deleteAsset('template', t.id, t.name) }} className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-1 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
+                          <div className="absolute right-2 top-2 z-20 flex gap-1 opacity-75 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                            <button type="button" aria-label={`Edit ${t.name}`} onClick={() => openEditTemplate(t)} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-indigo-600"><Pencil className="h-3.5 w-3.5" /></button>
+                            <button type="button" aria-label={`Delete ${t.name}`} onClick={() => setDeleteTarget({ kind: 'template', id: t.id, name: t.name })} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
                           </div>
                         )}
+                        <Link href={`/templates/${t.id}`} className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <CardHeader className="space-y-2.5 pt-5">
                           <div className="flex items-center gap-1.5">
                             <Badge variant="outline" className={cn('text-[11px] font-medium', accent.badge)}>{t.category}</Badge>
-                            {t.custom && <Badge variant="outline" className="text-[11px] font-medium border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">Community</Badge>}
+                            {t.custom && <Badge variant="outline" className="text-[11px] font-medium border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">{t.mine ? 'Workspace' : 'Community'}</Badge>}
                           </div>
                           <div className="flex items-start gap-2.5">
                             <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105', accent.tile)}>
@@ -475,13 +501,13 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                               </div>
                             </div>
                           )}
-                          <div className="flex items-center gap-1 pt-1 text-sm font-medium text-indigo-600 opacity-0 transition-opacity group-hover:opacity-100 dark:text-indigo-300">
-                            Use template
+                          <div className="flex items-center gap-1 pt-1 text-sm font-medium text-indigo-600 dark:text-indigo-300">
+                            View template
                             <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
                           </div>
                         </CardContent>
+                        </Link>
                       </Card>
-                    </Link>
                   )
                 })}
               </div>
@@ -495,10 +521,10 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
 
           {/* ── Skills tab ────────────────────────────────────────────────── */}
           <TabsContent value="skills" className="mt-6">
-            <div className="flex items-center justify-between mb-6">
+            <div className="mb-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
               <div>
                 <h2 className="text-lg font-semibold">Skills</h2>
-                <p className="text-sm text-muted-foreground">Instruction packs that extend agents at run time. Yours are shared publicly.</p>
+                <p className="text-sm text-muted-foreground">Reusable instruction packs for agents. Skills you create stay in this workspace.</p>
               </div>
               <Button size="sm" onClick={() => openCreate('skill')}><Plus className="mr-1.5 h-4 w-4" /> Create skill</Button>
             </div>
@@ -527,15 +553,15 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                   )}>
                     <div className={cn('absolute inset-x-0 top-0 h-1 rounded-t-xl bg-gradient-to-r opacity-80 transition-opacity group-hover:opacity-100', accent.bar)} />
                     {skill.mine && (
-                      <div className="absolute right-2 top-2 z-10 hidden gap-1 group-hover:flex">
-                        <button type="button" aria-label="Edit skill" onClick={() => openEditSkill(skill)} className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-1 hover:text-indigo-600"><Pencil className="h-3.5 w-3.5" /></button>
-                        <button type="button" aria-label="Delete skill" onClick={() => deleteAsset('skill', skill.id, skill.name)} className="rounded-md border bg-card p-1.5 text-muted-foreground shadow-1 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <div className="absolute right-2 top-2 z-10 flex gap-1 opacity-75 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                        <button type="button" aria-label={`Edit ${skill.name}`} onClick={() => openEditSkill(skill)} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-indigo-600"><Pencil className="h-3.5 w-3.5" /></button>
+                        <button type="button" aria-label={`Delete ${skill.name}`} onClick={() => setDeleteTarget({ kind: 'skill', id: skill.id, name: skill.name })} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     )}
                     <CardHeader className="space-y-2.5 pt-5">
                       <div className="flex items-center gap-1.5">
                         <Badge variant="outline" className={cn('text-[11px] font-medium', accent.badge)}>{skill.category}</Badge>
-                        {skill.custom && <Badge variant="outline" className="text-[11px] font-medium border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">Community</Badge>}
+                        {skill.custom && <Badge variant="outline" className="text-[11px] font-medium border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300">{skill.mine ? 'Workspace' : 'Community'}</Badge>}
                       </div>
                       <div className="flex items-start gap-2.5">
                         <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105', accent.tile)}>
@@ -633,7 +659,7 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
             /* Negative margin + matching padding gives input focus rings room
                to render inside the scroll clip instead of being cut at its edges. */
             <div className="-mx-1 max-h-[65vh] space-y-3 overflow-y-auto px-1 py-1">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-name">Name</label>
                   <Input id="template-dialog-name" value={dialog.name} onChange={(e) => setDialog({ ...dialog, name: e.target.value })} placeholder="e.g. Concise email replies" />
@@ -648,10 +674,10 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
                 <Input id="template-dialog-description" value={dialog.description} onChange={(e) => setDialog({ ...dialog, description: e.target.value })} placeholder="One line shown on the card" />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-instructions">
                   {dialog.kind === 'skill' ? 'Skill instructions (composed into the agent prompt)' : 'Agent instructions'}
                 </label>
-                <Textarea rows={8} value={dialog.instructions} onChange={(e) => setDialog({ ...dialog, instructions: e.target.value })} placeholder="What the agent should do…" />
+                <Textarea id="template-dialog-instructions" rows={8} value={dialog.instructions} onChange={(e) => setDialog({ ...dialog, instructions: e.target.value })} placeholder="What the agent should do…" />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground" htmlFor="template-dialog-tags">Tags (comma-separated)</label>
@@ -770,6 +796,16 @@ export function TemplatesView({ embedded = false, onCount }: { embedded?: boolea
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && !deletingAsset && setDeleteTarget(null)}
+        title={`Remove ${deleteTarget?.name || 'item'}?`}
+        description="This removes the item from your workspace. Agents already created from a template are not changed."
+        confirmLabel="Remove"
+        destructive
+        busy={deletingAsset}
+        onConfirm={() => deleteTarget && deleteAsset(deleteTarget.kind, deleteTarget.id)}
+      />
     </>
   )
 }

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { motion } from 'motion/react'
 import {
   Bot,
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -30,6 +31,7 @@ import { HomeIcon } from '@radix-ui/react-icons'
 import { toast } from 'sonner'
 import { CommandPalette } from '@/components/search/command-palette'
 import { NotificationBell } from '@/components/notifications/notification-bell'
+import { ConfirmDialog } from '@/components/settings/dialogs'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/hooks/use-auth'
@@ -75,6 +77,7 @@ const navigation = [
   { name: 'Home', href: '/dashboard', icon: HomeIcon },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Flows', href: '/flows', icon: Workflow },
+  { name: 'Library', href: '/templates', icon: BookOpen },
   { name: 'Integrations', href: '/integrations', icon: Plug },
 ]
 
@@ -113,6 +116,8 @@ export function Sidebar() {
   const [desktopCollapsed, setDesktopCollapsed] = useState(false)
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [runningId, setRunningId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
+  const [deletingAgent, setDeletingAgent] = useState(false)
 
   const load = useCallback(async (force = false) => {
     // One shared snapshot (deduped across the dashboard + bell within an ~8s
@@ -286,7 +291,7 @@ export function Sidebar() {
           toast.success(`${agent.title} ran`)
         }
         notifyAgentsChanged()
-        router.push('/dashboard')
+        router.push(`/agents?agent=${agent.id}`)
       } else {
         toast.error(data.error || 'Run failed')
       }
@@ -296,12 +301,24 @@ export function Sidebar() {
   }
 
   const deleteAgent = async (agent: Agent) => {
-    await fetch('/api/agents', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: agent.id }),
-    })
-    notifyAgentsChanged()
+    setDeletingAgent(true)
+    try {
+      const response = await fetch('/api/agents', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: agent.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not delete the agent.')
+      setDeleteTarget(null)
+      toast.success(`Deleted ${agent.title}`)
+      notifyAgentsChanged()
+      if (pathname === '/agents') router.push('/agents')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete the agent.')
+    } finally {
+      setDeletingAgent(false)
+    }
   }
 
   const dropProps = (key: string, target: { folder: string | null; visibility: 'shared' | 'private' }) => ({
@@ -335,12 +352,11 @@ export function Sidebar() {
       >
         {agent.title}
       </button>
-      {/* group-focus-within keeps Run/Delete reachable when tabbing, not just on hover. */}
-      <div className="hidden gap-0.5 group-focus-within:flex group-hover:flex">
-        <Button size="icon" variant="ghost" className="h-6 w-6" disabled={runningId === agent.id} onClick={() => runAgent(agent)} aria-label="Run agent">
+      <div className="flex gap-0.5 opacity-70 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+        <Button size="icon" variant="ghost" className="h-8 w-8" disabled={runningId === agent.id} onClick={() => runAgent(agent)} aria-label={`Run ${agent.title}`}>
           {runningId === agent.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
         </Button>
-        <Button size="icon" variant="ghost" className="h-6 w-6 text-red-600" onClick={() => deleteAgent(agent)} aria-label="Delete agent">
+        <Button size="icon" variant="ghost" className="h-8 w-8 text-red-600" onClick={() => setDeleteTarget(agent)} aria-label={`Delete ${agent.title}`}>
           <Trash2 className="h-3 w-3" />
         </Button>
       </div>
@@ -632,6 +648,16 @@ export function Sidebar() {
       </aside>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && !deletingAgent && setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.title || 'agent'}?`}
+        description="This permanently removes the agent and its configuration. Existing run history is not changed."
+        confirmLabel="Delete agent"
+        destructive
+        busy={deletingAgent}
+        onConfirm={() => deleteTarget && deleteAgent(deleteTarget)}
+      />
     </TooltipProvider>
   )
 }

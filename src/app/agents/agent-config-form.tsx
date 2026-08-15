@@ -23,6 +23,7 @@ import {
 import { KnowledgePanel } from '@/app/agents/knowledge-panel'
 import { AgentHttpEndpointDialog } from '@/components/agents/http-endpoint-dialog'
 import { QuickConfigChip } from '@/components/agents/tool-quick-config-popover'
+import { ConfirmDialog } from '@/components/settings/dialogs'
 import { mcpToolQuickConfig, parseAgentToolSettings, quickConfigForChip, type ToolQuickConfig, type ToolScopeOption } from '@/lib/connectors/tool-quick-config'
 import { endpointParams, endpointToolName, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { cn } from '@/lib/utils'
@@ -559,6 +560,7 @@ export function AgentConfigForm({
   onOpenRun,
   active = true,
   saveLabel,
+  onDirtyChange,
 }: {
   editingAgent?: any
   template?: any
@@ -570,6 +572,8 @@ export function AgentConfigForm({
   /** Dialogs pass their `open` flag so effects re-run each time they reopen. */
   active?: boolean
   saveLabel?: string
+  /** Reports unsaved draft state so the containing workspace can guard navigation. */
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const router = useRouter()
   const [draft, setDraft] = useState<AgentDraft>(emptyDraft)
@@ -596,6 +600,7 @@ export function AgentConfigForm({
   // Full memory log lives in a dialog — the panel shows only the two newest
   // entries, so a long-lived agent's memory can't crowd out the form.
   const [showMemoryLog, setShowMemoryLog] = useState(false)
+  const [confirmClearMemory, setConfirmClearMemory] = useState(false)
   // Other agents in the workspace, offered as run_agent targets.
   const [orgAgents, setOrgAgents] = useState<{ id: string; title: string }[]>([])
   // Published flows for the "Call flows" picker (published = runnable by agents).
@@ -654,7 +659,6 @@ export function AgentConfigForm({
 
   const clearAllMemory = async () => {
     if (!editingAgent?.id) return
-    if (!window.confirm('Clear everything this agent has learned? This cannot be undone.')) return
     const previous = memories
     setMemories([])
     const response = await fetch(`/api/agents/${editingAgent.id}/memories`, {
@@ -665,6 +669,9 @@ export function AgentConfigForm({
     if (!response.ok) {
       setMemories(previous)
       toast.error('Could not clear memory.')
+    } else {
+      setConfirmClearMemory(false)
+      toast.success('Agent memory cleared.')
     }
   }
 
@@ -765,6 +772,21 @@ export function AgentConfigForm({
   }
 
   const dirty = JSON.stringify(draft) !== baselineRef.current
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
+
+  useEffect(() => {
+    if (!dirty) return
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [dirty])
 
   const submit = async () => {
     setSaving(true)
@@ -915,20 +937,21 @@ export function AgentConfigForm({
   return (
     <div className="space-y-4">
       <div>
-        <Label>Name</Label>
+        <Label htmlFor="agent-name">Name</Label>
         <div className="flex gap-2">
           <EmojiPicker value={draft.icon} onChange={(icon) => setDraft({ ...draft, icon })} />
-          <Input className="flex-1" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+          <Input id="agent-name" className="flex-1" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
         </div>
       </div>
       <div>
-        <Label>Description</Label>
-        <Input value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
+        <Label htmlFor="agent-description">Description</Label>
+        <Input id="agent-description" value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} />
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <Label>Folder</Label>
+          <Label htmlFor="agent-folder">Folder</Label>
           <Input
+            id="agent-folder"
             placeholder="e.g. operations"
             value={draft.folder}
             onChange={(event) => setDraft({ ...draft, folder: event.target.value })}
@@ -937,7 +960,7 @@ export function AgentConfigForm({
         <div>
           <Label>Visibility</Label>
           <Select value={draft.visibility} onValueChange={(visibility: AgentDraft['visibility']) => setDraft({ ...draft, visibility })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger aria-label="Agent visibility"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="shared">Workspace</SelectItem>
               <SelectItem value="private">Private</SelectItem>
@@ -946,11 +969,11 @@ export function AgentConfigForm({
         </div>
       </div>
       <div>
-        <Label>Instructions</Label>
-        <Textarea rows={8} value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
+        <Label htmlFor="agent-instructions">Instructions</Label>
+        <Textarea id="agent-instructions" rows={8} value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
       </div>
       <div>
-        <Label>Larger goal (optional)</Label>
+        <Label htmlFor="agent-goal">Larger goal (optional)</Label>
         {suggestedGoal && !draft.goal && (
           <div className="mb-2 flex items-start justify-between gap-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2.5 text-sm text-indigo-900">
             <p><span className="font-semibold">Suggested goal:</span> {suggestedGoal}</p>
@@ -959,7 +982,7 @@ export function AgentConfigForm({
             </Button>
           </div>
         )}
-        <Textarea rows={2} value={draft.goal} onChange={(event) => setDraft({ ...draft, goal: event.target.value })} />
+        <Textarea id="agent-goal" rows={2} value={draft.goal} onChange={(event) => setDraft({ ...draft, goal: event.target.value })} />
         <p className="mt-1 text-xs text-muted-foreground">
           The outcome this agent ultimately serves — it steers every run and self-evaluation.
         </p>
@@ -967,7 +990,7 @@ export function AgentConfigForm({
       <div>
         <Label>Model</Label>
         <Select value={draft.model} onValueChange={(model) => setDraft({ ...draft, model })}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="Agent model"><SelectValue /></SelectTrigger>
           <SelectContent>
             {MODELS.map((m) => (
               <SelectItem key={m.id} value={m.id}>
@@ -1214,7 +1237,7 @@ export function AgentConfigForm({
             <Label>Schedule enabled</Label>
             <p className="mt-0.5 text-xs text-muted-foreground">Run this agent automatically on a cadence.</p>
           </div>
-          <Switch checked={draft.schedule.isActive} onCheckedChange={setScheduleEnabled} />
+          <Switch aria-label="Enable agent schedule" checked={draft.schedule.isActive} onCheckedChange={setScheduleEnabled} />
         </div>
 
         {draft.schedule.isActive && (
@@ -1222,7 +1245,7 @@ export function AgentConfigForm({
             <div>
               <Label>Cadence</Label>
               <Select value={cadence} onValueChange={(value) => setCadence(value as AgentCadence)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger aria-label="Schedule cadence"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="hourly">Hourly</SelectItem>
                   <SelectItem value="daily">Daily</SelectItem>
@@ -1270,12 +1293,12 @@ export function AgentConfigForm({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               {/* Hourly has no time-of-day — it fires on the hour, every hour. */}
               {cadence !== 'hourly' && (
                 <div>
                   <Label>Time</Label>
-                  <Input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
+                  <Input aria-label="Schedule time" type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} />
                 </div>
               )}
               <div>
@@ -1284,7 +1307,7 @@ export function AgentConfigForm({
                   value={draft.schedule.timezone}
                   onValueChange={(timezone) => setDraft({ ...draft, schedule: { ...draft.schedule, timezone } })}
                 >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label="Schedule timezone"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {/* Keep a browser-detected zone outside the common list selectable. */}
                     {!COMMON_TIMEZONES.includes(draft.schedule.timezone as (typeof COMMON_TIMEZONES)[number]) && draft.schedule.timezone && (
@@ -1392,7 +1415,7 @@ export function AgentConfigForm({
         )}
         <p className="mt-1.5 text-xs text-muted-foreground">
           Add skills from the{' '}
-          <Link href="/agents?view=templates" className="text-primary hover:underline">
+          <Link href="/templates?asset=skills" className="text-primary hover:underline">
             Templates page
           </Link>
           .
@@ -1476,7 +1499,7 @@ export function AgentConfigForm({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={clearAllMemory}
+                    onClick={() => setConfirmClearMemory(true)}
                     className="text-red-600 hover:text-red-700"
                   >
                     Clear all memory
@@ -1485,10 +1508,19 @@ export function AgentConfigForm({
               )}
             </DialogContent>
           </Dialog>
+          <ConfirmDialog
+            open={confirmClearMemory}
+            onOpenChange={setConfirmClearMemory}
+            title="Clear all agent memory?"
+            description="This permanently removes everything this agent has learned across runs."
+            confirmLabel="Clear memory"
+            destructive
+            onConfirm={() => void clearAllMemory()}
+          />
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex flex-wrap gap-2 border-t bg-white/95 p-4 backdrop-blur supports-[backdrop-filter]:bg-white/85">
         {editingAgent && onRunAgent && (
           <Button
             variant="outline"

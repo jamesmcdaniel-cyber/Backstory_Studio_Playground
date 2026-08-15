@@ -8,8 +8,8 @@ import { SPRING } from '@/lib/motion'
 export type DashboardView = 'agents' | 'templates'
 
 /**
- * The Agents / Templates segmented toggle at the top of the dashboard. A blue
- * pill slides between the two segments; Templates carries a live count badge.
+ * The Agents / Library segmented toggle at the top of the dashboard. A blue
+ * pill slides between the two segments; Library carries a live count badge.
  * Accessible as a tablist; the active pill respects reduced motion (the spring
  * simply resolves instantly under the global MotionConfig).
  */
@@ -25,7 +25,7 @@ export function ViewToggle({
   const layoutId = useId()
   const items: { key: DashboardView; label: string; count: number | null }[] = [
     { key: 'agents', label: 'Agents', count: null },
-    { key: 'templates', label: 'Templates', count: templateCount },
+    { key: 'templates', label: 'Library', count: templateCount },
   ]
   return (
     <div role="tablist" aria-label="Switch view" className="inline-flex items-center gap-1 rounded-2xl border border-border bg-card p-1 shadow-1">

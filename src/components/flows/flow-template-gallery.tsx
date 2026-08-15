@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
 import { FlowTemplateCard, type FlowTemplateItem } from '@/components/templates/flow-template-card'
@@ -27,6 +28,9 @@ const PAGE_SIZE = 9
 export function FlowTemplateGallery() {
   const router = useRouter()
   const [templates, setTemplates] = useState<FlowTemplateItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState(ALL_FILTER)
   const [role, setRole] = useState(ALL_FILTER)
@@ -38,10 +42,16 @@ export function FlowTemplateGallery() {
 
   useEffect(() => {
     let cancelled = false
+    setLoading(true)
+    setError(null)
     fetch('/api/flow-templates', { cache: 'no-store' })
-      .then((response) => response.json())
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok || !data.success) throw new Error(data.error || 'Could not load flow templates.')
+        return data
+      })
       .then((data) => {
-        if (cancelled || !data.success) return
+        if (cancelled) return
         // Flatten to the card shape here: the wire payload carries the whole
         // graph and notes, which the grid has no use for.
         setTemplates(
@@ -61,11 +71,16 @@ export function FlowTemplateGallery() {
           })),
         )
       })
-      .catch(() => undefined)
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load flow templates.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reloadKey])
 
   const useTemplate = async (template: FlowTemplateItem) => {
     setPendingId(template.id)
@@ -103,7 +118,37 @@ export function FlowTemplateGallery() {
     }
   }
 
-  if (templates.length === 0) return null
+  if (loading) {
+    return (
+      <section id="flow-template-gallery" className="space-y-4 border-t border-border/60 pt-6" aria-busy="true">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-10 w-full" />
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-64 rounded-xl" />)}
+        </div>
+      </section>
+    )
+  }
+
+  if (error) {
+    return (
+      <section id="flow-template-gallery" className="border-t border-border/60 pt-6">
+        <EmptyState
+          title="Flow templates could not load"
+          description={error}
+          action={<Button variant="outline" size="sm" onClick={() => setReloadKey((key) => key + 1)}>Try again</Button>}
+        />
+      </section>
+    )
+  }
+
+  if (templates.length === 0) {
+    return (
+      <section id="flow-template-gallery" className="border-t border-border/60 pt-6">
+        <EmptyState title="No flow templates yet" description="Templates available to this workspace will appear here." />
+      </section>
+    )
+  }
 
   // Search is a substring across everything a user might remember a template by
   // (name, description, category, tags, and required integrations), so nobody
@@ -131,7 +176,7 @@ export function FlowTemplateGallery() {
   const { pageItems, pageCount, page: current } = paginate(visible, page, PAGE_SIZE)
 
   return (
-    <section className="space-y-4 border-t border-border/60 pt-6">
+    <section id="flow-template-gallery" className="space-y-4 border-t border-border/60 pt-6">
       <div>
         <h2 className="text-2xl font-bold leading-9 tracking-tight text-foreground">Start from a template</h2>
         <p className="text-sm text-muted-foreground">

@@ -239,7 +239,7 @@ export default function FlowTemplateDetails() {
         </div>
         <Button onClick={useTemplate} loading={using} className="shrink-0">
           <Play className="mr-1.5 h-4 w-4" />
-          {using ? 'Creating…' : 'Use this flow'}
+          {using ? 'Creating…' : 'Create flow draft'}
         </Button>
       </div>
 

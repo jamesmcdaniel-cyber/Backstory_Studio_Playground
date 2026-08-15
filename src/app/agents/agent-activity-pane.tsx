@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input'
 import { Markdown } from '@/components/ui/markdown'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { ConfirmDialog } from '@/components/settings/dialogs'
 import { humanizeToolName } from '@/lib/flows/humanize-tool-name'
 import { cn } from '@/lib/utils'
 import { isCancellableRunStatus, isTerminalRunStatus } from '@/lib/agents/run-status'
@@ -466,6 +467,7 @@ function RunRow({
   const [reply, setReply] = useState('')
   const [replying, setReplying] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
+  const [confirmAction, setConfirmAction] = useState<'cancel' | 'delete' | null>(null)
   const status = activityStatus(activity)
   const isActive = ['running', 'pending', 'cancelling', 'waiting_for_input', 'waiting_for_approval'].includes(status)
   const isCancellable = isCancellableRunStatus(status)
@@ -515,7 +517,7 @@ function RunRow({
   }
 
   const cancelRun = async () => {
-    if (actionBusy || !window.confirm('Cancel this run?')) return
+    if (actionBusy) return
     setActionBusy(true)
     try {
       const response = await fetch(`/api/agents/${agentId}/runs/${activity.id}`, {
@@ -529,6 +531,7 @@ function RunRow({
         return
       }
       toast.success('Run cancelled.')
+      setConfirmAction(null)
       onChanged()
     } catch {
       toast.error('Could not cancel the run.')
@@ -538,7 +541,7 @@ function RunRow({
   }
 
   const deleteRun = async () => {
-    if (actionBusy || !window.confirm('Delete this run from history? This cannot be undone.')) return
+    if (actionBusy) return
     setActionBusy(true)
     try {
       const response = await fetch(`/api/agents/${agentId}/runs/${activity.id}`, { method: 'DELETE' })
@@ -548,6 +551,7 @@ function RunRow({
         return
       }
       toast.success('Run deleted.')
+      setConfirmAction(null)
       onChanged()
     } catch {
       toast.error('Could not delete the run.')
@@ -597,8 +601,9 @@ function RunRow({
               type="button"
               title="Cancel this run"
               disabled={actionBusy}
-              onClick={cancelRun}
-              className="shrink-0 rounded p-1 text-gray-400 transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setConfirmAction('cancel')}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-400 transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Cancel this run"
             >
               <XCircle className="h-4 w-4" />
             </button>
@@ -608,8 +613,9 @@ function RunRow({
               type="button"
               title="Delete this run"
               disabled={actionBusy}
-              onClick={deleteRun}
-              className="shrink-0 rounded p-1 text-gray-400 transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setConfirmAction('delete')}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-400 transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Delete this run"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -691,6 +697,16 @@ function RunRow({
               logs + status only. */}
         </div>
       )}
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => !open && !actionBusy && setConfirmAction(null)}
+        title={confirmAction === 'cancel' ? 'Cancel this run?' : 'Delete this run?'}
+        description={confirmAction === 'cancel' ? 'The agent will stop after its current operation.' : 'This permanently removes the run from history.'}
+        confirmLabel={confirmAction === 'cancel' ? 'Cancel run' : 'Delete run'}
+        destructive
+        busy={actionBusy}
+        onConfirm={() => confirmAction === 'cancel' ? cancelRun() : deleteRun()}
+      />
     </div>
   )
 }

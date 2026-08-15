@@ -1,8 +1,7 @@
-import { redirect } from 'next/navigation'
+import { TemplatesView } from '@/components/templates/templates-view'
 
-// Templates no longer has its own page — it lives on the dashboard behind the
-// Agents/Templates toggle. Old links (and the /templates/[id] back button) land
-// on that view.
+/** Canonical workspace library. The Agents page may also embed the same browser
+ * as a contextual shortcut, but navigation and shareable links land here. */
 export default function TemplatesPage() {
-  redirect('/agents?view=templates')
+  return <TemplatesView />
 }

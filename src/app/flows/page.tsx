@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound, ScrollText } from 'lucide-react'
+import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound, ScrollText, Sparkles, LayoutTemplate } from 'lucide-react'
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -56,6 +56,7 @@ export default function FlowsPage() {
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [creating, setCreating] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
   const [folderFilter, setFolderFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   // Run history is a sibling view, not a slab under the grid — it used to push
@@ -242,7 +243,7 @@ export default function FlowsPage() {
     }
   }, [])
 
-  const createFlow = async (template?: { name: string; graph: FlowGraph }) => {
+  const createFlow = async (template?: { name: string; graph: FlowGraph }, destination = '') => {
     setCreating(true)
     try {
       const response = await fetch('/api/flows', {
@@ -251,17 +252,15 @@ export default function FlowsPage() {
         body: JSON.stringify(template ? { name: template.name, graph: template.graph } : { name: 'Untitled flow' }),
       })
       const data = await response.json()
-      if (response.ok && data.flow) router.push(`/flows/${data.flow.id}`)
+      if (response.ok && data.flow) router.push(`/flows/${data.flow.id}${destination}`)
       else toast.error(data.error || 'Could not create the flow.')
     } finally {
       setCreating(false)
     }
   }
 
-  // New flow goes straight to a blank draft — templates live in the
-  // full "Start from a template" gallery below, not behind this button.
   const newFlowButton = (
-    <Button onClick={() => createFlow()} loading={creating}>
+    <Button onClick={() => setCreateOpen(true)} loading={creating}>
       <Plus className="mr-1.5 h-4 w-4" /> New flow
     </Button>
   )
@@ -270,9 +269,9 @@ export default function FlowsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col items-start justify-between gap-4 xl:flex-row">
         <PageHeader eyebrow="Pipelines" title="Flows" description="Wire your agents into deterministic multi-step pipelines." />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant={view === 'log' ? 'default' : 'outline'}
             aria-pressed={view === 'log'}
@@ -367,7 +366,6 @@ export default function FlowsPage() {
               const accent = cardAccent(flow.id)
               return (
               <StaggerItem key={flow.id}>
-              <Link href={`/flows/${flow.id}`} className="block h-full">
                 <TiltCard className={cn('group h-full overflow-hidden border-border/60 transition-[box-shadow,border-color]', accent.border)}>
                   <div className={cn('absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r opacity-80 transition-opacity group-hover:opacity-100', accent.bar)} />
                   <div aria-hidden="true" className={cn('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-60 blur-2xl transition-opacity duration-base group-hover:opacity-100', accent.glow)} />
@@ -378,22 +376,14 @@ export default function FlowsPage() {
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              onClick={(event) => { event.preventDefault(); event.stopPropagation() }}
-                              className="flex h-6 w-6 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                              className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                               title="Flow actions"
                               aria-label={`Actions for ${flow.name}`}
                             >
                               <MoreHorizontal className="h-4 w-4" />
                             </button>
                           </DropdownMenuTrigger>
-                          {/* The whole card is an <a>. Radix portals the menu to <body>,
-                              but React synthetic clicks still bubble through the REACT tree
-                              into the Link — which navigated mid-dialog-open and left the
-                              modal's pointer-events lock stuck on <body>. Stop them here. */}
-                          <DropdownMenuContent
-                            align="start"
-                            onClick={(event) => { event.preventDefault(); event.stopPropagation() }}
-                          >
+                          <DropdownMenuContent align="start">
                             <DropdownMenuItem onSelect={() => editDetails(flow)}>
                               <Pencil className="mr-2 h-4 w-4" /> Edit details
                             </DropdownMenuItem>
@@ -428,26 +418,27 @@ export default function FlowsPage() {
                         {flow.stepCount} step{flow.stepCount === 1 ? '' : 's'}
                         <button
                           type="button"
-                          onClick={(event) => { event.preventDefault(); event.stopPropagation(); void moveToFolder(flow) }}
-                          className="rounded border border-border px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+                          onClick={() => void moveToFolder(flow)}
+                          className="min-h-8 rounded border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
                           title="Move to a folder"
                         >
                           {flow.folder?.trim() || 'Folder…'}
                         </button>
                       </span>
                     </div>
-                    <div className="flex items-start gap-2.5">
+                    <Link href={`/flows/${flow.id}`} className="flex items-start gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                       <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg transition-transform group-hover:scale-105', accent.chip)}>
                         {flow.icon ? <span aria-hidden>{flow.icon}</span> : <Workflow className="h-[18px] w-[18px]" />}
                       </span>
                       <CardTitle className="min-w-0 text-base leading-snug">{flow.name}</CardTitle>
-                    </div>
+                    </Link>
                   </CardHeader>
                   <CardContent>
+                    <Link href={`/flows/${flow.id}`} className="block rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     <p className="line-clamp-2 text-sm text-muted-foreground">{flow.description || 'No description yet.'}</p>
+                    </Link>
                   </CardContent>
                 </TiltCard>
-              </Link>
               </StaggerItem>
               )
             })}
@@ -464,6 +455,56 @@ export default function FlowsPage() {
       <FlowTemplateGallery />
       </>
       )}
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create a flow</DialogTitle>
+            <DialogDescription>Choose the starting point that matches how much of the workflow you already know.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              className="rounded-xl border border-horizon-200 bg-horizon-50/60 p-4 text-left transition-colors hover:border-horizon-400 hover:bg-horizon-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => { setCreateOpen(false); void createFlow(undefined, '?panel=copilot') }}
+            >
+              <Sparkles className="mb-3 h-5 w-5 text-horizon-600" />
+              <span className="block font-semibold text-foreground">Describe it with Copilot</span>
+              <span className="mt-1 block text-sm text-muted-foreground">Explain the outcome and let Copilot draft the steps.</span>
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border p-4 text-left transition-colors hover:border-horizon-300 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => {
+                setCreateOpen(false)
+                window.setTimeout(() => document.getElementById('flow-template-gallery')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+              }}
+            >
+              <LayoutTemplate className="mb-3 h-5 w-5 text-muted-foreground" />
+              <span className="block font-semibold text-foreground">Start from a template</span>
+              <span className="mt-1 block text-sm text-muted-foreground">Choose a complete, editable pipeline from the library.</span>
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border p-4 text-left transition-colors hover:border-horizon-300 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => { setCreateOpen(false); void createFlow() }}
+            >
+              <Plus className="mb-3 h-5 w-5 text-muted-foreground" />
+              <span className="block font-semibold text-foreground">Blank flow</span>
+              <span className="mt-1 block text-sm text-muted-foreground">Open an empty canvas and add each step yourself.</span>
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border p-4 text-left transition-colors hover:border-horizon-300 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => { setCreateOpen(false); flowImport.pickFile() }}
+            >
+              <Upload className="mb-3 h-5 w-5 text-muted-foreground" />
+              <span className="block font-semibold text-foreground">Import JSON</span>
+              <span className="mt-1 block text-sm text-muted-foreground">Bring in an exported Backstory flow.</span>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={editDialog !== null} onOpenChange={(open) => { if (!open) setEditDialog(null) }}>
         <DialogContent className="max-w-lg">

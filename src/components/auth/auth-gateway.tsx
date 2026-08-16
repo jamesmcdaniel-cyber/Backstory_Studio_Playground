@@ -194,9 +194,7 @@ export function AuthGateway() {
                   <span className="block text-graphite-500">you left off.</span>
                 </h1>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
-                  {isInternalEdition()
-                    ? 'Sign in through Okta with your company account.'
-                    : "Continue with your Google account, or through your organization's identity provider below."}
+                  Continue with your Google account, or through your organization&apos;s identity provider below.
                 </p>
               </div>
 
@@ -207,57 +205,25 @@ export function AuthGateway() {
                 </div>
               )}
 
-              {isInternalEdition() ? (
-                <>
-                  <div className="mt-10 grid gap-2 2xl:grid-cols-2">
-                    {COMPANY_EMAIL_DOMAINS.map((domain) => (
-                      <Button
-                        key={domain}
-                        type="button"
-                        loading={ssoLoading && ssoDomain === domain}
-                        disabled={authLoading || ssoLoading}
-                        onClick={() => startCompanySso(domain)}
-                        className="h-14 min-w-0 rounded-xl px-3 text-sm font-semibold shadow-2 hover:shadow-3 sm:text-base"
-                      >
-                        Sign in with Okta · @{domain}
-                      </Button>
-                    ))}
-                  </div>
-                  <p className="mt-3 text-xs text-graphite-500">
-                    Okta verifies every company sign-in.
-                  </p>
-                  <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
-                    <span className="h-px flex-1 bg-graphite-200" /> or <span className="h-px flex-1 bg-graphite-200" />
-                  </div>
-                  <div>
-                    {authLoading ? (
-                      <Button disabled loading variant="outline" className="h-12 w-full rounded-xl text-sm">
-                        Checking session…
-                      </Button>
-                    ) : (
-                      <GoogleButton
-                        label="Continue with Google"
-                        className="h-12 rounded-xl border-graphite-200 bg-white text-sm font-semibold shadow-1 hover:border-horizon-200 hover:bg-white hover:shadow-2 [&_svg]:size-4"
-                      />
-                    )}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="mt-10">
-                    {authLoading ? (
-                      <Button disabled loading variant="outline" className="h-14 w-full rounded-xl text-base">
-                        Checking session…
-                      </Button>
-                    ) : (
-                      <GoogleButton
-                        label="Continue with Google"
-                        className="h-14 rounded-xl border-graphite-200 bg-white text-base font-semibold shadow-2 hover:border-horizon-200 hover:bg-white hover:shadow-3 [&_svg]:size-5"
-                      />
-                    )}
-                  </div>
-                </>
-              )}
+              {/* One sign-in surface for both editions. The per-domain
+                  "Sign in with Okta" buttons were removed as redundant: company
+                  Google sign-ins federate through Okta at the Workspace layer
+                  anyway, and the Enterprise SSO form below covers the direct
+                  SAML path for any domain — including the company ones. Two
+                  buttons that did the same thing as the form invited the wrong
+                  conclusion that they were the ONLY Okta-verified path. */}
+              <div className="mt-10">
+                {authLoading ? (
+                  <Button disabled loading variant="outline" className="h-14 w-full rounded-xl text-base">
+                    Checking session…
+                  </Button>
+                ) : (
+                  <GoogleButton
+                    label="Continue with Google"
+                    className="h-14 rounded-xl border-graphite-200 bg-white text-base font-semibold shadow-2 hover:border-horizon-200 hover:bg-white hover:shadow-3 [&_svg]:size-5"
+                  />
+                )}
+              </div>
 
               <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
                 <span className="h-px flex-1 bg-graphite-200" /> Enterprise SSO <span className="h-px flex-1 bg-graphite-200" />

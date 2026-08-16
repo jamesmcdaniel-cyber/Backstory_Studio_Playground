@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
@@ -47,7 +48,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!transcript) return { success: true, note: null, empty: true }
 
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `huddle-summary:${auth.dbUser.id}`, limit: 10 })
-  const system = 'You turn meeting transcripts into concise, faithful team notes.'
+  const system = `You turn meeting transcripts into concise, faithful team notes.\n\n${UNTRUSTED_DATA_RULE}`
   const user = summaryPrompt(flow.name, transcript)
   const raw = await generateStructured({ system, user, schema: SUMMARY_SCHEMA, schemaName: 'huddle_note', maxTokens: 1200 })
   recordEstimatedUsage(auth.organizationId, system, user, raw)

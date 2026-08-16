@@ -1,3 +1,5 @@
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { generateStructured } from '@/lib/llm/model-runner'
@@ -48,7 +50,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     'Output ONLY the snippet, no code fences, no explanation.',
   ].join('\n')
 
-  const system = body.language === 'python' ? pyContract : jsContract
+  const system = `${body.language === 'python' ? pyContract : jsContract}\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`
   const user = [
     `Task: ${body.prompt}`,
     body.inputSample ? `\nSample of \`input\`:\n${body.inputSample.slice(0, 4000)}` : '',

@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
@@ -78,7 +79,8 @@ export function buildReflectionPrompt(params: {
 }): { system: string; user: string } {
   return {
     system:
-      'You are the reflection pass for an autonomous agent. Given a completed run, extract durable learnings (facts about where data lives, what worked, what failed), one short self-critique paragraph the agent should read before its next run, and up to 3 user-actionable suggestions that would help future runs serve the larger goal better (missing connections, data gaps, objective improvements). Be concrete and terse. If no goal was provided, infer one from the objective and return it as suggestedGoal.',
+      UNTRUSTED_DATA_RULE +
+      '\n\nYou are the reflection pass for an autonomous agent. Given a completed run, extract durable learnings (facts about where data lives, what worked, what failed), one short self-critique paragraph the agent should read before its next run, and up to 3 user-actionable suggestions that would help future runs serve the larger goal better (missing connections, data gaps, objective improvements). Be concrete and terse. If no goal was provided, infer one from the objective and return it as suggestedGoal.',
     user: [
       `Larger goal: ${params.goal ?? '(none provided — infer one)'}`,
       `Objective: ${params.objective}`,

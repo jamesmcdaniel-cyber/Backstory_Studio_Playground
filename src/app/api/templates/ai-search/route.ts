@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
@@ -69,7 +70,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       schemaName: 'template_matches',
       schema: MATCHES_SCHEMA as unknown as Record<string, unknown>,
       system:
-        "You match a user's goal to the best library templates/skills. Return ONLY items that genuinely help accomplish the stated goal — an empty list is the correct answer when nothing fits. Rank best-first, at most 5, each with a one-sentence reason tied to the goal.",
+        "You match a user's goal to the best library templates/skills. Return ONLY items that genuinely help accomplish the stated goal — an empty list is the correct answer when nothing fits. Rank best-first, at most 5, each with a one-sentence reason tied to the goal.\n\n" +
+        UNTRUSTED_DATA_RULE,
       user: `Goal: ${query}\n\nCatalog (id | kind | name | category | description | tags):\n${formatCatalog(items)}`,
       maxTokens: 1024,
     })

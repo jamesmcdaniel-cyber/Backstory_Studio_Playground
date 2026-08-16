@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
@@ -57,7 +58,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       schemaName: 'integration_matches',
       schema: MATCHES_SCHEMA as unknown as Record<string, unknown>,
       system:
-        "You match a user's goal to the integrations that would help accomplish it. Return ONLY integrations from the catalog that genuinely help — an empty list is the correct answer when nothing fits. Rank best-first, at most 6, each with a one-sentence reason tied to the goal.",
+        "You match a user's goal to the integrations that would help accomplish it. Return ONLY integrations from the catalog that genuinely help — an empty list is the correct answer when nothing fits. Rank best-first, at most 6, each with a one-sentence reason tied to the goal.\n\n" +
+        UNTRUSTED_DATA_RULE,
       user: `Goal: ${query}\n\nIntegrations (id | name | provider):\n${formatCatalog(items)}`,
       maxTokens: 1024,
     })

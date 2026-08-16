@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { AI_OP_LABELS, DATA_OPS, type FlowGraph, type FlowNode } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
@@ -34,6 +35,7 @@ const NOTES_JSON_SCHEMA = {
 
 const SYSTEM = [
   'You document workflow automations for the people who will run them.',
+  UNTRUSTED_DATA_RULE,
   'You are given a flow graph. Return ONE JSON object with a single property, notesJson: a JSON string holding the notes object.',
   'Write for a competent colleague who did not build this flow. Be concrete and specific to THIS graph — never generic filler.',
   'objective: what the flow achieves AND how the reader knows it worked.',

@@ -1,3 +1,5 @@
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
 import { normalizeGeneratedFlowGraphInput, repairGeneratedFlowGraph, validationIssuesForModel } from '@/lib/flows/copilot'
@@ -59,7 +61,7 @@ export async function generateFlowGraph(
   opts: { currentGraph?: unknown; issues?: string[] } = {},
 ): Promise<GeneratedFlowGraph> {
   const { roster, toolCatalog, contextBlock, graphRules } = await buildCopilotGrounding(organizationId, userId)
-  const system = graphRules
+  const system = `${graphRules}\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`
 
   // REPAIR MODE: an existing graph + checker issues to fix in place, else a
   // brand-new flow from the description.

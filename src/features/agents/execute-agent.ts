@@ -45,6 +45,7 @@ import { reflectAndRemember } from './reflection'
 import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { shouldStrategize, goalSection, strategizeSection, STRATEGIZE_RETRIEVAL } from './strategy'
 import { applyToolPolicy, describeToolPolicy, type ToolPolicy } from '@/lib/agents/tool-policy'
+import { isGuardrailRefusal } from '@/lib/security/guardrails'
 
 export type AgentExecutionJob = {
   executionId?: string
@@ -1537,6 +1538,25 @@ async function runAgentExecutionInner(
         executionId: execution.id,
       }).catch(() => undefined)
     }
+    // A guardrail refusal is a completed run, not an error — but the ATTEMPT is
+    // the security-relevant fact. Recorded to the audit log so "who keeps asking
+    // agents to exfiltrate credentials" is a queryable question rather than
+    // something noticed by a colleague reading a transcript. The marker check is
+    // deliberately cheap prose-matching on the model's own flag; a run that
+    // refuses without the marker is a quality bug, not a bypass, since the
+    // boundary held either way.
+    if (isGuardrailRefusal(summary)) {
+      await recordAudit({
+        organizationId,
+        action: 'guardrail.refusal',
+        actorUserId: userId ?? null,
+        actorKind: 'agent',
+        resourceType: 'agent_execution',
+        resourceId: execution.id,
+        detail: { agentId: agent.id, excerpt: summary.slice(0, 300) },
+      })
+    }
+
     const headline = await generateHeadline(summary, { organizationId, agentExecutionId: execution.id })
 
     await prisma.executionMessage.create({

@@ -1,3 +1,5 @@
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import type { AgentChatMessage, Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
@@ -224,7 +226,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     const text = await generateStructured({
       schemaName: 'assistant_reply',
       schema: RESPONSE_SCHEMA as unknown as Record<string, unknown>,
-      system: SYSTEM_PROMPT,
+      system: `${SYSTEM_PROMPT}\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`,
       user: JSON.stringify({ context, conversation, question: message }),
       // Generous headroom: a reconfigure reply returns the agent's complete
       // instructions inline, which can be long — a tight cap truncates the JSON

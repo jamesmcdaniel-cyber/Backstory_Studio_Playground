@@ -1,3 +1,5 @@
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { apiLogger } from '@/lib/logger'
@@ -92,7 +94,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     .slice(0, 20)
     .map((issue) => `- [${issue.level}] ${issue.code}${issue.nodeId ? ` at node ${issue.nodeId}` : ''}: ${issue.message}`)
 
-  const system = [graphRules, '', OPS_CONTRACT, '', contextBlock].join('\n')
+  const system = [graphRules, '', OPS_CONTRACT, '', contextBlock, '', UNTRUSTED_DATA_RULE, '', GUARDRAIL_RULE].join('\n')
   const transcript = messages.map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}`).join('\n\n')
   const user = [
     `Current flow graph JSON:\n${JSON.stringify(graph)}`,

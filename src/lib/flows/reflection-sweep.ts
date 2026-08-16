@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
@@ -49,7 +50,8 @@ function warningsOf(value: unknown): string[] {
 export function buildReflectionPrompt(flowName: string, pattern: FailurePattern): { system: string; user: string } {
   return {
     system:
-      'You review automation run history. Given one recurring failure pattern in a workflow, write a short title naming what is wrong and a rationale explaining the likely cause and the fix. Be concrete and terse. Write plain English only: never output cron expressions, curly-brace token syntax, or code identifiers the user did not write themselves.',
+      UNTRUSTED_DATA_RULE +
+      '\n\nYou review automation run history. Given one recurring failure pattern in a workflow, write a short title naming what is wrong and a rationale explaining the likely cause and the fix. Be concrete and terse. Write plain English only: never output cron expressions, curly-brace token syntax, or code identifiers the user did not write themselves.',
     user: [
       `Workflow: ${flowName}`,
       `Step: ${pattern.stepId}`,

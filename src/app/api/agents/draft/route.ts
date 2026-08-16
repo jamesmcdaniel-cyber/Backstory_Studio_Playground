@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
@@ -74,6 +75,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       `Available integrations: ${NANGO_PROVIDERS.join(', ')}. Include only the ones the task needs; an agent with no integrations is fine.`,
       'Write instructions the agent can follow without further clarification: the goal, the steps, which tools to use, and what to include in the final report. If anything is genuinely ambiguous, instruct the agent to ask the user via its ask_user tool at run time.',
       'Set a schedule only when the user describes a recurring cadence; otherwise use type "manual" with isActive false.',
+      UNTRUSTED_DATA_RULE,
     ].join('\n'),
     user: description,
   })

@@ -1,3 +1,4 @@
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 /**
  * The HEART of sub-project C: turn a workspace's usage profile + graph-RAG
  * context into REVIEWABLE `TemplateProposal`s. This NEVER auto-publishes — it
@@ -442,6 +443,7 @@ export function buildGenerationUser(
 
 const GENERATION_SYSTEM = [
   'You propose REVIEWABLE automation templates for a team workspace, grounded strictly in its observed integration usage.',
+  UNTRUSTED_DATA_RULE,
   'Return AT MOST 3 proposals, and only ones you can justify from the evidence — returning 0 or 1 is the right answer when nothing strongly fits. Quality over quantity; never invent usage that is not in the evidence. Set `confidence` (0–1) honestly for each; anything below 0.6 is discarded, so omit weak ideas rather than pad the list.',
   'Two families: (1) NEW templates — kind agent_template (a single autonomous agent) or flow_template (a multi-step workflow) that automates a recurring, cross-integration pattern you see. Write implementation-grade second-person instructions with: objective and success criteria; required inputs and defaults; exact ordered tool/step plan; joins and field mappings; decision rules and thresholds; pagination/batching; retries, idempotency, deduplication, and partial-failure handling; approval gates for writes; data-quality and no-fabrication rules; output sections; delivery behavior; monitoring; and concrete test cases. Include only the integrations the task needs, a detailed example output, and a cadence when periodic. (2) process_improvement — an upgrade to an EXISTING flow or agent from the provided list; set targetType and the exact targetId, leave instructions empty, and put a specific implementation plan in configJson as a JSON object string with notes, diff, acceptanceCriteria, risks, and testPlan.',
   'For flow_template, describe a deterministic graph with stable step names, dependencies, branch conditions, inputs, outputs, and failure paths. For agent_template, define tool-selection boundaries and when to ask for clarification. Never use vague instructions such as “analyze the data” without naming the analysis and required output.',

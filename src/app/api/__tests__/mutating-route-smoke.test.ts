@@ -115,6 +115,9 @@ const cases = (): Case[] => [
   { route: 'agents/[id]/knowledge', method: 'DELETE', run: async () => (await import('../agents/[id]/knowledge/route')).DELETE(rq(`/api/agents/${agentId}/knowledge`, 'DELETE', { documentId: 'missing' })) },
   { route: 'agents/[id]/chat', method: 'PATCH', run: async () => (await import('../agents/[id]/chat/route')).PATCH(rq(`/api/agents/${agentId}/chat`, 'PATCH', { sessionId: 'missing', title: 'x' })) },
   { route: 'agents/[id]/runs/[runId]', method: 'DELETE', run: async () => (await import('../agents/[id]/runs/[runId]/route')).DELETE(rq(`/api/agents/${agentId}/runs/${executionId}`, 'DELETE', {})) },
+  { route: 'workspace-folders', method: 'POST', run: async () => (await import('../workspace-folders/route')).POST(rq('/api/workspace-folders', 'POST', { name: 'Smoke public folder' })) },
+  { route: 'workspace-folders', method: 'PATCH', run: async () => (await import('../workspace-folders/route')).PATCH(rq('/api/workspace-folders', 'PATCH', { id: 'missing', name: 'Renamed' })) },
+  { route: 'workspace-folders', method: 'DELETE', run: async () => (await import('../workspace-folders/route')).DELETE(rq('/api/workspace-folders', 'DELETE', { id: 'missing' })) },
 
   // Unauthenticated by design — a browser posts violation reports with no
   // credentials. Must answer 204 to anything, including junk: a collector that

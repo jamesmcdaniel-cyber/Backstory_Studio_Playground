@@ -15,6 +15,7 @@ import type { Activity, Agent } from '@/lib/types'
 export type Snapshot = {
   success: boolean
   agents: Agent[]
+  workspaceFolders?: Array<{ id: string; name: string }>
   activities: Activity[]
   usage: { since: string; executions: number; inputTokens: number; outputTokens: number }
   activeOrganizationId: string | null

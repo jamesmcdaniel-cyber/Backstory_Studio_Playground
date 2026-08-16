@@ -12,12 +12,15 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Folder,
+  FolderPlus,
   ImagePlus,
   Loader2,
   Lock,
   LogOut,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Play,
   Plug,
   Plus,
@@ -33,6 +36,9 @@ import { CommandPalette } from '@/components/search/command-palette'
 import { NotificationBell } from '@/components/notifications/notification-bell'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/hooks/use-auth'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
@@ -44,6 +50,7 @@ import type { Agent as AgentType } from '@/lib/types'
 type Agent = Pick<AgentType, 'id' | 'title' | 'description' | 'instructions' | 'icon' | 'folder' | 'visibility'>
 
 type Organization = { id: string; name: string; slug: string; plan: string; logoUrl?: string | null }
+type WorkspaceFolder = { id: string; name: string }
 
 /** Default workspace avatar — the Backstory mark, until an org uploads its own. */
 const DEFAULT_ORG_LOGO = '/backstory-symbol-black.png'
@@ -60,7 +67,7 @@ type Usage = { executions: number; inputTokens: number; outputTokens: number; ex
 // to empty state and flash the default logo + no agents until the refetch
 // resolves. Seeding state from this snapshot makes a remounted sidebar paint the
 // real org logo + agents instantly, then revalidate in the background.
-type SidebarSnapshot = { organizations: Organization[]; activeOrgId: string | null; agents: Agent[]; usage: Usage | null }
+type SidebarSnapshot = { organizations: Organization[]; activeOrgId: string | null; agents: Agent[]; workspaceFolders: WorkspaceFolder[]; usage: Usage | null }
 let sidebarCache: SidebarSnapshot | null = null
 
 const CREDIT_TOKENS = 1_000_000
@@ -113,6 +120,7 @@ export function Sidebar() {
   const logoInputRef = useRef<HTMLInputElement>(null)
   const [activeOrgId, setActiveOrgId] = useState<string | null>(() => sidebarCache?.activeOrgId ?? null)
   const [agents, setAgents] = useState<Agent[]>(() => sidebarCache?.agents ?? [])
+  const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>(() => sidebarCache?.workspaceFolders ?? [])
   const [usage, setUsage] = useState<Usage | null>(() => sidebarCache?.usage ?? null)
   const [folderCollapsed, setFolderCollapsed] = useState<Record<string, boolean>>({})
   const [desktopCollapsed, setDesktopCollapsed] = useState(false)
@@ -120,6 +128,10 @@ export function Sidebar() {
   const [runningId, setRunningId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
   const [deletingAgent, setDeletingAgent] = useState(false)
+  const [folderDialog, setFolderDialog] = useState<{ mode: 'create' | 'rename'; id?: string; name: string } | null>(null)
+  const [savingFolder, setSavingFolder] = useState(false)
+  const [deleteFolderTarget, setDeleteFolderTarget] = useState<WorkspaceFolder | null>(null)
+  const [deletingFolder, setDeletingFolder] = useState(false)
 
   const load = useCallback(async (force = false) => {
     // One shared snapshot (deduped across the dashboard + bell within an ~8s
@@ -129,10 +141,12 @@ export function Sidebar() {
       organizations: snapshot.organizations || [],
       activeOrgId: snapshot.activeOrganizationId || null,
       agents: snapshot.agents || [],
+      workspaceFolders: snapshot.workspaceFolders || [],
       usage: snapshot.usage || null,
     }
     sidebarCache = next
     setAgents(next.agents)
+    setWorkspaceFolders(next.workspaceFolders)
     setUsage(next.usage)
     setOrganizations(next.organizations)
     setActiveOrgId(next.activeOrgId)
@@ -298,17 +312,23 @@ export function Sidebar() {
   const sections = useMemo(() => {
     const shared = agents.filter((agent) => agent.visibility !== 'private')
     const folders = new Map<string, Agent[]>()
+    const explicitByName = new Map(workspaceFolders.map((folder) => [folder.name.toLocaleLowerCase(), folder]))
+    folders.set('General', [])
+    for (const folder of workspaceFolders) folders.set(folder.name, [])
     for (const agent of shared) {
-      const key = agent.folder?.trim() || 'General'
+      const requested = agent.folder?.trim() || 'General'
+      const key = explicitByName.get(requested.toLocaleLowerCase())?.name ?? requested
       const bucket = folders.get(key)
       if (bucket) bucket.push(agent)
       else folders.set(key, [agent])
     }
     return {
-      workspace: [...folders.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      workspace: [...folders.entries()]
+        .map(([name, folderAgents]) => ({ name, agents: folderAgents, folder: explicitByName.get(name.toLocaleLowerCase()) ?? null }))
+        .sort((a, b) => a.name === 'General' ? -1 : b.name === 'General' ? 1 : a.name.localeCompare(b.name)),
       private: agents.filter((agent) => agent.visibility === 'private'),
     }
-  }, [agents])
+  }, [agents, workspaceFolders])
 
   const creditPct = usage ? Math.min(100, Math.round(((usage.inputTokens + usage.outputTokens) / CREDIT_TOKENS) * 100)) : 0
 
@@ -322,6 +342,53 @@ export function Sidebar() {
       body: JSON.stringify({ id: agentId, folder: target.folder, visibility: target.visibility }),
     })
     notifyAgentsChanged()
+  }
+
+  const saveWorkspaceFolder = async () => {
+    if (!folderDialog || savingFolder) return
+    const name = folderDialog.name.trim().replace(/\s+/g, ' ')
+    if (!name) {
+      toast.error('Enter a folder name.')
+      return
+    }
+    setSavingFolder(true)
+    try {
+      const response = await fetch('/api/workspace-folders', {
+        method: folderDialog.mode === 'create' ? 'POST' : 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(folderDialog.mode === 'create' ? { name } : { id: folderDialog.id, name }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not save the public folder.')
+      setFolderDialog(null)
+      setFolderCollapsed((current) => ({ ...current, [`ws:${data.folder.name}`]: false }))
+      toast.success(folderDialog.mode === 'create' ? `Created ${data.folder.name}` : `Renamed folder to ${data.folder.name}`)
+      notifyAgentsChanged()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save the public folder.')
+    } finally {
+      setSavingFolder(false)
+    }
+  }
+
+  const deleteWorkspaceFolder = async (folder: WorkspaceFolder) => {
+    setDeletingFolder(true)
+    try {
+      const response = await fetch('/api/workspace-folders', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: folder.id }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not delete the public folder.')
+      setDeleteFolderTarget(null)
+      toast.success(data.moved > 0 ? `Deleted ${folder.name}; ${data.moved} agent${data.moved === 1 ? '' : 's'} moved to General` : `Deleted ${folder.name}`)
+      notifyAgentsChanged()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete the public folder.')
+    } finally {
+      setDeletingFolder(false)
+    }
   }
 
   const runAgent = async (agent: Agent) => {
@@ -611,36 +678,67 @@ export function Sidebar() {
               {...dropProps('workspace', { folder: null, visibility: 'shared' })}
             >
               <span className="text-xs font-semibold uppercase tracking-wide text-graphite-400">Workspace</span>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-5 w-5"
-                onClick={() => router.push('/agents?agent=new')}
-                aria-label="New agent"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
+              {can('agent.write') && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="Add to workspace">
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem onSelect={() => setFolderDialog({ mode: 'create', name: '' })}>
+                      <FolderPlus /> Public folder
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => router.push('/agents?agent=new')}>
+                      <Bot /> New agent
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
-            {sections.workspace.map(([folder, folderAgents]) => {
+            {sections.workspace.map(({ name: folder, agents: folderAgents, folder: folderRecord }) => {
               const key = `ws:${folder}`
               const isCollapsed = folderCollapsed[key]
               const isGeneral = folder === 'General'
               return (
                 <div key={key} className="mb-0.5">
-                  <button
-                    className={cn(
-                      'flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-graphite-700 hover:bg-graphite-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      dragOver === key && 'bg-horizon-50',
+                  <div className="group flex items-center gap-0.5">
+                    <button
+                      className={cn(
+                        'flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-graphite-700 hover:bg-graphite-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        dragOver === key && 'bg-horizon-50',
+                      )}
+                      onClick={() => setFolderCollapsed((current) => ({ ...current, [key]: !current[key] }))}
+                      {...dropProps(key, { folder: isGeneral ? null : folder, visibility: 'shared' })}
+                    >
+                      {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      <Folder className="h-3.5 w-3.5 text-graphite-400" />
+                      <span className="flex-1 truncate text-left">{folder}</span>
+                      <span className="text-xs text-graphite-400">{folderAgents.length}</span>
+                    </button>
+                    {folderRecord && can('agent.write') && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-graphite-400" aria-label={`Manage ${folder}`}>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => setFolderDialog({ mode: 'rename', id: folderRecord.id, name: folderRecord.name })}>
+                            <Pencil /> Rename
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={() => setDeleteFolderTarget(folderRecord)}>
+                            <Trash2 /> Delete folder
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
-                    onClick={() => setFolderCollapsed((current) => ({ ...current, [key]: !current[key] }))}
-                    {...dropProps(key, { folder: isGeneral ? null : folder, visibility: 'shared' })}
-                  >
-                    {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                    <Folder className="h-3.5 w-3.5 text-graphite-400" />
-                    <span className="flex-1 truncate text-left">{folder}</span>
-                    <span className="text-xs text-graphite-400">{folderAgents.length}</span>
-                  </button>
-                  {!isCollapsed && <div className="ml-3 border-l pl-1">{folderAgents.map(renderAgent)}</div>}
+                  </div>
+                  {!isCollapsed && (
+                    folderAgents.length > 0
+                      ? <div className="ml-3 border-l pl-1">{folderAgents.map(renderAgent)}</div>
+                      : !isGeneral && <p className="ml-5 px-2 py-1 text-xs text-graphite-400">Empty — drag an agent here.</p>
+                  )}
                 </div>
               )
             })}
@@ -701,6 +799,34 @@ export function Sidebar() {
       </aside>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <Dialog open={folderDialog !== null} onOpenChange={(open) => { if (!open && !savingFolder) setFolderDialog(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{folderDialog?.mode === 'rename' ? 'Rename public folder' : 'Create a public folder'}</DialogTitle>
+            <DialogDescription>
+              Everyone in this workspace can see this folder. Drag shared agents into it from the sidebar.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="space-y-1.5 text-sm" htmlFor="workspace-folder-name">
+            <span className="font-medium">Folder name</span>
+            <Input
+              id="workspace-folder-name"
+              autoFocus
+              maxLength={60}
+              value={folderDialog?.name ?? ''}
+              onChange={(event) => setFolderDialog((current) => current ? { ...current, name: event.target.value } : current)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void saveWorkspaceFolder() }}
+              placeholder="For example, Sales operations"
+            />
+          </label>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFolderDialog(null)} disabled={savingFolder}>Cancel</Button>
+            <Button onClick={() => void saveWorkspaceFolder()} loading={savingFolder}>
+              {folderDialog?.mode === 'rename' ? 'Save name' : 'Create folder'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && !deletingAgent && setDeleteTarget(null)}
@@ -710,6 +836,16 @@ export function Sidebar() {
         destructive
         busy={deletingAgent}
         onConfirm={() => deleteTarget && deleteAgent(deleteTarget)}
+      />
+      <ConfirmDialog
+        open={deleteFolderTarget !== null}
+        onOpenChange={(open) => !open && !deletingFolder && setDeleteFolderTarget(null)}
+        title={`Delete ${deleteFolderTarget?.name || 'folder'}?`}
+        description="The public folder will be removed. Agents inside it will stay shared and move to General."
+        confirmLabel="Delete folder"
+        destructive
+        busy={deletingFolder}
+        onConfirm={() => deleteFolderTarget && deleteWorkspaceFolder(deleteFolderTarget)}
       />
     </TooltipProvider>
   )

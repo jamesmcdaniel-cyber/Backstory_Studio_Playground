@@ -13,7 +13,7 @@ export const runtime = 'nodejs'
  * endpoints (/agents, /agents/activity, /usage, /organizations,
  * /notifications), each paying its own auth + function invocation — ~6
  * authenticated requests per user per poll cycle. This endpoint answers all
- * of them with a single auth and five parallel queries, so the app shell
+ * of them with a single auth and parallel queries, so the app shell
  * costs one request per cycle regardless of how many widgets poll.
  *
  * Response sub-shapes are IDENTICAL to the individual endpoints (agents via
@@ -27,7 +27,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
 
   const notificationScope = { organizationId: auth.organizationId, OR: [{ userId: auth.dbUser.id }, { userId: null }] }
 
-  const [agents, activities, usageAggregate, organization, notifications, unread] = await Promise.all([
+  const [agents, workspaceFolders, activities, usageAggregate, organization, notifications, unread] = await Promise.all([
     prisma.agentTask.findMany({
       where: {
         organizationId: auth.organizationId,
@@ -36,6 +36,11 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
       },
       orderBy: { updatedAt: 'desc' },
       take: 300,
+    }),
+    prisma.workspaceFolder.findMany({
+      where: { organizationId: auth.organizationId },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
     }),
     prisma.agentExecution.findMany({
       where: { organizationId: auth.organizationId, ...executionVisibilityScope(auth.dbUser.id) },
@@ -59,6 +64,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
   return {
     success: true,
     agents: agents.map(serializeAgent),
+    workspaceFolders,
     activities,
     usage: {
       since: monthStart.toISOString(),

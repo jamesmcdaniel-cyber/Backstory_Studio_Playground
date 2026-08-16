@@ -91,6 +91,7 @@ model Organization {
   identityProviders    IdentityProvider[]
   teams                Team[]
   featureGrants        FeatureGrant[]
+  workspaceFolders     WorkspaceFolder[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
@@ -100,6 +101,22 @@ model Organization {
   ssoEnforcement       String            @default("optional")
 
   @@map("organizations")
+}
+
+/// A named shared folder in the workspace agent tree. AgentTask.folder remains
+/// the denormalized assignment so existing agents and exports stay compatible;
+/// this row makes an empty folder durable and visible to every workspace member.
+model WorkspaceFolder {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  name           String
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@map("workspace_folders")
 }
 
 /// A pending invitation to join an organization. The plaintext token is emailed

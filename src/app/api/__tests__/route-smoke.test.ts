@@ -170,6 +170,7 @@ if (TEST_DB) {
     { name: 'GET /api/flow-templates/[id]/versions', run: async () => (await import('../flow-templates/[id]/versions/route')).GET(req('/api/flow-templates/summarize-extract/versions')) },
     { name: 'GET /api/agents', run: async () => (await import('../agents/route')).GET(req('/api/agents')) },
     { name: 'GET /api/agents/activity', run: async () => (await import('../agents/activity/route')).GET(req('/api/agents/activity')) },
+    { name: 'GET /api/workspace-folders', run: async () => (await import('../workspace-folders/route')).GET(req('/api/workspace-folders')) },
     { name: 'GET /api/approvals', run: async () => (await import('../approvals/route')).GET(req('/api/approvals')) },
     { name: 'GET /api/audit/export', run: async () => (await import('../audit/export/route')).GET(req('/api/audit/export')) },
     { name: 'GET /api/auth/context', run: async () => (await import('../auth/context/route')).GET(req('/api/auth/context')) },

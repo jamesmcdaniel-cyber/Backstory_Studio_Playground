@@ -1035,6 +1035,29 @@ export function StepDrawer({
             </p>
             <AdvancedParamsSection node={node} onChange={onChange} />
             <div>
+              <label className={labelClass} htmlFor={`${uid}-tool-policy`}>Tools this step may use</label>
+              <select
+                id={`${uid}-tool-policy`}
+                className={fieldClass}
+                value={node.data.toolPolicy?.mode ?? 'inherit'}
+                onChange={(e) => {
+                  const mode = e.target.value as 'inherit' | 'readonly' | 'none'
+                  onChange({
+                    ...node,
+                    data: { ...node.data, toolPolicy: mode === 'inherit' ? undefined : { mode } },
+                  })
+                }}
+              >
+                <option value="inherit">Everything the agent has</option>
+                <option value="readonly">Read-only — no sending, creating, or deleting</option>
+                <option value="none">No tools — reasoning only</option>
+              </select>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Read-only is the safe choice for steps that summarize or analyze: even if the content this
+                step reads tries to steer the agent, there is nothing here that can send or change data.
+              </p>
+            </div>
+            <div>
               <label className={labelClass} htmlFor={`${uid}-human-assist`}>Human assistance</label>
               <select
                 id={`${uid}-human-assist`}

@@ -1155,6 +1155,10 @@ async function runAgentExecutionInner(
     // monthly ceiling). Generous by default; tune via AGENT_MAX_RUN_TOKENS.
     const perRunTokenCap = Number(process.env.AGENT_MAX_RUN_TOKENS) || 2_000_000
     const monthlyLimit = budget.limit
+    // Set the moment any tool return scans as injection-shaped, for the rest of
+    // the run. One-way by design: content cannot un-taint a run, and the flag
+    // resets only because the next run starts clean.
+    let injectionTainted = false
     let finalText = ''
     let planEmitted = false
 
@@ -1301,7 +1305,7 @@ async function runAgentExecutionInner(
           // decideApproval executes the write and resumes this run with its
           // result injected, so the agent acts on the real outcome (rather than
           // continuing blind on a "queued" placeholder).
-          if (!data.skipApprovalGate && requiresApproval(agentMetadata, binding.provider, binding.isWrite)) {
+          if (!data.skipApprovalGate && requiresApproval(agentMetadata, binding.provider, binding.isWrite, { injectionTainted })) {
             // Only ONE suspension per turn: if a question or another approval is
             // already pending, defer this one with a covering result (and do NOT
             // create an approval row, so nothing is orphaned) — the model
@@ -1321,6 +1325,7 @@ async function runAgentExecutionInner(
               organizationId,
               executionId: execution.id,
               userId,
+              injectionTainted,
               provider: binding.provider,
               // The BARE tool name (binding.toolName), not the model-facing
               // namespaced call.name (e.g. nango_slack_post_message) — decideApproval
@@ -1372,6 +1377,7 @@ async function runAgentExecutionInner(
           // prompt remains the defence that handles the content itself.
           const injectionScan = scanToolResultForInjection(result)
           if (injectionScan.suspicious) {
+            injectionTainted = true
             await recordToolCallGuardEvent({
               organizationId,
               executionId: execution.id,

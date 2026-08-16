@@ -13,6 +13,7 @@ import { prisma } from '@/lib/prisma'
 import { recordAudit } from '@/lib/audit'
 import { resolveNangoConnection, type DeliveryCapability } from '@/lib/nango/delivery'
 import { findNangoWriteTool, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
+import { detectPiiCategories } from '@/lib/security/pii-egress'
 
 /** Delivery planes, used only to label an approval with a friendly capability. */
 const DELIVERY_PLANE = /^nango:(slack|gmail|salesforce)$/
@@ -30,9 +31,25 @@ export function requiresApproval(
   agentMetadata: Record<string, unknown> | null | undefined,
   provider: string,
   isWrite: boolean,
+  options: { injectionTainted?: boolean } = {},
 ): boolean {
-  const flag = agentMetadata?.requireApproval
-  return flag === true && isWrite === true && provider.startsWith('nango:')
+  if (isWrite !== true || !provider.startsWith('nango:')) return false
+  // A TAINTED run — one that has already read content flagged as
+  // injection-shaped this run — loses the right to write unattended, whatever
+  // the agent's own setting says. This is the deterministic answer to the one
+  // scenario no argument scan can catch: a persuaded model summarising
+  // sensitive-but-not-credential data into an outbound channel. The scan that
+  // sets the taint never blocks a READ (judgment calls stay out of the
+  // deterministic layer); it converts the next WRITE into a human decision,
+  // which costs one approval on a false positive instead of a broken run.
+  //
+  // Scoped to nango planes deliberately: decideApproval can EXECUTE an
+  // approved Nango write, so gating them queues real work. Gating a plane the
+  // decider cannot execute would queue-then-noop — the bug this gate's history
+  // already paid for once. MCP writes on tainted runs are the per-step
+  // toolPolicy's job.
+  if (options.injectionTainted === true) return true
+  return agentMetadata?.requireApproval === true
 }
 
 /** The delivery capability for a provider (for the approval summary), or null. */
@@ -48,16 +65,40 @@ export async function createApproval(input: {
   provider: string
   tool: string
   args: Record<string, unknown>
+  /** The run read injection-shaped content before proposing this write. */
+  injectionTainted?: boolean
 }): Promise<{ id: string }> {
   const capability = capabilityFromProvider(input.provider)
-  const summary = `${input.tool} (${capability ?? input.provider})`
+
+  // The approver's ONE job is deciding whether this send should happen, and
+  // the summary was `tool (capability)` — which tool, not what it carries.
+  // A persuaded model summarising sensitive data into an approved channel is
+  // exactly the call a human is gating here, and they cannot catch what they
+  // cannot see. So the summary now says what the payload CARRIES (PII
+  // categories, never values) and whether the run was tainted; the payload
+  // itself is stored for the detail view either way.
+  const piiCategories = detectPiiCategories(JSON.stringify(input.args ?? {}))
+  const riskNotes = [
+    ...(input.injectionTainted
+      ? ['⚠ this run read content flagged as a possible injection attempt']
+      : []),
+    ...(piiCategories.length ? [`carries ${piiCategories.join(', ')}`] : []),
+  ]
+  const summary = `${input.tool} (${capability ?? input.provider})${riskNotes.length ? ` — ${riskNotes.join('; ')}` : ''}`
+
   const approval = await prisma.approvalRequest.create({
     data: {
       organizationId: input.organizationId,
       executionId: input.executionId,
       tool: input.tool,
       summary,
-      payload: { provider: input.provider, capability, args: input.args, userId: input.userId } as never,
+      payload: {
+        provider: input.provider,
+        capability,
+        args: input.args,
+        userId: input.userId,
+        risk: { injectionTainted: input.injectionTainted === true, piiCategories },
+      } as never,
       status: 'pending',
     },
   })

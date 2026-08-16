@@ -33,6 +33,31 @@ test('requiresApproval defaults to off, so an agent without the flag is never ga
   assert.equal(requiresApproval(null, 'nango:slack', true), false)
 })
 
+test('a tainted run loses the right to write unattended, whatever the agent flag says', () => {
+  // The deterministic answer to the scenario no argument scan can catch: a
+  // persuaded model summarising sensitive-but-not-credential data into an
+  // outbound channel. Reading injection-shaped content converts the next write
+  // into a human decision — one approval on a false positive, instead of an
+  // unattended send on a true one.
+  assert.equal(requiresApproval({}, 'nango:slack', true, { injectionTainted: true }), true)
+  assert.equal(requiresApproval(null, 'nango:gmail', true, { injectionTainted: true }), true)
+  // The agent's own opt-OUT cannot override the taint.
+  assert.equal(requiresApproval({ requireApproval: false }, 'nango:slack', true, { injectionTainted: true }), true)
+})
+
+test('taint never gates a read — the cost lands only on writes', () => {
+  // Gating reads on a detection heuristic would break legitimate runs on false
+  // positives; gating writes costs one approval.
+  assert.equal(requiresApproval({}, 'nango:slack', false, { injectionTainted: true }), false)
+})
+
+test('taint does not gate non-nango planes — the decider could not execute them', () => {
+  // decideApproval can execute an approved Nango write. Queuing a plane it
+  // cannot execute would queue-then-noop, the bug this gate already paid for
+  // once. MCP writes on tainted runs are the per-step toolPolicy's job.
+  assert.equal(requiresApproval({}, 'mcp:some-server', true, { injectionTainted: true }), false)
+})
+
 test('capabilityFromProvider extracts the delivery capability', () => {
   assert.equal(capabilityFromProvider('nango:salesforce'), 'salesforce')
 })

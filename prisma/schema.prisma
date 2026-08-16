@@ -30,6 +30,10 @@ model Organization {
   peopleAiWebhookSecret String?
   // Entitlement snapshot, derived from an active People.ai Sales AI
   // connection and revalidated on a TTL (see src/lib/entitlement.ts).
+  /// 'allowed' (default) | 'blocked'. Blocked refuses every model call for
+  /// this workspace — the switch for customers whose DPA forbids AI
+  /// processing. Enforced in assertAiCallAllowed, recorded either way.
+  aiEgressPolicy        String    @default("allowed")
   entitlementTier       String?
   entitlementStatus     String    @default("unknown")
   entitlementCheckedAt  DateTime? @db.Timestamptz(6)

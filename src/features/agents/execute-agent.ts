@@ -46,6 +46,7 @@ import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { shouldStrategize, goalSection, strategizeSection, STRATEGIZE_RETRIEVAL } from './strategy'
 import { applyToolPolicy, describeToolPolicy, type ToolPolicy } from '@/lib/agents/tool-policy'
 import { isGuardrailRefusal } from '@/lib/security/guardrails'
+import { recordPiiEgress } from '@/lib/usage/ai-guard'
 
 export type AgentExecutionJob = {
   executionId?: string
@@ -837,6 +838,12 @@ async function runAgentExecutionInner(
           .catch(() => [])
       : []
     let system = buildAgentSystemPrompt(agent.objective, skillIds, communitySkills)
+
+    // What personal data is about to cross to the model provider, recorded per
+    // category before the first turn. The task input is the user/tenant-data
+    // half; the system prompt is our own text and is deliberately not scanned —
+    // scanning it would report the platform's own words as customer PII.
+    void recordPiiEgress({ organizationId, userId, surface: 'agent.run', text: data.input ?? '' })
 
     // Name the tools this run actually holds (and any attached-but-broken
     // integration) before anything else steers the model — the fix for runs

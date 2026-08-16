@@ -46,6 +46,7 @@ import { prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { buildAiPrompt, type AiPromptInput } from '@/lib/flows/ai-prompts'
+import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { createModelRunner, billableTokens, DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
 import { subflowChildInput, subflowGuard } from '@/lib/flows/subflow'
 import { parseStateOverrides, resolveOverride } from '@/lib/flows/state-overrides'
@@ -1046,6 +1047,9 @@ async function runFlowExecutionInner(
         const aiData = node.config as AiPromptInput
         const prompt = buildAiPrompt(aiData)
         const model = aiData.model === 'smart' ? DEFAULT_AGENT_MODEL : DEFAULT_SUMMARY_MODEL
+        // Same record as the agent path: the resolved input is tenant data on
+        // its way to a model provider.
+        void recordPiiEgress({ organizationId: job.organizationId, userId: job.userId, surface: 'flow.ai_step', text: prompt.user })
         const runner = createModelRunner(model)
         // Structured ops (extract/categorize/score) get the JSON-contract
         // instruction appended to the user message before the call — same

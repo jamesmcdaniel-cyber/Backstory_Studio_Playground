@@ -10,6 +10,7 @@ import {
   ReactFlowProvider,
   SelectionMode,
   useEdgesState,
+  useNodesInitialized,
   useNodesState,
   useReactFlow,
   useStoreApi,
@@ -67,6 +68,8 @@ type Agent = { id: string; title: string; icon?: string }
 
 export type GraphCanvasProps = {
   graph: FlowGraph
+  /** Stable flow/version identity used to run the initial overview exactly once. */
+  viewportKey?: string
   agentName: (agentId: string) => string
   agents: Agent[]
   toolCatalog: ToolCatalog
@@ -123,6 +126,10 @@ export type GraphCanvasProps = {
 const nodeTypes = { step: StepNode }
 const edgeTypes = { step: StepEdge }
 
+// Start from an orienting overview, not a 100% crop. The same framing is used
+// by the Fit view control so users can always recover their bearings.
+const CANVAS_FIT_OPTIONS = { padding: 0.25, maxZoom: 0.85 } as const
+
 /** Where an insert picker is open, and what it will do on pick. */
 type PickerState = {
   position: NodePosition
@@ -152,6 +159,7 @@ const MINIMAP_COLOR: Record<string, string> = {
 function GraphCanvasInner(props: GraphCanvasProps) {
   const {
     graph,
+    viewportKey,
     agentName,
     agents,
     toolCatalog,
@@ -189,6 +197,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   const { screenToFlowPosition, fitView, zoomIn, zoomOut } = useReactFlow()
   const storeApi = useStoreApi()
   const { zoom } = useViewport()
+  const nodesInitialized = useNodesInitialized()
   const [picker, setPicker] = useState<PickerState | null>(null)
   const pickerElRef = useRef<HTMLDivElement>(null)
 
@@ -329,6 +338,23 @@ function GraphCanvasInner(props: GraphCanvasProps) {
   useEffect(() => {
     setRfEdges(buildEdges())
   }, [buildEdges, setRfEdges])
+
+  // React Flow mounts before our controlled node list is populated. Its
+  // `fitView` prop therefore runs against an empty graph and leaves large
+  // flows at the default origin/100% zoom. Wait until every node has a measured
+  // size, then frame the complete graph once. The ref deliberately prevents
+  // status updates, remote edits, and ordinary graph changes from stealing the
+  // camera after the user has started navigating.
+  const initialFitKey = viewportKey ?? graph.nodes.find((node) => node.type === 'trigger')?.id ?? graph.nodes[0]?.id ?? null
+  const fittedGraphRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!nodesInitialized || rfNodes.length === 0 || !initialFitKey || fittedGraphRef.current === initialFitKey) return
+    const frame = window.requestAnimationFrame(() => {
+      fittedGraphRef.current = initialFitKey
+      void fitView(CANVAS_FIT_OPTIONS)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [fitView, initialFitKey, nodesInitialized, rfNodes.length])
 
   // Push the page's selection onto the canvas only where the two disagree, and
   // return the SAME array when they don't. An unconditional rebuild here would
@@ -599,10 +625,10 @@ function GraphCanvasInner(props: GraphCanvasProps) {
           panOnDrag={handTool ? [0, 1, 2] : [1, 2]}
           panOnScroll
           zoomOnDoubleClick={false}
-          minZoom={0.15}
+          minZoom={0.08}
           maxZoom={2}
           fitView
-          fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+          fitViewOptions={CANVAS_FIT_OPTIONS}
           proOptions={{ hideAttribution: true }}
         >
           <Background variant={BackgroundVariant.Dots} gap={28} size={1.4} color="rgba(15,23,42,0.22)" />
@@ -678,7 +704,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
               </button>
               <button
                 type="button"
-                onClick={() => void fitView({ padding: 0.25, maxZoom: 1 })}
+                onClick={() => void fitView({ ...CANVAS_FIT_OPTIONS, duration: 250 })}
                 aria-label="Fit view"
                 title="Fit view"
                 className="flex h-9 w-9 items-center justify-center border-t border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-900"

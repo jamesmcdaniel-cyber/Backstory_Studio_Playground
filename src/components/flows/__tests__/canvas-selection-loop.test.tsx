@@ -213,3 +213,22 @@ test('run status updates settle without re-rendering the page in a loop', async 
 
   cleanup()
 })
+
+test('a flow opens in a fitted overview instead of the default 100% viewport', async () => {
+  const mod = (await import('@/components/flows/canvas/graph-canvas')) as unknown as {
+    GraphCanvas: (props: Record<string, unknown>) => React.ReactElement
+  }
+  GraphCanvasRef.current = mod.GraphCanvas
+
+  const { Page } = harness()
+  const view = render(<Page status={{}} />)
+  await act(async () => { await new Promise((r) => setTimeout(r, 550)) })
+
+  const viewport = view.container.querySelector<HTMLElement>('.react-flow__viewport')
+  assert.ok(viewport, 'expected the React Flow viewport to render')
+  const scale = /scale\(([^)]+)\)/.exec(viewport.style.transform)?.[1]
+  assert.ok(scale, `expected a fitted viewport transform, received "${viewport.style.transform}"`)
+  assert.ok(Number(scale) <= 0.85, `initial overview should be no closer than 85%, received ${Number(scale) * 100}%`)
+
+  cleanup()
+})

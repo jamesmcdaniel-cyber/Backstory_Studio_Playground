@@ -108,7 +108,13 @@ export function buildContentSecurityPolicy({ nonce, isDevelopment = false }: Csp
     // session the way inline SCRIPT can, so this is a deliberate, bounded
     // exception rather than a hole of the same class.
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: ${ICON_CDN}`,
+    // lh3.googleusercontent.com serves the Google profile avatar every
+    // Google-auth user renders in the shell — the rollout missed it and every
+    // avatar was silently blocked. Deliberately NOT `https:`: agent-authored
+    // markdown/report content can carry <img> tags, and a blanket https:
+    // img-src would let injected content exfiltrate data through image URL
+    // query strings — the classic markdown-image leak. Named hosts only.
+    `img-src 'self' data: blob: ${ICON_CDN} https://lh3.googleusercontent.com`,
     "font-src 'self' data:",
     `connect-src ${connectSrc.join(' ')}`,
     // Agent HTML previews render in a sandboxed iframe from srcDoc, which is an

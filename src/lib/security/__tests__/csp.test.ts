@@ -79,3 +79,13 @@ test('unset or unrecognized values enforce — a typo must not disable the CSP',
     assert.equal(cspHeaderName(), 'Content-Security-Policy', JSON.stringify(value))
   }
 })
+
+test('img-src admits Google avatars but stays a named-host list', () => {
+  const csp = buildContentSecurityPolicy({ nonce: 'test-nonce' })
+  const imgSrc = csp.split(';').map((entry) => entry.trim()).find((entry) => entry.startsWith('img-src'))!
+
+  assert.ok(imgSrc.includes('https://lh3.googleusercontent.com'), 'every Google-auth avatar loads from here')
+  // A blanket https: would let agent-authored markdown exfiltrate data through
+  // image URL query strings — the named-host list IS the control.
+  assert.ok(!/img-src[^;]*\shttps:(\s|$)/.test(imgSrc), 'img-src must not admit all of https:')
+})

@@ -2587,6 +2587,7 @@ function FlowBuilder() {
           <div className="min-w-0 flex-1 bg-white">
             <GraphCanvas
               graph={canvasGraph}
+              viewportKey={viewingVersion ? `${id}:${viewingVersion.label}` : id}
               agentName={agentNameOf}
               agents={agents}
               toolCatalog={toolCatalog}

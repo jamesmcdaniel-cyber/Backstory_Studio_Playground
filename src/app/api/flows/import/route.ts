@@ -22,7 +22,26 @@ const URL_IMPORT_MAX_REDIRECTS = 3
 async function fetchImportUrl(raw: string): Promise<unknown> {
   // Redirects are followed manually so the SSRF guard re-runs on every hop —
   // a public URL must not be able to 302 into a private or metadata address.
-  let current = resolveN8nImportUrl(raw.trim())
+  const trimmed = raw.trim()
+  // A personal n8n instance's EDITOR url (singular /workflow/<id>, vs the
+  // n8n.io gallery's /workflows/). It serves the login-walled editor app, so
+  // fetching it can only ever yield HTML — fail with the fix, not a shrug.
+  try {
+    const parsed = new URL(trimmed)
+    const isGallery = parsed.hostname === 'n8n.io' || parsed.hostname === 'www.n8n.io'
+    if (!isGallery && /^\/workflow\//.test(parsed.pathname)) {
+      throw new ApiError(
+        'That looks like your n8n editor page, which needs your login and cannot be fetched. ' +
+          'In n8n, open the workflow menu (⋯) → Download to save the JSON, then use Import → From a JSON file.',
+        400,
+        'BAD_IMPORT_URL',
+      )
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    /* not parseable here — the SSRF guard below produces the real error */
+  }
+  let current = resolveN8nImportUrl(trimmed)
   let response: Response
   for (let hop = 0; ; hop++) {
     try {
@@ -61,7 +80,18 @@ async function fetchImportUrl(raw: string): Promise<unknown> {
   try {
     return JSON.parse(text)
   } catch {
-    throw new ApiError('That URL did not return JSON. For n8n.io, paste the template page URL; otherwise link the raw workflow JSON.', 400, 'BAD_IMPORT_URL')
+    // Say WHAT came back: "did not return JSON" reads as our bug when the URL
+    // served a web page, and the person's next step differs by which it was.
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType.includes('text/html') || text.trimStart().startsWith('<')) {
+      throw new ApiError(
+        'That URL returned a web page, not workflow JSON. For n8n.io templates, paste the template page URL. ' +
+          'For a workflow in your own n8n, use its ⋯ menu → Download and import the JSON file instead.',
+        400,
+        'BAD_IMPORT_URL',
+      )
+    }
+    throw new ApiError('That URL did not return JSON. Link the raw workflow JSON, or an n8n.io template page.', 400, 'BAD_IMPORT_URL')
   }
 }
 

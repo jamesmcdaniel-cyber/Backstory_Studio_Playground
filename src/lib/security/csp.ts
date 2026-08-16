@@ -158,9 +158,24 @@ function sentryOrigin(): string | null {
  * up as a report instead of a blank page.
  */
 export function cspHeaderName(): 'Content-Security-Policy' | 'Content-Security-Policy-Report-Only' {
-  return process.env.CSP_REPORT_ONLY === 'true'
-    ? 'Content-Security-Policy-Report-Only'
-    : 'Content-Security-Policy'
+  return cspReportOnly() ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy'
+}
+
+/**
+ * Whether the policy ships as report-only.
+ *
+ * Tolerant parse, because the strict `=== 'true'` comparison silently ENFORCED
+ * with the flag set in Vercel: a value that arrives as "true\n" or "TRUE" (the
+ * CLI empty-value/whitespace gotcha this project has hit before) failed the
+ * comparison, and the safety flag inverted into its opposite — the exact
+ * blank-page rollout it exists to prevent, discovered when every Nango connect
+ * died in production. Trimmed, case-insensitive, and accepting the spellings
+ * people actually type. Unset or unrecognized still enforces: report-only is
+ * the temporary state, and a typo must not quietly disable the CSP forever.
+ */
+export function cspReportOnly(): boolean {
+  const raw = process.env.CSP_REPORT_ONLY?.trim().toLowerCase()
+  return raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on'
 }
 
 /** A fresh 128-bit nonce, base64. Must be per-response — a reused nonce is no nonce. */

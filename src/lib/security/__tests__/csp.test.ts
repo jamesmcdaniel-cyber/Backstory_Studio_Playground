@@ -1,7 +1,7 @@
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildContentSecurityPolicy } from '../csp'
+import { buildContentSecurityPolicy, cspHeaderName } from '../csp'
 
 /**
  * Pins the CSP entries whose absence breaks a whole product surface SILENTLY —
@@ -61,4 +61,21 @@ test('the anti-clickjacking and injection directives survive edits to frame-src'
   assert.match(csp, /object-src 'none'/)
   assert.match(csp, /base-uri 'self'/)
   assert.match(csp, /script-src [^;]*'nonce-test-nonce'/)
+})
+
+test('the report-only flag survives the values Vercel actually delivers', () => {
+  // 'true' with a trailing newline (the CLI piping gotcha) silently ENFORCED —
+  // the safety flag inverted into the blank-page rollout it exists to prevent.
+  for (const value of ['true', 'true\n', ' TRUE ', '1', 'yes', 'on']) {
+    process.env.CSP_REPORT_ONLY = value
+    assert.equal(cspHeaderName(), 'Content-Security-Policy-Report-Only', JSON.stringify(value))
+  }
+})
+
+test('unset or unrecognized values enforce — a typo must not disable the CSP', () => {
+  for (const value of [undefined, '', 'false', 'report', 'enabled?']) {
+    if (value === undefined) delete process.env.CSP_REPORT_ONLY
+    else process.env.CSP_REPORT_ONLY = value
+    assert.equal(cspHeaderName(), 'Content-Security-Policy', JSON.stringify(value))
+  }
 })

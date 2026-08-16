@@ -47,6 +47,7 @@ import { shouldStrategize, goalSection, strategizeSection, STRATEGIZE_RETRIEVAL 
 import { applyToolPolicy, describeToolPolicy, type ToolPolicy } from '@/lib/agents/tool-policy'
 import { isGuardrailRefusal } from '@/lib/security/guardrails'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
+import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent, scanToolResultForInjection } from '@/lib/security/tool-call-guard'
 
 export type AgentExecutionJob = {
   executionId?: string
@@ -1337,7 +1338,50 @@ async function runAgentExecutionInner(
             continue
           }
 
+          // Deterministic exfiltration gate: prompts persuade, this enforces.
+          // Runs AFTER the model decided and before anything leaves — the one
+          // point a jailbreak cannot talk its way past, because no model is
+          // consulted here. See lib/security/tool-call-guard.ts.
+          const verdict = inspectToolArgs(call.input)
+          if (!verdict.allowed) {
+            const blockedMessage = blockedCallMessage(binding.toolName, verdict)
+            await recordToolCallGuardEvent({
+              organizationId,
+              executionId: execution.id,
+              actorUserId: userId,
+              kind: 'blocked_args',
+              toolName: binding.toolName,
+              reasons: verdict.reasons,
+            })
+            await prisma.workflowStep.update({
+              where: { id: step.id },
+              data: { status: 'failed', error: blockedMessage, completedAt: new Date() },
+            })
+            await recordEvent(execution.id, step.id, 'tool.blocked', { name: step.node, reasons: verdict.reasons })
+            // Returned as the tool RESULT so the model learns the boundary and
+            // continues the run — a thrown error would abort work whose other
+            // steps are legitimate.
+            results.push({ toolCallId: call.id, content: JSON.stringify({ error: blockedMessage }) })
+            continue
+          }
+
           const result = await binding.client.executeTool(binding.serverUrl, binding.toolName, call.input)
+
+          // Observation, never a gate: a return that carries injection-shaped
+          // instructions is recorded so probing is visible, and the fenced
+          // prompt remains the defence that handles the content itself.
+          const injectionScan = scanToolResultForInjection(result)
+          if (injectionScan.suspicious) {
+            await recordToolCallGuardEvent({
+              organizationId,
+              executionId: execution.id,
+              actorUserId: userId,
+              kind: 'suspicious_return',
+              toolName: binding.toolName,
+              reasons: injectionScan.reasons,
+            })
+          }
+
           await prisma.workflowStep.update({
             where: { id: step.id },
             data: { status: 'succeeded', output: jsonValue(result), completedAt: new Date() },

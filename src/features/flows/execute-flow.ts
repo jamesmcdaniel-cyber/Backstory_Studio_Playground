@@ -47,6 +47,7 @@ import { flowToolOutput } from './tool-output'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { buildAiPrompt, type AiPromptInput } from '@/lib/flows/ai-prompts'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
+import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent } from '@/lib/security/tool-call-guard'
 import { createModelRunner, billableTokens, DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
 import { subflowChildInput, subflowGuard } from '@/lib/flows/subflow'
 import { parseStateOverrides, resolveOverride } from '@/lib/flows/state-overrides'
@@ -999,6 +1000,23 @@ async function runFlowExecutionInner(
           // entry either, since no tool call occurred.
           await finish({ status: 'succeeded', output: recorded.result, warnings: [LEDGER_REPLAY_WARNING] })
           return { output: recorded.result }
+        }
+
+        // Same deterministic gate as the agent runtime: flow tool args are
+        // template-resolved from step data, which includes third-party content
+        // — the same channel a jailbreak would use to smuggle a credential out.
+        const verdict = inspectToolArgs(args)
+        if (!verdict.allowed) {
+          const blockedMessage = blockedCallMessage(toolName, verdict)
+          await recordToolCallGuardEvent({
+            organizationId: job.organizationId,
+            executionId: run.id,
+            actorUserId: job.userId,
+            kind: 'blocked_args',
+            toolName,
+            reasons: verdict.reasons,
+          })
+          throw new Error(blockedMessage)
         }
 
         const output = await runWithRetries(

@@ -44,6 +44,28 @@ function supabaseOrigins(): { http: string; ws: string } | null {
 /** Icon CDN used by the integrations catalogue for provider logos. */
 const ICON_CDN = 'https://cdn.simpleicons.org'
 
+/**
+ * Where the Nango Connect UI is embedded from.
+ *
+ * openConnectUI renders the OAuth connect flow in an IFRAME from this origin —
+ * the CSP rollout omitted it from frame-src, which blocked every Nango
+ * integration with a full-page "This content is blocked". Derived from the
+ * same NEXT_PUBLIC_NANGO_CONNECT_URL override use-nango-connect.ts passes as
+ * baseURL, so a self-hosted Connect UI is allowed without a code change and
+ * the CSP cannot drift from what the client actually embeds.
+ */
+function nangoConnectOrigin(): string {
+  const raw = process.env.NEXT_PUBLIC_NANGO_CONNECT_URL?.trim()
+  if (raw) {
+    try {
+      return new URL(raw).origin
+    } catch {
+      /* fall through to the hosted default */
+    }
+  }
+  return 'https://connect.nango.dev'
+}
+
 export interface CspOptions {
   nonce: string
   /** Development needs 'unsafe-eval' for React Refresh / HMR. */
@@ -90,8 +112,9 @@ export function buildContentSecurityPolicy({ nonce, isDevelopment = false }: Csp
     "font-src 'self' data:",
     `connect-src ${connectSrc.join(' ')}`,
     // Agent HTML previews render in a sandboxed iframe from srcDoc, which is an
-    // opaque origin; Turnstile renders its challenge in an iframe.
-    `frame-src 'self' blob: ${TURNSTILE_ORIGIN}`,
+    // opaque origin; Turnstile renders its challenge in an iframe; the Nango
+    // Connect UI (every OAuth integration connect) is an iframe too.
+    `frame-src 'self' blob: ${TURNSTILE_ORIGIN} ${nangoConnectOrigin()}`,
     "media-src 'self' data: blob:",
     "worker-src 'self' blob:",
     // Anti-clickjacking and injection-hardening, carried over unchanged.

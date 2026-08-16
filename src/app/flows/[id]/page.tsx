@@ -2232,7 +2232,7 @@ function FlowBuilder() {
   return (
     <div className="flex h-full flex-col">
       {/* Top bar */}
-      <div className="flex shrink-0 items-center gap-3 overflow-x-auto border-b border-border bg-card px-4 py-2.5">
+      <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-card px-4 py-2.5 [&>*]:shrink-0">
         <Button variant="ghost" size="icon" onClick={() => router.push('/flows')} aria-label="Back to flows">
           <ArrowLeft className="h-4 w-4" />
         </Button>
@@ -2273,8 +2273,8 @@ function FlowBuilder() {
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" aria-label="Flow settings" title="Flow settings">
-              <MoreHorizontal className="h-4 w-4" />
+            <Button variant="ghost" size="sm" className="h-8 px-2.5" aria-label="More flow actions" title="More flow actions">
+              <MoreHorizontal className="h-5 w-5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -2441,7 +2441,7 @@ function FlowBuilder() {
         </DropdownMenu>
         {/* Panel toggles — one cluster, and the open panel reads as pressed,
             so the toolbar says which workspace surfaces are showing. */}
-        <div className="hidden items-center gap-0.5 rounded-lg border border-border p-0.5 lg:flex">
+        <div className="hidden shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5 lg:flex">
           {!external && (
             <>
               <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => togglePanel('runs')} className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
@@ -2476,12 +2476,12 @@ function FlowBuilder() {
           )}
         </div>
         {!external && (
-          <Button variant="ghost" size="sm" onClick={() => router.push(`/flows/${id}/activity`)} className="hidden lg:inline-flex">
+          <Button variant="ghost" size="sm" onClick={() => router.push(`/flows/${id}/activity`)} className="hidden shrink-0 lg:inline-flex">
             <ScrollText className="mr-1.5 h-4 w-4" /> Activity
           </Button>
         )}
         {others.length > 0 && (
-          <div className="flex items-center -space-x-1.5" title={`${others.map((p) => p.name).join(', ')} here now`}>
+          <div className="flex shrink-0 items-center -space-x-1.5" title={`${others.map((p) => p.name).join(', ')} here now`}>
             {others.slice(0, 4).map((p) => (
               <span
                 key={p.clientId}
@@ -2500,7 +2500,7 @@ function FlowBuilder() {
           </div>
         )}
         {!external && (
-          <div className="hidden items-center gap-2 lg:flex">
+          <div className="hidden shrink-0 items-center gap-2 lg:flex">
             <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
             <Button variant="outline" size="sm" onClick={save} loading={saving} className="relative">
               <Save className="mr-1.5 h-4 w-4" /> Save now

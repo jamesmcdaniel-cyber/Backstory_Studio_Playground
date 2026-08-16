@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Workflow, Plus, Upload, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound, ScrollText, Sparkles, LayoutTemplate } from 'lucide-react'
+import { Workflow, Plus, Upload, ChevronDown, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound, ScrollText, Sparkles, LayoutTemplate } from 'lucide-react'
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -259,10 +259,30 @@ export default function FlowsPage() {
     }
   }
 
+  // Split button: the primary click keeps its one-click create — folding it
+  // into a menu would add a click to the page's most common action — while the
+  // chevron carries the import paths that used to be a separate header button.
   const newFlowButton = (
-    <Button onClick={() => setCreateOpen(true)} loading={creating}>
-      <Plus className="mr-1.5 h-4 w-4" /> New flow
-    </Button>
+    <div className="flex">
+      <Button onClick={() => setCreateOpen(true)} loading={creating} className="rounded-r-none">
+        <Plus className="mr-1.5 h-4 w-4" /> New flow
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button className="rounded-l-none border-l border-white/25 px-2" aria-label="More ways to add a flow">
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => flowImport.pickFile()}>
+            <Upload className="mr-2 h-4 w-4" /> Import from a JSON file
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>
+            <Upload className="mr-2 h-4 w-4" /> Import from a URL
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 
   const { pageItems, pageCount, page: current } = paginate(visibleFlows, page, PAGE_SIZE)
@@ -284,15 +304,6 @@ export default function FlowsPage() {
           <Button asChild variant="outline">
             <Link href="/credentials"><KeyRound className="mr-1.5 h-4 w-4" /> Credentials</Link>
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline"><Upload className="mr-1.5 h-4 w-4" /> Import</Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => flowImport.pickFile()}>From a JSON file</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>From a URL</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
           {flowImport.fileInput}
           {newFlowButton}
         </div>

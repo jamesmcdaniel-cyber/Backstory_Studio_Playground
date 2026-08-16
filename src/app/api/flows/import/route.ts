@@ -9,6 +9,9 @@ import { validateFlowGraph } from '@/lib/flows/validate'
 import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type FlowImportNote, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
 import { bindImportedHttpAuth, dropStaleAuthWarnings } from '@/lib/flows/import/bind-imported-auth'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
+import { parseN8nInstanceUrl, type N8nInstanceRef } from '@/lib/flows/import/n8n-instance'
+import { fetchWithHttpCredential, resolveHttpCredential } from '@/features/flows/http-auth'
+import { readResponseTextLimited } from '@/lib/net/response-body'
 import { triggerFromGraph } from '@/lib/flows/trigger'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
@@ -19,27 +22,18 @@ const URL_IMPORT_MAX_BYTES = 5_000_000
 const URL_IMPORT_MAX_REDIRECTS = 3
 
 /** Fetch a user-supplied import URL server-side (browser CORS can't) — SSRF-guarded, size- and time-capped. */
-async function fetchImportUrl(raw: string): Promise<unknown> {
+async function fetchImportUrl(raw: string, auth: { organizationId: string; dbUser: { id: string } }): Promise<unknown> {
   // Redirects are followed manually so the SSRF guard re-runs on every hop —
   // a public URL must not be able to 302 into a private or metadata address.
   const trimmed = raw.trim()
   // A personal n8n instance's EDITOR url (singular /workflow/<id>, vs the
-  // n8n.io gallery's /workflows/). It serves the login-walled editor app, so
-  // fetching it can only ever yield HTML — fail with the fix, not a shrug.
-  try {
-    const parsed = new URL(trimmed)
-    const isGallery = parsed.hostname === 'n8n.io' || parsed.hostname === 'www.n8n.io'
-    if (!isGallery && /^\/workflow\//.test(parsed.pathname)) {
-      throw new ApiError(
-        'That looks like your n8n editor page, which needs your login and cannot be fetched. ' +
-          'In n8n, open the workflow menu (⋯) → Download to save the JSON, then use Import → From a JSON file.',
-        400,
-        'BAD_IMPORT_URL',
-      )
-    }
-  } catch (error) {
-    if (error instanceof ApiError) throw error
-    /* not parseable here — the SSRF guard below produces the real error */
+  // n8n.io gallery's /workflows/). It serves the login-walled editor app; the
+  // workflow JSON lives behind /api/v1 and needs the instance's API key. With
+  // a stored credential for that host the URL "just works"; without one, the
+  // error says exactly which of the two fixes to take.
+  const instance = parseN8nInstanceUrl(trimmed)
+  if (instance) {
+    return fetchFromN8nInstance(instance, auth)
   }
   let current = resolveN8nImportUrl(trimmed)
   let response: Response
@@ -92,6 +86,77 @@ async function fetchImportUrl(raw: string): Promise<unknown> {
       )
     }
     throw new ApiError('That URL did not return JSON. Link the raw workflow JSON, or an n8n.io template page.', 400, 'BAD_IMPORT_URL')
+  }
+}
+
+/**
+ * Fetch a workflow from a personal n8n instance using its stored API key.
+ *
+ * The key is an ordinary HTTP credential bound to the instance host, so
+ * lookup, decryption, use-audit and host-binding all come from the credential
+ * store — this function only chooses the credential and shapes the errors.
+ */
+async function fetchFromN8nInstance(
+  instance: N8nInstanceRef,
+  auth: { organizationId: string; dbUser: { id: string } },
+): Promise<unknown> {
+  // Own credential first, then a workspace-shared (legacy, userId null) one —
+  // the same bindable set the flow editor's credential picker offers.
+  const row = await prisma.httpCredential.findFirst({
+    where: {
+      organizationId: auth.organizationId,
+      allowedHost: instance.host,
+      status: { in: ['verified', 'error'] },
+      OR: [{ userId: auth.dbUser.id }, { userId: null }],
+    },
+    orderBy: [{ userId: { sort: 'asc', nulls: 'last' } }, { lastVerifiedAt: 'desc' }],
+    select: { id: true },
+  })
+  if (!row) {
+    throw new ApiError(
+      `That is a workflow in your n8n at ${instance.host}, which needs an API key to read. ` +
+        'Either connect your n8n instance on the Credentials page (n8n → Settings → API to create a key), ' +
+        'or use the workflow menu (⋯) → Download and import the JSON file.',
+      400,
+      'N8N_CREDENTIAL_REQUIRED',
+    )
+  }
+
+  const credential = await resolveHttpCredential(row.id, auth.organizationId, {
+    actorUserId: auth.dbUser.id,
+    consumer: 'flows.import_url',
+  })
+
+  await assertPublicUrl(instance.apiUrl)
+  let response: Response
+  try {
+    response = await fetchWithHttpCredential(
+      { url: instance.apiUrl, init: { method: 'GET', headers: { accept: 'application/json' } } },
+      credential,
+      AbortSignal.timeout(15_000),
+    )
+  } catch {
+    throw new ApiError(`Could not reach ${instance.host}.`, 400, 'BAD_IMPORT_URL')
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new ApiError(
+      `Your n8n at ${instance.host} rejected the stored API key — it may have been revoked. ` +
+        'Rotate it on the Credentials page (n8n → Settings → API).',
+      400,
+      'N8N_CREDENTIAL_REJECTED',
+    )
+  }
+  if (response.status === 404) {
+    throw new ApiError('That workflow was not found in your n8n — check the link.', 400, 'BAD_IMPORT_URL')
+  }
+  if (!response.ok) {
+    throw new ApiError(`Your n8n answered ${response.status} for that workflow.`, 400, 'BAD_IMPORT_URL')
+  }
+  const text = await readResponseTextLimited(response, URL_IMPORT_MAX_BYTES, 'n8n workflow')
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new ApiError('Your n8n returned something that is not workflow JSON.', 400, 'BAD_IMPORT_URL')
   }
 }
 
@@ -181,7 +246,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   let payload: unknown = await request.json()
   const asRecord = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null
   if (asRecord && typeof asRecord.url === 'string' && !Array.isArray(asRecord.nodes) && !asRecord.flow) {
-    payload = await fetchImportUrl(asRecord.url)
+    payload = await fetchImportUrl(asRecord.url, auth)
   }
   payload = unwrapN8nPayload(payload)
 

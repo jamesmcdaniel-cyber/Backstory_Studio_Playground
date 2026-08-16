@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { ScopeBadge, type ScopeReviewView } from '@/components/integrations/scope-badge'
 import { StalenessBadge } from '@/components/integrations/staleness-badge'
+import { N8nConnectDialog } from '@/components/integrations/n8n-connect-dialog'
 import {
   ConnectIntegrationDialog,
   type ConnectableIntegration,
@@ -107,6 +108,7 @@ export default function CredentialsPage() {
 
   const [connectOpen, setConnectOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [n8nOpen, setN8nOpen] = useState(false)
   const [rotateHttpTarget, setRotateHttpTarget] = useState<HttpCredentialSummary | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<HttpCredentialSummary | null>(null)
@@ -422,9 +424,17 @@ export default function CredentialsPage() {
             hint="Reusable auth for HTTP request steps, bound to the host they were verified against. Rotate re-enters the secrets behind the same credential, so no step needs re-wiring."
             action={
               canManage && (
-                <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
-                  <Plus className="mr-1.5 h-3.5 w-3.5" /> New credential
-                </Button>
+                <span className="flex items-center gap-2">
+                  {/* Preset over the same store: the saved row IS an HTTP
+                      credential, this just spares people knowing the header
+                      name. Exists so n8n workflow URLs import directly. */}
+                  <Button variant="outline" size="sm" onClick={() => setN8nOpen(true)}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" /> Connect n8n
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" /> New credential
+                  </Button>
+                </span>
               )
             }
           >
@@ -626,6 +636,7 @@ export default function CredentialsPage() {
         </DialogContent>
       </Dialog>
 
+      <N8nConnectDialog open={n8nOpen} onOpenChange={setN8nOpen} onSaved={() => void load()} />
       <HttpCredentialDialog
         open={createOpen || Boolean(rotateHttpTarget)}
         onOpenChange={(next) => {

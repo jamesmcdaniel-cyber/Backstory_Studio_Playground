@@ -9,7 +9,7 @@ import { dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
 const schema = z.object({ decision: z.enum(['approve', 'reject']) })
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 export const POST = withAuthenticatedApi(async (request: NextRequest, auth) => {
   const id = request.nextUrl.pathname.split('/').pop() || ''

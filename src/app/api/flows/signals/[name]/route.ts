@@ -3,7 +3,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { emitFlowSignal } from '@/features/flows/signals'
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 // Signal fan-out endpoint: fires `name` to every ACTIVE, published, listening
 // flow in the caller's org. The request body (if JSON) becomes the payload

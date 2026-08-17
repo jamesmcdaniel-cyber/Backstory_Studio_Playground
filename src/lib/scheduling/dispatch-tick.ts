@@ -386,7 +386,7 @@ export async function runDispatchTick(
           // Enqueue rather than run here. Inline (dev/CI) still executes in the
           // request; in queue mode this costs one queue.add and the run happens
           // on the worker pool, so a burst of due schedules can no longer starve
-          // the tick or blow its 800s ceiling mid-run.
+          // the tick or blow its 1800s ceiling mid-run.
           await dispatchAgentExecution({
             executionId: execution.id,
             agentId: agent.id,

@@ -28,7 +28,7 @@ import {
 export const runtime = 'nodejs'
 // Matches the execute route: a chat-triggered run executes inline here, so the
 // request needs the same headroom as a manual run, not just a model call.
-export const maxDuration = 800
+export const maxDuration = 1800
 
 /**
  * Agent-scoped assistant chat. Extends the per-execution follow-up chat

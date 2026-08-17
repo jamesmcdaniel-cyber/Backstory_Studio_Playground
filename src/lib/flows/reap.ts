@@ -10,8 +10,10 @@
 import { systemPrisma } from '@/lib/prisma'
 import { NEVER_PICKED_UP_TIMEOUT_MS, NEVER_PICKED_UP_ERROR } from '@/lib/flows/run-stall'
 
-// Dispatch/execute routes cap at maxDuration 1200s; 30 min = budget + slack.
-export const STUCK_FLOW_RUN_TIMEOUT_MS = 30 * 60 * 1000
+// Dispatch/execute routes cap at maxDuration 1800s; 45 min = budget + slack.
+// The cutoff must exceed the route budget or the reaper kills runs that are
+// still legitimately executing inside a request.
+export const STUCK_FLOW_RUN_TIMEOUT_MS = 45 * 60 * 1000
 
 const STUCK_RUN_ERROR = 'The run was interrupted and timed out.'
 const REAP_BATCH_LIMIT = 500

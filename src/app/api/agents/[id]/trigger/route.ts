@@ -11,7 +11,7 @@ import { rateLimit } from '@/lib/ratelimit'
 import { recordTokenRejection } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 function legacyPlaintextMatch(provided: string, expected: string) {
   const a = Buffer.from(provided)

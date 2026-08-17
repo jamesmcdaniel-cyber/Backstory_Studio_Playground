@@ -6,7 +6,7 @@ import type { AgentExecutionJob } from './execute-agent'
  * Hand an agent run to the worker (or run it here in inline mode).
  *
  * The scheduler used to call `runAgentExecution` DIRECTLY, inside the cron HTTP
- * request, serially, for up to 25 agents under an 800s ceiling — so one slow
+ * request, serially, for up to 25 agents under an 1800s ceiling — so one slow
  * multi-turn run starved every other due agent in the tick, and a tick that ran
  * long was killed mid-run. Enqueueing instead means a burst of due schedules
  * costs the request one `queue.add` per agent and the runs execute on the pool

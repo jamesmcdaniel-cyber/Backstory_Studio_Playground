@@ -10,7 +10,7 @@ import { deriveRunWaiting } from '@/lib/flows/run-waiting'
 import { resolveReplyTarget, type ReplyTarget } from '@/lib/flows/reply-target'
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-2)

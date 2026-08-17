@@ -13,7 +13,7 @@ import { decryptSecret } from '@/lib/crypto/secrets'
 import { recordTokenRejection } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 /**
  * People.ai SalesAI webhook receiver (registered via POST /v1/salesai/webhooks).

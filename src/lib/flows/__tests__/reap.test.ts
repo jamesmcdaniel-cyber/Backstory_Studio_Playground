@@ -1,9 +1,12 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 
-test('stuck-run cutoff is 30 minutes', async () => {
+test('stuck-run cutoff exceeds the 1800s route budget', async () => {
   const { STUCK_FLOW_RUN_TIMEOUT_MS } = await import('../reap')
-  assert.equal(STUCK_FLOW_RUN_TIMEOUT_MS, 30 * 60 * 1000)
+  assert.equal(STUCK_FLOW_RUN_TIMEOUT_MS, 45 * 60 * 1000)
+  // A cutoff at or below the route's maxDuration reaps runs that are still
+  // legitimately executing inside a request.
+  assert.ok(STUCK_FLOW_RUN_TIMEOUT_MS > 1800 * 1000)
 })
 
 const TEST_DB = process.env.TEST_DATABASE_URL

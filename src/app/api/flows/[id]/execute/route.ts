@@ -11,7 +11,7 @@ import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limi
 import { recordAudit } from '@/lib/audit'
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 // POST /api/flows/[id]/execute — run a flow manually. id is the path segment
 // before "execute".

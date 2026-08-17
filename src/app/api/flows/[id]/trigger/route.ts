@@ -18,7 +18,7 @@ import {
 } from '@/lib/flows/webhook-security'
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 // External webhook trigger for flows. Authenticated by the per-flow secret
 // (hash stored in flow.trigger.webhookSecretHash) instead of a session — mirrors

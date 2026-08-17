@@ -2,7 +2,7 @@ import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { organizationExportStream } from '@/lib/privacy/export'
 
 export const runtime = 'nodejs'
-export const maxDuration = 800
+export const maxDuration = 1800
 
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   const date = new Date().toISOString().slice(0, 10)

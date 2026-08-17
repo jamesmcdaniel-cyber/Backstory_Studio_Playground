@@ -160,7 +160,7 @@ export function outputContract(spec: ReportSpec): string {
     `- Color identity: this template renders with the "${specTheme(spec)}" theme — set the wrapper to <div class="${specTheme(spec) === 'revenue' ? 'report' : `report theme-${specTheme(spec)}`}"> exactly as the gallery example does.`,
     "- Every quoted value above is illustrative, taken from a different run. Mirror the SHAPE and wording style; never reuse the example's numbers, account names, people, or dates.",
     '- The HTML document IS the entire final response. Do not wrap it in a code fence, do not precede it with a Markdown recap, and do not summarise it afterwards.',
-    '- When you also email or post the report, that message body is the same document rendered email-safe (inline CSS, no <style> block) — the final response still carries the full document.',
+    '- When you also email or post the report, that message carries this SAME complete document — for email, pass the full HTML document verbatim as the body (the platform adapts it for email clients); never a condensed or summarized version — and the final response still carries the full document.',
     '- Keep every section even when data is thin: state the gap in place ("no usage telemetry for 5 accounts") rather than dropping the section or inventing values.',
     '- Add rows, tiles, or an extra card when this run genuinely has more to show, but never remove or reorder the sections above.',
   ].join('\n')

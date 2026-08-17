@@ -110,6 +110,26 @@ export function reportDocument(body: string, theme?: ReportTheme): string {
 }
 
 /**
+ * Rewrites a house report document so it renders faithfully in email clients.
+ *
+ * Gmail (and most webmail) honors a <style> block in <head>, but strips CSS
+ * custom properties — every `var(--…)` resolves to nothing, which erases the
+ * theme's colors (eyebrows, pills, priority text, summary borders, tags,
+ * timeline dots). This resolves the wrapper's theme and substitutes the
+ * literal color values, so the emailed document IS the on-screen document.
+ * Unsupported niceties (grid, box-shadow, ::before dots) degrade gracefully
+ * to stacked blocks. Non-report HTML passes through untouched.
+ */
+export function emailSafeReportHtml(html: string): string {
+  const wrapper = html.match(/class="report(?:\s+theme-([a-z]+))?"/)
+  if (!wrapper) return html
+  const theme: ReportTheme = wrapper[1] && wrapper[1] in REPORT_THEMES ? (wrapper[1] as ReportTheme) : 'revenue'
+  const [tint, soft, accent, strong, deep] = REPORT_THEMES[theme]
+  const values: Record<string, string> = { tint, soft, accent, strong, deep }
+  return html.replace(/var\(--(tint|soft|accent|strong|deep)\)/g, (_, name: string) => values[name])
+}
+
+/**
  * Document skeleton the model reproduces, with placeholder content.
  */
 export const REPORT_HTML_SKELETON = reportDocument(`<div class="card hero"><div><p class="eyebrow">REPORT KIND (e.g. REVENUE INTELLIGENCE REPORT)</p><h1>Title</h1><p class="sub">One-sentence description of what this run did.</p></div><span class="pill"><span class="dot"></span>Status · e.g. Qualified · Action ready</span></div>

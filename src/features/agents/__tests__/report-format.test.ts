@@ -4,6 +4,7 @@ import {
   REPORT_CSS,
   REPORT_HTML_INSTRUCTION,
   REPORT_THEMES,
+  emailSafeReportHtml,
   reportDocument,
   themeForKind,
 } from '../report-format.js'
@@ -41,6 +42,29 @@ describe('report themes', () => {
     assert.ok(reportDocument('body', 'account').includes('<div class="report theme-account">'))
     assert.ok(reportDocument('body').includes('<div class="report">'), 'no theme keeps the plain wrapper')
     assert.ok(reportDocument('body', 'revenue').includes('<div class="report">'), 'revenue IS the default wrapper')
+  })
+})
+
+describe('emailSafeReportHtml', () => {
+  it('resolves every theme var() to the literal palette color for the detected theme', () => {
+    const doc = reportDocument('<p class="eyebrow">Brief</p>', 'account')
+    const out = emailSafeReportHtml(doc)
+    assert.ok(!/var\(--/.test(out), 'no var() may survive — Gmail strips custom properties')
+    const [tint, , accent, strong] = REPORT_THEMES.account
+    assert.ok(out.includes(`linear-gradient(135deg,${tint}`), 'hero gradient must carry the account tint')
+    assert.ok(out.includes(`color:${strong}`), 'eyebrow must carry the account strong color')
+    assert.ok(out.includes(`background:${accent}`), 'dot/bar must carry the account accent')
+  })
+
+  it('defaults to the revenue palette for the plain wrapper', () => {
+    const out = emailSafeReportHtml(reportDocument('<p>x</p>'))
+    assert.ok(!/var\(--/.test(out))
+    assert.ok(out.includes(`color:${REPORT_THEMES.revenue[3]}`))
+  })
+
+  it('leaves non-report HTML untouched', () => {
+    const plain = '<div style="max-width:600px"><h1>Hi</h1><p>var(--tint) as text</p></div>'
+    assert.equal(emailSafeReportHtml(plain), plain)
   })
 })
 

@@ -23,11 +23,23 @@
  */
 
 import type { ToolDefinition } from '@/lib/llm/model-runner'
+import { emailSafeReportHtml } from '@/features/agents/report-format'
 import { resolveOrgCredential, type ResolvedCredential } from './org-credential'
 
 const RESEND_API_URL = 'https://api.resend.com/emails'
 
 export const EMAIL_PROVIDER = 'email'
+
+/** Plain-text fallback for an HTML email body: drop <style>/<script> blocks
+ * (their contents would otherwise survive the tag strip as raw CSS/JS text),
+ * then strip tags. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<(style|script)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
 
 // ---------------------------------------------------------------------------
 // Per-org key resolution (agent tool)
@@ -75,7 +87,7 @@ export async function sendEmail({
   const payload: Record<string, unknown> = { from, to: [to], subject }
   if (html) {
     payload.html = html
-    payload.text = text ?? html.replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim()
+    payload.text = text ?? htmlToText(html)
   } else {
     payload.text = text ?? ''
   }
@@ -136,7 +148,12 @@ export class EmailToolClient {
 
     if (name === 'send') {
       const from = process.env.EMAIL_FROM || 'Backstory <onboarding@resend.dev>'
-      const body = typeof args.body === 'string' ? args.body : String(args.body ?? '')
+      // Agents email report deliverables as the same full house report document
+      // they render in-app; emailSafeReportHtml resolves the theme's CSS custom
+      // properties to literal colors (Gmail strips var()) so the emailed report
+      // matches the on-screen one. Non-report bodies pass through unchanged.
+      const raw = typeof args.body === 'string' ? args.body : String(args.body ?? '')
+      const body = emailSafeReportHtml(raw)
 
       // Agents are instructed to compose HTML email bodies; send those as html
       // (with a tag-stripped plain-text fallback for non-HTML clients). A plain
@@ -145,7 +162,7 @@ export class EmailToolClient {
       const payload: Record<string, unknown> = { from, to: [args.to], subject: args.subject }
       if (looksHtml) {
         payload.html = body
-        payload.text = body.replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim()
+        payload.text = htmlToText(body)
       } else {
         payload.text = body
       }

@@ -66,7 +66,10 @@ describe('buildAgentSystemPrompt', () => {
   it('makes the report document the whole final response, even when it was also delivered elsewhere', () => {
     const prompt = buildAgentSystemPrompt('Do the work.', [])
     assert.ok(/never inside a code fence/i.test(prompt), 'expected the no-code-fence rule')
-    assert.ok(/never followed by a Markdown recap/i.test(prompt), 'expected the no-Markdown-recap rule')
+    assert.ok(/never preceded or followed by ANY other text/i.test(prompt), 'expected the no-preamble/no-recap rule')
+    assert.ok(/No preamble of any kind/i.test(prompt), 'expected the explicit preamble ban')
+    assert.ok(/summary of what was done/i.test(prompt), 'expected the run-narration ban by name')
+    assert.ok(/Email sent successfully/i.test(prompt), 'expected the delivery-confirmation ban by name')
     assert.ok(/not an excuse to answer in Markdown/i.test(prompt), 'emailing the report must not downgrade the response')
     assert.ok(/required output shape for this run/i.test(prompt), 'a template contract must override the generic shape')
   })

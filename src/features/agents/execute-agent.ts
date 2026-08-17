@@ -682,7 +682,7 @@ async function runAgentExecutionInner(
           status: 'running',
           model: runner.model,
           // Refresh startedAt on resume too (not only on a fresh run) — the
-          // agent reaper fails any `running` execution older than 20 min, so a
+          // agent reaper fails any `running` execution older than 30 min, so a
           // long-after-question resume would otherwise be false-failed mid-run.
           // (Mirrors the flow resume's startedAt refresh.)
           startedAt: new Date(),

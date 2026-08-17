@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react'
 import { StepCard } from '@/components/flows/step-card'
 import { StepDrawer } from '@/components/flows/step-drawer'
 import type { FlowNode } from '@/lib/flows/graph'
+import { AGENT_RUN_MAX_DURATION_SECONDS } from '@/lib/agents/timeouts'
 
 const toolCatalog = [
   {
@@ -150,7 +151,7 @@ test('HTTP card keeps request configuration in the full node workspace', () => {
   cleanup()
 })
 
-test('AI and subflow timeout controls use their runtime 20-minute limit', () => {
+test('AI and subflow timeout controls use the runtime max-duration limit', () => {
   const node = {
     id: 'ai1',
     type: 'ai',
@@ -162,8 +163,10 @@ test('AI and subflow timeout controls use their runtime 20-minute limit', () => 
   assert.ok(showAll)
   fireEvent.click(showAll)
 
-  const timeout = container.querySelector('input[type="number"][max="1200"]')
-  assert.ok(timeout, 'AI timeout accepts the same 20-minute maximum as its graph/runtime contract')
+  // Derived from the runtime constant so the pin moves WITH the contract —
+  // a hardcoded seconds value here just re-breaks every time the limit moves.
+  const timeout = container.querySelector(`input[type="number"][max="${AGENT_RUN_MAX_DURATION_SECONDS}"]`)
+  assert.ok(timeout, 'AI timeout accepts the same maximum as its graph/runtime contract')
   cleanup()
 })
 

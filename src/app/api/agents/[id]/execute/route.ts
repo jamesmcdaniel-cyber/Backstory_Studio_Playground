@@ -14,7 +14,7 @@ export const maxDuration = 1800
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-2)
   if (!id) throw new ApiError('Agent id is required')
-  // Cap manual runs per workspace: each run burns tokens on up to a 20-min
+  // Cap manual runs per workspace: each run burns tokens on up to a 30-min
   // budget, and nothing else bounds how many a user (or a loop) can start.
   const limited = await rateLimit(`agent-run:${auth.organizationId}`, { limit: 30, windowMs: 60_000 })
   if (!limited.ok) throw new ApiError('Too many agent runs — please wait a moment.', 429, 'RATE_LIMITED')

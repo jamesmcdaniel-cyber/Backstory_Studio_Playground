@@ -23,11 +23,11 @@ test('flowGraphSchema accepts a valid agent+condition graph', () => {
   assert.deepEqual(trigger?.data.trigger.inputFields[0], { name: 'account', type: 'string', description: 'Customer name.' })
 })
 
-test('flowGraphSchema allows agent timeouts up to 20 minutes', () => {
+test('flowGraphSchema allows agent timeouts up to 30 minutes', () => {
   const graph = {
     nodes: [
       { id: 'trigger', type: 'trigger', data: {} },
-      { id: 'n1', type: 'agent', data: { agentId: 'a1', input: '{{trigger.input}}', timeoutMs: 1_200_000 } },
+      { id: 'n1', type: 'agent', data: { agentId: 'a1', input: '{{trigger.input}}', timeoutMs: 1_800_000 } },
     ],
     edges: [{ id: 'e1', source: 'trigger', target: 'n1' }],
   }
@@ -37,7 +37,7 @@ test('flowGraphSchema allows agent timeouts up to 20 minutes', () => {
       ...graph,
       nodes: [
         { id: 'trigger', type: 'trigger', data: {} },
-        { id: 'n1', type: 'agent', data: { agentId: 'a1', input: '{{trigger.input}}', timeoutMs: 1_200_001 } },
+        { id: 'n1', type: 'agent', data: { agentId: 'a1', input: '{{trigger.input}}', timeoutMs: 1_800_001 } },
       ],
     }),
   )
@@ -153,11 +153,11 @@ test('ai node schema round-trips the full op-specific field set', () => {
   }
 })
 
-test('ai node schema allows timeouts up to 20 minutes but no further', () => {
+test('ai node schema allows timeouts up to 30 minutes but no further', () => {
   const graph = {
     nodes: [
       { id: 'trigger', type: 'trigger', data: {} },
-      { id: 'n1', type: 'ai', data: { aiOp: 'ask', timeoutMs: 1_200_000 } },
+      { id: 'n1', type: 'ai', data: { aiOp: 'ask', timeoutMs: 1_800_000 } },
     ],
     edges: [{ id: 'e1', source: 'trigger', target: 'n1' }],
   }
@@ -167,7 +167,7 @@ test('ai node schema allows timeouts up to 20 minutes but no further', () => {
       ...graph,
       nodes: [
         { id: 'trigger', type: 'trigger', data: {} },
-        { id: 'n1', type: 'ai', data: { aiOp: 'ask', timeoutMs: 1_200_001 } },
+        { id: 'n1', type: 'ai', data: { aiOp: 'ask', timeoutMs: 1_800_001 } },
       ],
     }),
   )

@@ -1,5 +1,5 @@
 import type { FlowGraph, FlowNode, FlowEdge, VariableType, PerItemConfig } from '@/lib/flows/graph'
-import { resolveTemplate, resolveTemplateValue, asStructured, evalCondition, evalClause, normalizeStepAlias, buildUpstreamContextBlock, type FlowContext } from './context'
+import { resolveTemplate, resolveTemplateValue, readPath, asStructured, evalCondition, evalClause, normalizeStepAlias, buildUpstreamContextBlock, type FlowContext } from './context'
 import type { ToolPolicy } from '@/lib/agents/tool-policy'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, type NodeRunState } from '@/lib/flows/dag-scheduler'
@@ -10,6 +10,7 @@ import { mergeAppend, mergeAllCombinations, mergeByKey, mergeByPosition } from '
 import { computeResumeAt } from '@/lib/flows/wait'
 import { foreignReferences, unresolvedAuthHeaders, foreignReferenceMessage, unresolvedAuthMessage } from '@/lib/flows/foreign-reference'
 import { inBandErrorWarning } from './tool-output'
+import { bindFormFiles } from '@/lib/flows/file-ref'
 
 export type StepOutcome = {
   nodeId: string
@@ -995,6 +996,16 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               ...(node.data.pagination ? { pagination: node.data.pagination } : {}),
               ...(node.data.optimizeForAi ? { optimizeForAi: node.data.optimizeForAi } : {}),
             }
+      // Multipart file attachments: resolve each bound source to the file
+      // reference it carries and merge it into the form-data body, so the HTTP
+      // adapter's file path sends the real bytes. A binding that resolves to no
+      // file fails the step — a request that silently drops its attachment
+      // would look like a success.
+      if (node.type === 'http' && node.data.bodyMode === 'form-data' && node.data.sendBody !== false && node.data.formFiles?.length) {
+        const bound = bindFormFiles(config.body, node.data.formFiles, (path) => readPath(ctx, path))
+        if ('error' in bound) return failStep(bound.error, config)
+        config.body = bound.body
+      }
       const broken = missingTokenFailure(config) ?? unresolvedReferenceFailure(config)
       if (broken) return broken
       const res: RunAgentResult = opts.runAction

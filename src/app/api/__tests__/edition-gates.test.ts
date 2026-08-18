@@ -31,6 +31,9 @@ export const INTERNAL_ONLY_ROUTES = [
   // platform, their personal details, and the account actions.
   'admin/users',
   'admin/users/[id]/actions',
+  // Dead-letter operator tooling: a parked payload is some other workspace's
+  // raw job data, and replay re-runs it.
+  'admin/queue/dead-letters',
 ]
 
 const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>; methods: string[] }> = [
@@ -46,6 +49,7 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'admin/domains', load: () => import('../admin/domains/route'), methods: ['GET', 'POST', 'PATCH'] },
   { name: 'admin/users', load: () => import('../admin/users/route'), methods: ['GET'] },
   { name: 'admin/users/[id]/actions', load: () => import('../admin/users/[id]/actions/route'), methods: ['POST'] },
+  { name: 'admin/queue/dead-letters', load: () => import('../admin/queue/dead-letters/route'), methods: ['GET', 'POST'] },
 ]
 
 const BODYLESS = new Set(['GET', 'DELETE'])

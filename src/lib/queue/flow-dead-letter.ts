@@ -100,24 +100,29 @@ export async function recordFlowDeadLetter(
   })
 }
 
+/** Pure field extraction — see dead-letter.ts's deadLetterInputFromJob. */
+export function flowDeadLetterInputFromJob(queueName: string, job: Job, error: Error): FlowDeadLetterInput {
+  const data = (job.data ?? {}) as Record<string, unknown>
+  return {
+    queue: queueName,
+    jobId: job.id,
+    jobName: job.name,
+    flowRunId:
+      typeof data.flowRunId === 'string'
+        ? data.flowRunId
+        : typeof data.preparedRunId === 'string'
+          ? data.preparedRunId
+          : undefined,
+    organizationId: typeof data.organizationId === 'string' ? data.organizationId : undefined,
+    data: job.data,
+    error: error?.message || 'unknown error',
+  }
+}
+
 /** Wire onto a Worker's 'failed' event. */
 export function deadLetterFromFlowJob(queueName: string) {
   return (job: Job | undefined, error: Error) => {
     if (!job) return
-    const data = (job.data ?? {}) as Record<string, unknown>
-    void recordFlowDeadLetter({
-      queue: queueName,
-      jobId: job.id,
-      jobName: job.name,
-      flowRunId:
-        typeof data.flowRunId === 'string'
-          ? data.flowRunId
-          : typeof data.preparedRunId === 'string'
-            ? data.preparedRunId
-            : undefined,
-      organizationId: typeof data.organizationId === 'string' ? data.organizationId : undefined,
-      data: job.data,
-      error: error?.message || 'unknown error',
-    })
+    void recordFlowDeadLetter(flowDeadLetterInputFromJob(queueName, job, error))
   }
 }

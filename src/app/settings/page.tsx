@@ -41,6 +41,8 @@ import { MIN_PASSWORD_LENGTH } from '@/lib/auth/enterprise-policy'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { WorkspaceCredentialsPanel } from '@/components/integrations/workspace-credentials-panel'
 import { EnterpriseSecuritySection } from '@/components/settings/enterprise-security-section'
+import { MfaSection } from '@/components/settings/mfa-section'
+import { AiEgressSection } from '@/components/settings/ai-egress-section'
 import { DeveloperApiSection } from '@/components/settings/developer-api-section'
 import { PlatformSection } from '@/components/settings/platform-section'
 import { MembersSection } from '@/components/settings/members-section'
@@ -178,6 +180,7 @@ function SettingsTabs() {
             onMfaChanged={() => void loadFactors()}
           />
         )}
+        {active === 'account' && <MfaSection onChanged={() => void loadFactors()} />}
         {active === 'workspace' && <WorkspaceSection canManage={can('org.manage')} />}
         {active === 'members' && (
           <>
@@ -197,6 +200,7 @@ function SettingsTabs() {
             <EnterpriseSecuritySection selfHasMfa={selfHasMfa} />
           </Section>
         )}
+        {active === 'security' && <AiEgressSection />}
         {active === 'developer' && (
           <Section title="Developer API" description="Scoped credentials for the flow import, export, management, and execution APIs.">
             <DeveloperApiSection />

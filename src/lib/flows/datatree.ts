@@ -212,3 +212,30 @@ export function buildDataTree(source: DataTreeSource): DataField[] {
   if (source.context !== false) roots.push(...contextRoots())
   return roots
 }
+
+/**
+ * The subset of the datatree a user can bind to a multipart FILE field, as
+ * pickable options: a file arrives as an object (a file reference), so scalar
+ * leaves and the always-present run-context roots are dropped. `path` is the
+ * bare context path stored on the step — the picker shows `label`, so no token
+ * syntax ever reaches the UI.
+ */
+export function fileBindingOptions(fields: DataField[]): { label: string; path: string }[] {
+  const options: { label: string; path: string }[] = []
+  const skipRoots = /^\{\{(now|run|flow|loop)[.}]/
+  const walk = (field: DataField, trail: string[], depth: number) => {
+    if (depth > 2) return
+    const label = [...trail, field.label].join(' › ')
+    if (field.type === 'object' || field.type === 'array' || field.type === 'any' || field.type === 'file') {
+      options.push({ label, path: field.token.replace(/^\{\{\s*|\s*\}\}$/g, '') })
+    }
+    for (const child of field.children ?? []) walk(child, [...trail, field.label], depth + 1)
+  }
+  for (const field of fields) {
+    if (skipRoots.test(field.token)) continue
+    walk(field, [], 0)
+  }
+  // Dedupe by path, keeping the first (shallowest) label for each.
+  const seen = new Set<string>()
+  return options.filter((option) => (seen.has(option.path) ? false : (seen.add(option.path), true)))
+}

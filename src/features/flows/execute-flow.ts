@@ -46,7 +46,7 @@ import { prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { buildAiPrompt, type AiPromptInput } from '@/lib/flows/ai-prompts'
-import { recordPiiEgress } from '@/lib/usage/ai-guard'
+import { aiEgressRefusal, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent } from '@/lib/security/tool-call-guard'
 import { createModelRunner, billableTokens, DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
 import { subflowChildInput, subflowGuard } from '@/lib/flows/subflow'
@@ -1063,6 +1063,22 @@ async function runFlowExecutionInner(
         // outputFields, score bounds) is a static read as-is off the config,
         // same as tool/http's retries/timeoutMs.
         const aiData = node.config as AiPromptInput
+        // The workspace AI opt-out, enforced before the prompt is built. Same
+        // gate as the agent runtime, surfaced the flow way: a refused step is a
+        // failed step carrying the policy sentence, not a thrown run — the rest
+        // of the flow's error handling (retry policy, error branch) then applies
+        // to it exactly as it would to any other step that could not run.
+        const egressRefusal = await aiEgressRefusal({
+          organizationId: job.organizationId,
+          userId: job.userId,
+          surface: 'flow.ai_step',
+          resourceType: 'flow_run_step',
+          resourceId: run.id,
+        })
+        if (egressRefusal) {
+          await finish({ status: 'failed', error: egressRefusal.message })
+          return { error: egressRefusal.message }
+        }
         const prompt = buildAiPrompt(aiData)
         const model = aiData.model === 'smart' ? DEFAULT_AGENT_MODEL : DEFAULT_SUMMARY_MODEL
         // Same record as the agent path: the resolved input is tenant data on

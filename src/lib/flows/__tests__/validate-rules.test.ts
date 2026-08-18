@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { FlowGraph } from '../graph'
 import { validateFlowGraph, validationErrorMessage } from '../validate'
+import { flowGraphSchema } from '../graph'
 
 // Value-level checker rules (WS2 flow-gap-closure). Kept in their own file:
 // validate.test.ts sits just under a tsx+node22 file-size cliff (~45KB) where
@@ -147,4 +148,82 @@ test('agent toolConnectionIds validate against the catalog like tool steps do', 
   // No catalog in context (draft-time light validation): skipped entirely.
   const light = validateFlowGraph(graph, { agents: [{ id: 'agent-1' }] })
   assert.ok(!light.issues.some((issue) => issue.code.includes('AGENT_TOOL')))
+})
+
+// ── HTTP multipart file attachments ────────────────────────────────────────
+
+function uploadGraph(httpData: Record<string, unknown>): FlowGraph {
+  return {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'download', type: 'http', data: { method: 'GET', url: 'https://api.example.com/doc', responseType: 'file', credentialId: 'cred-1' } },
+      { id: 'upload', type: 'http', data: { method: 'POST', url: 'https://api.example.com/upload', credentialId: 'cred-1', ...httpData } } as FlowGraph['nodes'][number],
+    ],
+    edges: [
+      { id: 'e1', source: 'trigger', target: 'download' },
+      { id: 'e2', source: 'download', target: 'upload' },
+    ],
+  }
+}
+
+const fileIssues = (graph: FlowGraph) =>
+  validateFlowGraph(graph, { httpCredentials: [{ id: 'cred-1' }] }).issues.filter((issue) => issue.code.startsWith('FILE_FIELD_'))
+
+test('a well-formed multipart file attachment validates clean', () => {
+  const graph = uploadGraph({
+    bodyMode: 'form-data',
+    body: '{"title":"Q3"}',
+    formFiles: [{ field: 'document', source: 'step.download.output' }],
+  })
+  assert.deepEqual(fileIssues(graph), [])
+})
+
+test('a file attachment outside a form-data body is rejected', () => {
+  const issues = fileIssues(uploadGraph({ bodyMode: 'json', body: '{}', formFiles: [{ field: 'document', source: 'step.download.output' }] }))
+  assert.ok(issues.some((issue) => issue.code === 'FILE_FIELD_NEEDS_FORM_DATA' && issue.nodeId === 'upload'))
+})
+
+test('a file attachment on a step that sends no body, or a GET, is rejected', () => {
+  const off = fileIssues(uploadGraph({ bodyMode: 'form-data', sendBody: false, formFiles: [{ field: 'f', source: 'step.download.output' }] }))
+  assert.ok(off.some((issue) => issue.code === 'FILE_FIELD_BODY_OFF'))
+
+  const get = fileIssues(uploadGraph({ method: 'GET', bodyMode: 'form-data', formFiles: [{ field: 'f', source: 'step.download.output' }] }))
+  assert.ok(get.some((issue) => issue.code === 'FILE_FIELD_NO_BODY_METHOD'))
+})
+
+test('malformed file bindings are rejected: no field name, duplicates, no source, typed tokens, dead steps', () => {
+  const duplicate = fileIssues(uploadGraph({
+    bodyMode: 'form-data',
+    formFiles: [{ field: 'doc', source: 'step.download.output' }, { field: 'doc', source: 'step.download.output' }],
+  }))
+  assert.ok(duplicate.some((issue) => issue.code === 'FILE_FIELD_DUPLICATE'))
+
+  const unnamed = fileIssues(uploadGraph({ bodyMode: 'form-data', formFiles: [{ field: '   ', source: 'step.download.output' }] }))
+  assert.ok(unnamed.some((issue) => issue.code === 'FILE_FIELD_NO_NAME'))
+
+  const noSource = fileIssues(uploadGraph({ bodyMode: 'form-data', formFiles: [{ field: 'doc', source: '   ' }] }))
+  assert.ok(noSource.some((issue) => issue.code === 'FILE_FIELD_NO_SOURCE'))
+
+  // Raw token syntax is never what the picker writes — it means hand-typing.
+  const typed = fileIssues(uploadGraph({ bodyMode: 'form-data', formFiles: [{ field: 'doc', source: '{{step.download.output}}' }] }))
+  assert.ok(typed.some((issue) => issue.code === 'FILE_FIELD_BAD_SOURCE'))
+
+  const dead = fileIssues(uploadGraph({ bodyMode: 'form-data', formFiles: [{ field: 'doc', source: 'step.deleted.output' }] }))
+  assert.ok(dead.some((issue) => issue.code === 'FILE_FIELD_UNKNOWN_STEP'))
+})
+
+test('the graph schema accepts formFiles and rejects an empty field or source', () => {
+  const node = {
+    id: 'upload',
+    type: 'http',
+    data: { method: 'POST', url: 'https://api.example.com/upload', bodyMode: 'form-data', formFiles: [{ field: 'doc', source: 'step.download.output' }] },
+  }
+  const graph = { nodes: [{ id: 'trigger', type: 'trigger', data: {} }, node], edges: [] }
+  assert.equal(flowGraphSchema.safeParse(graph).success, true)
+
+  const bad = { ...graph, nodes: [graph.nodes[0], { ...node, data: { ...node.data, formFiles: [{ field: '', source: 'step.download.output' }] } }] }
+  assert.equal(flowGraphSchema.safeParse(bad).success, false)
+
+  const noSource = { ...graph, nodes: [graph.nodes[0], { ...node, data: { ...node.data, formFiles: [{ field: 'doc', source: '' }] } }] }
+  assert.equal(flowGraphSchema.safeParse(noSource).success, false)
 })

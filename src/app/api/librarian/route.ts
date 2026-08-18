@@ -5,7 +5,7 @@ import { DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
 import { qwenClient, qwenModel } from '@/lib/llm/qwen'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
-import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
+import { assertAiCallAllowed, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { citedItems, citedSources, dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
 import { searchBuiltinCatalogue } from '@/lib/librarian/catalogue'
@@ -130,6 +130,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // covers both. `citedItems`/`citedSources` split that numbering back apart.
   const candidateCount = workspaceItems.length + docs.length
   const prompt = buildPrompt(question, workspaceItems, docs)
+
+  // Recorded here rather than at the shared structured-call seam in
+  // lib/llm/model-runner.ts, which records for every other interactive endpoint:
+  // this one calls the Messages API directly and so never passes through it.
+  void recordPiiEgress({ organizationId: org, userId: uid, surface: 'librarian', text: prompt })
 
   const useClaude = Boolean(process.env.ANTHROPIC_API_KEY)
   const client = useClaude ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : qwenClient()

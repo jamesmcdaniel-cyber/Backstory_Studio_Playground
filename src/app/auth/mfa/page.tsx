@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { emailDomain } from '@/lib/auth/enterprise-policy'
+import { splitTotpFactors } from '@/lib/auth/mfa-factors'
 import { isCompanyEmail } from '@/lib/auth/company-domain'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,12 +28,39 @@ export default function MfaPage() {
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [ssoBusy, setSsoBusy] = useState(false)
+  // Someone who is ALREADY enrolled and lands here is being asked to step up to
+  // aal2, not to enroll: their session is aal1 (a fresh password sign-in, or a
+  // refresh that dropped the MFA leg). The page used to call enroll() for them
+  // unconditionally, which Supabase refuses because a factor exists — the whole
+  // required-MFA gate dead-ended in a raw error toast with no way forward.
+  const [mode, setMode] = useState<'loading' | 'enroll' | 'challenge'>('loading')
   const domain = emailDomain(user?.email)
   const company = isCompanyEmail(user?.email)
 
   useEffect(() => {
     if (!loading && !user) router.replace('/auth/login')
   }, [loading, router, user])
+
+  const inspectFactors = useCallback(async () => {
+    const { data, error } = await mfa.listFactors()
+    if (error) return { verified: [], stale: [] }
+    return splitTotpFactors(data?.all ?? data?.totp ?? [])
+  }, [mfa])
+
+  useEffect(() => {
+    if (loading || !user) return
+    let cancelled = false
+    void inspectFactors().then(({ verified }) => {
+      if (cancelled) return
+      if (verified.length > 0) {
+        setFactorId(verified[0].id)
+        setMode('challenge')
+      } else {
+        setMode('enroll')
+      }
+    })
+    return () => { cancelled = true }
+  }, [inspectFactors, loading, user])
 
   // Direct Okta SAML by domain. Company accounts fall back to Google (itself
   // Okta-federated at the Workspace layer) until the Okta<->Supabase SAML
@@ -58,12 +86,24 @@ export default function MfaPage() {
 
   const enroll = async () => {
     setBusy(true)
-    const { data, error } = await mfa.enroll({ factorType: 'totp', friendlyName: 'Backstory Studio' })
+    // Abandoned enrollment debris (someone scanned nothing and closed the tab)
+    // leaves an unverified factor, and Supabase refuses a fresh enroll while one
+    // exists. That surfaced as a raw error toast on a page whose only button was
+    // the one that had just failed — permanently, since nothing ever cleaned the
+    // stale factor up. Clear it and try once more rather than reporting it.
+    let result = await mfa.enroll({ factorType: 'totp', friendlyName: 'Backstory Studio' })
+    if (result.error) {
+      const { stale } = await inspectFactors()
+      if (stale.length > 0) {
+        for (const factor of stale) await mfa.unenroll({ factorId: factor.id })
+        result = await mfa.enroll({ factorType: 'totp', friendlyName: 'Backstory Studio' })
+      }
+    }
     setBusy(false)
-    if (error) return toast.error(error.message)
-    setFactorId(data.id)
-    setQr(data.totp.qr_code)
-    setSecret(data.totp.secret)
+    if (result.error) return toast.error(result.error.message)
+    setFactorId(result.data.id)
+    setQr(result.data.totp.qr_code)
+    setSecret(result.data.totp.secret)
   }
 
   const verify = async () => {
@@ -73,7 +113,7 @@ export default function MfaPage() {
     const result = await mfa.verify({ factorId, challengeId: challenge.data.id, code: code.trim() })
     setBusy(false)
     if (result.error) return toast.error(result.error.message)
-    toast.success('Multi-factor authentication enabled.')
+    toast.success(mode === 'challenge' ? 'Verified.' : 'Multi-factor authentication enabled.')
     router.replace('/dashboard')
     router.refresh()
   }
@@ -81,10 +121,13 @@ export default function MfaPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Secure your account</h1>
+        <h1 className="text-2xl font-semibold">
+          {mode === 'challenge' ? 'Verify it’s you' : 'Secure your account'}
+        </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Your account requires a second factor before access is granted. Signing in through your
-          organization&apos;s identity provider counts — Okta enforces MFA for you.
+          {mode === 'challenge'
+            ? 'Enter the current code from the authenticator app already on your account. Lost the device? Ask a platform administrator to reset it for you.'
+            : 'Your account requires a second factor before access is granted. Signing in through your organization’s identity provider counts — Okta enforces MFA for you.'}
         </p>
       </div>
       {domain && (
@@ -97,18 +140,26 @@ export default function MfaPage() {
           </div>
         </div>
       )}
-      {!factorId ? (
+      {mode === 'loading' ? (
+        <div className="h-10 animate-pulse rounded-lg border bg-muted/40" />
+      ) : mode === 'enroll' && !factorId ? (
         <Button variant={domain ? 'outline' : 'default'} onClick={enroll} loading={busy} disabled={!user}>
           Set up authenticator
         </Button>
       ) : (
         <div className="space-y-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={qrImageSrc(qr)} alt="Authenticator QR code" className="mx-auto h-56 w-56 rounded border bg-white p-3" />
-          <p className="text-center text-xs text-muted-foreground">
-            Scan with Google Authenticator, LastPass Authenticator, or any TOTP app — or enter the key below manually.
-          </p>
-          <p className="break-all rounded bg-muted p-3 font-mono text-xs">{secret}</p>
+          {/* An existing factor has no QR to show: the app is already paired, so
+              the only thing missing is the current code. */}
+          {mode === 'enroll' && (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={qrImageSrc(qr)} alt="Authenticator QR code" className="mx-auto h-56 w-56 rounded border bg-white p-3" />
+              <p className="text-center text-xs text-muted-foreground">
+                Scan with Google Authenticator, LastPass Authenticator, or any TOTP app — or enter the key below manually.
+              </p>
+              <p className="break-all rounded bg-muted p-3 font-mono text-xs">{secret}</p>
+            </>
+          )}
           <Input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value)} placeholder="6-digit code" />
           <Button className="w-full" onClick={verify} loading={busy} disabled={code.trim().length < 6}>Verify and continue</Button>
         </div>

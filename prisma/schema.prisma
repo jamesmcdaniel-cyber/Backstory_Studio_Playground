@@ -1142,7 +1142,12 @@ model Flow {
   secretScanAt   DateTime?
   version        Int      @default(1) // bumped on each publish
   visibility     String   @default("shared")
-  shareToken     String?  @unique // rotatable cross-workspace share-link token
+  /// SHA-256 digest of the rotatable cross-workspace share-link token. The raw
+  /// token is a bearer credential — it opens a flow from another workspace, or
+  /// with no session at all — so it is never stored. It is returned exactly
+  /// once, from the mint/rotate response, and every later presentation is
+  /// resolved by hashing what the caller sent and matching this digest.
+  shareTokenDigest String? @unique
   shareRole      String   @default("view") // role a share-link grants: 'view' | 'edit'
   /// May the share token be opened WITHOUT signing in? Anonymous opens land on
   /// a separate read-only page with a sanitized graph — never the builder, and

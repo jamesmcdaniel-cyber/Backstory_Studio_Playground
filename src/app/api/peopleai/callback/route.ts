@@ -6,8 +6,22 @@ import { apiLogger } from '@/lib/logger'
 import { captureError } from '@/lib/observability/sentry'
 import { safeReturnToPath } from '@/lib/mcp/oauth-authcode'
 import { decryptSecret } from '@/lib/crypto/secrets'
+import { rateLimit } from '@/lib/ratelimit'
+import { clientIp } from '@/lib/security/events'
 
 export const runtime = 'nodejs'
+
+/**
+ * Per-IP admission gate. OAuth redirect targets are addressable by anyone who
+ * knows the URL — the caller here has not proved anything yet, and the handler
+ * goes on to decrypt a cookie, hit the database, and make an outbound token
+ * exchange. A real person completes this flow a handful of times a day, so the
+ * cap is far above legitimate use and still ends replay/flood attempts.
+ *
+ * Fails closed: a retried consent click is a mild annoyance; an uncapped
+ * unauthenticated path into token exchange is not.
+ */
+const CALLBACK_LIMIT = { limit: 30, windowMs: 60_000, failureMode: 'closed' } as const
 
 function redirectWithStatus(request: NextRequest, returnTo: string, status: string) {
   // Validate again at the sink. The cookie is HttpOnly, but a parent-domain
@@ -21,6 +35,13 @@ function redirectWithStatus(request: NextRequest, returnTo: string, status: stri
 }
 
 export async function GET(request: NextRequest) {
+  const limited = await rateLimit(`peopleai-callback:${clientIp(request)}`, CALLBACK_LIMIT)
+  if (!limited.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'retry-after': String(Math.ceil((limited.retryAfterMs ?? 1_000) / 1_000)) } },
+    )
+  }
   const auth = await getAuthWithUser()
   if (!auth?.dbUser || !auth.organizationId) {
     return NextResponse.redirect(new URL('/auth/login', request.url))

@@ -101,19 +101,28 @@ export async function recordDeadLetter(
   })
 }
 
+/**
+ * Field extraction off a failed job. Pure and exported so the mapping — which
+ * decides whether an operator can find and replay the record — is testable
+ * without a queue or a database.
+ */
+export function deadLetterInputFromJob(queueName: string, job: Job, error: Error): DeadLetterInput {
+  const data = (job.data ?? {}) as Record<string, unknown>
+  return {
+    queue: queueName,
+    jobId: job.id,
+    jobName: job.name,
+    executionId: typeof data.executionId === 'string' ? data.executionId : undefined,
+    organizationId: typeof data.organizationId === 'string' ? data.organizationId : undefined,
+    data: job.data,
+    error: error?.message || 'unknown error',
+  }
+}
+
 /** Wire onto a Worker's 'failed' event. */
 export function deadLetterFromJob(queueName: string) {
   return (job: Job | undefined, error: Error) => {
     if (!job) return
-    const data = (job.data ?? {}) as Record<string, unknown>
-    void recordDeadLetter({
-      queue: queueName,
-      jobId: job.id,
-      jobName: job.name,
-      executionId: typeof data.executionId === 'string' ? data.executionId : undefined,
-      organizationId: typeof data.organizationId === 'string' ? data.organizationId : undefined,
-      data: job.data,
-      error: error?.message || 'unknown error',
-    })
+    void recordDeadLetter(deadLetterInputFromJob(queueName, job, error))
   }
 }

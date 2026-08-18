@@ -1,4 +1,5 @@
 import { systemPrisma } from '@/lib/prisma'
+import { hashToken } from '@/lib/crypto/secrets'
 import { rateLimit } from '@/lib/ratelimit'
 import { publicFlowGraph } from '@/lib/flows/public-graph'
 import type { FlowGraph } from '@/lib/flows/graph'
@@ -16,6 +17,9 @@ import type { FlowGraph } from '@/lib/flows/graph'
  * A share token is a bearer credential, so lookups are rate-limited per client
  * (a 128-bit token is not guessable, but an unbounded public lookup endpoint is
  * still free load) and the token is never echoed back in the payload.
+ *
+ * The database holds only the SHA-256 digest, so this resolves by hashing what
+ * the visitor presented — a stolen database row cannot be replayed as a link.
  */
 
 export type PublicFlowView = {
@@ -44,11 +48,11 @@ export async function resolveAnonymousFlowShare(
   if (!limited.ok) return { status: 'rate_limited' }
 
   // systemPrisma with justification: an anonymous visitor has no organization,
-  // so there is no tenant to scope by. The lookup is keyed on a unique
-  // 128-bit token AND requires shareAnonymous — a flow whose owner has not
+  // so there is no tenant to scope by. The lookup is keyed on the unique digest
+  // of a 128-bit token AND requires shareAnonymous — a flow whose owner has not
   // opted in is unreachable here, and nothing about other orgs is queryable.
   const flow = await systemPrisma.flow.findFirst({
-    where: { shareToken: token, shareAnonymous: true },
+    where: { shareTokenDigest: hashToken(token), shareAnonymous: true },
     select: { id: true, name: true, description: true, graph: true, publishedGraph: true, updatedAt: true },
   })
   if (!flow) return { status: 'not_found' }

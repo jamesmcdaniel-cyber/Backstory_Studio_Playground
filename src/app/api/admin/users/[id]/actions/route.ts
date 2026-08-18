@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/scim/server'
 import { resetMonthlyTokenUsage } from '@/lib/usage/budget'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { deprovisionUser } from '@/lib/revoke-user-access'
+import { deleteAllFactors } from '@/lib/auth/mfa-admin'
 
 /**
  * Operator actions on one account.
@@ -27,6 +28,7 @@ const bodySchema = z.object({
     'reset-password',
     'reset-monthly-tokens',
     'reset-daily-runs',
+    'reset-mfa',
   ]),
 })
 
@@ -154,6 +156,28 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       await resetMonthlyTokenUsage(target.organizationId)
       await audit({ scope: 'workspace' })
       return { success: true }
+    }
+
+    case 'reset-mfa': {
+      // The lost-device path (docs/runbooks/account-recovery.md). Deleting every
+      // factor drops the account to aal1, so the MFA gate meets their next
+      // request and routes them to /auth/mfa to enroll a new authenticator —
+      // which is why this restores access rather than granting it: no session is
+      // minted, nothing is bypassed, and an account under a required policy
+      // cannot reach anything until it has enrolled again.
+      //
+      // Explicitly ALLOWED for the platform owner. The owner invariant protects
+      // their access; a stale factor on a lost phone is the one thing that can
+      // strand them, and every other lockout in the auth path exempts them for
+      // the same reason. Nothing here can remove or downgrade their account.
+      if (!target.supabaseId) {
+        throw new ApiError('That account has no Supabase identity to reset.', 400, 'NO_IDENTITY')
+      }
+      const removed = await deleteAllFactors(target.supabaseId).catch((error) => {
+        throw new ApiError('Could not reset the authenticators in Supabase.', 502, 'SUPABASE_ERROR', error)
+      })
+      await audit({ factorsRemoved: removed, isPlatformOwner: isPlatformOwnerEmail(target.email) })
+      return { success: true, factorsRemoved: removed }
     }
 
     case 'reset-daily-runs': {

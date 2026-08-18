@@ -9,7 +9,8 @@ test('isSupported accepts text formats and PDFs, rejects other binaries', () => 
   assert.equal(isSupported('application/pdf', 'doc.pdf'), true)
   assert.equal(isSupported('', 'report.PDF'), true)
   assert.equal(isSupported('image/png', 'logo.png'), false)
-  assert.equal(isSupported('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'doc.docx'), false)
+  // DOCX extraction lives in ./docx and is covered by docx.test.ts.
+  assert.equal(isSupported('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'doc.docx'), true)
 })
 
 test('extractText decodes text and strips HTML markup', () => {

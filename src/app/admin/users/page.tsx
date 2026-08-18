@@ -2,7 +2,7 @@
 
 /**
  * Operator user console: who is on the platform, what they are spending, and
- * the four actions an operator can take on an account.
+ * the actions an operator can take on an account.
  *
  * A table plus a detail panel rather than a card grid — this is a scanning
  * surface first ("who burned the tokens", "who has not signed in"), and the
@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge } from 'lucide-react'
+import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -46,7 +46,7 @@ type PlatformUser = {
 
 type Report = { days: number; truncated: boolean; users: PlatformUser[] }
 
-type Action = 'deactivate' | 'reactivate' | 'reset-password' | 'reset-monthly-tokens' | 'reset-daily-runs'
+type Action = 'deactivate' | 'reactivate' | 'reset-password' | 'reset-monthly-tokens' | 'reset-daily-runs' | 'reset-mfa'
 
 const usd = (value: number) => (value >= 0.01 || value === 0 ? `$${value.toFixed(2)}` : '<$0.01')
 
@@ -116,6 +116,9 @@ export default function PlatformUsersPage() {
         : action === 'reactivate' ? body?.notice ? `Reactivated ${label}. ${body.notice}` : `Reactivated ${label}.`
         : action === 'reset-password' ? `Password reset email sent to ${label}.`
         : action === 'reset-monthly-tokens' ? `Monthly token counter cleared for ${user.organizationName ?? 'the workspace'}.`
+        // The count matters: "0 removed" means they had no authenticator, so
+        // whatever locked them out was not their second factor.
+        : action === 'reset-mfa' ? `Removed ${body?.factorsRemoved ?? 0} authenticator(s) from ${label}. They will enroll again at their next sign-in.`
         : `${label} has a fresh set of runs for today.`,
       )
       await load()
@@ -300,6 +303,14 @@ export default function PlatformUsersPage() {
             >
               <Gauge className="mr-2 h-4 w-4" />
               Reset monthly tokens
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy !== null}
+              onClick={() => void act(selected, 'reset-mfa')}
+            >
+              <Smartphone className="mr-2 h-4 w-4" />
+              Reset MFA
             </Button>
             {selected.isActive ? (
               <Button

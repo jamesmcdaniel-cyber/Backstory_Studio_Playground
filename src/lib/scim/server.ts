@@ -19,7 +19,33 @@ export function scimError(detail: string, status: number): Response {
   return scimJson({ schemas: [SCIM_ERROR_SCHEMA], status: String(status), detail }, status)
 }
 
+/**
+ * Pre-auth admission gate, per client IP.
+ *
+ * The per-token budget below is the steady-state limit, but it only exists
+ * AFTER a token has resolved — which means every unauthenticated caller was
+ * buying an unbounded stream of digest lookups against `scim_tokens`. This gate
+ * runs before any database work, so brute force and plain flooding are capped
+ * whether or not the caller holds a credential. It is generous enough that a
+ * real IdP (one shared egress IP, several tokens) never notices.
+ *
+ * Fails closed: SCIM is provisioning, not a user-facing surface — a paused sync
+ * retries, an uncapped pre-auth endpoint does not self-correct.
+ */
+export const SCIM_ADMISSION_BUDGET = { limit: 1_200, windowMs: 60_000, failureMode: 'closed' } as const
+
+function scimClientIp(request: Request): string {
+  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown'
+}
+
+/** The admission key for a caller — exported so tests can drive the budget. */
+export function scimAdmissionKey(request: Request): string {
+  return `scim-ip:${scimClientIp(request)}`
+}
+
 export async function authenticateScim(request: Request): Promise<ScimContext | Response> {
+  const admitted = await rateLimit(scimAdmissionKey(request), SCIM_ADMISSION_BUDGET)
+  if (!admitted.ok) return scimError('Rate limit exceeded.', 429)
   const authorization = request.headers.get('authorization') ?? ''
   const match = /^Bearer\s+(.+)$/i.exec(authorization)
   if (!match || match[1].length > 256) {

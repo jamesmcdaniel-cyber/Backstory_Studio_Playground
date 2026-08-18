@@ -4,7 +4,69 @@ import { qwenConfigured } from '@/lib/llm/qwen'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
 import { prisma } from '@/lib/prisma'
 import { recordAudit } from '@/lib/audit'
-import { detectPiiCategories, normalizeAiEgressPolicy } from '@/lib/security/pii-egress'
+import { apiLogger } from '@/lib/logger'
+import {
+  AI_EGRESS_BLOCKED_MESSAGE,
+  AiEgressBlockedError,
+  type AiEgressPolicy,
+  detectPiiCategories,
+  normalizeAiEgressPolicy,
+} from '@/lib/security/pii-egress'
+
+/**
+ * The workspace's AI egress policy — one indexed read of the org row.
+ *
+ * Its own function so the interactive gate below and the run-time gate used by
+ * the agent/flow runtimes read the SAME column through the SAME normalization.
+ * An unrecognised value means 'allowed' (see normalizeAiEgressPolicy).
+ */
+export async function loadAiEgressPolicy(organizationId: string): Promise<AiEgressPolicy> {
+  const organization = await prisma.organization.findFirst({
+    where: { id: organizationId },
+    select: { aiEgressPolicy: true },
+  })
+  return normalizeAiEgressPolicy(organization?.aiEgressPolicy)
+}
+
+/**
+ * The workspace AI opt-out, for the NON-interactive egress paths: agent runs and
+ * flow AI steps. Those two carry the overwhelming majority of the prompts this
+ * platform sends, and until this existed they only RECORDED what crossed —
+ * a workspace switched to 'blocked' still shipped every run's tenant data to the
+ * model provider, which is precisely the guarantee the switch is sold on.
+ *
+ * Returns the error to surface when the workspace is blocked, or null when the
+ * call may proceed. Non-throwing because the two callers surface failure
+ * differently — the agent runtime throws into its failure handler, a flow step
+ * resolves as a failed step — and both must get the same sentence either way.
+ *
+ * The refusal is audit-logged before it is returned, mirroring the
+ * `guardrail.refusal` row the agent loop writes: a policy that silently drops
+ * work is indistinguishable from an outage, and "how much did this switch stop
+ * last month" has to be a queryable question, not a guess.
+ */
+export async function aiEgressRefusal(opts: {
+  organizationId: string
+  userId?: string | null
+  /** Which surface was about to send, e.g. 'agent.run', 'flow.ai_step'. */
+  surface: string
+  resourceType?: string
+  resourceId?: string | null
+}): Promise<AiEgressBlockedError | null> {
+  if ((await loadAiEgressPolicy(opts.organizationId)) === 'allowed') return null
+  // recordAudit absorbs its own write failures (logging them), so the refusal
+  // below happens whether or not the row lands.
+  await recordAudit({
+    organizationId: opts.organizationId,
+    action: 'ai.egress_blocked',
+    actorUserId: opts.userId ?? null,
+    actorKind: 'system',
+    resourceType: opts.resourceType ?? 'model_call',
+    resourceId: opts.resourceId ?? null,
+    detail: { surface: opts.surface },
+  })
+  return new AiEgressBlockedError()
+}
 
 /**
  * Preflight for authenticated, interactive LLM endpoints (copilot generate/chat,
@@ -33,16 +95,8 @@ export async function assertAiCallAllowed(opts: {
   // Workspace-level AI opt-out — the enforceable switch for customers whose
   // DPA forbids model processing. Checked before rate limiting so the refusal
   // message is about policy, not about pace.
-  const organization = await prisma.organization.findFirst({
-    where: { id: opts.organizationId },
-    select: { aiEgressPolicy: true },
-  })
-  if (normalizeAiEgressPolicy(organization?.aiEgressPolicy) === 'blocked') {
-    throw new ApiError(
-      'This workspace has AI processing disabled by policy. An administrator can change this in workspace settings.',
-      403,
-      'AI_EGRESS_BLOCKED',
-    )
+  if ((await loadAiEgressPolicy(opts.organizationId)) === 'blocked') {
+    throw new ApiError(AI_EGRESS_BLOCKED_MESSAGE, 403, 'AI_EGRESS_BLOCKED')
   }
   const limited = await rateLimit(opts.rateKey, { limit: opts.limit, windowMs: opts.windowMs ?? 60_000 })
   if (!limited.ok) {
@@ -101,7 +155,15 @@ export async function recordPiiEgress(opts: {
       resourceType: 'model_call',
       detail: { surface: opts.surface, categories, chars: opts.text.length },
     })
-  } catch {
-    /* the record must never block the call */
+  } catch (error) {
+    // Still non-blocking — but no longer invisible. A bare swallow meant the one
+    // failure mode that matters here (recording broken for days, so the audit
+    // trail the DPA answer is built from has a hole in it) looked exactly like
+    // "no PII crossed". Warn so it shows up in the platform log.
+    apiLogger.warn('ai-guard: could not record PII egress', {
+      organizationId: opts.organizationId,
+      surface: opts.surface,
+      error: error instanceof Error ? error.message : String(error),
+    })
   }
 }

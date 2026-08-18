@@ -80,13 +80,25 @@ DROP TYPE "IntegrationType"; DROP TYPE "MCPAgentType";`
 The 2026-08-05 outage theme was *silent* failure: the queue had no consumer for
 weeks and nothing said so. The signals now exist; they need subscribers:
 
-- **Uptime monitor on `/api/health`** (UptimeRobot / Better Stack free tier):
-  alert on non-200. The endpoint 503s when the DB is down, the cache is down
-  in prod, or the queue plane has no consumers. The JSON also carries
-  alertable detail for keyword monitors: `checks.queueConsumers.ok: false`,
-  growing `queues[].waiting`, `deadLetters.total > 0`, and
-  `heartbeat.fresh: false` (worker stopped writing `worker:heartbeat` —
-  including the split-brain two-Redis case).
+- **`.github/workflows/health-monitor.yml`** polls `/api/health` every 10
+  minutes (plus manual `workflow_dispatch`) and turns a sustained non-200
+  into a pinned "Production health check failing" GitHub issue (auto-closed
+  on recovery), so a monitor doesn't depend on a third-party uptime service
+  being configured. **Requires ops to set the `HEALTH_MONITOR_URL` repository
+  secret** to `https://<prod-host>/api/health` — until that's set, the
+  workflow skips with a loud `::warning::` annotation instead of failing red.
+  When it fires (or for any production incident), start at
+  `docs/runbooks/incident-response.md` for severity/escalation and
+  `docs/runbooks/queue-incident.md` for queue-specific triage.
+- **Uptime monitor on `/api/health`** (UptimeRobot / Better Stack free tier)
+  is still worth adding independently for tighter-than-10-minute detection
+  and off-GitHub paging: alert on non-200. The endpoint 503s when the DB is
+  down, the cache is down in prod, or the queue plane has no consumers. The
+  JSON also carries alertable detail for keyword monitors:
+  `checks.queueConsumers.ok: false`, growing `queues[].waiting`,
+  `deadLetters.total > 0`, and `heartbeat.fresh: false` (worker stopped
+  writing `worker:heartbeat` — including the split-brain two-Redis case, see
+  `docs/runbooks/queue-incident.md` §2).
 - **`SENTRY_DSN` on the worker** (fly secrets / Render dashboard): without it
   every worker crash and dead-lettered job is console-only in `fly logs`. The
   boot audit (`src/lib/workers/assert-env.ts`) warns when it is missing.
@@ -115,5 +127,6 @@ offline" instead of stranding in `waiting`.
 
 `ENCRYPTION_KEY` is **required in production** — the server refuses to boot
 without it (see `src/lib/env.ts`, enforced at startup via
-`instrumentation.ts`; secrets code hard-fails too). Rotate by setting the new
-key, re-saving stored connection secrets, then removing the old one.
+`instrumentation.ts`; secrets code hard-fails too). For the full rotation
+procedure (preconditions, `npm run secrets:rotate` usage, verification,
+rollback), see `docs/runbooks/key-rotation.md`.

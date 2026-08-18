@@ -3,7 +3,9 @@ import type { FlowGraph } from '@/lib/flows/graph'
 import { canEditFlow } from '@/lib/flows/access'
 
 /** How a role-aware caller describes THIS viewer's relationship to the flow.
- *  `includeShare` exposes the share token/role — same-org editors only. */
+ *  `includeShare` exposes the share settings (whether a link is live, its role,
+ *  anonymous access, view count) — same-org editors only. Never the token
+ *  itself: that is stored as a digest and returned once, at mint. */
 export type FlowViewerAccess = { role: 'edit' | 'view'; external: boolean; includeShare?: boolean }
 
 /**
@@ -38,7 +40,7 @@ export function serializeFlow(flow: {
   publishedGraph?: unknown
   version?: number
   visibility: string
-  shareToken?: string | null
+  shareTokenDigest?: string | null
   shareRole?: string
   shareAnonymous?: boolean
   anonymousViews?: number
@@ -88,7 +90,10 @@ export function serializeFlow(flow: {
       external: access.external,
       ...(access.includeShare
         ? {
-            shareToken: flow.shareToken ?? null,
+            // Whether a link is live — NOT the link. The token is stored as a
+            // digest and handed out once at mint, so there is nothing to send
+            // here; the UI reports the audience and offers a rotate.
+            shareEnabled: Boolean(flow.shareTokenDigest),
             shareRole: flow.shareRole === 'edit' ? 'edit' : 'view',
             shareAnonymous: Boolean(flow.shareAnonymous),
             anonymousViews: flow.anonymousViews ?? 0,

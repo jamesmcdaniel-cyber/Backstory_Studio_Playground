@@ -6,9 +6,38 @@ import { maybeGenerateOnGateClear } from '@/lib/templates/generation-queue'
 import { apiLogger } from '@/lib/logger'
 import { systemPrisma } from '@/lib/prisma'
 import { providerSignalOutboxEvent } from '@/lib/outbox'
-import { recordTokenRejection } from '@/lib/security/events'
+import { clientIp, recordTokenRejection } from '@/lib/security/events'
+import { rateLimit } from '@/lib/ratelimit'
 
 export const runtime = 'nodejs'
+
+/**
+ * Rate limits, keyed by client IP and split on signature validity.
+ *
+ * This is the only unauthenticated ingress in the app that does database work,
+ * and it is not covered by the central write budget in api-handler (it is a
+ * raw route handler). Two gates:
+ *
+ *  - ADMISSION runs before the HMAC check, so a flood cannot even buy the
+ *    signature verification. It is set well above Nango's real burst rate (a
+ *    sync can fan out a batch of events) so a legitimate delivery never trips.
+ *  - REJECTED runs after a failed verification. A caller that cannot sign is
+ *    not a webhook, and gets a much smaller allowance — this is the gate that
+ *    stops signature-guessing and unauthenticated log/DB churn.
+ *
+ * Both fail CLOSED: dropping a webhook costs one reconciliation (the next
+ * event or a page-view sync repairs the mirror), while leaving an open,
+ * unauthenticated endpoint uncapped during a Redis outage costs more.
+ */
+const ADMISSION_LIMIT = { limit: 600, windowMs: 60_000, failureMode: 'closed' } as const
+const REJECTED_LIMIT = { limit: 30, windowMs: 60_000, failureMode: 'closed' } as const
+
+function tooMany(retryAfterMs?: number) {
+  return NextResponse.json(
+    { ok: false, error: 'Too many requests' },
+    { status: 429, headers: { 'retry-after': String(Math.ceil((retryAfterMs ?? 1_000) / 1_000)) } },
+  )
+}
 
 /**
  * Nango connection-lifecycle webhook. Nango calls this when an account is
@@ -28,6 +57,10 @@ export const runtime = 'nodejs'
  * event or a page-view sync will reconcile.
  */
 export async function POST(request: NextRequest) {
+  const ip = clientIp(request)
+  const admitted = await rateLimit(`nango-webhook:${ip}`, ADMISSION_LIMIT)
+  if (!admitted.ok) return tooMany(admitted.retryAfterMs)
+
   // No secret key configured → nothing can be verified or mirrored; ack so Nango
   // doesn't retry against a deployment that isn't wired up yet.
   if (!nangoConfigured()) {
@@ -50,6 +83,8 @@ export async function POST(request: NextRequest) {
     verified = false
   }
   if (!verified) {
+    const allowed = await rateLimit(`nango-webhook-rejected:${ip}`, REJECTED_LIMIT)
+    if (!allowed.ok) return tooMany(allowed.retryAfterMs)
     await recordTokenRejection(request, { surface: 'nango-webhook', reason: 'invalid_hmac' })
     return NextResponse.json({ ok: false, error: 'Invalid webhook signature' }, { status: 401 })
   }

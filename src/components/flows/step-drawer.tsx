@@ -11,13 +11,14 @@ import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, SUMMARI
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { DataTree } from '@/components/flows/data-tree'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
-import { type DataField } from '@/lib/flows/datatree'
+import { fileBindingOptions, type DataField } from '@/lib/flows/datatree'
 import { AdvancedParamsSection } from '@/components/flows/advanced-params'
 import { CodeEditor } from '@/components/flows/code-editor'
 import { CodeAssist } from '@/components/flows/code-assist'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 import type { FlowContext } from '@/features/flows/context'
+import type { FormFileBinding } from '@/lib/flows/file-ref'
 import { cn } from '@/lib/utils'
 import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { AgentInlineCreate } from './agent-inline-create'
@@ -216,6 +217,93 @@ function serializeKeyValueRows(rows: KeyValueRow[]): string | undefined {
     out[key] = parseTypedValue(row.value)
   }
   return Object.keys(out).length ? JSON.stringify(out, null, 2) : undefined
+}
+
+/**
+ * Multipart FILE fields on an HTTP step: bind a form field name to a file an
+ * earlier step produced (a download, an upload on the run input, a subflow
+ * result). The source is PICKED from the same data menu the rest of the builder
+ * uses — the stored value is a plain path and the user never sees or types
+ * token syntax.
+ */
+function FormFileFields({
+  bindings,
+  options,
+  onChange,
+}: {
+  bindings: FormFileBinding[]
+  options: { label: string; path: string }[]
+  onChange: (bindings: FormFileBinding[] | undefined) => void
+}) {
+  const update = (next: FormFileBinding[]) => onChange(next.length ? next : undefined)
+  const setAt = (index: number, patch: Partial<FormFileBinding>) =>
+    update(bindings.map((binding, i) => (i === index ? { ...binding, ...patch } : binding)))
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">File attachments</p>
+          <p className="text-xs text-muted-foreground">
+            Send a file from an earlier step as a real upload — its original name and type travel with it.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={options.length === 0 || bindings.length >= 10}
+          onClick={() => update([...bindings, { field: bindings.length ? `file${bindings.length + 1}` : 'file', source: options[0]?.path ?? '' }])}
+        >
+          <Plus className="mr-1 h-3.5 w-3.5" /> Add file
+        </Button>
+      </div>
+      {options.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No earlier step produces a file yet. Add a step that downloads or receives one, then attach it here.
+        </p>
+      ) : (
+        bindings.map((binding, index) => (
+          <div key={index} className="flex items-end gap-2">
+            <div className="w-40 shrink-0">
+              <label className={labelClass} htmlFor={`http-file-field-${index}`}>Form field</label>
+              <input
+                id={`http-file-field-${index}`}
+                className={fieldClass}
+                value={binding.field}
+                placeholder="file"
+                onChange={(event) => setAt(index, { field: event.target.value })}
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <label className={labelClass} htmlFor={`http-file-source-${index}`}>File from</label>
+              <select
+                id={`http-file-source-${index}`}
+                className={fieldClass}
+                value={binding.source}
+                onChange={(event) => setAt(index, { source: event.target.value })}
+              >
+                {!options.some((option) => option.path === binding.source) && (
+                  <option value={binding.source}>{binding.source ? 'Step that no longer exists' : 'Choose a file…'}</option>
+                )}
+                {options.map((option) => (
+                  <option key={option.path} value={option.path}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              className="mb-1.5 rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => update(bindings.filter((_, i) => i !== index))}
+              aria-label={`Remove file attachment ${index + 1}`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  )
 }
 
 function KeyValueJsonEditor({
@@ -658,6 +746,10 @@ export function StepDrawer({
       .filter((connection) => parseFlowToolConnectionId(connection.id).plane === 'mcp'),
     [toolCatalog],
   )
+  // Upstream data a multipart file field can be bound to — objects only, since
+  // a file arrives as a file reference. Same source as the data menu, so the
+  // picker and the chips always agree.
+  const fileOptions = useMemo(() => fileBindingOptions(dataFields), [dataFields])
   useEffect(() => {
     if (node.type !== 'http') return
     // An unbound step starts on whichever mode can actually finish here:
@@ -1700,13 +1792,14 @@ export function StepDrawer({
                     </select>
                   </div>
                   {node.data.bodyMode === 'form-urlencoded' || node.data.bodyMode === 'form-data' ? (
+                    <>
                     <KeyValueJsonEditor
                       label="Body fields"
                       value={node.data.body}
                       keyPlaceholder="field"
                       valuePlaceholder="Value or input data"
                       helper={node.data.bodyMode === 'form-data'
-                        ? 'These JSON fields are sent as multipart/form-data. File uploads are not yet supported.'
+                        ? 'These fields are sent as multipart/form-data text parts. Attach files below.'
                         : 'These JSON fields are encoded as application/x-www-form-urlencoded.'}
                       onChange={(body) => onChange({ ...node, data: { ...node.data, body } })}
                       labelCtx={labelCtx}
@@ -1716,6 +1809,14 @@ export function StepDrawer({
                       blockActive={blockActive}
                       unblockActive={unblockActive}
                     />
+                    {node.data.bodyMode === 'form-data' && (
+                      <FormFileFields
+                        bindings={node.data.formFiles ?? []}
+                        options={fileOptions}
+                        onChange={(formFiles) => onChange({ ...node, data: { ...node.data, formFiles } })}
+                      />
+                    )}
+                    </>
                   ) : (
                     <div>
                       {(node.data.bodyMode === 'raw' || node.data.bodyMode === 'text') && (

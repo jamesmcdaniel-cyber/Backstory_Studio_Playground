@@ -32,7 +32,7 @@ test('no credential-named column in any exported model survives the export filte
 test('the specific tokens that leaked before are omitted', () => {
   // Flow.shareToken is the sharp one: live, non-expiring, and it opens the flow
   // from another workspace — or with no session when shareAnonymous is set.
-  for (const key of ['shareToken', 'verificationToken', 'triggerSecret', 'resumeTokenHash', 'tokenHash', 'secretConfig']) {
+  for (const key of ['shareToken', 'shareTokenDigest', 'verificationToken', 'triggerSecret', 'resumeTokenHash', 'tokenHash', 'secretConfig']) {
     assert.equal(isOmittedExportKey(key), true, `${key} must never be exported`)
   }
 })

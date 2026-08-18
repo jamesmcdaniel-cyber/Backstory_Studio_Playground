@@ -177,6 +177,59 @@ TEST_DATABASE_URL=postgresql://$USER@localhost:5432/rls_probe npm test
 The DB-backed suites create their own `NOBYPASSRLS` role and skip cleanly if the
 database forbids `CREATE ROLE`.
 
+### Next steps for the staging redo
+
+The production rollout described above was rolled back to a pre-hardening
+commit after three outages; it has not been re-attempted. This is the
+concrete checklist for redoing it in **staging** (never production first —
+see "What testing against a real database found" above for why a
+TypeScript-only check missed all three defects):
+
+1. **Env vars to set on the staging environment** (see `.env.example` for the
+   full comments):
+   - `SYSTEM_DATABASE_URL` — the privileged (owner) connection. Required
+     before touching `DATABASE_RLS_ENABLED` at all: `src/lib/prisma.ts`
+     refuses to boot if RLS is enabled and this is unset.
+   - `DATABASE_URL` — must be a distinct non-owner, `NOBYPASSRLS` role once
+     any model is staged (it can stay the owner role while
+     `DATABASE_RLS_ENABLED` is `false`/unset).
+   - `DATABASE_RLS_ENABLED` — start unset (`false`), then move to a short
+     comma-separated model list per step 2 below. Never start with `true`.
+2. **Probe the exact three defects this rollout is known to hit** before
+   staging real traffic, using the fixture the DB test suite itself uses:
+
+   ```bash
+   createdb rls_probe   # or point at a disposable staging database
+   DATABASE_URL=<staging non-owner role> \
+   SYSTEM_DATABASE_URL=<staging owner role> \
+   DATABASE_RLS_ENABLED=Flow \
+   RLS_PROBE_ORG=<a seeded staging organization id> \
+     npx tsx scripts/rls-staging-probe.ts
+   ```
+
+   This runs as its own process (module-init caching in `src/lib/prisma.ts`
+   means a same-process re-import can't be trusted) and prints one JSON line:
+   `stagedOwnTenant` (the staged model returns its own rows — defect-1-style
+   regressions show as this being wrong or throwing), `stagedForeignTenant`
+   (must be `0` — cross-tenant isolation on the staged model), `unstagedOwnTenant`
+   (an org-scoped model NOT in `DATABASE_RLS_ENABLED` — must still return data;
+   `0` here is defect 3 recurring), and `parentScopedNoContext` (must read
+   `"threw"` — a parent-scoped model queried outside `tenantTransaction` with
+   no context; `"returned N"` is defect 2 recurring). Treat anything other
+   than `{stagedForeignTenant: 0, unstagedOwnTenant: >0, parentScopedNoContext:
+   "threw"}` as a blocker, not a finding to fix later.
+3. **Suggested staging model order**: start with 1-2 low-traffic, low-blast-
+   radius models with NO parent-scoped dependents (avoid `Flow`/`FlowRun`
+   first, since `FlowRunStep` and other `RLS_PARENT_SCOPED_MODELS` resolve
+   tenancy through them and would immediately exercise defect 2 under load).
+   A model with few or no rows tied to `RLS_PARENT_SCOPED_MODELS` — check
+   `src/lib/authz/rls-rollout.ts` for the current parent-scoped list — is the
+   safer first step; expand to `Flow`/`FlowRun` only after the parent-scoped
+   guard has been observed working under real staging traffic.
+4. Only after the probe is clean and a load test against staging shows no
+   pool-checkout regression (per step 3 of the Procedure above) does this
+   move toward production, following the same staged Procedure.
+
 ## 4. PostgREST exposure
 
 Migration `20260813120000_revoke_postgrest_grants` revokes all `anon` /

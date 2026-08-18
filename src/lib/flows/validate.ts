@@ -507,6 +507,45 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       if (node.data.bodyMode === 'form-urlencoded') {
         validateJsonObjectField(issues, node.data.body, `${nodeLabel(node)} form body must be a JSON object.`, node.id)
       }
+      // Multipart file attachments: only meaningful on a form-data body that is
+      // actually sent, and each binding must name a form field and point at data
+      // this graph can produce. A binding that can never resolve would post the
+      // request WITHOUT its file — caught here rather than at run time.
+      if (node.data.formFiles?.length) {
+        const seenFields = new Set<string>()
+        if (node.data.bodyMode !== 'form-data') {
+          add(issues, 'error', 'FILE_FIELD_NEEDS_FORM_DATA', `${nodeLabel(node)} attaches a file, which only works with a Form-Data (multipart) body — change the body type or remove the attachment.`, node.id)
+        }
+        if (node.data.sendBody === false) {
+          add(issues, 'error', 'FILE_FIELD_BODY_OFF', `${nodeLabel(node)} attaches a file but does not send a body — turn Send body on or remove the attachment.`, node.id)
+        }
+        if (['GET', 'HEAD'].includes(node.data.method)) {
+          add(issues, 'error', 'FILE_FIELD_NO_BODY_METHOD', `${nodeLabel(node)} attaches a file, but ${node.data.method} requests send no body — use POST, PUT, or PATCH.`, node.id)
+        }
+        for (const binding of node.data.formFiles) {
+          const field = binding.field.trim()
+          const source = binding.source.trim()
+          if (!field) {
+            add(issues, 'error', 'FILE_FIELD_NO_NAME', `${nodeLabel(node)} has a file attachment with no form field name — name the field the API expects.`, node.id)
+          } else if (seenFields.has(field)) {
+            add(issues, 'error', 'FILE_FIELD_DUPLICATE', `${nodeLabel(node)} attaches two files to the same form field "${field}" — give each attachment its own field name.`, node.id)
+          } else {
+            seenFields.add(field)
+          }
+          if (!source) {
+            add(issues, 'error', 'FILE_FIELD_NO_SOURCE', `${nodeLabel(node)} has a file attachment with nothing chosen to attach — pick the step that produces the file.`, node.id)
+            continue
+          }
+          if (source.includes('{{') || source.includes('}}')) {
+            add(issues, 'error', 'FILE_FIELD_BAD_SOURCE', `${nodeLabel(node)} has a file attachment that was typed rather than picked — choose the file from the data menu.`, node.id)
+            continue
+          }
+          const stepMatch = /^step\.([^.]+)/.exec(source)
+          if (stepMatch && !byId.has(stepMatch[1])) {
+            add(issues, 'error', 'FILE_FIELD_UNKNOWN_STEP', `${nodeLabel(node)} attaches a file from a step that no longer exists — re-pick the file from the data menu.`, node.id)
+          }
+        }
+      }
       if ((node.data.bodyMode ?? 'json') !== 'none' && ['GET', 'HEAD'].includes(node.data.method) && node.data.body?.trim()) {
         add(issues, 'warning', 'HTTP_BODY_IGNORED', `${nodeLabel(node)} will not send a body for ${node.data.method}.`, node.id)
       }

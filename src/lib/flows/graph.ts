@@ -261,6 +261,24 @@ const httpNode = z.object({
     body: z.string().optional(),
     cookie: z.string().optional(),
     bodyMode: z.enum(['json', 'raw', 'graphql', 'form-urlencoded', 'form-data', 'text', 'none']).optional(),
+    /**
+     * Multipart file attachments (form-data bodies only). Each entry binds a
+     * form field name to flow data that carries a file reference — the file a
+     * previous step produced or downloaded. At run time the interpreter
+     * resolves the source and merges the reference into the body, and the HTTP
+     * adapter posts the real bytes with the file's filename and content-type.
+     * `source` is a bare context path (no braces): the builder picks it, the
+     * user never types token syntax.
+     */
+    formFiles: z
+      .array(
+        z.object({
+          field: z.string().min(1).max(200),
+          source: z.string().min(1).max(500),
+        }),
+      )
+      .max(10)
+      .optional(),
     contentType: z.string().optional(),
     // 'file' downloads the response body to a stored file and outputs a file
     // reference ({ fileId, filename, url, content? }) instead of the parsed body.

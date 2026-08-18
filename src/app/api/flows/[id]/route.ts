@@ -1,6 +1,6 @@
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
-import { resolveFlowRole } from '@/lib/flows/access'
+import { resolveFlowRole, shareTokenMatches } from '@/lib/flows/access'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { recordAudit } from '@/lib/audit'
 
@@ -28,13 +28,13 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     // dead — they already hold a token, so this leaks nothing new, and it's the
     // only way rotation is comprehensible. Everyone else gets a plain 404 that
     // can't distinguish "missing" from "not yours".
-    if (token && token !== flow.shareToken) {
+    if (token && !shareTokenMatches(token, flow.shareTokenDigest)) {
       throw new ApiError('This share link is no longer valid.', 404, 'SHARE_LINK_INVALID')
     }
     throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   }
   const external = flow.organizationId !== auth.organizationId
-  if (external && !flow.collaborators.length && token && token === flow.shareToken) {
+  if (external && !flow.collaborators.length && shareTokenMatches(token, flow.shareTokenDigest)) {
     // Acceptance: the durable grant. Idempotent — re-opens never duplicate.
     await prisma.flowCollaborator.upsert({
       where: { flowId_userId: { flowId: flow.id, userId: auth.dbUser.id } },

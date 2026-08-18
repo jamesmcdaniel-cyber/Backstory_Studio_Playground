@@ -108,11 +108,17 @@ export function normalizeAiEgressPolicy(value: string | null | undefined): AiEgr
   return value === 'blocked' ? 'blocked' : 'allowed'
 }
 
+/**
+ * The one refusal sentence. Shared so the thrown error, the API response and the
+ * failed flow step all read identically — a person who hits this on an agent run
+ * and again in the copilot must not have to work out that it is the same switch.
+ */
+export const AI_EGRESS_BLOCKED_MESSAGE =
+  'This workspace has AI processing disabled by policy. An administrator can turn it back on in Settings → Enterprise security.'
+
 export class AiEgressBlockedError extends Error {
   constructor() {
-    super(
-      'This workspace has AI processing disabled by policy. An administrator can change this in workspace settings.',
-    )
+    super(AI_EGRESS_BLOCKED_MESSAGE)
     this.name = 'AiEgressBlockedError'
   }
 }

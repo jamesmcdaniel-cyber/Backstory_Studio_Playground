@@ -1,3 +1,4 @@
+import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { ApiError } from '@/lib/server/api-handler'
 
 /**
@@ -24,9 +25,22 @@ export type FlowRoleInput = {
   organizationId: string
   visibility: string
   userId: string | null
-  shareToken?: string | null
+  /** SHA-256 of the live share token; the plaintext is never stored. */
+  shareTokenDigest?: string | null
   shareRole?: string | null
   collaboratorRole?: string | null
+}
+
+/**
+ * Does the presented raw token match the flow's stored digest?
+ *
+ * Hash-then-compare, in constant time. The digest is what the database holds,
+ * so a leaked row cannot be replayed as a link, and the comparison cannot be
+ * used to walk the token a byte at a time.
+ */
+export function shareTokenMatches(presented: string | null | undefined, digest: string | null | undefined): boolean {
+  if (!presented || !digest) return false
+  return timingSafeEqualHex(hashToken(presented), digest)
 }
 
 /**
@@ -50,6 +64,6 @@ export function resolveFlowRole(
     return 'edit'
   }
   if (flow.collaboratorRole === 'edit' || flow.collaboratorRole === 'view') return flow.collaboratorRole
-  if (shareToken && flow.shareToken && shareToken === flow.shareToken) return flow.shareRole === 'edit' ? 'edit' : 'view'
+  if (shareTokenMatches(shareToken, flow.shareTokenDigest)) return flow.shareRole === 'edit' ? 'edit' : 'view'
   return null
 }

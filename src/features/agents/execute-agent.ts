@@ -46,7 +46,7 @@ import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { shouldStrategize, goalSection, strategizeSection, STRATEGIZE_RETRIEVAL } from './strategy'
 import { applyToolPolicy, describeToolPolicy, type ToolPolicy } from '@/lib/agents/tool-policy'
 import { isGuardrailRefusal } from '@/lib/security/guardrails'
-import { recordPiiEgress } from '@/lib/usage/ai-guard'
+import { aiEgressRefusal, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent, scanToolResultForInjection } from '@/lib/security/tool-call-guard'
 
 export type AgentExecutionJob = {
@@ -780,6 +780,21 @@ async function runAgentExecutionInner(
         `Monthly token budget reached for this workspace (${budget.used.toLocaleString()}/${budget.limit.toLocaleString()} tokens). Raise AGENT_MONTHLY_TOKEN_LIMIT or wait for the next cycle.`,
       )
     }
+
+    // The workspace AI opt-out, enforced BEFORE any prompt is built — this is
+    // the highest-volume path by which tenant data reaches a model provider, and
+    // recording what crossed (below) is not a substitute for not sending it.
+    // Throwing lands in this function's failure handler, so the run finalizes as
+    // failed with this exact sentence and the owner is notified, same as any
+    // other pre-flight refusal.
+    const egressRefusal = await aiEgressRefusal({
+      organizationId,
+      userId,
+      surface: 'agent.run',
+      resourceType: 'agent_execution',
+      resourceId: execution.id,
+    })
+    if (egressRefusal) throw egressRefusal
 
     // Typed connector bindings gate tool loading; falls back to
     // metadata.integrations for agents created before the FK existed.

@@ -50,6 +50,7 @@ export function JamDialog({
   selfClientId,
   capture,
   shareToken,
+  shareEnabled,
   shareRole,
   shareAnonymous,
   anonymousViews,
@@ -86,7 +87,13 @@ export function JamDialog({
   /** Huddle-notes capture (consent, session, upload state). */
   capture?: HuddleCapture
   /** Cross-workspace share link state (same-org editors only). */
+  /** The RAW token — present only in the session that just minted or rotated
+   *  it. The server stores a digest and returns the plaintext exactly once, so
+   *  a reload leaves this null with the link still live. */
   shareToken?: string | null
+  /** Whether a share link is currently live. Drives the audience chips, which
+   *  must stay correct after a reload has dropped the raw token. */
+  shareEnabled?: boolean
   shareRole?: 'view' | 'edit'
   /** Link opens without signing in (always read-only). */
   shareAnonymous?: boolean
@@ -94,6 +101,7 @@ export function JamDialog({
   anonymousViews?: number
   onShareChanged?: (
     token: string | null,
+    enabled: boolean,
     role: 'view' | 'edit',
     anonymous: boolean,
     anonymousViews: number,
@@ -114,9 +122,16 @@ export function JamDialog({
     : `/flows/${flowId}`
   // The anonymous link is a DIFFERENT address on purpose: it opens the public
   // read-only page, never the builder, so the two can't be confused.
+  //
+  // Both links can only be spelled out while we still hold the raw token — the
+  // one this session minted. After a reload the link is still live but
+  // unrecoverable (the server keeps only its digest), so the UI says so and
+  // offers a rotate rather than showing a URL it cannot complete.
   const publicLink = typeof window !== 'undefined' && shareToken
     ? `${window.location.origin}/share/flow/${shareToken}`
     : ''
+  /** A live link whose plaintext this session doesn't have. */
+  const linkLiveButUnrecoverable = Boolean(shareEnabled) && !shareToken
   const [copiedPublic, setCopiedPublic] = useState(false)
   const copyPublic = async () => {
     try {
@@ -255,6 +270,7 @@ export function JamDialog({
       }
       onShareChanged?.(
         data.shareToken ?? null,
+        Boolean(data.shareEnabled),
         data.shareRole === 'edit' ? 'edit' : 'view',
         Boolean(data.shareAnonymous),
         Number(data.anonymousViews ?? 0),
@@ -323,7 +339,7 @@ export function JamDialog({
   }
 
   // The link's current audience, as one value the chip row can render.
-  const audience: (typeof AUDIENCES)[number]['key'] = !shareToken
+  const audience: (typeof AUDIENCES)[number]['key'] = !shareEnabled
     ? 'workspace'
     : (shareRole ?? 'view') === 'edit'
       ? 'anyone-edit'
@@ -458,7 +474,7 @@ export function JamDialog({
                       {option.label}
                     </button>
                   ))}
-                  {shareToken && (
+                  {shareEnabled && (
                     <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs" disabled={shareBusy} onClick={() => void updateShare(true, shareRole ?? 'view', true)}>
                       <RefreshCw className="mr-1 h-3 w-3" /> Rotate
                     </Button>
@@ -466,12 +482,18 @@ export function JamDialog({
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                {shareToken
+                {shareEnabled
                   ? `Anyone with this link can sign in and ${shareRole === 'edit' ? 'edit' : 'view and run'} this flow. Rotating makes old links stop working; people who already accepted keep access until you remove them.`
                   : 'Only people in your workspace can open this link.'}
               </p>
+              {linkLiveButUnrecoverable && (
+                <p className="text-xs text-muted-foreground">
+                  The link is live, but it’s only shown once when it’s created — we don’t keep a copy. Rotate to
+                  get a new one (which stops the old link working).
+                </p>
+              )}
 
-              {canEdit && shareToken && (
+              {canEdit && shareEnabled && (
                 <>
                   <div className="space-y-1.5 rounded-lg border border-border/60 p-2.5">
                     <div className="flex items-center justify-between gap-2">
@@ -489,13 +511,19 @@ export function JamDialog({
                           Anyone with the link sees a read-only picture of the steps — no settings, connected
                           accounts, prompts or run history, and they can never edit or run it.
                         </p>
-                        <div className="flex items-center gap-1.5 rounded-md bg-muted/50 py-1 pl-2.5 pr-1">
-                          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{publicLink}</span>
-                          <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs" onClick={copyPublic}>
-                            {copiedPublic ? <Check className="mr-1 h-3 w-3 text-green-600" /> : <Copy className="mr-1 h-3 w-3" />}
-                            {copiedPublic ? 'Copied' : 'Copy'}
-                          </Button>
-                        </div>
+                        {publicLink ? (
+                          <div className="flex items-center gap-1.5 rounded-md bg-muted/50 py-1 pl-2.5 pr-1">
+                            <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{publicLink}</span>
+                            <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs" onClick={copyPublic}>
+                              {copiedPublic ? <Check className="mr-1 h-3 w-3 text-green-600" /> : <Copy className="mr-1 h-3 w-3" />}
+                              {copiedPublic ? 'Copied' : 'Copy'}
+                            </Button>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            The public link is live. Rotate above to get a fresh copy of it.
+                          </p>
+                        )}
                         <p className="text-xs text-muted-foreground">
                           {anonymousViews
                             ? `Opened ${anonymousViews} time${anonymousViews === 1 ? '' : 's'} without signing in.`

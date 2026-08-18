@@ -283,6 +283,7 @@ const SKIPS: Record<string, string> = {
   'organizations/scim-tokens:POST': 'returns a one-time plaintext bearer token; covered by SCIM service tests',
   'organizations/scim-tokens:DELETE': 'credential lifecycle; covered by SCIM service tests',
   'organizations/security:PATCH': 'changes MFA/SSO enforcement; covered by the enterprise policy tests',
+  'organizations/ai-policy:PATCH': 'switches the workspace AI opt-out for everyone; covered by organizations/ai-policy/__tests__/route.test.ts',
   // Reviewer-only, like the catalogue routes: the smoke org holds no
   // catalogue.review permission so these correctly 403 without reaching the
   // handler body. The security-critical logic (domain normalization, the

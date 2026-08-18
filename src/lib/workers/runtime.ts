@@ -1,6 +1,6 @@
 import 'dotenv/config'
-import Fastify from 'fastify'
-import { Worker, type Processor } from 'bullmq'
+import Fastify, { type FastifyInstance } from 'fastify'
+import { Worker, type Processor, type WorkerOptions } from 'bullmq'
 import { executeAgentJob } from '@/features/agents/execute-agent'
 import { executeFlowJob } from '@/features/flows/execute-flow'
 import { getRedisConnection, QUEUE_NAMES, workerConfig } from '@/lib/queue/config'
@@ -23,16 +23,29 @@ import { isCustomerEdition } from '@/lib/edition'
  */
 const DISPATCH_TICK_INTERVAL_MS = 60_000
 
-class WorkerRuntime {
-  private server = Fastify({ logger: true })
-  private scheduleTimer?: NodeJS.Timeout
-  private outboxTimer?: NodeJS.Timeout
-  private heartbeatTimer?: NodeJS.Timeout
-  private dispatchTimer?: NodeJS.Timeout
-  // handler is typed as the generic BullMQ Processor so this array (mixing
-  // the agent- and flow-job handler signatures) unifies to one element type —
-  // each queue is still wired to its own correctly-typed handler at runtime.
-  private workerSpecs: { queue: string; handler: Processor<any, any, string>; onFailed: (job: any, error: Error) => void }[] = [
+/**
+ * One queue this process consumes: which queue, what runs a job, and where a
+ * terminal failure is recorded. `handler` is typed as the generic BullMQ
+ * Processor so the array (mixing the agent- and flow-job handler signatures)
+ * unifies to one element type — each queue is still wired to its own
+ * correctly-typed handler at runtime.
+ */
+export interface WorkerSpec {
+  queue: string
+  handler: Processor<any, any, string>
+  onFailed: (job: any, error: Error) => void
+}
+
+/**
+ * The consumer topology, as a pure function of the edition.
+ *
+ * Extracted from the class (it used to be a field initializer) purely so the
+ * registration decision is assertable without a Redis connection — which queues
+ * this process consumes, and that each is paired with the dead-letter target
+ * that owns the right table, is exactly the wiring an outage turns on.
+ */
+export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerSpec[] {
+  return [
     { queue: QUEUE_NAMES.AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.AGENT_EXECUTION) },
     { queue: QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION) },
     // Flow execution: same worker pool, its own queue and dead-letter target
@@ -42,7 +55,7 @@ class WorkerRuntime {
     // dead-letter terminalizes nothing (generation is additive) — see
     // template-generation-dead-letter.ts. Absent entirely in the customer
     // edition, which never enqueues this job.
-    ...(isCustomerEdition()
+    ...(customerEdition
       ? []
       : [{
           queue: QUEUE_NAMES.TEMPLATE_GENERATION,
@@ -50,11 +63,60 @@ class WorkerRuntime {
           onFailed: deadLetterFromTemplateGenerationJob(QUEUE_NAMES.TEMPLATE_GENERATION),
         }]),
   ]
-  private workers = this.workerSpecs.map(
-    (spec) => new Worker(spec.queue, spec.handler, { ...workerConfig, connection: getRedisConnection() }),
-  )
+}
 
-  constructor() {
+/** The subset of a BullMQ Worker this runtime drives. */
+export interface WorkerHandle {
+  isRunning: () => boolean
+  on: (event: 'failed', listener: (job: any, error: Error) => void) => unknown
+  close: () => Promise<unknown>
+}
+
+/**
+ * Injectable seams. Production uses the defaults; tests substitute the Redis
+ * and process edges so the wiring above can be asserted without booting real
+ * workers (same pattern as dead-letter.ts's DeadLetterDeps).
+ */
+export interface WorkerRuntimeDeps {
+  specs: WorkerSpec[]
+  createServer: () => FastifyInstance
+  createWorker: (queue: string, handler: Processor<any, any, string>, options: WorkerOptions) => WorkerHandle
+  /** Resolves the shared Redis client — used for the health check's PING. */
+  connection: () => { ping: () => Promise<string> }
+  /** Signal registration, so a test can drive shutdown without touching process. */
+  onSignal: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => void
+  exit: (code: number) => void
+}
+
+function defaultDeps(): WorkerRuntimeDeps {
+  return {
+    specs: buildWorkerSpecs(),
+    createServer: () => Fastify({ logger: true }),
+    createWorker: (queue, handler, options) => new Worker(queue, handler, options) as unknown as WorkerHandle,
+    connection: () => getRedisConnection(),
+    onSignal: (signal, handler) => { process.on(signal, handler) },
+    exit: (code) => process.exit(code),
+  }
+}
+
+class WorkerRuntime {
+  private deps: WorkerRuntimeDeps
+  private server: FastifyInstance
+  private scheduleTimer?: NodeJS.Timeout
+  private outboxTimer?: NodeJS.Timeout
+  private heartbeatTimer?: NodeJS.Timeout
+  private dispatchTimer?: NodeJS.Timeout
+  private workerSpecs: WorkerSpec[]
+  private workers: WorkerHandle[]
+
+  constructor(deps: Partial<WorkerRuntimeDeps> = {}) {
+    this.deps = { ...defaultDeps(), ...deps }
+    this.server = this.deps.createServer()
+    this.workerSpecs = this.deps.specs
+    this.workers = this.workerSpecs.map((spec) =>
+      this.deps.createWorker(spec.queue, spec.handler, { ...workerConfig, connection: this.deps.connection() as never }),
+    )
+
     // Real readiness: reflect that the workers are running AND Redis is
     // reachable. A dead Redis connection means the worker consumes nothing —
     // returning 503 lets Docker's healthcheck/restart policy recycle it instead
@@ -63,7 +125,7 @@ class WorkerRuntime {
       const running = this.workers.every((worker) => worker.isRunning())
       let redis = false
       try {
-        redis = (await getRedisConnection().ping()) === 'PONG'
+        redis = (await this.deps.connection().ping()) === 'PONG'
       } catch {
         redis = false
       }
@@ -76,25 +138,36 @@ class WorkerRuntime {
         uptime: process.uptime(),
       }
     })
-    // Failed jobs are dead-lettered (durable, inspectable) — see workerSpecs
+    // Failed jobs are dead-lettered (durable, inspectable) — see buildWorkerSpecs
     // above for the per-queue handler (agent vs. flow target different tables).
     this.workers.forEach((worker, index) => worker.on('failed', this.workerSpecs[index].onFailed))
     this.setupShutdown()
   }
 
+  /** The queues this process consumes. Exposed for boot logging and tests. */
+  get queues(): string[] {
+    return this.workerSpecs.map((spec) => spec.queue)
+  }
+
+  /**
+   * Stop every timer, the HTTP server and every worker, flush error reporting,
+   * then exit. Public so shutdown is testable without raising a real signal.
+   */
+  async shutdown(): Promise<void> {
+    if (this.scheduleTimer) clearInterval(this.scheduleTimer)
+    if (this.outboxTimer) clearInterval(this.outboxTimer)
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
+    if (this.dispatchTimer) clearInterval(this.dispatchTimer)
+    await this.server.close()
+    await Promise.all(this.workers.map((worker) => worker.close()))
+    await flushErrorReporting()
+    this.deps.exit(0)
+  }
+
   private setupShutdown() {
-    const shutdown = async () => {
-      if (this.scheduleTimer) clearInterval(this.scheduleTimer)
-      if (this.outboxTimer) clearInterval(this.outboxTimer)
-      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer)
-      if (this.dispatchTimer) clearInterval(this.dispatchTimer)
-      await this.server.close()
-      await Promise.all(this.workers.map((worker) => worker.close()))
-      await flushErrorReporting()
-      process.exit(0)
-    }
-    process.on('SIGINT', shutdown)
-    process.on('SIGTERM', shutdown)
+    const shutdown = () => { void this.shutdown() }
+    this.deps.onSignal('SIGINT', shutdown)
+    this.deps.onSignal('SIGTERM', shutdown)
   }
 
   async start(port = 3002) {
@@ -145,6 +218,10 @@ class WorkerRuntime {
       runDispatchTick().catch((error) => this.server.log.error(error, 'Dispatch tick failed'))
     }, DISPATCH_TICK_INTERVAL_MS)
     await this.server.listen({ port, host: '0.0.0.0' })
+    // Boot marker: names the consumed queues on one line, so `fly logs` (and
+    // the CI worker smoke step) can prove the topology this build registered
+    // rather than inferring it from silence.
+    this.server.log.info(`worker ready: consuming ${this.queues.join(', ')}`)
   }
 }
 

@@ -6,7 +6,7 @@ import { qwenClient, qwenModel } from '@/lib/llm/qwen'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { executionVisibilityScope } from '@/lib/server/visibility'
 import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
-import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
+import { assertAiCallAllowed, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 
 // The run record folded into the prompt below carries whatever the agent's
@@ -40,6 +40,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     '',
     fenceUntrusted('agent run record', JSON.stringify(run)),
   ].join('\n')
+
+  // Recorded here rather than at the shared structured-call seam in
+  // lib/llm/model-runner.ts, which records for every other interactive endpoint:
+  // this one calls the Messages API directly and so never passes through it.
+  void recordPiiEgress({ organizationId: auth.organizationId, userId: auth.dbUser.id, surface: 'run.chat', text: prompt })
 
   // Both endpoints speak the Anthropic Messages API. Prefer Claude when its key
   // is present; otherwise use Qwen (DashScope's Anthropic-compatible endpoint).

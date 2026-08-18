@@ -50,12 +50,11 @@ const CLASSIFIED: Record<string, Classification> = {
   'Invitation.tokenHash': 'hash',
   'OrganizationDomain.verificationTokenHash': 'hash',
   'ScimToken.tokenHash': 'hash',
+  // The anonymous/cross-workspace share link IS the credential, so only its
+  // digest is stored; the raw token is returned once, from the mint response.
+  'Flow.shareTokenDigest': 'hash',
 
   // ── Unguessable bearer values ────────────────────────────────────────────
-  // Flow.shareToken is a plaintext bearer value by design — the anonymous share
-  // link IS the credential. Treating the URL and DB access as credential-bearing
-  // is the accepted trade-off; a hashed lookup digest remains a P2 follow-on.
-  'Flow.shareToken': 'capability',
   // Published to the workspace admin who must place it in DNS to prove control.
   'OrganizationDomain.verificationToken': 'capability',
 

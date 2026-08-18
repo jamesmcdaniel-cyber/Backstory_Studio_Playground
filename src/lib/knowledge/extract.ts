@@ -2,8 +2,11 @@
  * Text extraction + chunking for uploaded knowledge files: text-based formats
  * (plain text, markdown, csv/tsv, json, yaml, xml, html, common source code)
  * decode directly; PDFs extract via unpdf (pure-JS pdf.js build, serverless-
- * safe). DOCX still needs a parser and is rejected with a clear message.
+ * safe); DOCX goes through the dependency-free reader in ./docx (ZIP entry +
+ * WordprocessingML walk), which rejects corrupt/encrypted files outright.
  */
+
+import { extractDocxText, isDocx } from './docx'
 
 const CODE_EXT =
   /\.(md|markdown|txt|text|csv|tsv|json|jsonl|ya?ml|xml|html?|log|js|ts|tsx|jsx|py|rb|go|java|kt|c|cc|cpp|h|hpp|cs|php|rs|swift|sh|bash|sql|css|scss|less|toml|ini|env)$/i
@@ -15,6 +18,7 @@ function isPdf(mimeType: string, filename: string): boolean {
 /** Whether a file can be extracted to text. */
 export function isSupported(mimeType: string, filename: string): boolean {
   if (isPdf(mimeType, filename)) return true
+  if (isDocx(mimeType, filename)) return true
   if (/^text\//i.test(mimeType)) return true
   if (/^application\/(json|xml|csv|markdown|x-yaml|yaml|xhtml\+xml|javascript|sql)/i.test(mimeType)) return true
   return CODE_EXT.test(filename)
@@ -53,6 +57,10 @@ export async function extractTextAuto(buffer: Buffer, mimeType: string, filename
 
 /** Decode a file's bytes to normalized text (stripping HTML markup when present). */
 export function extractText(buffer: Buffer, mimeType: string, filename: string): string {
+  // DOCX is binary, so it never goes through the utf-8 decode below. A corrupt
+  // or password-protected file throws DocxExtractionError rather than returning
+  // the mojibake a raw decode would produce.
+  if (isDocx(mimeType, filename)) return extractDocxText(buffer)
   let text = buffer.toString('utf-8')
   if (/html/i.test(mimeType) || /\.html?$/i.test(filename)) text = stripHtml(text)
   return text.split(NULL_CHAR).join('').replace(/\r\n/g, '\n').trim()

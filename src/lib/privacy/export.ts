@@ -9,7 +9,9 @@ import { readStoredFile } from '@/lib/files/storage'
  * hand-kept denylist fails: `Flow.shareToken` — a live, non-expiring token that
  * opens a flow from ANOTHER workspace, or with no session at all — was never on
  * it, so every export shipped working share links while its own manifest said
- * `secretsIncluded: false`. `AgentTask.metadata.triggerSecret` and
+ * `secretsIncluded: false`. (That column now stores a digest, and its successor
+ * `shareTokenDigest` is listed below for the same reason: a digest is still a
+ * credential-shaped value nobody is owed in an export.) `AgentTask.metadata.triggerSecret` and
  * `OrganizationDomain.verificationToken` had the same gap.
  *
  * The convention rule below is what actually holds the line now; this set
@@ -18,7 +20,7 @@ import { readStoredFile } from '@/lib/files/storage'
 const OMIT_KEYS = new Set([
   'tokenHash', 'keyHash', 'verificationTokenHash', 'peopleAiWebhookSecret',
   'secretConfig', 'authConfig', 'accessToken', 'refreshToken', 'apiKey',
-  'webhookSecretHash', 'shareToken', 'verificationToken', 'resumeTokenHash',
+  'webhookSecretHash', 'shareTokenDigest', 'verificationToken', 'resumeTokenHash',
   'triggerSecret',
 ])
 

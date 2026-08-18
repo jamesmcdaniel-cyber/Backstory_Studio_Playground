@@ -228,6 +228,7 @@ if (TEST_DB) {
     { name: 'GET /api/flows/[id]/export', run: async () => (await import('../flows/[id]/export/route')).GET(req(`/api/flows/${flowId}/export`)) },
     { name: 'GET /api/organizations/scim-tokens', run: async () => (await import('../organizations/scim-tokens/route')).GET(req('/api/organizations/scim-tokens')) },
     { name: 'GET /api/organizations/security', run: async () => (await import('../organizations/security/route')).GET(req('/api/organizations/security')) },
+    { name: 'GET /api/organizations/ai-policy', run: async () => (await import('../organizations/ai-policy/route')).GET(req('/api/organizations/ai-policy')) },
     { name: 'GET /api/privacy/export', run: async () => (await import('../privacy/export/route')).GET(req('/api/privacy/export')) },
   ]
 
@@ -267,6 +268,10 @@ if (TEST_DB) {
     // Operator-only, so the smoke org gets a 403 by design. Covered instead by
     // admin/__tests__/users-route.db.test.ts, which seeds a real operator.
     { route: 'admin/users', reason: 'operator-only — 403 for the smoke org by design' },
+    // Reads the caller's factors through the Supabase service-role admin API,
+    // which is unreachable here. Covered against the seam (both refusals and
+    // the audit row) in auth/__tests__/mfa-factors-route.db.test.ts.
+    { route: 'auth/mfa/factors', reason: 'needs the Supabase admin API — driven through its seam in a dedicated test' },
   ]
 
   // Completeness self-check: enumerate every route.ts whose GET is wrapped in

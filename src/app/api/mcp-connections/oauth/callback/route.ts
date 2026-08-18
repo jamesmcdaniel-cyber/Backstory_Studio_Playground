@@ -25,6 +25,18 @@ import { bustBackstoryReadyCache } from '@/lib/mcp/backstory-connection'
 import { verifyMcpConfig } from '@/lib/mcp/verify-connection'
 import { recordCredentialGrant, recordCredentialRotation, normalizeScopes } from '@/lib/credentials/audit'
 import { reviewScopes, scopeViolationMessage } from '@/lib/credentials/scopes'
+import { rateLimit } from '@/lib/ratelimit'
+import { clientIp } from '@/lib/security/events'
+
+/**
+ * Per-IP admission gate. The third-party redirect that lands here is reachable
+ * by anyone, and the handler decrypts a cookie, exchanges a code with a remote
+ * token endpoint, and writes credential rows. A person finishes this flow a
+ * handful of times a day; the cap sits far above that and still ends flooding.
+ * Fails closed — an uncapped unauthenticated path into token exchange is worse
+ * than a consent click that has to be repeated.
+ */
+const CALLBACK_LIMIT = { limit: 30, windowMs: 60_000, failureMode: 'closed' } as const
 
 interface OAuthCookiePayload {
   state: string
@@ -52,6 +64,13 @@ function redirect(request: NextRequest, query: string, clearCookie = false) {
 }
 
 export async function GET(request: NextRequest) {
+  const limited = await rateLimit(`mcp-oauth-callback:${clientIp(request)}`, CALLBACK_LIMIT)
+  if (!limited.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'retry-after': String(Math.ceil((limited.retryAfterMs ?? 1_000) / 1_000)) } },
+    )
+  }
   const code = request.nextUrl.searchParams.get('code')
   const state = request.nextUrl.searchParams.get('state')
 

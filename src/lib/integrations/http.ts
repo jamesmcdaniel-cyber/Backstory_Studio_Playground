@@ -7,15 +7,17 @@
  * decrypted and applied here. The model never sees the secret and never needs
  * it in the agent's instructions — it just calls the URL.
  *
- * Safety: assertPublicUrl blocks private/internal targets (SSRF), redirects are
- * refused (they could bypass the check), one attempt is capped at 30s, and the
+ * Safety: fetchPublicUrl blocks private/internal targets (SSRF) and pins the
+ * validated address into the connection so DNS cannot rebind between the check
+ * and the socket, redirects are refused (they could bypass the check), one
+ * attempt is capped at 30s, and the
  * response body is truncated so a huge payload can't blow the context window.
  */
 
 import type { ToolDefinition } from '@/lib/llm/model-runner'
 import { prisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
-import { assertPublicUrl } from '@/lib/net/ssrf'
+import { fetchPublicUrl } from '@/lib/net/ssrf'
 import { readResponseTextLimited } from '@/lib/net/response-body'
 import { applyHttpCredential, resolveHttpCredential, resolveHttpConnectionToken } from '@/features/flows/http-auth'
 import {
@@ -158,7 +160,6 @@ export class HttpToolClient {
     bearerToken?: string
   }): Promise<unknown> {
     const { url, method, body } = params
-    await assertPublicUrl(url)
     const headers: Record<string, string> = { accept: 'application/json, text/plain;q=0.9, */*;q=0.8', ...params.headers }
     if (body && !headers['content-type']) headers['content-type'] = 'application/json'
 
@@ -182,7 +183,14 @@ export class HttpToolClient {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS)
     try {
-      const response = await fetch(request.url, { ...request.init, signal: controller.signal, redirect: 'error' })
+      // fetchPublicUrl runs the SSRF guard and pins the validated address into
+      // the connection; maxRedirects 0 keeps the previous `redirect: 'error'`
+      // contract (a redirect is refused, never followed).
+      const response = await fetchPublicUrl(
+        request.url,
+        { ...request.init, signal: controller.signal },
+        { maxRedirects: 0 },
+      )
       const text = (await readResponseTextLimited(response, 250_000, 'HTTP tool response')).slice(0, MAX_RESPONSE_CHARS)
       return { status: response.status, ok: response.ok, body: text, authenticated: Boolean(credential || params.bearerToken) }
     } finally {

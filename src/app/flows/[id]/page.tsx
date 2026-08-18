@@ -259,7 +259,11 @@ function FlowBuilder() {
   const [ownerId, setOwnerId] = useState<string | null>(null)
   // Cross-workspace guest? (UI hides run/publish/settings; server enforces.)
   const [external, setExternal] = useState(false)
+  // The RAW share token exists only in the session that minted it — the server
+  // stores a digest and returns the plaintext once. `shareEnabled` is the
+  // durable fact (a link is live) that survives a reload.
   const [shareToken, setShareToken] = useState<string | null>(null)
+  const [shareEnabled, setShareEnabled] = useState(false)
   const [shareAnonymous, setShareAnonymous] = useState(false)
   const [anonymousViews, setAnonymousViews] = useState(0)
   const [shareRole, setShareRole] = useState<'view' | 'edit'>('view')
@@ -426,7 +430,7 @@ function FlowBuilder() {
           setVisibility(flow.visibility ?? 'shared')
           setOwnerId(flow.ownerId ?? null)
           setExternal(Boolean(flow.external))
-          setShareToken(flow.shareToken ?? null)
+          setShareEnabled(Boolean(flow.shareEnabled))
           setShareRole(flow.shareRole === 'edit' ? 'edit' : 'view')
           setShareAnonymous(Boolean(flow.shareAnonymous))
           setAnonymousViews(Number(flow.anonymousViews ?? 0))
@@ -2947,11 +2951,15 @@ function FlowBuilder() {
         selfClientId={selfClientId}
         capture={huddleCapture}
         shareToken={shareToken}
+        shareEnabled={shareEnabled}
         shareRole={shareRole}
         shareAnonymous={shareAnonymous}
         anonymousViews={anonymousViews}
-        onShareChanged={(token, role, anonymous, views) => {
-          setShareToken(token)
+        onShareChanged={(token, enabled, role, anonymous, views) => {
+          // A mint/rotate hands back a fresh plaintext; a role or anonymity
+          // change hands back null and must NOT wipe the copy on screen.
+          if (token || !enabled) setShareToken(token)
+          setShareEnabled(enabled)
           setShareRole(role)
           setShareAnonymous(anonymous)
           setAnonymousViews(views)

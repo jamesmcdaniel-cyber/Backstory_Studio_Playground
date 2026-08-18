@@ -64,17 +64,27 @@ export async function recordTemplateGenerationDeadLetter(
   })
 }
 
+/** Pure field extraction — see dead-letter.ts's deadLetterInputFromJob. */
+export function templateGenerationDeadLetterInputFromJob(
+  queueName: string,
+  job: Job,
+  error: Error,
+): TemplateGenerationDeadLetterInput {
+  const data = (job.data ?? {}) as Record<string, unknown>
+  return {
+    queue: queueName,
+    jobId: job.id,
+    jobName: job.name,
+    organizationId: typeof data.organizationId === 'string' ? data.organizationId : undefined,
+    data: job.data,
+    error: error?.message || 'unknown error',
+  }
+}
+
 /** Wire onto a Worker's 'failed' event. */
 export function deadLetterFromTemplateGenerationJob(queueName: string) {
   return (job: Job | undefined, error: Error) => {
     if (!job) return
-    const data = (job.data ?? {}) as Record<string, unknown>
-    void recordTemplateGenerationDeadLetter({
-      queue: queueName,
-      jobId: job.id,
-      organizationId: typeof data.organizationId === 'string' ? data.organizationId : undefined,
-      data: job.data,
-      error: error?.message || 'unknown error',
-    })
+    void recordTemplateGenerationDeadLetter(templateGenerationDeadLetterInputFromJob(queueName, job, error))
   }
 }

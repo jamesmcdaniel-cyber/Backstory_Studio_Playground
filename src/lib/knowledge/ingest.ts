@@ -1,6 +1,7 @@
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedTexts, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { extractTextAuto, chunkText, isSupported } from './extract'
+import { DocxExtractionError } from './docx'
 import { Prisma } from '@prisma/client'
 
 // Bound the work per upload: cap extracted text and chunk count so one huge file
@@ -25,10 +26,19 @@ export async function ingestKnowledgeFile(params: {
 }) {
   if (!isSupported(params.mimeType, params.filename)) {
     throw new UnsupportedFileError(
-      'Unsupported file type. Upload PDF, text, markdown, CSV, JSON, HTML, or source files (DOCX support is coming).',
+      'Unsupported file type. Upload PDF, DOCX, text, markdown, CSV, JSON, HTML, or source files.',
     )
   }
-  const raw = await extractTextAuto(params.buffer, params.mimeType, params.filename)
+  // A file whose type we accept but whose bytes we cannot read (corrupt or
+  // password-protected DOCX, say) is rejected with the reader's own message —
+  // never ingested as a partial or empty document.
+  let raw: string
+  try {
+    raw = await extractTextAuto(params.buffer, params.mimeType, params.filename)
+  } catch (error) {
+    if (error instanceof DocxExtractionError) throw new UnsupportedFileError(error.message)
+    throw error
+  }
   if (!raw) throw new UnsupportedFileError('No readable text was found in that file.')
   const text = raw.slice(0, MAX_CHARS)
   const chunks = chunkText(text).slice(0, MAX_CHUNKS)

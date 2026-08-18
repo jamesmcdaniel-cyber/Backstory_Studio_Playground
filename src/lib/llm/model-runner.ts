@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { apiLogger } from '@/lib/logger'
 import { recordLlmCall } from '@/lib/usage/ledger'
+import { recordPiiEgress } from '@/lib/usage/ai-guard'
+import { ambientOrganization } from '@/lib/tenant-database-context'
 import { qwenClient, qwenConfigured, qwenModel } from './qwen'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import {
@@ -518,7 +520,40 @@ async function anthropicWireStructured(
     .join('')
 }
 
+/**
+ * Record what personal data a structured call is about to carry, for every
+ * caller of generateStructured at once.
+ *
+ * The interactive endpoints (both copilots, code-assist, the AI searches, the
+ * huddle summariser, agent draft, agent chat) all gate on assertAiCallAllowed
+ * and none of them recorded — so the compliance answer "which categories of PII
+ * went to which processor" covered agent and flow runs and silently omitted
+ * every prompt a person typed. Recording HERE rather than at each endpoint is
+ * the same reasoning as the fencing helper: the eleventh endpoint gets it by
+ * calling the shared function, not by remembering.
+ *
+ * The tenant comes from the ledger context when the caller threaded one, and
+ * otherwise from the ambient organization that withAuthenticatedApi establishes
+ * for the whole request (see lib/server/api-handler.ts). Callers with neither —
+ * scripts, the dev eval harness — are not recorded, exactly as they are not
+ * metered. Only the user message is scanned: the system prompt is our own text,
+ * and scanning it would report the platform's own words as customer PII.
+ */
+function recordStructuredEgress(opts: StructuredOpts): void {
+  const organizationId = opts.ledger?.organizationId ?? ambientOrganization.getStore()
+  if (!organizationId) return
+  void recordPiiEgress({
+    organizationId,
+    userId: opts.ledger?.userId ?? null,
+    // schemaName identifies the endpoint far better than 'structured' does —
+    // 'flow_edit_ops' and 'huddle_note' are different processors of PII.
+    surface: `llm.structured:${opts.schemaName}`,
+    text: opts.user,
+  })
+}
+
 export async function generateStructured(opts: StructuredOpts): Promise<string> {
+  recordStructuredEgress(opts)
   const overrideModel = opts.model?.trim() || undefined
   const effectiveDefaultModel = overrideModel || DEFAULT_AGENT_MODEL
   const order = structuredProviderOrder({

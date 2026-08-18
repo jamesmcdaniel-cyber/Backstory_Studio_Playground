@@ -21,27 +21,43 @@ import { createQueue, QUEUE_NAMES } from './config'
 export interface TemplateGenerationDeadLetterInput {
   queue: string
   jobId?: string
+  /** Original BullMQ job name, so an operator replay re-enqueues faithfully. */
+  jobName?: string
   organizationId?: string
   data: unknown
   error: string
 }
 
+/** Injectable seams — see dead-letter.ts for the pattern and rationale. */
+export interface TemplateGenerationDeadLetterDeps {
+  createQueue: typeof createQueue
+  logger: Pick<typeof apiLogger, 'error'>
+  capture: typeof captureError
+}
+
+const defaultDeps = (): TemplateGenerationDeadLetterDeps => ({
+  createQueue,
+  logger: apiLogger,
+  capture: captureError,
+})
+
 export async function recordTemplateGenerationDeadLetter(
   input: TemplateGenerationDeadLetterInput,
+  deps: TemplateGenerationDeadLetterDeps = defaultDeps(),
 ): Promise<void> {
   // No run/proposal terminalization: a failed generation clobbers nothing (see
   // the file header) — we only make the failure durable + inspectable.
   try {
-    const dlq = createQueue(QUEUE_NAMES.TEMPLATE_GENERATION_DEAD_LETTER)
+    const dlq = deps.createQueue(QUEUE_NAMES.TEMPLATE_GENERATION_DEAD_LETTER)
     await dlq.add('dead-letter', input, { removeOnComplete: false, removeOnFail: false })
   } catch (error) {
-    apiLogger.error('failed to record template-generation dead letter', {
+    deps.logger.error('failed to record template-generation dead letter', {
       organizationId: input.organizationId,
       error: error instanceof Error ? error.message : String(error),
     })
   }
 
-  captureError(new Error(`template-generation job dead-lettered: ${input.error}`), {
+  deps.capture(new Error(`template-generation job dead-lettered: ${input.error}`), {
     queue: input.queue,
     jobId: input.jobId,
     organizationId: input.organizationId,

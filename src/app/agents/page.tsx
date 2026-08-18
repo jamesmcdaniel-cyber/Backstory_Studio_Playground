@@ -3,8 +3,9 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertCircle, Bot, FileText, List, Loader2, Play, Plus, Settings2, Sparkles, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Bot, FileText, List, Loader2, Play, Plus, Settings2, Sparkles, X } from 'lucide-react'
 import { AgentActivityPane, resultText } from './agent-activity-pane'
+import { AgentsGallery } from './agents-gallery'
 import { AgentConfigForm, type AgentDraft } from './agent-config-form'
 import { AssistantPanel } from './assistant-panel'
 import { Button } from '@/components/ui/button'
@@ -50,6 +51,9 @@ function AgentHQ() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
+  // The roster gallery is the landing view; the two-pane workspace opens when a
+  // card is clicked or a deep link (?agent=, ?run=) names an agent or run.
+  const [view, setView] = useState<'gallery' | 'workspace'>('gallery')
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [configureOpen, setConfigureOpen] = useState(false)
   const [focusRunId, setFocusRunId] = useState<string | null>(null)
@@ -180,11 +184,13 @@ function AgentHQ() {
     }
   }, [load])
 
-  // Land on the most recently updated agent unless a deep link already chose.
+  // The workspace never renders agent-less: if it's somehow entered without a
+  // selection (e.g. the selected agent was deleted), land on the most recently
+  // updated one. The gallery is the no-selection surface now.
   useEffect(() => {
-    if (loading || selectedAgentId) return
+    if (view !== 'workspace' || loading || selectedAgentId) return
     if (agents.length) setSelectedAgentId(agents[0].id)
-  }, [loading, agents, selectedAgentId])
+  }, [view, loading, agents, selectedAgentId])
 
   // Deep links from the command palette and sidebar: ?agent=<id|new>, ?run=<id>.
   useEffect(() => {
@@ -194,6 +200,7 @@ function AgentHQ() {
       setSelectedAgentId(NEW_AGENT)
       setConfigureOpen(false)
       setFocusRunId(null)
+      setView('workspace')
       router.replace('/agents')
       return
     }
@@ -202,6 +209,7 @@ function AgentHQ() {
       setSelectedAgentId(agentParam)
       setConfigureOpen(false)
       setFocusRunId(null)
+      setView('workspace')
       router.replace('/agents')
       return
     }
@@ -223,6 +231,7 @@ function AgentHQ() {
       if (activity.agentTaskId) setSelectedAgentId(activity.agentTaskId)
       setConfigureOpen(false)
       setFocusRunId(activity.id)
+      setView('workspace')
     }
     const activity = activities.find((candidate) => candidate.id === runParam)
     if (activity) {
@@ -294,6 +303,31 @@ function AgentHQ() {
       setSelectedAgentId(id)
       setConfigureOpen(false)
       setFocusRunId(null)
+    })
+  }
+
+  // Gallery → workspace transitions. No dirty guard needed here: the config
+  // form only exists inside the workspace, so the gallery can't be dirty.
+  const openAgentFromGallery = (id: string, configure = false) => {
+    setSelectedAgentId(id)
+    setConfigureOpen(configure)
+    setFocusRunId(null)
+    setView('workspace')
+  }
+  const createAgentFromGallery = () => {
+    setSelectedAgentId(NEW_AGENT)
+    setSetupMode('choice')
+    setConfigureOpen(false)
+    setFocusRunId(null)
+    setView('workspace')
+  }
+  const backToGallery = () => {
+    navigateWithDirtyGuard(() => {
+      setView('gallery')
+      setSelectedAgentId(null)
+      setConfigureOpen(false)
+      setFocusRunId(null)
+      setSelectedRun(null)
     })
   }
 
@@ -407,6 +441,48 @@ function AgentHQ() {
     }
   }
 
+  const authBanner = authError ? (
+    <div className="m-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div>
+        {authStatus === 401 ? (
+          <>
+            <p className="font-medium">You’re not signed in.</p>
+            <p className="mb-2 text-amber-800">This environment has no active session — sign in to load your workspace.</p>
+            <Button size="sm" onClick={() => router.push('/auth/login')}>Sign in</Button>
+          </>
+        ) : authStatus === 403 ? (
+          <>
+            <p className="font-medium">Your workspace is still provisioning.</p>
+            <p className="text-amber-800">Reload in a moment. If this persists, the database isn’t reachable for this environment.</p>
+          </>
+        ) : (
+          <>
+            <p className="font-medium">{authError}</p>
+            <p className="text-amber-800">The database or auth isn’t configured for this environment.</p>
+          </>
+        )}
+      </div>
+    </div>
+  ) : null
+
+  if (view === 'gallery') {
+    return (
+      <div className="h-full min-h-0 overflow-y-auto">
+        {authBanner}
+        {!authError && (
+          <AgentsGallery
+            agents={agents}
+            loading={loading}
+            onOpenAgent={(id) => openAgentFromGallery(id)}
+            onEditAgent={(id) => openAgentFromGallery(id, true)}
+            onCreateAgent={createAgentFromGallery}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     // h-full (the shell's content region), never min-h-screen/h-screen: this
     // page already sits inside a viewport-tall <main>, so a second 100vh claim
@@ -442,6 +518,16 @@ function AgentHQ() {
         <section className={cn('min-w-0 border-b bg-white lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r', mobilePane !== 'agent' && 'hidden lg:block')}>
           <div className="sticky top-0 z-10 border-b bg-white/80 p-4 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
             <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={backToGallery}
+                aria-label="Back to all agents"
+                title="All agents"
+                className="shrink-0"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
               <div className="min-w-0 flex-1">
                 {agents.length > 0 ? (
                   <Select value={selectedAgent?.id ?? ''} onValueChange={selectAgent}>
@@ -493,30 +579,7 @@ function AgentHQ() {
             </div>
           </div>
 
-          {authError && (
-            <div className="m-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div>
-                {authStatus === 401 ? (
-                  <>
-                    <p className="font-medium">You’re not signed in.</p>
-                    <p className="mb-2 text-amber-800">This environment has no active session — sign in to load your workspace.</p>
-                    <Button size="sm" onClick={() => router.push('/auth/login')}>Sign in</Button>
-                  </>
-                ) : authStatus === 403 ? (
-                  <>
-                    <p className="font-medium">Your workspace is still provisioning.</p>
-                    <p className="text-amber-800">Reload in a moment. If this persists, the database isn’t reachable for this environment.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="font-medium">{authError}</p>
-                    <p className="text-amber-800">The database or auth isn’t configured for this environment.</p>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
+          {authBanner}
 
           {/* Persistent recommendation surface — a compact collapsible bar that
               renders only when the AI has a suggestion from real usage; each row

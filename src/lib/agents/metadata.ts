@@ -10,6 +10,9 @@ export type AgentMetadata = {
   integrations?: string[]
   skills?: string[]
   icon?: string
+  /** AI-generated 1–2 word role ("Deal Researcher") shown on the agents gallery.
+   *  Cleared whenever title/description/instructions change so it regenerates. */
+  roleLabel?: string
   maxTurns?: number
   headline?: string
   triggerSecretHash?: string

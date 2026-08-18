@@ -13,11 +13,18 @@ export type Agent = {
   integrations: string[]
   skills: string[]
   icon: string
+  /** AI-generated 1–2 word role shown on the agents gallery; null until generated. */
+  roleLabel: string | null
   folder: string | null
   visibility: 'shared' | 'private'
   status: string
   priority: string
   schedule: { type: string; isActive: boolean }
+  /** Always present on the wire (serializeAgent); optional so client-built
+   *  drafts (e.g. agent-from-template) need not fabricate server stats. */
+  createdAt?: string
+  lastExecutedAt?: string | null
+  executionCount?: number
 }
 
 export type Activity = {

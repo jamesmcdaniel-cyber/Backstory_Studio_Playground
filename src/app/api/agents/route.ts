@@ -239,6 +239,11 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         // A saved NON-EMPTY goal supersedes any prior AI-suggested one; saving
         // other fields with the goal still blank keeps the proposal visible.
         ...(typeof body.goal === 'string' && body.goal.trim() ? { suggestedGoal: undefined } : {}),
+        // What the agent does may have changed — drop the AI role label so the
+        // gallery regenerates it from the new configuration.
+        ...(body.title !== undefined || body.description !== undefined || body.instructions !== undefined
+          ? { roleLabel: undefined }
+          : {}),
       },
     },
   })

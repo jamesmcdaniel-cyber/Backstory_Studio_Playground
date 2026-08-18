@@ -242,6 +242,7 @@ const SKIPS: Record<string, string> = {
   'agents/[id]/runs/[runId]:POST': 'resumes a run against a live model',
   'agents/[id]/trigger:POST': 'per-agent secret path; covered by trigger-secret.db.test.ts',
   'agents/draft:POST': 'drafts an agent with a live model',
+  'agents/role-labels:POST': 'generates role labels with a live model',
   'chat:POST': 'live model turn',
   'librarian:POST': 'live model turn',
   'flows/copilot:POST': 'live model turn',

@@ -34,6 +34,7 @@ export function serializeAgent(agent: {
     toolSettings: parseAgentToolSettings(metadata.toolSettings),
     skills: metadata.skills || [],
     icon: metadata.icon || '',
+    roleLabel: metadata.roleLabel || null,
     allowSubagents: (metadata as { allowSubagents?: boolean }).allowSubagents === true,
     subagentIds: ((metadata as { subagentIds?: string[] }).subagentIds ?? []).filter((id) => typeof id === 'string'),
     allowFlows: (metadata as { allowFlows?: boolean }).allowFlows === true,

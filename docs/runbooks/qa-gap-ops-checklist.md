@@ -1,0 +1,47 @@
+# QA gap closure — operator actions required (2026-08-18)
+
+These items from the QA audit cannot be closed from a code session. Each is
+ready to execute: the supporting code, tooling, and docs shipped with the
+2026-08-18 gap-closure commits.
+
+## Monitoring (minutes, do first)
+- [ ] Set the `HEALTH_MONITOR_URL` GitHub Actions secret to `https://<prod-host>/api/health` so `.github/workflows/health-monitor.yml` starts alerting (it runs every 10 minutes and opens/closes a "Production health check failing" issue). Optionally also subscribe an external monitor (UptimeRobot/Better Stack) to the same URL — status code alone is enough; no token needed.
+- [ ] Set `SENTRY_DSN` on the Fly worker (`fly secrets set SENTRY_DSN=...`) and confirm it is set in Vercel Production. Until then worker crashes and dead-letter events are console-only.
+
+## Huddle voice TURN (two env vars)
+- [ ] Mint a Cloudflare Calls TURN key and set the two Cloudflare vars (exact names now documented in `.env.example`; procedure in `docs/voice-relay-setup.md`) in Vercel Production.
+- [ ] Verify: `GET /api/flows/huddle-ice` returns `provider: "cloudflare"`, `relayAvailable: true`.
+
+## RLS staged rollout (the deliberate, staging-first redo)
+- [ ] Provision the non-owner login role and set `SYSTEM_DATABASE_URL` + `DATABASE_URL` split in the staging project (checklist added to `docs/runbooks/security-controls.md`).
+- [ ] Stage 2–3 models via `DATABASE_RLS_ENABLED=<Model,Model2>` in staging; run `npm run rls:probe`; widen per the runbook. Prod enable only after staging soak.
+
+## Prod configuration proof
+- [ ] `fly deploy --config fly.worker.toml` — REQUIRED: `runtime.ts` and `agent-schedule-registrar.ts` both changed this session, and the old image keeps running until you deploy. Then `fly scale count 2` per the runbook.
+- [ ] Verify Render `numInstances: 3` and worker `connection_limit` against `render.yaml` declarations in the consoles.
+
+## Secrets hygiene
+- [ ] Confirm every secret in `.env.worker.prod` exists in `fly secrets list`, then delete the local file (it duplicates prod credentials unencrypted on this laptop).
+- [ ] Revoke the stale `KLAVIS_API_KEY` (Klavis→Nango migration completed 2026-07-15) and remove it from `.env.local`.
+
+## Load test
+- [ ] Run `npm run load:platform` (k6, 100 concurrent sessions) against a staging deploy and archive the summary in `docs/` — the infra audit's Wave 4 sign-off depends on it. Do not run against prod without a window.
+
+## Data backfill (ordering constraint)
+- [ ] `npm run embeddings:backfill -- --dry-run`, review counts and cost, then `npm run embeddings:backfill`. Covers KnowledgeChunk and AgentMemory; converts valid legacy vectors for free and only re-embeds what it must. Re-run the dry run to confirm 0 remaining. Only after that may the legacy `embedding Json?` columns be dropped — the drop migration was deliberately NOT shipped, since dropping before the backfill loses data.
+
+## Owner account
+- [ ] Owner TOTP enrollment (from the 2026-08-14 lockout fix) — enroll at `/auth/mfa` if not yet done.
+
+## Authenticated e2e (new this session)
+- [ ] Set the CI secrets so the authenticated journeys actually run: `E2E_BASE_URL`, `E2E_USER_EMAIL`, `E2E_USER_PASSWORD`, `E2E_SUPABASE_URL`, `E2E_SUPABASE_ANON_KEY`; optionally `E2E_DATABASE_URL` (the free-tier journey skips without it). Until then the job warns and skips rather than passing silently.
+- [ ] The test account must be admitted by `isAllowedEmail`, be a workspace admin, and must NOT be a platform owner (owner bootstrap forces MFA, and a password grant is aal1 → every route 403s) or a super admin (exempt actors can never trigger the free-tier refusal). If the Supabase project enforces Turnstile, add a Turnstile *testing* key.
+
+## Verify the RLS migration in staging first
+- [ ] Migration `20260818130000_rls_teams_grants_idps_tokens` adds policies to four tables plus `team_members`. They are inert while `DATABASE_RLS_ENABLED` is off, and prod's role bypasses RLS exactly as it does for the 40 tables already carrying these policies — but apply it to staging and smoke the teams/SSO/API-token surfaces before prod.
+
+## Known, deliberately not built
+- Legacy `embedding Json?` column drop (blocked on the backfill above).
+- SFU for huddles >~6, binary-plane data ops, flow-builder reducer, template ratings/forking: prior scope-outs, unchanged.
+- The IdP redirect leg of sign-in cannot be automated in e2e; it stays a manual check.
+- Three catalogue integration labels (`nango:snowflake`, `CRM`, `Calendar`) match no connector and render an unsatisfiable "Requires" chip. Pinned by a test so the set can only shrink — it needs a data decision from you.

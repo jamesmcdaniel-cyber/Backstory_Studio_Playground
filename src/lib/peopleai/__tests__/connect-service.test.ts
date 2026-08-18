@@ -79,7 +79,11 @@ if (ENABLED) {
   })
 
   test('completeConnect persists an encrypted connection, binds the team, marks entitled', async () => {
-    const config = { clientId: 'c', redirectUri: 'https://x/cb', scope: 's' }
+    // A real Sales AI grant: within SCOPE_POLICY.people_ai's allowed set and
+    // carrying its minimum. completeConnect refuses anything else outright,
+    // so a placeholder scope string never reaches the persistence this test
+    // is about. Over-scoped grants are covered in the scope-policy tests.
+    const config = { clientId: 'c', redirectUri: 'https://x/cb', scope: 'mcp:read mcp:tools offline_access' }
     const identity = await completeConnect({
       userId: ids.user!,
       organizationId: ids.orgA!,
@@ -98,6 +102,7 @@ if (ENABLED) {
     assert.ok(connection)
     assert.ok(!connection!.accessToken.startsWith('mcp_'), 'token must not be stored in plaintext')
     assert.match(decryptSecret(connection!.accessToken), /^mcp_/)
+    assert.deepEqual(connection!.grantedScopes, ['mcp:read', 'mcp:tools', 'offline_access'])
 
     const org = await prisma.organization.findUnique({ where: { id: ids.orgA! } })
     assert.equal(org!.peopleAiTeamId, 'team-77')

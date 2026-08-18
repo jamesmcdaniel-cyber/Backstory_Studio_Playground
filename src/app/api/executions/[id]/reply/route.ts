@@ -6,7 +6,7 @@ import { runAgentExecution } from '@/features/agents/execute-agent'
 import { dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { executionVisibilityScope, agentVisibilityScope } from '@/lib/server/visibility'
-import { deriveRunWaiting } from '@/lib/flows/run-waiting'
+import { deriveRunWaitingAll } from '@/lib/flows/run-waiting'
 import { resolveReplyTarget, type ReplyTarget } from '@/lib/flows/reply-target'
 
 export const runtime = 'nodejs'
@@ -47,7 +47,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       orderBy: { order: 'asc' },
       select: { nodeId: true, status: true, output: true },
     })
-    target = resolveReplyTarget(flowStep.run, flowStep, deriveRunWaiting(flowStep.run.status, steps))
+    // Match THIS step's own pause, not just the run's latest one: a loop that
+    // paused several iterations at once has several live pauses, and this reply
+    // belongs to the iteration whose execution it was written against.
+    const pending = deriveRunWaitingAll(flowStep.run.status, steps)
+    const own = pending.find((entry) => entry.nodeId === flowStep.nodeId) ?? null
+    target = resolveReplyTarget(flowStep.run, flowStep, own)
     // The reply endpoint never decides approvals — those resume only through
     // the approvals route with an explicit approve/reject decision.
     if (target === 'approval-block') {
@@ -85,6 +90,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         userId: run.userId ?? auth.dbUser.id,
         flowRunId: run.id,
         reply: message,
+        // The reply answers THIS step row — pass its key so a run with several
+        // paused iterations resolves the right one.
+        replyStepKey: flowStep.nodeId,
         usePublished: Boolean(triggerType && triggerType !== 'manual'),
       })
       return { success: true, executionId: execution.id, flowRunId: run.id, status: 'resuming' }

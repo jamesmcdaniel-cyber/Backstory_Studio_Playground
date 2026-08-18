@@ -11,12 +11,14 @@
  * integration was missing.
  *
  * ── Selector fragility, stated plainly ────────────────────────────────────
- * There is not a single `data-testid` in this application's production code,
- * so everything here hangs off accessible names, placeholders, and the two
- * structural attributes that do exist (`data-node-id` on step cards and
- * `data-node-configuration` on the inspector root). Copy edits will break
- * these. The selectors are centralised in this file so a copy edit is one fix
- * rather than nine.
+ * A first pass at this suite found the app had not one `data-testid` in its
+ * production code, so everything hung off accessible names and placeholders
+ * — and `aria-label="Close"` (five panels) / `aria-label="Add step"` (three
+ * controls) made some of those names ambiguous. The highest-value anchors
+ * (Runs panel + its toggle, the picker search input, step cards / the step
+ * list) now carry stable `data-testid`s; this file prefers those, falling
+ * back to copy-based selectors only where a testid would add nothing (e.g.
+ * `configureComposeInput`, which already scopes to the inspector root).
  */
 import { expect, type Locator, type Page } from '@playwright/test'
 
@@ -25,9 +27,14 @@ export function inspector(page: Page): Locator {
   return page.locator('[data-node-configuration]')
 }
 
+/** The Runs panel's root (`src/components/flows/run-panel.tsx`). */
+export function runsPanel(page: Page): Locator {
+  return page.getByTestId('runs-panel')
+}
+
 /** The runs panel's toolbar toggle, whose `aria-pressed` IS the panel's open state. */
 export function runsToggle(page: Page): Locator {
-  return page.getByRole('button', { name: 'Runs', exact: true })
+  return page.getByTestId('runs-panel-toggle')
 }
 
 /**
@@ -38,8 +45,12 @@ export function runsToggle(page: Page): Locator {
  * "Compose" colliding with any other row.
  */
 export async function addComposeStep(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Add step' }).first().click()
-  const search = page.getByPlaceholder('Search agents, actions, or connectors')
+  // `step-add-inline` disambiguates from the two other "Add step" controls
+  // (the canvas view's standalone button and its per-handle add buttons) —
+  // `.first()` still picks the insertion point right after the trigger, since
+  // the inline chain repeats this control at every gap.
+  await page.getByTestId('step-add-inline').first().click()
+  const search = page.getByTestId('picker-search')
   await expect(search, 'the step picker did not open').toBeVisible()
   await search.fill('Compose')
   await page.getByRole('button', { name: /Pass a value through so later steps can reuse it/ }).click()
@@ -47,7 +58,7 @@ export async function addComposeStep(page: Page): Promise<void> {
   // Adding a step does not reliably leave the inspector open (in the canvas
   // view any selection change closes it), so open it explicitly rather than
   // depending on that side effect.
-  const step = page.locator('[data-node-id]').filter({ hasNot: page.locator('[data-node-id="trigger"]') })
+  const step = page.getByTestId('step-card').filter({ hasNot: page.locator('[data-node-id="trigger"]') })
   await openStepInspector(page, step.last())
 }
 

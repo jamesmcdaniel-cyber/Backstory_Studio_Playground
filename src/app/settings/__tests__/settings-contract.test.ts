@@ -24,6 +24,7 @@ const page = read('src/app/settings/page.tsx')
 const members = read('src/components/settings/members-section.tsx')
 const security = read('src/components/settings/enterprise-security-section.tsx')
 const developer = read('src/components/settings/developer-api-section.tsx')
+const mfaSection = read('src/components/settings/mfa-section.tsx')
 const permissions = read('src/lib/authz/permissions.ts')
 
 test('the settings page renders WorkspaceCredentialsPanel', () => {
@@ -141,5 +142,39 @@ test('MFA enforcement cannot lock the admin who enables it out', () => {
   // nothing in Settings even linked to /auth/mfa.
   assert.match(security, /mfaWouldLockOut/, 'the guard must exist')
   assert.match(security, /href="\/auth\/mfa"/, 'security must offer the enrollment path')
-  assert.match(page, /href="\/auth\/mfa"/, 'account must offer the enrollment path')
+  // Enrollment now lives in MfaSection, rendered on the Account tab beside the
+  // profile fields — the account surface must still reach it.
+  // `<MfaSection`, not the bare name: an import left behind after the JSX was
+  // deleted would satisfy a name match while rendering nothing.
+  assert.match(page, /<MfaSection\b/, 'the account tab must render the authenticator section')
+  assert.match(mfaSection, /href="\/auth\/mfa"/, 'account must offer the enrollment path')
+})
+
+test('removing an authenticator goes through the guarded route, never the browser', () => {
+  // Settings used to remove factors with supabase.auth.mfa.unenroll() in a loop.
+  // That call answers to Supabase alone, so neither guard could apply to it: a
+  // member of a workspace that REQUIRES MFA could strip their only factor from
+  // Settings, and a stolen still-warm session could strip someone else's. The
+  // contract is that removal has exactly one path, and it is the server's.
+  for (const [name, source] of [['settings page', page], ['MFA section', mfaSection], ['security section', security]] as const) {
+    assert.doesNotMatch(source, /mfa\s*\.\s*unenroll\s*\(/, `${name} must not unenroll a factor from the browser`)
+  }
+  assert.match(
+    mfaSection,
+    /'\/api\/auth\/mfa\/factors',\s*\{\s*\n?\s*method: 'DELETE'/s,
+    'removal must call DELETE /api/auth/mfa/factors',
+  )
+})
+
+test('the last-factor lockout guard is enforced on the server, not by the UI', () => {
+  // The disabled button is a courtesy; a hand-rolled fetch has to hit the same
+  // rule. Both the list (which tells the UI what is removable) and the deletion
+  // decide with removalWouldLockOut, so they can never disagree.
+  const route = read('src/app/api/auth/mfa/factors/route.ts')
+  assert.match(route, /removalWouldLockOut/, 'the route must apply the lockout rule')
+  assert.match(route, /'LAST_FACTOR'/, 'and refuse with a named code')
+  assert.match(route, /stepUpSatisfied/, 'a stale session must not be able to remove a factor')
+  assert.match(route, /'STEP_UP_REQUIRED'/, 'and be refused with a named code')
+  // The UI renders the server's answer rather than recomputing it.
+  assert.match(mfaSection, /removable/, 'the section must key its button off the server-supplied flag')
 })

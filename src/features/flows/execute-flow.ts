@@ -20,6 +20,7 @@ import { apiLogger } from '@/lib/logger'
 import { recordAudit } from '@/lib/audit'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { ApiError } from '@/lib/server/api-handler'
+import { chooseWaitingReply } from '@/lib/flows/run-waiting'
 import { triggerFromGraph, triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
 import { applyInputDefaults, missingRequiredInputFields } from '@/lib/flows/input-validation'
 import { shouldReuseInput, storedRunInput } from '@/lib/flows/reuse-input'
@@ -29,7 +30,7 @@ import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfte
 import { runHttpWithRetries } from './http-retry'
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
 import { getByPath, setQueryParam, pageItems, optimizeForAi, paginationComplete } from '@/lib/flows/http-pagination'
-import { fileReference, isFileReference, bodyHasFileReference } from '@/lib/flows/file-ref'
+import { fileReference, bodyHasFileReference, buildMultipartBody } from '@/lib/flows/file-ref'
 import { broadcastFlowRunTick } from '@/lib/flows/run-stream'
 import { saveStoredFile, readStoredFile, STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
 import { readResponseBytesLimited } from '@/lib/net/response-body'
@@ -69,6 +70,14 @@ export type FlowExecutionJob = {
   flowRunId?: string
   // Resume a paused run: the user's reply to the ask-user step that paused it.
   reply?: string
+  /**
+   * WHICH pause the reply answers — the waiting step's id, iteration suffix
+   * included (`${nodeId}#${index}`). Optional: a run blocked on a single pause
+   * resolves it without a key. Required (enforced at resume) when a loop or
+   * parallel left several reviews waiting at once, so one reply cannot be
+   * misrouted to whichever iteration happened to be recorded last.
+   */
+  replyStepKey?: string
   // Scheduled/triggered runs execute the PUBLISHED graph; a manual builder run
   // executes the working draft so you can test before publishing.
   usePublished?: boolean
@@ -544,6 +553,11 @@ async function runFlowExecutionInner(
   // Paused CHILD flow runs per subflow step — a parent resume forwards the
   // reply into the child run instead of re-executing it from scratch.
   const pausedSubflowRunByNode = new Map<string, string>()
+  // Every leaf pause this run is blocked on, keyed by step id. A loop with
+  // concurrency above 1 — or a parallel node with a review in more than one
+  // branch — pauses SEVERAL iterations at once, so the reply has to say which
+  // one it answers (job.replyStepKey).
+  const waitingLeaves = new Map<string, { nodeId: string; executionId?: string }>()
   let order = 0
   if (resuming) {
     const priorSteps = await prisma.flowRunStep.findMany({ where: { flowRunId: run.id }, orderBy: { order: 'asc' } })
@@ -571,14 +585,33 @@ async function runFlowExecutionInner(
         // container (whose row sorts after the leaf and would otherwise win).
         const baseType = nodeTypeById.get(step.nodeId.split('#')[0])
         if (baseType === 'loop' || baseType === 'parallel') continue
-        resumeNodeId = step.nodeId
-        resumeExecutionId = step.agentExecutionId ?? undefined
+        // Keyed by step id, so a stale unresolved row and the live row for the
+        // same iteration collapse to one candidate (rows arrive in order asc,
+        // the later one wins).
+        waitingLeaves.set(step.nodeId, { nodeId: step.nodeId, executionId: step.agentExecutionId ?? undefined })
         const approvalId = (step.output as { waiting?: { approvalId?: string } } | null)?.waiting?.approvalId
         if (typeof approvalId === 'string' && approvalId) pausedApprovalByNode.set(step.nodeId, approvalId)
         const childRunId = (step.output as { waiting?: { childRunId?: string } } | null)?.waiting?.childRunId
         if (typeof childRunId === 'string' && childRunId) pausedSubflowRunByNode.set(step.nodeId, childRunId)
       }
     }
+    // Which pause does this reply answer? With exactly one waiting leaf there
+    // is nothing to choose (and every reply written before per-iteration keying
+    // carries no key, so that path must keep working). With several — a loop
+    // that paused three reviews at once — a key is REQUIRED: picking one
+    // silently would answer the wrong item and resolve the others with someone
+    // else's words. Roll the claim back to `waiting` so the run stays
+    // answerable, and say what to do.
+    const routed = chooseWaitingReply([...waitingLeaves.values()], job.replyStepKey)
+    if (routed && 'error' in routed) {
+      await prisma.flowRun.updateMany({
+        where: { id: run.id, organizationId: job.organizationId, status: 'running' },
+        data: { status: 'waiting' },
+      })
+      throw new ApiError(routed.error, 409, routed.code)
+    }
+    resumeNodeId = routed?.target.nodeId
+    resumeExecutionId = routed?.target.executionId
     // Resuming creates NEW step rows for the re-run node — resolve every stale
     // waiting row now so it can never shadow a later pause in deriveRunWaiting,
     // and continue the order counter after all prior rows so new steps always
@@ -1355,20 +1388,14 @@ async function runFlowExecutionInner(
         // (pure, no DB); here we read each referenced StoredFile's bytes and
         // rebuild the body with real Blobs, dropping the content-type so the
         // runtime sets the multipart boundary itself.
+        //
+        // buildMultipartBody THROWS when a referenced file can no longer be
+        // read; that propagates to this adapter's catch and fails the step with
+        // the reader's own message. Dropping the part instead (what the old
+        // inline loop did) posted the request without its attachment and
+        // reported success — a silent partial upload.
         if (node.config.bodyMode === 'form-data' && node.config.sendBody !== false && bodyHasFileReference(node.config.body)) {
-          const form = new FormData()
-          for (const [key, value] of Object.entries(node.config.body as Record<string, unknown>)) {
-            const values = Array.isArray(value) ? value : [value]
-            for (const entry of values) {
-              if (isFileReference(entry)) {
-                const file = await readStoredFile(entry.fileId, job.organizationId)
-                if (file) form.append(key, new Blob([new Uint8Array(file.buffer)], { type: file.mimeType }), file.filename)
-              } else if (entry != null) {
-                form.append(key, typeof entry === 'object' ? JSON.stringify(entry) : String(entry))
-              }
-            }
-          }
-          request.init.body = form
+          request.init.body = await buildMultipartBody(node.config.body, (fileId) => readStoredFile(fileId, job.organizationId))
           const headers = request.init.headers as Record<string, string>
           for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-type') delete headers[key]
         }
@@ -1401,7 +1428,13 @@ async function runFlowExecutionInner(
               const saved = await saveStoredFile({ organizationId: job.organizationId, userId: job.userId, filename, mimeType, buffer })
               let content: string | undefined
               if (isSupported(saved.mimeType, filename)) {
-                content = (await extractTextAuto(buffer, saved.mimeType, filename)).slice(0, 200_000)
+                // Downloads DEGRADE, ingestion REJECTS: knowledge ingestion
+                // fails loudly on a file it cannot read (a partial document is
+                // worse than none), but this step's job is to fetch and store
+                // the bytes — which succeeded. A corrupt or password-protected
+                // DOCX/PDF therefore yields empty text instead of failing the
+                // step. Same treatment as the /api/files upload route.
+                content = (await extractTextAuto(buffer, saved.mimeType, filename).catch(() => '')).slice(0, 200_000)
               }
               return fileReference(saved, { content }) as unknown as Record<string, unknown>
             } catch (error) {

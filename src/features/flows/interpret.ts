@@ -988,6 +988,15 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               bodyMode: node.data.bodyMode,
               ...(node.data.contentType !== undefined ? { contentType: node.data.contentType } : {}),
               responseType: node.data.responseType,
+              // Redirect policy. Absent → omitted, and the adapter keeps its
+              // `redirect: 'error'` default, so an existing flow is unchanged;
+              // only a node whose author turned the builder's "follow
+              // redirects" switch on follows a 3xx. Every hop is still
+              // validated and pinned by fetchWithHttpCredential /
+              // fetchPublicUrl — this forwards the author's intent, it does
+              // not relax the outbound guard.
+              ...(node.data.followRedirects !== undefined ? { followRedirects: node.data.followRedirects } : {}),
+              ...(node.data.maxRedirects !== undefined ? { maxRedirects: node.data.maxRedirects } : {}),
               failOnHttpError: node.data.failOnHttpError,
               retries: node.data.retries,
               timeoutMs: node.data.timeoutMs,

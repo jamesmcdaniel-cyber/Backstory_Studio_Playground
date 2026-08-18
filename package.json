@@ -30,10 +30,14 @@
     "load:platform": "k6 run scripts/load/platform.js",
     "secrets:rotate": "tsx scripts/rotate-encryption-key.ts",
     "embeddings:backfill": "tsx scripts/reembed-backfill.ts",
+    "queue:dlq": "tsx scripts/queue-dlq.ts",
+    "worker:smoke": "bash scripts/worker-smoke.sh",
     "backup:create": "node scripts/backup/create.mjs",
     "backup:restore": "node scripts/backup/restore.mjs",
     "backup:verify": "node scripts/backup/verify.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:anon": "playwright test --project=chromium --project=firefox --project=webkit",
+    "test:e2e:auth": "playwright test --project=authenticated --project=\"authenticated (limits)\"",
     "smoke:wasm": "node scripts/smoke-wasm-production.mjs"
   },
   "dependencies": {

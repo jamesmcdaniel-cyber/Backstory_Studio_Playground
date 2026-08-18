@@ -645,6 +645,7 @@ function GraphCanvasInner(props: GraphCanvasProps) {
                 type="button"
                 onClick={handleAddStandalone}
                 aria-label="Add step"
+                data-testid="step-add-standalone"
                 title="Add step — place a new step without connecting it"
                 className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-[0_8px_24px_rgba(15,23,42,0.12)] transition-colors hover:bg-slate-50 hover:text-slate-900"
               >

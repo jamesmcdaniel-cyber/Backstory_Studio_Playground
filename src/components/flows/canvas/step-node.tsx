@@ -233,6 +233,7 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
                   isConnectableEnd={false}
                   role="button"
                   aria-label={handle.label ? `Add step on ${handle.label}` : 'Add step'}
+                  data-testid="step-add-handle"
                   title={
                     handle.label
                       ? `Add step on ${handle.label} — click to pick, or drag to connect to another step`

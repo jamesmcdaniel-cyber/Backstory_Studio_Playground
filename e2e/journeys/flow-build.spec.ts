@@ -42,7 +42,7 @@ test('a step added, configured, and saved survives a reload', async ({ page, wor
   ).toBeVisible()
 
   // And the configuration persisted too, not merely the step's existence.
-  const card = page.locator('[data-node-id]').filter({ hasNot: page.locator('[data-node-id="trigger"]') }).last()
+  const card = page.getByTestId('step-card').filter({ hasNot: page.locator('[data-node-id="trigger"]') }).last()
   await card.click({ position: { x: 8, y: 8 } })
   await expect(inspector(page).getByRole('textbox', { name: 'Input', exact: true })).toContainText(
     'hello from the end-to-end suite',

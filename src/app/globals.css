@@ -19,10 +19,14 @@
   --secondary: 225 17% 95%;          /* graphite-100 #F1F2F5 */
   --secondary-foreground: 240 18% 11%;
   --muted: 225 17% 95%;
-  --muted-foreground: 240 3% 46%;    /* graphite-600 #717178 */
+  --muted-foreground: 240 3% 43%;    /* --fg-muted #6B6B72 — graphite-600 was
+                                        4.33:1 on --muted, under AA body text */
   --accent: 225 17% 95%;
   --accent-foreground: 240 18% 11%;
-  --destructive: 1 77% 55%;          /* red-500 #E53935 */
+  --destructive: 1 66% 50%;          /* #D42E2B — brand red-500 #E53935 is only
+                                        4.23:1 with white on it and as text on
+                                        white; this stop is 4.97:1 both ways.
+                                        The --red-500 brand scale is unchanged. */
   --destructive-foreground: 0 0% 100%;
   --border: 240 2% 89%;              /* graphite-200 #E3E3E4 */
   --input: 240 2% 89%;
@@ -51,8 +55,10 @@
   --muted-foreground: 240 4% 64%;
   --accent: 240 12% 20%;
   --accent-foreground: 225 17% 95%;
-  --destructive: 1 77% 55%;
-  --destructive-foreground: 0 0% 100%;
+  --destructive: 1 77% 66%;          /* lifted for the dark ground: 5.68:1 as
+                                        text on --background, and dark ink on
+                                        the fill reads at 5.68:1 too */
+  --destructive-foreground: 240 18% 11%;
   --border: 240 10% 24%;
   --input: 240 10% 24%;
   --ring: 197 41% 56%;

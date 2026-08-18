@@ -170,6 +170,7 @@ if (TEST_DB) {
     { name: 'GET /api/flow-templates/[id]/versions', run: async () => (await import('../flow-templates/[id]/versions/route')).GET(req('/api/flow-templates/summarize-extract/versions')) },
     { name: 'GET /api/agents', run: async () => (await import('../agents/route')).GET(req('/api/agents')) },
     { name: 'GET /api/agents/activity', run: async () => (await import('../agents/activity/route')).GET(req('/api/agents/activity')) },
+    { name: 'GET /api/agents/kpis', run: async () => (await import('../agents/kpis/route')).GET(req('/api/agents/kpis')) },
     { name: 'GET /api/workspace-folders', run: async () => (await import('../workspace-folders/route')).GET(req('/api/workspace-folders')) },
     { name: 'GET /api/approvals', run: async () => (await import('../approvals/route')).GET(req('/api/approvals')) },
     { name: 'GET /api/audit/export', run: async () => (await import('../audit/export/route')).GET(req('/api/audit/export')) },
@@ -272,6 +273,13 @@ if (TEST_DB) {
     // which is unreachable here. Covered against the seam (both refusals and
     // the audit row) in auth/__tests__/mfa-factors-route.db.test.ts.
     { route: 'auth/mfa/factors', reason: 'needs the Supabase admin API — driven through its seam in a dedicated test' },
+    // platform.administer + internalOnly, so the smoke org gets a 403 by design,
+    // and the handler reads the live BullMQ dead-letter queues, which no Redis
+    // backs here. The queue functions behind it (countDeadLetters,
+    // listDeadLetters, showDeadLetter) are covered directly in
+    // src/lib/queue/__tests__/dead-letter-admin.test.ts and
+    // dead-letter-admin.redis.test.ts.
+    { route: 'admin/queue/dead-letters', reason: 'operator-only and queue-backed — 403 for the smoke org by design; the queue functions are covered in lib/queue/__tests__/dead-letter-admin.test.ts' },
   ]
 
   // Completeness self-check: enumerate every route.ts whose GET is wrapped in

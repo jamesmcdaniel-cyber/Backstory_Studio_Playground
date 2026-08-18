@@ -20,7 +20,7 @@ import { runIsDegraded } from '@/components/flows/run-panel'
 import { cn } from '@/lib/utils'
 
 type RunStepSummary = { nodeId: string; status: string; order: number; error?: string | null; warnings?: string[] | null }
-type RunWaiting = { nodeId: string; kind: 'input' | 'approval'; question?: string }
+type RunWaiting = { nodeId: string; kind: 'input' | 'approval'; question?: string; stepKey?: string; iteration?: number }
 type RunSummary = {
   id: string
   status: string
@@ -29,7 +29,16 @@ type RunSummary = {
   trigger?: { type?: string; [key: string]: unknown } | null
   error?: string | null
   waiting?: RunWaiting | null
+  /** Every live pause — a loop can be waiting on several reviews at once. */
+  waitingAll?: RunWaiting[] | null
   steps: RunStepSummary[]
+}
+
+/** The pauses a run is blocked on, falling back to the single-pause shape. */
+function pendingWaitsOf(run: RunSummary): RunWaiting[] {
+  if (run.status !== 'waiting') return []
+  if (run.waitingAll?.length) return run.waitingAll
+  return run.waiting ? [run.waiting] : []
 }
 
 type StatusFilter = 'all' | 'running' | 'succeeded' | 'failed' | 'waiting'
@@ -80,10 +89,13 @@ function WaitingBanner({
   waiting,
   runId,
   onReply,
+  showItem = false,
 }: {
   waiting: RunWaiting
   runId: string
-  onReply: (flowRunId: string, reply: string) => Promise<void>
+  onReply: (flowRunId: string, reply: string, stepKey?: string) => Promise<void>
+  /** Several reviews are paused at once — name the item each box belongs to. */
+  showItem?: boolean
 }) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -92,7 +104,7 @@ function WaitingBanner({
     if (!reply || sending) return
     setSending(true)
     try {
-      await onReply(runId, reply)
+      await onReply(runId, reply, waiting.stepKey)
       setText('')
     } catch {
       // The page already surfaced the error — keep the text for a retry.
@@ -109,7 +121,9 @@ function WaitingBanner({
         </>
       ) : (
         <>
-          <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for your reply</p>
+          <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">
+            {showItem && waiting.iteration ? `Waiting for your reply — item ${waiting.iteration}` : 'Waiting for your reply'}
+          </p>
           <Markdown className="mt-1 space-y-2 text-xs text-blue-800 dark:text-blue-300 [&_li]:marker:text-blue-600 [&_strong]:text-blue-900 dark:[&_strong]:text-blue-200">
             {waiting.question || 'This flow is waiting on information from you.'}
           </Markdown>
@@ -197,11 +211,13 @@ export default function FlowActivityPage() {
   }, [id, filter, refreshKey])
 
   // Resume a paused run with the user's reply, then refetch (keeps the filter).
-  const replyToRun = async (flowRunId: string, reply: string) => {
+  const replyToRun = async (flowRunId: string, reply: string, stepKey?: string) => {
     const response = await fetch(`/api/flows/${id}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ flowRunId, reply }),
+      // stepKey says WHICH paused review this answers, when a loop paused more
+      // than one at a time.
+      body: JSON.stringify({ flowRunId, reply, ...(stepKey ? { replyStepKey: stepKey } : {}) }),
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
@@ -332,10 +348,18 @@ export default function FlowActivityPage() {
                       </Link>
                     </TableCell>
                   </TableRow>
-                  {run.status === 'waiting' && run.waiting && (
+                  {pendingWaitsOf(run).length > 0 && (
                     <TableRow className="hover:bg-transparent">
-                      <TableCell colSpan={6} className="pt-0">
-                        <WaitingBanner key={run.id} waiting={run.waiting} runId={run.id} onReply={replyToRun} />
+                      <TableCell colSpan={6} className="space-y-2 pt-0">
+                        {pendingWaitsOf(run).map((entry) => (
+                          <WaitingBanner
+                            key={`${run.id}:${entry.nodeId}`}
+                            waiting={entry}
+                            runId={run.id}
+                            onReply={replyToRun}
+                            showItem={pendingWaitsOf(run).length > 1}
+                          />
+                        ))}
                       </TableCell>
                     </TableRow>
                   )}

@@ -46,7 +46,7 @@ test('installing a flow template creates a draft and opens it in the builder', a
   // failure mode where the flow is created but the graph is not copied.
   await expect(page.getByLabel('Flow name')).not.toHaveValue('', { timeout: 30_000 })
   await expect(
-    page.locator('[data-node-id]').filter({ hasNot: page.locator('[data-node-id="trigger"]') }).first(),
+    page.getByTestId('step-card').filter({ hasNot: page.locator('[data-node-id="trigger"]') }).first(),
     'the installed template produced a flow with no steps',
   ).toBeVisible({ timeout: 30_000 })
 })

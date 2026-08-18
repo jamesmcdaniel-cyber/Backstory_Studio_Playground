@@ -4,8 +4,22 @@ import { safeMcpVerificationError, verifyStoredMcpConnection } from '@/lib/mcp/v
 const MAX_PER_SWEEP = 20
 const STALE_MS = 6 * 60 * 60_000
 
+/**
+ * Seam for tests only. Verification talks to a third-party server over HTTPS
+ * and the SSRF guard refuses every address a test could stand one up on, so the
+ * healthy and schema-drift outcomes are otherwise unreachable. Production
+ * callers pass nothing and get {@link verifyStoredMcpConnection}.
+ */
+export interface McpHealthSweepDeps {
+  verify?: typeof verifyStoredMcpConnection
+}
+
 /** Bounded background verification with persisted schema-drift state. */
-export async function sweepMcpConnectionHealth(now = new Date()): Promise<{ checked: number; unhealthy: number; changed: number }> {
+export async function sweepMcpConnectionHealth(
+  now = new Date(),
+  deps: McpHealthSweepDeps = {},
+): Promise<{ checked: number; unhealthy: number; changed: number }> {
+  const verify = deps.verify ?? verifyStoredMcpConnection
   // systemPrisma: bounded cross-tenant health sweep from authenticated cron.
   const connections = await systemPrisma.mcpConnection.findMany({
     where: { isActive: true, OR: [{ lastVerifiedAt: null }, { lastVerifiedAt: { lt: new Date(now.getTime() - STALE_MS) } }] },
@@ -18,7 +32,7 @@ export async function sweepMcpConnectionHealth(now = new Date()): Promise<{ chec
   // simply because many workspace connections became stale together.
   for (const connection of connections) {
     try {
-      const verification = await verifyStoredMcpConnection(connection)
+      const verification = await verify(connection)
       const schemaChanged = Boolean(connection.toolSchemaHash && connection.toolSchemaHash !== verification.schemaHash)
       if (schemaChanged) changed += 1
       // systemPrisma: result write for the globally selected connection row.

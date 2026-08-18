@@ -80,6 +80,7 @@ function InsertMenu({
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-label="Add step"
+        data-testid="step-add-inline"
         className={cn(
           'group flex items-center justify-center border bg-white text-slate-500 shadow-sm transition-all hover:border-blue-400 hover:text-blue-700 hover:shadow-md',
           compact
@@ -214,6 +215,7 @@ export function FlowCanvas({
     return (
     <div
       data-node-id={node.id}
+      data-testid="step-card"
       className="relative w-full rounded-2xl"
       style={editors?.length ? { boxShadow: `0 0 0 2px ${editors[0].color}` } : undefined}
     >
@@ -422,7 +424,7 @@ export function FlowCanvas({
           This flow has parallel paths the inline builder can&apos;t draw — switch to Canvas to see how they connect.
         </div>
       )}
-      <div className="flex w-full flex-col items-center">
+      <div data-testid="step-list" className="flex w-full flex-col items-center">
         {trigger && card(trigger)}
         {trigger && !first && (
           <div

@@ -99,6 +99,23 @@ test('buildDataTree lists upstream initialized variables as typed {{var.*}} root
   assert.equal(tree.filter((root) => root.token.startsWith('{{var.')).length, 1)
 })
 
+test('buildDataTree offers the flow identity under This run, including a pickable flow id', () => {
+  const tree = buildDataTree({ upstream: [] })
+  const thisRun = tree.find((root) => root.label === 'This run')
+  assert.ok(thisRun, 'the This run root exists')
+  const flowId = thisRun?.children?.find((child) => child.token === '{{flow.id}}')
+  assert.ok(flowId, 'the flow id is pickable, not hand-typed')
+  assert.equal(flowId?.label, 'Flow ID')
+  assert.equal(flowId?.type, 'string')
+  assert.ok(flowId?.description)
+  // It sits alongside the flow name, and neither is duplicated.
+  assert.ok(thisRun?.children?.some((child) => child.token === '{{flow.name}}'))
+  assert.equal(thisRun?.children?.filter((child) => child.token === '{{flow.id}}').length, 1)
+  // The run-context roots stay off when the caller suppresses them.
+  const preRun = buildDataTree({ upstream: [], context: false })
+  assert.ok(!preRun.some((root) => root.children?.some((child) => child.token === '{{flow.id}}')))
+})
+
 test('buildDataTree offers the Incoming data root when a step has upstream data, with fields from the direct upstream', () => {
   const tree = buildDataTree({
     upstream: [

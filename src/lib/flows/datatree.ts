@@ -88,6 +88,7 @@ function contextRoots(): DataField[] {
       description: 'Set automatically for every run.',
       children: [
         { label: 'Flow name', token: '{{flow.name}}', type: 'string', description: 'The name of this flow.' },
+        { label: 'Flow ID', token: '{{flow.id}}', type: 'string', description: "This flow's unique id." },
         { label: 'Trigger', token: '{{run.trigger}}', type: 'string', description: 'How this run was started.' },
         { label: 'Started at', token: '{{run.startedAt}}', type: 'string', description: 'When this run began.' },
         { label: 'Run link', token: '{{run.url}}', type: 'string', description: 'A link to this run in the builder.' },

@@ -49,8 +49,20 @@ export type FlowRunDetail = {
   output?: unknown
   error?: string | null
   trigger?: unknown
-  waiting?: { nodeId: string; kind: 'input' | 'approval'; question?: string } | null
+  waiting?: RunWaitingEntry | null
+  /** Every pause the run is blocked on — a loop can pause several reviews at
+   *  once, and each reply must say which one it answers. */
+  waitingAll?: RunWaitingEntry[] | null
   steps: RunStep[]
+}
+export type RunWaitingEntry = {
+  nodeId: string
+  kind: 'input' | 'approval'
+  question?: string
+  /** Sent back with the reply so it resolves this pause and no other. */
+  stepKey?: string
+  /** 1-based position of the item this pause belongs to, inside a loop. */
+  iteration?: number
 }
 
 /**
@@ -325,15 +337,30 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
   )
 }
 
+/**
+ * The pauses a run is currently blocked on. Normally one; a loop that ran its
+ * iterations concurrently can be waiting on several reviews at once, and each
+ * needs its own reply box. Falls back to the single `waiting` shape so a
+ * payload from an older deploy still renders.
+ */
+export function pendingWaitsOf(run: FlowRunDetail | null | undefined): RunWaitingEntry[] {
+  if (!run || run.status !== 'waiting') return []
+  if (run.waitingAll?.length) return run.waitingAll
+  return run.waiting ? [run.waiting] : []
+}
+
 /** Blue banner shown while a run is paused — carries the reply box for agent questions. */
 function WaitingBanner({
   waiting,
   runId,
   onReply,
+  showItem = false,
 }: {
-  waiting: NonNullable<FlowRunDetail['waiting']>
+  waiting: RunWaitingEntry
   runId: string
-  onReply?: (flowRunId: string, reply: string) => Promise<void>
+  onReply?: (flowRunId: string, reply: string, stepKey?: string) => Promise<void>
+  /** Several reviews are paused at once — name the item each box belongs to. */
+  showItem?: boolean
 }) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -342,7 +369,7 @@ function WaitingBanner({
     if (!reply || sending || !onReply) return
     setSending(true)
     try {
-      await onReply(runId, reply)
+      await onReply(runId, reply, waiting.stepKey)
       setText('')
     } catch {
       // The page already surfaced the error — keep the text for a retry.
@@ -360,7 +387,9 @@ function WaitingBanner({
           </>
         ) : (
           <>
-            <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for your reply</p>
+            <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">
+              {showItem && waiting.iteration ? `Waiting for your reply — item ${waiting.iteration}` : 'Waiting for your reply'}
+            </p>
             {/* Neutral fallback: input pauses come from agent questions AND humanReview steps. */}
             <Markdown className="mt-1 space-y-2 text-xs text-blue-800 dark:text-blue-300 [&_li]:marker:text-blue-600 [&_strong]:text-blue-900 dark:[&_strong]:text-blue-200">
               {waiting.question || 'This flow is waiting on information from you.'}
@@ -479,7 +508,7 @@ export function RunPanel({
   onSelectRun: (runId: string) => void
   onClose: () => void
   labelForNode: (nodeId: string) => string
-  onReply?: (flowRunId: string, reply: string) => Promise<void>
+  onReply?: (flowRunId: string, reply: string, stepKey?: string) => Promise<void>
   onRerunFrom?: (runId: string, nodeId: string) => void
   onForkWithEdits?: (runId: string, nodeId: string, recordedOutput: unknown, runFailed: boolean) => void
   inputFields?: TriggerInputField[]
@@ -488,11 +517,14 @@ export function RunPanel({
   onRun?: () => void
   starting?: boolean
 }) {
+  // `waitingAll` is the full list; `waiting` is the single-pause shape older
+  // payloads carry, kept as the fallback.
+  const pendingWaits = pendingWaitsOf(selected)
   return (
-    <div className="flex h-full w-full flex-col border-l border-border bg-card">
+    <div data-testid="runs-panel" className="flex h-full w-full flex-col border-l border-border bg-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="text-sm font-semibold">Runs</h2>
-        <button type="button" onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">
+        <button type="button" onClick={onClose} aria-label="Close" data-testid="runs-panel-close" className="text-muted-foreground hover:text-foreground">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -545,9 +577,19 @@ export function RunPanel({
               )}
               {selected.error && <p className="mt-1 text-xs text-red-600">{selected.error}</p>}
             </div>
-            {selected.status === 'waiting' && selected.waiting && (
-              <WaitingBanner key={selected.id} waiting={selected.waiting} runId={selected.id} onReply={onReply} />
-            )}
+            {selected.status === 'waiting' &&
+              // One box per live pause: a loop that ran its iterations
+              // concurrently can be waiting on several reviews, and each
+              // answer must reach the item it was written for.
+              pendingWaits.map((entry) => (
+                <WaitingBanner
+                  key={`${selected.id}:${entry.nodeId}`}
+                  waiting={entry}
+                  runId={selected.id}
+                  onReply={onReply}
+                  showItem={pendingWaits.length > 1}
+                />
+              ))}
             {selected.steps.length === 0 ? (
               <EmptyState
                 title="No steps recorded"
@@ -576,7 +618,7 @@ export function RunPanel({
                           )
                       : undefined
                   }
-                  waitingKind={step.status === 'waiting' && selected.waiting?.nodeId === step.nodeId ? selected.waiting.kind : undefined}
+                  waitingKind={step.status === 'waiting' ? pendingWaits.find((entry) => entry.nodeId === step.nodeId)?.kind : undefined}
                 />
               ))
             )}

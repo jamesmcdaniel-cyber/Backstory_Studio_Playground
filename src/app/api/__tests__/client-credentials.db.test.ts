@@ -32,7 +32,7 @@ if (TEST_DB) {
   })
 
   async function seedKey(scopes: string[] = ['flows:read', 'flows:write']) {
-    const org = await seedTestOrg()
+    const org = await seedTestOrg(systemPrisma)
     const user = await systemPrisma.user.create({
       data: {
         supabaseId: crypto.randomUUID(),

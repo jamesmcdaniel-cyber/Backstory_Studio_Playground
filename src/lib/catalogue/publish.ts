@@ -80,7 +80,12 @@ export async function publishSubmission(params: PublishParams): Promise<{ publis
       description: asString(snapshot.description),
       category: asString(snapshot.category, 'Custom'),
       graph: snapshot.graph as never,
-      notes: snapshot.notes as never,
+      // Defaulted like `bindings` and `configuration` below it: FlowTemplate.notes
+      // is nullable, the snapshot drops null fields, and createFlowTemplate does
+      // JSON.parse(JSON.stringify(notes)) — so an undefined here threw
+      // "undefined is not valid JSON" and no notes-less flow template could ever
+      // be published.
+      notes: (snapshot.notes ?? {}) as never,
       bindings: (snapshot.bindings ?? []) as never,
       integrations: (configuration.integrations ?? []) as string[],
       tags: (configuration.tags ?? []) as string[],

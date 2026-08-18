@@ -31,6 +31,10 @@ if (TEST_DB) {
   process.env.DIRECT_URL = TEST_DB
   process.env.ENTITLEMENT_GATE = 'off'
   process.env.CRON_SECRET = process.env.CRON_SECRET || 'smoke-cron-secret'
+  // Routes that mint or store secrets (e.g. peopleai/webhook-secret) throw
+  // without a key, which reads as a 500 crash rather than the missing-config
+  // it is. Match the sibling DB suites and supply one.
+  process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'smoke-test-key'
 }
 
 let prisma: any
@@ -304,6 +308,11 @@ const SKIPS: Record<string, string> = {
   'organizations/scim-tokens:DELETE': 'no coverage: SCIM token lifecycle, and no test invokes this route',
   'organizations/security:PATCH': 'no coverage: changes MFA/SSO enforcement, and no test invokes this route',
   'organizations/ai-policy:PATCH': 'covered by src/app/api/organizations/ai-policy/__tests__/route.test.ts',
+  // Self-service factor removal. Not invocable from here: it lists and deletes
+  // through the Supabase service-role admin API, which is unreachable in a test
+  // run — the cited file drives that through its production-inert seam, so the
+  // route's own guards (not a stub of them) are what it exercises.
+  'auth/mfa/factors:DELETE': 'covered by src/app/api/auth/__tests__/mfa-factors-route.db.test.ts — both refusals (STEP_UP_REQUIRED, LAST_FACTOR) plus the audited removal',
   // Reviewer-only, like the catalogue routes: the smoke org holds no
   // catalogue.review permission, so invoking them from HERE would only ever
   // produce a 403 that never reaches the handler body. They are driven from a

@@ -1807,11 +1807,13 @@ function FlowBuilder() {
 
   // Answer a paused run's agent question — the execute route resumes it.
   const replyToRun = useCallback(
-    async (flowRunId: string, reply: string) => {
+    async (flowRunId: string, reply: string, stepKey?: string) => {
       const response = await fetch(`/api/flows/${id}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flowRunId, reply }),
+        // stepKey says WHICH paused review this answers, when a loop paused
+        // more than one at a time.
+        body: JSON.stringify({ flowRunId, reply, ...(stepKey ? { replyStepKey: stepKey } : {}) }),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
@@ -2448,7 +2450,7 @@ function FlowBuilder() {
         <div className="hidden shrink-0 items-center gap-0.5 rounded-lg border border-border p-0.5 lg:flex">
           {!external && (
             <>
-              <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => togglePanel('runs')} className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
+              <Button variant="ghost" size="sm" aria-pressed={showRuns} onClick={() => togglePanel('runs')} data-testid="runs-panel-toggle" className={cn('h-7 px-2.5', showRuns && 'bg-muted text-foreground')}>
                 <ListChecks className="mr-1.5 h-4 w-4" /> Runs
               </Button>
               <Button variant="ghost" size="sm" aria-pressed={showVersions} onClick={() => togglePanel('versions')} className={cn('h-7 px-2.5', showVersions && 'bg-muted text-foreground')}>

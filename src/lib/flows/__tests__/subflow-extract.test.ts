@@ -62,19 +62,33 @@ test('two distinct outside references are refused with a plain-English error', (
   assert.ok('error' in plan && /more than one earlier step/i.test(plan.error))
 })
 
-test('branching steps, containers-members, bad ranges, and variables are refused', () => {
-  const g = graph()
-  ;(g.nodes[2] as { type: string }).type = 'condition'
-  ;(g.nodes[2] as { data: unknown }).data = { match: 'all', clauses: [{ left: '', op: 'contains', right: '' }] }
-  assert.ok('error' in planSubflowExtraction(g, 'b', 'c'))
-
+test('container members and bad ranges are refused', () => {
   const g2 = graph()
   assert.ok('error' in planSubflowExtraction(g2, 'c', 'a'), 'end before start refused')
   assert.ok('error' in planSubflowExtraction(g2, 'trigger', 'a'), 'trigger refused')
+  assert.ok('error' in planSubflowExtraction(g2, 'a', 'nope'), 'missing step refused')
 
-  const g3 = graph()
-  ;(g3.nodes[2].data as { input: string }).input = '{{var.total}}'
-  assert.ok('error' in planSubflowExtraction(g3, 'b', 'c'), 'variables refused')
+  const g3: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'l', type: 'loop', data: { over: '{{trigger.input}}', body: ['lb'] } },
+      { id: 'lb', type: 'ai', data: { aiOp: 'summarize', input: '{{item}}' } },
+    ],
+    edges: [{ id: 'e0', source: 'trigger', target: 'l' }],
+  }
+  const inContainer = planSubflowExtraction(g3, 'lb', 'lb')
+  assert.ok('error' in inContainer && /For each or Parallel/.test(inContainer.error))
+})
+
+test('a variable used only inside a straight run moves in without extra wiring', () => {
+  const g = graph()
+  ;(g.nodes[2] as { type: string }).type = 'variable'
+  ;(g.nodes[2] as { data: unknown }).data = { op: 'initialize', name: 'total', varType: 'string', value: 'seed' }
+  ;(g.nodes[3].data as { input: string }).input = '{{var.total}}'
+  const plan = planOrThrow(g, 'b', 'c')
+  assert.equal(plan.childInputs, undefined)
+  assert.deepEqual(plan.outputVariables, [])
+  assert.ok(flowGraphSchema.safeParse(plan.childGraph).success)
 })
 
 test('a loop in the range carries its body along, with in-body refs intact', () => {

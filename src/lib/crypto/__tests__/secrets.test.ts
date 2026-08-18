@@ -65,9 +65,16 @@ test('test env without ENCRYPTION_KEY: falls back to b64 so fixtures need no key
 })
 
 test('legacy b64 rows stay readable once a key is configured, so rotation can re-encrypt them', async () => {
+  // The row has to be written the way a pre-key process wrote it: no key in
+  // the environment at all, so encryptSecret takes the b64 fallback. Without
+  // the delete, an ambient ENCRYPTION_KEY (CI sets one) makes this a v2 row
+  // under a key the second half of the test then replaces, and the assertion
+  // stops being about legacy rows at all.
+  delete process.env.ENCRYPTION_KEY
   setNodeEnv('test')
   const { encryptSecret } = await freshSecrets()
   const legacy = encryptSecret('written-before-the-key-existed')
+  assert.match(legacy, /^b64:/, 'the fixture must actually be a legacy row')
 
   process.env.ENCRYPTION_KEY = 'unit-test-key'
   setNodeEnv('production')

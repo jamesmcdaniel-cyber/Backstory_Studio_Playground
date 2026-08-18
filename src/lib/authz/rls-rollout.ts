@@ -86,6 +86,7 @@ export const RLS_PARENT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'ExecutionMessage',
   'WorkflowStep',
   'WorkflowEvent',
+  'TeamMember',
 ])
 
 /**

@@ -4,7 +4,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { dispatchDetachedFlowExecution, startFlowExecution } from '@/features/flows/execute-flow'
 import { parseFlowInput } from '@/lib/flows/input'
-import { deriveRunWaiting } from '@/lib/flows/run-waiting'
+import { deriveRunWaiting, deriveRunWaitingAll, chooseWaitingReply } from '@/lib/flows/run-waiting'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkMonthlyTokenBudget } from '@/lib/usage/budget'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
@@ -51,6 +51,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       input: z.unknown().optional(),
       flowRunId: z.string().optional(),
       reply: z.string().refine((value) => value.trim().length > 0, 'Reply cannot be empty.').optional(),
+      // Which paused step the reply answers (`${nodeId}#${index}` for one
+      // iteration of a loop). Optional — a run with a single pause needs none.
+      replyStepKey: z.string().optional(),
       // Re-run from a step: replay fromRunId's outputs up to fromNodeId, then
       // execute from that step onward on the SAME pinned graph.
       fromRunId: z.string().optional(),
@@ -110,7 +113,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         orderBy: { order: 'asc' },
         select: { nodeId: true, status: true, output: true },
       })
-      if (deriveRunWaiting(owned.status, steps)?.kind === 'approval') {
+      // Which pause does this reply answer? Refused synchronously (rather than
+      // dispatched and dropped) when the key names a pause that already moved
+      // on, or when several reviews are waiting at once and no key was given —
+      // guessing would answer the wrong item. Same routing the resume path
+      // applies, so the two can never disagree.
+      const pending = deriveRunWaitingAll(owned.status, steps)
+      const routed = chooseWaitingReply(pending, parsed.replyStepKey)
+      if (routed && 'error' in routed) throw new ApiError(routed.error, 409, routed.code)
+      if ((routed?.target ?? deriveRunWaiting(owned.status, steps))?.kind === 'approval') {
         throw new ApiError('This run is waiting for an approval decision, not a reply.', 400, 'FLOW_RUN_AWAITING_APPROVAL')
       }
     }
@@ -123,6 +134,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       input: parseFlowInput(parsed.input),
       flowRunId: parsed.flowRunId,
       reply: parsed.reply,
+      ...(parsed.replyStepKey ? { replyStepKey: parsed.replyStepKey } : {}),
     })
     return { success: true, run: { flowRunId: parsed.flowRunId, status: 'running', output: null } }
   }

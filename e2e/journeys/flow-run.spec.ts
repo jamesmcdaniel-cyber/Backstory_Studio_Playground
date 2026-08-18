@@ -23,7 +23,7 @@
  * part of realtime narration, and it is what the mandate is actually about.
  */
 import { E2E_FLOW_PREFIX, createBlankFlow, expect, renameFlow, test } from '../support/fixtures'
-import { buildRunnableFlow, runsToggle } from '../support/builder'
+import { buildRunnableFlow, runsPanel, runsToggle } from '../support/builder'
 import { deleteFlowsNamed, grantFreshRunAllowance } from '../support/seed'
 
 test.describe('running a flow', () => {
@@ -58,7 +58,7 @@ test.describe('running a flow', () => {
       runsToggle(page),
       'REGRESSION: starting a run did not auto-open the Runs panel (src/app/flows/[id]/page.tsx run() must setActivePanel("runs"))',
     ).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByRole('heading', { name: 'Runs', level: 2 })).toBeVisible()
+    await expect(runsPanel(page)).toBeVisible()
 
     // The result the user came for. Statuses render lowercase in the DOM and
     // are capitalised by CSS, so the match must be case-insensitive.
@@ -80,7 +80,7 @@ test.describe('running a flow', () => {
     await buildRunnableFlow(page, 'Greeting')
 
     await runsToggle(page).click()
-    await expect(page.getByRole('heading', { name: 'Runs', level: 2 })).toBeVisible()
+    await expect(runsPanel(page)).toBeVisible()
 
     // Two buttons are named "Run" once the panel is open: the toolbar's, which
     // renders first, and the panel's own, which renders after it. `.last()` is

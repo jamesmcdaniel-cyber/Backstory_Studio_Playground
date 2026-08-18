@@ -17,18 +17,29 @@ if (TEST_DB) {
   let prisma: any
   let reapStuckFlowRuns: any
   let reapNeverPickedUpRuns: any
+  let stuckTimeoutMs = 0
   const ids: Record<string, string> = {}
+
+  /**
+   * A start time that is unambiguously past the stuck-run cutoff. Derived from
+   * STUCK_FLOW_RUN_TIMEOUT_MS rather than hardcoded, so raising the budget (as
+   * the 1800s route bump did) can never silently turn these fixtures into
+   * not-yet-stale runs that the reaper correctly ignores.
+   */
+  const staleStart = () => new Date(Date.now() - stuckTimeoutMs - 60 * 1000)
 
   before(async () => {
     ;({ prisma } = await import('@/lib/prisma'))
-    ;({ reapStuckFlowRuns, reapNeverPickedUpRuns } = await import('../reap'))
+    let STUCK_FLOW_RUN_TIMEOUT_MS: number
+    ;({ reapStuckFlowRuns, reapNeverPickedUpRuns, STUCK_FLOW_RUN_TIMEOUT_MS } = await import('../reap'))
+    stuckTimeoutMs = STUCK_FLOW_RUN_TIMEOUT_MS
     const org = await prisma.organization.create({ data: { name: 'Reap', slug: `reap-${Date.now()}` } })
     ids.org = org.id
     const flow = await prisma.flow.create({
       data: { name: 'reap-target', organizationId: org.id, status: 'ACTIVE', graph: { nodes: [], edges: [] } },
     })
     ids.flow = flow.id
-    const stale = new Date(Date.now() - 31 * 60 * 1000)
+    const stale = staleStart()
     const fresh = new Date(Date.now() - 5 * 60 * 1000)
     ids.staleRunning = (
       await prisma.flowRun.create({
@@ -85,7 +96,7 @@ if (TEST_DB) {
   })
 
   test('reapStuckFlowRuns never touches steps of a run that legitimately leaves running before the write', async () => {
-    const stale = new Date(Date.now() - 31 * 60 * 1000)
+    const stale = staleStart()
     const racingRun = await prisma.flowRun.create({
       data: { flowId: ids.flow, organizationId: ids.org, status: 'running', startedAt: stale },
     })
@@ -114,7 +125,7 @@ if (TEST_DB) {
   })
 
   test('mixed batch: a diverted run keeps its step, a genuinely-stuck sibling in the same call is reaped', async () => {
-    const stale = new Date(Date.now() - 31 * 60 * 1000)
+    const stale = staleStart()
     const divertedRun = await prisma.flowRun.create({
       data: { flowId: ids.flow, organizationId: ids.org, status: 'running', startedAt: stale },
     })
@@ -179,7 +190,7 @@ if (TEST_DB) {
     assert.equal(justDispatchedAfter.status, 'running', 'inside the pickup window — left alone')
 
     const pickedUpAfter = await prisma.flowRun.findUnique({ where: { id: pickedUp.id, organizationId: ids.org } })
-    assert.equal(pickedUpAfter.status, 'running', 'has a step, so it WAS picked up — the 30-min reaper owns it')
+    assert.equal(pickedUpAfter.status, 'running', 'has a step, so it WAS picked up — the stuck-run reaper owns it')
 
     await prisma.flowRun.update({ where: { id: justDispatched.id, organizationId: ids.org }, data: { status: 'succeeded' } })
     await prisma.flowRun.update({ where: { id: pickedUp.id, organizationId: ids.org }, data: { status: 'succeeded' } })

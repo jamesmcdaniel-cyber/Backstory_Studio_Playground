@@ -5,7 +5,7 @@ import { ensureFreshConnectionToken } from '@/lib/mcp/connection-token'
 import { mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import { mcpConnectionScope } from '@/lib/flows/tool-catalog'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
-import { assertPublicUrl } from '@/lib/net/ssrf'
+import { assertPublicUrl, fetchPublicUrl } from '@/lib/net/ssrf'
 import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentials/audit'
 import { assessStaleness } from '@/lib/credentials/lifetime'
 
@@ -82,13 +82,20 @@ async function requestOauth2Token(
   tokenUrl: string,
   form: URLSearchParams,
 ): Promise<string> {
-  await assertPublicUrl(tokenUrl)
-  const response = await fetch(tokenUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-    body: form,
-    redirect: 'error',
-  })
+  // The token endpoint is user-supplied, so it goes out through the guarded
+  // fetcher: the host is validated and PINNED for the connection that follows
+  // (no rebinding window), and `maxRedirects: 0` preserves this call's original
+  // `redirect: 'error'` contract — a token exchange must never be bounced to
+  // another host with the client secret attached.
+  const response = await fetchPublicUrl(
+    tokenUrl,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: form,
+    },
+    { maxRedirects: 0 },
+  )
   const payload = (await response.json().catch(() => ({}))) as Oauth2TokenResponse
   if (!response.ok || !payload.access_token) {
     throw new Error(payload.error_description || `OAuth2 token endpoint returned HTTP ${response.status}.`)
@@ -267,7 +274,25 @@ export async function fetchWithHttpCredential(
   const applied = credential ? await applyHttpCredential(request, credential) : request
   let currentUrl = applied.url
   let currentInit: RequestInit = { ...applied.init, signal }
-  let response = await fetch(currentUrl, currentInit)
+  /**
+   * Every outbound hop — the first request, the digest re-try, and each
+   * redirect target below — is validated and PINNED immediately before it is
+   * dialled, so a hostname cannot be rebound between the check and the socket.
+   *
+   * When redirects are off, that is exactly `fetchPublicUrl` with a zero hop
+   * budget (its own equivalent of `redirect: 'error'`). When they are ON we
+   * must see the 3xx ourselves, because this function's redirect policy is
+   * stricter than the generic follower's: it strips authorization/cookie
+   * headers on a cross-origin hop and downgrades 301/302 POST to GET. So the
+   * loop stays here and each single hop is guarded with the same
+   * validate-then-pin call `fetchPublicUrl` makes internally.
+   */
+  const guardedFetch = async (url: string, init: RequestInit): Promise<Response> => {
+    if (!request.followRedirects) return fetchPublicUrl(url, init, { maxRedirects: 0 })
+    await assertPublicUrl(url)
+    return fetch(url, { ...init, redirect: 'manual' })
+  }
+  let response = await guardedFetch(currentUrl, currentInit)
 
   // Digest is a 401-challenge round-trip on the FIRST request only.
   if (credential?.authType === 'digest' && response.status === 401) {
@@ -277,7 +302,7 @@ export async function fetchWithHttpCredential(
       const headers = headerRecord(currentInit.headers)
       headers.authorization = digestHeader(currentUrl, String(currentInit.method || 'GET'), credential.config, challenge)
       currentInit = { ...currentInit, headers }
-      response = await fetch(currentUrl, currentInit)
+      response = await guardedFetch(currentUrl, currentInit)
     }
   }
 
@@ -297,7 +322,6 @@ export async function fetchWithHttpCredential(
     const location = response.headers.get('location')
     if (!location) break
     const nextUrl = new URL(location, currentUrl).toString()
-    await assertPublicUrl(nextUrl)
     await response.body?.cancel().catch(() => undefined)
 
     const crossOrigin = new URL(nextUrl).origin !== new URL(currentUrl).origin
@@ -317,7 +341,7 @@ export async function fetchWithHttpCredential(
     }
     currentUrl = nextUrl
     currentInit = { ...currentInit, headers, method, body }
-    response = await fetch(currentUrl, currentInit)
+    response = await guardedFetch(currentUrl, currentInit)
     hops += 1
   }
   return response

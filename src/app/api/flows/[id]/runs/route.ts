@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
-import { deriveRunWaiting } from '@/lib/flows/run-waiting'
+import { deriveRunWaiting, deriveRunWaitingAll } from '@/lib/flows/run-waiting'
 
 // GET /api/flows/[id]/runs — recent runs + each run's per-step detail (input,
 // output, error), polled by the builder for live status and run inspection.
@@ -57,6 +57,11 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     // What the run is blocked on (agent question / approval), non-null only
     // when the run is waiting — reply UIs key off this.
     waiting: deriveRunWaiting(run.status, run.steps),
+    // Every pause the run is blocked on. Usually one (and identical to
+    // `waiting`), but a loop that ran its iterations concurrently can pause
+    // several reviews at once — each entry carries the step key its reply must
+    // be sent with.
+    waitingAll: deriveRunWaitingAll(run.status, run.steps),
     steps: summary ? run.steps.map(({ nodeId, status, order, error, warnings }) => ({ nodeId, status, order, error, warnings })) : run.steps,
   })
   return {

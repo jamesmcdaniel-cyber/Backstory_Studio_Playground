@@ -111,7 +111,7 @@ export function ProposalPreview({ proposal, clamp = true }: { proposal: Proposal
         </details>
       )}
       <IntegrationChips slugs={integrations} withLabel />
-      <div className="flex items-center gap-2 text-[10px] text-gray-400">
+      <div className="flex items-center gap-2 text-[10px] text-fg-muted">
         {schedule && <span>Runs {schedule}</span>}
         {confidence !== null && <span>· {confidence}% confidence</span>}
       </div>

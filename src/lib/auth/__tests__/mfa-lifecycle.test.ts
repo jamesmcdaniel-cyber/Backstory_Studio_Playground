@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { removalWouldLockOut, splitTotpFactors } from '../mfa-factors'
 import { mfaVerifiedAt, stepUpSatisfied, STEP_UP_MAX_AGE_MS } from '../mfa-session'
 
@@ -115,6 +117,46 @@ test('an aal2 session goes stale once the verification ages out', () => {
   const stale = { assuranceLevel: 'aal2', methods: ['mfa'], verifiedAt: new Date(now - STEP_UP_MAX_AGE_MS - 1000) }
   assert.equal(stepUpSatisfied(fresh, now), true)
   assert.equal(stepUpSatisfied(stale, now), false)
+})
+
+/**
+ * Source guard: no browser-side unenroll may come back.
+ *
+ * Both refusals above are enforced by /api/auth/mfa/factors, and a client that
+ * calls supabase.auth.mfa.unenroll() directly is answerable to Supabase alone —
+ * it routes around BOTH of them, which is exactly what Settings used to do.
+ * Behavioural coverage of the refusals lives in
+ * src/app/api/auth/__tests__/mfa-factors-route.db.test.ts; this catches the
+ * reintroduction of a path that would never reach them.
+ */
+const UI_SURFACES = [
+  'src/app/settings/page.tsx',
+  'src/components/settings/mfa-section.tsx',
+  'src/components/settings/enterprise-security-section.tsx',
+]
+
+/** Comments discuss the removed call by name; only real code counts. */
+const stripComments = (source: string) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+test('no settings surface unenrolls a factor from the browser', () => {
+  const root = fileURLToPath(new URL('../../../../', import.meta.url))
+  const offenders = UI_SURFACES.filter((file) =>
+    /mfa\s*\.\s*unenroll\s*\(/.test(stripComments(readFileSync(root + file, 'utf8'))),
+  )
+  assert.deepEqual(
+    offenders,
+    [],
+    `Client-side mfa.unenroll() in: ${offenders.join(', ')}. Removal must go through DELETE /api/auth/mfa/factors, which enforces STEP_UP_REQUIRED and LAST_FACTOR.`,
+  )
+})
+
+test('the enrollment page may still clear its own stale factor', () => {
+  // Not a removal of a working second factor: unverified debris blocks a fresh
+  // enroll and satisfies no policy, so the guards have nothing to say about it.
+  const root = fileURLToPath(new URL('../../../../', import.meta.url))
+  const page = readFileSync(root + 'src/app/auth/mfa/page.tsx', 'utf8')
+  assert.match(page, /stale/, 'the retry path is what that call is for')
 })
 
 test('aal2 with no timestamp available is accepted, deliberately', () => {

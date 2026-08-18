@@ -93,14 +93,14 @@ function runStatusIcon(status: string) {
     case 'pending':
       return <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-blue-600" aria-label="Running" />
     case 'cancelling':
-      return <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-gray-400" aria-label="Cancelling" />
+      return <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-fg-muted" aria-label="Cancelling" />
     case 'waiting_for_input':
     case 'waiting_for_approval':
       return <HelpCircle className="h-4 w-4 shrink-0 text-amber-500" aria-label="Needs input" />
     case 'cancelled':
-      return <XCircle className="h-4 w-4 shrink-0 text-gray-400" aria-label="Cancelled" />
+      return <XCircle className="h-4 w-4 shrink-0 text-fg-muted" aria-label="Cancelled" />
     default:
-      return <AlertCircle className="h-4 w-4 shrink-0 text-gray-400" aria-label={status} />
+      return <AlertCircle className="h-4 w-4 shrink-0 text-fg-muted" aria-label={status} />
   }
 }
 
@@ -218,7 +218,7 @@ function ToolCallCard({ step }: { step: RunStep }) {
           )}
           {/* Raw node id stays on the title for debugging, off the surface. */}
           <span className="truncate text-xs font-medium" title={step.node}>{stepLabel(step.node)}</span>
-          {provider && <span className="shrink-0 text-xs text-gray-400">{provider.name}</span>}
+          {provider && <span className="shrink-0 text-xs text-fg-muted">{provider.name}</span>}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {duration && <span className="text-xs text-gray-500">{duration}</span>}
@@ -260,7 +260,7 @@ function ToolCallCard({ step }: { step: RunStep }) {
 function ThinkingCard({ text }: { text: string }) {
   return (
     <div className="rounded-lg border border-dashed bg-white/60 px-3 py-2">
-      <p className="mono-label mb-1 flex items-center gap-1.5 text-gray-400">
+      <p className="mono-label mb-1 flex items-center gap-1.5 text-fg-muted">
         <Sparkles className="h-3 w-3" /> Thinking
       </p>
       <div className="text-sm text-gray-600"><Markdown>{text}</Markdown></div>
@@ -323,7 +323,7 @@ function ContextCard({ summary, hits, related }: { summary: string; hits: Contex
                 <IntegrationLogo slug="backstory" name="Backstory" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               )}
               <span>
-                <span className="mono-label mr-1.5 text-gray-400">{fact.type}</span>
+                <span className="mono-label mr-1.5 text-fg-muted">{fact.type}</span>
                 {humanizeFact(fact.text)}
               </span>
             </li>
@@ -339,7 +339,7 @@ function ContextCard({ summary, hits, related }: { summary: string; hits: Contex
 function PlanCard({ text }: { text: string }) {
   return (
     <div className="rounded-lg border border-dashed bg-white/60 px-3 py-2">
-      <p className="mono-label mb-1 flex items-center gap-1.5 text-gray-400">
+      <p className="mono-label mb-1 flex items-center gap-1.5 text-fg-muted">
         <ListOrdered className="h-3 w-3" /> Plan
       </p>
       <p className="whitespace-pre-wrap text-sm text-gray-600">{text}</p>
@@ -365,7 +365,7 @@ function MemoryCard({ summary }: { summary: string }) {
 function AutoAnswerCard({ question, answer }: { question: string; answer: string }) {
   return (
     <div className="rounded-lg border border-dashed bg-white/60 px-3 py-2">
-      <p className="mono-label mb-1 flex items-center gap-1.5 text-gray-400">
+      <p className="mono-label mb-1 flex items-center gap-1.5 text-fg-muted">
         <MessageSquareQuote className="h-3 w-3" /> Answered from memory
       </p>
       <p className="text-sm text-gray-500">{question}</p>
@@ -436,7 +436,7 @@ function SuggestionsCard({
               type="button"
               aria-label="Dismiss suggestion"
               onClick={() => dismiss(suggestion.memoryId)}
-              className="shrink-0 rounded p-1 text-gray-400 transition-colors duration-150 hover:bg-amber-100 hover:text-gray-600"
+              className="shrink-0 rounded p-1 text-fg-muted transition-colors duration-150 hover:bg-amber-100 hover:text-gray-600"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -594,7 +594,7 @@ function RunRow({
             })()}
           </div>
         </div>
-        <time className="shrink-0 font-mono text-xs tabular-nums text-gray-400">{new Date(activity.startedAt).toLocaleString()}</time>
+        <time className="shrink-0 font-mono text-xs tabular-nums text-fg-muted">{new Date(activity.startedAt).toLocaleString()}</time>
         <span role="presentation" className="flex shrink-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
           {isCancellable && (
             <button
@@ -602,7 +602,7 @@ function RunRow({
               title="Cancel this run"
               disabled={actionBusy}
               onClick={() => setConfirmAction('cancel')}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-400 transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-fg-muted transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Cancel this run"
             >
               <XCircle className="h-4 w-4" />
@@ -614,7 +614,7 @@ function RunRow({
               title="Delete this run"
               disabled={actionBusy}
               onClick={() => setConfirmAction('delete')}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-400 transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-fg-muted transition-colors duration-150 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="Delete this run"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -660,7 +660,7 @@ function RunRow({
           <div>
             <h4 className="eyebrow mb-2 flex items-center gap-2">
               <Wrench className="h-4 w-4" /> Process
-              {timeline.length ? <span className="text-gray-400">· {timeline.length}</span> : null}
+              {timeline.length ? <span className="text-fg-muted">· {timeline.length}</span> : null}
             </h4>
             <div className="space-y-2">
               {timeline.map((item) => (
@@ -784,7 +784,7 @@ export function AgentActivityPane({
                 groupStatus === 'waiting_for_input' || groupStatus === 'waiting_for_approval' ? <HelpCircle className="h-4 w-4 text-amber-500" /> :
                 groupStatus === 'cancelled' ? <XCircle className="h-4 w-4 text-gray-400" /> :
                 <AlertCircle className="h-4 w-4 text-red-600" />}
-              {groupLabels[groupStatus]} <span className="font-mono text-xs tabular-nums text-gray-400">{items.length}</span>
+              {groupLabels[groupStatus]} <span className="font-mono text-xs tabular-nums text-fg-muted">{items.length}</span>
             </div>
             {visibleItems.map((activity) => (
               <RunRow

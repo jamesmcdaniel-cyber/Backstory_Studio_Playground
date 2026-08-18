@@ -29,21 +29,44 @@ if (TEST_DB) {
   const mkFlow = (organizationId: string, userId: string) =>
     prisma.flow.create({ data: { organizationId, userId, name: 'Shared flow', graph: { nodes: [], edges: [] } } })
 
-  test('share lifecycle: mint → role change keeps token → rotate mints fresh → disable clears', async () => {
+  test('share lifecycle: mint → role change keeps the link → rotate mints fresh → disable clears', async () => {
     const s = await seedTestOrg(prisma)
+    const { hashToken } = await import('@/lib/crypto/secrets')
     try {
       installTestAuth(s.auth)
       const flow = await mkFlow(s.organizationId, s.userId)
       const minted = await (await share(flow.id, { enabled: true, role: 'edit' })).json()
-      assert.ok(minted.shareToken, 'mint returns a token')
+      assert.ok(minted.shareToken, 'mint returns a raw token')
+      assert.equal(minted.shareEnabled, true)
       assert.equal(minted.shareRole, 'edit')
+
+      // The row holds the DIGEST and nothing else — no plaintext at rest.
+      const stored = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: s.organizationId } })
+      assert.equal(stored.shareTokenDigest, hashToken(minted.shareToken))
+      assert.equal(
+        JSON.stringify(stored).includes(minted.shareToken),
+        false,
+        'the raw token appears nowhere on the stored row',
+      )
+
+      // A role change keeps the link working, but there is no plaintext left to
+      // return — the token was shown once, at mint.
       const roleChanged = await (await share(flow.id, { enabled: true, role: 'view' })).json()
-      assert.equal(roleChanged.shareToken, minted.shareToken, 'role change keeps the token — sent links stay valid')
+      assert.equal(roleChanged.shareToken, null, 'the raw token is never re-issued')
+      assert.equal(roleChanged.shareEnabled, true)
       assert.equal(roleChanged.shareRole, 'view')
+      const unchanged = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: s.organizationId } })
+      assert.equal(unchanged.shareTokenDigest, stored.shareTokenDigest, 'sent links stay valid')
+
       const rotated = await (await share(flow.id, { enabled: true, role: 'view', rotate: true })).json()
       assert.ok(rotated.shareToken && rotated.shareToken !== minted.shareToken, 'rotate mints a fresh token')
+      const afterRotate = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: s.organizationId } })
+      assert.equal(afterRotate.shareTokenDigest, hashToken(rotated.shareToken))
+
       const disabled = await (await share(flow.id, { enabled: false, role: 'view' })).json()
       assert.equal(disabled.shareToken, null)
+      assert.equal(disabled.shareEnabled, false)
+      assert.equal((await prisma.flow.findFirst({ where: { id: flow.id, organizationId: s.organizationId } })).shareTokenDigest, null)
     } finally {
       await s.cleanup()
       await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
@@ -143,16 +166,17 @@ if (TEST_DB) {
       // read-only, and never becomes an editable grant.
       const opened = await (await share(flow.id, { enabled: true, role: 'edit', anonymous: true })).json()
       assert.equal(opened.shareAnonymous, true)
-      assert.equal(opened.shareToken, minted.shareToken, 'opting in does not rotate the token')
-      const anon = await resolveAnonymousFlowShare(opened.shareToken, { clientKey: 'anon-2', countView: false })
+      assert.equal(opened.shareToken, null, 'opting in does not rotate — and never re-issues the plaintext')
+      // The token the owner was handed at mint still resolves, via its digest.
+      const anon = await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-2', countView: false })
       assert.equal(anon.status, 'ok')
 
       // Rotating kills the old public URL and resets the counter.
-      await resolveAnonymousFlowShare(opened.shareToken, { clientKey: 'anon-3' })
+      await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-3' })
       const rotated = await (await share(flow.id, { enabled: true, role: 'view', rotate: true, anonymous: true })).json()
-      assert.notEqual(rotated.shareToken, opened.shareToken)
+      assert.ok(rotated.shareToken && rotated.shareToken !== minted.shareToken)
       assert.equal(rotated.anonymousViews, 0, 'the view count resets with the link')
-      assert.equal((await resolveAnonymousFlowShare(opened.shareToken, { clientKey: 'anon-4', countView: false })).status, 'not_found')
+      assert.equal((await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-4', countView: false })).status, 'not_found')
 
       // Turning sharing off ends anonymous access entirely.
       const disabled = await (await share(flow.id, { enabled: false, role: 'view' })).json()

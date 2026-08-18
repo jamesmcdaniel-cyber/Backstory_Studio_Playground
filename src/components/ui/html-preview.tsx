@@ -132,7 +132,7 @@ export function HtmlPreview({ html, className }: { html: string; className?: str
   return (
     <div className={cn('min-h-[120px] w-full', className)}>
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="mono-label text-gray-400">Rendered output</span>
+        <span className="mono-label text-fg-muted">Rendered output</span>
         <span className="flex items-center gap-1">
           <button
             type="button"

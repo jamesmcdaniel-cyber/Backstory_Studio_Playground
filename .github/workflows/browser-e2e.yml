@@ -2,8 +2,12 @@ name: Browser E2E
 on:
   pull_request:
   workflow_dispatch:
+
 jobs:
-  browser:
+  # The anonymous suite. Needs nothing but a reachable deployment, so it is the
+  # gate: it runs on every pull request and its failure fails the workflow.
+  anonymous:
+    name: Anonymous journeys (3 browsers)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -11,10 +15,92 @@ jobs:
         with: { node-version: 20, cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
-      - run: npm run test:e2e
+      - run: npx playwright test --project=chromium --project=firefox --project=webkit
         env:
           E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
           E2E_API_KEY: ${{ secrets.E2E_API_KEY }}
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: playwright-report, path: playwright-report, retention-days: 14 }
+        with: { name: playwright-report-anonymous, path: playwright-report, retention-days: 14 }
+
+  # The authenticated journeys. Split into its own job for two reasons: it needs
+  # secrets the anonymous suite does not, and it must be able to be ABSENT
+  # without turning the workflow red — while still saying so out loud.
+  authenticated:
+    name: Authenticated journeys
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+
+      # Secrets cannot be referenced in a job-level `if:`, so the decision is
+      # made here and every later step keys off its output. The annotation is
+      # the point: an unconfigured authenticated suite must appear in the
+      # Actions summary as a warning a human reads, not as a silent green tick
+      # that looks exactly like nine passing journeys.
+      - id: gate
+        name: Check for authenticated end-to-end secrets
+        env:
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          E2E_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
+          E2E_DATABASE_URL: ${{ secrets.E2E_DATABASE_URL }}
+        # Secrets are read through `env`, never interpolated into the script
+        # body: `${{ secrets.X }}` inside `run:` splices the value into the
+        # shell source, where a character like a quote or backtick in a
+        # connection string becomes executable text.
+        run: |
+          missing=""
+          for name in E2E_BASE_URL E2E_USER_EMAIL E2E_USER_PASSWORD E2E_SUPABASE_URL E2E_SUPABASE_ANON_KEY; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Authenticated E2E journeys did not run::Missing repository secrets:$missing. The nine authenticated product journeys were SKIPPED, not passed. See e2e/README.md for what each secret is and what the test account must look like."
+            {
+              echo "### ⚠️ Authenticated journeys skipped"
+              echo
+              echo "Missing secrets:$missing"
+              echo
+              echo "The authenticated suite did not run. This job is green because the"
+              echo "secrets are absent, **not** because the journeys passed."
+              echo
+              echo "See \`e2e/README.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            if [ -z "$E2E_DATABASE_URL" ]; then
+              echo "::warning title=Free-tier ceiling journey will skip::E2E_DATABASE_URL is not set, so the daily-run-cap journey cannot arrange its precondition and will report as skipped."
+            fi
+          fi
+
+      - if: steps.gate.outputs.run == 'true'
+        run: npm ci
+      # Chromium only: the journeys test product behaviour, not rendering
+      # differences, and the anonymous job already covers three engines.
+      - if: steps.gate.outputs.run == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - if: steps.gate.outputs.run == 'true'
+        name: Run authenticated journeys
+        # "authenticated (limits)" depends on "authenticated", so Playwright
+        # orders them: the ceiling journey spends the test account's daily run
+        # allowance and must go last.
+        run: npx playwright test --project=authenticated --project="authenticated (limits)"
+        env:
+          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          E2E_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
+          # Optional. Absent → the free-tier journey skips with its reason.
+          E2E_DATABASE_URL: ${{ secrets.E2E_DATABASE_URL }}
+          # Optional. Only needed if the Supabase project enforces Turnstile.
+          E2E_CAPTCHA_TOKEN: ${{ secrets.E2E_CAPTCHA_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.gate.outputs.run == 'true'
+        with: { name: playwright-report-authenticated, path: playwright-report, retention-days: 14 }

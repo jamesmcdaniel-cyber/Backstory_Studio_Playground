@@ -500,7 +500,7 @@ export function AssistantPanel({
                             >
                               <MessageSquare className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                               <span className="min-w-0 flex-1 truncate">{session.title}</span>
-                              <span className="shrink-0 text-xs text-gray-400">{relativeTime(session.updatedAt)}</span>
+                              <span className="shrink-0 text-xs text-fg-muted">{relativeTime(session.updatedAt)}</span>
                             </button>
                           </li>
                         ))}
@@ -547,7 +547,7 @@ export function AssistantPanel({
                   if (!items.length) return null
                   return (
                     <div key={kind}>
-                      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+                      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-fg-muted">
                         {kind === 'action' ? <Settings2 className="h-3.5 w-3.5" /> : <MessageSquare className="h-3.5 w-3.5" />}
                         {kind === 'action' ? 'Quick actions' : 'Ask about this agent'}
                       </p>
@@ -584,7 +584,7 @@ export function AssistantPanel({
               <div className={cn('rounded-lg border p-3', runOutput.status === 'failed' ? 'border-red-200 bg-red-50' : 'bg-white')}>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="eyebrow">{runOutput.status === 'failed' ? 'Run error' : 'Output'} · {runOutput.title}</p>
-                  <span className="shrink-0 text-xs text-gray-400">{new Date(runOutput.at).toLocaleString()}</span>
+                  <span className="shrink-0 text-xs text-fg-muted">{new Date(runOutput.at).toLocaleString()}</span>
                 </div>
                 <div className={cn('text-sm', runOutput.status === 'failed' && 'whitespace-pre-wrap text-red-700')}>
                   {runOutput.status === 'failed' ? runOutput.text : <AgentOutput text={runOutput.text} />}

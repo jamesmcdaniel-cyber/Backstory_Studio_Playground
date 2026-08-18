@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { apiLogger } from '@/lib/logger'
 import { amrMethods } from './enterprise-policy'
 
 /**
@@ -94,14 +95,27 @@ export async function readMfaSession(): Promise<MfaSessionState> {
     const { data } = await supabase.auth.getClaims()
     const claims = data?.claims
     if (claims?.sub) {
-      return {
+      const state = {
         assuranceLevel: typeof claims.aal === 'string' ? claims.aal : null,
         methods: amrMethods(claims.amr),
         verifiedAt: mfaVerifiedAt(claims.amr),
       }
+      // The soft half of the guard, made visible. An aal2 session with no MFA
+      // timestamp is accepted for removal WITHOUT a freshness check, so if this
+      // starts appearing for every caller — getClaims falling back to getUser
+      // across the fleet, or a project whose tokens carry no amr — the freshness
+      // requirement has silently stopped applying and this is the only signal.
+      if (state.assuranceLevel === 'aal2' && !state.verifiedAt) {
+        apiLogger.warn('MFA step-up freshness could not be verified (no amr timestamp)', {
+          assuranceLevel: state.assuranceLevel,
+          methods: state.methods,
+        })
+      }
+      return state
     }
   } catch {
     // Fall through: an unreadable token is an unproven step-up, not an error.
   }
+  apiLogger.warn('MFA session state unreadable — treating the session as not stepped up')
   return { assuranceLevel: null, methods: [], verifiedAt: null }
 }

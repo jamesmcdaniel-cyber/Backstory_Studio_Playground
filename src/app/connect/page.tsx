@@ -201,7 +201,7 @@ function ConnectInner() {
 
             <div className="mt-6 space-y-3">
               <div className="rounded-lg border p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Step 1</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Step 1</p>
                 <p className="mt-0.5 text-sm font-semibold text-gray-900">Sales AI entitlement</p>
                 {status.entitled ? (
                   <p className="mt-3 flex items-center gap-2 text-sm font-medium text-green-700">
@@ -219,7 +219,7 @@ function ConnectInner() {
               </div>
 
               <div className="rounded-lg border p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Step 2</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Step 2</p>
                 <div className="mt-0.5 flex items-center gap-2">
                   <p className="text-sm font-semibold text-gray-900">Backstory MCP</p>
                   <span className="inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium text-gray-500">OAuth 2.0</span>
@@ -246,7 +246,7 @@ function ConnectInner() {
 
               {entitlementDone && (
                 <div className="rounded-lg border p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Step 3</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Step 3</p>
                   <p className="mt-0.5 text-sm font-semibold text-gray-900">Connect the tools your team works in</p>
                   {/* The meter and its copy describe AI generation, which the
                       customer edition does not have — promising it would be a
@@ -289,7 +289,7 @@ function ConnectInner() {
               )}
             </div>
 
-            <p className="mt-4 text-xs leading-5 text-gray-400">
+            <p className="mt-4 text-xs leading-5 text-fg-muted">
               You&apos;ll authenticate with Salesforce through Backstory. Backstory only receives tokens scoped to your
               permissions — no passwords.
             </p>

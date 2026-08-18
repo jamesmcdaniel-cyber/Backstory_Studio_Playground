@@ -136,19 +136,19 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       <DialogContent className="top-[20%] max-w-lg translate-y-0 gap-0 p-0">
         <DialogTitle className="sr-only">Search workspace</DialogTitle>
         <div className="flex items-center gap-2 border-b px-4 py-3">
-          {searching ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : <Search className="h-4 w-4 text-gray-400" />}
+          {searching ? <Loader2 className="h-4 w-4 animate-spin text-gray-400" /> : <Search className="h-4 w-4 text-fg-muted" />}
           <input
-            className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-fg-muted"
             placeholder="Search navigation, agents, flows, and runs…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
           />
-          <kbd className="rounded border bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-400">ESC</kbd>
+          <kbd className="rounded border bg-gray-50 px-1.5 py-0.5 text-[10px] text-fg-muted">ESC</kbd>
         </div>
         <div className="max-h-80 overflow-y-auto p-2" aria-live="polite" aria-busy={searching}>
           {navMatches.length > 0 && (
-            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Navigate</div>
+            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">Navigate</div>
           )}
           {navMatches.map((nav, index) => (
             <button
@@ -162,7 +162,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             </button>
           ))}
           {agents.length > 0 && (
-            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Agents</div>
+            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">Agents</div>
           )}
           {agents.map((agent, index) => {
             const resultIndex = navMatches.length + index
@@ -177,12 +177,12 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 {agent.icon || agent.title.trim().charAt(0) || 'A'}
               </span>
               <span className="flex-1 truncate">{agent.title}</span>
-              {agent.folder && <span className="text-xs text-gray-400">{agent.folder}</span>}
+              {agent.folder && <span className="text-xs text-fg-muted">{agent.folder}</span>}
             </button>
             )
           })}
           {flows.length > 0 && (
-            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Flows</div>
+            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">Flows</div>
           )}
           {flows.map((flow, index) => {
             const resultIndex = navMatches.length + agents.length + index
@@ -198,14 +198,14 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{flow.name}</span>
-                  {flow.description && <span className="block truncate text-xs text-gray-400">{flow.description}</span>}
+                  {flow.description && <span className="block truncate text-xs text-fg-muted">{flow.description}</span>}
                 </span>
-                <span className="shrink-0 text-[11px] capitalize text-gray-400">{flow.status.toLowerCase()}</span>
+                <span className="shrink-0 text-[11px] capitalize text-fg-muted">{flow.status.toLowerCase()}</span>
               </button>
             )
           })}
           {runs.length > 0 && (
-            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Runs</div>
+            <div className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-fg-muted">Runs</div>
           )}
           {runs.map((run, index) => {
             const resultIndex = navMatches.length + agents.length + flows.length + index
@@ -218,7 +218,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               >
                 {runStatusIcon(run.status)}
                 <span className="flex-1 truncate">{run.headline || run.title}</span>
-                <span className="shrink-0 text-xs text-gray-400">{new Date(run.startedAt).toLocaleDateString()}</span>
+                <span className="shrink-0 text-xs text-fg-muted">{new Date(run.startedAt).toLocaleDateString()}</span>
               </button>
             )
           })}
@@ -229,7 +229,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <p className="px-2 py-6 text-center text-sm text-gray-500">No results for “{query.trim()}”.</p>
           )}
           {query.trim().length < 2 && (
-            <p className="px-2 pb-2 pt-4 text-center text-xs text-gray-400">Choose a destination or type at least 2 characters to search.</p>
+            <p className="px-2 pb-2 pt-4 text-center text-xs text-fg-muted">Choose a destination or type at least 2 characters to search.</p>
           )}
         </div>
       </DialogContent>

@@ -138,7 +138,7 @@ export default function AssistantHome() {
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input) } else indentOnTab(e) }}
             placeholder="Ask the Assistant about the library, setup, or a goal…"
             aria-label="Ask the Assistant"
-            className="min-h-[3.5rem] w-full resize-none bg-transparent text-xl leading-8 text-gray-900 outline-none placeholder:text-gray-400"
+            className="min-h-[3.5rem] w-full resize-none bg-transparent text-xl leading-8 text-gray-900 outline-none placeholder:text-fg-muted"
           />
         </div>
 
@@ -213,9 +213,9 @@ export default function AssistantHome() {
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-medium text-gray-900">{r.title}</span>
-                            <span className="block truncate text-xs text-gray-400">{r.subtitle}</span>
+                            <span className="block truncate text-xs text-fg-muted">{r.subtitle}</span>
                           </span>
-                          {external && <ExternalLink aria-label="Opens in a new tab" className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
+                          {external && <ExternalLink aria-label="Opens in a new tab" className="h-3.5 w-3.5 shrink-0 text-fg-muted" />}
                         </Link>
                       )
                     })}
@@ -226,7 +226,7 @@ export default function AssistantHome() {
                     the reader can go and check it. */}
                 {turn.sources.length > 0 && (
                   <div className="mt-4 border-t border-gray-100 pt-3">
-                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-gray-400">Sources</p>
+                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-fg-muted">Sources</p>
                     <ol className="mt-2 space-y-2">
                       {turn.sources.map((s, n) => (
                         <li key={`${s.url}-${n}`} className="flex gap-2">
@@ -240,12 +240,12 @@ export default function AssistantHome() {
                             >
                               {s.title}
                             </a>
-                            <span className="ml-1.5 text-[11px] text-gray-400">{s.label}</span>
+                            <span className="ml-1.5 text-[11px] text-fg-muted">{s.label}</span>
                             <a
                               href={s.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block truncate font-mono text-[11px] text-gray-400 transition-colors hover:text-horizon-600"
+                              className="block truncate font-mono text-[11px] text-fg-muted transition-colors hover:text-horizon-600"
                             >
                               {s.url}
                             </a>
@@ -275,7 +275,7 @@ export default function AssistantHome() {
               <div className="flex items-center gap-1.5 text-xs font-medium text-horizon-600">
                 <Sparkles className="h-3.5 w-3.5" /> Assistant
               </div>
-              <p className="mt-2 text-sm text-gray-400">Searching your library…</p>
+              <p className="mt-2 text-sm text-fg-muted">Searching your library…</p>
               <div className="mt-3 space-y-2">
                 <Skeleton className="h-3.5 w-full rounded" />
                 <Skeleton className="h-3.5 w-11/12 rounded" />

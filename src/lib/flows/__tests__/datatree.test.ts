@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildDataTree, inferFields } from '../datatree'
+import { buildDataTree, fileBindingOptions, inferFields } from '../datatree'
 import { httpOutputFields } from '../schema-fields'
 
 test('inferFields walks objects and arrays into dot-path tokens', () => {
@@ -118,4 +118,20 @@ test('buildDataTree offers the Incoming data root when a step has upstream data,
 test('buildDataTree omits the Incoming data root on the first step', () => {
   const tree = buildDataTree({ upstream: [] })
   assert.equal(tree.find((root) => root.token === '{{input}}'), undefined)
+})
+
+test('fileBindingOptions offers pickable object paths and hides scalars and run context', () => {
+  const tree = buildDataTree({
+    trigger: false,
+    upstream: [{ id: 'n1', label: 'Download invoice' }],
+    lastOutputs: { n1: { fileId: 'f1', filename: 'invoice.pdf', mimeType: 'application/pdf', size: 4, url: '/api/files/f1' } },
+  })
+  const options = fileBindingOptions(tree)
+  // Paths are stored bare — the UI shows the label, never token syntax.
+  assert.ok(options.every((option) => !option.path.includes('{{')))
+  assert.ok(options.some((option) => option.path === 'step.n1.output'))
+  assert.ok(options.some((option) => option.label.includes('Download invoice')))
+  // Scalars (filename, size) and the always-present run-context roots are out.
+  assert.ok(!options.some((option) => option.path.endsWith('.filename')))
+  assert.ok(!options.some((option) => /^(now|run|flow)/.test(option.path)))
 })

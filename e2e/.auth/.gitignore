@@ -1,0 +1,10 @@
+# This directory holds a LIVE Supabase session: user.json contains an access
+# token AND a refresh token for the end-to-end test account, and status.json
+# names the workspace it belongs to. Committing either would publish working
+# credentials.
+#
+# Self-contained here rather than in the root .gitignore so the protection
+# travels with the directory it protects and cannot be lost to an unrelated
+# edit of a file at the repository root.
+*
+!.gitignore

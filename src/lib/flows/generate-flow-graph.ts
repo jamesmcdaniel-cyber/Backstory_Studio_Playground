@@ -37,8 +37,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-/** Unwrap {graphJson:"..."} (strips ```json fences); falls back to the raw reply. */
-function parseGeneratedGraphReply(raw: string): unknown {
+/** Unwrap {graphJson:"..."} (strips ```json fences); falls back to the raw reply.
+ *  Exported for tests — this is the seam where a malformed model reply is
+ *  either recovered or rejected. */
+export function parseGeneratedGraphReply(raw: string): unknown {
   const outer = JSON.parse(raw)
   const graphJson = isRecord(outer) ? outer.graphJson : undefined
   if (typeof graphJson !== 'string') return outer

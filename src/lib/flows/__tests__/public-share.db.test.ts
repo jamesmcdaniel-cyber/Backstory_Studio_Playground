@@ -10,6 +10,7 @@ if (TEST_DB) {
   let prisma: any
   let seeded: any
   let resolveAnonymousFlowShare: any
+  let hashToken: any
 
   const graph = {
     nodes: [
@@ -22,6 +23,7 @@ if (TEST_DB) {
   before(async () => {
     ;({ prisma } = await import('@/lib/prisma'))
     ;({ resolveAnonymousFlowShare } = await import('@/lib/flows/public-share'))
+    ;({ hashToken } = await import('@/lib/crypto/secrets'))
     const { seedTestOrg } = await import('@/lib/server/__tests__/test-auth')
     seeded = await seedTestOrg(prisma)
   })
@@ -30,9 +32,21 @@ if (TEST_DB) {
     if (seeded) await seeded.cleanup()
   })
 
-  const mkFlow = (data: Record<string, unknown>) =>
+  /**
+   * Seeds a flow the way minting does: the row carries only the DIGEST, and the
+   * raw token stays in the test's hand — exactly the split the resolver must
+   * bridge on every lookup.
+   */
+  const mkFlow = ({ shareToken, ...data }: Record<string, unknown> & { shareToken?: string }) =>
     prisma.flow.create({
-      data: { organizationId: seeded.organizationId, userId: seeded.userId, name: 'Public flow', graph, ...data },
+      data: {
+        organizationId: seeded.organizationId,
+        userId: seeded.userId,
+        name: 'Public flow',
+        graph,
+        ...(shareToken ? { shareTokenDigest: hashToken(shareToken) } : {}),
+        ...data,
+      },
     })
 
   test('a token is only resolvable when the owner opted in — and never leaks the graph payload', async () => {
@@ -42,8 +56,14 @@ if (TEST_DB) {
 
     // Opted IN: resolves, and the payload is the sanitized projection.
     const shared = await mkFlow({ shareToken: 'tok-opted-in-0000000', shareAnonymous: true, description: 'A shared pipeline' })
+    assert.equal(shared.shareTokenDigest, hashToken('tok-opted-in-0000000'))
+    assert.equal(
+      JSON.stringify(shared).includes('tok-opted-in-0000000'),
+      false,
+      'the stored row holds no plaintext token',
+    )
     const result = await resolveAnonymousFlowShare('tok-opted-in-0000000', { clientKey: 'b' })
-    assert.equal(result.status, 'ok')
+    assert.equal(result.status, 'ok', 'lookup succeeds by hashing what the visitor presented')
     assert.equal(result.flow.name, 'Public flow')
     assert.equal(result.flow.description, 'A shared pipeline')
     const serialized = JSON.stringify(result.flow.graph)

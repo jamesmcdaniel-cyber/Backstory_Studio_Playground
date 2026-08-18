@@ -199,10 +199,10 @@ export function NotificationBell() {
             <div className="flex items-center justify-between border-b px-3 py-2">
               <span className="text-sm font-semibold">Notifications</span>
               {pushState === 'available' && <button className="text-xs font-medium text-indigo-600" onClick={enablePush}>Enable push</button>}
-              {pushState === 'enabled' && <span className="text-xs text-gray-400">Push on</span>}
+              {pushState === 'enabled' && <span className="text-xs text-fg-muted">Push on</span>}
             </div>
             <div className="max-h-96 overflow-y-auto">
-              {items.length === 0 && <p className="px-3 py-6 text-center text-sm text-gray-400">No notifications yet.</p>}
+              {items.length === 0 && <p className="px-3 py-6 text-center text-sm text-fg-muted">No notifications yet.</p>}
               {items.map((n) => (
                 <Link
                   key={n.id}
@@ -214,7 +214,7 @@ export function NotificationBell() {
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium">{n.title}</div>
                     {n.body && <div className="line-clamp-2 text-xs text-gray-500">{n.body}</div>}
-                    <div className="mt-0.5 text-[11px] text-gray-400">{new Date(n.createdAt).toLocaleString()}</div>
+                    <div className="mt-0.5 text-[11px] text-fg-muted">{new Date(n.createdAt).toLocaleString()}</div>
                   </div>
                 </Link>
               ))}

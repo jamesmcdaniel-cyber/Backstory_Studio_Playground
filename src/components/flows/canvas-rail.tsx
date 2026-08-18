@@ -102,10 +102,10 @@ export function CanvasRail({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search steps..."
-              className="w-full border-b border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-blue-500"
+              className="w-full border-b border-slate-200 px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-fg-muted focus:border-blue-500"
             />
             <div className="max-h-56 overflow-y-auto py-1">
-              {results.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">No matching steps.</p>}
+              {results.length === 0 && <p className="px-3 py-2 text-xs text-fg-muted">No matching steps.</p>}
               {results.map((node) => (
                 <button
                   key={node.id}

@@ -82,9 +82,9 @@ test('inviting by email posts the flow as the destination so acceptance lands he
   cleanup()
 })
 
-test('without a share token the link is workspace-only and one chip opens it up', async () => {
+test('without a live share link the audience is workspace-only and one chip opens it up', async () => {
   stubMembers('ADMIN')
-  render(<JamDialog {...baseProps} shareToken={null} />)
+  render(<JamDialog {...baseProps} shareToken={null} shareEnabled={false} />)
   await flush()
   assert.ok(screen.getByText(/only people in your workspace can open this link/i))
   const workspaceChip = screen.getByRole('button', { name: /^workspace only$/i })
@@ -93,11 +93,27 @@ test('without a share token the link is workspace-only and one chip opens it up'
   cleanup()
 })
 
-test('with a share token the link row states the role it grants', async () => {
+test('with a live share link the row states the role it grants', async () => {
   stubMembers('ADMIN')
-  render(<JamDialog {...baseProps} shareToken="tok" shareRole="edit" />)
+  render(<JamDialog {...baseProps} shareToken="tok" shareEnabled shareRole="edit" />)
   await flush()
   assert.ok(screen.getByText(/anyone with this link can sign in and edit/i))
+  cleanup()
+})
+
+// The server stores only a digest, so after a reload the link is live but its
+// plaintext is gone. The dialog must still report the right audience and say
+// why it cannot show the URL — silently falling back to "workspace only" would
+// tell the owner their flow is private when it is not.
+test('a live link whose plaintext this session lacks still reads as shared', async () => {
+  stubMembers('ADMIN')
+  render(<JamDialog {...baseProps} shareToken={null} shareEnabled shareRole="view" />)
+  await flush()
+  assert.equal(
+    screen.getByRole('button', { name: /^anyone can view$/i }).getAttribute('aria-pressed'),
+    'true',
+  )
+  assert.ok(screen.getByText(/only shown once when it.s created/i))
   cleanup()
 })
 

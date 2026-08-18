@@ -11,6 +11,13 @@ const graphite = {
 }
 
 module.exports = {
+  // INERT BY DESIGN. Nothing in src/ ever adds the `dark` class, so every
+  // `dark:` variant in the app is currently unreachable. This line is kept
+  // (rather than deleted) on purpose: removing it falls back to Tailwind's
+  // default `media` strategy, which would switch ~260 never-reviewed `dark:`
+  // utilities on for any visitor whose OS is in dark mode. Keeping the class
+  // strategy holds the dark palette dormant until a real theme preference
+  // exists; wiring one means adding/removing `dark` on <html> and nothing else.
   darkMode: 'class',
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
@@ -34,6 +41,10 @@ module.exports = {
         blue: horizon,
         indigo: horizon,
         sky: horizon,
+        // Accessible muted TEXT tone (see --fg-muted in backstory-design.css).
+        // Use `text-fg-muted` for secondary copy; graphite-400 stays for
+        // borders, dividers and decorative marks where AA does not apply.
+        'fg-muted': 'var(--fg-muted)',
         // shadcn token aliases
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',

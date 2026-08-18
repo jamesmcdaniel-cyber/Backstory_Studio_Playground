@@ -110,13 +110,13 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
               <span className="min-w-0 flex-1 truncate text-gray-700" title={doc.filename}>
                 {doc.filename}
               </span>
-              <span className="shrink-0 text-xs text-gray-400">
+              <span className="shrink-0 text-xs text-fg-muted">
                 {formatSize(doc.sizeBytes)} · {doc.chunkCount} passages
               </span>
               <button
                 type="button"
                 onClick={() => remove(doc)}
-                className="shrink-0 text-gray-400 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
+                className="shrink-0 text-fg-muted opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
                 aria-label={`Remove ${doc.filename}`}
               >
                 <Trash2 className="h-4 w-4" />

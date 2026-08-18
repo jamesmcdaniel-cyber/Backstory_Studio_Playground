@@ -64,7 +64,7 @@ export function AgentInlineCreate({
       <input
         value={title}
         onChange={(event) => setTitle(event.target.value)}
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-indigo-400"
+        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-fg-muted focus:border-indigo-400"
         placeholder="Agent name — e.g. Pipeline Persona Analyst"
         aria-label="New agent name"
       />
@@ -73,7 +73,7 @@ export function AgentInlineCreate({
         value={instructions}
         onChange={(event) => setInstructions(event.target.value)}
         rows={4}
-        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-indigo-400"
+        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none placeholder:text-fg-muted focus:border-indigo-400"
         placeholder="Instructions — who this agent is, what it does, and how it should respond."
         aria-label="New agent instructions"
       />

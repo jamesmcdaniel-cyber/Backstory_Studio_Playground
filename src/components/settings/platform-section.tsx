@@ -177,7 +177,7 @@ export function PlatformSection({ organizationId }: { organizationId: string | n
                   <button
                     type="button"
                     onClick={() => void patch({ email: entry.email, platformRole: null })}
-                    className="text-xs font-medium text-graphite-400 hover:text-red-600"
+                    className="text-xs font-medium text-fg-muted hover:text-red-600"
                   >
                     Revoke
                   </button>

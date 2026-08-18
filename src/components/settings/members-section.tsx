@@ -226,7 +226,7 @@ export function MembersSection({
                     type="button"
                     disabled={busyId === member.id}
                     onClick={() => setRemoving(member)}
-                    className="rounded-md p-1.5 text-graphite-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                    className="rounded-md p-1.5 text-fg-muted hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
                     aria-label={`Remove ${member.name || member.email}`}
                   >
                     <UserMinus className="h-4 w-4" />
@@ -276,7 +276,7 @@ export function MembersSection({
                     type="button"
                     disabled={busyId === invite.id}
                     onClick={() => void revokeInvite(invite)}
-                    className="text-xs font-medium text-graphite-400 hover:text-red-600 disabled:opacity-50"
+                    className="text-xs font-medium text-fg-muted hover:text-red-600 disabled:opacity-50"
                   >
                     Revoke
                   </button>

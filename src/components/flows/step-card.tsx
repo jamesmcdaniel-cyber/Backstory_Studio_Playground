@@ -78,12 +78,12 @@ const INPUT_TYPES: {
 ]
 
 const controlClass =
-  'h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none transition-colors placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
+  'h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none transition-colors placeholder:text-fg-muted hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
 // TokenTextEditor overrides that restyle the drawer-flavored defaults to match
 // the card's denser slate inputs. No border color here — `invalid` red borders
 // (appended after this string) must win in tailwind-merge order.
 const tokenControlBase =
-  'min-h-10 rounded-md bg-white px-3 py-2 text-sm text-slate-950 transition-colors empty:before:text-slate-400 hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
+  'min-h-10 rounded-md bg-white px-3 py-2 text-sm text-slate-950 transition-colors empty:before:text-fg-muted hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
 const tokenControlClass = `${tokenControlBase} border-slate-300`
 const labelClass = 'text-[11px] font-semibold uppercase tracking-wide text-slate-500'
 
@@ -493,7 +493,7 @@ export function StepCard({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            {typeof index === 'number' && <span className="text-xs font-semibold text-slate-400">{index}</span>}
+            {typeof index === 'number' && <span className="text-xs font-semibold text-fg-muted">{index}</span>}
             {renaming ? (
               <span role="presentation" className="flex items-center gap-1.5" onClick={stopEvent}>
                 <input
@@ -588,7 +588,7 @@ export function StepCard({
               <>
                 <DropdownMenuItem onSelect={onDelete} className="text-red-600 focus:text-red-700">
                   <Trash2 className="h-4 w-4" /> Delete
-                  <span className="ml-auto pl-4 text-xs text-slate-400">Del</span>
+                  <span className="ml-auto pl-4 text-xs text-fg-muted">Del</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
               </>
@@ -596,7 +596,7 @@ export function StepCard({
             {!isTrigger && (
               <DropdownMenuItem onSelect={copyStep}>
                 <Copy className="h-4 w-4" /> Copy step
-                <span className="ml-auto pl-4 text-xs text-slate-400">⌘C</span>
+                <span className="ml-auto pl-4 text-xs text-fg-muted">⌘C</span>
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={copyNodeJson}>
@@ -610,7 +610,7 @@ export function StepCard({
             {!isTrigger && node.type !== 'condition' && node.type !== 'switch' && (
               <DropdownMenuItem onSelect={() => update({ ...node, disabled: node.disabled ? undefined : true })}>
                 <ToggleLeft className="h-4 w-4" /> {node.disabled ? 'Enable step' : 'Disable step'}
-                <span className="ml-auto pl-4 text-xs text-slate-400">D</span>
+                <span className="ml-auto pl-4 text-xs text-fg-muted">D</span>
               </DropdownMenuItem>
             )}
             {!isTrigger && onDuplicate && (
@@ -936,7 +936,7 @@ function TriggerBody({
                 <button
                   type="button"
                   onClick={() => removeField(fieldIndex)}
-                  className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600"
                   aria-label="Remove input"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -1240,7 +1240,7 @@ function AiBody({
                 <button
                   type="button"
                   onClick={() => setOutputFields(outputFields.filter((_, j) => j !== index))}
-                  className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600"
                   aria-label="Remove field"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -1275,7 +1275,7 @@ function AiBody({
                 <button
                   type="button"
                   onClick={() => setCategories(categories.filter((_, j) => j !== index))}
-                  className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600"
                   aria-label="Remove category"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -1484,7 +1484,7 @@ function AgentBody({
                 <button
                   type="button"
                   onClick={() => setOutputFields(outputFields.filter((_, j) => j !== index))}
-                  className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600"
                   aria-label="Remove property"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -1849,7 +1849,7 @@ function ConditionBody({
             type="button"
             onClick={() => setClauses(clauses.filter((_, entryIndex) => entryIndex !== index))}
             disabled={clauses.length === 1}
-            className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+            className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
             aria-label="Remove condition"
           >
             <Trash2 className="h-4 w-4" />
@@ -1905,7 +1905,7 @@ function TransformBody({
           <button
             type="button"
             onClick={() => setFields(fields.filter((_, fieldIndex) => fieldIndex !== index))}
-            className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+            className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600"
             aria-label="Remove field"
           >
             <Trash2 className="h-4 w-4" />
@@ -1995,7 +1995,7 @@ function SwitchBody({
               type="button"
               onClick={() => setCases(cases.filter((_, itemIndex) => itemIndex !== index))}
               disabled={cases.length === 1}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+              className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
               aria-label="Remove case"
             >
               <Trash2 className="h-4 w-4" />
@@ -2162,7 +2162,7 @@ function VariableBody({
       )}
       <div className="grid gap-2">
         <label className={labelClass}>
-          Value {variableValueOptional(node.data.op) ? <span className="font-normal normal-case text-slate-400">(optional)</span> : <span className="text-red-500">*</span>}
+          Value {variableValueOptional(node.data.op) ? <span className="font-normal normal-case text-fg-muted">(optional)</span> : <span className="text-red-500">*</span>}
         </label>
         <TokenTextEditor
           ref={registerEditor('var.value')}
@@ -2234,7 +2234,7 @@ function DataBody({
       </div>
       {(op === 'join' || op === 'split') && (
         <div className="grid gap-2">
-          <label className={labelClass}>{op === 'join' ? 'Join with' : 'Split at'} <span className="font-normal normal-case text-slate-400">(optional)</span></label>
+          <label className={labelClass}>{op === 'join' ? 'Join with' : 'Split at'} <span className="font-normal normal-case text-fg-muted">(optional)</span></label>
           <input
             value={node.data.separator ?? ''}
             onChange={(event) => update({ ...node, data: { ...node.data, separator: event.target.value || undefined } })}
@@ -2323,7 +2323,7 @@ function DataBody({
       )}
       {op === 'parseJson' && (
         <div className="grid gap-2">
-          <label className={labelClass} htmlFor={`${id}-schema`}>Schema <span className="font-normal normal-case text-slate-400">(optional)</span></label>
+          <label className={labelClass} htmlFor={`${id}-schema`}>Schema <span className="font-normal normal-case text-fg-muted">(optional)</span></label>
           <textarea
             id={`${id}-schema`}
             rows={4}
@@ -2392,7 +2392,7 @@ function DataBody({
                 type="button"
                 onClick={() => setClauses(list.filter((_, j) => j !== index))}
                 disabled={list.length === 1}
-                className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
+                className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
                 aria-label="Remove condition"
               >
                 <Trash2 className="h-4 w-4" />
@@ -2410,7 +2410,7 @@ function DataBody({
       )}
       {op === 'flatten' && (
         <div className="grid gap-2">
-          <label className={labelClass} htmlFor={`${id}-by`}>Field holding the list <span className="font-normal normal-case text-slate-400">(optional)</span></label>
+          <label className={labelClass} htmlFor={`${id}-by`}>Field holding the list <span className="font-normal normal-case text-fg-muted">(optional)</span></label>
           <input
             id={`${id}-by`}
             value={node.data.by ?? ''}
@@ -2571,7 +2571,7 @@ function DataBody({
                 type="button"
                 onClick={() => setFields(list.filter((_, j) => j !== index))}
                 disabled={list.length === 1}
-                className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
+                className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
                 aria-label={op === 'renameKeys' ? 'Remove rename' : 'Remove field'}
               >
                 <Trash2 className="h-4 w-4" />
@@ -2705,7 +2705,7 @@ function OutputBody({
               type="button"
               onClick={() => setOutputs(outputs.filter((_, j) => j !== index))}
               disabled={outputs.length === 1}
-              className="flex h-10 w-10 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
+              className="flex h-10 w-10 items-center justify-center rounded-md text-fg-muted hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-30"
               aria-label="Remove output"
             >
               <Trash2 className="h-4 w-4" />

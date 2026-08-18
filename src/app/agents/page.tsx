@@ -634,7 +634,7 @@ function AgentHQ() {
                   <div className="flex items-center gap-2 rounded-xl border bg-gray-50 px-3 py-2 transition-shadow duration-150 focus-within:ring-2 focus-within:ring-indigo-200">
                     <Sparkles className="h-4 w-4 shrink-0 text-indigo-500" />
                     <input
-                      className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400"
+                      className="flex-1 bg-transparent text-sm outline-none placeholder:text-fg-muted"
                       placeholder={"Describe an agent to build — e.g. “Every Monday, summarize last week’s GitHub activity and post it to Slack”"}
                       value={describe}
                       disabled={building}
@@ -662,7 +662,7 @@ function AgentHQ() {
                       <div className="sticky top-0 flex items-center justify-between border-b bg-white px-3 py-2">
                         <span className="text-xs font-medium text-gray-600">Select a meeting to import</span>
                         <button
-                          className="rounded p-0.5 text-gray-400 transition-colors duration-150 hover:text-gray-700"
+                          className="rounded p-0.5 text-fg-muted transition-colors duration-150 hover:text-gray-700"
                           onClick={() => setGranolaPickerOpen(false)}
                           aria-label="Close picker"
                         >
@@ -684,7 +684,7 @@ function AgentHQ() {
                           onClick={() => importGranolaNote(note)}
                         >
                           <span className="truncate text-sm font-medium">{note.title}</span>
-                          <span className="truncate text-xs text-gray-400">
+                          <span className="truncate text-xs text-fg-muted">
                             {note.owner?.name || note.owner?.email || ''}
                             {note.owner && note.created_at ? ' · ' : ''}
                             {note.created_at ? new Date(note.created_at).toLocaleDateString() : ''}

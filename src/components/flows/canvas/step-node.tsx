@@ -160,7 +160,7 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
             </span>
           )}
           {bodyCount !== undefined && (
-            <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-slate-400">
+            <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-fg-muted">
               {bodyCount} step{bodyCount === 1 ? '' : 's'}
             </span>
           )}
@@ -168,7 +168,7 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
 
         <span className="flex shrink-0 flex-col items-end gap-1">
           {status && <span className={cn('h-2.5 w-2.5 rounded-full', STATUS_DOT[status])} aria-label={status} />}
-          {node.disabled && <Ban className="h-3.5 w-3.5 text-slate-400" aria-label="Disabled" />}
+          {node.disabled && <Ban className="h-3.5 w-3.5 text-fg-muted" aria-label="Disabled" />}
           {(errorCount > 0 || warningCount > 0) && (
             <span
               className={cn(
@@ -202,7 +202,7 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
               <span
                 className={cn(
                   'pointer-events-none absolute max-w-[140px] -translate-y-[150%] truncate whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide',
-                  isError ? 'text-amber-600' : 'text-slate-400',
+                  isError ? 'text-amber-600' : 'text-fg-muted',
                 )}
                 style={{ top: offsets[index], left: showPlus ? 'calc(100% + 28px)' : 'calc(100% + 10px)' }}
               >
@@ -248,7 +248,7 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
                     onAddFrom(node.id, handle.branch)
                   }}
                   className={cn(
-                    'nodrag flex !h-5 !w-5 items-center justify-center !rounded-full !border !border-dashed !bg-white text-slate-400 transition-colors duration-fast hover:!border-blue-400 hover:text-blue-600 dark:!bg-slate-900',
+                    'nodrag flex !h-5 !w-5 items-center justify-center !rounded-full !border !border-dashed !bg-white text-fg-muted transition-colors duration-fast hover:!border-blue-400 hover:text-blue-600 dark:!bg-slate-900',
                     isError ? '!border-amber-300' : '!border-slate-300 dark:!border-slate-600',
                   )}
                   style={{ top: offsets[index], left: 'calc(100% + 28px)', transform: 'translateY(-50%)' }}

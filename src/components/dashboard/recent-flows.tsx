@@ -55,10 +55,10 @@ export function RecentFlows() {
   return (
     <div className="mt-10">
       <div className="mb-3 flex items-baseline justify-between gap-4">
-        <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-gray-400">Recent flows</p>
+        <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-fg-muted">Recent flows</p>
         <Link
           href="/flows"
-          className="group inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-[0.12em] text-gray-400 transition-colors hover:text-horizon-600"
+          className="group inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-[0.12em] text-fg-muted transition-colors hover:text-horizon-600"
         >
           All flows
           <ArrowRight className="h-3 w-3 transition-transform duration-base group-hover:translate-x-0.5" />
@@ -95,7 +95,7 @@ export function RecentFlows() {
                     {flow.icon ? <span aria-hidden="true">{flow.icon}</span> : <Workflow className="h-4 w-4" />}
                   </span>
                   <p className="mt-3 truncate text-sm font-medium text-gray-900">{flow.name}</p>
-                  <p className="mt-1 text-xs text-gray-400">edited {relativeTime(flow.updatedAt)}</p>
+                  <p className="mt-1 text-xs text-fg-muted">edited {relativeTime(flow.updatedAt)}</p>
                 </Link>
               )
             })}

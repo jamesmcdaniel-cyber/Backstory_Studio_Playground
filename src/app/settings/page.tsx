@@ -176,8 +176,6 @@ function SettingsTabs() {
             firstName={user?.firstName ?? ''}
             lastName={user?.lastName ?? ''}
             email={user?.emailAddress ?? ''}
-            hasMfa={selfHasMfa}
-            onMfaChanged={() => void loadFactors()}
           />
         )}
         {active === 'account' && <MfaSection onChanged={() => void loadFactors()} />}
@@ -225,20 +223,28 @@ function SettingsTabs() {
 
 /* ------------------------------- Account -------------------------------- */
 
+/**
+ * Authenticators are NOT managed here — see MfaSection, rendered directly below
+ * this one on the same tab.
+ *
+ * This section used to carry its own "Remove" control that looped over the
+ * caller's verified factors calling supabase.auth.mfa.unenroll() straight from
+ * the browser. That path answered to Supabase and to nothing else, so neither
+ * the step-up requirement nor the last-factor rule could apply to it: a member
+ * of a workspace that REQUIRES MFA could strip their only factor from here, and
+ * a stolen still-warm session could strip someone else's. Every removal now goes
+ * through DELETE /api/auth/mfa/factors, which enforces both.
+ */
 function AccountSection({
   supabase,
   firstName,
   lastName,
   email,
-  hasMfa,
-  onMfaChanged,
 }: {
   supabase: ReturnType<typeof createClient>
   firstName: string
   lastName: string
   email: string
-  hasMfa: boolean | null
-  onMfaChanged: () => void
 }) {
   const [first, setFirst] = useState(firstName)
   const [last, setLast] = useState(lastName)
@@ -246,8 +252,6 @@ function AccountSection({
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [savingPassword, setSavingPassword] = useState(false)
-  const [disablingMfa, setDisablingMfa] = useState(false)
-  const [confirmDisableMfa, setConfirmDisableMfa] = useState(false)
 
   // Keep local fields in sync once the auth hook resolves the real values.
   useEffect(() => { setFirst(firstName); setLast(lastName) }, [firstName, lastName])
@@ -276,23 +280,6 @@ function AccountSection({
     setPassword('')
     setConfirm('')
     toast.success('Password updated.')
-  }
-
-  // Unenrolling every verified factor. If the workspace requires MFA the next
-  // request will bounce this user to enrollment, which the dialog says plainly.
-  const disableMfa = async () => {
-    setDisablingMfa(true)
-    try {
-      const { data } = await supabase.auth.mfa.listFactors()
-      const factors = (data?.totp ?? []).filter((factor) => factor.status === 'verified')
-      for (const factor of factors) {
-        const { error } = await supabase.auth.mfa.unenroll({ factorId: factor.id })
-        if (error) { toast.error(error.message); return }
-      }
-      setConfirmDisableMfa(false)
-      onMfaChanged()
-      toast.success('Authenticator removed.')
-    } finally { setDisablingMfa(false) }
   }
 
   return (
@@ -332,42 +319,6 @@ function AccountSection({
         </Button>
       </form>
 
-      {/* Enrollment lives at /auth/mfa; before this, nothing in Settings said so
-          — an admin could require MFA workspace-wide with no path to satisfy it. */}
-      <div className="border-t pt-4">
-        <SettingsRow
-          title="Two-factor authentication"
-          description={
-            hasMfa === null
-              ? 'Checking your authenticator…'
-              : hasMfa
-                ? 'An authenticator app is verified on your account.'
-                : 'Add an authenticator app for a second factor at sign-in.'
-          }
-        >
-          {hasMfa ? (
-            <div className="flex items-center gap-2">
-              <Badge variant="good">Enabled</Badge>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmDisableMfa(true)}>Remove</Button>
-            </div>
-          ) : (
-            <Button asChild variant="outline" size="sm" disabled={hasMfa === null}>
-              <a href="/auth/mfa">Set up</a>
-            </Button>
-          )}
-        </SettingsRow>
-      </div>
-
-      <ConfirmDialog
-        open={confirmDisableMfa}
-        onOpenChange={setConfirmDisableMfa}
-        title="Remove your authenticator?"
-        description="If your workspace requires multi-factor authentication — or your account holds platform administrator rights, which always require it — you'll be asked to enroll again on your next request."
-        confirmLabel="Remove authenticator"
-        destructive
-        busy={disablingMfa}
-        onConfirm={disableMfa}
-      />
     </Section>
   )
 }

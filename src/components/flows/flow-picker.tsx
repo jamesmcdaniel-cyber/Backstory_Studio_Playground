@@ -511,7 +511,7 @@ export function FlowPicker({
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-sm text-slate-950 outline-none placeholder:text-slate-400"
+            className="min-w-0 flex-1 bg-transparent text-sm text-slate-950 outline-none placeholder:text-fg-muted"
             placeholder={mode === 'trigger' ? 'Search triggers' : 'Search agents, actions, or connectors'}
             ref={focusOnMount}
           />

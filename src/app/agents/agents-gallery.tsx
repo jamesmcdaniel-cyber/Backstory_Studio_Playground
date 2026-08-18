@@ -130,7 +130,7 @@ export function AgentsGallery({
                 onClick={() => onEditAgent(agent.id)}
                 aria-label={`Configure ${agent.title}`}
                 title="Configure agent"
-                className="absolute right-2.5 top-2.5 z-10 rounded-lg p-1.5 text-gray-400 opacity-60 transition-all duration-150 hover:bg-gray-100 hover:text-gray-700 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 group-hover:opacity-100"
+                className="absolute right-2.5 top-2.5 z-10 rounded-lg p-1.5 text-fg-muted opacity-60 transition-all duration-150 hover:bg-gray-100 hover:text-gray-700 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 group-hover:opacity-100"
               >
                 <Settings2 className="h-4 w-4" aria-hidden="true" />
               </button>

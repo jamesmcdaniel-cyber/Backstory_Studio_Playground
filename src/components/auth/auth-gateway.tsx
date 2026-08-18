@@ -225,7 +225,7 @@ export function AuthGateway() {
                 )}
               </div>
 
-              <div className="my-5 flex items-center gap-3 text-xs text-graphite-400">
+              <div className="my-5 flex items-center gap-3 text-xs text-fg-muted">
                 <span className="h-px flex-1 bg-graphite-200" /> Enterprise SSO <span className="h-px flex-1 bg-graphite-200" />
               </div>
               <form

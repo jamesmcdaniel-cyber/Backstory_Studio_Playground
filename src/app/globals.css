@@ -30,7 +30,13 @@
   --radius: 0.75rem;                 /* 12px — product cards (rounded-lg) */
 }
 
+/* NOTE: nothing in the app adds this class today — see the `darkMode` comment
+   in tailwind.config.js. The dark palette is kept authored and correct so a
+   future theme switcher is a one-line change, not a re-design. */
 .dark {
+  /* Muted foreground on the dark ground: graphite-400 #ABABAD is 7.76:1 on
+     graphite-900 — the same stop that fails on white passes here. */
+  --fg-muted: #ABABAD;
   --background: 240 18% 11%;         /* graphite-900 */
   --foreground: 225 17% 95%;
   --card: 240 16% 13%;

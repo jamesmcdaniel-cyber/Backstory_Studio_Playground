@@ -31,6 +31,13 @@ const cleanups: (() => Promise<void>)[] = []
 
 after(async () => {
   for (const cleanup of cleanups) await cleanup().catch(() => {})
+  // config.ts holds ONE ioredis client for the process and nothing else closes
+  // it. Without this the test file passes and then hangs forever on an open
+  // handle — which in CI is indistinguishable from a deadlocked queue plane.
+  if (TEST_REDIS_URL) {
+    const { getRedisConnection } = await import('../config')
+    await getRedisConnection().quit().catch(() => {})
+  }
 })
 
 describe('dead-letter admin against live Redis', () => {

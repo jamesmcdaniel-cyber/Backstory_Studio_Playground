@@ -569,7 +569,7 @@ export function Sidebar() {
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={org.logoUrl || DEFAULT_ORG_LOGO} alt="" className="h-5 w-5 rounded object-cover" />
                     <span className="flex-1 truncate text-left">{org.name}</span>
-                    <span className="text-xs text-graphite-400">{planLabel(org.plan)}</span>
+                    <span className="text-xs text-fg-muted">{planLabel(org.plan)}</span>
                     {org.id === activeOrg?.id && <Check className="h-4 w-4 text-horizon-600" />}
                   </button>
                 ))}
@@ -603,7 +603,7 @@ export function Sidebar() {
                   }}
                 />
                 <div className="my-1 border-t" />
-                <div className="truncate px-2 py-1 text-xs text-graphite-400">{user?.emailAddress}</div>
+                <div className="truncate px-2 py-1 text-xs text-fg-muted">{user?.emailAddress}</div>
                 <button
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-graphite-700 hover:bg-graphite-100"
                   onClick={signOut}
@@ -616,7 +616,7 @@ export function Sidebar() {
           <div className={cn('mt-2 flex items-center gap-2', desktopCollapsed && 'lg:flex-col')}>
             <button
               className={cn(
-                'flex flex-1 items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-sm text-graphite-400 transition-colors duration-fast hover:border-graphite-300 hover:text-graphite-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                'flex flex-1 items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5 text-sm text-fg-muted transition-colors duration-fast hover:border-graphite-300 hover:text-graphite-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 desktopCollapsed && 'lg:h-9 lg:w-9 lg:flex-none lg:justify-center lg:px-0',
               )}
               onClick={() => setPaletteOpen(true)}
@@ -662,7 +662,7 @@ export function Sidebar() {
                       aria-hidden="true"
                     />
                   )}
-                  <item.icon className={cn('relative z-10 h-4 w-4 transition-transform duration-base group-hover:scale-110', desktopCollapsed && 'lg:h-5 lg:w-5', isActive ? 'text-horizon-600' : 'text-graphite-400')} />
+                  <item.icon className={cn('relative z-10 h-4 w-4 transition-transform duration-base group-hover:scale-110', desktopCollapsed && 'lg:h-5 lg:w-5', isActive ? 'text-horizon-600' : 'text-fg-muted')} />
                   <span className={cn('relative z-10', desktopCollapsed && 'lg:hidden')}>{item.name}</span>
                 </Link>
               )
@@ -677,7 +677,7 @@ export function Sidebar() {
               )}
               {...dropProps('workspace', { folder: null, visibility: 'shared' })}
             >
-              <span className="text-xs font-semibold uppercase tracking-wide text-graphite-400">Workspace</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-fg-muted">Workspace</span>
               {can('agent.write') && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -714,12 +714,12 @@ export function Sidebar() {
                       {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       <Folder className="h-3.5 w-3.5 text-graphite-400" />
                       <span className="flex-1 truncate text-left">{folder}</span>
-                      <span className="text-xs text-graphite-400">{folderAgents.length}</span>
+                      <span className="text-xs text-fg-muted">{folderAgents.length}</span>
                     </button>
                     {folderRecord && can('agent.write') && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-graphite-400" aria-label={`Manage ${folder}`}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-fg-muted" aria-label={`Manage ${folder}`}>
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -737,7 +737,7 @@ export function Sidebar() {
                   {!isCollapsed && (
                     folderAgents.length > 0
                       ? <div className="ml-3 border-l pl-1">{folderAgents.map(renderAgent)}</div>
-                      : !isGeneral && <p className="ml-5 px-2 py-1 text-xs text-graphite-400">Empty — drag an agent here.</p>
+                      : !isGeneral && <p className="ml-5 px-2 py-1 text-xs text-fg-muted">Empty — drag an agent here.</p>
                   )}
                 </div>
               )
@@ -745,7 +745,7 @@ export function Sidebar() {
 
             <div
               className={cn(
-                'flex items-center gap-1.5 rounded-lg px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-graphite-400',
+                'flex items-center gap-1.5 rounded-lg px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-fg-muted',
                 dragOver === 'private' && 'bg-horizon-50',
               )}
               {...dropProps('private', { folder: null, visibility: 'private' })}
@@ -754,7 +754,7 @@ export function Sidebar() {
             </div>
             {sections.private.length > 0
               ? <div className="ml-3 border-l pl-1">{sections.private.map(renderAgent)}</div>
-              : <p className="px-2 py-1 text-xs text-graphite-400">Drag agents here to make them private.</p>}
+              : <p className="px-2 py-1 text-xs text-fg-muted">Drag agents here to make them private.</p>}
           </div>
         </div>
 
@@ -787,7 +787,7 @@ export function Sidebar() {
             </div>
             <div className={cn('min-w-0 flex-1', desktopCollapsed && 'lg:hidden')}>
               <div className="truncate text-sm font-medium">{user?.firstName || 'Account'}</div>
-              <div className="truncate text-xs text-graphite-400">{user?.emailAddress}</div>
+              <div className="truncate text-xs text-fg-muted">{user?.emailAddress}</div>
             </div>
             {activeOrg && (
               <span className={cn('rounded-full bg-graphite-200 px-2 py-0.5 text-xs text-graphite-600', desktopCollapsed && 'lg:hidden')}>

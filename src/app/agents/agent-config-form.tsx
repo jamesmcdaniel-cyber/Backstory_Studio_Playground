@@ -349,13 +349,13 @@ function MemoryRow({ memory, onDelete }: { memory: AgentMemory; onDelete: (id: s
         {memory.question && <p className="italic text-gray-500">{memory.question}</p>}
         <p className="line-clamp-2 text-gray-500">{memory.content}</p>
         {memory.lastUsedAt && (
-          <p className="mt-0.5 text-xs text-gray-400">Last used {new Date(memory.lastUsedAt).toLocaleDateString()}</p>
+          <p className="mt-0.5 text-xs text-fg-muted">Last used {new Date(memory.lastUsedAt).toLocaleDateString()}</p>
         )}
       </div>
       <button
         type="button"
         onClick={() => onDelete(memory.id)}
-        className="shrink-0 text-gray-400 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
+        className="shrink-0 text-fg-muted opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
         aria-label={`Remove memory ${memory.title}`}
       >
         <Trash2 className="h-4 w-4" />
@@ -1181,7 +1181,7 @@ export function AgentConfigForm({
                   onChange={() => setDraft({ ...draft, subagentIds: [] })}
                 />
                 <span className="font-medium">All agents</span>
-                <span className="text-xs text-gray-400">({candidates.length} available)</span>
+                <span className="text-xs text-fg-muted">({candidates.length} available)</span>
               </label>
               {candidates.length > 0 && (
                 <div className="mt-1 max-h-40 space-y-0.5 overflow-y-auto rounded-md border p-1">
@@ -1198,7 +1198,7 @@ export function AgentConfigForm({
                   ))}
                 </div>
               )}
-              {candidates.length === 0 && <p className="px-1 text-xs text-gray-400">No other agents yet — create more to delegate to them.</p>}
+              {candidates.length === 0 && <p className="px-1 text-xs text-fg-muted">No other agents yet — create more to delegate to them.</p>}
             </div>
           )
         })()}
@@ -1238,7 +1238,7 @@ export function AgentConfigForm({
                   onChange={() => setDraft({ ...draft, flowIds: [] })}
                 />
                 <span className="font-medium">All published flows</span>
-                <span className="text-xs text-gray-400">({orgFlows.length} available)</span>
+                <span className="text-xs text-fg-muted">({orgFlows.length} available)</span>
               </label>
               {orgFlows.length > 0 && (
                 <div className="mt-1 max-h-40 space-y-0.5 overflow-y-auto rounded-md border p-1">
@@ -1256,7 +1256,7 @@ export function AgentConfigForm({
                 </div>
               )}
               {orgFlows.length === 0 && (
-                <p className="px-1 text-xs text-gray-400">No published flows yet — publish a flow in the builder to make it callable.</p>
+                <p className="px-1 text-xs text-fg-muted">No published flows yet — publish a flow in the builder to make it callable.</p>
               )}
             </div>
           )

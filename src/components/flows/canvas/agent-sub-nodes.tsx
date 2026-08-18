@@ -65,17 +65,17 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
   const circleClass =
     'nodrag relative flex h-10 w-10 items-center justify-center rounded-full border-2 border-slate-300 bg-white shadow-sm transition-colors hover:border-blue-400 dark:border-slate-600 dark:bg-slate-900'
   const stubClass =
-    'nodrag flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-slate-400 transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:bg-slate-900'
+    'nodrag flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-slate-300 bg-white text-fg-muted transition-colors hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:bg-slate-900'
   const captionClass = 'mt-1 max-w-[72px] truncate text-center text-[9px] font-medium leading-tight text-slate-500 dark:text-slate-400'
   const panelClass =
     'nodrag absolute top-full z-50 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-2.5 text-left shadow-lg dark:border-slate-700 dark:bg-slate-900'
-  const panelLabelClass = 'mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400'
+  const panelLabelClass = 'mb-1 block text-[10px] font-semibold uppercase tracking-wide text-fg-muted'
   const panelFieldClass =
     'w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200'
   const menuItemClass =
     'flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-[11px] font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-800 dark:text-slate-200 dark:hover:bg-slate-800'
   const removeBadgeClass =
-    'nodrag absolute -right-1.5 -top-1.5 z-10 hidden h-4 w-4 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm hover:text-red-500 group-hover/sub:flex dark:border-slate-600 dark:bg-slate-900'
+    'nodrag absolute -right-1.5 -top-1.5 z-10 hidden h-4 w-4 items-center justify-center rounded-full border border-slate-200 bg-white text-fg-muted shadow-sm hover:text-red-500 group-hover/sub:flex dark:border-slate-600 dark:bg-slate-900'
 
   /** One attachment: dashed drop-line, the sub-node circle, its caption, and (open) its config panel. */
   const subNode = (opts: {
@@ -149,7 +149,7 @@ export function AgentSubNodes({ node }: { node: AgentNode }) {
   const port = (label: string, body: React.ReactNode) => (
     <div className="relative flex min-w-0 flex-1 flex-col items-center">
       <span className="-mt-[5px] h-2 w-2 rotate-45 border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-900" />
-      <span className="mt-0.5 max-w-full truncate text-[9px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="mt-0.5 max-w-full truncate text-[9px] font-semibold uppercase tracking-wide text-fg-muted">{label}</span>
       <span className="h-3 w-px border-l border-dashed border-slate-300 dark:border-slate-600" />
       <div className="flex flex-col items-center gap-1.5">{body}</div>
     </div>

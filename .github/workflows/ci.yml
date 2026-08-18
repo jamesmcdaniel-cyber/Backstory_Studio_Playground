@@ -28,6 +28,17 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # The queue plane. Until this existed, CI imported the worker's modules
+      # but never ran a queue: EXECUTION_MODE=queue was exercised for the first
+      # time in production, on Upstash.
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
@@ -36,6 +47,12 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/test
       DATABASE_URL: postgresql://postgres:ci@localhost:5432/test
       DIRECT_URL: postgresql://postgres:ci@localhost:5432/test
+      # Redis-backed tests gate on this and t.skip VISIBLY without it, exactly
+      # as the DB-backed ones do with TEST_DATABASE_URL. Deliberately NOT
+      # exported as REDIS_URL at job scope: that would silently switch the rate
+      # limiter and the queue probes onto a shared backend for every other
+      # test. The worker smoke step below sets REDIS_URL for itself alone.
+      TEST_REDIS_URL: redis://localhost:6379
       ENCRYPTION_KEY: ci-encryption-key
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +76,23 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      # Boot the Fly worker runtime for real against the CI Redis + Postgres.
+      # `npm test` imports the worker's modules but never starts the process,
+      # so a boot-time regression (unbootable env audit, a queue that fails to
+      # register, a worker-only import that throws) used to reach Fly
+      # unchallenged and show up as a crash-looping machine. The script fails
+      # the job if the worker exits early, reports unhealthy, loses a queue, or
+      # does not shut down cleanly on SIGTERM. ~35s of wall clock.
+      - name: Worker plane smoke (queue mode)
+        env:
+          EXECUTION_MODE: queue
+          REDIS_URL: redis://localhost:6379
+          # assert-env.ts treats this as fatal at boot. No model call is made:
+          # the smoke never enqueues a job.
+          ANTHROPIC_API_KEY: ci-placeholder
+          WORKER_PORT: '3102'
+          SMOKE_OBSERVE: '20'
+        run: bash scripts/worker-smoke.sh
       - run: npm run build
 
   # Prove the migration history applies cleanly from zero and that

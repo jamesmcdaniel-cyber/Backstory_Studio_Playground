@@ -113,18 +113,19 @@ export default function CostsPage() {
             ))}
           </ul>
         </div>
+        {/* Deliberately a link, not a second table. Per-model spend belongs
+            beside per-model latency — the two are only useful read together,
+            and a copy here would be the one that drifts out of the same window. */}
         <div className="space-y-2">
           <h2 className="text-sm font-medium">By model</h2>
-          <ul className="divide-y rounded-lg border text-sm">
-            {report?.byModel.map((row) => (
-              <li key={`${row.provider}:${row.model}`} className="flex justify-between px-4 py-2">
-                <span className="truncate">{row.model}</span>
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {usd(row.costUsd)} · {row.calls.toLocaleString()} calls
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="rounded-lg border px-4 py-3 text-sm">
+            <p className="text-muted-foreground">
+              {report?.byModel.length ?? 0} models served calls in this window.
+            </p>
+            <a href="/admin/users" className="mt-1 inline-block font-medium underline underline-offset-4">
+              Cost and performance per model →
+            </a>
+          </div>
         </div>
       </section>
     </div>

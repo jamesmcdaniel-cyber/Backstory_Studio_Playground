@@ -119,8 +119,18 @@ test('the super-admin grant paths require the operator tier', () => {
   }
 })
 
-test('the Users nav entry and page are gated on the operator tier', () => {
+test('the Admin nav entry and page are gated on the operator tier', () => {
   const sidebar = readFileSync('src/components/layout/sidebar.tsx', 'utf8')
-  assert.match(sidebar, /can\('platform\.administer'\).*usersNavItem|usersNavItem/s)
-  assert.match(sidebar, /can\('platform\.administer'\)/, 'the Users entry must be permission-gated')
+  // Matched on the HREF, not on a variable name: the entry was renamed from
+  // "Users" to "Admin" once the console grew a Models tab, and a test pinned to
+  // an identifier fails on a rename while saying nothing about the gate.
+  assert.match(sidebar, /can\('platform\.administer'\)/, 'the Admin entry must be permission-gated')
+  const entry = sidebar.match(/^const \w+NavItem = \{[^}]*'\/admin\/users'[^}]*\}$/m)
+  assert.ok(entry, 'the operator console entry must still exist in the sidebar')
+  const name = entry[0].match(/name: '(\w+)'/)?.[1]
+  assert.match(
+    sidebar,
+    new RegExp(`can\\('platform\\.administer'\\)[^\\n]*${entry[0].match(/^const (\w+)/)?.[1]}`),
+    `the ${name} entry must be rendered only under platform.administer`,
+  )
 })

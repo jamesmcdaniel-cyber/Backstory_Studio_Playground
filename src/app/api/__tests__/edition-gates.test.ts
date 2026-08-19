@@ -27,6 +27,9 @@ export const INTERNAL_ONLY_ROUTES = [
   // the staff console does.
   'admin/costs',
   'admin/domains',
+  // Per-model cost and latency, aggregated across every workspace — the same
+  // cross-tenant read as costs, plus the p95 that makes it a performance view.
+  'admin/models',
   // The user console reaches furthest of the three: every account on the
   // platform, their personal details, and the account actions.
   'admin/users',
@@ -47,6 +50,7 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'catalogue/entries/[id]', load: () => import('../catalogue/entries/[id]/route'), methods: ['DELETE'] },
   { name: 'admin/costs', load: () => import('../admin/costs/route'), methods: ['GET'] },
   { name: 'admin/domains', load: () => import('../admin/domains/route'), methods: ['GET', 'POST', 'PATCH'] },
+  { name: 'admin/models', load: () => import('../admin/models/route'), methods: ['GET'] },
   { name: 'admin/users', load: () => import('../admin/users/route'), methods: ['GET'] },
   { name: 'admin/users/[id]/actions', load: () => import('../admin/users/[id]/actions/route'), methods: ['POST'] },
   { name: 'admin/queue/dead-letters', load: () => import('../admin/queue/dead-letters/route'), methods: ['GET', 'POST'] },

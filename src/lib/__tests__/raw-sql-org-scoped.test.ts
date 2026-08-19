@@ -25,6 +25,25 @@ import { fileURLToPath } from 'node:url'
 
 const SRC = fileURLToPath(new URL('../..', import.meta.url))
 
+/**
+ * Files whose raw SQL is deliberately CROSS-TENANT.
+ *
+ * The operator console's whole job is the view no single workspace can see —
+ * "which model is costing us money across every customer" has no org filter by
+ * definition, so requiring one would make the surface impossible rather than
+ * safe. That is a real exception, not a loophole, so it is enumerated here with
+ * a reason, in the same spirit as the "touches no rows" list above.
+ *
+ * The exemption is CONDITIONAL, and the test below enforces the condition: an
+ * exempt file must be an /api/admin route that requires platform.administer and
+ * carries internalOnly, so cross-tenant SQL cannot be smuggled into a
+ * customer-reachable endpoint by adding a line here.
+ */
+const CROSS_TENANT_BY_DESIGN: Record<string, string> = {
+  'app/api/admin/models/route.ts':
+    'Per-model cost and p95 latency across every workspace. Prisma groupBy has no percentile aggregate, and an org filter would defeat the purpose of the view.',
+}
+
 /** Statements that touch no rows, so org scope is meaningless for them. */
 function touchesNoRows(sql: string): boolean {
   const normalized = sql.trim().replace(/\s+/g, ' ').toUpperCase()
@@ -122,9 +141,11 @@ test('every raw SQL statement that touches rows filters on organizationId', () =
     const source = readFileSync(file, 'utf8')
     if (!/\$(?:query|execute)Raw/.test(source)) continue
 
+    const relative = path.relative(SRC, file)
     for (const site of rawSites(source, file)) {
       if (touchesNoRows(site.sql)) continue
       if (site.sql.includes('organizationId')) continue
+      if (CROSS_TENANT_BY_DESIGN[relative]) continue
       offenders.push(
         `${path.relative(SRC, site.file)}:${site.line} — ${site.sql.trim().replace(/\s+/g, ' ').slice(0, 120)}`,
       )
@@ -136,6 +157,20 @@ test('every raw SQL statement that touches rows filters on organizationId', () =
     [],
     'Raw SQL without an organizationId filter (the tenant guard cannot see these):\n' + offenders.join('\n'),
   )
+})
+
+test('every cross-tenant exemption is an operator-only route', () => {
+  // The exemption above is what makes unscoped SQL possible at all, so its
+  // precondition is checked rather than trusted. Without this, adding a path to
+  // that list would be enough to ship an unscoped query on a customer-reachable
+  // endpoint — the exemption would become the hole it exists to bound.
+  for (const [relative, reason] of Object.entries(CROSS_TENANT_BY_DESIGN)) {
+    assert.ok(reason.trim().length > 20, `${relative} needs a written reason, not a placeholder`)
+    assert.match(relative, /^app\/api\/admin\//, `${relative} must be an operator route to read across tenants`)
+    const source = readFileSync(path.join(SRC, relative), 'utf8')
+    assert.match(source, /permission: 'platform\.administer'/, `${relative} must require the operator tier`)
+    assert.match(source, /internalOnly: true/, `${relative} must be absent from the customer edition`)
+  }
 })
 
 test('the scan actually finds the known raw SQL sites', () => {

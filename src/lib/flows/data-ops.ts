@@ -138,6 +138,13 @@ function parseCsvRows(text: string): string[][] {
   return rows
 }
 
+/**
+ * The keys an API wraps its list in. Shared with the interpreter so a value
+ * fanned out per-item and the same value handed to a list op resolve to the
+ * same list — they were separate copies of this list, and drifted.
+ */
+export const LIST_ENVELOPE_KEYS = ['items', 'records', 'results', 'result', 'data']
+
 const isBlank = (value: unknown): boolean => value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
 
 /**
@@ -153,6 +160,15 @@ const isBlank = (value: unknown): boolean => value === undefined || value === nu
  * A single object is therefore read as a one-item list, which is how `join`
  * has always degraded for scalars.
  *
+ * First, though, a list nested under a conventional key is the list. A CRM
+ * "list" action almost never returns a bare array — it returns the array under
+ * a wrapper ({records: [...], total: 2}). Per-item fan-out, the builder's
+ * loop preview and the run panel's table all reach through that wrapper
+ * (`LIST_ENVELOPE_KEYS`), so the author looks at the previous step, sees a
+ * list of records, wires "get item 0" — and used to be told it wasn't a list,
+ * or, once single objects were wrapped, quietly handed the WRAPPER to the next
+ * step. One value, one reading, everywhere it is read.
+ *
  * A bare scalar (string, number, boolean) still returns null and still fails.
  * That is not pedantry: piping text into "make a CSV table" is a genuine
  * mis-wire, and silently wrapping it would build a nonsense table instead of
@@ -167,7 +183,12 @@ const isBlank = (value: unknown): boolean => value === undefined || value === nu
 const asList = (input: unknown): unknown[] | null => {
   const structured = asStructured(input)
   if (Array.isArray(structured)) return structured
-  return structured !== null && typeof structured === 'object' ? [structured] : null
+  if (structured === null || typeof structured !== 'object') return null
+  const record = structured as Record<string, unknown>
+  for (const key of LIST_ENVELOPE_KEYS) {
+    if (Array.isArray(record[key])) return record[key] as unknown[]
+  }
+  return [structured]
 }
 
 const itemText = (item: unknown): string => {

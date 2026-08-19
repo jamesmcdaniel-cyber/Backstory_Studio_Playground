@@ -5,7 +5,7 @@ import { stepLabelsOf } from '@/lib/flows/token-text'
 import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, type NodeRunState } from '@/lib/flows/dag-scheduler'
 import { shouldRetryAfterTimeout } from './action-reliability'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
-import { runDataOp, chunkItems, coerceFieldType } from '@/lib/flows/data-ops'
+import { runDataOp, chunkItems, coerceFieldType, LIST_ENVELOPE_KEYS } from '@/lib/flows/data-ops'
 import { mergeAppend, mergeAllCombinations, mergeByKey, mergeByPosition } from '@/lib/flows/merge'
 import { computeResumeAt } from '@/lib/flows/wait'
 import { foreignReferences, unresolvedAuthHeaders, foreignReferenceMessage, unresolvedAuthMessage } from '@/lib/flows/foreign-reference'
@@ -197,7 +197,7 @@ function loopItems(value: unknown): unknown[] {
   const structured = asStructured(value)
   if (Array.isArray(structured)) return structured
   if (structured && typeof structured === 'object') {
-    for (const key of ['items', 'records', 'results', 'result', 'data']) {
+    for (const key of LIST_ENVELOPE_KEYS) {
       const candidate = (structured as Record<string, unknown>)[key]
       if (Array.isArray(candidate)) return candidate
     }
@@ -220,8 +220,6 @@ function nodePerItem(node: FlowNode): PerItemConfig | undefined {
 
 // ── Step warnings: degraded success made visible ────────────────────────────
 
-const LOOPABLE_KEYS = ['items', 'records', 'results', 'result', 'data']
-
 /**
  * A data-producing step that succeeded with nothing in it — the silent-empty
  * failure mode (typically a masked upstream stub or a filter that matched
@@ -234,7 +232,7 @@ function emptyResultWarning(output: unknown): string | undefined {
   if (Array.isArray(output)) return output.length === 0 ? message : undefined
   if (output && typeof output === 'object') {
     const record = output as Record<string, unknown>
-    const listKeys = LOOPABLE_KEYS.filter((key) => Array.isArray(record[key]))
+    const listKeys = LIST_ENVELOPE_KEYS.filter((key) => Array.isArray(record[key]))
     if (listKeys.length && listKeys.every((key) => (record[key] as unknown[]).length === 0)) return message
   }
   return undefined
@@ -630,7 +628,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         structuredOver &&
         typeof structuredOver === 'object' &&
         !Array.isArray(structuredOver) &&
-        !['items', 'records', 'results', 'result', 'data'].some((key) => Array.isArray((structuredOver as Record<string, unknown>)[key]))
+        !LIST_ENVELOPE_KEYS.some((key) => Array.isArray((structuredOver as Record<string, unknown>)[key]))
       ) {
         items = [structuredOver]
       }

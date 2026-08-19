@@ -347,3 +347,41 @@ test('the other list ops read a single record the same way', () => {
     /came back empty/,
   )
 })
+
+// ── list envelopes: the same list the loop and the run panel already see ────
+// A CRM "list" action rarely returns a bare array — it returns the array under
+// a key ({records: [...], total: 2}). Per-item fan-out, the builder's preview
+// and the run panel's table all reach through that wrapper, so the author sees
+// a list of records; the list ops did not, and "get item 0" handed the WRAPPER
+// to the next step. Same value, same reading, everywhere.
+
+test('getItem reaches through a list envelope to the records inside', () => {
+  const first = { id: 1, account: 'Acme' }
+  const envelope = { records: [first, { id: 2, account: 'Globex' }], total: 2 }
+  assert.deepEqual(ok(runDataOp('getItem', { input: envelope, index: '0' })), first)
+  assert.deepEqual(ok(runDataOp('getItem', { input: envelope, index: '-1' })), { id: 2, account: 'Globex' })
+  // Every key the interpreter loops over reads the same way here.
+  for (const key of ['items', 'records', 'results', 'result', 'data']) {
+    assert.deepEqual(ok(runDataOp('getItem', { input: { [key]: [{ id: 9 }] } })), { id: 9 }, key)
+  }
+})
+
+test('an empty envelope is an empty list, not a one-item list of the wrapper', () => {
+  // The honest answer on a day the CRM returned nothing — and the message the
+  // author needs, rather than a wrapper object flowing on to the next step.
+  assert.match(err(runDataOp('getItem', { input: { records: [], total: 0 } })), /has 0 items/)
+})
+
+test('a record that merely carries a list is still that record', () => {
+  // No conventional list key, so this is one renewal with its contacts — not a
+  // list of contacts. Only the envelope keys unwrap.
+  const record = { id: 7, account: 'Acme', contacts: [{ name: 'Dana' }] }
+  assert.deepEqual(ok(runDataOp('getItem', { input: record })), record)
+})
+
+test('the sibling list ops read an envelope the same way', () => {
+  const envelope = { results: [{ n: 1 }, { n: 2 }] }
+  assert.deepEqual(ok(runDataOp('filterArray', { input: envelope, clauses: [{ left: '{{item.n}}', op: 'eq', right: '2' }] })), [{ n: 2 }])
+  assert.deepEqual(ok(runDataOp('trim', { input: envelope, count: '1' })), [{ n: 2 }])
+  assert.equal(ok(runDataOp('csvTable', { input: envelope })), 'n\n1\n2')
+})

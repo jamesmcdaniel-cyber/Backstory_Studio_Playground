@@ -45,6 +45,7 @@ import { processOutboxBatch } from '@/lib/outbox'
 import { reapStuckApprovals } from '@/lib/approvals/reap'
 import { sweepMcpConnectionHealth } from '@/lib/mcp/health-sweep'
 import { sweepFlowReflection } from '@/lib/flows/reflection-sweep'
+import { sweepObsoleteProposals } from '@/lib/templates/obsolete-proposals'
 import { withTickLock } from '@/lib/queue/tick-lock'
 import { writeTickLiveness } from '@/lib/queue/tick-liveness'
 
@@ -80,6 +81,8 @@ export type DispatchTickSummary =
       outbox: { delivered: number; retried: number; failed: number }
       reapedApprovals: number
       mcpHealth: { checked: number; unhealthy: number; changed: number }
+      /** Improvement proposals retired because their target now runs clean. */
+      retiredProposals: number
       /** Credential-use anomalies raised this tick, per workspace swept. */
       credentialAnomalies: { organizations: number; anomalies: number }
     }
@@ -237,6 +240,15 @@ export async function runDispatchTick(
     const mcpHealth = await sweepMcpConnectionHealth(now).catch((error) => {
       apiLogger.error('cron/dispatch: MCP health sweep failed', { error: capError(error) })
       return { checked: 0, unhealthy: 0, changed: 0 }
+    })
+
+    // The closing half of the proposal lifecycle: reflection raises an
+    // improvement when a flow keeps failing, and this retires it once the flow
+    // has been running clean since. Without it, fixing the bug could not clear
+    // the flag and the board filled with complaints that were no longer true.
+    const retiredProposals = await sweepObsoleteProposals().catch((error) => {
+      apiLogger.error('cron/dispatch: obsolete proposal sweep failed', { error: capError(error) })
+      return 0
     })
 
     // Single-owner scheduling: when the BullMQ worker is live in queue mode it
@@ -659,6 +671,7 @@ export async function runDispatchTick(
       outbox,
       reapedApprovals,
       mcpHealth,
+      retiredProposals,
       credentialAnomalies: anomalies,
     }
   })

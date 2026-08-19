@@ -15,7 +15,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AGENTS_CHANGED_EVENT, notifyAgentsChanged } from '@/components/layout/sidebar'
 import { getSnapshot, SnapshotError } from '@/lib/client/snapshot'
-import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { cn } from '@/lib/utils'
 
@@ -586,14 +585,9 @@ function AgentHQ() {
 
           {authBanner}
 
-          {/* Persistent recommendation surface — a compact collapsible bar that
-              renders only when the AI has a suggestion from real usage; each row
-              opens a detail popup, and the bell mirrors the same proposals. */}
-          {!loading && !authError && (
-            <div className="px-4 pt-4">
-              <RecommendationsBar />
-            </div>
-          )}
+          {/* No hiring desk here. This pane is one agent's own work; candidates
+              belong on the roster, where hiring is the thing you came to do.
+              The bell still carries them on every page. */}
 
           {/* Work / Skills — centred above the pane so it reads as the pane's
               own switch rather than another header button. Teaching an agent a

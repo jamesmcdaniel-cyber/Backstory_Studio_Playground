@@ -44,10 +44,11 @@ import { useAuth } from '@/hooks/use-auth'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { getSnapshot } from '@/lib/client/snapshot'
 import { resizeImageToDataUrl } from '@/lib/client/image'
+import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { cn } from '@/lib/utils'
 import type { Agent as AgentType } from '@/lib/types'
 
-type Agent = Pick<AgentType, 'id' | 'title' | 'description' | 'instructions' | 'icon' | 'folder' | 'visibility'>
+type Agent = Pick<AgentType, 'id' | 'title' | 'description' | 'instructions' | 'avatarSeed' | 'folder' | 'visibility'>
 
 type Organization = { id: string; name: string; slug: string; plan: string; logoUrl?: string | null }
 type WorkspaceFolder = { id: string; name: string }
@@ -458,9 +459,7 @@ export function Sidebar() {
       onDragStart={(event) => event.dataTransfer.setData('text/agent-id', agent.id)}
       className="group flex cursor-grab items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-fast hover:bg-graphite-100 active:cursor-grabbing"
     >
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-graphite-100 text-[11px] font-semibold uppercase leading-none text-graphite-700">
-        {agent.icon || agent.title.trim().charAt(0) || 'A'}
-      </span>
+      <AgentAvatar seed={agent.avatarSeed || agent.id} className="h-5 w-5 shrink-0 rounded-full ring-1 ring-black/5" />
       <button
         className="flex-1 truncate rounded text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         title={agent.description || agent.title}

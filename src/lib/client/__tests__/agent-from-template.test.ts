@@ -72,7 +72,9 @@ test('the new agent carries the template’s instructions and tools', async () =
   assert.deepEqual(body.integrations, TEMPLATE.integrations)
   assert.deepEqual(body.skills, TEMPLATE.skills)
   assert.equal(body.model, TEMPLATE.model)
-  assert.equal(body.icon, TEMPLATE.icon)
+  // Agents are shown as avatars now, so no emoji is sent — asserting its
+  // ABSENCE keeps the dead field from quietly coming back.
+  assert.equal(body.icon, undefined)
   assert.equal(body.allowSubagents, true)
   assert.equal(body.schedule.type, 'manual', 'a template-built agent starts manual, never on a live cadence')
 })

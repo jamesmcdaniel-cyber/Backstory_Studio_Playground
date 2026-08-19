@@ -582,10 +582,25 @@ function AgentHQ() {
                 </Button>
               </div>
             </div>
-            {/* Work / Skills — teaching an agent a new skill should not mean
-                leaving it for the Library and finding your way back. */}
-            {selectedAgent && !showSetup && (
-              <div className="mt-3 inline-flex rounded-lg bg-gray-100 p-0.5" role="tablist" aria-label="Agent workspace view">
+          </div>
+
+          {authBanner}
+
+          {/* Persistent recommendation surface — a compact collapsible bar that
+              renders only when the AI has a suggestion from real usage; each row
+              opens a detail popup, and the bell mirrors the same proposals. */}
+          {!loading && !authError && (
+            <div className="px-4 pt-4">
+              <RecommendationsBar />
+            </div>
+          )}
+
+          {/* Work / Skills — centred above the pane so it reads as the pane's
+              own switch rather than another header button. Teaching an agent a
+              new skill should not mean leaving it for the Library. */}
+          {!loading && selectedAgent && !showSetup && (
+            <div className="flex justify-center px-4 pt-4">
+              <div className="inline-flex rounded-lg bg-gray-100 p-0.5" role="tablist" aria-label="Agent workspace view">
                 {([
                   { id: 'agent', label: 'Work' },
                   { id: 'skills', label: 'Skills' },
@@ -597,7 +612,7 @@ function AgentHQ() {
                     aria-selected={workspaceTab === tab.id}
                     onClick={() => setWorkspaceTab(tab.id)}
                     className={cn(
-                      'rounded-md px-3 py-1 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300',
+                      'rounded-md px-5 py-1.5 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300',
                       workspaceTab === tab.id ? 'bg-white text-foreground shadow-1' : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
@@ -608,17 +623,6 @@ function AgentHQ() {
                   </button>
                 ))}
               </div>
-            )}
-          </div>
-
-          {authBanner}
-
-          {/* Persistent recommendation surface — a compact collapsible bar that
-              renders only when the AI has a suggestion from real usage; each row
-              opens a detail popup, and the bell mirrors the same proposals. */}
-          {!loading && !authError && (
-            <div className="px-4 pt-4">
-              <RecommendationsBar />
             </div>
           )}
 

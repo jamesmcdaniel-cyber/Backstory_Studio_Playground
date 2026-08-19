@@ -376,7 +376,6 @@ export type AgentDraft = {
   /** Per-tool scopes (Slack channels, GitHub repos…) keyed by quick-config key. */
   toolSettings?: Record<string, ToolScopeOption[]>
   skills: string[]
-  icon: string
   /** Chosen avatar seed; null derives the face from the agent id. */
   avatarSeed?: string | null
   folder: string
@@ -441,7 +440,6 @@ const emptyDraft: AgentDraft = {
   integrations: [],
   toolSettings: {},
   skills: [],
-  icon: '🤖',
   avatarSeed: null,
   folder: '',
   visibility: 'shared',
@@ -504,57 +502,6 @@ function normalizeSchedule(schedule: AgentDraft['schedule']): AgentDraft['schedu
   return schedule
 }
 
-// Curated agent emojis — all ≤4 UTF-16 code units, so they fit the icon cap.
-const AGENT_EMOJIS = [
-  '🤖', '📊', '📈', '📉', '✉️', '📬', '🔔', '📅',
-  '🗂️', '📝', '🔎', '🎯', '⚡', '🧠', '💬', '📣',
-  '🛰️', '🧭', '🚀', '🛎️', '💼', '📌', '🧾', '🔗',
-  '⏰', '🗓️', '✅', '⭐', '🔥', '💡', '🏷️', '🪄',
-]
-
-function EmojiPicker({ value, onChange }: { value: string; onChange: (emoji: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    if (!open) return
-    const onClick = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [open])
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-14 items-center justify-center rounded-md border border-input bg-background text-xl transition-colors hover:bg-accent"
-        aria-label="Choose agent emoji"
-      >
-        {value || '🤖'}
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-md border border-border bg-popover p-2 shadow-md">
-          <div className="grid grid-cols-8 gap-0.5">
-            {AGENT_EMOJIS.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                onClick={() => { onChange(emoji); setOpen(false) }}
-                className={cn(
-                  'flex h-6 w-6 items-center justify-center rounded text-lg hover:bg-accent',
-                  value === emoji && 'bg-accent',
-                )}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 export function AgentConfigForm({
   editingAgent,
@@ -743,7 +690,6 @@ export function AgentConfigForm({
       integrations: source.integrations || [],
       toolSettings: parseAgentToolSettings((source as { toolSettings?: unknown }).toolSettings),
       skills: source.skills || [],
-      icon: source.icon || emptyDraft.icon,
       avatarSeed: source.avatarSeed ?? null,
       folder: source.folder || '',
       visibility: source.visibility || 'shared',
@@ -867,7 +813,6 @@ export function AgentConfigForm({
           skills: draft.skills,
           tags,
           model: draft.model,
-          icon: draft.icon,
           avatarSeed: draft.avatarSeed ?? null,
           allowSubagents: draft.allowSubagents === true,
         }),
@@ -974,7 +919,6 @@ export function AgentConfigForm({
               <Camera className="h-3.5 w-3.5 text-white" aria-hidden="true" />
             </span>
           </button>
-          <EmojiPicker value={draft.icon} onChange={(icon) => setDraft({ ...draft, icon })} />
           <Input id="agent-name" className="flex-1" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
         </div>
         {pickingAvatar && (

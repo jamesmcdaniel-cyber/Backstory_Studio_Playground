@@ -129,13 +129,20 @@ export default function PlatformUsersPage() {
 
   const totals = useMemo(() => {
     const users = report?.users ?? []
+    // Two different questions, and reading one as the other is how "7 of 7
+    // active" sat above a table where every row said "Last seen: Never".
+    // `enabled` counts accounts that are not deactivated; `seen` counts people
+    // who actually showed up inside the selected window, which is what the rest
+    // of this page's numbers mean.
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
     return {
       people: users.length,
-      active: users.filter((user) => user.isActive).length,
+      enabled: users.filter((user) => user.isActive).length,
+      seen: users.filter((user) => user.lastSeenAt && new Date(user.lastSeenAt).getTime() >= cutoff).length,
       tokens: users.reduce((sum, user) => sum + user.tokens, 0),
       cost: users.reduce((sum, user) => sum + user.costUsd, 0),
     }
-  }, [report])
+  }, [report, days])
 
   return (
     <div className="space-y-6">
@@ -159,9 +166,10 @@ export default function PlatformUsersPage() {
         </select>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Stat label="People" value={totals.people.toLocaleString()} />
-        <Stat label="Active" value={`${totals.active.toLocaleString()} of ${totals.people.toLocaleString()}`} />
+        <Stat label="Seen in window" value={`${totals.seen.toLocaleString()} of ${totals.people.toLocaleString()}`} />
+        <Stat label="Enabled" value={`${totals.enabled.toLocaleString()} of ${totals.people.toLocaleString()}`} />
         <Stat label="Tokens" value={tokenLabel(totals.tokens)} />
         <Stat label="Cost" value={usd(totals.cost)} />
       </div>

@@ -12,7 +12,6 @@ const DRAFT_SCHEMA = {
   additionalProperties: false,
   properties: {
     title: { type: 'string', description: 'Short agent name, e.g. "Weekly Report Agent".' },
-    icon: { type: 'string', description: 'A single emoji that represents the agent, e.g. "📄" or "💰".' },
     description: { type: 'string', description: 'One sentence describing what the agent does.' },
     instructions: {
       type: 'string',
@@ -36,12 +35,11 @@ const DRAFT_SCHEMA = {
       required: ['type', 'time', 'cron', 'timezone', 'isActive'],
     },
   },
-  required: ['title', 'icon', 'description', 'instructions', 'integrations', 'schedule'],
+  required: ['title', 'description', 'instructions', 'integrations', 'schedule'],
 } as const
 
 type Draft = {
   title: string
-  icon: string
   description: string
   instructions: string
   integrations: string[]
@@ -93,12 +91,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     ...(draft.schedule.cron ? { cron: draft.schedule.cron } : {}),
   }
 
-  // The model sometimes returns a word (e.g. "test") instead of an emoji for
-  // `icon`; that then shows as broken text. Accept it only if it looks like an
-  // emoji (no ASCII letters/digits, short), else fall back to a default mark.
-  const rawIcon = draft.icon?.trim() || ''
-  const icon = rawIcon && !/[A-Za-z0-9]/.test(rawIcon) && [...rawIcon].length <= 4 ? rawIcon : '🤖'
-  const enrichedDraft = { ...draft, icon, schedule, model: DEFAULT_AGENT_MODEL, priority: 'medium', visibility: 'shared' as const, folder: null }
+const enrichedDraft = { ...draft, schedule, model: DEFAULT_AGENT_MODEL, priority: 'medium', visibility: 'shared' as const, folder: null }
   if (!create) {
     return { success: true, draft: enrichedDraft }
   }
@@ -121,7 +114,6 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         description: draft.description,
         model: DEFAULT_AGENT_MODEL,
         integrations: draft.integrations,
-        icon,
       },
     },
   })

@@ -76,7 +76,6 @@ export async function createAgentFromTemplate(
       integrations: template.integrations,
       skills: template.skills || [],
       model: template.model,
-      icon: template.icon || '',
       allowSubagents: template.allowSubagents === true,
       ...(teammateId ? { teammateId } : {}),
       // Manual by default: connecting a template must never silently start a

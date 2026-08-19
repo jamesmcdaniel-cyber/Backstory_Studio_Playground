@@ -10,10 +10,12 @@ import { NextRequest } from 'next/server'
  * and the guards on the actions, which are the most consequential things anyone
  * can do to someone else's account.
  *
- * Supabase is not reachable from a test run, so the two actions that call it
- * (deactivate/reactivate) are covered by their REFUSALS — owner and self — which
- * are checked before any Supabase call. The happy path is left to manual
- * verification rather than faked with a stub that would prove nothing.
+ * The two actions that call Supabase (deactivate/reactivate) are covered HERE by
+ * their REFUSALS — owner and self — which are checked before any Supabase call.
+ * Their happy path and their Supabase failure modes live in
+ * users-deactivate.db.test.ts, against a stand-in GoTrue on a real socket: the
+ * stub this file once declined to write is what shows that updateUserById
+ * resolves with `{ error }` instead of rejecting.
  */
 const TEST_DB = process.env.TEST_DATABASE_URL
 if (!TEST_DB) test('admin users route (skipped: TEST_DATABASE_URL not set)', { skip: true }, () => {})

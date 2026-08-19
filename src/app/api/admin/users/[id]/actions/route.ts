@@ -50,6 +50,42 @@ function supabasePublic() {
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 }
 
+/**
+ * Ban or unban the Supabase identity, and refuse to continue unless it landed.
+ *
+ * Two failure modes, neither of which the obvious
+ * `supabaseAdmin().updateUserById(...).catch(...)` can see:
+ *
+ * supabaseAdmin() throws SYNCHRONOUSLY when the service-role key is missing, so
+ * the .catch() chained onto its return value does not exist yet. The throw
+ * escaped the route as a bare 500 — "Internal server error" in front of the one
+ * person who needs to be told the deployment is misconfigured.
+ *
+ * updateUserById RESOLVES with `{ error }` rather than rejecting, even when the
+ * host is unreachable, so that .catch() could never fire on a real Supabase
+ * failure either. That is the worse of the two: the ban quietly became a no-op
+ * and the caller went on to mark the account deactivated here while the session
+ * it was meant to kill stayed live — precisely the ordering hazard the
+ * ban-before-flip sequence exists to avoid.
+ */
+async function setSupabaseBan(supabaseId: string, banDuration: string, failure: string) {
+  let admin: ReturnType<typeof supabaseAdmin>
+  try {
+    admin = supabaseAdmin()
+  } catch (cause) {
+    throw new ApiError(
+      'Supabase is not configured, so account access cannot be changed.',
+      500,
+      'SUPABASE_UNCONFIGURED',
+      cause,
+    )
+  }
+  const { error } = await admin
+    .updateUserById(supabaseId, { ban_duration: banDuration })
+    .catch((cause: unknown) => ({ error: cause }))
+  if (error) throw new ApiError(failure, 502, 'SUPABASE_ERROR', error)
+}
+
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-2) ?? ''
   const { action } = bodySchema.parse(await request.json())
@@ -89,11 +125,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       // Ban first, then flip the column. In this order a failure leaves the
       // account still active and still bannable — the reverse would mark someone
       // deactivated in our database while their Supabase session lived on.
-      await supabaseAdmin()
-        .updateUserById(target.supabaseId, { ban_duration: FOREVER })
-        .catch(() => {
-          throw new ApiError('Could not deactivate the account in Supabase.', 502, 'SUPABASE_ERROR')
-        })
+      await setSupabaseBan(target.supabaseId, FOREVER, 'Could not deactivate the account in Supabase.')
       // Deprovision, not a bare isActive flip: a suspended account used to keep
       // every credential it held, so its OAuth grants stayed live at the
       // provider and its scheduled work kept running under a colleague.
@@ -113,11 +145,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     }
 
     case 'reactivate': {
-      await supabaseAdmin()
-        .updateUserById(target.supabaseId, { ban_duration: 'none' })
-        .catch(() => {
-          throw new ApiError('Could not reactivate the account in Supabase.', 502, 'SUPABASE_ERROR')
-        })
+      await setSupabaseBan(target.supabaseId, 'none', 'Could not reactivate the account in Supabase.')
       await systemPrisma.user.update({ where: { id: target.id }, data: { isActive: true } })
       await audit({})
       return {

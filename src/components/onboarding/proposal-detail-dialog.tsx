@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { proposalPersona } from '@/lib/templates/proposal-persona'
-import { ProposalPreview, type ProposalCard } from './proposal-shared'
+import { ProposalPreview, proposalHeadline, proposalSubline, type ProposalCard } from './proposal-shared'
 
 /**
  * The "little more detail" popup shared by the home Recommendations bar and the
@@ -46,7 +46,10 @@ export function ProposalDetailDialog({
                   >
                     {persona!.chip}
                   </span>
-                  <DialogTitle className="mt-1.5 text-base">{proposal.title}</DialogTitle>
+                  <DialogTitle className="mt-1.5 text-base">{proposalHeadline(proposal)}</DialogTitle>
+                  {proposalSubline(proposal) && (
+                    <p className="mt-0.5 text-sm text-muted-foreground">{proposalSubline(proposal)}</p>
+                  )}
                 </div>
               </div>
             </DialogHeader>

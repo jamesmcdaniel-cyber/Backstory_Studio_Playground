@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { readAgentMetadata } from '@/lib/agents/metadata'
 import { Prisma } from '@prisma/client'
 import type { TemplateProposal } from '@prisma/client'
 
@@ -48,6 +49,65 @@ export async function listOpenProposals(
     where: openProposalsWhere(organizationId, userId),
     orderBy: { createdAt: 'desc' },
   })
+}
+
+/** A proposal plus the display name of the flow/agent it is about, when it has one. */
+export type ProposalWithTarget = TemplateProposal & { targetName: string | null }
+
+/**
+ * Resolve the NAME of the thing each improvement proposal is about.
+ *
+ * An improvement's `title` is the model's description of the fault — useful
+ * detail, useless as a headline. On a roster that presents agents as people,
+ * the row has to say WHO it concerns, so the surface reads "Sales Digest has a
+ * problem" rather than leading with a sentence about list inputs.
+ *
+ * Two batched queries for the whole page, never one per row.
+ */
+export async function attachTargetNames(
+  proposals: TemplateProposal[],
+  organizationId: string,
+): Promise<ProposalWithTarget[]> {
+  const flowIds: string[] = []
+  const agentIds: string[] = []
+  for (const proposal of proposals) {
+    const target = readTarget(proposal.configuration)
+    if (!target) continue
+    ;(target.type === 'flow' ? flowIds : agentIds).push(target.id)
+  }
+
+  const [flows, agents] = await Promise.all([
+    flowIds.length
+      ? prisma.flow.findMany({ where: { id: { in: flowIds }, organizationId }, select: { id: true, name: true } })
+      : Promise.resolve([]),
+    agentIds.length
+      ? prisma.agentTask.findMany({
+          where: { id: { in: agentIds }, organizationId },
+          select: { id: true, description: true, metadata: true },
+        })
+      : Promise.resolve([]),
+  ])
+
+  const names = new Map<string, string>()
+  for (const flow of flows) names.set(flow.id, flow.name)
+  for (const agent of agents) {
+    const metadata = readAgentMetadata(agent.metadata)
+    names.set(agent.id, metadata.title || agent.description.split('\n')[0] || 'Untitled agent')
+  }
+
+  return proposals.map((proposal) => {
+    const target = readTarget(proposal.configuration)
+    return { ...proposal, targetName: (target && names.get(target.id)) ?? null }
+  })
+}
+
+/** targetType/targetId off a configuration blob, or null when malformed. */
+function readTarget(configuration: unknown): { type: 'flow' | 'agent'; id: string } | null {
+  if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration)) return null
+  const { targetType, targetId } = configuration as { targetType?: unknown; targetId?: unknown }
+  if (targetType !== 'flow' && targetType !== 'agent') return null
+  if (typeof targetId !== 'string' || !targetId.trim()) return null
+  return { type: targetType, id: targetId.trim() }
 }
 
 /**

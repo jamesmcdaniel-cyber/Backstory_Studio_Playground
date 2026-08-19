@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { useProposals } from '@/components/providers/proposals-provider'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { inboxSubtitle, inboxTitle, proposalPersona } from '@/lib/templates/proposal-persona'
-import { IntegrationChips, proposalIntegrations } from './proposal-shared'
+import { IntegrationChips, proposalHeadline, proposalIntegrations, proposalSubline } from './proposal-shared'
 
 const COLLAPSE_KEY = 'backstory:recs-collapsed'
 
@@ -83,14 +83,20 @@ export function RecommendationsBar() {
                   onClick={() => openDetail(proposal)}
                   className="min-w-0 flex-1 text-left"
                 >
-                  <span className="block truncate text-sm font-medium text-gray-900">{proposal.title}</span>
-                  <span
-                    className={cn(
-                      'mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium',
-                      persona.kind === 'applicant' ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-800',
+                  <span className="block truncate text-sm font-medium text-gray-900">{proposalHeadline(proposal)}</span>
+                  <span className="mt-0.5 flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
+                        persona.kind === 'applicant' ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-800',
+                      )}
+                    >
+                      {persona.chip}
+                    </span>
+                    {/* The fault, demoted to detail — the name is the headline. */}
+                    {proposalSubline(proposal) && (
+                      <span className="truncate text-xs text-muted-foreground">{proposalSubline(proposal)}</span>
                     )}
-                  >
-                    {persona.chip}
                   </span>
                 </button>
                 <IntegrationChips slugs={proposalIntegrations(proposal)} />

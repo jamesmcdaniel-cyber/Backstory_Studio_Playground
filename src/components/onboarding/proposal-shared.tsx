@@ -13,6 +13,29 @@ export type ProposalCard = {
   // about to provision, so accept is an informed 1-click, not a leap of faith.
   configuration?: Record<string, unknown> | null
   sourceEvidence?: Record<string, unknown> | null
+  /** For an improvement: the name of the flow/agent it is about. */
+  targetName?: string | null
+}
+
+/**
+ * What the row should be CALLED.
+ *
+ * An improvement's `title` is the model's description of the fault — "next-up
+ * step expects a list but receives non-list input". That is detail, not a
+ * headline: on a roster of people the row has to say WHO it concerns. So an
+ * improvement leads with the flow or agent's real name and carries the fault
+ * underneath, while a candidate keeps its own title, which is already its name.
+ */
+export function proposalHeadline(proposal: ProposalCard): string {
+  if (proposal.kind === 'process_improvement' && proposal.targetName?.trim()) {
+    return proposal.targetName.trim()
+  }
+  return proposal.title
+}
+
+/** The secondary line: the fault, for an improvement that led with a name. */
+export function proposalSubline(proposal: ProposalCard): string | null {
+  return proposalHeadline(proposal) === proposal.title ? null : proposal.title
 }
 
 export const KIND_LABEL: Record<string, string> = {

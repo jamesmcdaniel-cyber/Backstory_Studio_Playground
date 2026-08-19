@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 import { landOnAcceptedProposal } from '@/lib/client/apply-proposal'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { proposalPersona } from '@/lib/templates/proposal-persona'
-import { ProposalPreview, type ProposalCard } from './proposal-shared'
+import { ProposalPreview, proposalHeadline, proposalSubline, type ProposalCard } from './proposal-shared'
 
 export type { ProposalCard } from './proposal-shared'
 
@@ -131,7 +131,10 @@ export function ProposalInbox({
               >
                 {persona.chip}
               </span>
-              <p className="mt-1.5 text-sm font-semibold text-gray-900">{proposal.title}</p>
+              <p className="mt-1.5 text-sm font-semibold text-gray-900">{proposalHeadline(proposal)}</p>
+              {proposalSubline(proposal) && (
+                <p className="mt-0.5 text-xs text-muted-foreground">{proposalSubline(proposal)}</p>
+              )}
               <p className="mt-1 text-sm leading-5 text-gray-600">{proposal.rationale}</p>
               <ProposalPreview proposal={proposal} />
             </div>

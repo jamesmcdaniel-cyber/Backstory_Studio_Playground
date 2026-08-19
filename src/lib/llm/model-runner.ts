@@ -4,7 +4,7 @@ import { recordLlmCall } from '@/lib/usage/ledger'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { qwenClient, qwenConfigured, qwenModel } from './qwen'
-import { modelTier, UNLIMITED_MODEL_ALLOWANCE, type ModelAllowance } from '@/lib/usage/model-allowance'
+import { modelTier, UNLIMITED_MODEL_ALLOWANCE, type ModelAllowance } from '@/lib/usage/model-tiers'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import {
   type IRMessage,

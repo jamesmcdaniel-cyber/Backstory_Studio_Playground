@@ -26,7 +26,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
-  UsersRound,
+  ShieldUser,
   Trash2,
   Workflow,
 } from 'lucide-react'
@@ -96,9 +96,14 @@ const reviewsNavItem = { name: 'Reviews', href: '/admin/catalogue', icon: Shield
 
 // A STRICTER gate than Reviews, and not an oversight: catalogue.review is also
 // held by reviewers in partner workspaces, while this page carries every user's
-// personal details and the account actions. platform.administer is the operator
-// tier alone. The route re-checks it — this only decides whether to draw a link.
-const usersNavItem = { name: 'Users', href: '/admin/users', icon: UsersRound }
+// personal details, the account actions, and cross-workspace model spend.
+// platform.administer is the operator tier alone. The route re-checks it — this
+// only decides whether to draw a link.
+//
+// Named for the console rather than its first tab: the page holds People and
+// Models, and calling it "Users" hid the second one behind a label that denied
+// it existed. The href still lands on People.
+const adminNavItem = { name: 'Admin', href: '/admin/users', icon: ShieldUser }
 
 function planLabel(plan: string) {
   const lower = plan.toLowerCase()
@@ -635,7 +640,7 @@ export function Sidebar() {
             {[
               ...navigation,
               ...(can('catalogue.review') ? [reviewsNavItem] : []),
-              ...(can('platform.administer') ? [usersNavItem] : []),
+              ...(can('platform.administer') ? [adminNavItem] : []),
             ].map((item) => {
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
               return (

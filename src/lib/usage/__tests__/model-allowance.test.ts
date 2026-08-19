@@ -1,6 +1,6 @@
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { MODEL_LIMITS, downgradeNotice, modelTier } from '../model-allowance'
+import { MODEL_LIMITS, downgradeNotice, modelTier } from '../model-tiers'
 import { routeModel } from '@/lib/llm/model-runner'
 
 /**
@@ -46,13 +46,17 @@ test('a spent frontier allowance downgrades to Sonnet but stays on Claude', () =
   assert.equal(chain.some((step) => modelTier(step.model) === 'frontier'), false)
 })
 
-test('the frontier cap also holds the cross-endpoint fallback down', () => {
-  // Qwen unconfigured, so the chain is Claude-only and appends a second Claude
-  // step — which defaults to Opus and would hand the cap straight back.
-  delete process.env.QWEN_API_KEY
-  delete process.env.QWEN_BASE_URL
-  const chain = routeModel('claude-sonnet-5', NO_FRONTIER)
-  assert.equal(chain.some((step) => modelTier(step.model) === 'frontier'), false)
+test('no step in the chain is frontier once that allowance is spent', () => {
+  // The cross-endpoint fallback defaults to Opus, so a cap applied only to the
+  // requested model would be handed straight back on the first 529.
+  for (const requested of ['claude-sonnet-5', 'claude-opus-4-8', 'qwen-3.7', undefined]) {
+    const chain = routeModel(requested, NO_FRONTIER)
+    assert.equal(
+      chain.some((step) => modelTier(step.model) === 'frontier'),
+      false,
+      `frontier model survived in the chain for ${requested ?? 'the default'}`,
+    )
+  }
 })
 
 test('a spent Claude allowance leaves Qwen as the only endpoint', () => {

@@ -30,7 +30,8 @@ import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrati
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
-import { downgradeNotice, modelAllowanceFor } from '@/lib/usage/model-allowance'
+import { modelAllowanceFor } from '@/lib/usage/model-allowance'
+import { downgradeNotice } from '@/lib/usage/model-tiers'
 import { buildAgentSystemPrompt } from './system-prompt'
 import {
   createModelRunner,

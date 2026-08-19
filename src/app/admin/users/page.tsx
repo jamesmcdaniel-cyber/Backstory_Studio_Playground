@@ -19,6 +19,8 @@ import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge, Smartphone,
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ModelsPanel } from './models-panel'
 import { cn } from '@/lib/utils'
 
 type PlatformUser = {
@@ -155,10 +157,11 @@ export default function PlatformUsersPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Users</h1>
+          <h1 className="text-2xl font-semibold">Admin</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every account on the platform, across every workspace. Activity and spend are for the selected
-            window; personal details and integration counts are current. Each view is recorded in the audit log.
+            Every account on the platform and every model it reaches, across every workspace. Activity, spend
+            and latency are for the selected window; personal details and integration counts are current. Each
+            view is recorded in the audit log.
           </p>
         </div>
         <select
@@ -173,6 +176,17 @@ export default function PlatformUsersPage() {
         </select>
       </header>
 
+      <Tabs defaultValue="people" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="people">People</TabsTrigger>
+          <TabsTrigger value="models">Models</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="models">
+          <ModelsPanel days={days} />
+        </TabsContent>
+
+        <TabsContent value="people" className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Stat label="People" value={totals.people.toLocaleString()} />
         <Stat label="Seen in window" value={`${totals.seen.toLocaleString()} of ${totals.people.toLocaleString()}`} />
@@ -398,6 +412,8 @@ export default function PlatformUsersPage() {
           </p>
         </section>
       )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

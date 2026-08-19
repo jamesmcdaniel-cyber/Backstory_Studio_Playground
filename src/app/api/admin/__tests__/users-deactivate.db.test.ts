@@ -43,6 +43,7 @@ if (TEST_DB) {
   let banRequests: Array<{ path: string; body: string }> = []
   /** Flipped per test to make the stand-in GoTrue reject the update. */
   let goTrueStatus = 200
+  let goTrueErrorCode = 'unexpected_failure'
 
   before(async () => {
     server = http.createServer((request, response) => {
@@ -55,7 +56,7 @@ if (TEST_DB) {
           JSON.stringify(
             goTrueStatus === 200
               ? { id: crypto.randomUUID(), email: 'stub@example.com' }
-              : { code: goTrueStatus, error_code: 'unexpected_failure', msg: 'stub failure' },
+              : { code: goTrueStatus, error_code: goTrueErrorCode, msg: 'stub failure' },
           ),
         )
       })
@@ -189,6 +190,54 @@ if (TEST_DB) {
       assert.equal(await isActive(subject.userId), false)
     } finally {
       goTrueStatus = 200
+      await subject.cleanup()
+    }
+  })
+
+  test('an account already gone from Supabase can still be cleared', async () => {
+    const subject = await seedSubject()
+    // What an operator who deleted the identity in the Supabase dashboard is
+    // left holding: our row, pointing at nothing.
+    goTrueStatus = 404
+    goTrueErrorCode = 'user_not_found'
+    try {
+      const response = await act(subject.userId, 'deactivate')
+      const body = await response.json()
+      // There is no session to ban, so the request is already satisfied.
+      // Reporting an outage here would block the operator on exactly the rows
+      // they are trying to clear.
+      assert.equal(response.status, 200, JSON.stringify(body))
+      assert.equal(body.identityMissing, true)
+      assert.match(body.notice, /no longer had a Supabase identity/)
+      assert.equal(await isActive(subject.userId), false)
+      assert.equal(
+        await systemPrisma.integration.count({ where: { userId: subject.userId } }),
+        0,
+        'the orphaned row must still be deprovisioned',
+      )
+    } finally {
+      goTrueStatus = 200
+      goTrueErrorCode = 'unexpected_failure'
+      await subject.cleanup()
+    }
+  })
+
+  test('an account already gone from Supabase cannot be reactivated', async () => {
+    const subject = await seedSubject()
+    try {
+      assert.equal((await act(subject.userId, 'deactivate')).status, 200)
+      goTrueStatus = 404
+      goTrueErrorCode = 'user_not_found'
+      const response = await act(subject.userId, 'reactivate')
+      const body = await response.json()
+      // The mirror of the case above: lifting a ban nobody holds restores no
+      // access, so saying "reactivated" would be a lie the operator acts on.
+      assert.equal(response.status, 409, JSON.stringify(body))
+      assert.equal(body.code, 'SUPABASE_IDENTITY_MISSING')
+      assert.equal(await isActive(subject.userId), false)
+    } finally {
+      goTrueStatus = 200
+      goTrueErrorCode = 'unexpected_failure'
       await subject.cleanup()
     }
   })

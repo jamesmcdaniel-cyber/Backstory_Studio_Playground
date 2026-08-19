@@ -1,6 +1,7 @@
 import { systemPrisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
+import { liveSupabaseIdentities } from '@/lib/scim/server'
 import { listConnectedProviders } from '@/lib/integrations/connected'
 // The same "what counts against the 3-integration cap" rule the enforcement
 // path uses, so the console cannot disagree with the limit it is reporting on.
@@ -43,6 +44,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     where,
     select: {
       id: true,
+      supabaseId: true,
       email: true,
       name: true,
       imageUrl: true,
@@ -67,7 +69,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 
   // Four batched aggregates plus one integration read per DISTINCT workspace —
   // never per user. A naive per-user loop is ~5 queries × 200 rows.
-  const [agentRuns, flowRuns, tokens, integrationsByOrg] = await Promise.all([
+  const [agentRuns, flowRuns, tokens, integrationsByOrg, liveIdentities] = await Promise.all([
     systemPrisma.agentExecution.groupBy({
       by: ['userId'],
       where: { userId: { in: userIds }, startedAt: { gte: since } },
@@ -99,6 +101,12 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         ] as const
       }),
     ),
+    // The console's rows are ours alone: nothing prunes a user row when its
+    // identity is deleted straight out of the Supabase dashboard, so without
+    // this sweep an orphan is indistinguishable from someone who simply never
+    // signed in. One paginated read per page load, and it fails to `null`
+    // rather than to an empty set — see liveSupabaseIdentities.
+    liveSupabaseIdentities(),
   ])
 
   const agentByUser = new Map<string, Rollup>()
@@ -136,6 +144,9 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     success: true,
     days,
     truncated: users.length === PAGE_SIZE,
+    // Lets the UI say "could not check" instead of silently showing every row
+    // as fine when the sweep did not run.
+    identitiesReconciled: liveIdentities !== null,
     users: users.map((user) => {
       const agent = agentByUser.get(user.id) ?? { runs: 0, costUsd: 0 }
       const flow = flowByUser.get(user.id) ?? { runs: 0, costUsd: 0 }
@@ -149,6 +160,11 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         role: user.role,
         platformRole: user.platformRole,
         isActive: user.isActive,
+        supabaseIdentity: liveIdentities
+          ? liveIdentities.has(user.supabaseId)
+            ? ('present' as const)
+            : ('missing' as const)
+          : ('unknown' as const),
         createdAt: user.createdAt,
         lastSeenAt: user.lastSeenAt,
         runAllowanceResetAt: user.runAllowanceResetAt,

@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge, Smartphone } from 'lucide-react'
+import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge, Smartphone, Trash2, UserX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -30,6 +30,8 @@ type PlatformUser = {
   role: string
   platformRole: string | null
   isActive: boolean
+  /** 'unknown' means the Supabase sweep did not run — absence of evidence. */
+  supabaseIdentity: 'present' | 'missing' | 'unknown'
   createdAt: string
   lastSeenAt: string | null
   runAllowanceResetAt: string | null
@@ -44,9 +46,9 @@ type PlatformUser = {
   countableIntegrations: number
 }
 
-type Report = { days: number; truncated: boolean; users: PlatformUser[] }
+type Report = { days: number; truncated: boolean; identitiesReconciled: boolean; users: PlatformUser[] }
 
-type Action = 'deactivate' | 'reactivate' | 'reset-password' | 'reset-monthly-tokens' | 'reset-daily-runs' | 'reset-mfa'
+type Action = 'deactivate' | 'reactivate' | 'reset-password' | 'reset-monthly-tokens' | 'reset-daily-runs' | 'reset-mfa' | 'delete'
 
 const usd = (value: number) => (value >= 0.01 || value === 0 ? `$${value.toFixed(2)}` : '<$0.01')
 
@@ -112,15 +114,20 @@ export default function PlatformUsersPage() {
         // Deactivating revokes credentials and stops the work they owned;
         // reactivating restores neither, because the OAuth grants were deleted
         // at the provider. Both say so, or correct behaviour reads as a bug.
-        action === 'deactivate' ? `Deactivated ${label}. Their integrations were revoked and any flows they owned are waiting for a new owner.`
+        // The notice branch covers the orphaned-identity case: the account had
+        // no Supabase identity left to ban, which the operator needs told.
+        action === 'deactivate' ? body?.notice ? `Deactivated ${label}. ${body.notice}`
+          : `Deactivated ${label}. Their integrations were revoked and any flows they owned are waiting for a new owner.`
         : action === 'reactivate' ? body?.notice ? `Reactivated ${label}. ${body.notice}` : `Reactivated ${label}.`
         : action === 'reset-password' ? `Password reset email sent to ${label}.`
         : action === 'reset-monthly-tokens' ? `Monthly token counter cleared for ${user.organizationName ?? 'the workspace'}.`
         // The count matters: "0 removed" means they had no authenticator, so
         // whatever locked them out was not their second factor.
         : action === 'reset-mfa' ? `Removed ${body?.factorsRemoved ?? 0} authenticator(s) from ${label}. They will enroll again at their next sign-in.`
+        : action === 'delete' ? body?.notice ? `Deleted ${label}. ${body.notice}` : `Deleted ${label}.`
         : `${label} has a fresh set of runs for today.`,
       )
+      if (action === 'delete') setSelectedId(null)
       await load()
     } finally {
       setBusy(null)
@@ -236,6 +243,12 @@ export default function PlatformUsersPage() {
                     {user.platformRole ? ` · ${user.platformRole}` : ''}
                     {!user.isActive ? ' · deactivated' : ''}
                   </div>
+                  {user.supabaseIdentity === 'missing' && (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
+                      <UserX className="h-3 w-3" />
+                      No Supabase identity
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 whitespace-nowrap">{when(user.lastSeenAt)}</td>
                 <td className="px-4 py-2.5 tabular-nums">{user.integrations}</td>
@@ -271,6 +284,14 @@ export default function PlatformUsersPage() {
             <Detail label="Workspace role" value={selected.role.toLowerCase()} />
             <Detail label="Platform tier" value={selected.platformRole ?? 'none'} />
             <Detail label="Time zone" value={selected.timezone} />
+            <Detail
+              label="Supabase identity"
+              value={
+                selected.supabaseIdentity === 'missing' ? 'Deleted upstream'
+                : selected.supabaseIdentity === 'present' ? 'Live'
+                : 'Could not check'
+              }
+            />
             <Detail label="Account created" value={when(selected.createdAt)} />
             <Detail label="Last seen" value={when(selected.lastSeenAt)} />
             <Detail
@@ -338,12 +359,40 @@ export default function PlatformUsersPage() {
                 Reactivate
               </Button>
             )}
+            <Button
+              variant="destructive"
+              disabled={busy !== null}
+              onClick={() => {
+                // Typed confirmation, not an OK button. Deactivation is one
+                // click because this console can undo it; nothing here or
+                // anywhere else can undo the line below, and it can take a
+                // whole workspace with it.
+                const label = selected.email ?? selected.name ?? 'this account'
+                const typed = prompt(
+                  `Permanently delete ${label}?\n\n` +
+                    `Their Supabase identity, credentials and personal data are erased. If they are the last member of ` +
+                    `${selected.organizationName ?? 'their workspace'}, that workspace and everything in it goes too.\n\n` +
+                    `This cannot be undone. Type the email address to confirm:`,
+                )
+                if (typed === null) return
+                if (typed.trim().toLowerCase() !== (selected.email ?? '').trim().toLowerCase()) {
+                  toast.error('That did not match the account email. Nothing was deleted.')
+                  return
+                }
+                void act(selected, 'delete')
+              }}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete account
+            </Button>
           </div>
 
           {/* Said plainly, because the button name cannot carry it: the monthly
               token counter is per WORKSPACE, so resetting it from a person's
               panel lifts the ceiling for all their colleagues too. */}
           <p className="text-xs text-muted-foreground">
+            Deleting is permanent and takes their workspace with them if they are its last member — deactivate
+            instead if you only need to cut off access.{' '}
             Resetting monthly tokens clears the counter for the whole {selected.organizationName ?? 'workspace'},
             not just this person. Resetting today&apos;s runs affects only this account.
           </p>

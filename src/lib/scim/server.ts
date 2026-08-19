@@ -79,10 +79,48 @@ export async function authenticateScim(request: Request): Promise<ScimContext | 
   return { organizationId: token.organizationId, tokenId: token.id }
 }
 
+/**
+ * Thrown by supabaseAdmin() when the service-role key is absent.
+ *
+ * A named type rather than a bare Error because callers need to TELL THE
+ * DIFFERENCE: this is a misconfigured deployment, not a failed operation, and
+ * the two deserve different words in front of an operator. It is also thrown
+ * SYNCHRONOUSLY, so `supabaseAdmin().someCall().catch(...)` cannot see it —
+ * acquire the client on its own line.
+ *
+ * SUPABASE_SERVICE_ROLE_KEY is deliberately not in env.ts's boot-required list,
+ * so a deploy without it starts fine and every surface that needs it (SCIM,
+ * stored files, run streaming, the operator console's account actions) fails
+ * here instead.
+ */
+export class SupabaseUnconfiguredError extends Error {
+  constructor() {
+    super('SUPABASE_SERVICE_ROLE_KEY is not set, so the Supabase admin API is unavailable.')
+    this.name = 'SupabaseUnconfiguredError'
+  }
+}
+
+/**
+ * Is this Supabase error "that identity does not exist" rather than a failure?
+ *
+ * Identities deleted straight out of the Supabase dashboard leave our user rows
+ * pointing at nothing, and every admin call on one comes back 404. Whether that
+ * satisfies the caller's intent or defeats it depends on the call, but it is
+ * never the transient outage a bare error would imply.
+ *
+ * Matched on the code rather than the message so a copy edit upstream cannot
+ * turn a handled state back into an outage; the bare 404 covers older GoTrue
+ * builds that sent no error_code.
+ */
+export function isIdentityGone(error: unknown): boolean {
+  const value = error as { code?: unknown; status?: unknown } | null
+  return value?.code === 'user_not_found' || value?.status === 404
+}
+
 export function supabaseAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !key) throw new Error('SCIM requires SUPABASE_SERVICE_ROLE_KEY.')
+  if (!url || !key) throw new SupabaseUnconfiguredError()
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } }).auth.admin
 }
 
@@ -105,4 +143,39 @@ export function scimUser(user: { id: string; scimExternalId: string | null; emai
     roles: [{ value: user.role }],
     meta: { resourceType: 'User', created: user.createdAt.toISOString(), lastModified: user.updatedAt.toISOString(), location: `/api/scim/v2/Users/${user.id}` },
   }
+}
+
+/** GoTrue's per-page maximum for the admin user listing. */
+const IDENTITY_PAGE_SIZE = 1000
+/** ~20k identities. Beyond this the sweep is abandoned rather than trusted. */
+const IDENTITY_PAGE_LIMIT = 20
+
+/**
+ * Every identity Supabase currently holds, as a set of ids — or null when the
+ * answer cannot be trusted.
+ *
+ * null, never an empty set, on EVERY failure path: unconfigured, an API error,
+ * or more pages than the cap. Callers use this to mark our own rows as
+ * orphaned, so a partial sweep would report live accounts as deleted. That is
+ * far worse than "unknown": it invites an operator to delete people who are
+ * still using the product, and the deletion is the one action they cannot undo.
+ */
+export async function liveSupabaseIdentities(): Promise<Set<string> | null> {
+  let admin: ReturnType<typeof supabaseAdmin>
+  try {
+    admin = supabaseAdmin()
+  } catch {
+    return null
+  }
+  const ids = new Set<string>()
+  for (let page = 1; page <= IDENTITY_PAGE_LIMIT; page += 1) {
+    const { data, error } = await admin
+      .listUsers({ page, perPage: IDENTITY_PAGE_SIZE })
+      .catch((cause: unknown) => ({ data: null, error: cause }))
+    if (error || !data) return null
+    for (const identity of data.users) ids.add(identity.id)
+    // A short page is the last page. Anything else means another round trip.
+    if (data.users.length < IDENTITY_PAGE_SIZE) return ids
+  }
+  return null
 }

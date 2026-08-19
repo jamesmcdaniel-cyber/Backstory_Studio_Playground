@@ -3,10 +3,11 @@ import { createClient } from '@supabase/supabase-js'
 import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
-import { supabaseAdmin } from '@/lib/scim/server'
+import { isIdentityGone, supabaseAdmin, SupabaseUnconfiguredError } from '@/lib/scim/server'
 import { resetMonthlyTokenUsage } from '@/lib/usage/budget'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { deprovisionUser } from '@/lib/revoke-user-access'
+import { DeleteConflictError, deleteUserAccount } from '@/lib/privacy/delete'
 import { deleteAllFactors } from '@/lib/auth/mfa-admin'
 
 /**
@@ -29,6 +30,7 @@ const bodySchema = z.object({
     'reset-monthly-tokens',
     'reset-daily-runs',
     'reset-mfa',
+    'delete',
   ]),
 })
 
@@ -51,6 +53,30 @@ function supabasePublic() {
 }
 
 /**
+ * `applied` — Supabase accepted the change. `identity-missing` — there is no
+ * such identity to change, because it was deleted straight out of the Supabase
+ * dashboard and left our row behind. Whether that satisfies the request or
+ * defeats it depends on the direction, so the branches decide, not this helper.
+ */
+type BanOutcome = 'applied' | 'identity-missing'
+
+/**
+ * The misconfigured-deployment case, in the words the operator needs. Rethrows
+ * anything else untouched so a real bug cannot hide behind a config message.
+ */
+function unconfigured(cause: unknown): unknown {
+  if (cause instanceof SupabaseUnconfiguredError) {
+    return new ApiError(
+      'Supabase is not configured, so account access cannot be changed.',
+      500,
+      'SUPABASE_UNCONFIGURED',
+      cause,
+    )
+  }
+  return cause
+}
+
+/**
  * Ban or unban the Supabase identity, and refuse to continue unless it landed.
  *
  * Two failure modes, neither of which the obvious
@@ -68,22 +94,23 @@ function supabasePublic() {
  * it was meant to kill stayed live — precisely the ordering hazard the
  * ban-before-flip sequence exists to avoid.
  */
-async function setSupabaseBan(supabaseId: string, banDuration: string, failure: string) {
+async function setSupabaseBan(
+  supabaseId: string,
+  banDuration: string,
+  failure: string,
+): Promise<BanOutcome> {
   let admin: ReturnType<typeof supabaseAdmin>
   try {
     admin = supabaseAdmin()
   } catch (cause) {
-    throw new ApiError(
-      'Supabase is not configured, so account access cannot be changed.',
-      500,
-      'SUPABASE_UNCONFIGURED',
-      cause,
-    )
+    throw unconfigured(cause)
   }
   const { error } = await admin
     .updateUserById(supabaseId, { ban_duration: banDuration })
     .catch((cause: unknown) => ({ error: cause }))
-  if (error) throw new ApiError(failure, 502, 'SUPABASE_ERROR', error)
+  if (!error) return 'applied'
+  if (isIdentityGone(error)) return 'identity-missing'
+  throw new ApiError(failure, 502, 'SUPABASE_ERROR', error)
 }
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -94,7 +121,18 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // that is what makes this an operator console rather than member management.
   const target = await systemPrisma.user.findUnique({
     where: { id },
-    select: { id: true, email: true, supabaseId: true, isActive: true, organizationId: true },
+    select: {
+      id: true,
+      email: true,
+      supabaseId: true,
+      isActive: true,
+      organizationId: true,
+      // Only the delete branch reads it, but the workspace-ownership refusal it
+      // feeds is the difference between removing one person and stranding their
+      // colleagues in an ownerless workspace.
+      role: true,
+      organization: { select: { name: true } },
+    },
   })
   if (!target) throw new ApiError('User not found.', 404, 'NOT_FOUND')
 
@@ -125,7 +163,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       // Ban first, then flip the column. In this order a failure leaves the
       // account still active and still bannable — the reverse would mark someone
       // deactivated in our database while their Supabase session lived on.
-      await setSupabaseBan(target.supabaseId, FOREVER, 'Could not deactivate the account in Supabase.')
+      const ban = await setSupabaseBan(target.supabaseId, FOREVER, 'Could not deactivate the account in Supabase.')
       // Deprovision, not a bare isActive flip: a suspended account used to keep
       // every credential it held, so its OAuth grants stayed live at the
       // provider and its scheduled work kept running under a colleague.
@@ -140,12 +178,36 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         // No workspace means no org-scoped credentials to revoke.
         await systemPrisma.user.update({ where: { id: target.id }, data: { isActive: false } })
       }
-      await audit({})
-      return { success: true, isActive: false }
+      await audit({ supabaseIdentity: ban })
+      return {
+        success: true,
+        isActive: false,
+        identityMissing: ban === 'identity-missing',
+        // Said out loud rather than passed over in silence: the operator is
+        // usually here BECAUSE the identity is gone, and a deactivation that
+        // reports plain success would leave them guessing whether the orphaned
+        // row was actually dealt with.
+        ...(ban === 'identity-missing' && {
+          notice:
+            'They no longer had a Supabase identity, so there was no session to end. Their credentials and owned work were still revoked.',
+        }),
+      }
     }
 
     case 'reactivate': {
-      await setSupabaseBan(target.supabaseId, 'none', 'Could not reactivate the account in Supabase.')
+      const unban = await setSupabaseBan(target.supabaseId, 'none', 'Could not reactivate the account in Supabase.')
+      // Deliberately NOT treated as success, unlike deactivation. Lifting a ban
+      // that nobody holds restores no access: the identity is gone, so there is
+      // no way for this person to sign in and marking them active here would
+      // put a working-looking row in front of an operator who then waits for a
+      // login that can never happen.
+      if (unban === 'identity-missing') {
+        throw new ApiError(
+          'That account no longer exists in Supabase, so it cannot be reactivated. They need a fresh invitation.',
+          409,
+          'SUPABASE_IDENTITY_MISSING',
+        )
+      }
       await systemPrisma.user.update({ where: { id: target.id }, data: { isActive: true } })
       await audit({})
       return {
@@ -158,6 +220,58 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         credentialsRestored: false,
         notice:
           'Their integrations were revoked when the account was deactivated. They will need to reconnect each one.',
+      }
+    }
+
+    case 'delete': {
+      // The same two refusals as deactivation, and the second one carries more
+      // weight here: a deactivation can be undone from this console, a deletion
+      // cannot be undone from anywhere.
+      if (isPlatformOwnerEmail(target.email)) {
+        throw new ApiError('The platform owner cannot be deleted.', 403, 'OWNER_PROTECTED')
+      }
+      if (target.id === auth.userId) {
+        throw new ApiError('You cannot delete your own account from this console.', 400, 'SELF_DELETION')
+      }
+
+      let outcome
+      try {
+        outcome = await deleteUserAccount({
+          userId: target.id,
+          supabaseId: target.supabaseId,
+          organizationId: target.organizationId,
+          email: target.email,
+          role: target.role,
+          actorUserId: auth.userId,
+        })
+      } catch (error) {
+        if (error instanceof DeleteConflictError) throw new ApiError(error.message, 409, 'DELETE_CONFLICT')
+        // Teardown reports its external legs as an AggregateError and does NOT
+        // commit the database delete, so the account is still whole. Say that,
+        // rather than leaving an operator to wonder how much of it survived.
+        if (error instanceof AggregateError) {
+          throw new ApiError(
+            'Their data could not be erased everywhere it lives, so nothing was deleted. Try again once the provider recovers.',
+            502,
+            'EXTERNAL_DELETE_FAILED',
+            error,
+          )
+        }
+        throw unconfigured(error)
+      }
+
+      await audit({ ...outcome })
+      return {
+        success: true,
+        deleted: true,
+        ...outcome,
+        // Two facts an operator cannot recover by looking, because the thing
+        // they would look at is gone.
+        notice: outcome.workspaceDeleted
+          ? `They were the last member of ${target.organization?.name ?? 'their workspace'}, so that workspace and everything in it was deleted too.`
+          : outcome.identityMissing
+            ? 'They had no Supabase identity left, so only the leftover record here was removed.'
+            : undefined,
       }
     }
 

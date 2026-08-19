@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Check, Sparkles, X } from 'lucide-react'
+import { Check, Sparkles, UserPlus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { landOnAcceptedProposal } from '@/lib/client/apply-proposal'
-import { KIND_LABEL, ProposalPreview, type ProposalCard } from './proposal-shared'
+import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { proposalPersona } from '@/lib/templates/proposal-persona'
+import { ProposalPreview, type ProposalCard } from './proposal-shared'
 
 export type { ProposalCard } from './proposal-shared'
 
@@ -112,12 +114,22 @@ export function ProposalInbox({
   }
   const list = (
     <ul className="space-y-3">
-      {proposals.map((proposal) => (
+      {proposals.map((proposal) => {
+        // Same persona as the hiring desk and the detail popup: one face and
+        // one verb per proposal, wherever it is shown.
+        const persona = proposalPersona(proposal)
+        return (
         <li key={proposal.id} className="rounded-lg border p-4">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AgentAvatar seed={persona.seed} className="h-10 w-10 shrink-0 rounded-full ring-1 ring-black/5" />
             <div className="min-w-0">
-              <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
-                <Sparkles className="h-3 w-3" /> {KIND_LABEL[proposal.kind] ?? 'Suggestion'}
+              <span
+                className={cn(
+                  'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium',
+                  persona.kind === 'applicant' ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-800',
+                )}
+              >
+                {persona.chip}
               </span>
               <p className="mt-1.5 text-sm font-semibold text-gray-900">{proposal.title}</p>
               <p className="mt-1 text-sm leading-5 text-gray-600">{proposal.rationale}</p>
@@ -133,7 +145,10 @@ export function ProposalInbox({
                 'inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-50',
               )}
             >
-              <Check className="h-3.5 w-3.5" /> {proposal.kind === 'process_improvement' ? 'Open and improve' : 'Accept'}
+              {persona.kind === 'applicant'
+                ? <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
+                : <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+              {persona.action}
             </button>
             <button
               type="button"
@@ -141,11 +156,12 @@ export function ProposalInbox({
               onClick={() => void dismiss(proposal)}
               className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
             >
-              <X className="h-3.5 w-3.5" /> Dismiss
+              <X className="h-3.5 w-3.5" /> {persona.kind === 'applicant' ? 'Pass' : 'Dismiss'}
             </button>
           </div>
         </li>
-      ))}
+        )
+      })}
     </ul>
   )
   if (!title) return list

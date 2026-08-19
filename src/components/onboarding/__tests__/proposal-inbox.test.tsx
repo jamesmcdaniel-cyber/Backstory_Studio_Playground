@@ -35,7 +35,7 @@ test('renders open proposals and accepting posts to the accept route, removing t
   try {
     const { findByText, getByText, queryByText } = render(React.createElement(ProposalInbox, { generating: true }))
     await findByText('Weekly pipeline digest')
-    fireEvent.click(getByText('Accept'))
+    fireEvent.click(getByText('Hire'))
     await waitFor(() => assert.equal(queryByText('Weekly pipeline digest'), null))
     assert.ok(stub.calls.some((c) => c.startsWith('POST') && c.includes('/api/template-proposals/p1/accept')))
   } finally {
@@ -52,7 +52,7 @@ test('dismissing removes the card via the dismiss endpoint', async () => {
   try {
     const { findByText, getByText, queryByText } = render(React.createElement(ProposalInbox, { generating: false }))
     await findByText('Deal risk watcher')
-    fireEvent.click(getByText('Dismiss'))
+    fireEvent.click(getByText('Pass'))
     await waitFor(() => assert.equal(queryByText('Deal risk watcher'), null))
     assert.ok(stub.calls.some((c) => c.startsWith('POST') && c.includes('/api/template-proposals/p2/dismiss')))
   } finally {
@@ -69,6 +69,27 @@ test('empty inbox copy tracks whether generation is still running', async () => 
     cleanup()
     const settled = render(React.createElement(ProposalInbox, { generating: false }))
     await settled.findByText(/build your own anytime/i)
+  } finally {
+    stub.restore()
+    cleanup()
+  }
+})
+
+test('an improvement is staff, not an applicant — it is reviewed, not hired', async () => {
+  const stub = stubFetch({
+    '/api/template-proposals': () => ({
+      success: true,
+      proposals: [proposal({ kind: 'process_improvement', configuration: { targetId: 'flow-9' } })],
+    }),
+  })
+  try {
+    const { findByText, queryByText } = render(React.createElement(ProposalInbox, { generating: false }))
+    await findByText('Weekly pipeline digest')
+    await findByText('Review')
+    await findByText('On the team')
+    // Hiring vocabulary must not leak onto something already running.
+    assert.equal(queryByText('Hire'), null)
+    assert.equal(queryByText('Pass'), null)
   } finally {
     stub.restore()
     cleanup()

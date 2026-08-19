@@ -124,8 +124,13 @@ test('htmlTable escapes headers and ampersands/apostrophes', () => {
   assert.ok(output.includes('<td>Tom &amp; Jerry&#39;s</td>'))
 })
 
-test('htmlTable fails plainly on a non-list input', () => {
-  assert.match(err(runDataOp('htmlTable', { input: { not: 'a list' } })), /Create HTML table needs a list/)
+test('htmlTable fails plainly on a scalar, but treats one record as one row', () => {
+  // A bare scalar is a genuine mis-wire — text piped into a records op.
+  assert.match(err(runDataOp('htmlTable', { input: 'not a list' })), /Create HTML table needs a list/)
+  // A single unwrapped record is the common real shape (an API that returned
+  // exactly one match), and its obvious reading is a one-row table.
+  const output = String(ok(runDataOp('htmlTable', { input: { name: 'Acme' } })))
+  assert.ok(output.includes('<td>Acme</td>'), output)
 })
 
 // ── filterArray ─────────────────────────────────────────────────────────────
@@ -294,4 +299,51 @@ test('columnarToRecords maps generic columns/rows and passes record lists throug
 test('columnarToRecords rejects shapes without columns and rows in plain english', () => {
   const res = runDataOp('columnarToRecords', { input: { foo: 'bar' } })
   assert.ok('error' in res && /column names and rows/.test(res.error))
+})
+
+// ── non-list inputs: the shape the flagged flows actually hit ───────────────
+// An upstream step that returns ONE record, or nothing at all, used to make
+// every list op report "the input wasn't a list" — including "get item 0",
+// whose answer for a single record is obvious. These pin the three readings.
+
+test('getItem takes the single record an upstream step returned unwrapped', () => {
+  const record = { id: 7, name: 'Acme' }
+  assert.deepEqual(runDataOp('getItem', { input: record }), { output: record })
+  assert.deepEqual(runDataOp('getItem', { input: record, index: '-1' }), { output: record })
+})
+
+test('asking past the end of a one-record input still says so', () => {
+  const res = err(runDataOp('getItem', { input: { id: 7 }, index: '1' }))
+  assert.match(res, /has 1 item\b/, res)
+})
+
+test('an upstream step that produced nothing names THAT, not the input shape', () => {
+  for (const input of [null, undefined, '']) {
+    const res = err(runDataOp('getItem', { input }))
+    // A shared blank guard already answers this case, and it answers it well:
+    // the author's real problem is that the previous step returned nothing.
+    assert.match(res, /came back empty/, `input ${JSON.stringify(input)} → ${res}`)
+    assert.doesNotMatch(res, /wasn't a list/, `input ${JSON.stringify(input)} → ${res}`)
+  }
+})
+
+test('a bare scalar is still a mis-wire and still fails', () => {
+  assert.match(err(runDataOp('getItem', { input: 'just some text' })), /wasn't a list/)
+  assert.match(err(runDataOp('getItem', { input: 42 })), /wasn't a list/)
+})
+
+test('the other list ops read a single record the same way', () => {
+  assert.deepEqual(
+    ok(runDataOp('select', { input: { name: 'Acme' }, fields: [{ name: 'n', value: '{{item.name}}' }] })),
+    [{ n: 'Acme' }],
+  )
+  assert.deepEqual(
+    ok(runDataOp('filterArray', { input: { n: 1 }, clauses: [{ left: '{{item.n}}', op: 'eq', right: '1' }] })),
+    [{ n: 1 }],
+  )
+  // Nothing upstream is still surfaced, by the shared blank guard.
+  assert.match(
+    err(runDataOp('select', { input: null, fields: [{ name: 'n', value: '{{item.n}}' }] })),
+    /came back empty/,
+  )
 })

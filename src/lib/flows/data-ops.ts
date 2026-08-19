@@ -140,10 +140,34 @@ function parseCsvRows(text: string): string[][] {
 
 const isBlank = (value: unknown): boolean => value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
 
-/** Coerce input to a list: structured arrays as-is; anything else is not a list. */
+/**
+ * Coerce input to a list for the list-shaped ops.
+ *
+ * The strict version of this rejected anything that was not already an array,
+ * which made the single most common real-world wiring fail: an upstream step
+ * that returns ONE record (an API with a single match, a lookup that found one
+ * row) hands over a bare object, and "get item 0" — whose answer is obviously
+ * that record — reported "the input wasn't a list" instead. A flow would work
+ * for months and then break on the day a result set had exactly one entry.
+ *
+ * A single object is therefore read as a one-item list, which is how `join`
+ * has always degraded for scalars.
+ *
+ * A bare scalar (string, number, boolean) still returns null and still fails.
+ * That is not pedantry: piping text into "make a CSV table" is a genuine
+ * mis-wire, and silently wrapping it would build a nonsense table instead of
+ * telling the author their steps are connected wrong.
+ *
+ * Two cases deliberately never reach here: `asStructured` has already parsed
+ * JSON text, so a JSON array or object arrives structured; and empty input is
+ * caught by the blank guard at the top of `runDataOp`, which reports that the
+ * previous step came back empty — the author's real problem, stated better
+ * than any answer this function could give.
+ */
 const asList = (input: unknown): unknown[] | null => {
   const structured = asStructured(input)
-  return Array.isArray(structured) ? structured : null
+  if (Array.isArray(structured)) return structured
+  return structured !== null && typeof structured === 'object' ? [structured] : null
 }
 
 const itemText = (item: unknown): string => {

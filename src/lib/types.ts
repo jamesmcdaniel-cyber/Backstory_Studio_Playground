@@ -15,6 +15,8 @@ export type Agent = {
   icon: string
   /** AI-generated 1–2 word role shown on the agents gallery; null until generated. */
   roleLabel: string | null
+  /** Chosen avatar seed; null derives the face from the agent id. */
+  avatarSeed: string | null
   /** The avatar this agent works under; null = a solo agent with its own card. */
   teammateId: string | null
   folder: string | null
@@ -38,6 +40,8 @@ export type Teammate = {
   name: string
   /** AI-generated 1–2 word role covering what this teammate's agents do. */
   roleLabel: string | null
+  /** Chosen avatar seed; null derives the face from the teammate id. */
+  avatarSeed: string | null
   createdAt: string
 }
 

@@ -78,6 +78,8 @@ const agentSchema = z.object({
   teammateId: z.string().min(1).nullish(),
   visibility: z.enum(['shared', 'private']).default('shared'),
   icon: z.string().trim().max(8).optional(),
+  // Chosen avatar seed; null clears it back to the id-derived face.
+  avatarSeed: z.string().trim().max(120).nullish(),
   // Lets this agent delegate to other agents via the run_agent tool (pipelines).
   allowSubagents: z.boolean().optional(),
   // Restrict which agents it may run. Empty/omitted = any visible agent.
@@ -210,6 +212,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         toolSettings: data.toolSettings ?? {},
         skills: data.skills,
         icon: data.icon || '',
+        ...(data.avatarSeed ? { avatarSeed: data.avatarSeed } : {}),
         allowSubagents: data.allowSubagents === true,
         subagentIds: data.subagentIds ?? [],
         allowFlows: data.allowFlows === true,
@@ -260,6 +263,8 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(body.toolSettings !== undefined && { toolSettings: body.toolSettings }),
         ...(body.skills !== undefined && { skills: body.skills }),
         ...(body.icon !== undefined && { icon: body.icon }),
+        // null clears the override, restoring the id-derived face.
+        ...(body.avatarSeed !== undefined && { avatarSeed: body.avatarSeed || undefined }),
         ...(body.allowSubagents !== undefined && { allowSubagents: body.allowSubagents }),
         ...(body.subagentIds !== undefined && { subagentIds: body.subagentIds }),
         ...(body.allowFlows !== undefined && { allowFlows: body.allowFlows }),

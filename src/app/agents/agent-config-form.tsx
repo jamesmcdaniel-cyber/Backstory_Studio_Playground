@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ChevronDown, Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
+import { Camera, ChevronDown, Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,8 @@ import {
   type HttpCredentialSummary,
 } from '@/components/flows/http-credential-dialog'
 import { KnowledgePanel } from '@/app/agents/knowledge-panel'
+import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { AvatarPicker } from '@/components/agents/avatar-picker'
 import { AgentHttpEndpointDialog } from '@/components/agents/http-endpoint-dialog'
 import { QuickConfigChip } from '@/components/agents/tool-quick-config-popover'
 import { ConfirmDialog } from '@/components/settings/dialogs'
@@ -375,6 +377,8 @@ export type AgentDraft = {
   toolSettings?: Record<string, ToolScopeOption[]>
   skills: string[]
   icon: string
+  /** Chosen avatar seed; null derives the face from the agent id. */
+  avatarSeed?: string | null
   folder: string
   visibility: 'shared' | 'private'
   /** Lets this agent delegate to other agents via the run_agent tool. */
@@ -438,6 +442,7 @@ const emptyDraft: AgentDraft = {
   toolSettings: {},
   skills: [],
   icon: '🤖',
+  avatarSeed: null,
   folder: '',
   visibility: 'shared',
   allowSubagents: false,
@@ -577,6 +582,11 @@ export function AgentConfigForm({
 }) {
   const router = useRouter()
   const [draft, setDraft] = useState<AgentDraft>(emptyDraft)
+  const [pickingAvatar, setPickingAvatar] = useState(false)
+  // A brand-new agent has no id yet, so its face is seeded by the draft name
+  // until it is saved — the preview still changes as you pick, and the saved
+  // seed is what the roster reads from then on.
+  const avatarBaseSeed = editingAgent?.id || draft.title || 'new-agent'
   const [saving, setSaving] = useState(false)
   const [publishingTemplate, setPublishingTemplate] = useState(false)
   // Snapshot of the draft as last populated/saved, so Run can tell whether
@@ -734,6 +744,7 @@ export function AgentConfigForm({
       toolSettings: parseAgentToolSettings((source as { toolSettings?: unknown }).toolSettings),
       skills: source.skills || [],
       icon: source.icon || emptyDraft.icon,
+      avatarSeed: source.avatarSeed ?? null,
       folder: source.folder || '',
       visibility: source.visibility || 'shared',
       allowSubagents: source.allowSubagents === true,
@@ -857,6 +868,7 @@ export function AgentConfigForm({
           tags,
           model: draft.model,
           icon: draft.icon,
+          avatarSeed: draft.avatarSeed ?? null,
           allowSubagents: draft.allowSubagents === true,
         }),
       })
@@ -947,10 +959,33 @@ export function AgentConfigForm({
     <div className="space-y-4">
       <div>
         <Label htmlFor="agent-name">Name</Label>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {/* The roster shows this agent as a person; the emoji is still what
+              the sidebar and lists use, so both live next to the name. */}
+          <button
+            type="button"
+            onClick={() => setPickingAvatar(true)}
+            aria-label="Change avatar"
+            title="Change avatar"
+            className="group relative shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+          >
+            <AgentAvatar seed={draft.avatarSeed || avatarBaseSeed} className="h-9 w-9 rounded-full ring-1 ring-black/5" />
+            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+              <Camera className="h-3.5 w-3.5 text-white" aria-hidden="true" />
+            </span>
+          </button>
           <EmojiPicker value={draft.icon} onChange={(icon) => setDraft({ ...draft, icon })} />
           <Input id="agent-name" className="flex-1" value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
         </div>
+        {pickingAvatar && (
+          <AvatarPicker
+            baseSeed={avatarBaseSeed}
+            current={draft.avatarSeed ?? null}
+            saving={false}
+            onCancel={() => setPickingAvatar(false)}
+            onSelect={(avatarSeed) => { setDraft({ ...draft, avatarSeed }); setPickingAvatar(false) }}
+          />
+        )}
       </div>
       <div>
         <Label htmlFor="agent-description">Description</Label>

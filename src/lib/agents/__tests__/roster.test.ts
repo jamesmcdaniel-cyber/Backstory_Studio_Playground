@@ -12,6 +12,7 @@ function agent(overrides: Partial<Agent> & { id: string; title: string }): Agent
     skills: [],
     icon: '',
     roleLabel: null,
+    avatarSeed: null,
     teammateId: null,
     folder: null,
     visibility: 'shared',
@@ -23,7 +24,7 @@ function agent(overrides: Partial<Agent> & { id: string; title: string }): Agent
 }
 
 function teammate(id: string, name: string): Teammate {
-  return { id, name, roleLabel: null, createdAt: '2026-08-18T00:00:00.000Z' }
+  return { id, name, roleLabel: null, avatarSeed: null, createdAt: '2026-08-18T00:00:00.000Z' }
 }
 
 test('groups agents under their teammate and leaves the rest solo', () => {
@@ -100,4 +101,48 @@ test('success rate counts only finished runs, and is null before any finish', ()
   // Three still in flight: the rate is about what finished, not what started.
   assert.equal(successRate({ runs: 5, completed: 2, failed: 0 }), 100)
   assert.equal(successRate({ runs: 3, completed: 0, failed: 0 }), null)
+})
+
+test('cards carry an instant derived role so a chip never waits on the network', () => {
+  const agents = [agent({ id: 'a1', title: 'Monday thing', instructions: 'Summarize last week for the team' })]
+  const { agentCards } = buildRoster(agents, [], {})
+  assert.equal(agentCards[0].derivedRole, 'Summarizer')
+})
+
+test('a teammate takes a derived role only when its jobs agree', () => {
+  const shared = [
+    agent({ id: 'a1', title: 'A', teammateId: 't1', instructions: 'Summarize the call' }),
+    agent({ id: 'a2', title: 'B', teammateId: 't1', instructions: 'Summarize the thread' }),
+  ]
+  assert.equal(buildRoster(shared, [teammate('t1', 'Dana')], {}).teammateCards[0].derivedRole, 'Summarizer')
+
+  const mixed = [
+    agent({ id: 'a1', title: 'A', teammateId: 't1', instructions: 'Summarize the call' }),
+    agent({ id: 'a2', title: 'B', teammateId: 't1', instructions: 'Watch the pipeline' }),
+  ]
+  assert.equal(buildRoster(mixed, [teammate('t1', 'Dana')], {}).teammateCards[0].derivedRole, null)
+})
+
+test('search matches an agent by name and by what it does', () => {
+  const agents = [
+    agent({ id: 'a1', title: 'Renewals watcher', instructions: 'Watch renewals' }),
+    agent({ id: 'a2', title: 'Deal briefer', instructions: 'Research each account' }),
+  ]
+  assert.deepEqual(buildRoster(agents, [], {}, 'renew').agentCards.map((c) => c.agent.id), ['a1'])
+  // By derived role rather than by title.
+  assert.deepEqual(buildRoster(agents, [], {}, 'researcher').agentCards.map((c) => c.agent.id), ['a2'])
+  assert.equal(buildRoster(agents, [], {}, 'nothing here').agentCards.length, 0)
+})
+
+test('search finds a teammate by the job they run, not just their name', () => {
+  const agents = [agent({ id: 'a1', title: 'Renewals watcher', teammateId: 't1' })]
+  const roster = [teammate('t1', 'Dana')]
+  assert.equal(buildRoster(agents, roster, {}, 'dana').teammateCards.length, 1)
+  assert.equal(buildRoster(agents, roster, {}, 'renewals').teammateCards.length, 1)
+  assert.equal(buildRoster(agents, roster, {}, 'zzz').teammateCards.length, 0)
+})
+
+test('search is case-insensitive and ignores surrounding whitespace', () => {
+  const agents = [agent({ id: 'a1', title: 'Renewals watcher' })]
+  assert.equal(buildRoster(agents, [], {}, '  RENEWALS  ').agentCards.length, 1)
 })

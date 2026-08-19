@@ -13,6 +13,8 @@ export type AgentMetadata = {
   /** AI-generated 1–2 word role ("Deal Researcher") shown on the agents gallery.
    *  Cleared whenever title/description/instructions change so it regenerates. */
   roleLabel?: string
+  /** Chosen avatar seed; null/absent derives the face from the agent id. */
+  avatarSeed?: string
   maxTurns?: number
   headline?: string
   triggerSecretHash?: string

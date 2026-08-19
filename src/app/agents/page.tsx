@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { AlertCircle, ArrowLeft, Bot, FileText, List, Loader2, Play, Plus, Settings2, Sparkles, X } from 'lucide-react'
 import { AgentActivityPane, resultText } from './agent-activity-pane'
 import { AgentsGallery } from './agents-gallery'
+import { AgentSkillsPanel } from './agent-skills-panel'
 import { AgentConfigForm, type AgentDraft } from './agent-config-form'
 import { AssistantPanel } from './assistant-panel'
 import { Button } from '@/components/ui/button'
@@ -56,6 +57,9 @@ function AgentHQ() {
   const [view, setView] = useState<'gallery' | 'workspace'>('gallery')
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [configureOpen, setConfigureOpen] = useState(false)
+  // The left pane shows either this agent's work, or the skills library scoped
+  // to it. The full library still lives under /templates.
+  const [workspaceTab, setWorkspaceTab] = useState<'agent' | 'skills'>('agent')
   const [focusRunId, setFocusRunId] = useState<string | null>(null)
   // The run expanded in the left pane, whose output renders in the right pane.
   const [selectedRun, setSelectedRun] = useState<Activity | null>(null)
@@ -290,6 +294,7 @@ function AgentHQ() {
   useEffect(() => {
     setSelectedRun(null)
     setSetupMode('choice')
+    setWorkspaceTab('agent')
   }, [selectedAgentId])
 
   // Setup opens only when creating a new agent, editing an incomplete agent,
@@ -577,6 +582,33 @@ function AgentHQ() {
                 </Button>
               </div>
             </div>
+            {/* Work / Skills — teaching an agent a new skill should not mean
+                leaving it for the Library and finding your way back. */}
+            {selectedAgent && !showSetup && (
+              <div className="mt-3 inline-flex rounded-lg bg-gray-100 p-0.5" role="tablist" aria-label="Agent workspace view">
+                {([
+                  { id: 'agent', label: 'Work' },
+                  { id: 'skills', label: 'Skills' },
+                ] as const).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={workspaceTab === tab.id}
+                    onClick={() => setWorkspaceTab(tab.id)}
+                    className={cn(
+                      'rounded-md px-3 py-1 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300',
+                      workspaceTab === tab.id ? 'bg-white text-foreground shadow-1' : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {tab.label}
+                    {tab.id === 'skills' && (selectedAgent.skills?.length ?? 0) > 0 && (
+                      <span className="ml-1.5 text-xs text-muted-foreground">{selectedAgent.skills.length}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {authBanner}
@@ -743,13 +775,20 @@ function AgentHQ() {
             </div>
           )}
 
-          {!loading && !showSetup && selectedAgent && (
+          {!loading && !showSetup && selectedAgent && workspaceTab === 'agent' && (
             <AgentActivityPane
               agent={selectedAgent}
               activities={agentActivities}
               focusRunId={focusRunId}
               onChanged={() => load(true).catch(() => undefined)}
               onSelectRun={setSelectedRun}
+            />
+          )}
+
+          {!loading && !showSetup && selectedAgent && workspaceTab === 'skills' && (
+            <AgentSkillsPanel
+              agent={selectedAgent}
+              onChanged={() => load(true).catch(() => undefined)}
             />
           )}
 

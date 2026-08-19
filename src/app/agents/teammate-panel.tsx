@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Check, Pencil, Play, Plus, Settings2, X } from 'lucide-react'
+import { Camera, Check, Pencil, Play, Plus, Settings2, X } from 'lucide-react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { AvatarPicker } from '@/components/agents/avatar-picker'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -45,6 +46,28 @@ export function TeammatePanel({
   const [name, setName] = useState(teammate.name)
   const [saving, setSaving] = useState(false)
   const [confirmDisband, setConfirmDisband] = useState(false)
+  const [pickingAvatar, setPickingAvatar] = useState(false)
+  const [savingAvatar, setSavingAvatar] = useState(false)
+
+  const chooseAvatar = async (avatarSeed: string | null) => {
+    setSavingAvatar(true)
+    try {
+      const response = await fetch('/api/teammates', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: teammate.id, avatarSeed }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        toast.error(data.error || 'Could not change the avatar.')
+        return
+      }
+      setPickingAvatar(false)
+      onChanged()
+    } finally {
+      setSavingAvatar(false)
+    }
+  }
 
   const rename = async () => {
     const next = name.trim()
@@ -94,7 +117,18 @@ export function TeammatePanel({
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <div className="flex items-start gap-3">
-              <AgentAvatar seed={teammate.id} className="h-14 w-14 shrink-0 rounded-full ring-1 ring-black/5" />
+              <button
+                type="button"
+                onClick={() => setPickingAvatar(true)}
+                aria-label={`Change ${teammate.name}'s avatar`}
+                title="Change avatar"
+                className="group relative shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+              >
+                <AgentAvatar seed={teammate.avatarSeed || teammate.id} className="h-14 w-14 rounded-full ring-1 ring-black/5" />
+                <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                  <Camera className="h-4 w-4 text-white" aria-hidden="true" />
+                </span>
+              </button>
               <div className="min-w-0 flex-1">
                 {renaming ? (
                   <div className="flex items-center gap-1.5">
@@ -206,6 +240,15 @@ export function TeammatePanel({
           </div>
         </DialogContent>
       </Dialog>
+      {pickingAvatar && (
+        <AvatarPicker
+          baseSeed={teammate.id}
+          current={teammate.avatarSeed}
+          saving={savingAvatar}
+          onCancel={() => setPickingAvatar(false)}
+          onSelect={chooseAvatar}
+        />
+      )}
       <ConfirmDialog
         open={confirmDisband}
         onOpenChange={setConfirmDisband}

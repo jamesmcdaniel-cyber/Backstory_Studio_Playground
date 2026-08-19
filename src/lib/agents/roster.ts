@@ -1,3 +1,5 @@
+import { deriveGroupRoleLabel, deriveRoleLabel } from '@/lib/agents/derive-role'
+
 import type { Agent, Teammate } from '@/lib/types'
 
 /** Lifetime run stats for one card, aggregated across whatever it fronts. */
@@ -15,6 +17,8 @@ export type TeammateCard = {
   soleAgent: Agent | null
   stats: CardStats
   presence: Presence
+  /** Instant, network-free role, shown until (or unless) an AI label arrives. */
+  derivedRole: string | null
 }
 
 export type AgentCard = {
@@ -22,6 +26,8 @@ export type AgentCard = {
   agent: Agent
   stats: CardStats
   presence: Presence
+  /** Instant, network-free role, shown until (or unless) an AI label arrives. */
+  derivedRole: string | null
 }
 
 export type RosterCardModel = TeammateCard | AgentCard
@@ -74,10 +80,21 @@ export function successRate(stats: CardStats): number | null {
   return Math.round((stats.completed / finished) * 100)
 }
 
+/**
+ * Does this card answer the search box?
+ *
+ * A teammate matches on the JOBS it runs as well as its own name, because
+ * people look for the work ("renewals") at least as often as the worker.
+ */
+function matchesQuery(haystack: Array<string | null | undefined>, needle: string): boolean {
+  return haystack.some((value) => value?.toLocaleLowerCase().includes(needle))
+}
+
 export function buildRoster(
   agents: Agent[],
   teammates: Teammate[],
   kpis: Record<string, CardStats>,
+  query = '',
 ): { teammateCards: TeammateCard[]; agentCards: AgentCard[] } {
   const grouped = new Map<string, Agent[]>()
   const solo: Agent[] = []
@@ -101,6 +118,7 @@ export function buildRoster(
         soleAgent: roster.length === 1 ? roster[0] : null,
         stats: sumStats(roster, kpis),
         presence: groupPresence(roster),
+        derivedRole: deriveGroupRoleLabel(roster.map((agent) => deriveRoleLabel(agent.title, agent.instructions))),
       }
     })
     // An avatar whose agents are all invisible to this user (private to someone
@@ -117,7 +135,18 @@ export function buildRoster(
       agent,
       stats: statsFor(agent, kpis),
       presence: presenceFor(agent),
+      derivedRole: deriveRoleLabel(agent.title, agent.instructions),
     }))
 
-  return { teammateCards, agentCards }
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return { teammateCards, agentCards }
+  return {
+    teammateCards: teammateCards.filter((card) =>
+      matchesQuery(
+        [card.teammate.name, card.teammate.roleLabel, card.derivedRole, ...card.agents.map((agent) => agent.title)],
+        needle,
+      )),
+    agentCards: agentCards.filter((card) =>
+      matchesQuery([card.agent.title, card.agent.roleLabel, card.derivedRole, card.agent.description], needle)),
+  }
 }

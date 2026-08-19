@@ -16,11 +16,18 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 
 const nameSchema = z.string().trim().min(1).max(60)
 
-function serializeTeammate(teammate: { id: string; name: string; roleLabel: string | null; createdAt: Date }) {
+function serializeTeammate(teammate: {
+  id: string
+  name: string
+  roleLabel: string | null
+  avatarSeed: string | null
+  createdAt: Date
+}) {
   return {
     id: teammate.id,
     name: teammate.name,
     roleLabel: teammate.roleLabel,
+    avatarSeed: teammate.avatarSeed,
     createdAt: teammate.createdAt,
   }
 }
@@ -59,12 +66,22 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 }, { permission: 'agent.write' })
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
-  const { id, name } = z.object({ id: z.string().min(1), name: nameSchema }).parse(await request.json())
+  const { id, name, avatarSeed } = z
+    .object({
+      id: z.string().min(1),
+      name: nameSchema.optional(),
+      // null clears the override, restoring the id-derived face.
+      avatarSeed: z.string().trim().max(120).nullish(),
+    })
+    .parse(await request.json())
   const result = await prisma.agentTeammate.updateMany({
     where: { id, organizationId: auth.organizationId },
-    // A rename can change what the avatar is called but not what its agents do,
-    // so the AI role label deliberately survives it.
-    data: { name },
+    // A rename or a new face changes what the avatar is CALLED or LOOKS LIKE,
+    // not what its agents do, so the AI role label deliberately survives both.
+    data: {
+      ...(name !== undefined && { name }),
+      ...(avatarSeed !== undefined && { avatarSeed: avatarSeed || null }),
+    },
   })
   if (!result.count) throw new ApiError('Teammate not found', 404, 'NOT_FOUND')
   return { success: true }

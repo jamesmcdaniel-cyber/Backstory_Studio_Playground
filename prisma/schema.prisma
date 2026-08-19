@@ -514,6 +514,10 @@ model AgentTeammate {
   /// AI-generated 1–2 word role covering what this teammate's agents do.
   /// Cleared when its roster changes so it regenerates from the new mix.
   roleLabel      String?
+  /// Chosen avatar. The face is derived from this string, so overriding it is
+  /// how a person picks a different look; null falls back to the row id, which
+  /// is what every avatar used before they were choosable.
+  avatarSeed     String?
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)
 

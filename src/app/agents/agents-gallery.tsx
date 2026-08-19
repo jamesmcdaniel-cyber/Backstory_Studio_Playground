@@ -1,11 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Users } from 'lucide-react'
+import { Plus, Search, Users, X } from 'lucide-react'
 import { RosterCard } from './roster-card'
 import { TeammatePanel } from './teammate-panel'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
 import { buildRoster, type CardStats } from '@/lib/agents/roster'
@@ -41,6 +42,7 @@ export function AgentsGallery({
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [teammateLabels, setTeammateLabels] = useState<Record<string, string>>({})
   const [openTeammateId, setOpenTeammateId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
   // Subjects already sent for labeling, so a slow model call or a sanitizer
   // miss doesn't retrigger a request on every agents poll.
   const requestedLabels = useRef<Set<string>>(new Set())
@@ -60,18 +62,21 @@ export function AgentsGallery({
     loadTeammates()
   }, [loadTeammates])
 
+  // The unfiltered roster drives the label backfill and the empty state, so a
+  // search that matches nothing never looks like a workspace with no agents.
+  const fullRoster = useMemo(() => buildRoster(agents, teammates, kpis), [agents, teammates, kpis])
   const { teammateCards, agentCards } = useMemo(
-    () => buildRoster(agents, teammates, kpis),
-    [agents, teammates, kpis],
+    () => buildRoster(agents, teammates, kpis, query),
+    [agents, teammates, kpis, query],
   )
 
   // Lazily backfill missing role labels — one batched call covering both kinds
   // of card; results are persisted server-side.
   useEffect(() => {
-    const agentIds = agentCards
+    const agentIds = fullRoster.agentCards
       .filter((card) => !card.agent.roleLabel && !labels[card.agent.id] && !requestedLabels.current.has(`agent:${card.agent.id}`))
       .map((card) => card.agent.id)
-    const teammateIds = teammateCards
+    const teammateIds = fullRoster.teammateCards
       .filter((card) => !card.teammate.roleLabel && !teammateLabels[card.teammate.id] && !requestedLabels.current.has(`teammate:${card.teammate.id}`))
       .map((card) => card.teammate.id)
     if (!agentIds.length && !teammateIds.length) return
@@ -82,16 +87,24 @@ export function AgentsGallery({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentIds: agentIds.slice(0, 100), teammateIds: teammateIds.slice(0, 100) }),
     })
-      .then((response) => (response.ok ? response.json() : null))
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))))
       .then((data) => {
         if (data?.labels) setLabels((current) => ({ ...current, ...data.labels }))
         if (data?.teammateLabels) setTeammateLabels((current) => ({ ...current, ...data.teammateLabels }))
       })
-      .catch(() => undefined)
-  }, [agentCards, teammateCards, labels, teammateLabels])
+      .catch(() => {
+        // The AI label is an enhancement, not a dependency: a failed call (no
+        // model provider on this runtime, rate limit, offline) must not leave a
+        // skeleton pulsing forever. Forget the attempt so a later poll can retry
+        // — the card meanwhile shows its derived role, which needs no network.
+        agentIds.forEach((id) => requestedLabels.current.delete(`agent:${id}`))
+        teammateIds.forEach((id) => requestedLabels.current.delete(`teammate:${id}`))
+      })
+  }, [fullRoster, labels, teammateLabels])
 
   const openCard = teammateCards.find((card) => card.teammate.id === openTeammateId) ?? null
-  const total = teammateCards.length + agentCards.length
+  const total = fullRoster.teammateCards.length + fullRoster.agentCards.length
+  const shown = teammateCards.length + agentCards.length
 
   if (loading) {
     return (
@@ -127,24 +140,50 @@ export function AgentsGallery({
       <div className="mb-4">
         <RecommendationsBar />
       </div>
-      <div className="mb-5 flex items-center justify-between gap-3">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Agents</h1>
           <p className="text-sm text-muted-foreground">
-            {total === 1 ? '1 teammate on your roster' : `${total} teammates on your roster`}
+            {query.trim()
+              ? `${shown} of ${total} matching “${query.trim()}”`
+              : total === 1 ? '1 teammate on your roster' : `${total} teammates on your roster`}
           </p>
         </div>
-        <Button onClick={onCreateAgent}>
-          <Plus className="mr-1.5 h-4 w-4" /> New agent
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" aria-hidden="true" />
+            <Input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => event.key === 'Escape' && setQuery('')}
+              placeholder="Search agents"
+              aria-label="Search agents by name or what they do"
+              className="w-56 pl-8 pr-8"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-muted transition-colors duration-150 hover:text-gray-700"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <Button onClick={onCreateAgent}>
+            <Plus className="mr-1.5 h-4 w-4" /> New agent
+          </Button>
+        </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {teammateCards.map(({ teammate, agents: roster, soleAgent, stats, presence }) => (
+        {teammateCards.map(({ teammate, agents: roster, soleAgent, stats, presence, derivedRole }) => (
           <RosterCard
             key={teammate.id}
-            seed={teammate.id}
+            seed={teammate.avatarSeed || teammate.id}
             name={teammate.name}
-            role={teammate.roleLabel || teammateLabels[teammate.id] || null}
+            role={teammate.roleLabel || teammateLabels[teammate.id] || derivedRole}
             roleLoading={requestedLabels.current.has(`teammate:${teammate.id}`)}
             subtitle={roster.length === 1 ? '1 job' : `${roster.length} jobs`}
             stats={stats}
@@ -156,12 +195,12 @@ export function AgentsGallery({
             configureLabel={soleAgent ? `Configure ${soleAgent.title}` : `Manage ${teammate.name}`}
           />
         ))}
-        {agentCards.map(({ agent, stats, presence }) => (
+        {agentCards.map(({ agent, stats, presence, derivedRole }) => (
           <RosterCard
             key={agent.id}
-            seed={agent.id}
+            seed={agent.avatarSeed || agent.id}
             name={agent.title}
-            role={agent.roleLabel || labels[agent.id] || null}
+            role={agent.roleLabel || labels[agent.id] || derivedRole}
             roleLoading={requestedLabels.current.has(`agent:${agent.id}`)}
             stats={stats}
             presence={presence}
@@ -170,15 +209,23 @@ export function AgentsGallery({
             configureLabel={`Configure ${agent.title}`}
           />
         ))}
-        <button
-          type="button"
-          onClick={onCreateAgent}
-          className="flex min-h-56 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-200 text-muted-foreground transition-colors duration-150 hover:border-indigo-300 hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
-        >
-          <Plus className="h-6 w-6" aria-hidden="true" />
-          <span className="text-sm font-medium">New agent</span>
-        </button>
+        {/* The create tile belongs to the roster, not to a filtered view of it. */}
+        {!query.trim() && (
+          <button
+            type="button"
+            onClick={onCreateAgent}
+            className="flex min-h-56 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-200 text-muted-foreground transition-colors duration-150 hover:border-indigo-300 hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+          >
+            <Plus className="h-6 w-6" aria-hidden="true" />
+            <span className="text-sm font-medium">New agent</span>
+          </button>
+        )}
       </div>
+      {query.trim() && shown === 0 && (
+        <p className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+          No agent matches “{query.trim()}”. Try a name, or what the agent does — “renewals”, “summarize”.
+        </p>
+      )}
       {openCard && (
         <TeammatePanel
           teammate={openCard.teammate}

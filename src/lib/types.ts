@@ -15,6 +15,8 @@ export type Agent = {
   icon: string
   /** AI-generated 1–2 word role shown on the agents gallery; null until generated. */
   roleLabel: string | null
+  /** The avatar this agent works under; null = a solo agent with its own card. */
+  teammateId: string | null
   folder: string | null
   visibility: 'shared' | 'private'
   status: string
@@ -25,6 +27,18 @@ export type Agent = {
   createdAt?: string
   lastExecutedAt?: string | null
   executionCount?: number
+}
+
+/**
+ * An avatar on the agents roster: a named persona that can front several agents
+ * doing different jobs. Agents with no teammate render as their own solo card.
+ */
+export type Teammate = {
+  id: string
+  name: string
+  /** AI-generated 1–2 word role covering what this teammate's agents do. */
+  roleLabel: string | null
+  createdAt: string
 }
 
 export type Activity = {

@@ -26,6 +26,30 @@ function indexAgentRow(agent: { id: string; organizationId: string; objective: s
   }).catch(() => undefined)
 }
 
+/**
+ * Confirm a teammate belongs to this workspace before attaching an agent to it.
+ *
+ * The foreign key alone is not a tenant check — it accepts ANY existing
+ * teammate id, including another organization's, which would file this agent
+ * onto a stranger's roster. Returns the id when it checks out.
+ */
+async function assertTeammateInOrg(teammateId: string, organizationId: string): Promise<string> {
+  const teammate = await prisma.agentTeammate.findFirst({
+    where: { id: teammateId, organizationId },
+    select: { id: true },
+  })
+  if (!teammate) throw new ApiError('Teammate not found', 404, 'NOT_FOUND')
+  return teammate.id
+}
+
+/** Drop the cached AI role label on avatars whose roster just changed. */
+function invalidateTeammateLabels(teammateIds: string[], organizationId: string) {
+  return prisma.agentTeammate.updateMany({
+    where: { id: { in: teammateIds }, organizationId },
+    data: { roleLabel: null },
+  })
+}
+
 const scheduleSchema = z.object({
   type: z.enum(['manual', 'hourly', 'daily', 'weekly', 'cron', 'once']).default('manual'),
   time: z.string().optional(),
@@ -50,6 +74,8 @@ const agentSchema = z.object({
     .optional(),
   skills: z.array(z.string()).default([]),
   folder: z.string().trim().max(60).nullish(),
+  // The avatar this agent works under. Null/omitted = a solo agent.
+  teammateId: z.string().min(1).nullish(),
   visibility: z.enum(['shared', 'private']).default('shared'),
   icon: z.string().trim().max(8).optional(),
   // Lets this agent delegate to other agents via the run_agent tool (pipelines).
@@ -159,6 +185,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const body = await request.json()
   const cloning = Boolean(body) && typeof body === 'object' && typeof (body as { cloneFrom?: unknown }).cloneFrom === 'string'
   const data = cloning ? await resolveClonedAgent(cloneSchema.parse(body), auth) : agentSchema.parse(body)
+  const teammateId = data.teammateId ? await assertTeammateInOrg(data.teammateId, auth.organizationId) : null
   const agent = await prisma.agentTask.create({
     data: {
       type: 'agent',
@@ -170,6 +197,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       schedule: anchorSchedule(data.schedule),
       status: 'ACTIVE',
       folder: data.folder || null,
+      teammateId,
       visibility: data.visibility,
       goal: data.goal?.trim() ? data.goal.trim() : null,
       organizationId: auth.organizationId,
@@ -196,6 +224,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // Project the selection into typed connector bindings (await: a fresh agent
   // has no rows yet, so the very next run must see them, not the fallback).
   await syncAgentConnectors(agent.id, auth.organizationId, data.integrations)
+  // A new job on the roster changes what this avatar does overall.
+  if (teammateId) await invalidateTeammateLabels([teammateId], auth.organizationId)
   void indexAgentRow(agent)
   return { success: true, agent: serializeAgent(agent) }
 }, { permission: 'agent.write' })
@@ -206,6 +236,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     where: { id: body.id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
   })
   if (!existing) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
+  const teammateId = body.teammateId ? await assertTeammateInOrg(body.teammateId, auth.organizationId) : null
   const metadata = existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata) ? existing.metadata : {}
   const agent = await prisma.agentTask.update({
     where: { id: body.id, organizationId: auth.organizationId },
@@ -217,6 +248,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
       // instantly as a catch-up of today's already-passed time.
       ...(body.schedule !== undefined && { schedule: anchorSchedule(body.schedule, existing.schedule) }),
       ...(body.folder !== undefined && { folder: body.folder || null }),
+      ...(body.teammateId !== undefined && { teammateId }),
       ...(body.visibility !== undefined && { visibility: body.visibility }),
       ...(body.goal !== undefined && { goal: body.goal?.trim() ? body.goal.trim() : null }),
       metadata: {
@@ -251,6 +283,14 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   // run enqueued right after the edit reads the updated bindings.
   if (body.integrations !== undefined) {
     await syncAgentConnectors(agent.id, auth.organizationId, body.integrations)
+  }
+  // An avatar's role label summarises the jobs on its roster, so both the
+  // teammate it left and the one it joined are now describing a lineup they no
+  // longer have. Same for an edit that changed what this agent does.
+  const jobChanged = body.title !== undefined || body.description !== undefined || body.instructions !== undefined
+  const affected = [...new Set([existing.teammateId, agent.teammateId].filter((id): id is string => Boolean(id)))]
+  if (affected.length && (body.teammateId !== undefined || jobChanged)) {
+    await invalidateTeammateLabels(affected, auth.organizationId)
   }
   void indexAgentRow(agent)
   return { success: true, agent: serializeAgent(agent) }

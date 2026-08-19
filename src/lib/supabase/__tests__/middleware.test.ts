@@ -34,6 +34,15 @@ function stubAuth(user: { id: string } | null) {
   return { calls, restore: () => { globalThis.fetch = original } }
 }
 
+/**
+ * Supabase names its session cookie after the project ref in the configured
+ * URL. Deriving it (rather than hardcoding one ref) is load-bearing: CI sets
+ * NEXT_PUBLIC_SUPABASE_URL to its own placeholder, which the `||=` above then
+ * leaves in place — a hardcoded name silently misses, every signed-in request
+ * reads as anonymous, and the redirect assertions fail on a null location.
+ */
+const PROJECT_REF = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).hostname.split('.')[0]
+
 /** A request carrying a Supabase session cookie the server client will read. */
 function signedInRequest(path: string) {
   const request = new NextRequest(new URL(`${ORIGIN}${path}`))
@@ -44,7 +53,7 @@ function signedInRequest(path: string) {
     token_type: 'bearer',
     user: { id: 'user-1' },
   }
-  request.cookies.set('sb-stub-auth-token', `base64-${Buffer.from(JSON.stringify(session)).toString('base64')}`)
+  request.cookies.set(`sb-${PROJECT_REF}-auth-token`, `base64-${Buffer.from(JSON.stringify(session)).toString('base64')}`)
   return request
 }
 

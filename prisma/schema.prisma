@@ -92,6 +92,7 @@ model Organization {
   teams                Team[]
   featureGrants        FeatureGrant[]
   workspaceFolders     WorkspaceFolder[]
+  agentTeammates       AgentTeammate[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
@@ -499,6 +500,30 @@ model ApiAccessToken {
   @@map("api_access_tokens")
 }
 
+/// A named persona ("avatar") that owns a GROUP of agents.
+///
+/// The roster people manage is made of teammates, not tasks: one avatar can run
+/// several agents doing different jobs, and installing a template adds another
+/// job to an existing teammate instead of spawning a stranger. Agents without a
+/// teammate stay valid and render as solo cards, so this is additive — nothing
+/// had to be backfilled.
+model AgentTeammate {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  name           String
+  /// AI-generated 1–2 word role covering what this teammate's agents do.
+  /// Cleared when its roster changes so it regenerates from the new mix.
+  roleLabel      String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agents       AgentTask[]
+
+  @@index([organizationId])
+  @@map("agent_teammates")
+}
+
 model AgentTask {
   id             String    @id @default(cuid())
   type           String    @default("agent")
@@ -514,6 +539,10 @@ model AgentTask {
   visibility     String    @default("shared")
   organizationId String    @db.Uuid
   userId         String?
+  /// The avatar this agent works under. Null = a solo agent with its own card.
+  /// SetNull on delete: removing a teammate ungroups its agents, never deletes
+  /// the work they do.
+  teammateId     String?
   /// See Flow.quarantinedAt — set when the owner was deprovisioned.
   quarantinedAt  DateTime? @db.Timestamptz(6)
   metadata       Json?
@@ -525,6 +554,7 @@ model AgentTask {
 
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   owner               User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  teammate            AgentTeammate?       @relation(fields: [teammateId], references: [id], onDelete: SetNull)
   executions          AgentExecution[]
   signalSubscriptions SignalSubscription[]
   chatMessages        AgentChatMessage[]
@@ -534,6 +564,8 @@ model AgentTask {
 
   @@index([organizationId, status])
   @@index([userId])
+  // The gallery groups a workspace's roster by avatar on every load.
+  @@index([teammateId])
   // The scheduler's cursor scan: `status = 'ACTIVE' ORDER BY id`, across all
   // orgs. The [organizationId, status] index above can't serve it — wrong
   // leading column — so without this the sweep is a full table scan every tick.

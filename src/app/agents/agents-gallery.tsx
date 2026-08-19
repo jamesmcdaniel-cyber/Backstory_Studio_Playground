@@ -1,22 +1,27 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Settings2, Users } from 'lucide-react'
-import { AgentAvatar } from './agent-avatar'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, Users } from 'lucide-react'
+import { RosterCard } from './roster-card'
+import { TeammatePanel } from './teammate-panel'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
-import { cn } from '@/lib/utils'
+import { buildRoster, type CardStats } from '@/lib/agents/roster'
 
-import type { Agent } from '@/lib/types'
+import type { Agent, Teammate } from '@/lib/types'
 
-type AgentKpis = Record<string, { runs: number; completed: number; failed: number }>
+type AgentKpis = Record<string, CardStats>
 
 /**
- * The Agents landing view: a roster of coworker-style cards — avatar with a
- * presence dot, an AI-written job title, and two lifetime stats. Clicking a
- * card opens that agent's workspace; the gear opens its configuration.
+ * The Agents landing view: a roster of coworker cards.
+ *
+ * A card is either a teammate avatar fronting several agents, or a solo agent
+ * that belongs to no teammate. Clicking a solo card (or a teammate with exactly
+ * one job) opens that agent's workspace; a teammate with several jobs opens its
+ * roster panel first, because there is no single screen that means "the whole
+ * avatar".
  */
 export function AgentsGallery({
   agents,
@@ -32,40 +37,61 @@ export function AgentsGallery({
   onCreateAgent: () => void
 }) {
   const [kpis, setKpis] = useState<AgentKpis>({})
+  const [teammates, setTeammates] = useState<Teammate[]>([])
   const [labels, setLabels] = useState<Record<string, string>>({})
-  // Ids already sent for labeling this page view, so a slow model call or a
-  // sanitizer miss doesn't retrigger a request on every agents poll.
+  const [teammateLabels, setTeammateLabels] = useState<Record<string, string>>({})
+  const [openTeammateId, setOpenTeammateId] = useState<string | null>(null)
+  // Subjects already sent for labeling, so a slow model call or a sanitizer
+  // miss doesn't retrigger a request on every agents poll.
   const requestedLabels = useRef<Set<string>>(new Set())
+
+  const loadTeammates = useCallback(() => {
+    fetch('/api/teammates', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => { if (data?.teammates) setTeammates(data.teammates) })
+      .catch(() => undefined)
+  }, [])
 
   useEffect(() => {
     fetch('/api/agents/kpis', { cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => { if (data?.kpis) setKpis(data.kpis) })
       .catch(() => undefined)
-  }, [])
+    loadTeammates()
+  }, [loadTeammates])
 
-  // Lazily backfill missing role labels — one batched call for whatever the
-  // roster is currently missing; results are persisted server-side.
+  const { teammateCards, agentCards } = useMemo(
+    () => buildRoster(agents, teammates, kpis),
+    [agents, teammates, kpis],
+  )
+
+  // Lazily backfill missing role labels — one batched call covering both kinds
+  // of card; results are persisted server-side.
   useEffect(() => {
-    const missing = agents
-      .filter((agent) => !agent.roleLabel && !labels[agent.id] && !requestedLabels.current.has(agent.id))
-      .map((agent) => agent.id)
-    if (!missing.length) return
-    missing.forEach((id) => requestedLabels.current.add(id))
+    const agentIds = agentCards
+      .filter((card) => !card.agent.roleLabel && !labels[card.agent.id] && !requestedLabels.current.has(`agent:${card.agent.id}`))
+      .map((card) => card.agent.id)
+    const teammateIds = teammateCards
+      .filter((card) => !card.teammate.roleLabel && !teammateLabels[card.teammate.id] && !requestedLabels.current.has(`teammate:${card.teammate.id}`))
+      .map((card) => card.teammate.id)
+    if (!agentIds.length && !teammateIds.length) return
+    agentIds.forEach((id) => requestedLabels.current.add(`agent:${id}`))
+    teammateIds.forEach((id) => requestedLabels.current.add(`teammate:${id}`))
     fetch('/api/agents/role-labels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentIds: missing.slice(0, 100) }),
+      body: JSON.stringify({ agentIds: agentIds.slice(0, 100), teammateIds: teammateIds.slice(0, 100) }),
     })
       .then((response) => (response.ok ? response.json() : null))
-      .then((data) => { if (data?.labels) setLabels((current) => ({ ...current, ...data.labels })) })
+      .then((data) => {
+        if (data?.labels) setLabels((current) => ({ ...current, ...data.labels }))
+        if (data?.teammateLabels) setTeammateLabels((current) => ({ ...current, ...data.teammateLabels }))
+      })
       .catch(() => undefined)
-  }, [agents, labels])
+  }, [agentCards, teammateCards, labels, teammateLabels])
 
-  const roster = useMemo(
-    () => [...agents].sort((a, b) => a.title.localeCompare(b.title)),
-    [agents],
-  )
+  const openCard = teammateCards.find((card) => card.teammate.id === openTeammateId) ?? null
+  const total = teammateCards.length + agentCards.length
 
   if (loading) {
     return (
@@ -79,7 +105,7 @@ export function AgentsGallery({
     )
   }
 
-  if (!roster.length) {
+  if (!total) {
     return (
       <div className="mx-auto w-full max-w-2xl p-6">
         <EmptyState
@@ -105,7 +131,7 @@ export function AgentsGallery({
         <div>
           <h1 className="text-xl font-semibold">Agents</h1>
           <p className="text-sm text-muted-foreground">
-            {roster.length === 1 ? '1 teammate on your roster' : `${roster.length} teammates on your roster`}
+            {total === 1 ? '1 teammate on your roster' : `${total} teammates on your roster`}
           </p>
         </div>
         <Button onClick={onCreateAgent}>
@@ -113,66 +139,37 @@ export function AgentsGallery({
         </Button>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {roster.map((agent) => {
-          const kpi = kpis[agent.id]
-          const runs = kpi?.runs ?? agent.executionCount ?? 0
-          const finished = (kpi?.completed ?? 0) + (kpi?.failed ?? 0)
-          const successRate = finished > 0 ? `${Math.round(((kpi?.completed ?? 0) / finished) * 100)}%` : '—'
-          const role = agent.roleLabel || labels[agent.id] || null
-          const active = agent.status === 'active' && Boolean(agent.instructions?.trim())
-          return (
-            <div
-              key={agent.id}
-              className="group relative rounded-2xl border bg-white shadow-1 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md focus-within:shadow-md"
-            >
-              <button
-                type="button"
-                onClick={() => onEditAgent(agent.id)}
-                aria-label={`Configure ${agent.title}`}
-                title="Configure agent"
-                className="absolute right-2.5 top-2.5 z-10 rounded-lg p-1.5 text-fg-muted opacity-60 transition-all duration-150 hover:bg-gray-100 hover:text-gray-700 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 group-hover:opacity-100"
-              >
-                <Settings2 className="h-4 w-4" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenAgent(agent.id)}
-                className="flex w-full flex-col items-center rounded-2xl px-4 pb-4 pt-6 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
-              >
-                <span className="relative">
-                  <AgentAvatar seed={agent.id} className="h-16 w-16 rounded-full ring-1 ring-black/5" />
-                  {/* Presence dot: green when the agent is set up and on the
-                      clock (active schedule), gray while it's idle or unfinished. */}
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white',
-                      active && agent.schedule?.isActive ? 'bg-emerald-500' : active ? 'bg-emerald-300' : 'bg-gray-300',
-                    )}
-                  />
-                </span>
-                <span className="mt-3 line-clamp-1 w-full text-sm font-semibold text-foreground">{agent.title}</span>
-                <span className="mt-1.5 flex h-6 items-center">
-                  {role ? (
-                    <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">{role}</span>
-                  ) : (
-                    <span className="h-5 w-20 animate-pulse rounded-full bg-gray-100" />
-                  )}
-                </span>
-                <span className="mt-4 grid w-full grid-cols-2 divide-x border-t pt-3">
-                  <span className="flex flex-col gap-0.5 px-2">
-                    <span className="text-base font-semibold tabular-nums text-foreground">{runs.toLocaleString()}</span>
-                    <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Runs</span>
-                  </span>
-                  <span className="flex flex-col gap-0.5 px-2">
-                    <span className="text-base font-semibold tabular-nums text-foreground">{successRate}</span>
-                    <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Success</span>
-                  </span>
-                </span>
-              </button>
-            </div>
-          )
-        })}
+        {teammateCards.map(({ teammate, agents: roster, soleAgent, stats, presence }) => (
+          <RosterCard
+            key={teammate.id}
+            seed={teammate.id}
+            name={teammate.name}
+            role={teammate.roleLabel || teammateLabels[teammate.id] || null}
+            roleLoading={requestedLabels.current.has(`teammate:${teammate.id}`)}
+            subtitle={roster.length === 1 ? '1 job' : `${roster.length} jobs`}
+            stats={stats}
+            presence={presence}
+            // One job means the avatar IS that agent — skip the roster panel
+            // and behave exactly like a solo card.
+            onOpen={() => (soleAgent ? onOpenAgent(soleAgent.id) : setOpenTeammateId(teammate.id))}
+            onConfigure={() => (soleAgent ? onEditAgent(soleAgent.id) : setOpenTeammateId(teammate.id))}
+            configureLabel={soleAgent ? `Configure ${soleAgent.title}` : `Manage ${teammate.name}`}
+          />
+        ))}
+        {agentCards.map(({ agent, stats, presence }) => (
+          <RosterCard
+            key={agent.id}
+            seed={agent.id}
+            name={agent.title}
+            role={agent.roleLabel || labels[agent.id] || null}
+            roleLoading={requestedLabels.current.has(`agent:${agent.id}`)}
+            stats={stats}
+            presence={presence}
+            onOpen={() => onOpenAgent(agent.id)}
+            onConfigure={() => onEditAgent(agent.id)}
+            configureLabel={`Configure ${agent.title}`}
+          />
+        ))}
         <button
           type="button"
           onClick={onCreateAgent}
@@ -182,6 +179,18 @@ export function AgentsGallery({
           <span className="text-sm font-medium">New agent</span>
         </button>
       </div>
+      {openCard && (
+        <TeammatePanel
+          teammate={openCard.teammate}
+          agents={openCard.agents}
+          kpis={kpis}
+          roleLabel={openCard.teammate.roleLabel || teammateLabels[openCard.teammate.id] || null}
+          onOpenAgent={onOpenAgent}
+          onEditAgent={onEditAgent}
+          onClose={() => setOpenTeammateId(null)}
+          onChanged={loadTeammates}
+        />
+      )}
     </div>
   )
 }

@@ -45,6 +45,7 @@ let runId: string
 let executionId: string
 let connectionId: string
 let notificationId: string
+let teammateId: string
 
 before(async () => {
   if (!TEST_DB) return
@@ -76,6 +77,9 @@ before(async () => {
   })).id
   connectionId = (await prisma.mcpConnection.create({
     data: { name: 'Smoke MCP', serverUrl: 'https://mcp.invalid.test/mcp', organizationId: org, userId: uid, authType: 'none', isActive: true },
+  })).id
+  teammateId = (await prisma.agentTeammate.create({
+    data: { organizationId: org, name: 'Smoke teammate' },
   })).id
   notificationId = (await prisma.notification.create({
     data: { organizationId: org, userId: uid, type: 'smoke', level: 'info', title: 't', body: 'b' },
@@ -119,6 +123,9 @@ const cases = (): Case[] => [
   { route: 'agents/[id]/knowledge', method: 'DELETE', run: async () => (await import('../agents/[id]/knowledge/route')).DELETE(rq(`/api/agents/${agentId}/knowledge`, 'DELETE', { documentId: 'missing' })) },
   { route: 'agents/[id]/chat', method: 'PATCH', run: async () => (await import('../agents/[id]/chat/route')).PATCH(rq(`/api/agents/${agentId}/chat`, 'PATCH', { sessionId: 'missing', title: 'x' })) },
   { route: 'agents/[id]/runs/[runId]', method: 'DELETE', run: async () => (await import('../agents/[id]/runs/[runId]/route')).DELETE(rq(`/api/agents/${agentId}/runs/${executionId}`, 'DELETE', {})) },
+  { route: 'teammates', method: 'POST', run: async () => (await import('../teammates/route')).POST(rq('/api/teammates', 'POST', { name: 'Smoke avatar' })) },
+  { route: 'teammates', method: 'PATCH', run: async () => (await import('../teammates/route')).PATCH(rq('/api/teammates', 'PATCH', { id: teammateId, name: 'Smoke avatar renamed' })) },
+  { route: 'teammates', method: 'DELETE', run: async () => (await import('../teammates/route')).DELETE(rq('/api/teammates', 'DELETE', { id: 'missing' })) },
   { route: 'workspace-folders', method: 'POST', run: async () => (await import('../workspace-folders/route')).POST(rq('/api/workspace-folders', 'POST', { name: 'Smoke public folder' })) },
   { route: 'workspace-folders', method: 'PATCH', run: async () => (await import('../workspace-folders/route')).PATCH(rq('/api/workspace-folders', 'PATCH', { id: 'missing', name: 'Renamed' })) },
   { route: 'workspace-folders', method: 'DELETE', run: async () => (await import('../workspace-folders/route')).DELETE(rq('/api/workspace-folders', 'DELETE', { id: 'missing' })) },

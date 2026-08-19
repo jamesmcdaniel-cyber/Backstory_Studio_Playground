@@ -171,6 +171,7 @@ if (TEST_DB) {
     { name: 'GET /api/agents', run: async () => (await import('../agents/route')).GET(req('/api/agents')) },
     { name: 'GET /api/agents/activity', run: async () => (await import('../agents/activity/route')).GET(req('/api/agents/activity')) },
     { name: 'GET /api/agents/kpis', run: async () => (await import('../agents/kpis/route')).GET(req('/api/agents/kpis')) },
+    { name: 'GET /api/teammates', run: async () => (await import('../teammates/route')).GET(req('/api/teammates')) },
     { name: 'GET /api/workspace-folders', run: async () => (await import('../workspace-folders/route')).GET(req('/api/workspace-folders')) },
     { name: 'GET /api/approvals', run: async () => (await import('../approvals/route')).GET(req('/api/approvals')) },
     { name: 'GET /api/audit/export', run: async () => (await import('../audit/export/route')).GET(req('/api/audit/export')) },

@@ -47,6 +47,7 @@
 // from user-facing code.
 export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'Invitation', 'OrganizationDomain', 'ScimToken', 'ApiKey', 'ApiAccessToken', 'IdentityProvider', 'Team', 'FeatureGrant', 'WorkspaceFolder',
+  'AgentTeammate',
   'AgentTask', 'AgentConnector', 'AgentMemory', 'AgentChatMessage', 'AgentChatSession',
   'Signal', 'SignalSubscription', 'CustomSignal', 'AgentExecution', 'Notification',
   'PushSubscription', 'AuditEvent', 'ApprovalRequest', 'AgentTemplate', 'Integration',

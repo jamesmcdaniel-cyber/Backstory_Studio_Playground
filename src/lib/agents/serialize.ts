@@ -14,6 +14,7 @@ export function serializeAgent(agent: {
   goal: string | null
   metadata: unknown
   folder: string | null
+  teammateId: string | null
   visibility: string
   status: string
   priority: string
@@ -45,6 +46,7 @@ export function serializeAgent(agent: {
     requireApproval: metadata.requireApproval === true,
     suggestedGoal: metadata.suggestedGoal || null,
     folder: agent.folder || null,
+    teammateId: agent.teammateId || null,
     visibility: agent.visibility || 'shared',
     status: agent.status.toLowerCase(),
     priority: agent.priority.toLowerCase(),

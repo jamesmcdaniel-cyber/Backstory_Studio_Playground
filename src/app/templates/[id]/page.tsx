@@ -14,7 +14,8 @@ import { unmetRequirements, type WorkspaceConnections } from '@/components/integ
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { SubmitToCatalogue, type SubmissionStatus } from '@/components/templates/submit-to-catalogue'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
-import { createAgentFromTemplate } from '@/lib/client/agent-from-template'
+import { createAgentFromTemplate, type TemplateDestination } from '@/lib/client/agent-from-template'
+import { AssignTemplateDialog } from '@/components/agents/assign-template-dialog'
 import { useAuth } from '@/hooks/use-auth'
 
 type Template = {
@@ -39,6 +40,8 @@ export default function TemplateDetails() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [creating, setCreating] = useState(false)
+  // Installing asks WHO does the job before it creates anything.
+  const [assignOpen, setAssignOpen] = useState(false)
   const [deploying, setDeploying] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
   const [submission, setSubmission] = useState<SubmissionStatus | null>(null)
@@ -116,15 +119,16 @@ export default function TemplateDetails() {
 
   useEffect(() => { loadSubmission() }, [loadSubmission])
 
-  const createAgent = async () => {
+  const createAgent = async (destination: TemplateDestination) => {
     if (!template) return
     setCreating(true)
-    const result = await createAgentFromTemplate(template)
+    const result = await createAgentFromTemplate(template, destination)
     setCreating(false)
     if (!result.ok) {
       toast.error(result.error)
       return
     }
+    setAssignOpen(false)
     // Land on the agent itself, so the instructions this template just handed
     // over are right there to review, run, or schedule.
     notifyAgentsChanged()
@@ -195,9 +199,9 @@ export default function TemplateDetails() {
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
-                <Button variant={template.playbook ? 'outline' : 'default'} onClick={createAgent} loading={creating}>
+                <Button variant={template.playbook ? 'outline' : 'default'} onClick={() => setAssignOpen(true)} loading={creating}>
                   <Bot className="mr-1.5 h-4 w-4" />
-                  {creating ? 'Creating…' : 'Create agent'}
+                  {creating ? 'Adding…' : 'Add to a teammate'}
                 </Button>
                 {template.playbook && (
                   <Button onClick={deployPlaybook} loading={deploying}>
@@ -296,6 +300,15 @@ export default function TemplateDetails() {
               names={template.integrations}
               description={`${template.name} needs these connected before every step can run.`}
             />
+
+            {assignOpen && (
+              <AssignTemplateDialog
+                templateName={template.name}
+                busy={creating}
+                onCancel={() => setAssignOpen(false)}
+                onConfirm={createAgent}
+              />
+            )}
           </>
         )}
       </div>

@@ -362,6 +362,13 @@ model LlmCall {
   cacheWriteTokens Int      @default(0)
   cacheReadTokens  Int      @default(0)
   outputTokens     Int      @default(0)
+  /// Wall-clock for the call, in milliseconds.
+  ///
+  /// Nullable rather than defaulted to 0: rows written before this column
+  /// existed have no measurement, and a 0 default would be indistinguishable
+  /// from an instant call and would pull the console's per-model averages down
+  /// by however much history predates it.
+  latencyMs        Int?
   costUsd          Decimal  @default(0) @db.Decimal(12, 6)
   /// Which price table produced costUsd. 'unknown' means the model had no rate.
   priceVersion     String
@@ -371,6 +378,9 @@ model LlmCall {
   @@index([flowRunId])
   // Per-person spend for the operator console, over a time window.
   @@index([userId, createdAt])
+  // Per-model cost and latency for the Models console, and the Claude-usage
+  // caps, which both scan a day/window grouped by provider and model.
+  @@index([provider, model, createdAt])
   @@map("llm_calls")
 }
 

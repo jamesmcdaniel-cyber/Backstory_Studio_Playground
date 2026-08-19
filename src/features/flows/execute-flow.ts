@@ -55,6 +55,7 @@ import { parseStateOverrides, resolveOverride } from '@/lib/flows/state-override
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { recordTokenUsage } from '@/lib/usage/budget'
+import { downgradeNotice, modelAllowanceFor } from '@/lib/usage/model-allowance'
 import { runFlowCode } from './code-runner'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
@@ -1117,7 +1118,14 @@ async function runFlowExecutionInner(
         // Same record as the agent path: the resolved input is tenant data on
         // its way to a model provider.
         void recordPiiEgress({ organizationId: job.organizationId, userId: job.userId, surface: 'flow.ai_step', text: prompt.user })
-        const runner = createModelRunner(model)
+        // Same daily model ceilings as the agent plane, applied to the run's
+        // owner. A spent allowance moves the step to Qwen rather than failing
+        // it. See usage/model-allowance.ts.
+        const runner = createModelRunner(model, await modelAllowanceFor(run.userId))
+        // Surfaced as a step warning, the same channel a ledger replay uses:
+        // a step that quietly ran on a different model than the flow asks for
+        // reads as the model misbehaving rather than as a policy.
+        const modelWarnings = [downgradeNotice(model, runner.model)].filter((note): note is string => Boolean(note))
         // Structured ops (extract/categorize/score) get the JSON-contract
         // instruction appended to the user message before the call — same
         // idiom as the 'agent' node's structured branch in interpret.ts.
@@ -1160,7 +1168,7 @@ async function runFlowExecutionInner(
         ).catch(() => undefined)
 
         if (!prompt.structuredFields) {
-          await finish({ status: 'succeeded', output: turn.text })
+          await finish({ status: 'succeeded', output: turn.text, warnings: modelWarnings })
           return { output: turn.text }
         }
         // Structured ops never throw on a malformed/invalid reply — parse and
@@ -1176,7 +1184,7 @@ async function runFlowExecutionInner(
           await finish({ status: 'failed', error: validationError })
           return { error: validationError }
         }
-        await finish({ status: 'succeeded', output: parsed.output })
+        await finish({ status: 'succeeded', output: parsed.output, warnings: modelWarnings })
         return { output: parsed.output }
       }
       if (node.kind === 'subflow') {

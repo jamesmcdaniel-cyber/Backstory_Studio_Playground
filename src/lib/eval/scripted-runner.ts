@@ -57,6 +57,7 @@ export class ScriptedRunner implements ModelRunner {
     for (const call of toolCalls) content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input })
     transcript.push({ role: 'assistant', content })
 
-    return { text, toolCalls, usage: emptyUsage(), provider: 'anthropic', servedModel: 'scripted' }
+    // latencyMs 0: nothing is called, so there is no wall-clock to report.
+    return { text, toolCalls, usage: emptyUsage(), provider: 'anthropic', servedModel: 'scripted', latencyMs: 0 }
   }
 }

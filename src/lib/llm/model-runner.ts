@@ -4,10 +4,10 @@ import { recordLlmCall } from '@/lib/usage/ledger'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { qwenClient, qwenConfigured, qwenModel } from './qwen'
+import { modelTier, UNLIMITED_MODEL_ALLOWANCE, type ModelAllowance } from '@/lib/usage/model-allowance'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import {
   type IRMessage,
-  type ProviderKind,
   irUser,
   irToolResults,
   irFromAnthropic,
@@ -73,14 +73,28 @@ export function billableTokens(usage: TokenUsage): number {
   return usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens + usage.outputTokens
 }
 
+/**
+ * Which ENDPOINT served a call, for cost and performance attribution.
+ *
+ * Deliberately not `ProviderKind`, which answers a different question: that
+ * type describes the WIRE FORMAT of a persisted IR block, and Qwen's blocks are
+ * Anthropic-shaped because DashScope speaks the Messages API. Reusing it here
+ * billed every Qwen turn to 'anthropic' — the per-model console then showed
+ * Qwen spend under Anthropic, and the Claude-usage caps counted Qwen runs
+ * against the Claude allowance they exist to relieve.
+ */
+export type ProviderId = 'anthropic' | 'qwen'
+
 export type ModelTurn = {
   text: string
   toolCalls: ToolCall[]
   usage: TokenUsage
   /** Which endpoint actually served this turn — the chain may have fallen back. */
-  provider: ProviderKind
+  provider: ProviderId
   /** The model string actually sent, which may differ from the one requested. */
   servedModel: string
+  /** Wall-clock for the call, so the console can report latency beside cost. */
+  latencyMs: number
 }
 
 // The transcript is provider-native message JSON. It is persisted on the
@@ -111,6 +125,25 @@ const STREAM_DEADLINE_MS = AGENT_MODEL_TURN_TIMEOUT_MS
 const CACHE_CONTROL = { type: 'ephemeral' as const }
 
 /**
+ * Which dialect of the Messages API an endpoint speaks.
+ *
+ * Claude (api.anthropic.com) accepts the whole surface. Qwen reaches us through
+ * DashScope's Anthropic-COMPATIBLE endpoint, which implements the core of that
+ * API and not its recent extensions: block-array `system` carrying
+ * `cache_control` breakpoints, `thinking`, and structured `output_config`.
+ *
+ * Sending those to a compat endpoint is a SAFETY problem, not a performance
+ * one. The system prompt is where GUARDRAIL_RULE and the untrusted-data fencing
+ * live, so an endpoint that rejects — or worse, quietly ignores — the
+ * block-array form drops every boundary along with it, and nothing in the reply
+ * says so: the run just proceeds with an unguarded model. 'compat' therefore
+ * sends the plainest shape the Messages API defines (string `system`, no cache
+ * breakpoints, no extension fields), trading prompt caching for the guarantee
+ * that the instructions actually arrive.
+ */
+export type WireDialect = 'anthropic' | 'compat'
+
+/**
  * Add a rolling prompt-cache breakpoint on the last message so the growing
  * transcript prefix is cached turn-over-turn (cache reads bill ~0.1x). Operates
  * on a COPY — the persisted transcript (replayed verbatim on resume, where the
@@ -132,6 +165,47 @@ function withRollingCache(messages: Anthropic.MessageParam[]): Anthropic.Message
 }
 
 /**
+ * Shape one turn's request for a dialect.
+ *
+ * Pure and exported because the failure it guards against is SILENT: a compat
+ * endpoint that drops the block-array `system` still returns a perfectly
+ * ordinary-looking answer, just from a model that never saw the guardrails. The
+ * only way to know the instructions arrived is to assert on the request we
+ * build, which is what lib/llm/__tests__/wire-dialect.test.ts does.
+ */
+export function buildMessagesRequest(input: {
+  model: string
+  system: string
+  tools: ToolDefinition[]
+  messages: Anthropic.MessageParam[]
+  dialect: WireDialect
+}): Anthropic.MessageStreamParams {
+  const full = input.dialect === 'anthropic'
+  return {
+    model: input.model,
+    max_tokens: 32000,
+    // Full dialect: a breakpoint on the system block caches tools + system
+    // together (they precede messages in the cache prefix), so they bill at
+    // ~0.1x on every repeat turn instead of full price each turn. Compat sends
+    // the SAME text as a plain string — identical instructions, no caching.
+    system: full ? [{ type: 'text', text: input.system, cache_control: CACHE_CONTROL }] : input.system,
+    ...(full && ADAPTIVE_THINKING_MODELS.test(input.model) ? { thinking: { type: 'adaptive' as const } } : {}),
+    ...(input.tools.length
+      ? {
+          tools: input.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.inputSchema as Anthropic.Tool['input_schema'],
+          })),
+        }
+      : {}),
+    // Rolling cache is applied to the TRANSLATED native messages, never to the
+    // persisted IR (which is replayed verbatim and must stay unmodified).
+    messages: full ? withRollingCache(input.messages) : input.messages,
+  }
+}
+
+/**
  * One concrete provider. Stateless except for its SDK client: it translates the
  * IR transcript to its native format, calls the API, and (on success) appends
  * the assistant reply back onto the IR transcript as an IRAssistantMessage. It
@@ -139,7 +213,8 @@ function withRollingCache(messages: Anthropic.MessageParam[]): Anthropic.Message
  * IR on the next provider in the chain.
  */
 interface Provider {
-  readonly kind: ProviderKind
+  /** The endpoint this step bills to. */
+  readonly providerId: ProviderId
   readonly model: string
   next(ir: IRMessage[], system: string, tools: ToolDefinition[]): Promise<ModelTurn>
 }
@@ -149,32 +224,27 @@ interface Provider {
 // client — so one implementation covers both. The client is injected by
 // buildProvider so this class stays free of endpoint/key selection.
 class AnthropicProvider implements Provider {
-  readonly kind = 'anthropic' as const
-
-  constructor(readonly model: string, private readonly client: Anthropic) {}
+  constructor(
+    /** Which endpoint this instance points at — attribution, not wire format. */
+    readonly providerId: ProviderId,
+    readonly model: string,
+    private readonly client: Anthropic,
+    /** Which request shape this endpoint accepts. See WireDialect. */
+    private readonly dialect: WireDialect,
+  ) {}
 
   async next(ir: IRMessage[], system: string, tools: ToolDefinition[]): Promise<ModelTurn> {
-    const stream = this.client.messages.stream({
-      model: this.model,
-      max_tokens: 32000,
-      // Cache the stable prefix: a breakpoint on the system block caches tools +
-      // system together (they precede messages in the cache prefix), so they
-      // bill at ~0.1x on every repeat turn instead of full price each turn.
-      system: [{ type: 'text', text: system, cache_control: CACHE_CONTROL }],
-      ...(ADAPTIVE_THINKING_MODELS.test(this.model) ? { thinking: { type: 'adaptive' as const } } : {}),
-      ...(tools.length
-        ? {
-            tools: tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              input_schema: tool.inputSchema as Anthropic.Tool['input_schema'],
-            })),
-          }
-        : {}),
-      // Rolling cache is applied to the TRANSLATED native messages, never to the
-      // persisted IR (which is replayed verbatim and must stay unmodified).
-      messages: withRollingCache(toAnthropicMessages(ir)),
-    }, { signal: AbortSignal.timeout(STREAM_DEADLINE_MS) })
+    const startedAt = Date.now()
+    const stream = this.client.messages.stream(
+      buildMessagesRequest({
+        model: this.model,
+        system,
+        tools,
+        messages: toAnthropicMessages(ir),
+        dialect: this.dialect,
+      }),
+      { signal: AbortSignal.timeout(STREAM_DEADLINE_MS) },
+    )
     const message = await stream.finalMessage()
     ir.push(irFromAnthropic(message))
 
@@ -197,8 +267,9 @@ class AnthropicProvider implements Provider {
         cacheReadTokens: message.usage.cache_read_input_tokens || 0,
         outputTokens: message.usage.output_tokens,
       },
-      provider: this.kind,
+      provider: this.providerId,
       servedModel: this.model,
+      latencyMs: Date.now() - startedAt,
     }
   }
 }
@@ -257,6 +328,7 @@ class AgentRunner implements ModelRunner {
             provider: turn.provider,
             model: turn.servedModel,
             usage: turn.usage,
+            latencyMs: turn.latencyMs,
             agentExecutionId: ledger.agentExecutionId,
             flowRunId: ledger.flowRunId,
             flowRunStepId: ledger.flowRunStepId,
@@ -268,8 +340,8 @@ class AgentRunner implements ModelRunner {
         // Only fall back on availability failures, and only if a fallback exists.
         if (!isProviderAvailabilityError(error) || i === this.chain.length - 1) throw error
         apiLogger.warn('model-runner: provider unavailable mid-run, falling back', {
-          from: `${provider.kind}:${provider.model}`,
-          to: `${this.chain[i + 1].kind}:${this.chain[i + 1].model}`,
+          from: `${provider.providerId}:${provider.model}`,
+          to: `${this.chain[i + 1].providerId}:${this.chain[i + 1].model}`,
           status: (error as { status?: number }).status,
           error: error instanceof Error ? error.message.slice(0, 200) : String(error),
         })
@@ -289,6 +361,9 @@ class AgentRunner implements ModelRunner {
 export const DEFAULT_AGENT_MODEL = process.env.AGENT_MODEL?.trim() || 'claude-sonnet-5'
 export const DEFAULT_SUMMARY_MODEL = process.env.SUMMARY_MODEL?.trim() || 'claude-haiku-4-5'
 const FALLBACK_CLAUDE_MODEL = 'claude-opus-4-8'
+// Where a frontier model lands when this actor's frontier allowance is spent:
+// still Claude, still capable, a fraction of the price. See usage/model-allowance.ts.
+const DOWNGRADE_CLAUDE_MODEL = 'claude-sonnet-5'
 // UI id for the Qwen slot; the exact model string is resolved from QWEN_MODEL.
 const FALLBACK_QWEN_MODEL = 'qwen-3.7'
 
@@ -307,28 +382,42 @@ type RouteStep = { target: 'claude' | 'qwen'; model: string }
  * when Qwen isn't configured, and every run gains a cross-endpoint fallback when
  * both are present. This is the single source of truth for run routing.
  */
-export function routeModel(requested?: string): RouteStep[] {
+export function routeModel(requested?: string, allowance: ModelAllowance = UNLIMITED_MODEL_ALLOWANCE): RouteStep[] {
   const model = requested?.trim() || DEFAULT_AGENT_MODEL
   const wantsClaude = isClaude(model)
-  const claudeStep: RouteStep = { target: 'claude', model: wantsClaude ? model : FALLBACK_CLAUDE_MODEL }
+
+  // A spent allowance REDIRECTS to Qwen; it never refuses. With no Qwen
+  // endpoint configured there is nowhere to redirect to, so the ceilings do not
+  // apply at all — otherwise an unset env var would quietly stop every run in
+  // the workspace, which is a far worse failure than an unenforced cap.
+  const capsApply = hasQwen()
+  const claudeAllowed = !capsApply || allowance.claude
+  const frontierAllowed = !capsApply || allowance.frontier
+  /** Hold a Claude model to the tier this actor may still reach today. */
+  const permitted = (id: string) => (frontierAllowed || modelTier(id) !== 'frontier' ? id : DOWNGRADE_CLAUDE_MODEL)
+
+  const claudeStep: RouteStep = { target: 'claude', model: permitted(wantsClaude ? model : FALLBACK_CLAUDE_MODEL) }
   const qwenStep: RouteStep = { target: 'qwen', model: wantsClaude ? FALLBACK_QWEN_MODEL : model }
   const ordered = wantsClaude ? [claudeStep, qwenStep] : [qwenStep, claudeStep]
-  const available = ordered.filter((step) => (step.target === 'qwen' ? hasQwen() : hasAnthropic()))
+  // A spent whole-family allowance drops Claude from the chain entirely, not
+  // just from first place: leaving it as the fallback would hand every Qwen
+  // overload straight back to the endpoint the ceiling exists to relieve.
+  const available = ordered.filter((step) => (step.target === 'qwen' ? hasQwen() : hasAnthropic() && claudeAllowed))
   // When Anthropic is the ONLY configured endpoint (the common deployment), a
   // transient overload (529) of the primary has nowhere to fall back and fails
   // the run immediately. Append a second Claude step on a different model so the
   // run retries there instead. No-op when the primary already IS the fallback
   // model, or when a cross-provider fallback already exists.
-  if (available.length === 1 && available[0].target === 'claude' && available[0].model !== FALLBACK_CLAUDE_MODEL) {
-    available.push({ target: 'claude', model: FALLBACK_CLAUDE_MODEL })
+  if (available.length === 1 && available[0].target === 'claude' && available[0].model !== permitted(FALLBACK_CLAUDE_MODEL)) {
+    available.push({ target: 'claude', model: permitted(FALLBACK_CLAUDE_MODEL) })
   }
   return available
 }
 
 function buildProvider(step: RouteStep): Provider {
   return step.target === 'qwen'
-    ? new AnthropicProvider(qwenModel(step.model), qwenClient())
-    : new AnthropicProvider(step.model, claudeClient())
+    ? new AnthropicProvider('qwen', qwenModel(step.model), qwenClient(), 'compat')
+    : new AnthropicProvider('anthropic', step.model, claudeClient(), 'anthropic')
 }
 
 /**
@@ -336,8 +425,8 @@ function buildProvider(step: RouteStep): Provider {
  * endpoint chain (primary + cross-endpoint fallback). Keeps the same signature
  * and ModelRunner contract as before; callers are unchanged.
  */
-export function createModelRunner(requested?: string): ModelRunner {
-  const chain = routeModel(requested).map(buildProvider)
+export function createModelRunner(requested?: string, allowance?: ModelAllowance): ModelRunner {
+  const chain = routeModel(requested, allowance).map(buildProvider)
   if (chain.length === 0) {
     throw new Error('No model provider configured — set ANTHROPIC_API_KEY (or QWEN_API_KEY + QWEN_BASE_URL).')
   }
@@ -362,6 +451,7 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
   if (!target || !summary.trim()) return null
   const system =
     'Summarize what an AI agent run accomplished in one short, friendly past-tense line of at most 10 words. Respond with the line only — no quotes, no preamble.'
+  const startedAt = Date.now()
   try {
     // Both endpoints speak the Anthropic Messages API.
     const client = target.target === 'qwen' ? qwenClient() : claudeClient()
@@ -384,6 +474,7 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
           cacheReadTokens: response.usage.cache_read_input_tokens || 0,
           outputTokens: response.usage.output_tokens,
         },
+        latencyMs: Date.now() - startedAt,
         agentExecutionId: ledger.agentExecutionId,
         flowRunId: ledger.flowRunId,
       })
@@ -481,22 +572,93 @@ export function strictifySchema(schema: Record<string, unknown>): Record<string,
 }
 
 /**
+ * The compat dialect's stand-in for `output_config`.
+ *
+ * Appended to the SYSTEM prompt, not the user message, deliberately: it then
+ * sits with GUARDRAIL_RULE and the untrusted-data fencing, on the same side of
+ * the trust boundary, so fenced content can't argue with the output contract
+ * any more than it can argue with the guardrails.
+ */
+export function schemaInstruction(schemaName: string, schema: Record<string, unknown>): string {
+  return [
+    `Output format — reply with a single JSON value named "${schemaName}" that validates against this JSON Schema:`,
+    JSON.stringify(schema),
+    'Reply with that JSON and nothing else: no prose before or after it, no markdown code fence, no explanation. Every required property must be present.',
+  ].join('\n')
+}
+
+/**
+ * Recover the JSON value from a compat reply.
+ *
+ * The compat dialect has no schema constraint — only the instruction above — so
+ * a model on it sometimes wraps the object in a ```json fence or tops it with a
+ * sentence. Strips a fence when present, then takes the outermost {...}/[...]
+ * span. A clean reply passes through untouched, and a genuinely broken one is
+ * returned as-is so the caller's JSON.parse fails with the model's own text to
+ * debug from rather than an empty string.
+ */
+export function extractJson(text: string): string {
+  const trimmed = text.trim()
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(trimmed)
+  const body = (fenced ? fenced[1] : trimmed).trim()
+  const start = body.search(/[{[]/)
+  if (start === -1) return body
+  const end = body.lastIndexOf(body[start] === '{' ? '}' : ']')
+  return end > start ? body.slice(start, end + 1) : body
+}
+
+/**
+ * Shape one structured call for a dialect. Exported for the same reason as
+ * buildMessagesRequest: on compat both the guardrails AND the output contract
+ * ride in the system string, and nothing in a response proves they were sent.
+ */
+export function buildStructuredRequest(input: {
+  system: string
+  user: string
+  schema: Record<string, unknown>
+  schemaName: string
+  model: string
+  maxTokens?: number
+  dialect: WireDialect
+}): Anthropic.MessageCreateParamsNonStreaming {
+  const schema = strictifySchema(input.schema)
+  const full = input.dialect === 'anthropic'
+  return {
+    model: input.model,
+    max_tokens: input.maxTokens ?? 4096,
+    // Compat cannot be handed `output_config`, so the schema is instructed
+    // instead — appended AFTER the caller's system prompt so the guardrails
+    // it carries stay first and stay intact.
+    system: full ? input.system : `${input.system}\n\n${schemaInstruction(input.schemaName, schema)}`,
+    messages: [{ role: 'user', content: input.user }],
+    ...(full ? { output_config: { format: { type: 'json_schema' as const, schema } } } : {}),
+  }
+}
+
+/**
  * One structured call over the Anthropic Messages API (both Claude and Qwen
- * speak it). `output_config` json_schema constrains the reply to the schema.
+ * speak it). Claude gets an `output_config` json_schema constraint; Qwen's
+ * compat endpoint gets the instructed equivalent and its reply is unwrapped.
  */
 async function anthropicWireStructured(
   opts: StructuredOpts,
   client: Anthropic,
   model: string,
   provider: 'anthropic' | 'qwen',
+  dialect: WireDialect,
 ): Promise<string> {
-  const response = await client.messages.create({
-    model,
-    max_tokens: opts.maxTokens ?? 4096,
-    system: opts.system,
-    messages: [{ role: 'user', content: opts.user }],
-    output_config: { format: { type: 'json_schema', schema: strictifySchema(opts.schema) } },
-  })
+  const startedAt = Date.now()
+  const response = await client.messages.create(
+    buildStructuredRequest({
+      system: opts.system,
+      user: opts.user,
+      schema: opts.schema,
+      schemaName: opts.schemaName,
+      model,
+      maxTokens: opts.maxTokens,
+      dialect,
+    }),
+  )
   if (opts.ledger) {
     void recordLlmCall({
       organizationId: opts.ledger.organizationId,
@@ -510,14 +672,16 @@ async function anthropicWireStructured(
         cacheReadTokens: response.usage.cache_read_input_tokens || 0,
         outputTokens: response.usage.output_tokens,
       },
+      latencyMs: Date.now() - startedAt,
       agentExecutionId: opts.ledger.agentExecutionId,
       flowRunId: opts.ledger.flowRunId,
     })
   }
-  return response.content
+  const text = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
     .join('')
+  return dialect === 'anthropic' ? text : extractJson(text)
 }
 
 /**
@@ -574,8 +738,8 @@ export async function generateStructured(opts: StructuredOpts): Promise<string> 
   for (const target of order) {
     try {
       return target === 'qwen'
-        ? await anthropicWireStructured(opts, qwenClient(), qwenModel(FALLBACK_QWEN_MODEL), 'qwen')
-        : await anthropicWireStructured(opts, claudeClient(), claudeModel, 'anthropic')
+        ? await anthropicWireStructured(opts, qwenClient(), qwenModel(FALLBACK_QWEN_MODEL), 'qwen', 'compat')
+        : await anthropicWireStructured(opts, claudeClient(), claudeModel, 'anthropic', 'anthropic')
     } catch (error) {
       lastError = error
       if (!isProviderAvailabilityError(error)) throw error

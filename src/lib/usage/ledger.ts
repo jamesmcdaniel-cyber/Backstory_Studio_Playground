@@ -24,6 +24,12 @@ export type LlmCallInput = {
   provider: string
   model: string
   usage: TokenUsage
+  /**
+   * Wall-clock for the call. Optional: an omitted latency is stored as NULL and
+   * excluded from the console's averages, which is the honest reading — a zero
+   * would drag every model's mean toward instant.
+   */
+  latencyMs?: number | null
   agentExecutionId?: string | null
   flowRunId?: string | null
   flowRunStepId?: string | null
@@ -47,6 +53,7 @@ export async function recordLlmCall(input: LlmCallInput): Promise<void> {
         cacheWriteTokens: input.usage.cacheWriteTokens,
         cacheReadTokens: input.usage.cacheReadTokens,
         outputTokens: input.usage.outputTokens,
+        latencyMs: input.latencyMs ?? null,
         costUsd,
         priceVersion,
       },

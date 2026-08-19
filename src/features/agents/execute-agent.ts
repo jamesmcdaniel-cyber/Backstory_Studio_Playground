@@ -30,6 +30,7 @@ import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrati
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
+import { downgradeNotice, modelAllowanceFor } from '@/lib/usage/model-allowance'
 import { buildAgentSystemPrompt } from './system-prompt'
 import {
   createModelRunner,
@@ -557,7 +558,13 @@ async function runAgentExecutionInner(
   // A flow step may pin the chat model for its runs; the agent's own model is
   // the default, exactly like n8n's per-node Chat Model attachment.
   const model = data.stepOverrides?.model || agentMetadata.model || DEFAULT_AGENT_MODEL
-  const runner = createModelRunner(model)
+  // Daily model ceilings are a ROUTING input, not an admission check: a person
+  // past their Claude allowance still runs, on Qwen. See usage/model-allowance.ts.
+  const runner = createModelRunner(model, await modelAllowanceFor(userId))
+  // The execution row does not exist yet, so a downgrade is noted here and
+  // recorded as an event below — silently serving a different model than the
+  // agent is configured for would read as the model misbehaving.
+  const modelDowngrade = downgradeNotice(model, runner.model)
 
   // Flow-step conversation memory: replay the session's recent exchanges into
   // the prompt, and persist this run's exchange afterwards. Backed by the
@@ -704,6 +711,14 @@ async function runAgentExecutionInner(
           organizationId,
         },
       })
+
+  if (modelDowngrade) {
+    await recordEvent(execution.id, null, 'run.model_downgraded', {
+      requested: model,
+      served: runner.model,
+      message: modelDowngrade,
+    })
+  }
 
   // The execution row now exists: hand its id to the caller. Fire-and-forget
   // and fully fenced — a callback failure (sync or async) must never fail or

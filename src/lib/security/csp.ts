@@ -41,8 +41,17 @@ function supabaseOrigins(): { http: string; ws: string } | null {
   }
 }
 
-/** Icon CDN used by the integrations catalogue for provider logos. */
-const ICON_CDN = 'https://cdn.simpleicons.org'
+/**
+ * Hosts the integrations catalogue pulls provider logos from (see
+ * components/integrations/brand-logo-sources): Simple Icons for developer
+ * brands, DuckDuckGo's favicon service for everyone else (Gong, Clari,
+ * BambooHR…), and Nango's own CDN for the logo the catalogue hands us.
+ */
+const ICON_CDNS = [
+  'https://cdn.simpleicons.org',
+  'https://icons.duckduckgo.com',
+  'https://app.nango.dev',
+]
 
 /**
  * Where the Nango Connect UI is embedded from.
@@ -114,7 +123,7 @@ export function buildContentSecurityPolicy({ nonce, isDevelopment = false }: Csp
     // markdown/report content can carry <img> tags, and a blanket https:
     // img-src would let injected content exfiltrate data through image URL
     // query strings — the classic markdown-image leak. Named hosts only.
-    `img-src 'self' data: blob: ${ICON_CDN} https://lh3.googleusercontent.com`,
+    `img-src 'self' data: blob: ${ICON_CDNS.join(' ')} https://lh3.googleusercontent.com`,
     "font-src 'self' data:",
     `connect-src ${connectSrc.join(' ')}`,
     // Agent HTML previews render in a sandboxed iframe from srcDoc, which is an

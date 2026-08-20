@@ -21,4 +21,6 @@ export const POST = withAuthenticatedApi(async (_request, auth) => {
     path: '/',
   })
   return response
-})
+// Baseline member permission: every role holds flow.read, and demo mode
+// mirrors exactly the access the caller already has in the real workspace.
+}, { permission: 'flow.read' })

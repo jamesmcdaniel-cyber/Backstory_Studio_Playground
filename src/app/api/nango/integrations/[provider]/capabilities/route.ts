@@ -12,4 +12,4 @@ export const GET = withAuthenticatedApi(async (request: NextRequest) => {
   const segments = request.nextUrl.pathname.split('/')
   const provider = decodeURIComponent(segments[segments.indexOf('integrations') + 1] ?? '')
   return { success: true, capabilities: integrationCapabilities(provider) }
-})
+}, { permission: 'flow.read' })

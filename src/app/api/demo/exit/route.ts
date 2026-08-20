@@ -15,4 +15,4 @@ export const POST = withAuthenticatedApi(async (_request, auth) => {
   const response = NextResponse.json({ success: true })
   response.cookies.set(DEMO_COOKIE, '', { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 0 })
   return response
-})
+}, { permission: 'flow.read' })

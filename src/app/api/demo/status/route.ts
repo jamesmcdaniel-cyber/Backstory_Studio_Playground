@@ -7,4 +7,4 @@ export const runtime = 'nodejs'
 export const GET = withAuthenticatedApi(async (_request, auth) => {
   const demoOrgId = await resolveDemoOrganization(auth.dbUser.id)
   return { success: true, active: Boolean(demoOrgId) }
-})
+}, { permission: 'flow.read' })

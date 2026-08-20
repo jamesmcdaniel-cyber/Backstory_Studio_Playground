@@ -43,7 +43,7 @@ import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/hooks/use-auth'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
-import { getSnapshot } from '@/lib/client/snapshot'
+import { resetSnapshotCache, getSnapshot } from '@/lib/client/snapshot'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { cn } from '@/lib/utils'
@@ -77,6 +77,14 @@ const SIDEBAR_COLLAPSED_KEY = 'backstory:sidebar-collapsed'
 export const AGENTS_CHANGED_EVENT = 'backstory:agents-changed'
 
 export function notifyAgentsChanged() {
+  // Evict the shared snapshot BEFORE waking the listeners. The event makes
+  // subscribed surfaces (this sidebar, the agents page) reload with force —
+  // but any consumer calling plain getSnapshot() inside the 8s freshness
+  // window (the dashboard's poll, the bell) was still handed the PRE-edit
+  // snapshot back, and the localStorage copy would instant-paint the pre-edit
+  // state on the next reload. Clearing the cache fixes every consumer at
+  // once, subscribed or not.
+  resetSnapshotCache()
   window.dispatchEvent(new CustomEvent(AGENTS_CHANGED_EVENT))
 }
 

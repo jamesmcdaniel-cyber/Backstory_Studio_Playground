@@ -38,6 +38,12 @@ const DEFAULT_FRESH_MS = 8_000
 let cached: { data: Snapshot; ts: number } | null = null
 let inflight: Promise<Snapshot> | null = null
 
+// Bumped on every reset. A fetch that STARTED before a reset can resolve
+// after it carrying pre-reset data; comparing the epoch it captured keeps
+// that response from re-poisoning the cache it was evicted from. Its own
+// awaiters still get their data — it just never becomes the shared copy.
+let epoch = 0
+
 function readPersisted(): { data: Snapshot; ts: number } | null {
   if (typeof window === 'undefined') return null
   try {
@@ -61,12 +67,15 @@ function persist(entry: { data: Snapshot; ts: number }) {
 }
 
 async function fetchSnapshot(): Promise<Snapshot> {
+  const startedIn = epoch
   const res = await fetch('/api/snapshot', { cache: 'no-store' })
   const body = (await res.json().catch(() => ({}))) as Partial<Snapshot> & { error?: string; code?: string }
   if (!res.ok) throw new SnapshotError(body.error || `Snapshot failed (${res.status})`, body.code, res.status)
   const entry = { data: body as Snapshot, ts: Date.now() }
-  cached = entry
-  persist(entry)
+  if (startedIn === epoch) {
+    cached = entry
+    persist(entry)
+  }
   return entry.data
 }
 
@@ -95,6 +104,7 @@ export function peekSnapshot(): Snapshot | null {
  * user's data to the next one on the same browser. See client/cache-owner.ts.
  */
 export function resetSnapshotCache(): void {
+  epoch += 1
   cached = null
   inflight = null
   if (typeof window === 'undefined') return

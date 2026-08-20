@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
+import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { Camera, Check, Pencil, Play, Plus, Settings2, X } from 'lucide-react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { AvatarPicker } from '@/components/agents/avatar-picker'
@@ -63,7 +64,12 @@ export function TeammatePanel({
         return
       }
       setPickingAvatar(false)
+      // onChanged refreshes the gallery this panel sits in; the notify wakes
+      // every OTHER surface showing this roster (sidebar, agents page) and
+      // evicts the shared snapshot, so the new face appears everywhere without
+      // a page refresh — the exact staleness this event exists to prevent.
       onChanged()
+      notifyAgentsChanged()
     } finally {
       setSavingAvatar(false)
     }
@@ -90,6 +96,7 @@ export function TeammatePanel({
       }
       setRenaming(false)
       onChanged()
+      notifyAgentsChanged()
     } finally {
       setSaving(false)
     }
@@ -108,6 +115,9 @@ export function TeammatePanel({
     }
     toast.success(`${teammate.name} disbanded. Their agents are back on the roster.`)
     onChanged()
+    // Disbanding puts agents back on the roster — snapshot data the sidebar
+    // shows, which otherwise stays stale until its 30s poll.
+    notifyAgentsChanged()
     onClose()
   }
 

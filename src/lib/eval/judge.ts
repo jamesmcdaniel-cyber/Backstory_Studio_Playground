@@ -9,7 +9,22 @@
  * when no key is present.
  */
 import { generateStructured } from '@/lib/llm/model-runner'
+import { qwenModel } from '@/lib/llm/qwen'
 import type { JudgeResult, Trajectory } from './types'
+
+/**
+ * The one model that grades a cross-model comparison (bench and shadow both).
+ * Overridable via BENCH_JUDGE_MODEL, never per-candidate: a judge is itself a
+ * model with tastes, and scores are only comparable when the same judge
+ * produced them. Claude when available; otherwise the configured Qwen model
+ * judges — grading its own output, which the stored judgeModel makes visible
+ * instead of hiding.
+ */
+export function pinnedJudgeModel(): string {
+  const override = process.env.BENCH_JUDGE_MODEL?.trim()
+  if (override) return override
+  return process.env.ANTHROPIC_API_KEY ? 'claude-sonnet-5' : qwenModel('qwen-3.7')
+}
 
 const JUDGE_SCHEMA = {
   type: 'object',
@@ -34,9 +49,23 @@ function renderTrajectory(trajectory: Trajectory): string {
   return lines.join('\n')
 }
 
-export async function judgeTrajectory(rubric: string, trajectory: Trajectory): Promise<JudgeResult> {
+export async function judgeTrajectory(
+  rubric: string,
+  trajectory: Trajectory,
+  opts?: {
+    /**
+     * Pin the judge to one model. The cross-model bench REQUIRES this: without
+     * it, provider selection picks the judge per call, and a Qwen-only
+     * deployment would have Qwen grading its own output while believing the
+     * scores comparable to Claude-judged ones. Nightly omits it — a single
+     * model against its own baseline has no cross-grading to distort.
+     */
+    judgeModel?: string
+  },
+): Promise<JudgeResult> {
   const raw = await generateStructured({
     schemaName: 'eval_judgment',
+    model: opts?.judgeModel,
     schema: JUDGE_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 512,
     system:

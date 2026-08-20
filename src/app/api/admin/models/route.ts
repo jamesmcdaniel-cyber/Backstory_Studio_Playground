@@ -34,6 +34,29 @@ type Row = {
   /** Output tokens per second of model time, across the timed calls. */
   outputTokensPerSecond: number | null
   unpriced: boolean
+  /** Production outcomes for runs this model SERVED (dominant attribution). */
+  outcomes: Outcome | null
+}
+
+/**
+ * What actually happened to the runs a model served. This is the half of the
+ * "can a cheaper model do this job" question that cost and latency cannot
+ * answer: a model that is 6x cheaper per token and fails twice as often, or
+ * takes twice the turns to finish, is not 6x cheaper.
+ */
+type Outcome = {
+  /** Runs attributed to this model (it served the most calls in the run). */
+  runs: number
+  succeeded: number
+  failed: number
+  /** succeeded / (succeeded + failed); waiting/cancelled runs excluded. */
+  successRate: number | null
+  /** Mean agent turns per agent run — the "does the cheap model flail" number. */
+  avgTurns: number | null
+  /** Runs where more than one endpoint served calls (mid-run fallback). */
+  mixedProviderRuns: number
+  /** Runs that ended in an audited guardrail refusal. */
+  guardrailRefusals: number
 }
 
 export const GET = withAuthenticatedApi(async (request) => {
@@ -89,6 +112,87 @@ export const GET = withAuthenticatedApi(async (request) => {
     LIMIT 50
   `
 
+  // ── Outcomes ─────────────────────────────────────────────────────────────
+  //
+  // Attribution is by which model SERVED the run — the model with the most
+  // ledger calls in it — never by the model column on the run row, which
+  // records what was REQUESTED. Cross-provider fallback makes the requested
+  // model a lie for exactly the runs this view exists to compare: a run that
+  // asked for Qwen and was served by Claude must count as Claude's outcome.
+  //
+  // COALESCE prefers agentExecutionId, so an agent step inside a flow is one
+  // run (the execution), matching the runs count in the rollup above. Success
+  // vocabulary differs by plane ('completed' for agents, 'succeeded' for
+  // flows); waiting/running/cancelled runs sit outside the success denominator
+  // because their outcome is not yet a fact.
+  const outcomeRows = await systemPrisma.$queryRaw<
+    {
+      provider: string
+      model: string
+      runs: number
+      succeeded: number
+      failed: number
+      avg_turns: number | null
+      mixed_runs: number
+      refusals: number
+    }[]
+  >`
+    WITH per_run AS (
+      SELECT
+        COALESCE("agentExecutionId", "flowRunId") AS run_id,
+        ("agentExecutionId" IS NOT NULL) AS is_agent,
+        COUNT(*) FILTER (WHERE "surface" = 'agent_turn')::int AS turns,
+        COUNT(DISTINCT "provider")::int AS providers
+      FROM "llm_calls"
+      WHERE "createdAt" >= ${since} AND COALESCE("agentExecutionId", "flowRunId") IS NOT NULL
+      GROUP BY 1, 2
+    ),
+    dominant AS (
+      SELECT DISTINCT ON (run_id) run_id, "provider", "model"
+      FROM (
+        SELECT COALESCE("agentExecutionId", "flowRunId") AS run_id, "provider", "model", COUNT(*) AS calls
+        FROM "llm_calls"
+        WHERE "createdAt" >= ${since} AND COALESCE("agentExecutionId", "flowRunId") IS NOT NULL
+        GROUP BY 1, 2, 3
+      ) grouped
+      ORDER BY run_id, calls DESC
+    ),
+    refusals AS (
+      SELECT DISTINCT "resourceId" AS run_id
+      FROM "audit_events"
+      WHERE "action" = 'guardrail.refusal' AND "createdAt" >= ${since}
+    )
+    SELECT
+      d."provider",
+      d."model",
+      COUNT(*)::int AS runs,
+      COUNT(*) FILTER (WHERE COALESCE(a."status", f."status") IN ('completed', 'succeeded'))::int AS succeeded,
+      COUNT(*) FILTER (WHERE COALESCE(a."status", f."status") = 'failed')::int AS failed,
+      AVG(p.turns) FILTER (WHERE p.is_agent AND p.turns > 0)::float8 AS avg_turns,
+      COUNT(*) FILTER (WHERE p.providers > 1)::int AS mixed_runs,
+      COUNT(*) FILTER (WHERE r.run_id IS NOT NULL)::int AS refusals
+    FROM dominant d
+    JOIN per_run p USING (run_id)
+    LEFT JOIN "agent_executions" a ON p.is_agent AND a.id = d.run_id
+    LEFT JOIN "flow_runs" f ON NOT p.is_agent AND f.id = d.run_id
+    LEFT JOIN refusals r ON r.run_id = d.run_id
+    GROUP BY 1, 2
+  `
+  const outcomeByModel = new Map(
+    outcomeRows.map((row) => [
+      `${row.provider}:${row.model}`,
+      {
+        runs: row.runs,
+        succeeded: row.succeeded,
+        failed: row.failed,
+        successRate: row.succeeded + row.failed > 0 ? row.succeeded / (row.succeeded + row.failed) : null,
+        avgTurns: row.avg_turns,
+        mixedProviderRuns: row.mixed_runs,
+        guardrailRefusals: row.refusals,
+      } satisfies Outcome,
+    ]),
+  )
+
   const models: Row[] = rows.map((row) => ({
     provider: row.provider,
     model: row.model,
@@ -106,12 +210,99 @@ export const GET = withAuthenticatedApi(async (request) => {
         ? (row.timed_output_tokens / row.total_latency_ms) * 1000
         : null,
     unpriced: row.unpriced,
+    outcomes: outcomeByModel.get(`${row.provider}:${row.model}`) ?? null,
   }))
+
+  // ── Quality: bench scores and shadow comparisons over the window ─────────
+  //
+  // Same window as cost and outcomes, so all three read as one measurement.
+  // Prisma groupBy (not raw SQL) — this table is platform-level, but staying on
+  // the model API keeps the raw-SQL surface of this file to the one statement
+  // the exemption list documents.
+  const [benchGroups, shadowRows] = await Promise.all([
+    systemPrisma.modelEvalResult.groupBy({
+      by: ['provider', 'model', 'judgeModel'],
+      where: { kind: 'bench', createdAt: { gte: since } },
+      _avg: { score: true },
+      _count: true,
+      _max: { createdAt: true },
+    }),
+    systemPrisma.modelEvalResult.findMany({
+      where: { kind: 'shadow', createdAt: { gte: since } },
+      select: { pairId: true, provider: true, model: true, score: true, champion: true, costUsd: true },
+      orderBy: { createdAt: 'desc' },
+      // Bounded: pairs are aggregated in memory. 4000 rows = 2000 comparisons,
+      // far past what a sampled shadow rate produces in 90 days.
+      take: 4000,
+    }),
+  ])
+
+  const bench = benchGroups
+    .map((group) => ({
+      provider: group.provider,
+      model: group.model,
+      judgeModel: group.judgeModel,
+      avgScore: group._avg.score == null ? null : Number(group._avg.score),
+      samples: group._count,
+      lastRunAt: group._max.createdAt,
+    }))
+    .sort((a, b) => (b.avgScore ?? 0) - (a.avgScore ?? 0))
+
+  // Pair shadow rows and aggregate per champion-vs-challenger matchup. A pair
+  // missing a side (a judge failure mid-write) is dropped rather than counted
+  // as a win for whoever survived.
+  const byPair = new Map<string, { champion?: (typeof shadowRows)[number]; challenger?: (typeof shadowRows)[number] }>()
+  for (const row of shadowRows) {
+    if (!row.pairId) continue
+    const pair = byPair.get(row.pairId) ?? {}
+    if (row.champion) pair.champion = row
+    else pair.challenger = row
+    byPair.set(row.pairId, pair)
+  }
+  type Matchup = {
+    championModel: string
+    challengerModel: string
+    samples: number
+    challengerWins: number
+    ties: number
+    avgChampionScore: number
+    avgChallengerScore: number
+    challengerCostUsd: number
+  }
+  const matchups = new Map<string, Matchup>()
+  for (const { champion, challenger } of byPair.values()) {
+    if (!champion || !challenger || champion.score == null || challenger.score == null) continue
+    const key = `${champion.model} vs ${challenger.model}`
+    const entry =
+      matchups.get(key) ??
+      ({
+        championModel: champion.model,
+        challengerModel: challenger.model,
+        samples: 0,
+        challengerWins: 0,
+        ties: 0,
+        avgChampionScore: 0,
+        avgChallengerScore: 0,
+        challengerCostUsd: 0,
+      } satisfies Matchup)
+    const championScore = Number(champion.score)
+    const challengerScore = Number(challenger.score)
+    entry.samples += 1
+    if (challengerScore > championScore) entry.challengerWins += 1
+    else if (challengerScore === championScore) entry.ties += 1
+    // Running means, so the entry never holds a sum that needs a second pass.
+    entry.avgChampionScore += (championScore - entry.avgChampionScore) / entry.samples
+    entry.avgChallengerScore += (challengerScore - entry.avgChallengerScore) / entry.samples
+    entry.challengerCostUsd += Number(challenger.costUsd)
+    matchups.set(key, entry)
+  }
 
   return {
     success: true,
     days,
     models,
+    bench,
+    shadow: [...matchups.values()].sort((a, b) => b.samples - a.samples),
     // Shipped with the table so the tab can state the ceilings it is reporting
     // against, rather than the reader holding two numbers in their head.
     limits: MODEL_LIMITS,

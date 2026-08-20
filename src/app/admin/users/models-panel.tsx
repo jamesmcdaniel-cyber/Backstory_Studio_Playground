@@ -19,6 +19,16 @@ import { Badge } from '@/components/ui/badge'
 import { modelTier } from '@/lib/usage/model-tiers'
 import { modelProviderBrand } from '@/lib/llm/provider-brand'
 
+type Outcome = {
+  runs: number
+  succeeded: number
+  failed: number
+  successRate: number | null
+  avgTurns: number | null
+  mixedProviderRuns: number
+  guardrailRefusals: number
+}
+
 type ModelRow = {
   provider: string
   model: string
@@ -33,11 +43,34 @@ type ModelRow = {
   p95LatencyMs: number | null
   outputTokensPerSecond: number | null
   unpriced: boolean
+  outcomes: Outcome | null
+}
+
+type BenchRow = {
+  provider: string
+  model: string
+  judgeModel: string | null
+  avgScore: number | null
+  samples: number
+  lastRunAt: string | null
+}
+
+type ShadowMatchup = {
+  championModel: string
+  challengerModel: string
+  samples: number
+  challengerWins: number
+  ties: number
+  avgChampionScore: number
+  avgChallengerScore: number
+  challengerCostUsd: number
 }
 
 type Report = {
   days: number
   models: ModelRow[]
+  bench: BenchRow[]
+  shadow: ShadowMatchup[]
   limits: { frontierClaudeRunsPerDay: number; claudeRunsPerDay: number }
 }
 
@@ -48,6 +81,8 @@ function duration(ms: number | null): string {
   if (ms == null) return '—'
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`
 }
+
+const percent = (value: number | null) => (value == null ? '—' : `${Math.round(value * 100)}%`)
 
 function tokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`

@@ -57,6 +57,7 @@ import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { modelAllowanceFor } from '@/lib/usage/model-allowance'
 import { downgradeNotice } from '@/lib/usage/model-tiers'
+import { maybeShadowFlowAiStep } from '@/lib/eval/shadow'
 import { runFlowCode } from './code-runner'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
@@ -1167,6 +1168,21 @@ async function runFlowExecutionInner(
           job.organizationId,
           turn.usage ? billableTokens(turn.usage) : 0,
         ).catch(() => undefined)
+
+        // Sampled challenger comparison (off unless SHADOW_EVAL_RATE is set).
+        // This is the only run surface shadowed, because it is the only one
+        // with no side effects to double-fire — see lib/eval/shadow.ts. Fire
+        // and forget: never awaited, never able to fail the step.
+        void maybeShadowFlowAiStep({
+          organizationId: job.organizationId,
+          userId: run.userId,
+          flowRunId: run.id,
+          system: prompt.system,
+          user,
+          championText: turn.text,
+          championProvider: turn.provider,
+          championModel: turn.servedModel,
+        })
 
         if (!prompt.structuredFields) {
           await finish({ status: 'succeeded', output: turn.text, warnings: modelWarnings })

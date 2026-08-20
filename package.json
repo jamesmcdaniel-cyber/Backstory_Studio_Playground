@@ -24,6 +24,7 @@
     "eval": "tsx --test $(find src/lib/eval -type f -name '*.test.ts' -path '*__tests__*')",
     "eval:rag": "tsx src/lib/eval/rag/run.ts",
     "eval:nightly": "tsx src/lib/eval/nightly.ts",
+    "eval:bench": "tsx src/lib/eval/bench.ts",
     "eval:capture": "tsx src/lib/eval/capture.ts",
     "eval:rag:generate": "tsx src/lib/eval/rag/generate.ts",
     "load:flow": "k6 run scripts/load/flow-webhook.js",

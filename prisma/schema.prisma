@@ -399,6 +399,50 @@ model LlmCall {
   @@map("llm_calls")
 }
 
+/// One graded model evaluation — a bench fixture run or one side of a shadow
+/// comparison. The evidence base for "can a cheaper model do this job", kept in
+/// the database rather than a JSON artifact so the operator console can chart
+/// it per model over time, for ANY model that gets added.
+///
+/// Same posture as LlmCall: no relations, written via systemPrisma only, and —
+/// critically for shadow rows, which are graded on real tenant prompts — it
+/// stores scores and token counts, NEVER text. The judge's reasoning is only
+/// kept for bench rows, whose inputs are checked-in fixtures we authored.
+model ModelEvalResult {
+  id             String   @id @default(cuid())
+  /// 'bench' — checked-in fixture, comparable across models and time.
+  /// 'shadow' — sampled production task, one row per side of the pair.
+  kind           String
+  provider       String
+  model          String
+  /// bench: the fixture name. shadow: the surface (e.g. 'flow.ai_step').
+  subject        String
+  /// Judge score 0..1. Null when the run broke before judging.
+  score          Decimal? @db.Decimal(4, 3)
+  /// Bench only: whether deterministic structural asserts held.
+  pass           Boolean?
+  /// Bench only — see the header: shadow reasoning could quote tenant text.
+  reasoning      String?
+  /// Which model graded this row. A judge is itself a model with tastes; a
+  /// score is only comparable to scores graded by the same judge.
+  judgeModel     String?
+  /// Shadow: links the two sides of one comparison.
+  pairId         String?
+  /// Shadow: true on the row for the model that actually served production.
+  champion       Boolean?
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  latencyMs      Int?
+  costUsd        Decimal  @default(0) @db.Decimal(12, 6)
+  /// Shadow only, for spend accounting. Bench rows are platform-level (null).
+  organizationId String?  @db.Uuid
+  createdAt      DateTime @default(now())
+
+  @@index([kind, model, createdAt])
+  @@index([pairId])
+  @@map("model_eval_results")
+}
+
 /// Platform-level access gate: which email domains may reach the product at
 /// all. Deliberately SEPARATE from OrganizationDomain — that model answers
 /// "does this domain belong to workspace X" for SSO enforcement, and

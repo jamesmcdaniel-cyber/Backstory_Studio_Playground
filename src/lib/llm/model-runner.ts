@@ -29,7 +29,7 @@ export type LedgerContext = {
   organizationId: string
   /** The run's owner, so spend can be attributed to a person, not just a tenant. */
   userId?: string | null
-  surface?: 'agent_turn' | 'structured' | 'headline' | 'embedding' | 'eval_judge'
+  surface?: 'agent_turn' | 'structured' | 'headline' | 'embedding' | 'eval_judge' | 'shadow_eval'
   agentExecutionId?: string | null
   flowRunId?: string | null
   flowRunStepId?: string | null
@@ -431,6 +431,25 @@ export function createModelRunner(requested?: string, allowance?: ModelAllowance
     throw new Error('No model provider configured — set ANTHROPIC_API_KEY (or QWEN_API_KEY + QWEN_BASE_URL).')
   }
   return new AgentRunner(chain)
+}
+
+/**
+ * A runner PINNED to one endpoint and model — no fallback chain.
+ *
+ * Exists for evaluation, where fallback is not resilience but contamination:
+ * a bench or shadow run of "qwen-3.7" that quietly fell back to Claude on a
+ * 529 would score Claude's answer under Qwen's name, which is precisely the
+ * conclusion-corrupting event the comparison exists to rule out. Production
+ * runs keep createModelRunner and its chain; a pinned run FAILS where a
+ * production run would degrade, and for measurement that is correct.
+ */
+export function createPinnedRunner(requested: string): ModelRunner {
+  const wantsClaude = isClaude(requested)
+  if (wantsClaude && !hasAnthropic()) throw new Error(`ANTHROPIC_API_KEY is not configured — cannot pin ${requested}`)
+  if (!wantsClaude && !hasQwen()) throw new Error(`Qwen is not configured — cannot pin ${requested}`)
+  return new AgentRunner([
+    buildProvider(wantsClaude ? { target: 'claude', model: requested } : { target: 'qwen', model: requested }),
+  ])
 }
 
 // Resolve which endpoint/model to use for a cheap "summary" call, honoring

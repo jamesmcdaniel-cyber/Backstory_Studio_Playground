@@ -14,7 +14,7 @@ import { apiLogger } from '@/lib/logger'
 import type { TokenUsage } from '@/lib/llm/model-runner'
 import { computeCostUsd } from './pricing'
 
-export type LlmSurface = 'agent_turn' | 'structured' | 'headline' | 'embedding' | 'eval_judge'
+export type LlmSurface = 'agent_turn' | 'structured' | 'headline' | 'embedding' | 'eval_judge' | 'shadow_eval'
 
 export type LlmCallInput = {
   organizationId: string

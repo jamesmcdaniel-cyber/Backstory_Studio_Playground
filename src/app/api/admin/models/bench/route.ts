@@ -63,7 +63,18 @@ export const POST = withAuthenticatedApi(async (_request, auth) => {
     // Timestamped id: BullMQ never reuses a completed job's id, so a fixed one
     // would allow exactly one bench per Redis lifetime. Serialization comes
     // from the in-flight check above, not from id collision.
-    await queue.add('model-bench', {}, { jobId: `model-bench-${Date.now()}`, removeOnComplete: 100, removeOnFail: 100 })
+    //
+    // attempts: 1 OVERRIDES the queue default of 2. That default exists for
+    // checkpointed agent runs, where a retry resumes from the last turn; the
+    // bench has no checkpoint — a retry re-spends the entire candidates ×
+    // fixtures sweep and writes a second copy of every row the first attempt
+    // already persisted. The first prod bench did exactly that before this
+    // line existed.
+    await queue.add(
+      'model-bench',
+      {},
+      { jobId: `model-bench-${Date.now()}`, attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
+    )
   } catch (error) {
     if (error instanceof ApiError) throw error
     throw new ApiError('Unable to queue the bench run', 503, 'QUEUE_UNAVAILABLE', error)

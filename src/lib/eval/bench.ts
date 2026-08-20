@@ -60,11 +60,31 @@ async function meanJudgement(rubric: string, trajectory: Trajectory): Promise<{ 
   const scores: number[] = []
   let reasoning = ''
   for (let i = 0; i < SAMPLES; i += 1) {
-    const verdict = await judgeTrajectory(rubric, trajectory, { judgeModel: judge })
+    // One retry per sample: the judge occasionally returns an unparseable
+    // reply ("Unexpected end of JSON input" — seen on the first prod bench),
+    // and without this a single flake voided the candidate's whole fixture
+    // after its expensive live run had already been paid for. Two failures in
+    // a row propagate — at that point the judge, not luck, is the problem.
+    const verdict = await judgeTrajectory(rubric, trajectory, { judgeModel: judge }).catch(() =>
+      judgeTrajectory(rubric, trajectory, { judgeModel: judge }),
+    )
     scores.push(verdict.score)
     reasoning = verdict.reasoning
   }
   return { score: scores.reduce((total, score) => total + score, 0) / scores.length, reasoning }
+}
+
+/**
+ * The message worth logging for a failed candidate run. The SDK's Error
+ * message for a refused stream is just "403 event:error"; the actual reason
+ * ("free quota exhausted", "invalid model") sits in the parsed error body,
+ * which is what an operator reading the job log needs.
+ */
+export function benchErrorDetail(error: unknown): string {
+  const body = (error as { error?: { message?: string; error?: { message?: string } } })?.error
+  const nested = body?.error?.message ?? body?.message
+  const message = error instanceof Error ? error.message : String(error)
+  return nested && !message.includes(nested) ? `${message} — ${nested}` : message
 }
 
 export type BenchSummary = {
@@ -133,7 +153,7 @@ export async function runBench(log: (line: string) => void = console.log): Promi
         // A pinned run has no fallback by design; a dead endpoint fails its
         // candidate loudly instead of polluting the table with silent gaps.
         summary.errors += 1
-        log(`  ${fixture.name}: ERROR — ${error instanceof Error ? error.message : String(error)}`)
+        log(`  ${fixture.name}: ERROR — ${benchErrorDetail(error)}`)
       }
     }
   }

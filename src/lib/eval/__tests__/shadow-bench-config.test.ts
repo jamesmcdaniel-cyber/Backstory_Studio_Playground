@@ -72,3 +72,18 @@ test('the judge is pinned: override first, Claude when available, Qwen last', ()
   process.env.QWEN_MODEL = 'qwen3-max'
   assert.equal(pinnedJudgeModel(), 'qwen3-max')
 })
+
+test('benchErrorDetail surfaces the provider body, not just the SDK line', async () => {
+  const { benchErrorDetail } = await import('../bench')
+  // The shape DashScope's refusal actually arrived in: a terse SDK message
+  // with the reason buried in the parsed body.
+  const refusal = Object.assign(new Error('403 event:error'), {
+    error: { error: { code: 'AccessDenied', message: 'The free quota has been exhausted.' } },
+  })
+  assert.equal(benchErrorDetail(refusal), '403 event:error — The free quota has been exhausted.')
+  // Flat body shape, plain errors, and non-errors all still read sensibly.
+  const flat = Object.assign(new Error('400 bad request'), { error: { message: 'unknown model' } })
+  assert.equal(benchErrorDetail(flat), '400 bad request — unknown model')
+  assert.equal(benchErrorDetail(new Error('plain failure')), 'plain failure')
+  assert.equal(benchErrorDetail('string error'), 'string error')
+})

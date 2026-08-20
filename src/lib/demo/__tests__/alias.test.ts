@@ -80,6 +80,13 @@ test('logo data URL is an inline SVG', () => {
   assert.ok(url.startsWith('data:image/svg+xml'))
 })
 
+test('aka() registers an extra spelling for the sweep', () => {
+  const book = createAliasBook(ORG)
+  const company = book.company('globex')
+  book.aka('globex.com', company.domain)
+  assert.equal(book.entries().get('globex.com'), company.domain)
+})
+
 test('entries() records every real→alias mapping made', () => {
   const book = createAliasBook(ORG)
   const company = book.company('Acme Corp')

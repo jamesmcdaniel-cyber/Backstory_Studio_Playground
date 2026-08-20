@@ -72,3 +72,19 @@ test('anonymizeJson walks nested structures and leaves keys/non-strings alone', 
   assert.equal(out.steps[0].done, true)
   assert.ok(!out.meta.owner.includes('Sarah'))
 })
+
+test('harvestAliases teaches the book companies from email domains and CRM keys', async () => {
+  const { harvestAliases } = await import('../anonymize')
+  const book = createAliasBook(ORG)
+  harvestAliases({ notes: 'Ping bob.jones@globex.com re contract', payload: { accountName: 'Initech' } }, book)
+  const out = anonymizeText('Globex and Initech both renewed. See globex.com and bob.jones@globex.com.', book)
+  assert.ok(!/globex/i.test(out))
+  assert.ok(!/initech/i.test(out))
+})
+
+test('harvestAliases ignores consumer mail domains', async () => {
+  const { harvestAliases } = await import('../anonymize')
+  const book = createAliasBook(ORG)
+  harvestAliases('reach me at someone@gmail.com', book)
+  assert.equal(book.entries().get('gmail'), undefined)
+})

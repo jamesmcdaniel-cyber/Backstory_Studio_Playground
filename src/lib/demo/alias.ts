@@ -30,6 +30,12 @@ export interface AliasBook {
   ip(real: string): string
   nationalId(real: string): string
   cardNumber(real: string): string
+  /**
+   * Register an extra spelling of an already-aliased value, so the free-text
+   * sweep replaces it too — e.g. the bare domain label "globex" and the full
+   * domain "globex.com" both mapping to the company aliased from that domain.
+   */
+  aka(real: string, alias: string): void
   /** Normalised real value → alias, for the free-text sweep. */
   entries(): ReadonlyMap<string, string>
 }
@@ -176,6 +182,9 @@ export function createAliasBook(realOrgId: string): AliasBook {
       const hash = digest(realOrgId, 'card', normalise(real))
       const mid = String(hash.readUInt16BE(0) % 100).padStart(2, '0')
       return remember(real, `4242 42${mid} XXXX 4242`)
+    },
+    aka(real, alias) {
+      remember(real, alias)
     },
     entries() {
       return map

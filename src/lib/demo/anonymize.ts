@@ -96,3 +96,50 @@ export function anonymizeJson(value: unknown, book: AliasBook): unknown {
   }
   return value
 }
+
+// ── Alias harvesting ────────────────────────────────────────────────────────
+
+const EMAIL_GLOBAL = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi
+/** Consumer mail hosts whose domain names identify nobody. */
+const CONSUMER_MAIL = new Set(['gmail', 'googlemail', 'outlook', 'hotmail', 'live', 'yahoo', 'icloud', 'me', 'aol', 'proton', 'protonmail', 'fastmail', 'gmx', 'msn'])
+/** JSON keys whose string values name a company (CRM payloads, signal data). */
+const COMPANY_KEY = /(account|company|customer|vendor|partner|organization)(_?name)?$/i
+
+/**
+ * Walk a value and TEACH the book about entities found in free text, before
+ * any anonymisation runs. The book can only substitute names it knows; the
+ * structured columns teach it people, but company names mostly live inside
+ * prose and CRM payloads. Two harvest sources:
+ *
+ *  - Email addresses: the address itself gets a person alias, and a
+ *    non-consumer domain's label ("globex" of globex.com) gets a company
+ *    alias, with `aka` registrations for the label and the full domain so
+ *    "Globex", "globex.com" and "bob@globex.com" all leave as one fiction.
+ *  - Company-shaped JSON keys (accountName, company, …): their string values
+ *    become company aliases outright.
+ */
+export function harvestAliases(value: unknown, book: AliasBook): void {
+  const visit = (node: unknown, keyHint?: string) => {
+    if (typeof node === 'string') {
+      if (keyHint && COMPANY_KEY.test(keyHint) && node.trim().length >= 2 && node.length <= 80) {
+        book.company(node)
+      }
+      for (const email of node.match(EMAIL_GLOBAL) ?? []) {
+        book.person({ name: null, email, companyName: null })
+        const domain = email.split('@')[1]?.toLowerCase() ?? ''
+        const label = domain.split('.')[0] ?? ''
+        if (label.length >= 3 && !CONSUMER_MAIL.has(label)) {
+          const company = book.company(label)
+          book.aka(label, company.name)
+          book.aka(domain, company.domain)
+        }
+      }
+      return
+    }
+    if (Array.isArray(node)) return node.forEach((item) => visit(item, keyHint))
+    if (node && typeof node === 'object') {
+      for (const [key, item] of Object.entries(node as Record<string, unknown>)) visit(item, key)
+    }
+  }
+  visit(value)
+}

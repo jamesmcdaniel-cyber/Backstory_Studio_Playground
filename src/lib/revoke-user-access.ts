@@ -163,6 +163,17 @@ export async function deprovisionUser(params: {
     },
   })
 
+  // Their standing demo sandbox goes with them: it is an anonymised copy of
+  // this workspace that only they could enter, and a deactivated account must
+  // not leave a live tenant behind. After the transaction on purpose — the
+  // teardown deletes an entire org graph and must not hold the revocation
+  // transaction open (and a teardown failure must not resurrect access).
+  const demoOrg = await systemPrisma.organization.findUnique({ where: { demoOwnerUserId: userId }, select: { id: true } })
+  if (demoOrg) {
+    const { teardownOrganization } = await import('@/lib/org-teardown')
+    await teardownOrganization(demoOrg.id)
+  }
+
   // A separate row, not just a field on the one above: the claim queue is an
   // operational surface, and "what got quarantined and when" is the question an
   // admin asks weeks later without wanting to reconstruct a deprovisioning.

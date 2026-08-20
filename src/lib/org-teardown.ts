@@ -18,6 +18,20 @@ export async function teardownOrganization(organizationId: string): Promise<{ na
   let filesDeleted = 0
   const externalFailures: Error[] = []
 
+  // Demo copies go first: a demo org is an anonymised clone of this workspace
+  // (kind 'demo', pointing back via demoOfOrganizationId), and an orphaned
+  // clone outliving its source would be an unowned tenant nobody can exit.
+  // Depth-1 by construction — a demo org never has demo copies — and the kind
+  // check makes that assumption fail loud rather than recurse.
+  const demoCopies = await systemPrisma.organization.findMany({
+    where: { demoOfOrganizationId: organizationId },
+    select: { id: true, kind: true },
+  })
+  for (const copy of demoCopies) {
+    if (copy.kind !== 'demo') throw new Error(`Organization ${copy.id} points at ${organizationId} via demoOfOrganizationId but is kind '${copy.kind}' — refusing to cascade`)
+    await teardownOrganization(copy.id)
+  }
+
   // systemPrisma: org teardown enumerates the org's own rows by org id — the
   // guard's org-scope requirement is satisfied semantically but these run
   // outside any authenticated request context.

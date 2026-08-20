@@ -117,3 +117,20 @@ test('exit tears the sandbox down and clears the cookie', { skip }, async () => 
   // The REAL workspace is untouched.
   assert.ok(await systemPrisma.organization.findUnique({ where: { id: org.id } }))
 })
+
+test('deprovisioning a user tears down their standing demo org', { skip }, async () => {
+  const { org, user } = await seedOrgAndUser()
+  const { demoOrgId } = await ensureDemoWorkspace(org.id, user.id)
+  const { deprovisionUser } = await import('@/lib/revoke-user-access')
+  await deprovisionUser({ userId: user.id, organizationId: org.id, reason: 'deactivated' })
+  assert.equal(await systemPrisma.organization.findUnique({ where: { id: demoOrgId } }), null)
+})
+
+test('tearing down a real org deletes its demo copies first', { skip }, async () => {
+  const { org, user } = await seedOrgAndUser()
+  const { demoOrgId } = await ensureDemoWorkspace(org.id, user.id)
+  const { teardownOrganization } = await import('@/lib/org-teardown')
+  await teardownOrganization(org.id)
+  assert.equal(await systemPrisma.organization.findUnique({ where: { id: org.id } }), null)
+  assert.equal(await systemPrisma.organization.findUnique({ where: { id: demoOrgId } }), null)
+})

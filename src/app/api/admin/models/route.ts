@@ -1,6 +1,26 @@
 import { systemPrisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { MODEL_LIMITS } from '@/lib/usage/model-tiers'
+import { shadowConfig } from '@/lib/eval/shadow'
+import { createQueue, getRedisConnection, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
+import { inlineExecution } from '@/lib/queue/execution-mode'
+
+/**
+ * Whether a bench is queued or running right now, so the panel can render the
+ * button as busy instead of letting a second click double-spend. Best-effort:
+ * an unreachable Redis answers null ("could not check"), never false — the
+ * POST route re-checks authoritatively before enqueueing anyway.
+ */
+async function benchRunning(): Promise<boolean | null> {
+  if (inlineExecution || !workersEnabled) return null
+  try {
+    await getRedisConnection().connect().catch(() => undefined)
+    const counts = await createQueue(QUEUE_NAMES.MODEL_BENCH).getJobCounts('waiting', 'active', 'delayed')
+    return (counts.waiting ?? 0) + (counts.active ?? 0) + (counts.delayed ?? 0) > 0
+  } catch {
+    return null
+  }
+}
 
 /**
  * Per-model cost AND performance, for the Models tab of the operator console.
@@ -303,6 +323,14 @@ export const GET = withAuthenticatedApi(async (request) => {
     models,
     bench,
     shadow: [...matchups.values()].sort((a, b) => b.samples - a.samples),
+    benchRunning: await benchRunning(),
+    // Whether shadow sampling is switched on in this deployment, so the panel
+    // reports config STATE ("off" / "on at 5% against qwen-3.7") instead of
+    // printing env-var homework at the operator.
+    shadowSampling: (() => {
+      const config = shadowConfig({ rate: process.env.SHADOW_EVAL_RATE, model: process.env.SHADOW_EVAL_MODEL })
+      return config ? { model: config.model, rate: config.rate } : null
+    })(),
     // Shipped with the table so the tab can state the ceilings it is reporting
     // against, rather than the reader holding two numbers in their head.
     limits: MODEL_LIMITS,

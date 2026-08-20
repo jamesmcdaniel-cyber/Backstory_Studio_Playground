@@ -332,6 +332,11 @@ const SKIPS: Record<string, string> = {
   'admin/domains:PATCH': 'covered by src/app/api/admin/__tests__/domains-route.db.test.ts',
   // Operator-only, and every branch acts on someone else's account.
   'admin/users/[id]/actions:POST': 'covered by src/app/api/admin/__tests__/users-route.db.test.ts',
+  // Operator-only bench trigger: the smoke org holds no platform.administer,
+  // so invoking it here would only ever produce a 403 — and its body wants a
+  // Redis queue. The customer-edition 404 and permission gate are covered by
+  // edition-gates.test.ts + the platform-administer route walk.
+  'admin/models/bench:POST': 'covered by src/app/api/__tests__/edition-gates.test.ts',
   // Operator-only, and its body needs a live Redis rather than a database: the
   // smoke org holds no platform.administer, so invoking it here would only
   // ever produce a 403. The gate is covered in

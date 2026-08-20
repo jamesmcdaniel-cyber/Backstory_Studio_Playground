@@ -14,8 +14,11 @@
  * spend is buying anything.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import { Play, Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { modelTier } from '@/lib/usage/model-tiers'
 import { modelProviderBrand } from '@/lib/llm/provider-brand'
 
@@ -71,6 +74,10 @@ type Report = {
   models: ModelRow[]
   bench: BenchRow[]
   shadow: ShadowMatchup[]
+  /** null = could not check (inline mode / Redis unreachable). */
+  benchRunning: boolean | null
+  /** Deployment's shadow-sampling state; null = off. */
+  shadowSampling: { model: string; rate: number } | null
   limits: { frontierClaudeRunsPerDay: number; claudeRunsPerDay: number }
 }
 
@@ -93,22 +100,57 @@ function tokens(value: number): string {
 export function ModelsPanel({ days }: { days: number }) {
   const [report, setReport] = useState<Report | null>(null)
   const [loading, setLoading] = useState(true)
+  const [benchBusy, setBenchBusy] = useState(false)
+  const alive = useRef(true)
 
-  useEffect(() => {
-    let live = true
-    setLoading(true)
-    void (async () => {
-      try {
-        const response = await fetch(`/api/admin/models?days=${days}`, { cache: 'no-store' })
-        if (live && response.ok) setReport(await response.json())
-      } finally {
-        if (live) setLoading(false)
-      }
-    })()
-    return () => {
-      live = false
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    try {
+      const response = await fetch(`/api/admin/models?days=${days}`, { cache: 'no-store' })
+      if (alive.current && response.ok) setReport(await response.json())
+    } finally {
+      if (alive.current && !silent) setLoading(false)
     }
   }, [days])
+
+  useEffect(() => {
+    alive.current = true
+    void load()
+    return () => {
+      alive.current = false
+    }
+  }, [load])
+
+  // While a bench is queued or running, refresh quietly so its rows appear
+  // without the operator hammering reload. Stops the moment it is not.
+  const benchInFlight = benchBusy || report?.benchRunning === true
+  useEffect(() => {
+    if (!benchInFlight) return
+    const timer = setInterval(() => void load(true), 15_000)
+    return () => clearInterval(timer)
+  }, [benchInFlight, load])
+
+  const startBench = async () => {
+    setBenchBusy(true)
+    try {
+      const response = await fetch('/api/admin/models/bench', { method: 'POST' })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        toast.error(body?.error ?? 'Could not start the bench.')
+        setBenchBusy(false)
+        return
+      }
+      toast.success(
+        body?.alreadyRunning
+          ? 'A bench is already running — results will appear here when it finishes.'
+          : 'Bench started. Every candidate model runs the same fixtures; results land below as they finish.',
+      )
+      void load(true)
+    } catch {
+      toast.error('Could not start the bench.')
+      setBenchBusy(false)
+    }
+  }
 
   const models = report?.models ?? []
   const totalCost = models.reduce((sum, row) => sum + row.costUsd, 0)
@@ -215,7 +257,22 @@ export function ModelsPanel({ days }: { days: number }) {
           did the job. Both sections generalize to any model that gets added —
           rows appear per provider:model straight from the eval table. */}
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">Quality — bench</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium">Quality — bench</h2>
+          <Button size="sm" variant="secondary" onClick={() => void startBench()} disabled={benchInFlight}>
+            {benchInFlight ? (
+              <>
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                Bench running…
+              </>
+            ) : (
+              <>
+                <Play className="mr-2 h-3.5 w-3.5" />
+                Run bench
+              </>
+            )}
+          </Button>
+        </div>
         {(report?.bench.length ?? 0) > 0 ? (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full min-w-[40rem] text-sm">
@@ -245,8 +302,9 @@ export function ModelsPanel({ days }: { days: number }) {
           </div>
         ) : (
           <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
-            No bench results in this window. Run <code className="font-mono">npm run eval:bench</code> (models via
-            BENCH_MODELS) — the same fixtures against every candidate, graded by one pinned judge, persisted here.
+            {benchInFlight
+              ? 'Bench in progress — every configured model is running the same fixtures. Results appear here as they land.'
+              : 'No bench results in this window yet. Run bench puts every configured model through the same task fixtures, graded blind by one pinned judge, and keeps the scores here.'}
           </p>
         )}
         {/* Scores from different judges are different rulers; say so whenever
@@ -295,9 +353,9 @@ export function ModelsPanel({ days }: { days: number }) {
           </div>
         ) : (
           <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
-            No shadow comparisons in this window. Set SHADOW_EVAL_MODEL and SHADOW_EVAL_RATE (e.g. 0.05) to run a
-            sampled fraction of flow AI steps through a challenger and judge the pairs blind. Only side-effect-free
-            steps are shadowed; scores are stored, never the text.
+            {report?.shadowSampling
+              ? `Shadow sampling is on — ${Math.round(report.shadowSampling.rate * 100)}% of flow AI steps also run through ${report.shadowSampling.model} and the pairs are judged blind. No samples have landed in this window yet.`
+              : 'Shadow sampling is off in this deployment. When enabled, a sampled fraction of real flow AI steps also runs through a challenger model and the two answers are judged blind — the strongest evidence for a model swap. Only side-effect-free steps are shadowed; scores are stored, never the text.'}
           </p>
         )}
       </section>

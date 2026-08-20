@@ -77,7 +77,7 @@ function harness(overrides: Partial<WorkerRuntimeDeps> = {}) {
 afterEach(() => { delete process.env.APP_EDITION })
 
 describe('consumer topology', () => {
-  test('the internal edition consumes all four queues', () => {
+  test('the internal edition consumes every queue', () => {
     const specs = buildWorkerSpecs(false)
 
     assert.deepEqual(specs.map((spec) => spec.queue), [
@@ -85,16 +85,19 @@ describe('consumer topology', () => {
       QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION,
       QUEUE_NAMES.FLOW_EXECUTION,
       QUEUE_NAMES.TEMPLATE_GENERATION,
+      QUEUE_NAMES.MODEL_BENCH,
     ])
   })
 
-  test('the customer edition does not register the template-generation queue', () => {
+  test('the customer edition registers neither internal-only queue', () => {
     // The edition gate lives in the topology, not just in the enqueue path: a
-    // customer deploy that consumed this queue would be a surface leak of the
-    // kind customer-edition.md exists to prevent.
+    // customer deploy that consumed these queues would be a surface leak of the
+    // kind customer-edition.md exists to prevent. Model bench is internal for
+    // the same reason as the console that triggers it.
     const specs = buildWorkerSpecs(true)
 
     assert.equal(specs.some((spec) => spec.queue === QUEUE_NAMES.TEMPLATE_GENERATION), false)
+    assert.equal(specs.some((spec) => spec.queue === QUEUE_NAMES.MODEL_BENCH), false)
     assert.equal(specs.length, 3)
   })
 
@@ -102,7 +105,7 @@ describe('consumer topology', () => {
     process.env.APP_EDITION = 'customer'
     assert.equal(buildWorkerSpecs().length, 3)
     process.env.APP_EDITION = 'internal'
-    assert.equal(buildWorkerSpecs().length, 4)
+    assert.equal(buildWorkerSpecs().length, 5)
   })
 
   test('every spec carries a distinct queue and its own failure handler', () => {

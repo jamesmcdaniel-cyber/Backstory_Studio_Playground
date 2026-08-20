@@ -17,6 +17,12 @@ export const QUEUE_NAMES = {
   // createMany) so its dead-letter has no in-flight run row to terminalize.
   TEMPLATE_GENERATION: 'template-generation',
   TEMPLATE_GENERATION_DEAD_LETTER: 'template-generation-dead-letter',
+  // Operator-triggered cross-model bench (Admin → Models → Run bench). Long
+  // (fixtures × candidates × judge samples), so it runs on the worker, never
+  // in a request. No dead-letter queue: the job is additive-only — each result
+  // row is persisted as it lands, so a failed run leaves partial results and a
+  // log line, and re-running simply adds a fresh batch.
+  MODEL_BENCH: 'model-bench',
 } as const
 
 const buildPhase = process.env.NEXT_PHASE === 'phase-production-build'

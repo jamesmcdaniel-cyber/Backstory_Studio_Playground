@@ -9,6 +9,7 @@ import { deadLetterFromJob } from '@/lib/queue/dead-letter'
 import { deadLetterFromFlowJob } from '@/lib/queue/flow-dead-letter'
 import { deadLetterFromTemplateGenerationJob } from '@/lib/queue/template-generation-dead-letter'
 import { executeTemplateGenerationJob } from '@/lib/templates/generation-queue'
+import { runBench } from '@/lib/eval/bench'
 import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
 import { runDispatchTick } from '@/lib/scheduling/dispatch-tick'
 import { assertWorkerEnv } from '@/lib/workers/assert-env'
@@ -44,6 +45,21 @@ export interface WorkerSpec {
  * this process consumes, and that each is paired with the dead-letter target
  * that owns the right table, is exactly the wiring an outage turns on.
  */
+/**
+ * One bench run per job. The job payload is empty on purpose — candidates and
+ * judge come from the worker's environment (BENCH_MODELS, BENCH_JUDGE_MODEL),
+ * the same source the CLI reads, so the button and the shell measure the same
+ * thing. Job-level progress goes to the worker log; results go to the table
+ * the Models panel reads.
+ */
+async function executeModelBenchJob(job: { id?: string }) {
+  const summary = await runBench((line) => console.log(`[model-bench ${job.id ?? ''}] ${line}`))
+  if (summary.errors > 0) {
+    throw new Error(`bench finished with ${summary.errors} errored fixture(s); ${summary.recorded} recorded`)
+  }
+  return summary
+}
+
 export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerSpec[] {
   return [
     { queue: QUEUE_NAMES.AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.AGENT_EXECUTION) },
@@ -61,6 +77,16 @@ export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerS
           queue: QUEUE_NAMES.TEMPLATE_GENERATION,
           handler: executeTemplateGenerationJob as Processor<any, any, string>,
           onFailed: deadLetterFromTemplateGenerationJob(QUEUE_NAMES.TEMPLATE_GENERATION),
+        },
+        // Operator bench (internal edition only — the customer edition has no
+        // Models console to trigger it). Additive-only, so no dead-letter
+        // target: results persisted before a failure survive it, and the
+        // failure itself is a log line, not a stranded run row.
+        {
+          queue: QUEUE_NAMES.MODEL_BENCH,
+          handler: executeModelBenchJob as Processor<any, any, string>,
+          onFailed: (job: any, error: Error) =>
+            console.error(`model-bench job ${job?.id ?? '?'} failed: ${error.message}`),
         }]),
   ]
 }

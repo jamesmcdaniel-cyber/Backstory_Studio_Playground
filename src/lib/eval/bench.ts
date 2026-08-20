@@ -14,7 +14,9 @@
  *    model with tastes; letting provider selection pick it per-call would let
  *    Qwen grade its own homework whenever it is the configured provider.
  *
- * Usage:  BENCH_MODELS=claude-sonnet-5,qwen-3.7 npm run eval:bench
+ * Two entry points, one implementation: the "Run bench" button in Admin →
+ * Models enqueues a model-bench job the worker drives through runBench(), and
+ * `BENCH_MODELS=... npm run eval:bench` calls the same function from a shell.
  * Costs real tokens and needs DATABASE_URL — an operator tool, never a PR gate.
  */
 import { createPinnedRunner, DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
@@ -65,26 +67,41 @@ async function meanJudgement(rubric: string, trajectory: Trajectory): Promise<{ 
   return { score: scores.reduce((total, score) => total + score, 0) / scores.length, reasoning }
 }
 
-async function main() {
+export type BenchSummary = {
+  models: string[]
+  judge: string
+  /** fixture results actually persisted */
+  recorded: number
+  /** candidate/fixture attempts that errored (dead endpoint, judge failure) */
+  errors: number
+}
+
+/**
+ * Run the full bench and persist every result. Throws only when NOTHING is
+ * benchable (no configured candidate); per-fixture errors are counted and
+ * logged so one dead endpoint fails its candidate loudly without killing the
+ * others. `log` defaults to console so the CLI output is unchanged.
+ */
+export async function runBench(log: (line: string) => void = console.log): Promise<BenchSummary> {
   const models = resolveBenchModels({
     env: process.env.BENCH_MODELS,
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     qwen: qwenConfigured(),
   })
   if (!models.length) {
-    console.error('No benchable model configured — set ANTHROPIC_API_KEY and/or QWEN_API_KEY (+QWEN_BASE_URL).')
-    process.exit(1)
+    throw new Error('No benchable model configured — set ANTHROPIC_API_KEY and/or QWEN_API_KEY (+QWEN_BASE_URL).')
   }
   // Imported lazily so the pure helpers above stay importable in DB-less tests.
   const { systemPrisma } = await import('@/lib/prisma')
   const judge = pinnedJudgeModel()
-  console.log(`Bench: ${models.join(', ')} — judged by ${judge}`)
+  const summary: BenchSummary = { models, judge, recorded: 0, errors: 0 }
+  log(`Bench: ${models.join(', ')} — judged by ${judge}`)
 
   for (const model of models) {
     // Qwen candidates resolve through QWEN_MODEL exactly as production does,
     // so the bench measures the model production would actually serve.
     const served = model.startsWith('claude') ? model : qwenModel(model)
-    console.log(`\n${model}${served === model ? '' : ` (served as ${served})`}:`)
+    log(`${model}${served === model ? '' : ` (served as ${served})`}:`)
     for (const fixture of fixtures) {
       if (!fixture.rubric) continue
       const runner = createPinnedRunner(served)
@@ -110,18 +127,25 @@ async function main() {
             latencyMs: Date.now() - startedAt,
           },
         })
-        console.log(`  ${fixture.name}: ${score.toFixed(3)}${structural.length ? ' STRUCTURAL-FAIL' : ''}`)
+        summary.recorded += 1
+        log(`  ${fixture.name}: ${score.toFixed(3)}${structural.length ? ' STRUCTURAL-FAIL' : ''}`)
       } catch (error) {
         // A pinned run has no fallback by design; a dead endpoint fails its
         // candidate loudly instead of polluting the table with silent gaps.
-        console.error(`  ${fixture.name}: ERROR — ${error instanceof Error ? error.message : String(error)}`)
-        process.exitCode = 1
+        summary.errors += 1
+        log(`  ${fixture.name}: ERROR — ${error instanceof Error ? error.message : String(error)}`)
       }
     }
   }
+  return summary
 }
 
-// Only execute as a script — importing the pure helpers must never start a run.
+// Only execute as a script — importing runBench must never start a run.
 if (process.argv[1]?.endsWith('bench.ts')) {
-  void main().then(() => process.exit())
+  void runBench()
+    .then((summary) => process.exit(summary.errors > 0 ? 1 : 0))
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exit(1)
+    })
 }

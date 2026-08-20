@@ -61,6 +61,11 @@ function luhnValid(raw: string): boolean {
   return sum % 10 === 0
 }
 
+/**
+ * Exported for demo mode's anonymiser (src/lib/demo/anonymize.ts), which
+ * REPLACES matches in a disposable copy of a workspace. This module's own
+ * contract is unchanged: here, detection only ever records categories.
+ */
 const DETECTORS: readonly Detector[] = [
   { category: 'email', pattern: /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i },
   // Requires separators or +country so run ids and timestamps do not match.
@@ -122,3 +127,11 @@ export class AiEgressBlockedError extends Error {
     this.name = 'AiEgressBlockedError'
   }
 }
+
+/**
+ * Exported for demo mode's anonymiser (src/lib/demo/anonymize.ts), which
+ * REPLACES matches — but only inside a disposable demo workspace that holds
+ * no real data path. This module's own contract is unchanged: here, detection
+ * only ever records categories, never transforms.
+ */
+export const PII_DETECTORS = DETECTORS

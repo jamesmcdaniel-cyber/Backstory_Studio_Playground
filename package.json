@@ -64,7 +64,7 @@
     "@types/web-push": "^3.6.4",
     "@uiw/react-codemirror": "^4.25.11",
     "@xyflow/react": "^12.11.2",
-    "bullmq": "^5.58.2",
+    "bullmq": "^6.0.11",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",

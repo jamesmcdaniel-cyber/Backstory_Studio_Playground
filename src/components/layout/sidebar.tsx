@@ -38,6 +38,7 @@ import { ConfirmDialog } from '@/components/settings/dialogs'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DemoChip, DemoModeMenuItem } from '@/components/layout/demo-chip'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuth } from '@/hooks/use-auth'
@@ -607,6 +608,8 @@ export function Sidebar() {
                   }}
                 />
                 <div className="my-1 border-t" />
+                <DemoModeMenuItem />
+                <div className="my-1 border-t" />
                 <div className="truncate px-2 py-1 text-xs text-fg-muted">{user?.emailAddress}</div>
                 <button
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-graphite-700 hover:bg-graphite-100"
@@ -617,6 +620,7 @@ export function Sidebar() {
             </div>
           )}
 
+          <DemoChip />
           <div className={cn('mt-2 flex items-center gap-2', desktopCollapsed && 'lg:flex-col')}>
             <button
               className={cn(

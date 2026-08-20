@@ -17,9 +17,18 @@ model Organization {
   logoUrl               String?
   plan                  Plan      @default(TRIAL)
   /// Platform tier. 'internal' = Backstory; 'partner' = People.ai; 'customer'
-  /// = every paying workspace. Only a platform reviewer may change this — it
-  /// is never settable from a customer-facing route.
+  /// = every paying workspace; 'demo' = a user's disposable anonymised copy
+  /// of their workspace (Demo mode). Only a platform reviewer may change this
+  /// — it is never settable from a customer-facing route.
   kind                  String    @default("customer")
+  /// 'demo' orgs only: the real workspace this is an anonymised copy of.
+  /// Scalar on purpose (no FK relation): teardown order is enforced in
+  /// org-teardown, and a cascade here would delete the sandbox mid-request
+  /// instead of through the teardown path.
+  demoOfOrganizationId  String?   @db.Uuid
+  /// 'demo' orgs only: the single user who may enter this sandbox. Unique —
+  /// one demo workspace per person, reused across sessions until exited.
+  demoOwnerUserId       String?   @unique
   // People.ai tenant binding: one Studio workspace per People.ai team. Set on
   // first People.ai connection; every rep from that team lands in this org.
   peopleAiTeamId        String?   @unique

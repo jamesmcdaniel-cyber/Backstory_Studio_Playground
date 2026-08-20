@@ -33,7 +33,12 @@ type PlatformUser = {
   platformRole: string | null
   isActive: boolean
   /** 'unknown' means the Supabase sweep did not run — absence of evidence. */
-  supabaseIdentity: 'present' | 'missing' | 'unknown'
+  /**
+   * 'disabled' — banned or soft-deleted in Supabase, so it can no longer sign
+   * in. 'missing' — no identity at all, an orphaned row for an operator to
+   * clean up. The two are different problems and read differently below.
+   */
+  supabaseIdentity: 'present' | 'disabled' | 'missing' | 'unknown'
   createdAt: string
   lastSeenAt: string | null
   runAllowanceResetAt: string | null
@@ -48,7 +53,15 @@ type PlatformUser = {
   countableIntegrations: number
 }
 
-type Report = { days: number; truncated: boolean; identitiesReconciled: boolean; users: PlatformUser[] }
+type Report = {
+  days: number
+  truncated: boolean
+  identitiesReconciled: boolean
+  /** Deactivated accounts the default view is holding back. */
+  deactivatedHidden: number
+  includeDeactivated: boolean
+  users: PlatformUser[]
+}
 
 type Action = 'deactivate' | 'reactivate' | 'reset-password' | 'reset-monthly-tokens' | 'reset-daily-runs' | 'reset-mfa' | 'delete'
 
@@ -72,6 +85,7 @@ export default function PlatformUsersPage() {
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [showDeactivated, setShowDeactivated] = useState(false)
   const [busy, setBusy] = useState<Action | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -80,6 +94,7 @@ export default function PlatformUsersPage() {
     try {
       const params = new URLSearchParams({ days: String(days) })
       if (search) params.set('q', search)
+      if (showDeactivated) params.set('deactivated', '1')
       const response = await fetch(`/api/admin/users?${params}`, { cache: 'no-store' })
       if (!response.ok) {
         toast.error('Could not load users.')
@@ -89,10 +104,12 @@ export default function PlatformUsersPage() {
     } finally {
       setLoading(false)
     }
-  }, [days, search])
+  }, [days, search, showDeactivated])
 
   useEffect(() => { void load() }, [load])
 
+  // Deactivating the selected account removes it from the default view, so the
+  // detail panel must close with it rather than linger over a row that is gone.
   const selected = useMemo(
     () => report?.users.find((user) => user.id === selectedId) ?? null,
     [report, selectedId],
@@ -144,9 +161,14 @@ export default function PlatformUsersPage() {
     // who actually showed up inside the selected window, which is what the rest
     // of this page's numbers mean.
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    // Deactivated accounts are filtered out of `users` by default, so the
+    // denominator has to add them back — otherwise "Enabled" reads "12 of 12"
+    // for the same reason it once read "7 of 7 active": the tile would be
+    // counting the filter, not the platform.
+    const hidden = report?.deactivatedHidden ?? 0
     return {
-      people: users.length,
-      enabled: users.filter((user) => user.isActive).length,
+      people: users.length + hidden,
+      enabled: users.filter((user) => user.isActive && user.supabaseIdentity !== 'disabled').length,
       seen: users.filter((user) => user.lastSeenAt && new Date(user.lastSeenAt).getTime() >= cutoff).length,
       tokens: users.reduce((sum, user) => sum + user.tokens, 0),
       cost: users.reduce((sum, user) => sum + user.costUsd, 0),
@@ -216,6 +238,23 @@ export default function PlatformUsersPage() {
         )}
       </form>
 
+      {/* Deactivated accounts are out of the list by default — banned in
+          Supabase, switched off here, or both. The count is named rather than
+          left implicit, so an operator looking for someone who has gone missing
+          can see there is somewhere else to look. */}
+      <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-input accent-primary"
+          checked={showDeactivated}
+          onChange={(event) => setShowDeactivated(event.target.checked)}
+        />
+        Show deactivated accounts
+        {!showDeactivated && report && report.deactivatedHidden > 0 && (
+          <span className="tabular-nums">({report.deactivatedHidden} hidden)</span>
+        )}
+      </label>
+
       {report?.truncated && (
         <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
           Showing the 200 most recently active accounts. Search to narrow it down — the rest are not on this page.
@@ -263,6 +302,12 @@ export default function PlatformUsersPage() {
                       No Supabase identity
                     </span>
                   )}
+                  {user.supabaseIdentity === 'disabled' && (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded bg-[var(--status-warn-bg)] px-1.5 py-0.5 text-xs font-medium text-[var(--status-warn-fg)]">
+                      <ShieldOff className="h-3 w-3" />
+                      Banned in Supabase
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2.5 whitespace-nowrap">{when(user.lastSeenAt)}</td>
                 <td className="px-4 py-2.5 tabular-nums">{user.integrations}</td>
@@ -302,6 +347,7 @@ export default function PlatformUsersPage() {
               label="Supabase identity"
               value={
                 selected.supabaseIdentity === 'missing' ? 'Deleted upstream'
+                : selected.supabaseIdentity === 'disabled' ? 'Banned upstream — cannot sign in'
                 : selected.supabaseIdentity === 'present' ? 'Live'
                 : 'Could not check'
               }

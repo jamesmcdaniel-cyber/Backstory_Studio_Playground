@@ -151,8 +151,56 @@ const IDENTITY_PAGE_SIZE = 1000
 const IDENTITY_PAGE_LIMIT = 20
 
 /**
- * Every identity Supabase currently holds, as a set of ids — or null when the
- * answer cannot be trusted.
+ * The ban/delete state GoTrue reports for an identity.
+ *
+ * Neither field is on @supabase/auth-js's `User` type — `banned_until` is
+ * returned by the admin listing but has never been declared, and `deleted_at`
+ * is declared but not on every version. So the sweep reads them off the raw
+ * object through this shape rather than trusting the SDK's type, which would
+ * silently narrow them away.
+ */
+type IdentityState = { banned_until?: string | null; deleted_at?: string | null }
+
+/**
+ * Whether Supabase will refuse to sign this identity in.
+ *
+ * Banning is how deactivation is expressed on both paths — the console's own
+ * deactivate action sets `ban_duration`, and the Supabase dashboard's "Ban
+ * user" does the same thing — so a banned identity is a deactivated account,
+ * not merely a flagged one.
+ *
+ * Pure and exported so the rule is unit-testable without a Supabase project.
+ *
+ * An UNPARSEABLE ban stamp counts as banned. Supabase set that value for a
+ * reason, and the two ways to be wrong are not symmetric: reading it as "not
+ * banned" leaves a revoked account listed and treated as healthy, while reading
+ * it as banned merely hides a row an operator can still reveal.
+ */
+export function identityDisabled(identity: IdentityState, now: Date): boolean {
+  if (identity.deleted_at) return true
+  const until = identity.banned_until
+  // GoTrue clears a ban to null; 'none' is the value the WRITE side uses, and
+  // is accepted here so an echoed request body can never read as a ban.
+  if (!until || until === 'none') return false
+  const at = Date.parse(until)
+  return Number.isNaN(at) || at > now.getTime()
+}
+
+/** What one sweep of the Supabase identity store found. */
+export type IdentitySweep = {
+  /** Every identity id Supabase returned, disabled ones included. */
+  present: Set<string>
+  /**
+   * Those Supabase will no longer sign in — banned or soft-deleted. They are
+   * still returned by the admin listing, so without this pass they are
+   * indistinguishable from a healthy account.
+   */
+  disabled: Set<string>
+}
+
+/**
+ * Every identity Supabase currently holds, split by whether it can still sign
+ * in — or null when the answer cannot be trusted.
  *
  * null, never an empty set, on EVERY failure path: unconfigured, an API error,
  * or more pages than the cap. Callers use this to mark our own rows as
@@ -160,22 +208,34 @@ const IDENTITY_PAGE_LIMIT = 20
  * far worse than "unknown": it invites an operator to delete people who are
  * still using the product, and the deletion is the one action they cannot undo.
  */
-export async function liveSupabaseIdentities(): Promise<Set<string> | null> {
+export async function supabaseIdentitySweep(now: Date = new Date()): Promise<IdentitySweep | null> {
   let admin: ReturnType<typeof supabaseAdmin>
   try {
     admin = supabaseAdmin()
   } catch {
     return null
   }
-  const ids = new Set<string>()
+  const present = new Set<string>()
+  const disabled = new Set<string>()
   for (let page = 1; page <= IDENTITY_PAGE_LIMIT; page += 1) {
     const { data, error } = await admin
       .listUsers({ page, perPage: IDENTITY_PAGE_SIZE })
       .catch((cause: unknown) => ({ data: null, error: cause }))
     if (error || !data) return null
-    for (const identity of data.users) ids.add(identity.id)
+    for (const identity of data.users) {
+      present.add(identity.id)
+      if (identityDisabled(identity as IdentityState, now)) disabled.add(identity.id)
+    }
     // A short page is the last page. Anything else means another round trip.
-    if (data.users.length < IDENTITY_PAGE_SIZE) return ids
+    if (data.users.length < IDENTITY_PAGE_SIZE) return { present, disabled }
   }
   return null
+}
+
+/**
+ * Ids only, for callers that just need "does this identity still exist".
+ * Kept as a thin wrapper so the orphan check reads the same as it always has.
+ */
+export async function liveSupabaseIdentities(): Promise<Set<string> | null> {
+  return (await supabaseIdentitySweep())?.present ?? null
 }

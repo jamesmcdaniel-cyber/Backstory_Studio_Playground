@@ -51,6 +51,7 @@ export const PARENT_SCOPED_COPIES = [
 export const EXCLUDED: Record<string, string> = {
   AuditEvent: 'the audit trail is the record of the REAL workspace; a copy in a sandbox is noise at best',
   LlmCall: 'cost/latency accounting for real usage; demo runs write their own rows',
+  ModelEvalResult: 'platform-level model quality measurements (same family as LlmCall); a demo copy would double-count real scores',
   OutboxEvent: 'delivery queue — copying would re-deliver real events',
   FlowSideEffect: 'idempotency ledger for real deliveries; meaningless against canned transports',
   FlowWebhookReceipt: 'inbound webhook dedupe ledger tied to real endpoints',

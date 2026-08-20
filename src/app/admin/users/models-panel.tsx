@@ -140,7 +140,7 @@ export function ModelsPanel({ days }: { days: number }) {
       )}
 
       <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full min-w-[56rem] text-sm">
+        <table className="w-full min-w-[64rem] text-sm">
           <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
             <tr>
               <th className="px-4 py-2 font-medium">Model</th>
@@ -148,6 +148,8 @@ export function ModelsPanel({ days }: { days: number }) {
               <th className="px-4 py-2 font-medium">Calls</th>
               <th className="px-4 py-2 font-medium">Cost</th>
               <th className="px-4 py-2 font-medium">Per run</th>
+              <th className="px-4 py-2 font-medium">Success</th>
+              <th className="px-4 py-2 font-medium">Turns</th>
               <th className="px-4 py-2 font-medium">Avg</th>
               <th className="px-4 py-2 font-medium">p95</th>
               <th className="px-4 py-2 font-medium">Output</th>
@@ -172,6 +174,25 @@ export function ModelsPanel({ days }: { days: number }) {
                   <td className="px-4 py-2.5 tabular-nums">
                     {row.unpriced || row.runs === 0 ? '—' : usd(row.costUsd / row.runs)}
                   </td>
+                  <td className="px-4 py-2.5">
+                    <span className="tabular-nums">{percent(row.outcomes?.successRate ?? null)}</span>
+                    {/* Facts that change how the success number reads: runs a
+                        mid-run fallback handed to another endpoint, and runs
+                        that ended in an audited guardrail refusal. */}
+                    {row.outcomes && (row.outcomes.mixedProviderRuns > 0 || row.outcomes.guardrailRefusals > 0) && (
+                      <div className="text-xs text-muted-foreground">
+                        {[
+                          row.outcomes.mixedProviderRuns > 0 ? `${row.outcomes.mixedProviderRuns} mixed` : null,
+                          row.outcomes.guardrailRefusals > 0 ? `${row.outcomes.guardrailRefusals} refusals` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums">
+                    {row.outcomes?.avgTurns == null ? '—' : row.outcomes.avgTurns.toFixed(1)}
+                  </td>
                   <td className="px-4 py-2.5 tabular-nums">{duration(row.avgLatencyMs)}</td>
                   <td className="px-4 py-2.5 tabular-nums">{duration(row.p95LatencyMs)}</td>
                   <td className="px-4 py-2.5 tabular-nums">{tokens(row.outputTokens)}</td>
@@ -189,7 +210,101 @@ export function ModelsPanel({ days }: { days: number }) {
         {loading && <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p>}
       </div>
 
+      {/* ── Quality ─────────────────────────────────────────────────────────
+          Cost and latency say a model is cheaper; only these say whether it
+          did the job. Both sections generalize to any model that gets added —
+          rows appear per provider:model straight from the eval table. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">Quality — bench</h2>
+        {(report?.bench.length ?? 0) > 0 ? (
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full min-w-[40rem] text-sm">
+              <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Model</th>
+                  <th className="px-4 py-2 font-medium">Avg score</th>
+                  <th className="px-4 py-2 font-medium">Samples</th>
+                  <th className="px-4 py-2 font-medium">Judge</th>
+                  <th className="px-4 py-2 font-medium">Last run</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {report?.bench.map((row) => (
+                  <tr key={`${row.provider}:${row.model}:${row.judgeModel}`}>
+                    <td className="px-4 py-2.5 font-medium">{row.model}</td>
+                    <td className="px-4 py-2.5 tabular-nums">{row.avgScore == null ? '—' : row.avgScore.toFixed(3)}</td>
+                    <td className="px-4 py-2.5 tabular-nums">{row.samples}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{row.judgeModel ?? '—'}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">
+                      {row.lastRunAt ? new Date(row.lastRunAt).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
+            No bench results in this window. Run <code className="font-mono">npm run eval:bench</code> (models via
+            BENCH_MODELS) — the same fixtures against every candidate, graded by one pinned judge, persisted here.
+          </p>
+        )}
+        {/* Scores from different judges are different rulers; say so whenever
+            the table is actually mixing them. */}
+        {new Set(report?.bench.map((row) => row.judgeModel)).size > 1 && (
+          <p className="text-xs text-muted-foreground">
+            Multiple judges appear above — compare scores only within rows graded by the same judge.
+          </p>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">Quality — shadow (real production tasks)</h2>
+        {(report?.shadow.length ?? 0) > 0 ? (
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full min-w-[44rem] text-sm">
+              <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Matchup</th>
+                  <th className="px-4 py-2 font-medium">Samples</th>
+                  <th className="px-4 py-2 font-medium">Challenger wins</th>
+                  <th className="px-4 py-2 font-medium">Champion avg</th>
+                  <th className="px-4 py-2 font-medium">Challenger avg</th>
+                  <th className="px-4 py-2 font-medium">Extra spend</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {report?.shadow.map((row) => (
+                  <tr key={`${row.championModel}:${row.challengerModel}`}>
+                    <td className="px-4 py-2.5">
+                      <span className="font-medium">{row.challengerModel}</span>
+                      <span className="text-muted-foreground"> vs {row.championModel}</span>
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums">{row.samples}</td>
+                    <td className="px-4 py-2.5 tabular-nums">
+                      {percent(row.samples ? (row.challengerWins + row.ties / 2) / row.samples : null)}
+                      <span className="text-xs text-muted-foreground"> ({row.ties} ties)</span>
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums">{row.avgChampionScore.toFixed(3)}</td>
+                    <td className="px-4 py-2.5 tabular-nums">{row.avgChallengerScore.toFixed(3)}</td>
+                    <td className="px-4 py-2.5 tabular-nums">{usd(row.challengerCostUsd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
+            No shadow comparisons in this window. Set SHADOW_EVAL_MODEL and SHADOW_EVAL_RATE (e.g. 0.05) to run a
+            sampled fraction of flow AI steps through a challenger and judge the pairs blind. Only side-effect-free
+            steps are shadowed; scores are stored, never the text.
+          </p>
+        )}
+      </section>
+
       <p className="text-sm text-muted-foreground">
+        Success and turns attribute each run to the model that actually served most of its calls — a run that asked
+        for one model and was served by another (fallback) counts under the model that did the work.
         Latency columns cover only calls made since per-call timing was recorded, so a window reaching further
         back than that shows fewer timed calls than total calls. Everyone outside the operator tier is held to{' '}
         {report?.limits.frontierClaudeRunsPerDay ?? '—'} frontier-Claude runs and{' '}

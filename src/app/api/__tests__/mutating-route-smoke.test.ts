@@ -267,6 +267,8 @@ test('cron/dispatch and cron/retention refuse a wrong secret', { skip: !TEST_DB 
  * a src/lib/privacy/delete.ts that no test imported at all.
  */
 const SKIPS: Record<string, string> = {
+  'demo/enter:POST': 'covered by src/lib/demo/__tests__/session.db.test.ts — enter clones a whole workspace, which the smoke fixture is not shaped for',
+  'demo/exit:POST': 'covered by src/lib/demo/__tests__/session.db.test.ts — exit tears down the demo org created there',
   'v1/token:POST': 'no coverage: the client-credentials grant is exercised as a service (client-credentials.db.test.ts), but this route wrapper is never invoked',
   'agents/[id]/execute:POST': 'covered by src/app/api/__tests__/free-tier-enforcement.db.test.ts — the daily-run ceiling, with the queue seam stubbed off',
   'agents/[id]/chat:POST': 'no coverage: streams a live model turn',

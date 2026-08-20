@@ -10,6 +10,7 @@ import {
 } from '@/lib/auth/identity-providers'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { DEFAULT_FEATURES, resolveFeatures, type Feature } from '@/lib/authz/features'
+import { resolveDemoOrganization } from '@/lib/demo/session'
 import { prisma } from '@/lib/prisma'
 
 type AuthResult = NonNullable<Awaited<ReturnType<typeof getAuthWithUser>>>
@@ -234,11 +235,20 @@ export async function requireAuthContext(
     }
   }
 
+  // Demo mode: every gate above has already judged the REAL workspace —
+  // entitlement, MFA, SSO, Backstory MCP, platform admission. Only the tenant
+  // the request operates on is redirected, so the tenant guard and RLS scope
+  // the whole handler to the sandbox. Permissions and features stay the real
+  // ones: the demo org's kind grants nothing (REVIEWING_ORG_KINDS and
+  // OPERATING_ORG_KINDS exclude 'demo', pinned by test), and resolution ran
+  // before this line from the real org.
+  const demoOrganizationId = await resolveDemoOrganization(auth.dbUser.id)
+
   return {
     user: auth.user,
     dbUser: auth.dbUser,
     userId: auth.userId,
-    organizationId: auth.organizationId,
+    organizationId: demoOrganizationId ?? auth.organizationId,
     permissions,
     can: (permission) => permissions.has(permission),
     features,

@@ -205,6 +205,7 @@ if (TEST_DB) {
     { name: 'GET /api/push/key', run: async () => (await import('../push/key/route')).GET(req('/api/push/key')) },
     { name: 'GET /api/search', run: async () => (await import('../search/route')).GET(req('/api/search?q=smoke')) },
     { name: 'GET /api/setup/status', run: async () => (await import('../setup/status/route')).GET(req('/api/setup/status')) },
+    { name: 'GET /api/demo/status', run: async () => (await import('../demo/status/route')).GET(req('/api/demo/status')) },
     { name: 'GET /api/signal-subscriptions', run: async () => (await import('../signal-subscriptions/route')).GET(req('/api/signal-subscriptions')) },
     { name: 'GET /api/signals', run: async () => (await import('../signals/route')).GET(req('/api/signals')) },
     { name: 'GET /api/signals/custom', run: async () => (await import('../signals/custom/route')).GET(req('/api/signals/custom')) },

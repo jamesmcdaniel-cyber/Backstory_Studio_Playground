@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { PROVIDER_CONNECT_HINTS } from '@/components/integrations/provider-connect-hints'
+import { IntegrationDetailDialog } from '@/components/integrations/integration-detail-dialog'
 import { useCachedJson } from '@/lib/client/use-cached-json'
 import { useNangoConnect } from '@/lib/client/use-nango-connect'
 
@@ -59,6 +60,9 @@ export function OAuthIntegrationsGrid() {
   // as you type.
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  // Card click → capability detail dialog; Connect/Verify/Disconnect keep
+  // working from the card via stopPropagation, and again inside the dialog.
+  const [detailId, setDetailId] = useState<string | null>(null)
 
   const q = search.trim().toLowerCase()
   const filtered = useMemo(
@@ -117,7 +121,21 @@ export function OAuthIntegrationsGrid() {
         {pageItems.map((integration) => {
           const connection = connections[integration.id]
           return (
-            <Card key={integration.id} variant="interactive">
+            <Card
+              key={integration.id}
+              variant="interactive"
+              role="button"
+              tabIndex={0}
+              aria-label={`${integration.name} details`}
+              className="cursor-pointer"
+              onClick={() => setDetailId(integration.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  setDetailId(integration.id)
+                }
+              }}
+            >
               <CardHeader>
                 <CardTitle className="flex items-center justify-between gap-3 text-base">
                   <span className="flex items-center gap-2">
@@ -159,15 +177,15 @@ export function OAuthIntegrationsGrid() {
                       <Button
                         className="w-full"
                         variant={connection.verifiedAt ? 'outline' : 'default'}
-                        onClick={() => verify(integration)}
+                        onClick={(event) => { event.stopPropagation(); verify(integration) }}
                         loading={verifying === integration.id}
                       >
                         <ShieldCheck className="h-4 w-4" />
                         {connection.verifiedAt ? 'Verify again' : 'Verify'}
                       </Button>
-                      <Button className="w-full" variant="outline" onClick={() => disconnect(integration)} loading={busy === integration.id}>Disconnect</Button>
+                      <Button className="w-full" variant="outline" onClick={(event) => { event.stopPropagation(); disconnect(integration) }} loading={busy === integration.id}>Disconnect</Button>
                     </div>
-                  : <Button className="w-full" onClick={() => connect(integration)} loading={busy === integration.id}>
+                  : <Button className="w-full" onClick={(event) => { event.stopPropagation(); connect(integration) }} loading={busy === integration.id}>
                       Connect
                     </Button>}
               </CardContent>
@@ -177,6 +195,25 @@ export function OAuthIntegrationsGrid() {
       </div>
 
       <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} />
+
+      {detailId && (() => {
+        const integration = integrations.find((candidate) => candidate.id === detailId)
+        if (!integration) return null
+        const connection = connections[integration.id]
+        return (
+          <IntegrationDetailDialog
+            integration={integration}
+            connected={Boolean(connection?.connected)}
+            verified={Boolean(connection?.verifiedAt)}
+            busy={busy === integration.id}
+            verifying={verifying === integration.id}
+            onConnect={() => connect(integration)}
+            onVerify={() => verify(integration)}
+            onDisconnect={() => disconnect(integration)}
+            onClose={() => setDetailId(null)}
+          />
+        )
+      })()}
     </div>
   )
 }

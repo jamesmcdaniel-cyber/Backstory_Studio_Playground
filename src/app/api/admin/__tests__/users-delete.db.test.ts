@@ -36,6 +36,8 @@ if (TEST_DB) {
 
   /** Identities the stand-in GoTrue admits to holding. */
   let liveIdentities = new Set<string>()
+  /** Of those, the ones it reports as banned — deactivated, but still listed. */
+  const bannedIdentities = new Set<string>()
   /** Set to make DELETE report the identity as already gone. */
   let identityDeleteStatus = 200
 
@@ -49,7 +51,15 @@ if (TEST_DB) {
           response.end(JSON.stringify(body))
         }
         if (request.method === 'GET' && path === '/auth/v1/admin/users') {
-          return json(200, { users: [...liveIdentities].map((id) => ({ id })), aud: 'authenticated' })
+          return json(200, {
+            users: [...liveIdentities].map((id) => ({
+              id,
+              // A banned identity is STILL returned by the admin listing. That
+              // is the whole reason the sweep has to read this field.
+              ...(bannedIdentities.has(id) ? { banned_until: '2126-01-01T00:00:00.000Z' } : {}),
+            })),
+            aud: 'authenticated',
+          })
         }
         if (request.method === 'DELETE') {
           if (identityDeleteStatus !== 200) {
@@ -232,6 +242,44 @@ if (TEST_DB) {
       assert.equal(find(live.userId).supabaseIdentity, 'present')
     } finally {
       await live.cleanup().catch(() => {})
+      await orphan.cleanup().catch(() => {})
+    }
+  })
+
+  test('an account banned in Supabase drops out of the list, and can be recovered', async () => {
+    const banned = await seedSubject()
+    bannedIdentities.add(banned.supabaseId)
+    try {
+      const list = async (search = '') =>
+        (await (await listRoute.GET(new NextRequest(new URL(`http://test/api/admin/users${search}`)))).json())
+
+      // Deactivated in Supabase alone — our own isActive flag is untouched,
+      // which is exactly the case that used to read as a healthy account.
+      const shown = await list()
+      assert.equal(shown.users.some((user: any) => user.id === banned.userId), false)
+      assert.ok(shown.deactivatedHidden >= 1, 'the hidden count must name what was withheld')
+
+      // Recoverable, or the console could never reactivate or delete the row.
+      const all = await list('?deactivated=1')
+      const row = all.users.find((user: any) => user.id === banned.userId)
+      assert.ok(row, 'the account must still be reachable with ?deactivated=1')
+      assert.equal(row.supabaseIdentity, 'disabled')
+      assert.equal(all.deactivatedHidden, 0)
+    } finally {
+      bannedIdentities.delete(banned.supabaseId)
+      await banned.cleanup().catch(() => {})
+    }
+  })
+
+  test('an orphaned row stays visible — it is a cleanup task, not a switched-off account', async () => {
+    const orphan = await seedSubject()
+    liveIdentities.delete(orphan.supabaseId)
+    try {
+      const body = await (await listRoute.GET(new NextRequest(new URL('http://test/api/admin/users')))).json()
+      const row = body.users.find((user: any) => user.id === orphan.userId)
+      assert.ok(row, 'hiding orphans by default is how they would stay unresolved')
+      assert.equal(row.supabaseIdentity, 'missing')
+    } finally {
       await orphan.cleanup().catch(() => {})
     }
   })

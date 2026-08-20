@@ -112,7 +112,13 @@ model WorkspaceFolder {
   organizationId String   @db.Uuid
   name           String
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime @updatedAt
+  /// @default(now()) declares what the table has always had: the creating
+  /// migration wrote DEFAULT CURRENT_TIMESTAMP, the model did not, and the
+  /// resulting drift failed CI's migrations job on every run since. Declared
+  /// rather than dropped because dropping it is the direction that can break
+  /// something — Prisma sets this field itself, but a raw INSERT omitting it
+  /// would start violating NOT NULL.
+  updatedAt      DateTime @default(now()) @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 

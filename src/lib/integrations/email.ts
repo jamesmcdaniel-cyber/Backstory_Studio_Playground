@@ -25,6 +25,7 @@
 import type { ToolDefinition } from '@/lib/llm/model-runner'
 import { emailSafeReportHtml } from '@/features/agents/report-format'
 import { resolveOrgCredential, type ResolvedCredential } from './org-credential'
+import { demoFetchOr } from '@/lib/demo/transport'
 
 const RESEND_API_URL = 'https://api.resend.com/emails'
 
@@ -91,12 +92,12 @@ export async function sendEmail({
   } else {
     payload.text = text ?? ''
   }
-  const response = await fetch(RESEND_API_URL, {
+  const response = await demoFetchOr('email', () => fetch(RESEND_API_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(30_000),
-  })
+  }))
   if (!response.ok) throw new Error(`Email API error ${response.status}`)
   return true
 }
@@ -167,7 +168,7 @@ export class EmailToolClient {
         payload.text = body
       }
 
-      const response = await fetch(RESEND_API_URL, {
+      const response = await demoFetchOr('email', () => fetch(RESEND_API_URL, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -175,7 +176,7 @@ export class EmailToolClient {
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(30_000),
-      })
+      }))
 
       if (!response.ok) {
         throw new Error(`Email API error ${response.status}`)

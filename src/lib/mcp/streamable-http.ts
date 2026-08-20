@@ -1,3 +1,4 @@
+import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
 /**
  * Minimal MCP StreamableHTTP client transport (JSON-RPC over POST, tolerating
  * SSE-framed responses). Auth is injected as a header provider so the same
@@ -123,6 +124,8 @@ export class StreamableHttpMcpClient {
   }
 
   async callTool(serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+    // Demo orgs never dial out — canned result instead (src/lib/demo/transport.ts).
+    if (await demoAmbientActive()) return cannedResponse('mcp', { toolName: name })
     await this.initialize(serverUrl)
     const response = await this.rpc(serverUrl, 'tools/call', { name, arguments: args })
     if (response.error) throw new Error(response.error.message || `MCP tool ${name} failed`)

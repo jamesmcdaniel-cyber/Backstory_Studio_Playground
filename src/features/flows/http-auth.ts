@@ -8,6 +8,7 @@ import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { assertPublicUrl, fetchPublicUrl } from '@/lib/net/ssrf'
 import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentials/audit'
 import { assessStaleness } from '@/lib/credentials/lifetime'
+import { cannedFetchResponse, demoAmbientActive } from '@/lib/demo/transport'
 
 export const HTTP_AUTH_TYPES = [
   'basic',
@@ -271,6 +272,9 @@ export async function fetchWithHttpCredential(
   credential: ResolvedHttpCredential | null,
   signal?: AbortSignal,
 ): Promise<Response> {
+  // Demo orgs never dial out — the step succeeds against a canned body so a
+  // captured run narrates like a real one (src/lib/demo/transport.ts).
+  if (await demoAmbientActive()) return cannedFetchResponse('http', { endpoint: request.url })
   const applied = credential ? await applyHttpCredential(request, credential) : request
   let currentUrl = applied.url
   let currentInit: RequestInit = { ...applied.init, signal }

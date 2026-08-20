@@ -19,6 +19,7 @@
 
 import type { ToolDefinition } from '@/lib/llm/model-runner'
 import { resolveOrgCredential, type ResolvedCredential } from './org-credential'
+import { demoFetchOr } from '@/lib/demo/transport'
 
 const SLACK_API_URL = 'https://slack.com/api/chat.postMessage'
 
@@ -86,7 +87,7 @@ export class SlackToolClient {
     if (!token) throw new Error('Slack bot token is not configured')
 
     if (name === 'post_message') {
-      const response = await fetch(SLACK_API_URL, {
+      const response = await demoFetchOr('slack', () => fetch(SLACK_API_URL, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -97,7 +98,7 @@ export class SlackToolClient {
           text: args.text,
         }),
         signal: AbortSignal.timeout(30_000),
-      })
+      }))
 
       // Slack always returns HTTP 200 even on failure; we must inspect body.ok
       const body = (await response.json()) as Record<string, unknown>

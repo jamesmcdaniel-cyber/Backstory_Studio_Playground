@@ -15,6 +15,7 @@ import { prisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { fromNangoProviderKey } from '@/lib/connectors/registry'
 import { getNangoClient, nangoConfigured } from './client'
+import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
 
 export interface DeliveryConnection {
   connectionId: string
@@ -81,12 +82,18 @@ function proxyTimeoutMs(): number {
 
 export function defaultProxy(): NangoProxy {
   const nango = getNangoClient()
-  return (args) =>
-    withTimeout(
+  return async (args) => {
+    // Demo orgs never dial out: their connection rows are credential-free
+    // shells, and a captured run must succeed — see src/lib/demo/transport.ts.
+    if (await demoAmbientActive()) {
+      return cannedResponse('nango-proxy', { endpoint: args.endpoint, method: args.method }) as { data: unknown }
+    }
+    return withTimeout(
       nango.proxy(args as never) as Promise<{ data: unknown }>,
       proxyTimeoutMs(),
       `Nango proxy ${args.method} ${args.endpoint}`,
     )
+  }
 }
 
 /**

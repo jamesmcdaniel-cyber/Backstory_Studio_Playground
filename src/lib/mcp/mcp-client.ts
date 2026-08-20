@@ -14,6 +14,7 @@
 import { decryptSecret } from '@/lib/crypto/secrets'
 import { refreshAccessToken } from '@/lib/mcp/oauth-authcode'
 import { assertPublicUrl } from '@/lib/net/ssrf'
+import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
 
 // ---------------------------------------------------------------------------
 // Runtime config (constructor argument — secrets already decrypted)
@@ -408,6 +409,9 @@ export class McpClient {
     name: string,
     args: Record<string, unknown>,
   ): Promise<any> {
+    // Demo orgs never dial an MCP server — their connection rows are
+    // credential-free shells (src/lib/demo/transport.ts).
+    if (await demoAmbientActive()) return cannedResponse('mcp', { toolName: name })
     await this.initialize(serverUrl)
     const response = await this.rpc(serverUrl, 'tools/call', { name, arguments: args })
     if (response.error) {

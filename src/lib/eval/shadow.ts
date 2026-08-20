@@ -29,7 +29,6 @@
 import { randomUUID } from 'node:crypto'
 import { createPinnedRunner, generateStructured } from '@/lib/llm/model-runner'
 import { qwenModel } from '@/lib/llm/qwen'
-import { modelProviderBrand } from '@/lib/llm/provider-brand'
 import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { computeCostUsd } from '@/lib/usage/pricing'

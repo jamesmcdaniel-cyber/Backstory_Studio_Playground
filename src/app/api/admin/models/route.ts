@@ -2,6 +2,7 @@ import { systemPrisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { MODEL_LIMITS } from '@/lib/usage/model-tiers'
 import { shadowConfig } from '@/lib/eval/shadow'
+import { benchableModels } from '@/lib/eval/bench'
 import { createQueue, getRedisConnection, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 
@@ -324,6 +325,9 @@ export const GET = withAuthenticatedApi(async (request) => {
     bench,
     shadow: [...matchups.values()].sort((a, b) => b.samples - a.samples),
     benchRunning: await benchRunning(),
+    // What the candidate picker may offer: the model roster filtered to
+    // endpoints this deployment has keys for.
+    benchable: benchableModels(),
     // Whether shadow sampling is switched on in this deployment, so the panel
     // reports config STATE ("off" / "on at 5% against qwen-3.7") instead of
     // printing env-var homework at the operator.

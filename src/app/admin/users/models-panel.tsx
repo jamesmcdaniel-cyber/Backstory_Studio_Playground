@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { Play, Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { modelTier } from '@/lib/usage/model-tiers'
 import { modelProviderBrand } from '@/lib/llm/provider-brand'
 
@@ -76,6 +77,8 @@ type Report = {
   shadow: ShadowMatchup[]
   /** null = could not check (inline mode / Redis unreachable). */
   benchRunning: boolean | null
+  /** Models the candidate picker may offer (endpoint configured). */
+  benchable: string[]
   /** Deployment's shadow-sampling state; null = off. */
   shadowSampling: { model: string; rate: number } | null
   limits: { frontierClaudeRunsPerDay: number; claudeRunsPerDay: number }
@@ -101,13 +104,21 @@ export function ModelsPanel({ days }: { days: number }) {
   const [report, setReport] = useState<Report | null>(null)
   const [loading, setLoading] = useState(true)
   const [benchBusy, setBenchBusy] = useState(false)
+  /** Chip selection; null until the roster arrives, then defaults to all. */
+  const [candidates, setCandidates] = useState<string[] | null>(null)
   const alive = useRef(true)
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
       const response = await fetch(`/api/admin/models?days=${days}`, { cache: 'no-store' })
-      if (alive.current && response.ok) setReport(await response.json())
+      if (alive.current && response.ok) {
+        const body: Report = await response.json()
+        setReport(body)
+        // First load only: default to benching everything configured. A
+        // selection the operator already made is never overwritten by a poll.
+        setCandidates((current) => current ?? body.benchable)
+      }
     } finally {
       if (alive.current && !silent) setLoading(false)
     }
@@ -130,10 +141,21 @@ export function ModelsPanel({ days }: { days: number }) {
     return () => clearInterval(timer)
   }, [benchInFlight, load])
 
+  const toggleCandidate = (model: string) => {
+    setCandidates((current) => {
+      const list = current ?? report?.benchable ?? []
+      return list.includes(model) ? list.filter((entry) => entry !== model) : [...list, model]
+    })
+  }
+
   const startBench = async () => {
     setBenchBusy(true)
     try {
-      const response = await fetch('/api/admin/models/bench', { method: 'POST' })
+      const response = await fetch('/api/admin/models/bench', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: candidates ?? [] }),
+      })
       const body = await response.json().catch(() => ({}))
       if (!response.ok) {
         toast.error(body?.error ?? 'Could not start the bench.')
@@ -259,7 +281,12 @@ export function ModelsPanel({ days }: { days: number }) {
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium">Quality — bench</h2>
-          <Button size="sm" variant="secondary" onClick={() => void startBench()} disabled={benchInFlight}>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void startBench()}
+            disabled={benchInFlight || (candidates !== null && candidates.length === 0)}
+          >
             {benchInFlight ? (
               <>
                 <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
@@ -273,6 +300,38 @@ export function ModelsPanel({ days }: { days: number }) {
             )}
           </Button>
         </div>
+        {/* Which models the next Run bench covers. Only endpoints this
+            deployment holds keys for appear; the selection is honored by the
+            worker after re-validation, so a chip is a promise, not a hint. */}
+        {(report?.benchable.length ?? 0) > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Candidates:</span>
+            {report?.benchable.map((model) => {
+              const selected = (candidates ?? report.benchable).includes(model)
+              return (
+                <button
+                  key={model}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => toggleCandidate(model)}
+                  disabled={benchInFlight}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    selected
+                      ? 'border-primary bg-primary/10 text-foreground'
+                      : 'border-input text-muted-foreground hover:bg-accent/50',
+                    benchInFlight && 'opacity-60',
+                  )}
+                >
+                  {model}
+                </button>
+              )
+            })}
+            {candidates !== null && candidates.length === 0 && (
+              <span className="text-xs text-muted-foreground">Pick at least one model to run.</span>
+            )}
+          </div>
+        )}
         {(report?.bench.length ?? 0) > 0 ? (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full min-w-[40rem] text-sm">

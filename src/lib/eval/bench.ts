@@ -31,20 +31,56 @@ import type { Trajectory } from './types'
 const SAMPLES = 3
 
 /**
- * Which models this bench run covers. Pure so the filtering rule is testable:
- * BENCH_MODELS wins when set; either way, models whose endpoint has no key are
- * dropped rather than failed, so one unconfigured provider does not kill the
- * whole run.
+ * Every model an operator may pick as a bench candidate — the product's model
+ * roster, filtered to endpoints whose key is configured. Pure so the rule is
+ * testable; `extra` lets BENCH_MODELS add ids beyond the built-in roster (a
+ * dated Claude variant, a different Qwen tier) without a deploy.
+ */
+export function benchableCandidates(input: {
+  anthropic: boolean
+  qwen: boolean
+  extra?: string[]
+}): string[] {
+  const roster = [
+    // Mirrors the model list users pick from in the agent config form.
+    'claude-sonnet-5',
+    'claude-opus-4-8',
+    'claude-haiku-4-5',
+    'qwen-3.7',
+    ...(input.extra ?? []),
+  ]
+  return [...new Set(roster.map((model) => model.trim()).filter(Boolean))].filter((model) =>
+    model.startsWith('claude') ? input.anthropic : input.qwen,
+  )
+}
+
+/** The roster for THIS deployment, read from the live environment. */
+export function benchableModels(): string[] {
+  return benchableCandidates({
+    anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+    qwen: qwenConfigured(),
+    extra: (process.env.BENCH_MODELS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
+  })
+}
+
+/**
+ * Which models one bench run covers. An explicit `selection` (the panel's
+ * chips) wins; otherwise BENCH_MODELS; otherwise the defaults. In every case,
+ * models whose endpoint has no key are dropped rather than failed, so one
+ * unconfigured provider does not kill the whole run.
  */
 export function resolveBenchModels(input: {
   env: string | undefined
   anthropic: boolean
   qwen: boolean
+  selection?: string[]
 }): string[] {
-  const requested = (input.env ?? '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
+  const requested = input.selection?.length
+    ? input.selection
+    : (input.env ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
   const candidates = requested.length ? requested : [DEFAULT_AGENT_MODEL, 'qwen-3.7']
   return [...new Set(candidates)].filter((model) =>
     model.startsWith('claude') ? input.anthropic : input.qwen,
@@ -102,11 +138,15 @@ export type BenchSummary = {
  * logged so one dead endpoint fails its candidate loudly without killing the
  * others. `log` defaults to console so the CLI output is unchanged.
  */
-export async function runBench(log: (line: string) => void = console.log): Promise<BenchSummary> {
+export async function runBench(
+  opts: { models?: string[]; log?: (line: string) => void } = {},
+): Promise<BenchSummary> {
+  const log = opts.log ?? console.log
   const models = resolveBenchModels({
     env: process.env.BENCH_MODELS,
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     qwen: qwenConfigured(),
+    selection: opts.models,
   })
   if (!models.length) {
     throw new Error('No benchable model configured — set ANTHROPIC_API_KEY and/or QWEN_API_KEY (+QWEN_BASE_URL).')

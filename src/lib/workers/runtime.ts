@@ -46,14 +46,18 @@ export interface WorkerSpec {
  * that owns the right table, is exactly the wiring an outage turns on.
  */
 /**
- * One bench run per job. The job payload is empty on purpose — candidates and
- * judge come from the worker's environment (BENCH_MODELS, BENCH_JUDGE_MODEL),
- * the same source the CLI reads, so the button and the shell measure the same
- * thing. Job-level progress goes to the worker log; results go to the table
- * the Models panel reads.
+ * One bench run per job. `models` is the panel's chip selection — already
+ * validated against the benchable roster by the enqueueing route, and filtered
+ * again against configured endpoints inside runBench, so a stale payload can
+ * never bench an endpoint this worker cannot reach. An empty payload keeps the
+ * environment defaults (BENCH_MODELS), the same source the CLI reads, so the
+ * button and the shell measure the same thing.
  */
-async function executeModelBenchJob(job: { id?: string }) {
-  const summary = await runBench((line) => console.log(`[model-bench ${job.id ?? ''}] ${line}`))
+async function executeModelBenchJob(job: { id?: string; data?: { models?: string[] } }) {
+  const summary = await runBench({
+    models: Array.isArray(job.data?.models) ? job.data.models : undefined,
+    log: (line) => console.log(`[model-bench ${job.id ?? ''}] ${line}`),
+  })
   if (summary.errors > 0) {
     throw new Error(`bench finished with ${summary.errors} errored fixture(s); ${summary.recorded} recorded`)
   }

@@ -1,6 +1,7 @@
+import { z } from 'zod'
 import { createQueue, getRedisConnection, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
-import { runBench } from '@/lib/eval/bench'
+import { benchableModels, runBench } from '@/lib/eval/bench'
 import { recordAudit } from '@/lib/audit'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 
@@ -28,16 +29,31 @@ async function benchInFlight(): Promise<boolean> {
 // Serializes inline runs the same way benchInFlight serializes queued ones.
 let inlineBenchRunning = false
 
-export const POST = withAuthenticatedApi(async (_request, auth) => {
+export const POST = withAuthenticatedApi(async (request, auth) => {
+  // The panel's chip selection. Optional and defensive: an empty body keeps
+  // the environment defaults, and anything not on the benchable roster is
+  // refused rather than silently dropped — a typo'd id failing loudly beats a
+  // bench that quietly measured fewer models than the operator picked.
+  const { models } = z
+    .object({ models: z.array(z.string().min(1).max(100)).max(12).optional() })
+    .parse(await request.json().catch(() => ({})))
+  if (models?.length) {
+    const roster = new Set(benchableModels())
+    const unknown = models.filter((model) => !roster.has(model))
+    if (unknown.length) {
+      throw new ApiError(`Not benchable here: ${unknown.join(', ')} — endpoint not configured or unknown model.`, 400, 'UNBENCHABLE_MODEL')
+    }
+  }
+
   // Audited before dispatch: pressing the button spends platform tokens across
-  // every configured candidate, which is an operator act worth a record even
+  // every selected candidate, which is an operator act worth a record even
   // when the run itself later fails.
   await recordAudit({
     organizationId: auth.organizationId,
     actorUserId: auth.userId,
     action: 'platform.models.bench_started',
     resourceType: 'model_bench',
-    detail: { mode: inlineExecution ? 'inline' : 'queue' },
+    detail: { mode: inlineExecution ? 'inline' : 'queue', models: models ?? null },
   })
 
   if (inlineExecution) {
@@ -46,7 +62,7 @@ export const POST = withAuthenticatedApi(async (_request, auth) => {
     // Detached on purpose: a dev-server request must return, not sit through
     // the whole sweep. Safe only because inline mode is the long-lived dev
     // process, never a serverless function (see execution-mode.ts).
-    void runBench()
+    void runBench({ models })
       .catch((error) => console.error('inline bench failed:', error instanceof Error ? error.message : error))
       .finally(() => {
         inlineBenchRunning = false
@@ -72,7 +88,7 @@ export const POST = withAuthenticatedApi(async (_request, auth) => {
     // line existed.
     await queue.add(
       'model-bench',
-      {},
+      { models: models ?? null },
       { jobId: `model-bench-${Date.now()}`, attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
     )
   } catch (error) {

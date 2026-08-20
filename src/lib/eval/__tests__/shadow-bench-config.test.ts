@@ -53,6 +53,41 @@ test('bench candidates come from BENCH_MODELS, filtered to configured endpoints'
   )
 })
 
+test('an explicit selection beats BENCH_MODELS, and still drops unconfigured endpoints', () => {
+  // The panel's chips are the selection; the env var stays the CLI/default
+  // source. Endpoint filtering applies to BOTH — a stale queued selection must
+  // never make the worker call an endpoint it has no key for.
+  assert.deepEqual(
+    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, qwen: true, selection: ['claude-haiku-4-5', 'qwen-3.7'] }),
+    ['claude-haiku-4-5', 'qwen-3.7'],
+  )
+  assert.deepEqual(
+    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, qwen: false, selection: ['claude-haiku-4-5', 'qwen-3.7'] }),
+    ['claude-haiku-4-5'],
+  )
+  // An empty selection is "no selection", not "bench nothing".
+  assert.deepEqual(
+    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, qwen: true, selection: [] }),
+    ['claude-opus-4-8'],
+  )
+})
+
+test('the benchable roster is the picker contract: configured endpoints only, extras included once', async () => {
+  const { benchableCandidates } = await import('../bench')
+  assert.deepEqual(benchableCandidates({ anthropic: true, qwen: true }), [
+    'claude-sonnet-5',
+    'claude-opus-4-8',
+    'claude-haiku-4-5',
+    'qwen-3.7',
+  ])
+  assert.deepEqual(benchableCandidates({ anthropic: false, qwen: true }), ['qwen-3.7'])
+  // BENCH_MODELS extends the roster (a dated variant) without duplicating it.
+  assert.deepEqual(
+    benchableCandidates({ anthropic: true, qwen: false, extra: ['claude-sonnet-5', 'claude-opus-4-7'] }),
+    ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-opus-4-7'],
+  )
+})
+
 test('the default candidate set covers both endpoints when configured', () => {
   delete process.env.AGENT_MODEL
   const models = resolveBenchModels({ env: undefined, anthropic: true, qwen: true })

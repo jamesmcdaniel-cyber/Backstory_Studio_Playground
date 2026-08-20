@@ -163,20 +163,29 @@ export const GET = withAuthenticatedApi(async (request) => {
         COALESCE("agentExecutionId", "flowRunId") AS run_id,
         ("agentExecutionId" IS NOT NULL) AS is_agent,
         COUNT(*) FILTER (WHERE "surface" = 'agent_turn')::int AS turns,
-        COUNT(DISTINCT "provider")::int AS providers
+        -- Same headline exclusion as the dominant CTE: a haiku headline on a
+        -- sonnet run is not a mid-run fallback.
+        COUNT(DISTINCT "provider") FILTER (WHERE "surface" <> 'headline')::int AS providers
       FROM "llm_calls"
       WHERE "createdAt" >= ${since} AND COALESCE("agentExecutionId", "flowRunId") IS NOT NULL
       GROUP BY 1, 2
     ),
     dominant AS (
+      -- Which model DID the run's work. Headline rows are excluded: the
+      -- one-line activity summary is bookkeeping that rides on every run, and
+      -- counting it let a 1-turn run tie its own headline model and win the
+      -- attribution on row order. The tiebreak is total, so attribution is
+      -- deterministic run over run.
       SELECT DISTINCT ON (run_id) run_id, "provider", "model"
       FROM (
         SELECT COALESCE("agentExecutionId", "flowRunId") AS run_id, "provider", "model", COUNT(*) AS calls
         FROM "llm_calls"
-        WHERE "createdAt" >= ${since} AND COALESCE("agentExecutionId", "flowRunId") IS NOT NULL
+        WHERE "createdAt" >= ${since}
+          AND COALESCE("agentExecutionId", "flowRunId") IS NOT NULL
+          AND "surface" <> 'headline'
         GROUP BY 1, 2, 3
       ) grouped
-      ORDER BY run_id, calls DESC
+      ORDER BY run_id, calls DESC, "provider", "model"
     ),
     refusals AS (
       SELECT DISTINCT "resourceId" AS run_id
@@ -245,7 +254,10 @@ export const GET = withAuthenticatedApi(async (request) => {
       by: ['provider', 'model', 'judgeModel'],
       where: { kind: 'bench', createdAt: { gte: since } },
       _avg: { score: true },
-      _count: true,
+      // score counts only scored rows; _all includes error rows (score null),
+      // so errors = _all - score and a candidate whose every fixture failed
+      // still appears instead of vanishing from the table.
+      _count: { _all: true, score: true },
       _max: { createdAt: true },
     }),
     systemPrisma.modelEvalResult.findMany({
@@ -264,10 +276,34 @@ export const GET = withAuthenticatedApi(async (request) => {
       model: group.model,
       judgeModel: group.judgeModel,
       avgScore: group._avg.score == null ? null : Number(group._avg.score),
-      samples: group._count,
+      samples: group._count.score,
+      errors: group._count._all - group._count.score,
       lastRunAt: group._max.createdAt,
     }))
     .sort((a, b) => (b.avgScore ?? 0) - (a.avgScore ?? 0))
+
+  // Per-fixture drill-down: the judge's reasoning is what turns a surprising
+  // average into a diagnosis (the first bench's inversion was explained in one
+  // read of these rows). Bench rows only — their inputs are checked-in
+  // fixtures; shadow reasoning is never stored at all.
+  const benchDetail = (
+    await systemPrisma.modelEvalResult.findMany({
+      where: { kind: 'bench', createdAt: { gte: since } },
+      select: {
+        model: true,
+        subject: true,
+        score: true,
+        pass: true,
+        reasoning: true,
+        judgeModel: true,
+        latencyMs: true,
+        outputTokens: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 120,
+    })
+  ).map((row) => ({ ...row, score: row.score == null ? null : Number(row.score) }))
 
   // Pair shadow rows and aggregate per champion-vs-challenger matchup. A pair
   // missing a side (a judge failure mid-write) is dropped rather than counted
@@ -323,6 +359,7 @@ export const GET = withAuthenticatedApi(async (request) => {
     days,
     models,
     bench,
+    benchDetail,
     shadow: [...matchups.values()].sort((a, b) => b.samples - a.samples),
     benchRunning: await benchRunning(),
     // What the candidate picker may offer: the model roster filtered to

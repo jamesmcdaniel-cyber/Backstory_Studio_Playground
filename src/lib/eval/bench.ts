@@ -22,7 +22,7 @@
 import { createPinnedRunner, DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 import { qwenConfigured, qwenModel } from '@/lib/llm/qwen'
 import { modelProviderBrand } from '@/lib/llm/provider-brand'
-import { runLoop, cannedDispatch, checkTrajectory } from './harness'
+import { runLoop, fixtureDispatch, checkTrajectory } from './harness'
 import { judgeTrajectory, pinnedJudgeModel } from './judge'
 import { fixtures } from './fixtures'
 import type { Trajectory } from './types'
@@ -167,7 +167,7 @@ export async function runBench(
       const runner = createPinnedRunner(served)
       const startedAt = Date.now()
       try {
-        const trajectory = await runLoop(runner, fixture, cannedDispatch(fixture.toolResponses))
+        const trajectory = await runLoop(runner, fixture, fixtureDispatch(fixture))
         const structural = checkTrajectory(trajectory, fixture.expect)
         const { score, reasoning } = await meanJudgement(fixture.rubric, trajectory)
         await systemPrisma.modelEvalResult.create({
@@ -191,9 +191,28 @@ export async function runBench(
         log(`  ${fixture.name}: ${score.toFixed(3)}${structural.length ? ' STRUCTURAL-FAIL' : ''}`)
       } catch (error) {
         // A pinned run has no fallback by design; a dead endpoint fails its
-        // candidate loudly instead of polluting the table with silent gaps.
+        // candidate loudly instead of polluting the table with silent gaps —
+        // and the failure is PERSISTED (score null, reason in `reasoning`), so
+        // the panel shows "qwen-3.7: AccessDenied — free quota exhausted"
+        // where it used to silently show no qwen row at all.
         summary.errors += 1
-        log(`  ${fixture.name}: ERROR — ${benchErrorDetail(error)}`)
+        const detail = benchErrorDetail(error)
+        log(`  ${fixture.name}: ERROR — ${detail}`)
+        await systemPrisma.modelEvalResult
+          .create({
+            data: {
+              kind: 'bench',
+              provider: providerOf(model),
+              model: served,
+              subject: fixture.name,
+              score: null,
+              pass: null,
+              reasoning: `error: ${detail.slice(0, 500)}`,
+              judgeModel: judge,
+              latencyMs: Date.now() - startedAt,
+            },
+          })
+          .catch(() => undefined)
       }
     }
   }

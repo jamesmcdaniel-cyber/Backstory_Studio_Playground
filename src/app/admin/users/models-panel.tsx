@@ -14,9 +14,9 @@
  * spend is buying anything.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Play, Loader2 } from 'lucide-react'
+import { Play, Loader2, ChevronDown, ChevronRight } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -56,7 +56,22 @@ type BenchRow = {
   judgeModel: string | null
   avgScore: number | null
   samples: number
+  /** Fixture attempts that errored (endpoint down, judge failure) — no score. */
+  errors: number
   lastRunAt: string | null
+}
+
+/** One fixture-level result, judge reasoning included — the drill-down rows. */
+type BenchDetailRow = {
+  model: string
+  subject: string
+  score: number | null
+  pass: boolean | null
+  reasoning: string | null
+  judgeModel: string | null
+  latencyMs: number | null
+  outputTokens: number
+  createdAt: string
 }
 
 type ShadowMatchup = {
@@ -74,6 +89,7 @@ type Report = {
   days: number
   models: ModelRow[]
   bench: BenchRow[]
+  benchDetail: BenchDetailRow[]
   shadow: ShadowMatchup[]
   /** null = could not check (inline mode / Redis unreachable). */
   benchRunning: boolean | null
@@ -106,6 +122,8 @@ export function ModelsPanel({ days }: { days: number }) {
   const [benchBusy, setBenchBusy] = useState(false)
   /** Chip selection; null until the roster arrives, then defaults to all. */
   const [candidates, setCandidates] = useState<string[] | null>(null)
+  /** Which bench model rows are expanded to their per-fixture detail. */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const alive = useRef(true)
 
   const load = useCallback(async (silent = false) => {
@@ -334,28 +352,88 @@ export function ModelsPanel({ days }: { days: number }) {
         )}
         {(report?.bench.length ?? 0) > 0 ? (
           <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[40rem] text-sm">
+            <table className="w-full min-w-[44rem] text-sm">
               <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-4 py-2 font-medium">Model</th>
                   <th className="px-4 py-2 font-medium">Avg score</th>
                   <th className="px-4 py-2 font-medium">Samples</th>
+                  <th className="px-4 py-2 font-medium">Errors</th>
                   <th className="px-4 py-2 font-medium">Judge</th>
                   <th className="px-4 py-2 font-medium">Last run</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {report?.bench.map((row) => (
-                  <tr key={`${row.provider}:${row.model}:${row.judgeModel}`}>
-                    <td className="px-4 py-2.5 font-medium">{row.model}</td>
-                    <td className="px-4 py-2.5 tabular-nums">{row.avgScore == null ? '—' : row.avgScore.toFixed(3)}</td>
-                    <td className="px-4 py-2.5 tabular-nums">{row.samples}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{row.judgeModel ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {row.lastRunAt ? new Date(row.lastRunAt).toLocaleDateString() : '—'}
-                    </td>
-                  </tr>
-                ))}
+                {report?.bench.map((row) => {
+                  const key = `${row.provider}:${row.model}:${row.judgeModel}`
+                  const detail = report.benchDetail.filter(
+                    (entry) => entry.model === row.model && entry.judgeModel === row.judgeModel,
+                  )
+                  const open = Boolean(expanded[key])
+                  return (
+                    <Fragment key={key}>
+                      {/* The average is a claim; the detail rows are the
+                          evidence. Expanding shows every fixture with the
+                          judge's own reasoning — the first bench's inverted
+                          scores were diagnosed by exactly this read. */}
+                      <tr
+                        className="cursor-pointer transition-colors hover:bg-accent/40"
+                        onClick={() => setExpanded((current) => ({ ...current, [key]: !open }))}
+                      >
+                        <td className="px-4 py-2.5 font-medium">
+                          <span className="inline-flex items-center gap-1.5">
+                            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                            {row.model}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 tabular-nums">{row.avgScore == null ? '—' : row.avgScore.toFixed(3)}</td>
+                        <td className="px-4 py-2.5 tabular-nums">{row.samples}</td>
+                        <td className={cn('px-4 py-2.5 tabular-nums', row.errors > 0 && 'text-destructive')}>
+                          {row.errors || '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{row.judgeModel ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">
+                          {row.lastRunAt ? new Date(row.lastRunAt).toLocaleDateString() : '—'}
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={6} className="bg-muted/20 px-4 py-3">
+                            <ul className="space-y-3">
+                              {detail.map((entry, index) => (
+                                <li key={`${entry.subject}:${entry.createdAt}:${index}`} className="text-sm">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-medium">{entry.subject}</span>
+                                    {entry.score == null ? (
+                                      <Badge variant="risk">error</Badge>
+                                    ) : (
+                                      <span className="tabular-nums">{entry.score.toFixed(3)}</span>
+                                    )}
+                                    {entry.pass === false && entry.score != null && (
+                                      <Badge variant="warn">structural fail</Badge>
+                                    )}
+                                    <span className="text-xs text-muted-foreground">
+                                      {new Date(entry.createdAt).toLocaleString()}
+                                      {entry.latencyMs != null && ` · ${duration(entry.latencyMs)}`}
+                                    </span>
+                                  </div>
+                                  {entry.reasoning && (
+                                    <p className={cn('mt-1 text-xs', entry.score == null ? 'text-destructive' : 'text-muted-foreground')}>
+                                      {entry.reasoning}
+                                    </p>
+                                  )}
+                                </li>
+                              ))}
+                              {detail.length === 0 && (
+                                <li className="text-xs text-muted-foreground">No per-fixture rows in this window.</li>
+                              )}
+                            </ul>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>

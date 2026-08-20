@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createModelRunner } from '@/lib/llm/model-runner'
-import { runLoop, cannedDispatch, checkTrajectory } from './harness'
+import { runLoop, fixtureDispatch, checkTrajectory } from './harness'
 import { judgeTrajectory } from './judge'
 import { fixtures } from './fixtures'
 import { compareToBaseline, type Baseline, type Scorecard } from './baseline'
@@ -46,7 +46,7 @@ async function main() {
       continue
     }
     const runner = createModelRunner(fixture.model)
-    const trajectory = await runLoop(runner, fixture, cannedDispatch(fixture.toolResponses))
+    const trajectory = await runLoop(runner, fixture, fixtureDispatch(fixture))
 
     // Deterministic asserts still apply on a live run — a structural break is a
     // failure regardless of what the judge thinks of the prose.

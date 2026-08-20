@@ -102,6 +102,42 @@ export function cannedDispatch(toolResponses: Record<string, unknown> = {}): Too
   })
 }
 
+/**
+ * Dispatch for LIVE runs: serve the tool results the fixture's SCRIPT already
+ * authored, matched by tool name.
+ *
+ * This closes the gap that inverted the first production bench. Live runs used
+ * cannedDispatch with the fixture's (absent) toolResponses, so every tool call
+ * returned a bare {ok:true} — the account lookup carried no renewal data, and
+ * the rubric then graded a message no model could honestly write. Careful
+ * models flagged the missing data and asked for more information; the judge
+ * scored them 0.1 while a model that barreled ahead scored 0.85. The bench was
+ * measuring willingness to fabricate.
+ *
+ * Results are served per tool name in authored order (a tool called twice gets
+ * its two scripted results), then stick on the LAST authored result for extra
+ * calls — a re-lookup should see the same world, not a different one. Tools
+ * the script never calls fall back to toolResponses, then to {ok: true}.
+ */
+export function fixtureDispatch(fixture: EvalFixture): ToolDispatch {
+  const queues = new Map<string, unknown[]>()
+  for (const turn of fixture.script ?? []) {
+    for (const call of turn.toolCalls ?? []) {
+      if (call.result === undefined) continue
+      const queue = queues.get(call.name) ?? []
+      queue.push(call.result)
+      queues.set(call.name, queue)
+    }
+  }
+  const fallback = cannedDispatch(fixture.toolResponses)
+  return (call, turnIndex) => {
+    const queue = queues.get(call.name)
+    if (!queue?.length) return fallback(call, turnIndex)
+    const result = queue.length > 1 ? queue.shift() : queue[0]
+    return { content: JSON.stringify(result), isError: false }
+  }
+}
+
 /** Run a fixture's scripted turns deterministically (offline, no API key). */
 export async function replayScripted(fixture: EvalFixture): Promise<Trajectory> {
   if (!fixture.script) throw new Error(`fixture "${fixture.name}" has no script to replay`)

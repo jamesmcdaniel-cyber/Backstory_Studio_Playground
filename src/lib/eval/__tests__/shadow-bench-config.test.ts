@@ -122,3 +122,26 @@ test('benchErrorDetail surfaces the provider body, not just the SDK line', async
   assert.equal(benchErrorDetail(new Error('plain failure')), 'plain failure')
   assert.equal(benchErrorDetail('string error'), 'string error')
 })
+
+test('live runs are fed the script-authored tool results, not bare ok:true', async () => {
+  const { fixtureDispatch } = await import('../harness')
+  const { fixtures } = await import('../fixtures')
+  const nudge = fixtures.find((fixture) => fixture.name === 'slack-renewal-nudge')
+  assert.ok(nudge)
+  const dispatch = fixtureDispatch(nudge)
+
+  // The account lookup must return the authored renewal data. The first prod
+  // bench served {ok:true} here, which starved careful models of the renewal
+  // date and scored them below the model willing to fabricate one.
+  const lookup = await dispatch({ id: '1', name: 'backstory_get_account', input: { account: 'ACME' } }, 0)
+  assert.ok(lookup.content.includes('renewalDate'), `lookup got: ${lookup.content}`)
+  assert.equal(lookup.isError, false)
+
+  // A re-lookup sees the same world, not a different one.
+  const again = await dispatch({ id: '2', name: 'backstory_get_account', input: { account: 'ACME' } }, 1)
+  assert.equal(again.content, lookup.content)
+
+  // A tool the script never calls still gets the benign fallback.
+  const unknown = await dispatch({ id: '3', name: 'some_other_tool', input: {} }, 1)
+  assert.equal(unknown.content, JSON.stringify({ ok: true }))
+})

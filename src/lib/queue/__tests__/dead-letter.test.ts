@@ -196,11 +196,23 @@ describe('flow dead-letter', () => {
     const logs = logRecorder()
     const updates: any[] = []
     const stepUpdates: any[] = []
+    type MockDb = {
+      flowRun: { updateMany: (args: any) => Promise<unknown> }
+      flowRunStep: { updateMany: (args: any) => Promise<unknown> }
+      $transaction: <T>(fn: (tx: MockDb) => Promise<T>) => Promise<T>
+    }
+    const db: MockDb = {
+      flowRun: { updateMany: (args: any) => { updates.push(args); return updateMany(args) } },
+      flowRunStep: { updateMany: (args: any) => { stepUpdates.push(args); return stepUpdateMany(args) } },
+      // The run flip and its step sweep run inside one interactive
+      // transaction in production (see flow-dead-letter.ts) — mimic that
+      // here by invoking the callback against this same mocked db, so the
+      // per-pair atomicity shape is exercised the same way the real
+      // Prisma-backed seam runs it.
+      $transaction: (fn) => fn(db),
+    }
     const deps: FlowDeadLetterDeps = {
-      db: {
-        flowRun: { updateMany: (args) => { updates.push(args); return updateMany(args) } },
-        flowRunStep: { updateMany: (args) => { stepUpdates.push(args); return stepUpdateMany(args) } },
-      },
+      db,
       createQueue: queues.createQueue,
       logger: logs.logger,
       capture: logs.capture,
@@ -254,6 +266,18 @@ describe('flow dead-letter', () => {
     assert.equal(queues.added[QUEUE_NAMES.FLOW_DEAD_LETTER].length, 1)
   })
 
+  test('a run no longer running (count 0) skips the step sweep entirely', async () => {
+    // Task-5-deferred gap, closed alongside the atomicity fix: the guard's
+    // whole point is that a run diverted away from `running` (already
+    // settled, or rolled back to `waiting`) must not have its steps swept
+    // either — the same count-gating the reaper and failPreparedRun rely on.
+    const { deps, stepUpdates } = harness(async () => ({ count: 0 }))
+
+    await recordFlowDeadLetter(input, deps)
+
+    assert.deepEqual(stepUpdates, [], 'count 0 on the run flip must skip the step sweep')
+  })
+
   test('a failed terminalization is logged and reported, never swallowed', async () => {
     const { deps, logs, queues } = harness(async () => { throw new Error('db down') })
 
@@ -265,12 +289,17 @@ describe('flow dead-letter', () => {
     assert.equal(queues.added[QUEUE_NAMES.FLOW_DEAD_LETTER].length, 1)
   })
 
-  test('a failed step sweep is logged but never swallows the dead-letter', async () => {
+  test('a failed step sweep rolls back the pair and is logged, never swallowing the dead-letter', async () => {
+    // The flip and the sweep now share one interactive transaction (per-pair
+    // atomicity, matching the reaper): a step-sweep failure aborts the whole
+    // transaction rather than leaving the run flipped to `failed` with a
+    // step still `running`, so it surfaces through the same terminalization
+    // catch as any other transaction failure.
     const { deps, logs, queues } = harness(async () => ({ count: 1 }), async () => { throw new Error('db down') })
 
     await recordFlowDeadLetter(input, deps)
 
-    assert.match(logs.errors.at(-1)!.message, /failed to sweep running steps/)
+    assert.match(logs.errors[0].message, /failed to terminalize/)
     assert.equal(queues.added[QUEUE_NAMES.FLOW_DEAD_LETTER].length, 1)
   })
 

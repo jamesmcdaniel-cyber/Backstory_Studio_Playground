@@ -1,6 +1,8 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 
 // DB-gated: runs only under TEST_DATABASE_URL (CI-mode).
 // FlowRun.degraded is computed ONCE at finalize, from the FULL persisted step
@@ -86,5 +88,47 @@ if (TEST_DB) {
     const { result, persisted } = await run(graph, '')
     assert.equal(result.status, 'failed')
     assert.equal(persisted.degraded, false)
+  })
+
+  test('the legacy backfill migration flips a pre-migration succeeded-with-warnings row to degraded: true', async () => {
+    // Runs that finished before 20260821090000 added the `degraded` column
+    // never had it computed and were backfilled to the column default,
+    // `false` — the honesty gap the 20260821120000 migration exists to
+    // close. Seed a row in exactly that pre-migration shape (succeeded,
+    // degraded: false, one warned step) and run the migration's own SQL
+    // directly, rather than re-deriving equivalent SQL that could drift from
+    // what actually ships.
+    const flow = await prisma.flow.create({
+      data: { name: `degraded-backfill-${Date.now()}`, organizationId: ids.org, userId: ids.user, graph: { nodes: [], edges: [] } },
+    })
+    const legacyRun = await prisma.flowRun.create({
+      data: {
+        flowId: flow.id,
+        organizationId: ids.org,
+        userId: ids.user,
+        status: 'succeeded',
+        degraded: false,
+        finishedAt: new Date(),
+      },
+    })
+    await prisma.flowRunStep.create({
+      data: {
+        flowRunId: legacyRun.id,
+        nodeId: 'js',
+        status: 'succeeded',
+        warnings: ['dropped 1 of 3 items (itemError: skip)'],
+        startedAt: new Date(),
+        finishedAt: new Date(),
+      },
+    })
+
+    const migrationSql = fs.readFileSync(
+      path.join(process.cwd(), 'prisma/migrations/20260821120000_backfill_legacy_degraded/migration.sql'),
+      'utf8',
+    )
+    await prisma.$executeRawUnsafe(migrationSql)
+
+    const reloaded = await prisma.flowRun.findFirst({ where: { id: legacyRun.id, organizationId: ids.org } })
+    assert.equal(reloaded.degraded, true, 'the legacy row must be flipped to degraded: true')
   })
 }

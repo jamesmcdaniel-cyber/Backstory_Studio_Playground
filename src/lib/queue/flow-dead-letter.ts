@@ -25,21 +25,33 @@ export interface FlowDeadLetterInput {
   error: string
 }
 
+/** The subset of the Prisma client (or a transaction handle) this module writes through. */
+interface FlowDeadLetterDb {
+  flowRun: {
+    updateMany: (args: {
+      where: { id: string; status: string }
+      data: { status: string; error: string; finishedAt: Date }
+    }) => Promise<{ count: number } | unknown>
+  }
+  flowRunStep: {
+    updateMany: (args: {
+      where: { flowRunId: string; status: string }
+      data: { status: string; error: string; finishedAt: Date }
+    }) => Promise<unknown>
+  }
+}
+
 /** Injectable seams — see dead-letter.ts for the pattern and rationale. */
 export interface FlowDeadLetterDeps {
-  db: {
-    flowRun: {
-      updateMany: (args: {
-        where: { id: string; status: string }
-        data: { status: string; error: string; finishedAt: Date }
-      }) => Promise<unknown>
-    }
-    flowRunStep: {
-      updateMany: (args: {
-        where: { flowRunId: string; status: string }
-        data: { status: string; error: string; finishedAt: Date }
-      }) => Promise<unknown>
-    }
+  db: FlowDeadLetterDb & {
+    /**
+     * Interactive-transaction handle, matching Prisma's `$transaction(fn)`
+     * shape — the run flip and its step sweep must commit or roll back as
+     * one pair (see src/lib/flows/reap.ts for the same per-pair atomicity
+     * rationale: a crash between the two writes must never land a `failed`
+     * run with a step still `running` forever).
+     */
+    $transaction: <T>(fn: (tx: FlowDeadLetterDb) => Promise<T>) => Promise<T>
   }
   createQueue: typeof createQueue
   logger: Pick<typeof apiLogger, 'error'>
@@ -63,10 +75,34 @@ export async function recordFlowDeadLetter(
     // resume that rolled back to `waiting` (claim rollback), an already-settled
     // run, or a per-attempt BullMQ failure mid-retry must never be clobbered
     // to failed by the dead-letter path.
-    const terminalized = await deps.db.flowRun
-      .updateMany({
-        where: { id: input.flowRunId, status: 'running' },
-        data: { status: 'failed', error: input.error.slice(0, 300), finishedAt: new Date() },
+    //
+    // The flip and the step sweep run inside one interactive transaction —
+    // the same per-pair atomicity shape as the reaper (see
+    // src/lib/flows/reap.ts) and failPreparedRun: a crash between the two
+    // writes must never land a `failed` run with a step still `running`
+    // forever, since the status guard means nothing ever revisits a `failed`
+    // run to sweep steps it left behind.
+    await deps.db
+      .$transaction(async (tx) => {
+        const terminalized = await tx.flowRun.updateMany({
+          where: { id: input.flowRunId!, status: 'running' },
+          data: { status: 'failed', error: input.error.slice(0, 300), finishedAt: new Date() },
+        })
+
+        // Sweep phantom 'running' step rows — but only when THIS call
+        // actually failed the run: a run left untouched (already settled
+        // elsewhere) may have a step genuinely still in flight, which must
+        // not be clobbered. The worker crashed/stalled mid-step, so whatever
+        // adapter promise was in flight was abandoned and its FlowRunStep
+        // never got a terminal write. Mirrors the interpreter's own
+        // end-of-run sweep (execute-flow.ts) — without this a dead-lettered
+        // run shows as failed while one of its steps sits `running` forever.
+        if ((terminalized as { count?: number } | undefined)?.count) {
+          await tx.flowRunStep.updateMany({
+            where: { flowRunId: input.flowRunId!, status: 'running' },
+            data: { status: 'failed', error: input.error.slice(0, 300), finishedAt: new Date() },
+          })
+        }
       })
       .catch((error: unknown) => {
         // Still non-throwing — the DLQ enqueue below must happen regardless —
@@ -85,33 +121,7 @@ export async function recordFlowDeadLetter(
           flowRunId: input.flowRunId,
           organizationId: input.organizationId,
         })
-        return undefined
       })
-
-    // Sweep phantom 'running' step rows — but only when THIS call actually
-    // failed the run: a run left untouched (already settled elsewhere) may
-    // have a step genuinely still in flight, which must not be clobbered.
-    // The worker crashed/stalled mid-step, so whatever adapter promise was in
-    // flight was abandoned and its FlowRunStep never got a terminal write.
-    // Mirrors the interpreter's own end-of-run sweep (execute-flow.ts) —
-    // without this a dead-lettered run shows as failed while one of its steps
-    // sits `running` forever. Best-effort: a sweep failure never masks the
-    // dead-letter itself.
-    if ((terminalized as { count?: number } | undefined)?.count) {
-      await deps.db.flowRunStep
-        .updateMany({
-          where: { flowRunId: input.flowRunId, status: 'running' },
-          data: { status: 'failed', error: input.error.slice(0, 300), finishedAt: new Date() },
-        })
-        .catch((error: unknown) => {
-          deps.logger.error('failed to sweep running steps for dead-lettered flow run', {
-            queue: input.queue,
-            jobId: input.jobId,
-            flowRunId: input.flowRunId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        })
-    }
   }
 
   try {

@@ -28,15 +28,26 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // hand `cancelling` off to, so leaving it there would be a permanent dead
   // end. Try this branch first so a waiting run never falls through into the
   // 'cancelling' handoff below.
-  const waitingResult = await prisma.flowRun.updateMany({
-    where: { id: flowRunId, flowId: flow.id, organizationId: auth.organizationId, status: 'waiting' },
-    data: { status: 'cancelled', finishedAt: new Date() },
-  })
-  if (waitingResult.count > 0) {
-    await prisma.flowRunStep.updateMany({
+  //
+  // The flip and the step sweep run inside one interactive transaction — the
+  // same per-pair atomicity shape as the reaper (see src/lib/flows/reap.ts):
+  // a crash between the two statements must never land a `cancelled` run
+  // with its steps still `running`/`waiting` forever, since a `cancelled`
+  // run's status guard means nothing revisits it to clean up steps it left
+  // behind.
+  const waitingResult = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.flowRun.updateMany({
+      where: { id: flowRunId, flowId: flow.id, organizationId: auth.organizationId, status: 'waiting' },
+      data: { status: 'cancelled', finishedAt: new Date() },
+    })
+    if (claimed.count === 0) return claimed
+    await tx.flowRunStep.updateMany({
       where: { flowRunId, status: { in: ['running', 'waiting'] } },
       data: { status: 'cancelled', finishedAt: new Date() },
     })
+    return claimed
+  })
+  if (waitingResult.count > 0) {
     return { success: true, status: 'cancelled' }
   }
 

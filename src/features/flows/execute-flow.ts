@@ -16,6 +16,7 @@ import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { resolveFlowToolExecutor } from '@/features/agents/tool-planes'
 import { parseApprovalDecision, shouldConsumeApprovalDecision } from '@/lib/flows/approval-decision'
+import { REDACTED_AT_REST_WARNING } from '@/lib/flows/run-data-guard'
 import { notify } from '@/lib/notifications/service'
 import { apiLogger } from '@/lib/logger'
 import { recordAudit } from '@/lib/audit'
@@ -365,25 +366,33 @@ async function createFlowRunRow(
  */
 export async function failPreparedRun(flowRunId: string, organizationId: string, message: string): Promise<void> {
   const errorMessage = truncateWithMarker(message, 300)
-  const terminalized = await prisma.flowRun
-    .updateMany({
-      where: { id: flowRunId, organizationId, status: 'running' },
-      data: { status: 'failed', error: errorMessage, finishedAt: new Date() },
-    })
-    .catch(() => undefined)
-  // Sweep phantom 'running' step rows — but only when THIS call actually
-  // failed the run: a run left untouched (already settled, or legitimately
-  // `waiting`) may have a step genuinely still in flight, which must not be
-  // clobbered. Mirrors the interpreter's own end-of-run sweep (~1889 below) so
-  // a run failed here never leaves an orphaned step.
-  if (terminalized?.count) {
-    await prisma.flowRunStep
-      .updateMany({
-        where: { flowRunId, status: 'running' },
+  // The flip and the step sweep run inside one interactive transaction — the
+  // same per-pair atomicity shape as the reaper (see src/lib/flows/reap.ts):
+  // a crash between the two statements must never land a `failed` run with a
+  // step still `running` forever, since the status guard above means nothing
+  // ever revisits a `failed` run to clean up steps it left behind. The whole
+  // transaction stays best-effort (caller treats this as fire-and-forget),
+  // so a failure here is swallowed exactly as the two independent calls used
+  // to be.
+  await prisma
+    .$transaction(async (tx) => {
+      const terminalized = await tx.flowRun.updateMany({
+        where: { id: flowRunId, organizationId, status: 'running' },
         data: { status: 'failed', error: errorMessage, finishedAt: new Date() },
       })
-      .catch(() => undefined)
-  }
+      // Sweep phantom 'running' step rows — but only when THIS call actually
+      // failed the run: a run left untouched (already settled, or legitimately
+      // `waiting`) may have a step genuinely still in flight, which must not be
+      // clobbered. Mirrors the interpreter's own end-of-run sweep so a run
+      // failed here never leaves an orphaned step.
+      if (terminalized.count) {
+        await tx.flowRunStep.updateMany({
+          where: { flowRunId, status: 'running' },
+          data: { status: 'failed', error: errorMessage, finishedAt: new Date() },
+        })
+      }
+    })
+    .catch(() => undefined)
 }
 
 /**
@@ -598,6 +607,30 @@ async function runFlowExecutionInner(
   // mid-loop pause resumes ONLY the paused iteration, never re-running prior
   // iterations' side effects.
   const completed: Record<string, unknown> = {}
+  // Pin/override provenance, keyed exactly like `completed` — read by
+  // interpret.ts's resume-replay branch (`opts.completedProvenance`) so an
+  // INTERPRETER-NATIVE node type (condition/loop/parallel/stop/variable/…)
+  // carries the same log line on the row IT writes for itself, every single
+  // time the walk reaches it (every resume attempt re-walks the whole graph
+  // and re-emits a fresh row for each already-completed node — see the
+  // `opts.completed` branch in interpret.ts — so this must be set on every
+  // invocation, not just the first).
+  //
+  // Declared up here (rather than beside the pinData/stateOverrides seeding
+  // below) so the resume-seeding loop just below can ALSO populate it: a
+  // step whose persisted `warnings` carry REDACTED_AT_REST_WARNING (see
+  // run-data-guard.ts) had its stored output masked at rest, and a plain
+  // resume/patch/replay would otherwise replay that masked value with no
+  // signal that it is not the real one (X1 in the design spec).
+  const completedProvenance: Record<string, string> = {}
+  const REPLAYED_REDACTED_NOTE = 'replayed from a redacted stored output — values may be masked'
+  // The redaction guard (run-data-guard.ts) appends REDACTED_AT_REST_WARNING
+  // to a step's persisted `warnings` when it masks that step's stored output.
+  // A resume/patch/replay that seeds `completed[nodeId]` from such a step
+  // must not silently hand the masked value onward with no signal — flag it
+  // via completedProvenance instead (X1 in the design spec).
+  const stepWasRedacted = (step: { warnings: unknown }): boolean =>
+    Array.isArray(step.warnings) && step.warnings.includes(REDACTED_AT_REST_WARNING)
   let resumeNodeId: string | undefined
   let resumeExecutionId: string | undefined
   // The approval id each paused leaf node (`${nodeId}#${index}` inside a loop)
@@ -624,13 +657,17 @@ async function runFlowExecutionInner(
       // the error edge instead of diverting down the normal path. This makes
       // resumed runs deterministic even when the transient failure has
       // cleared: the run repeats the path it actually took.
-      if (step.status === 'succeeded' || step.status === 'skipped') completed[step.nodeId] = step.output
+      if (step.status === 'succeeded' || step.status === 'skipped') {
+        completed[step.nodeId] = step.output
+        if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
+      }
       if (step.status === 'failed') {
         const baseNode = nodeById.get(step.nodeId.split('#')[0])
         const onError = baseNode && 'onError' in baseNode.data ? (baseNode.data as { onError?: string }).onError : undefined
         if ((onError === 'route' || onError === 'continue') && step.output !== null && step.output !== undefined) {
           completed[step.nodeId] = step.output
           if (onError === 'route') completedRoutes.add(step.nodeId)
+          if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
         }
       }
       if (step.status === 'waiting') {
@@ -700,13 +737,17 @@ async function runFlowExecutionInner(
     const cutoff = firstTargetRow ? firstTargetRow.order : Number.POSITIVE_INFINITY
     for (const step of priorSteps) {
       if (step.order >= cutoff) continue
-      if (step.status === 'succeeded' || step.status === 'skipped') completed[step.nodeId] = step.output
+      if (step.status === 'succeeded' || step.status === 'skipped') {
+        completed[step.nodeId] = step.output
+        if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
+      }
       if (step.status === 'failed') {
         const baseNode = nodeById.get(step.nodeId.split('#')[0])
         const onError = baseNode && 'onError' in baseNode.data ? (baseNode.data as { onError?: string }).onError : undefined
         if ((onError === 'route' || onError === 'continue') && step.output !== null && step.output !== undefined) {
           completed[step.nodeId] = step.output
           if (onError === 'route') completedRoutes.add(step.nodeId)
+          if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
         }
       }
     }
@@ -730,13 +771,17 @@ async function runFlowExecutionInner(
     const cutoff = firstTargetRow ? firstTargetRow.order : Number.POSITIVE_INFINITY
     for (const step of priorSteps) {
       if (step.order >= cutoff) continue
-      if (step.status === 'succeeded' || step.status === 'skipped') completed[step.nodeId] = step.output
+      if (step.status === 'succeeded' || step.status === 'skipped') {
+        completed[step.nodeId] = step.output
+        if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
+      }
       if (step.status === 'failed') {
         const baseNode = nodeById.get(step.nodeId.split('#')[0])
         const onError = baseNode && 'onError' in baseNode.data ? (baseNode.data as { onError?: string }).onError : undefined
         if ((onError === 'route' || onError === 'continue') && step.output !== null && step.output !== undefined) {
           completed[step.nodeId] = step.output
           if (onError === 'route') completedRoutes.add(step.nodeId)
+          if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
         }
       }
     }
@@ -761,15 +806,9 @@ async function runFlowExecutionInner(
   // makes the substitution visible in the same run panel that shows every
   // other step, using a status the UI already renders.
   //
-  // Pin/override provenance, keyed exactly like `completed` — read by
-  // interpret.ts's resume-replay branch (`opts.completedProvenance`) so an
-  // INTERPRETER-NATIVE node type (condition/loop/parallel/stop/variable/…)
-  // carries the same log line on the row IT writes for itself, every single
-  // time the walk reaches it (every resume attempt re-walks the whole graph
-  // and re-emits a fresh row for each already-completed node — see the
-  // `opts.completed` branch in interpret.ts — so this must be set on every
-  // invocation, not just the first).
-  const completedProvenance: Record<string, string> = {}
+  // `completedProvenance` itself is declared above, alongside `completed` —
+  // it must be populated by the resume-seeding loop too (see there), not just
+  // by the pinData/stateOverrides seeding below.
 
   // The explicit row write below is for ADAPTER_PERSISTED_TYPES (agent/tool/
   // http/ai/subflow/code/knowledge — see run-step-persistence.ts) ONLY: those

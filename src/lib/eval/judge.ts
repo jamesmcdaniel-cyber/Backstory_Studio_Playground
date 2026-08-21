@@ -8,7 +8,7 @@
  * which already handles provider selection + fallback) and is skipped in CI
  * when no key is present.
  */
-import { generateStructured } from '@/lib/llm/model-runner'
+import { generateStructured, type LedgerContext } from '@/lib/llm/model-runner'
 import { qwenModel } from '@/lib/llm/qwen'
 import type { JudgeResult, Trajectory } from './types'
 
@@ -49,20 +49,24 @@ function renderTrajectory(trajectory: Trajectory): string {
   return lines.join('\n')
 }
 
-export async function judgeTrajectory(
-  rubric: string,
-  trajectory: Trajectory,
-  opts?: {
-    /**
-     * Pin the judge to one model. The cross-model bench REQUIRES this: without
-     * it, provider selection picks the judge per call, and a Qwen-only
-     * deployment would have Qwen grading its own output while believing the
-     * scores comparable to Claude-judged ones. Nightly omits it — a single
-     * model against its own baseline has no cross-grading to distort.
-     */
-    judgeModel?: string
-  },
-): Promise<JudgeResult> {
+export type JudgeOpts = {
+  /**
+   * Pin the judge to one model. The cross-model bench REQUIRES this: without
+   * it, provider selection picks the judge per call, and a Qwen-only
+   * deployment would have Qwen grading its own output while believing the
+   * scores comparable to Claude-judged ones. Nightly omits it — a single
+   * model against its own baseline has no cross-grading to distort.
+   */
+  judgeModel?: string
+  /**
+   * Bench threads its ledger context here (surface `eval_bench`) so the
+   * judge's own tokens are billed, not just the candidate's. Nightly omits
+   * it — a CLI-only quality gate with no organization to bill.
+   */
+  ledger?: LedgerContext
+}
+
+export async function judgeTrajectory(rubric: string, trajectory: Trajectory, opts?: JudgeOpts): Promise<JudgeResult> {
   const raw = await generateStructured({
     schemaName: 'eval_judgment',
     model: opts?.judgeModel,
@@ -71,6 +75,7 @@ export async function judgeTrajectory(
     system:
       'You are a strict evaluator of AI agent runs. Given a grading rubric and a transcript of what the agent did (its reasoning, tool calls, tool results, and final answer), judge whether the run satisfies the rubric. Be rigorous: only pass a run that genuinely meets the criteria.',
     user: `RUBRIC:\n${rubric}\n\nTRANSCRIPT:\n${renderTrajectory(trajectory)}`,
+    ledger: opts?.ledger,
   })
   const parsed = JSON.parse(raw) as Partial<JudgeResult>
   return {

@@ -9,11 +9,27 @@
  * same ModelRunner interface, a fixture that passes here pins the loop's
  * behavior across refactors of the runner internals.
  */
-import { billableTokens, type ModelRunner, type ToolCall, type ToolResult } from '@/lib/llm/model-runner'
+import {
+  billableTokens,
+  emptyUsage,
+  type LedgerContext,
+  type ModelRunner,
+  type ToolCall,
+  type ToolResult,
+} from '@/lib/llm/model-runner'
 import { ScriptedRunner } from './scripted-runner'
 import type { EvalFixture, ScriptedTurn, Trajectory, TrajectoryExpectation } from './types'
 
 const DEFAULT_MAX_TURNS = 16
+
+/**
+ * Bump whenever fixture dispatch or judging semantics change (a live bench run
+ * that was scored under different rules is not comparable to one scored under
+ * these). `bench.ts` stamps this on every new `ModelEvalResult` row so the
+ * admin console can exclude pre-fix rows from its rolling averages instead of
+ * blending them in — see the inverted-score incident this closes.
+ */
+export const CURRENT_HARNESS_VERSION = '2026-08-20'
 
 /** Resolves a tool call to the string content fed back to the model. */
 export type ToolDispatch = (
@@ -21,10 +37,27 @@ export type ToolDispatch = (
   turnIndex: number,
 ) => Promise<{ content: string; isError: boolean }> | { content: string; isError: boolean }
 
+/**
+ * A trajectory that failed partway through, with whatever the loop had
+ * accumulated before the throw attached. `runBench` reads `partialTrajectory`
+ * off a caught error to persist the tokens/cost an errored candidate actually
+ * burned, rather than the zeros an ordinary rethrow would leave behind.
+ */
+export class RunLoopError extends Error {
+  readonly partialTrajectory: Trajectory
+  constructor(cause: unknown, partialTrajectory: Trajectory) {
+    super(cause instanceof Error ? cause.message : String(cause))
+    this.name = 'RunLoopError'
+    this.cause = cause
+    this.partialTrajectory = partialTrajectory
+  }
+}
+
 export async function runLoop(
   runner: ModelRunner,
   fixture: EvalFixture,
   dispatch: ToolDispatch,
+  ledger?: LedgerContext,
 ): Promise<Trajectory> {
   const maxTurns = fixture.maxTurns ?? DEFAULT_MAX_TURNS
   const tools = fixture.tools ?? []
@@ -36,33 +69,47 @@ export async function runLoop(
     toolsCalled: [],
     toolErrors: 0,
     usage: { inputTokens: 0, outputTokens: 0 },
+    rawUsage: emptyUsage(),
     hitMaxTurns: false,
   }
 
-  for (let turn = 0; turn < maxTurns; turn += 1) {
-    const result = await runner.next(transcript, fixture.system, tools)
-    // Trajectory.usage keeps its two-field display shape; fold every input
-    // bucket into inputTokens so the total still reads as it did before the split.
-    trajectory.usage.inputTokens += billableTokens(result.usage) - result.usage.outputTokens
-    trajectory.usage.outputTokens += result.usage.outputTokens
+  try {
+    for (let turn = 0; turn < maxTurns; turn += 1) {
+      const result = await runner.next(transcript, fixture.system, tools, ledger)
+      // Trajectory.usage keeps its two-field display shape; fold every input
+      // bucket into inputTokens so the total still reads as it did before the split.
+      trajectory.usage.inputTokens += billableTokens(result.usage) - result.usage.outputTokens
+      trajectory.usage.outputTokens += result.usage.outputTokens
+      // rawUsage keeps the buckets separate — computeCostUsd needs cache
+      // write/read tokens priced at their own rates, not folded into input.
+      trajectory.rawUsage.inputTokens += result.usage.inputTokens
+      trajectory.rawUsage.cacheWriteTokens += result.usage.cacheWriteTokens
+      trajectory.rawUsage.cacheReadTokens += result.usage.cacheReadTokens
+      trajectory.rawUsage.outputTokens += result.usage.outputTokens
 
-    if (!result.toolCalls.length) {
-      trajectory.finalText = result.text
-      trajectory.turns.push({ text: result.text, toolCalls: [], results: [] })
-      return trajectory
-    }
+      if (!result.toolCalls.length) {
+        trajectory.finalText = result.text
+        trajectory.turns.push({ text: result.text, toolCalls: [], results: [] })
+        return trajectory
+      }
 
-    const results: ToolResult[] = []
-    const recordedResults: Trajectory['turns'][number]['results'] = []
-    for (const call of result.toolCalls) {
-      trajectory.toolsCalled.push(call.name)
-      const { content, isError } = await dispatch(call, turn)
-      if (isError) trajectory.toolErrors += 1
-      results.push({ toolCallId: call.id, content, isError })
-      recordedResults.push({ name: call.name, content, isError })
+      const results: ToolResult[] = []
+      const recordedResults: Trajectory['turns'][number]['results'] = []
+      for (const call of result.toolCalls) {
+        trajectory.toolsCalled.push(call.name)
+        const { content, isError } = await dispatch(call, turn)
+        if (isError) trajectory.toolErrors += 1
+        results.push({ toolCallId: call.id, content, isError })
+        recordedResults.push({ name: call.name, content, isError })
+      }
+      runner.appendToolResults(transcript, results)
+      trajectory.turns.push({ text: result.text, toolCalls: result.toolCalls, results: recordedResults })
     }
-    runner.appendToolResults(transcript, results)
-    trajectory.turns.push({ text: result.text, toolCalls: result.toolCalls, results: recordedResults })
+  } catch (error) {
+    // Tokens already spent on turns that succeeded before this one failed are
+    // real spend — attach what the loop had so the caller can still account
+    // for it instead of losing it to an ordinary rethrow.
+    throw new RunLoopError(error, trajectory)
   }
 
   trajectory.hitMaxTurns = true

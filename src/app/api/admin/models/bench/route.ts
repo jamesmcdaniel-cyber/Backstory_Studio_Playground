@@ -62,7 +62,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     // Detached on purpose: a dev-server request must return, not sit through
     // the whole sweep. Safe only because inline mode is the long-lived dev
     // process, never a serverless function (see execution-mode.ts).
-    void runBench({ models })
+    void runBench({ models, organizationId: auth.organizationId })
       .catch((error) => console.error('inline bench failed:', error instanceof Error ? error.message : error))
       .finally(() => {
         inlineBenchRunning = false
@@ -86,9 +86,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     // fixtures sweep and writes a second copy of every row the first attempt
     // already persisted. The first prod bench did exactly that before this
     // line existed.
+    //
+    // organizationId rides along so the worker can bill the run's tokens to
+    // the operator who clicked the button (ledger surface `eval_bench`) — the
+    // ModelEvalResult rows themselves stay platform-level (organizationId:
+    // null), this only attributes spend in the LlmCall ledger.
     await queue.add(
       'model-bench',
-      { models: models ?? null },
+      { models: models ?? null, organizationId: auth.organizationId },
       { jobId: `model-bench-${Date.now()}`, attempts: 1, removeOnComplete: 100, removeOnFail: 100 },
     )
   } catch (error) {

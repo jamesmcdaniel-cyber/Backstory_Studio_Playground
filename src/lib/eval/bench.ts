@@ -19,10 +19,11 @@
  * `BENCH_MODELS=... npm run eval:bench` calls the same function from a shell.
  * Costs real tokens and needs DATABASE_URL — an operator tool, never a PR gate.
  */
-import { createPinnedRunner, DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
+import { createPinnedRunner, DEFAULT_AGENT_MODEL, type LedgerContext, type ModelRunner } from '@/lib/llm/model-runner'
 import { qwenConfigured, qwenModel } from '@/lib/llm/qwen'
 import { modelProviderBrand } from '@/lib/llm/provider-brand'
-import { runLoop, fixtureDispatch, checkTrajectory } from './harness'
+import { computeCostUsd } from '@/lib/usage/pricing'
+import { runLoop, fixtureDispatch, checkTrajectory, RunLoopError, CURRENT_HARNESS_VERSION } from './harness'
 import { judgeTrajectory, pinnedJudgeModel } from './judge'
 import { fixtures } from './fixtures'
 import type { Trajectory } from './types'
@@ -91,23 +92,48 @@ function providerOf(model: string): string {
   return modelProviderBrand(model)?.slug === 'qwen' ? 'qwen' : 'anthropic'
 }
 
-async function meanJudgement(rubric: string, trajectory: Trajectory): Promise<{ score: number; reasoning: string }> {
-  const judge = pinnedJudgeModel()
-  const scores: number[] = []
-  let reasoning = ''
+/** One judge sample, persisted verbatim in `samples` so the mean has evidence behind it. */
+export type BenchSample = { score: number; reasoning: string }
+
+export type MeanJudgement = {
+  /** Mean of `samples[*].score` — the number the table sorts by. */
+  score: number
+  /** The last sample's reasoning, kept for the one-line log/summary use. */
+  reasoning: string
+  /** Every sample that produced `score` — what the drill-down actually shows. */
+  samples: BenchSample[]
+}
+
+/**
+ * Judge a trajectory SAMPLES times and average. Takes the judge function as a
+ * parameter (defaulting to the real `judgeTrajectory`) purely so a unit test
+ * can substitute a fake that records what it was called with, without hitting
+ * a real model endpoint.
+ */
+export async function meanJudgement(
+  rubric: string,
+  trajectory: Trajectory,
+  opts: { ledger?: LedgerContext; judge?: typeof judgeTrajectory } = {},
+): Promise<MeanJudgement> {
+  const judgeModel = pinnedJudgeModel()
+  const judge = opts.judge ?? judgeTrajectory
+  const samples: BenchSample[] = []
   for (let i = 0; i < SAMPLES; i += 1) {
     // One retry per sample: the judge occasionally returns an unparseable
     // reply ("Unexpected end of JSON input" — seen on the first prod bench),
     // and without this a single flake voided the candidate's whole fixture
     // after its expensive live run had already been paid for. Two failures in
     // a row propagate — at that point the judge, not luck, is the problem.
-    const verdict = await judgeTrajectory(rubric, trajectory, { judgeModel: judge }).catch(() =>
-      judgeTrajectory(rubric, trajectory, { judgeModel: judge }),
+    const verdict = await judge(rubric, trajectory, { judgeModel, ledger: opts.ledger }).catch(() =>
+      judge(rubric, trajectory, { judgeModel, ledger: opts.ledger }),
     )
-    scores.push(verdict.score)
-    reasoning = verdict.reasoning
+    samples.push({ score: verdict.score, reasoning: verdict.reasoning })
   }
-  return { score: scores.reduce((total, score) => total + score, 0) / scores.length, reasoning }
+  return {
+    score: samples.reduce((total, sample) => total + sample.score, 0) / samples.length,
+    reasoning: samples[samples.length - 1].reasoning,
+    samples,
+  }
 }
 
 /**
@@ -132,14 +158,40 @@ export type BenchSummary = {
   errors: number
 }
 
+/** The slice of PrismaClient runBench needs — injectable so a unit test can hand in a fake, no DB required. */
+export type BenchPrismaClient = {
+  modelEvalResult: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> }
+}
+
 /**
  * Run the full bench and persist every result. Throws only when NOTHING is
  * benchable (no configured candidate); per-fixture errors are counted and
  * logged so one dead endpoint fails its candidate loudly without killing the
  * others. `log` defaults to console so the CLI output is unchanged.
+ *
+ * `organizationId` attributes the run's spend to whichever operator clicked
+ * "Run bench" (the route/worker thread `auth.organizationId` through here).
+ * Bench has no natural tenant of its own — every `ModelEvalResult` row stays
+ * platform-level (`organizationId: null`, unchanged) — so when it is absent
+ * (the bare `npm run eval:bench` CLI path, invoked with no session) the
+ * ledger context is simply omitted: a call still runs and still gets judged,
+ * it is just not billed to any organization's LlmCall ledger. Bench's OWN
+ * cost/token accounting on the `ModelEvalResult` row itself is unaffected
+ * either way — computed below directly from the trajectory's usage, not from
+ * the ledger.
  */
 export async function runBench(
-  opts: { models?: string[]; log?: (line: string) => void } = {},
+  opts: {
+    models?: string[]
+    log?: (line: string) => void
+    organizationId?: string
+    /** Test seam: substitute a fake runner factory instead of a real provider. */
+    createRunner?: (model: string) => ModelRunner
+    /** Test seam: substitute a fake Prisma client instead of the real DB. */
+    prisma?: BenchPrismaClient
+    /** Test seam: substitute a fake judge instead of a real model call. */
+    judge?: typeof judgeTrajectory
+  } = {},
 ): Promise<BenchSummary> {
   const log = opts.log ?? console.log
   const models = resolveBenchModels({
@@ -152,8 +204,12 @@ export async function runBench(
     throw new Error('No benchable model configured — set ANTHROPIC_API_KEY and/or QWEN_API_KEY (+QWEN_BASE_URL).')
   }
   // Imported lazily so the pure helpers above stay importable in DB-less tests.
-  const { systemPrisma } = await import('@/lib/prisma')
+  const prisma = opts.prisma ?? ((await import('@/lib/prisma')).systemPrisma as unknown as BenchPrismaClient)
+  const createRunner = opts.createRunner ?? createPinnedRunner
   const judge = pinnedJudgeModel()
+  const ledger: LedgerContext | undefined = opts.organizationId
+    ? { organizationId: opts.organizationId, surface: 'eval_bench' }
+    : undefined
   const summary: BenchSummary = { models, judge, recorded: 0, errors: 0 }
   log(`Bench: ${models.join(', ')} — judged by ${judge}`)
 
@@ -164,13 +220,19 @@ export async function runBench(
     log(`${model}${served === model ? '' : ` (served as ${served})`}:`)
     for (const fixture of fixtures) {
       if (!fixture.rubric) continue
-      const runner = createPinnedRunner(served)
+      const runner = createRunner(served)
       const startedAt = Date.now()
+      // Declared outside the try so the catch block can still read whatever
+      // usage the run accumulated before it failed — a candidate that burns
+      // three successful turns and then errors on the fourth spent real
+      // tokens on those three, and the error row must say so.
+      let trajectory: Trajectory | undefined
       try {
-        const trajectory = await runLoop(runner, fixture, fixtureDispatch(fixture))
+        trajectory = await runLoop(runner, fixture, fixtureDispatch(fixture), ledger)
         const structural = checkTrajectory(trajectory, fixture.expect)
-        const { score, reasoning } = await meanJudgement(fixture.rubric, trajectory)
-        await systemPrisma.modelEvalResult.create({
+        const { score, reasoning, samples } = await meanJudgement(fixture.rubric, trajectory, { ledger, judge: opts.judge })
+        const costUsd = computeCostUsd(providerOf(model), served, trajectory.rawUsage).costUsd
+        await prisma.modelEvalResult.create({
           data: {
             kind: 'bench',
             provider: providerOf(model),
@@ -184,6 +246,9 @@ export async function runBench(
             judgeModel: judge,
             inputTokens: trajectory.usage.inputTokens,
             outputTokens: trajectory.usage.outputTokens,
+            costUsd,
+            samples,
+            harnessVersion: CURRENT_HARNESS_VERSION,
             latencyMs: Date.now() - startedAt,
           },
         })
@@ -198,7 +263,13 @@ export async function runBench(
         summary.errors += 1
         const detail = benchErrorDetail(error)
         log(`  ${fixture.name}: ERROR — ${detail}`)
-        await systemPrisma.modelEvalResult
+        // runLoop failing mid-loop attaches whatever it had accumulated to a
+        // RunLoopError; a failure AFTER runLoop returned (e.g. the judge) still
+        // has the local `trajectory` binding — either way the tokens already
+        // spent are not lost.
+        const partial = trajectory ?? (error instanceof RunLoopError ? error.partialTrajectory : undefined)
+        const costUsd = partial ? computeCostUsd(providerOf(model), served, partial.rawUsage).costUsd : 0
+        await prisma.modelEvalResult
           .create({
             data: {
               kind: 'bench',
@@ -209,6 +280,10 @@ export async function runBench(
               pass: null,
               reasoning: `error: ${detail.slice(0, 500)}`,
               judgeModel: judge,
+              inputTokens: partial?.usage.inputTokens ?? 0,
+              outputTokens: partial?.usage.outputTokens ?? 0,
+              costUsd,
+              harnessVersion: CURRENT_HARNESS_VERSION,
               latencyMs: Date.now() - startedAt,
             },
           })

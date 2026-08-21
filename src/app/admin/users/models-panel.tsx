@@ -72,6 +72,10 @@ type BenchDetailRow = {
   latencyMs: number | null
   outputTokens: number
   createdAt: string
+  /** Scored under an older harness than CURRENT_HARNESS_VERSION — excluded from the aggregate above, shown here badged. */
+  stale: boolean
+  /** The judge's per-sample {score, reasoning} verdicts backing the mean in `score`. */
+  samples: { score: number; reasoning: string }[] | null
 }
 
 type ShadowMatchup = {
@@ -412,6 +416,11 @@ export function ModelsPanel({ days }: { days: number }) {
                                     {entry.pass === false && entry.score != null && (
                                       <Badge variant="warn">structural fail</Badge>
                                     )}
+                                    {entry.stale && (
+                                      <Badge variant="warn" title="Scored under an older harness version — not in the average above.">
+                                        stale harness
+                                      </Badge>
+                                    )}
                                     <span className="text-xs text-muted-foreground">
                                       {new Date(entry.createdAt).toLocaleString()}
                                       {entry.latencyMs != null && ` · ${duration(entry.latencyMs)}`}
@@ -421,6 +430,18 @@ export function ModelsPanel({ days }: { days: number }) {
                                     <p className={cn('mt-1 text-xs', entry.score == null ? 'text-destructive' : 'text-muted-foreground')}>
                                       {entry.reasoning}
                                     </p>
+                                  )}
+                                  {/* The mean is a claim; each sample is the evidence — shown so the
+                                      number and its backing reasoning are never a mismatched pair. */}
+                                  {entry.samples && entry.samples.length > 0 && (
+                                    <ul className="mt-1.5 space-y-1 border-l pl-2">
+                                      {entry.samples.map((sample, sampleIndex) => (
+                                        <li key={sampleIndex} className="text-xs text-muted-foreground">
+                                          <span className="tabular-nums font-medium text-foreground">{sample.score.toFixed(3)}</span>
+                                          {sample.reasoning && ` — ${sample.reasoning}`}
+                                        </li>
+                                      ))}
+                                    </ul>
                                   )}
                                 </li>
                               ))}

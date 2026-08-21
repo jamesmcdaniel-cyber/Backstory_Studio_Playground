@@ -3,6 +3,7 @@ import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { MODEL_LIMITS } from '@/lib/usage/model-tiers'
 import { shadowConfig } from '@/lib/eval/shadow'
 import { benchableModels } from '@/lib/eval/bench'
+import { CURRENT_HARNESS_VERSION } from '@/lib/eval/harness'
 import { createQueue, getRedisConnection, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 
@@ -252,7 +253,12 @@ export const GET = withAuthenticatedApi(async (request) => {
   const [benchGroups, shadowRows] = await Promise.all([
     systemPrisma.modelEvalResult.groupBy({
       by: ['provider', 'model', 'judgeModel'],
-      where: { kind: 'bench', createdAt: { gte: since } },
+      // Legacy rows (harnessVersion default 'pre-2026-08-20', from before
+      // fixture dispatch was fixed — see 4f48b3a9) must never blend into this
+      // average: a run scored under different rules is not the same
+      // measurement. They stay visible in benchDetail below (unfiltered),
+      // badged stale, for anyone drilling in.
+      where: { kind: 'bench', createdAt: { gte: since }, harnessVersion: CURRENT_HARNESS_VERSION },
       _avg: { score: true },
       // score counts only scored rows; _all includes error rows (score null),
       // so errors = _all - score and a candidate whose every fixture failed
@@ -288,6 +294,10 @@ export const GET = withAuthenticatedApi(async (request) => {
   // fixtures; shadow reasoning is never stored at all.
   const benchDetail = (
     await systemPrisma.modelEvalResult.findMany({
+      // Unfiltered by harnessVersion on purpose: a legacy row is still real
+      // evidence of what that fixture run produced, it is just not
+      // comparable to current scores. The panel badges it stale instead of
+      // hiding it.
       where: { kind: 'bench', createdAt: { gte: since } },
       select: {
         model: true,
@@ -299,11 +309,18 @@ export const GET = withAuthenticatedApi(async (request) => {
         latencyMs: true,
         outputTokens: true,
         createdAt: true,
+        harnessVersion: true,
+        samples: true,
       },
       orderBy: { createdAt: 'desc' },
       take: 120,
     })
-  ).map((row) => ({ ...row, score: row.score == null ? null : Number(row.score) }))
+  ).map((row) => ({
+    ...row,
+    score: row.score == null ? null : Number(row.score),
+    stale: row.harnessVersion !== CURRENT_HARNESS_VERSION,
+    samples: Array.isArray(row.samples) ? (row.samples as { score: number; reasoning: string }[]) : null,
+  }))
 
   // Pair shadow rows and aggregate per champion-vs-challenger matchup. A pair
   // missing a side (a judge failure mid-write) is dropped rather than counted

@@ -16,7 +16,7 @@
  * Fixtures can be authored by hand or generated from a persisted run transcript
  * (see from-transcript.ts) — a real run becomes a regression fixture.
  */
-import type { ToolDefinition } from '@/lib/llm/model-runner'
+import type { ToolDefinition, TokenUsage } from '@/lib/llm/model-runner'
 
 /** One scripted model turn: optional narration + zero or more tool calls. */
 export type ScriptedToolCall = {
@@ -83,6 +83,13 @@ export type Trajectory = {
   toolsCalled: string[]
   toolErrors: number
   usage: { inputTokens: number; outputTokens: number }
+  /**
+   * The same totals as `usage`, but keeping cache-write/cache-read tokens in
+   * their own buckets instead of folding them into inputTokens. `usage` is the
+   * display shape (unchanged for backward compat); `rawUsage` is what
+   * `computeCostUsd` needs to price the run correctly.
+   */
+  rawUsage: TokenUsage
   /** True when the run ended by hitting maxTurns rather than a final answer. */
   hitMaxTurns: boolean
 }

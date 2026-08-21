@@ -436,6 +436,15 @@ model ModelEvalResult {
   costUsd        Decimal  @default(0) @db.Decimal(12, 6)
   /// Shadow only, for spend accounting. Bench rows are platform-level (null).
   organizationId String?  @db.Uuid
+  /// Bumped whenever fixture dispatch or judging semantics change (see
+  /// CURRENT_HARNESS_VERSION in src/lib/eval/harness.ts). Rows from before this
+  /// column existed are labeled 'pre-2026-08-20' by the migration default, so
+  /// the admin console's rolling averages can exclude them instead of blending
+  /// scores from the inverted-score era into current numbers.
+  harnessVersion String   @default("pre-2026-08-20")
+  /// Bench only: the per-sample {score, reasoning} judge verdicts backing the
+  /// mean stored in `score` — the evidence for the number, not just the number.
+  samples        Json?
   createdAt      DateTime @default(now())
 
   @@index([kind, model, createdAt])

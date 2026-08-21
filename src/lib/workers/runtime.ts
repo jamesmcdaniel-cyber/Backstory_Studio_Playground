@@ -53,9 +53,10 @@ export interface WorkerSpec {
  * environment defaults (BENCH_MODELS), the same source the CLI reads, so the
  * button and the shell measure the same thing.
  */
-async function executeModelBenchJob(job: { id?: string; data?: { models?: string[] } }) {
+async function executeModelBenchJob(job: { id?: string; data?: { models?: string[]; organizationId?: string } }) {
   const summary = await runBench({
     models: Array.isArray(job.data?.models) ? job.data.models : undefined,
+    organizationId: job.data?.organizationId,
     log: (line) => console.log(`[model-bench ${job.id ?? ''}] ${line}`),
   })
   if (summary.errors > 0) {

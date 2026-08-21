@@ -43,6 +43,7 @@ test('checkTrajectory flags missing tools, forbidden tools, and missing substrin
     toolsCalled: ['nango_send_slack_message'],
     toolErrors: 1,
     usage: { inputTokens: 0, outputTokens: 0 },
+    rawUsage: { inputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 0 },
     hitMaxTurns: false,
   }
   const failures = checkTrajectory(trajectory, {

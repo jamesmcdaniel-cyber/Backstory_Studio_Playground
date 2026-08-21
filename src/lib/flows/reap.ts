@@ -42,11 +42,30 @@ export function formatReapMessage(startedAt: Date, now: Date, lastCompletedStepN
  * Fail runs stuck `running` past the cutoff (and their still-live steps).
  * Returns the reaped count.
  *
+ * Each run is terminalized as its own small atomic unit — two plain
+ * statements guarded by `status: 'running'` in their `where` clause, NOT one
+ * `$transaction` wrapping the whole batch. A mass-outage batch (the exact
+ * scenario this reaper exists for — see the file header) can be hundreds of
+ * runs; wrapping all of them in one interactive transaction would burn
+ * Prisma's 5s default transaction timeout on the round trips alone, rolling
+ * back the ENTIRE pass and retrying the same oversized batch forever — worse
+ * than the bug this reaper fixes. Here, one slow or failing run can never
+ * roll back runs already terminalized before it in the same pass, and a
+ * crash mid-pass leaves already-reaped runs reaped: a rerun just picks up
+ * whatever is left, which is the incremental-progress property a mass-outage
+ * recovery path actually needs.
+ *
+ * The conditional `where: { status: 'running' }` on each run's updateMany IS
+ * the re-verify step (replacing the old single bulk-then-re-query pattern,
+ * still checking status at write time, just per row): a run that legitimately
+ * left `running` between the initial read and its turn in the loop (paused
+ * for approval, picked up late, etc.) reports `count: 0` and is left alone,
+ * steps untouched.
+ *
  * `onAfterRead` is a test-only seam: real callers never pass it. It runs
- * after the initial read (so its effects land in the gap the transaction's
- * re-checked `where` clauses are meant to protect against) and lets a test
- * simulate a run legitimately leaving `running` between the read and the
- * write — the exact race this function's re-query step exists to handle.
+ * after the initial read (so its effects land in the gap the per-run
+ * conditional writes are meant to protect against) and lets a test simulate a
+ * run legitimately leaving `running` before this function's loop reaches it.
  */
 export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Promise<void>): Promise<number> {
   const cutoff = new Date(now.getTime() - STUCK_FLOW_RUN_TIMEOUT_MS)
@@ -57,48 +76,36 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
     take: REAP_BATCH_LIMIT,
   })
   if (stuck.length === 0) return 0
-  const runIds = stuck.map((run) => run.id)
   await onAfterRead?.()
-  // systemPrisma: global reaper sweep — runs across all orgs by design.
-  return systemPrisma.$transaction(async (tx) => {
-    // Status re-checked here so a run that legitimately left `running`
-    // (e.g. paused for approval) between the read above and this write is
-    // left alone.
-    const stillRunning = await tx.flowRun.findMany({
-      where: { id: { in: runIds }, status: 'running' },
-      select: { id: true, startedAt: true },
-    })
-    if (stillRunning.length === 0) return 0
-    // Last succeeded step per still-running run, so the failure message can
-    // name how far the run actually got instead of a flat "timed out".
-    const doneSteps = await tx.flowRunStep.findMany({
-      where: { flowRunId: { in: stillRunning.map((run) => run.id) }, status: 'succeeded' },
-      select: { flowRunId: true, nodeId: true, finishedAt: true },
-      orderBy: { finishedAt: 'desc' },
-    })
-    const lastStepByRun = new Map<string, string>()
-    for (const step of doneSteps) if (!lastStepByRun.has(step.flowRunId)) lastStepByRun.set(step.flowRunId, step.nodeId)
 
-    // Each run gets its own message (elapsed + last step differ per run), so
-    // this writes one run at a time rather than a single blanket updateMany —
-    // the conditional `status: 'running'` in each where clause is the same
-    // race guard the old bulk updateMany used, just applied per row.
-    let reapedCount = 0
-    for (const run of stillRunning) {
-      const message = formatReapMessage(run.startedAt, now, lastStepByRun.get(run.id) ?? null)
-      const result = await tx.flowRun.updateMany({
-        where: { id: run.id, status: 'running' },
-        data: { status: 'failed', error: message, finishedAt: now },
-      })
-      if (result.count === 0) continue // diverted away from `running` since stillRunning was read
-      reapedCount += 1
-      await tx.flowRunStep.updateMany({
-        where: { flowRunId: run.id, status: { in: ['queued', 'running', 'waiting'] } },
-        data: { status: 'failed', error: message, finishedAt: now },
-      })
-    }
-    return reapedCount
+  // Last succeeded step per candidate run, so the failure message can name
+  // how far the run actually got. This read is best-effort against whichever
+  // candidates the initial query found — the per-run write below is what
+  // actually re-verifies a run is still stuck, not this lookup.
+  const doneSteps = await systemPrisma.flowRunStep.findMany({
+    where: { flowRunId: { in: stuck.map((run) => run.id) }, status: 'succeeded' },
+    select: { flowRunId: true, nodeId: true, finishedAt: true },
+    orderBy: { finishedAt: 'desc' },
   })
+  const lastStepByRun = new Map<string, string>()
+  for (const step of doneSteps) if (!lastStepByRun.has(step.flowRunId)) lastStepByRun.set(step.flowRunId, step.nodeId)
+
+  let reapedCount = 0
+  for (const run of stuck) {
+    const message = formatReapMessage(run.startedAt, now, lastStepByRun.get(run.id) ?? null)
+    // systemPrisma: global reaper sweep — runs across all orgs by design.
+    const result = await systemPrisma.flowRun.updateMany({
+      where: { id: run.id, status: 'running' },
+      data: { status: 'failed', error: message, finishedAt: now },
+    })
+    if (result.count === 0) continue // diverted away from `running` since the initial read
+    reapedCount += 1
+    await systemPrisma.flowRunStep.updateMany({
+      where: { flowRunId: run.id, status: { in: ['queued', 'running', 'waiting'] } },
+      data: { status: 'failed', error: message, finishedAt: now },
+    })
+  }
+  return reapedCount
 }
 
 /**

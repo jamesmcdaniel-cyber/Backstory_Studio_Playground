@@ -187,6 +187,64 @@ if (TEST_DB) {
     assert.equal(stuckStepAfter.status, 'failed')
   })
 
+  // Regression for the per-run construction itself: reapStuckFlowRuns used to
+  // wrap the whole batch's re-verify-and-write in one `$transaction`, so a
+  // mass-outage pass (this reaper's actual reason to exist — see the file
+  // header) of hundreds of runs could burn Prisma's 5s interactive-transaction
+  // timeout on the round trips alone, rolling back the ENTIRE pass. The fix
+  // terminalizes each run as its own small atomic unit instead. This seeds a
+  // realistic-sized batch (80 runs, half with a completed step) and proves
+  // the whole pass finishes well inside that timeout and every run gets its
+  // OWN contextual message — not a shared one bled across the batch.
+  test('a realistic mass-outage batch (80 simultaneously stuck runs) completes without an interactive-transaction timeout, each with its own message', async () => {
+    const batchSize = 80
+    const stale = staleStart()
+    const seeded = await Promise.all(
+      Array.from({ length: batchSize }, async (_, i) => {
+        const run = await prisma.flowRun.create({
+          data: { flowId: ids.flow, organizationId: ids.org, status: 'running', startedAt: stale },
+        })
+        const nodeId = `mass-step-${i}`
+        const hasStep = i % 2 === 0
+        if (hasStep) {
+          await prisma.flowRunStep.create({
+            data: { flowRunId: run.id, nodeId, status: 'succeeded', startedAt: stale },
+          })
+        }
+        return { id: run.id, hasStep, nodeId }
+      }),
+    )
+    const runIds = seeded.map((run) => run.id)
+
+    const startedAt = Date.now()
+    // Idempotent (proven above) — looping tolerates this shared DB's own
+    // cross-org noise (concurrent sessions' fixtures) ever pushing part of
+    // this batch past a single pass's REAP_BATCH_LIMIT, without weakening
+    // what this test actually proves: the pass itself never times out or
+    // rolls back wholesale.
+    for (let pass = 0; pass < 5; pass += 1) {
+      await reapStuckFlowRuns()
+      const remaining = await prisma.flowRun.count({
+        where: { id: { in: runIds }, organizationId: ids.org, status: 'running' },
+      })
+      if (remaining === 0) break
+    }
+    const elapsedMs = Date.now() - startedAt
+    // Comfortably under Prisma's 5s interactive-transaction default even
+    // summed across retries — an umbrella $transaction around a batch this
+    // size was exactly what risked blowing that budget in one shot.
+    assert.ok(elapsedMs < 20_000, `batch took ${elapsedMs}ms across retries — too slow for a per-run, no-umbrella-transaction design`)
+
+    const finished = await prisma.flowRun.findMany({ where: { id: { in: runIds }, organizationId: ids.org } })
+    assert.equal(finished.length, batchSize)
+    for (const run of finished) {
+      assert.equal(run.status, 'failed', `run ${run.id} should have been reaped`)
+      const seed = seeded.find((candidate) => candidate.id === run.id)
+      if (seed?.hasStep) assert.match(run.error ?? '', new RegExp(`last completed step: ${seed.nodeId}$`))
+      else assert.match(run.error ?? '', /no step completed before the timeout$/)
+    }
+  })
+
   test('reapNeverPickedUpRuns fails only zero-step running runs past the pickup window', async () => {
     // freshRunning (zero steps, seeded ~5 min ago) has aged past the pickup
     // window by now — settle it so this test's counts cover only its own runs.

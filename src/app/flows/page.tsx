@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import { Workflow, Plus, Upload, ChevronDown, MoreHorizontal, Copy, Download, Trash2, Rocket, CircleOff, Pencil, Search, KeyRound, ScrollText, Sparkles, LayoutTemplate } from 'lucide-react'
-import { CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -21,7 +21,7 @@ import { FlowExecutionLog } from '@/components/flows/execution-log'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
-import { StaggerItem, StaggerReveal, TiltCard } from '@/components/ui/motion-primitives'
+import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
 import { cn } from '@/lib/utils'
 import { cardAccent } from '@/lib/flows/card-accent'
 import { deferDialogFromDropdown } from '@/lib/client/defer-dialog'
@@ -378,7 +378,7 @@ export default function FlowsPage() {
               const accent = cardAccent(flow.id)
               return (
               <StaggerItem key={flow.id}>
-                <TiltCard className={cn('group h-full overflow-hidden border-border/60 transition-[box-shadow,border-color]', accent.border)}>
+                <Card variant="flat" className={cn('group relative h-full overflow-hidden border-border/60 transition-colors', accent.border)}>
                   <div className={cn('absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r opacity-80 transition-opacity group-hover:opacity-100', accent.bar)} />
                   <div aria-hidden="true" className={cn('pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-60 blur-2xl transition-opacity duration-base group-hover:opacity-100', accent.glow)} />
                   <CardHeader className="space-y-2.5 pt-5">
@@ -450,7 +450,7 @@ export default function FlowsPage() {
                     <p className="line-clamp-2 text-sm text-muted-foreground">{flow.description || 'No description yet.'}</p>
                     </Link>
                   </CardContent>
-                </TiltCard>
+                </Card>
               </StaggerItem>
               )
             })}

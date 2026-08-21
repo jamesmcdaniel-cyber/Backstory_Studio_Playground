@@ -47,13 +47,23 @@ export function AvatarPicker({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Choose an avatar</DialogTitle>
-          <DialogDescription>Pick the face that shows on the roster.</DialogDescription>
-        </DialogHeader>
+      <DialogContent className="max-w-lg overflow-hidden p-0">
+        <div className="border-b bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-6 pb-5 pt-6">
+          <DialogHeader>
+            <DialogTitle>Choose an avatar</DialogTitle>
+            <DialogDescription>Choose a look for your teammate. You can change it any time.</DialogDescription>
+          </DialogHeader>
 
-        <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+          <div className="mt-5 flex items-center gap-4 rounded-2xl border border-white/80 bg-white/70 p-3 shadow-sm backdrop-blur-sm">
+            <AgentAvatar seed={choice || baseSeed} className="h-16 w-16 shrink-0 rounded-full shadow-md" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">Your current pick</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">A crisp, illustrated profile that stays consistent across your workspace.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3 px-6 py-5 sm:grid-cols-6">
           {seeds.map((seed) => {
             const selected = (choice ?? baseSeed) === seed
             return (
@@ -64,17 +74,22 @@ export function AvatarPicker({
                 aria-label={`Avatar option ${seed}`}
                 aria-pressed={selected}
                 className={cn(
-                  'rounded-full p-0.5 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300',
-                  selected ? 'ring-2 ring-indigo-500' : 'hover:ring-2 hover:ring-indigo-200',
+                  'group/avatar relative rounded-2xl border bg-slate-50/70 p-1.5 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300',
+                  selected
+                    ? 'border-indigo-500 bg-indigo-50 shadow-[0_5px_16px_-8px_rgba(79,70,229,0.8)] ring-1 ring-indigo-500'
+                    : 'border-gray-200/80 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:shadow-md',
                 )}
               >
-                <AgentAvatar seed={seed} className="h-12 w-12 rounded-full" />
+                <AgentAvatar seed={seed} className="h-auto w-full rounded-full shadow-sm transition-transform duration-150 group-hover/avatar:scale-[1.03]" />
+                {selected && (
+                  <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white ring-2 ring-white" aria-hidden="true">✓</span>
+                )}
               </button>
             )
           })}
         </div>
 
-        <div className="flex items-center justify-between gap-2 pt-1">
+        <div className="flex items-center justify-between gap-2 border-t bg-slate-50/60 px-6 py-4">
           <Button variant="ghost" onClick={() => setPage((current_) => current_ + 1)} disabled={saving}>
             <RefreshCw className="mr-1.5 h-4 w-4" aria-hidden="true" /> Shuffle
           </Button>

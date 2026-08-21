@@ -41,7 +41,9 @@ export function RosterCard({
   const finished = stats.completed + stats.failed
   const successRate = finished > 0 ? `${Math.round((stats.completed / finished) * 100)}%` : '—'
   return (
-    <div className="group relative rounded-2xl border bg-white shadow-1 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md focus-within:shadow-md">
+    <div className="group relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-1 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200/80 hover:shadow-lg focus-within:shadow-md">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-indigo-50/70 via-slate-50/45 to-transparent opacity-80 transition-opacity duration-200 group-hover:opacity-100" />
+      <div className="pointer-events-none absolute -left-8 -top-10 h-24 w-24 rounded-full bg-indigo-100/30 blur-2xl" />
       <button
         type="button"
         onClick={onConfigure}
@@ -54,17 +56,17 @@ export function RosterCard({
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full flex-col items-center rounded-2xl px-4 pb-4 pt-6 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+        className="relative flex w-full flex-col items-center rounded-2xl px-4 pb-4 pt-6 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300"
       >
-        <span className="relative">
-          <AgentAvatar seed={seed} className="h-16 w-16 rounded-full ring-1 ring-black/5" />
+        <span className="relative rounded-full bg-white p-1 shadow-[0_8px_24px_-8px_rgba(30,41,59,0.38)] ring-1 ring-black/[0.06] transition-transform duration-200 group-hover:scale-[1.035]">
+          <AgentAvatar seed={seed} className="h-[4.5rem] w-[4.5rem] rounded-full" />
           {/* Presence dot: green on the clock, pale when set up but manual,
               gray while setup is unfinished. */}
           <span
             aria-hidden="true"
             className={cn(
-              'absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white',
-              presence === 'working' ? 'bg-emerald-500' : presence === 'ready' ? 'bg-emerald-300' : 'bg-gray-300',
+              'absolute bottom-0 right-0 h-4 w-4 rounded-full border-[3px] border-white shadow-sm',
+              presence === 'working' ? 'bg-emerald-500' : presence === 'ready' ? 'bg-emerald-300' : 'bg-slate-300',
             )}
           />
         </span>

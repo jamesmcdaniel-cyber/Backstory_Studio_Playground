@@ -120,7 +120,10 @@ export function recordEstimatedUsage(
 ): void {
   const chars = parts.reduce((sum, part) => sum + (part ? part.length : 0), 0)
   if (chars <= 0) return
-  void recordTokenUsage(organizationId, Math.ceil(chars / 4)).catch(() => undefined)
+  // A guess, not a provider-reported count — lands in the sibling `:est` Redis
+  // key (see recordTokenUsage) so it never blends into the measured number a
+  // surface might show, while still counting toward enforcement.
+  void recordTokenUsage(organizationId, Math.ceil(chars / 4), { estimated: true }).catch(() => undefined)
 }
 
 

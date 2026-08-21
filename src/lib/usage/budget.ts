@@ -13,17 +13,39 @@ function monthKey(organizationId: string): string {
 }
 
 /**
- * Record token spend against the live month-to-date counter. Call per turn.
- * Best-effort (returns the new total, or null if the counter backend is down).
+ * Sibling key to monthKey, for chars/4 ESTIMATES (endpoints whose model helper
+ * returns no real usage). Kept separate from the reported-usage key so a
+ * surface that shows month-to-date spend can distinguish "measured" from
+ * "guessed" — enforcement (checkMonthlyTokenBudget) sums both, since an
+ * estimate still represents real tokens spent, just not precisely counted.
  */
-export async function recordTokenUsage(organizationId: string, tokens: number): Promise<number | null> {
-  if (!Number.isFinite(tokens) || tokens <= 0) return null
-  return cacheIncrBy(monthKey(organizationId), Math.floor(tokens), MONTH_TTL_MS)
+function estimatedMonthKey(organizationId: string): string {
+  return `${monthKey(organizationId)}:est`
 }
 
 /**
- * Clear this workspace's month-to-date token counter, so a workspace stopped by
- * the monthly ceiling can run again immediately.
+ * Record token spend against the live month-to-date counter. Call per turn.
+ * Best-effort (returns the new total, or null if the counter backend is down).
+ *
+ * Pass `{ estimated: true }` when the count is a chars/4 guess rather than
+ * provider-reported usage — it lands in a sibling Redis key so estimated and
+ * measured spend never share (and silently blend into) the same number, while
+ * still counting toward enforcement (see checkMonthlyTokenBudget).
+ */
+export async function recordTokenUsage(
+  organizationId: string,
+  tokens: number,
+  opts?: { estimated?: boolean },
+): Promise<number | null> {
+  if (!Number.isFinite(tokens) || tokens <= 0) return null
+  const key = opts?.estimated ? estimatedMonthKey(organizationId) : monthKey(organizationId)
+  return cacheIncrBy(key, Math.floor(tokens), MONTH_TTL_MS)
+}
+
+/**
+ * Clear this workspace's month-to-date token counters (both the reported and
+ * estimated keys), so a workspace stopped by the monthly ceiling can run again
+ * immediately.
  *
  * Deliberately WORKSPACE-scoped, because the counter is: the key is per org per
  * UTC month, and there is no per-person breakdown to clear. An operator screen
@@ -35,7 +57,10 @@ export async function recordTokenUsage(organizationId: string, tokens: number): 
  * monthKey changed, and the failure mode is a button that appears to work.
  */
 export async function resetMonthlyTokenUsage(organizationId: string): Promise<void> {
-  await cacheDelete(monthKey(organizationId))
+  await Promise.all([
+    cacheDelete(monthKey(organizationId)),
+    cacheDelete(estimatedMonthKey(organizationId)),
+  ])
 }
 
 /**
@@ -90,6 +115,20 @@ export function tokenLimitForTier(tier: string | null | undefined): number {
 }
 
 /**
+ * The enforced month-to-date token ceiling for a workspace — the same number
+ * checkMonthlyTokenBudget gates runs against, exposed standalone so display
+ * surfaces (the sidebar's credits bar, /api/snapshot, /api/usage) can show the
+ * real denominator instead of an unrelated hardcoded constant.
+ */
+export async function monthlyTokenBudgetFor(organizationId: string): Promise<number> {
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { entitlementTier: true },
+  })
+  return tokenLimitForTier(org?.entitlementTier)
+}
+
+/**
  * Month-to-date token budget for an organization. Enforced at the start of every
  * agent run so a runaway agent (or an expired trial) can't burn unbounded spend.
  *
@@ -107,28 +146,38 @@ export async function checkMonthlyTokenBudget(
     if (isUsageExemptEmail(user?.email)) return { over: false, used: 0, limit: 0 }
   }
 
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { entitlementTier: true },
-  })
-  const limit = tokenLimitForTier(org?.entitlementTier)
+  const limit = await monthlyTokenBudgetFor(organizationId)
   if (limit <= 0) return { over: false, used: 0, limit: 0 }
 
   const since = new Date()
   since.setUTCDate(1)
   since.setUTCHours(0, 0, 0, 0)
 
-  const aggregate = await prisma.agentExecution.aggregate({
-    where: { organizationId, startedAt: { gte: since } },
-    _sum: { inputTokens: true, outputTokens: true },
+  // LlmCall covers BOTH planes (agent turns AND flow AI steps) — unlike
+  // agentExecution, which only the agent plane ever wrote to, and so silently
+  // under-counted any workspace that mostly runs flows.
+  const aggregate = await prisma.llmCall.aggregate({
+    where: { organizationId, createdAt: { gte: since } },
+    _sum: { inputTokens: true, cacheWriteTokens: true, cacheReadTokens: true, outputTokens: true },
   })
-  const dbUsed = (aggregate._sum.inputTokens || 0) + (aggregate._sum.outputTokens || 0)
+  const dbUsed =
+    (aggregate._sum.inputTokens || 0) +
+    (aggregate._sum.cacheWriteTokens || 0) +
+    (aggregate._sum.cacheReadTokens || 0) +
+    (aggregate._sum.outputTokens || 0)
 
-  // The live counter includes in-flight runs the DB aggregate can't see yet, so
-  // it's normally the higher (and correct) number. Fall back to the DB total if
-  // the counter is unavailable or was reset mid-month, so we never under-count.
-  const live = await cacheGetNumber(monthKey(organizationId))
-  const used = Math.max(dbUsed, live ?? 0)
+  // The live counters include in-flight runs the DB aggregate can't see yet, so
+  // their sum is normally the higher (and correct) number. Reported and
+  // estimated usage are sibling keys (see recordTokenUsage) — enforcement sums
+  // both, since an estimate still represents real spend. Fall back to the DB
+  // total if both are unavailable or were reset mid-month, so we never
+  // under-count.
+  const [liveReported, liveEstimated] = await Promise.all([
+    cacheGetNumber(monthKey(organizationId)),
+    cacheGetNumber(estimatedMonthKey(organizationId)),
+  ])
+  const live = (liveReported ?? 0) + (liveEstimated ?? 0)
+  const used = Math.max(dbUsed, live)
 
   return { over: used >= limit, used, limit }
 }

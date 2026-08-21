@@ -46,6 +46,7 @@ import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-point
 import { resetSnapshotCache, getSnapshot } from '@/lib/client/snapshot'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { creditUsagePct } from '@/lib/usage/credit-pct'
 import { cn } from '@/lib/utils'
 import type { Agent as AgentType } from '@/lib/types'
 
@@ -61,7 +62,7 @@ const DEFAULT_ORG_LOGO = '/backstory-symbol-black.png'
  * Downscale an uploaded image to a small square PNG data URL so the logo can
  * be stored inline (no object storage) and still render crisply at 32px.
  */
-type Usage = { executions: number; inputTokens: number; outputTokens: number; exempt?: boolean }
+type Usage = { executions: number; usedTokens: number; budgetTokens: number; exempt?: boolean }
 
 // Module-level snapshot of the sidebar's fetched data, persisted across the
 // component's remounts. Each top-level page renders its own <DashboardLayout>,
@@ -72,7 +73,6 @@ type Usage = { executions: number; inputTokens: number; outputTokens: number; ex
 type SidebarSnapshot = { organizations: Organization[]; activeOrgId: string | null; agents: Agent[]; workspaceFolders: WorkspaceFolder[]; usage: Usage | null }
 let sidebarCache: SidebarSnapshot | null = null
 
-const CREDIT_TOKENS = 1_000_000
 const SIDEBAR_COLLAPSED_KEY = 'backstory:sidebar-collapsed'
 export const AGENTS_CHANGED_EVENT = 'backstory:agents-changed'
 
@@ -345,7 +345,7 @@ export function Sidebar() {
     }
   }, [agents, workspaceFolders])
 
-  const creditPct = usage ? Math.min(100, Math.round(((usage.inputTokens + usage.outputTokens) / CREDIT_TOKENS) * 100)) : 0
+  const creditPct = usage ? creditUsagePct(usage.usedTokens, usage.budgetTokens) : 0
 
   const moveAgent = async (agentId: string, target: { folder: string | null; visibility: 'shared' | 'private' }) => {
     const agent = agents.find((candidate) => candidate.id === agentId)

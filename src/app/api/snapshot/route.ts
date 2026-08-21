@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
 import { serializeAgent } from '@/lib/agents/serialize'
-import { isUsageExemptEmail } from '@/lib/usage/budget'
+import { checkMonthlyTokenBudget, isUsageExemptEmail } from '@/lib/usage/budget'
 
 export const runtime = 'nodejs'
 
@@ -27,7 +27,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
 
   const notificationScope = { organizationId: auth.organizationId, OR: [{ userId: auth.dbUser.id }, { userId: null }] }
 
-  const [agents, workspaceFolders, activities, usageAggregate, organization, notifications, unread] = await Promise.all([
+  const [agents, workspaceFolders, activities, executionCount, budget, organization, notifications, unread] = await Promise.all([
     prisma.agentTask.findMany({
       where: {
         organizationId: auth.organizationId,
@@ -48,11 +48,14 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
       orderBy: { startedAt: 'desc' },
       take: 50,
     }),
-    prisma.agentExecution.aggregate({
+    prisma.agentExecution.count({
       where: { organizationId: auth.organizationId, startedAt: { gte: monthStart } },
-      _sum: { inputTokens: true, outputTokens: true },
-      _count: true,
     }),
+    // The same enforcement source of truth the run-time gate checks — LlmCall
+    // token sums across BOTH planes (agent turns and flow AI steps) plus the
+    // workspace's enforced ceiling — so the number the sidebar shows and the
+    // number that stops a run are never two different sources.
+    checkMonthlyTokenBudget(auth.organizationId),
     prisma.organization.findUnique({
       where: { id: auth.organizationId },
       select: { id: true, name: true, slug: true, plan: true, logoUrl: true },
@@ -68,9 +71,9 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     activities,
     usage: {
       since: monthStart.toISOString(),
-      executions: usageAggregate._count,
-      inputTokens: usageAggregate._sum.inputTokens || 0,
-      outputTokens: usageAggregate._sum.outputTokens || 0,
+      executions: executionCount,
+      usedTokens: budget.used,
+      budgetTokens: budget.limit,
       // Exempt admins have no ceiling — the sidebar shows "Unlimited".
       exempt: isUsageExemptEmail(auth.dbUser.email),
     },

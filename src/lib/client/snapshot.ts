@@ -17,7 +17,7 @@ export type Snapshot = {
   agents: Agent[]
   workspaceFolders?: Array<{ id: string; name: string }>
   activities: Activity[]
-  usage: { since: string; executions: number; inputTokens: number; outputTokens: number }
+  usage: { since: string; executions: number; usedTokens: number; budgetTokens: number; exempt?: boolean }
   activeOrganizationId: string | null
   organizations: Array<{ id: string; name: string; slug: string; plan: string; logoUrl?: string | null }>
   notifications: Array<Record<string, unknown>>

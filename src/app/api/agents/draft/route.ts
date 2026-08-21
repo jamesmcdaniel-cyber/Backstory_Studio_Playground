@@ -79,8 +79,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
 
   if (!text) throw new ApiError('The model returned no draft', 502, 'DRAFT_FAILED')
-  // Rough metering (~chars/4) since generateStructured returns no token usage.
-  void recordTokenUsage(auth.organizationId, Math.ceil((description.length + text.length) / 4)).catch(() => undefined)
+  // Rough metering (~chars/4): generateStructured returns only text, not the
+  // provider's real usage counts, so this is an estimate — recorded to the
+  // sibling `:est` Redis key (see recordTokenUsage) rather than blended into
+  // measured spend, while still counting toward enforcement.
+  void recordTokenUsage(auth.organizationId, Math.ceil((description.length + text.length) / 4), { estimated: true }).catch(() => undefined)
   const draft = JSON.parse(text) as Draft
 
   const schedule = {

@@ -169,8 +169,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   if (text) {
-    // Rough metering (~chars/4), same convention as the draft builder.
-    void recordTokenUsage(auth.organizationId, Math.ceil((roster.length + text.length) / 4)).catch(() => undefined)
+    // Rough metering (~chars/4), same convention as the draft builder:
+    // generateStructured exposes no real usage to this caller, so this is an
+    // estimate — recorded to the sibling `:est` Redis key (see
+    // recordTokenUsage), not blended into measured spend.
+    void recordTokenUsage(auth.organizationId, Math.ceil((roster.length + text.length) / 4), { estimated: true }).catch(() => undefined)
     let generated: string[] = []
     try {
       generated = ((JSON.parse(text) as { labels?: unknown }).labels as string[]) ?? []

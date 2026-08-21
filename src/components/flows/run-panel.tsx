@@ -62,7 +62,9 @@ export type FlowRunDetail = {
 }
 export type RunWaitingEntry = {
   nodeId: string
-  kind: 'input' | 'approval'
+  /** 'unknown' — a missing/unparseable/redacted pause reason — must never be
+   *  reported as 'input': that would ask the user a question nobody asked. */
+  kind: 'input' | 'approval' | 'unknown'
   question?: string
   /** Sent back with the reply so it resolves this pause and no other. */
   stepKey?: string
@@ -226,7 +228,7 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
   return rows
 }
 
-function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { step: RunStep; label: string; waitingKind?: 'input' | 'approval'; onRerunFrom?: () => void; onForkWithEdits?: () => void }) {
+function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { step: RunStep; label: string; waitingKind?: 'input' | 'approval' | 'unknown'; onRerunFrom?: () => void; onForkWithEdits?: () => void }) {
   const [open, setOpen] = useState(false)
   // An in-flight agent step with a linked execution shows the agent's REAL
   // process (below) instead of the decorative typewriter word. Steps without
@@ -235,7 +237,13 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
   const live = (step.status === 'running' || step.status === 'waiting') && Boolean(step.agentExecutionId)
   const feed = useAgentProcessFeed(step.agentExecutionId, live, step.status === 'waiting')
   // A paused step reads as what it needs, never the bare status word.
-  const statusLabel = waitingKind ? (waitingKind === 'input' ? 'Waiting for your reply' : 'Waiting for approval') : step.status
+  const statusLabel = waitingKind
+    ? waitingKind === 'input'
+      ? 'Waiting for your reply'
+      : waitingKind === 'approval'
+        ? 'Waiting for approval'
+        : 'Waiting (details unavailable)'
+    : step.status
   return (
     <div className="border-b border-border/60 last:border-0">
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50">
@@ -296,7 +304,9 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
                     ? `Waiting for a webhook callback${waiting.timeoutAt ? ` (gives up ${new Date(waiting.timeoutAt).toLocaleString()})` : ''}`
                     : waiting.kind === 'approval'
                       ? 'Waiting for an approval decision'
-                      : 'Waiting for a reply'}
+                      : waiting.kind === 'input'
+                        ? 'Waiting for a reply'
+                        : 'Waiting (details unavailable)'}
               </p>
             )
           })()}
@@ -397,6 +407,11 @@ function WaitingBanner({
           <>
             <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for an approval decision</p>
             <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">A step needs an approval before this run can continue.</p>
+          </>
+        ) : waiting.kind === 'unknown' ? (
+          <>
+            <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting (details unavailable)</p>
+            <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">This run is paused, but its pause reason could not be read — open the step for what is recorded.</p>
           </>
         ) : (
           <>

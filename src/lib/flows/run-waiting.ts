@@ -12,7 +12,14 @@
 
 export type RunWaiting = {
   nodeId: string
-  kind: 'input' | 'approval'
+  /**
+   * 'unknown' covers a missing, unparseable, or unrecognized `waiting.kind` —
+   * e.g. a legacy row recorded before pause reasons were persisted, or a
+   * redacted marker sitting where a real kind should be. It must never be
+   * reported as 'input': an approval pause misreported as a question asks the
+   * user for text nobody is going to read.
+   */
+  kind: 'input' | 'approval' | 'unknown'
   question?: string
   /**
    * The exact step row this pause belongs to, when it is one iteration of a
@@ -39,7 +46,12 @@ function toRunWaiting(step: WaitingStep): RunWaiting {
   const index = parts.length > 1 ? Number(parts[parts.length - 1]) : NaN
   return {
     nodeId: step.nodeId,
-    kind: info?.kind === 'approval' ? ('approval' as const) : ('input' as const),
+    kind:
+      info?.kind === 'approval'
+        ? ('approval' as const)
+        : info?.kind === 'input'
+          ? ('input' as const)
+          : ('unknown' as const),
     question: info?.question,
     ...(parts.length > 1 ? { stepKey: step.nodeId } : {}),
     ...(Number.isInteger(index) ? { iteration: index + 1 } : {}),

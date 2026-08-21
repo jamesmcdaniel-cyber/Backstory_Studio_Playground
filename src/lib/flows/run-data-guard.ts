@@ -72,7 +72,7 @@ export function applyRunDataRedaction(
 
   // `data` is an object for create/update and an array for createMany.
   if (input.data) {
-    const redacted = redactDataPayload(input.data, fields)
+    const redacted = redactDataPayload(input.data, fields, model)
     if (redacted !== input.data) {
       next.data = redacted
       changed = true
@@ -82,7 +82,7 @@ export function applyRunDataRedaction(
   // upsert carries two payloads and both write run data.
   for (const key of ['create', 'update'] as const) {
     if (input[key]) {
-      const redacted = redactDataPayload(input[key], fields)
+      const redacted = redactDataPayload(input[key], fields, model)
       if (redacted !== input[key]) {
         next[key] = redacted
         changed = true
@@ -93,15 +93,41 @@ export function applyRunDataRedaction(
   return changed ? next : args
 }
 
-function redactDataPayload(data: unknown, fields: readonly string[]): unknown {
+/** The literal warning appended to a FlowRunStep row when redaction actually
+ *  changed its persisted bytes — so resume seeding (which replays a step's
+ *  stored output as if it were the real one) surfaces that the value it is
+ *  replaying is not what the step actually produced. */
+export const REDACTED_AT_REST_WARNING = 'output redacted at rest'
+
+/** Cheap deep-equality for values that only ever contain JSON — every field
+ *  this guard touches is a Prisma Json column, so this is exact, not a
+ *  heuristic. Used to tell "redaction rebuilt an identical object" (the
+ *  redactor always allocates a fresh object/array) from "redaction actually
+ *  removed a secret". */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  try {
+    return JSON.stringify(a) === JSON.stringify(b)
+  } catch {
+    return false
+  }
+}
+
+function redactDataPayload(data: unknown, fields: readonly string[], model?: string): unknown {
   if (Array.isArray(data)) {
-    const mapped = data.map((entry) => redactDataPayload(entry, fields))
+    const mapped = data.map((entry) => redactDataPayload(entry, fields, model))
     return mapped.some((entry, index) => entry !== data[index]) ? mapped : data
   }
   if (!data || typeof data !== 'object') return data
 
   const record = data as Record<string, unknown>
   let changed = false
+  // Whether input/output/logs (the fields resume seeding and the run panel
+  // treat as "what actually happened") were changed by redaction — as
+  // opposed to `warnings`, which is redacted too but must never count toward
+  // this, or appending our own marker below would flag itself as content
+  // that needs a marker appended.
+  let contentRedacted = false
   const next: Record<string, unknown> = { ...record }
 
   for (const field of fields) {
@@ -110,7 +136,23 @@ function redactDataPayload(data: unknown, fields: readonly string[]): unknown {
     // to redact. Skipping both avoids turning a partial update into a full one.
     if (value === undefined || value === null) continue
     const redacted = redactFlowValue(value)
+    // The redactor always allocates a fresh object, so only a byte-level
+    // comparison tells a clean row (no warning earned) from a row that
+    // actually lost a secret (warning earned) — the constraint this whole
+    // change turns on.
+    if (sameJson(redacted, value)) continue
     next[field] = redacted
+    changed = true
+    if (field !== 'warnings') contentRedacted = true
+  }
+
+  if (contentRedacted && model === 'FlowRunStep') {
+    const priorWarnings = Array.isArray(next.warnings)
+      ? (next.warnings as unknown[])
+      : Array.isArray(record.warnings)
+        ? (record.warnings as unknown[])
+        : []
+    next.warnings = [...priorWarnings, REDACTED_AT_REST_WARNING]
     changed = true
   }
 

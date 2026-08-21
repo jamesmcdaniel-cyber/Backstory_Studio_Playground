@@ -742,12 +742,71 @@ async function runFlowExecutionInner(
     }
   }
 
+  // Container (condition/loop/parallel/stop) outcomes are reported via onStep;
+  // persist them so runs are fully inspectable. Agent/tool/http steps are
+  // persisted by their adapters because they need started/running rows. The
+  // node type is looked up by the BARE `outcome.nodeId`; the row is keyed by
+  // `outcome.iterationKey` (the per-iteration `${nodeId}#${index}` inside a
+  // loop, or the bare id on the main chain).
+  //
+  // Declared before the pinData/stateOverrides seeding below so THOSE writes
+  // (which also need to land before finalize) can share the same array.
+  const pending: Promise<unknown>[] = []
+
+  // A node marked pre-completed below (pinData/stateOverrides) never runs the
+  // interpreter, so nothing would ever call onStep for it — before this fix
+  // that meant NO FlowRunStep row at all, and anything downstream of it had no
+  // way to tell "this input came from a pinned/overridden value" from "this
+  // input came from a step that actually ran". A `skipped` row with a log line
+  // makes the substitution visible in the same run panel that shows every
+  // other step, using a status the UI already renders.
+  //
+  // `alreadyRecorded` guards against a duplicate row on resume/patch/replay: by
+  // the time this section runs, `completed` may already hold this nodeId's
+  // value from a prior row read out of the DB above (including a skipped-pin
+  // row this very section wrote on an earlier attempt) — in that case the
+  // node's provenance is already on record and only the replayed VALUE should
+  // win, not a second row.
+  //
+  // Scoped to ADAPTER_PERSISTED_TYPES (agent/tool/http/ai/subflow/code/
+  // knowledge — see run-step-persistence.ts): those are the types whose row
+  // is normally written by the adapter, which a pre-completed node never
+  // reaches, so nothing else will ever write one. Every OTHER node type
+  // (condition/loop/parallel/stop/variable/…) is persisted generically by
+  // `interpret.ts`'s own resume-replay path the moment the walk reaches it
+  // (see the `opts.completed` branch there) — writing a second row here for
+  // those would duplicate that one.
+  const recordSkippedSeed = (nodeId: string, value: unknown, log: string) => {
+    if (shouldPersistInterpreterStep(nodeTypeById.get(nodeId.split('#')[0]))) return
+    const seedOrder = order++
+    pending.push(
+      prisma.flowRunStep
+        .create({
+          data: {
+            flowRunId: run.id,
+            nodeId,
+            order: seedOrder,
+            status: 'skipped',
+            input: jsonValue({}),
+            output: jsonValue(value ?? null),
+            logs: jsonValue([log]),
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          },
+        })
+        .catch(() => undefined),
+    )
+  }
+
   // Pinned/mock outputs: seed them as pre-completed so those nodes are not run
   // and downstream steps consume the pinned value (n8n pinData semantics). A
   // pin wins over a replayed output — it is the user's explicit override.
   if (graph.pinData) {
     for (const [nodeId, value] of Object.entries(graph.pinData)) {
-      if (nodeById.has(nodeId)) completed[nodeId] = value ?? null
+      if (!nodeById.has(nodeId)) continue
+      const alreadyRecorded = nodeId in completed
+      completed[nodeId] = value ?? null
+      if (!alreadyRecorded) recordSkippedSeed(nodeId, value, 'value pinned — node not executed')
     }
   }
 
@@ -758,22 +817,20 @@ async function runFlowExecutionInner(
   if (overrides) {
     for (const nodeId of nodeById.keys()) {
       const { hit, value } = resolveOverride(overrides, nodeId)
-      if (hit) completed[nodeId] = value
+      if (!hit) continue
+      const alreadyRecorded = nodeId in completed
+      completed[nodeId] = value
+      if (!alreadyRecorded) recordSkippedSeed(nodeId, value, 'state override — node not executed')
     }
     // Iteration-specific keys name rows (`node#i`) that are not bare graph
     // nodes, so they need seeding directly.
     for (const key of Object.keys(overrides)) {
-      if (key.includes('#') && nodeById.has(key.split('#')[0])) completed[key] = overrides[key]
+      if (!key.includes('#') || !nodeById.has(key.split('#')[0])) continue
+      const alreadyRecorded = key in completed
+      completed[key] = overrides[key]
+      if (!alreadyRecorded) recordSkippedSeed(key, overrides[key], 'state override — node not executed')
     }
   }
-
-  // Container (condition/loop/parallel/stop) outcomes are reported via onStep;
-  // persist them so runs are fully inspectable. Agent/tool/http steps are
-  // persisted by their adapters because they need started/running rows. The
-  // node type is looked up by the BARE `outcome.nodeId`; the row is keyed by
-  // `outcome.iterationKey` (the per-iteration `${nodeId}#${index}` inside a
-  // loop, or the bare id on the main chain).
-  const pending: Promise<unknown>[] = []
   const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[]; startedAt: Date; finishedAt: Date }) => {
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.

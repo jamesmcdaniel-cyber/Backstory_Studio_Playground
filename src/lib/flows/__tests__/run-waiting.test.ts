@@ -25,11 +25,13 @@ test('derives an approval pause', () => {
   assert.deepEqual(deriveRunWaiting('waiting', steps), { nodeId: 'b', kind: 'approval', question: undefined })
 })
 
-test('defaults to input when the waiting info is missing or malformed', () => {
-  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting' }]), { nodeId: 'b', kind: 'input', question: undefined })
-  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting', output: null }]), { nodeId: 'b', kind: 'input', question: undefined })
-  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting', output: 'a summary string' }]), { nodeId: 'b', kind: 'input', question: undefined })
-  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting', output: { waiting: { kind: 'bogus' } } }]), { nodeId: 'b', kind: 'input', question: undefined })
+test('never defaults to input when the waiting info is missing or malformed — surfaces unknown instead', () => {
+  // An approval pause with a redacted/malformed marker must read as "details
+  // unavailable", never as a question nobody actually asked.
+  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting' }]), { nodeId: 'b', kind: 'unknown', question: undefined })
+  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting', output: null }]), { nodeId: 'b', kind: 'unknown', question: undefined })
+  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting', output: 'a summary string' }]), { nodeId: 'b', kind: 'unknown', question: undefined })
+  assert.deepEqual(deriveRunWaiting('waiting', [{ nodeId: 'b', status: 'waiting', output: { waiting: { kind: 'bogus' } } }]), { nodeId: 'b', kind: 'unknown', question: undefined })
 })
 
 test('picks the latest waiting step when multiple are waiting', () => {
@@ -91,9 +93,9 @@ test('deriveRunWaitingAll is empty unless the run itself is waiting', () => {
   assert.deepEqual(deriveRunWaitingAll('waiting', [{ nodeId: 'a', status: 'succeeded' }]), [])
 })
 
-test('deriveRunWaitingAll keeps legacy rows that never recorded a pause reason', () => {
+test('deriveRunWaitingAll keeps legacy rows that never recorded a pause reason, honestly as unknown', () => {
   assert.deepEqual(deriveRunWaitingAll('waiting', [{ nodeId: 'a', status: 'waiting' }]), [
-    { nodeId: 'a', kind: 'input', question: undefined },
+    { nodeId: 'a', kind: 'unknown', question: undefined },
   ])
 })
 

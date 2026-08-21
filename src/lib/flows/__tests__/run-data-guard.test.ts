@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { applyRunDataRedaction } from '../run-data-guard'
+import { applyRunDataRedaction, REDACTED_AT_REST_WARNING } from '../run-data-guard'
 import { REDACTED } from '@/lib/logging/redact'
 
 /**
@@ -121,4 +121,83 @@ test('null and undefined run-data fields are left alone', () => {
 test('an unknown model with no args does not throw', () => {
   assert.doesNotThrow(() => applyRunDataRedaction(undefined, 'update', undefined))
   assert.doesNotThrow(() => applyRunDataRedaction('FlowRunStep', 'update', null))
+})
+
+// ── Redaction provenance: the persisted trace must say when it lied ────────
+//
+// Before this, a step whose output got redacted looked IDENTICAL to a step
+// that ran clean — resume seeding then replayed the redacted stand-in as if
+// it were the real value, with nothing on the row saying otherwise.
+
+test('a row whose output is actually redacted gets the "redacted at rest" warning appended', () => {
+  const out = applyRunDataRedaction('FlowRunStep', 'create', {
+    data: { id: 'step-1', status: 'succeeded', output: { body: TOKEN_BODY } },
+  }) as { data: { warnings: string[] } }
+
+  assert.ok(out.data.warnings.includes(REDACTED_AT_REST_WARNING))
+  assert.equal(out.data.warnings.length, 1)
+})
+
+test('the warning is appended AFTER any existing warnings on the row, never replacing them', () => {
+  const out = applyRunDataRedaction('FlowRunStep', 'create', {
+    data: { id: 'step-1', output: { body: TOKEN_BODY }, warnings: ['retried once'] },
+  }) as { data: { warnings: string[] } }
+
+  assert.deepEqual(out.data.warnings, ['retried once', REDACTED_AT_REST_WARNING])
+})
+
+test('a clean row is returned completely untouched — same object, no warnings field added', () => {
+  // A field being PRESENT is not enough to earn the warning: only a value that
+  // genuinely changed under redaction should. The redactor allocates a fresh
+  // object either way, so a naive "field was written" check would false-fire
+  // on every single row.
+  const args = { data: { id: 'step-1', status: 'succeeded', output: { body: { total: 3, items: ['a', 'b'] } } } }
+  const out = applyRunDataRedaction('FlowRunStep', 'create', args)
+  assert.equal(out, args, 'identity: nothing in this row needed redaction, so nothing was rewritten')
+})
+
+test('input, output AND logs redaction each independently earn the warning, but only one copy is appended', () => {
+  const out = applyRunDataRedaction('FlowRunStep', 'create', {
+    data: {
+      input: { token: TOKEN_BODY.access_token },
+      output: { token: TOKEN_BODY.access_token },
+      logs: [`Bearer ${TOKEN_BODY.access_token}`],
+    },
+  }) as { data: { warnings: string[] } }
+
+  assert.deepEqual(out.data.warnings, [REDACTED_AT_REST_WARNING])
+})
+
+test('redacting the warnings FIELD itself never earns the marker — no self-recursion', () => {
+  // `warnings` is itself in REDACTED_WRITE_FIELDS (an author-authored warning
+  // string could in principle carry a literal secret). If a warnings-field
+  // redaction counted toward "content redacted", appending our own marker
+  // string would immediately re-trigger itself in a future write of the same
+  // row — the exact recursive loop the guard must never produce.
+  const out = applyRunDataRedaction('FlowRunStep', 'update', {
+    data: { warnings: [`leaked ${TOKEN_BODY.access_token}`] },
+  }) as { data: { warnings: string[] } }
+
+  assert.ok(!out.data.warnings.some((w) => w.includes(TOKEN_BODY.access_token)), 'the secret in the warning text is still redacted')
+  assert.ok(!out.data.warnings.includes(REDACTED_AT_REST_WARNING), 'but redacting warnings alone never earns the "redacted at rest" marker')
+})
+
+test('the warning is never appended for FlowRun rows — only FlowRunStep carries a warnings column consumers read this way', () => {
+  const out = applyRunDataRedaction('FlowRun', 'create', {
+    data: { trigger: { type: 'webhook', headers: { authorization: 'Bearer abcdefghijklmnop' } } },
+  }) as { data: Record<string, unknown> }
+
+  assert.equal('warnings' in out.data, false)
+})
+
+test('createMany: only the rows that actually lost a secret get the warning, not their neighbors', () => {
+  const out = applyRunDataRedaction('FlowRunStep', 'createMany', {
+    data: [
+      { output: { password: 'one' } },
+      { output: { total: 3 } },
+    ],
+  }) as { data: Array<{ warnings?: string[]; output: Record<string, unknown> }> }
+
+  assert.deepEqual(out.data[0].warnings, [REDACTED_AT_REST_WARNING])
+  assert.equal(out.data[1].warnings, undefined)
 })

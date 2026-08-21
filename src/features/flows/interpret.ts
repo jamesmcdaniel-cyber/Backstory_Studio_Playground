@@ -1211,8 +1211,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const res = await runAgentWithReliability(node, resolved, stepKey, overrides)
       // Retry evidence: every failed attempt before this settled result, so a
       // step that eventually succeeded (or gave up) is not indistinguishable
-      // from one that never had to retry. Empty when nothing failed.
-      const agentWarnings = res.attemptErrors?.length ? res.attemptErrors : undefined
+      // from one that never had to retry. Gated on attempts > 1 (not just
+      // attemptErrors.length) — a retries:0 step that fails on its one and
+      // only attempt still carries a single "attempt 1/1 failed" entry, which
+      // would just duplicate the `error` field verbatim as a "warning".
+      const agentWarnings = res.attempts && res.attempts > 1 && res.attemptErrors?.length ? res.attemptErrors : undefined
       if (res.waiting) {
         if (node.data.humanAssistance === false) {
           const error = 'The agent asked for help, but human assistance is turned off for this step.'
@@ -1220,7 +1223,12 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
           emit({ nodeId: node.id, status: 'failed', error, ...(mode === 'route' || mode === 'continue' ? { output: { error, input: resolved } } : {}), ...(agentWarnings ? { warnings: agentWarnings } : {}) })
           return onFailure(mode, error, resolved)
         }
-        emit({ nodeId: node.id, status: 'waiting' })
+        // The retry trail must persist on the waiting row too — a step that
+        // failed once or twice before the agent finally paused for human
+        // input is otherwise indistinguishable from one that paused
+        // immediately. onStep's 'waiting' branch (execute-flow.ts) is what
+        // turns this into a persisted warning.
+        emit({ nodeId: node.id, status: 'waiting', ...(agentWarnings ? { warnings: agentWarnings } : {}) })
         return { kind: 'pause', nodeId: stepKey, question: res.waiting.question }
       }
       if (res.error) {

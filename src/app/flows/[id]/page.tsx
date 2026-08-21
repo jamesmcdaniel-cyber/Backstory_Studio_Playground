@@ -59,6 +59,7 @@ import { ImportNotesPanel, parseImportReport, type FlowImportReport } from '@/co
 import { CheckerPanel } from '@/components/flows/checker-panel'
 import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
 import { FlowIconInput } from '@/components/flows/flow-icon-input'
+import { deferDialogFromDropdown } from '@/lib/client/defer-dialog'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { useCanvasPan } from '@/components/flows/use-canvas-pan'
@@ -2286,14 +2287,14 @@ function FlowBuilder() {
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>Flow settings</DropdownMenuLabel>
             {canEdit && !external && (
-              <DropdownMenuItem onSelect={openFlowSettings}>
+              <DropdownMenuItem onSelect={() => deferDialogFromDropdown(openFlowSettings)}>
                 <FileText className="h-4 w-4" /> Edit details…
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={duplicateFlow}>
               <Copy className="h-4 w-4" /> Duplicate
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setSavingTemplate(true)}>
+            <DropdownMenuItem onSelect={() => deferDialogFromDropdown(() => setSavingTemplate(true))}>
               <BookmarkPlus className="h-4 w-4" /> Save as template…
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -2345,7 +2346,7 @@ function FlowBuilder() {
             {!external && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setConfirmDeleteOpen(true)} className="text-red-600 focus:text-red-700">
+                <DropdownMenuItem onSelect={() => deferDialogFromDropdown(() => setConfirmDeleteOpen(true))} className="text-red-600 focus:text-red-700">
                   <Trash2 className="h-4 w-4" /> Delete flow
                 </DropdownMenuItem>
               </>

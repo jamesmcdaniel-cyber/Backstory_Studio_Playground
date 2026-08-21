@@ -9,6 +9,7 @@ import { anchorTriggerSchedule, normalizeFlowTrigger, preserveWebhookSecretHash,
 import { assertFlowEditable, resolveFlowRole } from '@/lib/flows/access'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
+import { shouldGuardFlowWrite } from '@/lib/flows/concurrency'
 
 /** Newest per-edit snapshots kept per flow — enough to cover the History panel's
  *  edit timeline (30 rows) with headroom. */
@@ -157,7 +158,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   }
   // Scoped to the OWNING org (which for a guest differs from the caller's).
   let flow
-  if (body.baseUpdatedAt) {
+  if (shouldGuardFlowWrite({ graph: body.graph, baseUpdatedAt: body.baseUpdatedAt })) {
     // Atomic optimistic-concurrency guard. The stale-CLIENT check above compares
     // our fresh read to what the client loaded; this closes the TOCTOU between
     // that read and this write by making the update CONDITIONAL on updatedAt not
@@ -172,7 +173,9 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     }
     flow = await prisma.flow.findFirstOrThrow({ where: { id: body.id, organizationId: existing.organizationId } })
   } else {
-    // No baseUpdatedAt: documented last-write-wins for callers that don't opt in.
+    // Settings-only writes are last-write-wins even when the caller carries its
+    // current timestamp. They touch no graph data and must not race the graph
+    // autosaver merely because both advance Flow.updatedAt.
     flow = await prisma.flow.update({ where: { id: body.id, organizationId: existing.organizationId }, data })
   }
   // Per-user edit log: capture canvas AND flow-setting changes. Previously a

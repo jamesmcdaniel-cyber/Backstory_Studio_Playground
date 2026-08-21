@@ -24,6 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { StaggerItem, StaggerReveal, TiltCard } from '@/components/ui/motion-primitives'
 import { cn } from '@/lib/utils'
 import { cardAccent } from '@/lib/flows/card-accent'
+import { deferDialogFromDropdown } from '@/lib/client/defer-dialog'
 
 /** Cards per page on the Flows grid. */
 const PAGE_SIZE = 9
@@ -395,7 +396,7 @@ export default function FlowsPage() {
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start">
-                            <DropdownMenuItem onSelect={() => editDetails(flow)}>
+                            <DropdownMenuItem onSelect={() => deferDialogFromDropdown(() => editDetails(flow))}>
                               <Pencil className="mr-2 h-4 w-4" /> Edit details
                             </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => void togglePublish(flow)}>

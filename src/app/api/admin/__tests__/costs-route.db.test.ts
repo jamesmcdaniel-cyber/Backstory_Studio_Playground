@@ -85,4 +85,45 @@ if (TEST_DB) {
     assert.ok(body.dataSince, 'dataSince must be present')
     assert.ok(!Number.isNaN(new Date(body.dataSince).getTime()), 'dataSince must be a valid date')
   })
+
+  test('a demo-clone organization cannot inflate the platform totals', async () => {
+    // A demo org's LlmCall rows are fabricated (anonymised clones of a real
+    // workspace's usage) — see src/lib/demo/snapshot.ts. If they blended into
+    // this route's cross-org aggregate, every "top spender" and headline total
+    // would count fiction as real spend.
+    const demoOrg = await prisma.organization.create({
+      data: { name: 'Demo Clone Org', slug: `demo-org-${crypto.randomUUID()}`, kind: 'demo' },
+    })
+    const demoCostUsd = '999999.00'
+    await prisma.llmCall.create({
+      data: {
+        organizationId: demoOrg.id,
+        surface: 'agent_turn',
+        provider: 'anthropic',
+        model: 'claude-test',
+        priceVersion: 'test-2026-08',
+        costUsd: demoCostUsd,
+        inputTokens: 10,
+        outputTokens: 10,
+      },
+    })
+
+    try {
+      const response = await costsRoute.GET(get())
+      const body = await response.json()
+      assert.equal(response.status, 200, JSON.stringify(body))
+
+      assert.ok(
+        !body.byOrg.some((row: any) => row.organizationId === demoOrg.id),
+        'the demo org must not appear in byOrg',
+      )
+      // Full sum over 1..55 = 1540.00 — if the demo row's 999999.00 leaked in,
+      // the unbounded total would dwarf this.
+      const fullSum = (ORG_COUNT * (ORG_COUNT + 1)) / 2
+      assert.equal(body.total.costUsd, fullSum, 'the unbounded total must exclude the demo org')
+    } finally {
+      await prisma.llmCall.deleteMany({ where: { organizationId: demoOrg.id } })
+      await prisma.organization.delete({ where: { id: demoOrg.id } })
+    }
+  })
 }

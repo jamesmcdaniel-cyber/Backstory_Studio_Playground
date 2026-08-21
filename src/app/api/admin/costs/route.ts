@@ -12,23 +12,33 @@ export const GET = withAuthenticatedApi(async (request) => {
   const days = Math.min(90, Math.max(1, Number(request.nextUrl.searchParams.get('days')) || 30))
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
 
+  // Demo orgs (kind === 'demo') are disposable anonymised clones of a real
+  // workspace — see src/lib/demo/snapshot.ts. Their LlmCall rows are canned
+  // history the clone wrote for itself, not real spend, and LlmCall carries
+  // no Prisma relation to Organization (denormalized scalar FK only), so every
+  // query below excludes them by id rather than through a relation filter.
+  const demoOrgIds = (
+    await systemPrisma.organization.findMany({ where: { kind: 'demo' }, select: { id: true } })
+  ).map((org) => org.id)
+  const notDemo = { organizationId: { notIn: demoOrgIds } }
+
   const [byOrg, bySurface, byModel, totalAgg] = await Promise.all([
     systemPrisma.llmCall.groupBy({
       by: ['organizationId'],
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, ...notDemo },
       _sum: { costUsd: true, inputTokens: true, cacheReadTokens: true, outputTokens: true },
       orderBy: { _sum: { costUsd: 'desc' } },
       take: 50,
     }),
     systemPrisma.llmCall.groupBy({
       by: ['surface'],
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, ...notDemo },
       _sum: { costUsd: true },
       _count: true,
     }),
     systemPrisma.llmCall.groupBy({
       by: ['provider', 'model', 'priceVersion'],
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, ...notDemo },
       _sum: { costUsd: true },
       _count: true,
       orderBy: { _sum: { costUsd: 'desc' } },
@@ -40,7 +50,7 @@ export const GET = withAuthenticatedApi(async (request) => {
     // 90-day request against a table with a 90-day retention prune, the true
     // earliest row can be newer than `since`, and the page needs to say so.
     systemPrisma.llmCall.aggregate({
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, ...notDemo },
       _sum: { costUsd: true, inputTokens: true, cacheReadTokens: true, outputTokens: true },
       _count: { _all: true },
       _min: { createdAt: true },

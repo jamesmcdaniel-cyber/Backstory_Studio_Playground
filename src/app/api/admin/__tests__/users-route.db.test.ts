@@ -227,4 +227,30 @@ if (TEST_DB) {
     const response = await actionsRoute.POST(action(subject.userId, { action: 'delete-everything' }))
     assert.ok(response.status >= 400 && response.status < 500, `expected a 4xx, saw ${response.status}`)
   })
+
+  test('a demo-clone workspace\'s users are excluded from the roster and totals', async () => {
+    // Demo orgs (kind === 'demo') are disposable anonymised clones of a real
+    // workspace, and User is copied in full into them (src/lib/demo/snapshot.ts
+    // COPY_FULL) — those rows are fictional people, not platform users.
+    const testAuth = await import('@/lib/server/__tests__/test-auth')
+    const demo = await testAuth.seedTestOrg(prisma, { orgKind: 'demo' })
+    try {
+      const identity = await systemPrisma.user.findUnique({
+        where: { id: demo.userId },
+        select: { supabaseId: true },
+      })
+      liveIdentities.add(identity.supabaseId)
+
+      const before = await listRoute.GET(get())
+      const beforeBody = await before.json()
+      assert.equal(before.status, 200, JSON.stringify(beforeBody))
+
+      assert.ok(
+        !beforeBody.users.some((user: any) => user.id === demo.userId),
+        'a demo-clone user must not appear in the roster',
+      )
+    } finally {
+      await demo.cleanup()
+    }
+  })
 }

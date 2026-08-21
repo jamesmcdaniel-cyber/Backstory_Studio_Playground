@@ -55,6 +55,13 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const where: Prisma.UserWhereInput = {
     supabaseId: { in: eligibleSupabaseIds },
     ...(includeDeactivated ? {} : { isActive: true }),
+    // Demo orgs (kind === 'demo') are disposable anonymised clones of a real
+    // workspace, and User is copied in full into them (see
+    // src/lib/demo/snapshot.ts COPY_FULL) — those rows are fictional people,
+    // not platform users. `isNot` also holds for a user with no organization
+    // at all (organizationId is nullable), so it never drops real orgless
+    // accounts. Applied once here: every total below reuses this `where`.
+    organization: { isNot: { kind: 'demo' } },
     ...(query ? {
         OR: [
           { email: { contains: query, mode: 'insensitive' as const } },

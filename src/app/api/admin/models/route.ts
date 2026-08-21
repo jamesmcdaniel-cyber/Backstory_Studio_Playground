@@ -85,6 +85,18 @@ export const GET = withAuthenticatedApi(async (request) => {
   const days = Math.min(90, Math.max(1, Number(request.nextUrl.searchParams.get('days')) || 30))
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
 
+  // Demo orgs (kind === 'demo') are disposable anonymised clones of a real
+  // workspace — see src/lib/demo/snapshot.ts. Their LlmCall rows are canned
+  // history the clone wrote for itself, not real spend or real model
+  // performance, so every cross-org query below (Prisma and raw SQL alike)
+  // excludes organizations of that kind. LlmCall has no Prisma relation to
+  // Organization (denormalized scalar FK only), so the Prisma aggregate below
+  // filters by a precomputed id list, and the raw SQL joins "organizations"
+  // directly on the same column.
+  const demoOrgIds = (
+    await systemPrisma.organization.findMany({ where: { kind: 'demo' }, select: { id: true } })
+  ).map((org) => org.id)
+
   // COALESCE over the two run columns: a call belongs to at most one of them,
   // and counting runs rather than calls is what makes the number comparable to
   // the daily ceilings in usage/model-allowance.ts.
@@ -129,6 +141,7 @@ export const GET = withAuthenticatedApi(async (request) => {
       BOOL_OR("priceVersion" = 'unknown') AS unpriced
     FROM "llm_calls"
     WHERE "createdAt" >= ${since}
+      AND "organizationId" NOT IN (SELECT "id" FROM "organizations" WHERE "kind" = 'demo')
     GROUP BY "provider", "model"
     ORDER BY COALESCE(SUM("costUsd"), 0) DESC, COUNT(*) DESC
     LIMIT 50
@@ -140,7 +153,7 @@ export const GET = withAuthenticatedApi(async (request) => {
   // (systemPrisma, no organizationId filter): cross-org by design, matching
   // the rollup above.
   const totalAgg = await systemPrisma.llmCall.aggregate({
-    where: { createdAt: { gte: since } },
+    where: { createdAt: { gte: since }, organizationId: { notIn: demoOrgIds } },
     _sum: { costUsd: true },
     _count: { _all: true },
     _min: { createdAt: true },
@@ -181,6 +194,7 @@ export const GET = withAuthenticatedApi(async (request) => {
         COUNT(DISTINCT "provider") FILTER (WHERE "surface" <> 'headline')::int AS providers
       FROM "llm_calls"
       WHERE "createdAt" >= ${since} AND COALESCE("agentExecutionId", "flowRunId") IS NOT NULL
+        AND "organizationId" NOT IN (SELECT "id" FROM "organizations" WHERE "kind" = 'demo')
       GROUP BY 1, 2
     ),
     dominant AS (
@@ -196,6 +210,7 @@ export const GET = withAuthenticatedApi(async (request) => {
         WHERE "createdAt" >= ${since}
           AND COALESCE("agentExecutionId", "flowRunId") IS NOT NULL
           AND "surface" <> 'headline'
+          AND "organizationId" NOT IN (SELECT "id" FROM "organizations" WHERE "kind" = 'demo')
         GROUP BY 1, 2, 3
       ) grouped
       ORDER BY run_id, calls DESC, "provider", "model"

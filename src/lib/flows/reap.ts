@@ -42,25 +42,34 @@ export function formatReapMessage(startedAt: Date, now: Date, lastCompletedStepN
  * Fail runs stuck `running` past the cutoff (and their still-live steps).
  * Returns the reaped count.
  *
- * Each run is terminalized as its own small atomic unit — two plain
- * statements guarded by `status: 'running'` in their `where` clause, NOT one
- * `$transaction` wrapping the whole batch. A mass-outage batch (the exact
- * scenario this reaper exists for — see the file header) can be hundreds of
- * runs; wrapping all of them in one interactive transaction would burn
- * Prisma's 5s default transaction timeout on the round trips alone, rolling
- * back the ENTIRE pass and retrying the same oversized batch forever — worse
- * than the bug this reaper fixes. Here, one slow or failing run can never
- * roll back runs already terminalized before it in the same pass, and a
- * crash mid-pass leaves already-reaped runs reaped: a rerun just picks up
- * whatever is left, which is the incremental-progress property a mass-outage
- * recovery path actually needs.
+ * Each run is terminalized inside its OWN small interactive transaction —
+ * `{ flowRun updateMany, flowRunStep updateMany }`, two round trips, nothing
+ * more — rather than one `$transaction` wrapping the whole batch. A
+ * mass-outage batch (the exact scenario this reaper exists for — see the
+ * file header) can be hundreds of runs; wrapping all of them in ONE
+ * interactive transaction would burn Prisma's 5s default transaction timeout
+ * on the round trips alone, rolling back the ENTIRE pass and retrying the
+ * same oversized batch forever — worse than the bug this reaper fixes. A
+ * per-run transaction stays far inside that 5s budget (two statements), so
+ * one slow or failing run can never roll back runs already terminalized
+ * before it in the same pass, and a crash mid-pass (or mid one run's own
+ * transaction, which then rolls back cleanly as a whole) leaves already-
+ * reaped runs reaped: a rerun just picks up whatever is left. That
+ * per-run transaction is also what keeps the run's failure and its steps'
+ * failure atomic AS A PAIR — two independently-committed statements would
+ * let a crash between them land a `failed` run with its steps still
+ * `running` forever (the candidate query only ever selects `status:
+ * 'running'` runs, so a `failed` run is never revisited to clean up steps
+ * it left behind).
  *
  * The conditional `where: { status: 'running' }` on each run's updateMany IS
  * the re-verify step (replacing the old single bulk-then-re-query pattern,
  * still checking status at write time, just per row): a run that legitimately
  * left `running` between the initial read and its turn in the loop (paused
- * for approval, picked up late, etc.) reports `count: 0` and is left alone,
- * steps untouched.
+ * for approval, picked up late, etc.) reports `count: 0`, and its transaction
+ * returns without touching steps at all — must NOT sweep steps when the claim
+ * matched zero rows, which is why this is a conditional interactive
+ * transaction rather than the batch/array `$transaction([...])` form.
  *
  * `onAfterRead` is a test-only seam: real callers never pass it. It runs
  * after the initial read (so its effects land in the gap the per-run
@@ -94,16 +103,23 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
   for (const run of stuck) {
     const message = formatReapMessage(run.startedAt, now, lastStepByRun.get(run.id) ?? null)
     // systemPrisma: global reaper sweep — runs across all orgs by design.
-    const result = await systemPrisma.flowRun.updateMany({
-      where: { id: run.id, status: 'running' },
-      data: { status: 'failed', error: message, finishedAt: now },
+    // Per-run interactive transaction (see the doc comment above): the step
+    // sweep must NOT run when the claim below matched 0 rows, which rules
+    // out the batch/array $transaction form and requires this conditional
+    // callback form instead.
+    const reapedThisRun = await systemPrisma.$transaction(async (tx) => {
+      const claimed = await tx.flowRun.updateMany({
+        where: { id: run.id, status: 'running' },
+        data: { status: 'failed', error: message, finishedAt: now },
+      })
+      if (claimed.count === 0) return false // diverted away from `running` since the initial read
+      await tx.flowRunStep.updateMany({
+        where: { flowRunId: run.id, status: { in: ['queued', 'running', 'waiting'] } },
+        data: { status: 'failed', error: message, finishedAt: now },
+      })
+      return true
     })
-    if (result.count === 0) continue // diverted away from `running` since the initial read
-    reapedCount += 1
-    await systemPrisma.flowRunStep.updateMany({
-      where: { flowRunId: run.id, status: { in: ['queued', 'running', 'waiting'] } },
-      data: { status: 'failed', error: message, finishedAt: now },
-    })
+    if (reapedThisRun) reapedCount += 1
   }
   return reapedCount
 }

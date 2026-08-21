@@ -517,7 +517,7 @@ function FlowBuilder() {
       .then((r) => r.json())
       .then((data) => {
         if (!data?.runs) return
-        setRuns((data.runs as FlowRunDetail[]).map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt, degraded: runIsDegraded(r.status, r.steps ?? []) })))
+        setRuns((data.runs as FlowRunDetail[]).map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt, degraded: runIsDegraded(r.status, r.steps ?? [], r.degraded) })))
         const found = (data.runs as FlowRunDetail[]).find((r) => r.id === runId)
         if (found) {
           pinnedRunId.current = found.id
@@ -1508,7 +1508,7 @@ function FlowBuilder() {
       if (typeof document !== 'undefined' && document.hidden) return
       const data = await fetch(`/api/flows/${id}/runs`, { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
       const allRuns = data?.runs as FlowRunDetail[] | undefined
-      if (allRuns) setRuns(allRuns.map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt, degraded: runIsDegraded(r.status, r.steps ?? []) })))
+      if (allRuns) setRuns(allRuns.map((r) => ({ id: r.id, status: r.status, startedAt: r.startedAt, degraded: runIsDegraded(r.status, r.steps ?? [], r.degraded) })))
       const latest = data?.latest as FlowRunDetail | null
       if (!latest) {
         // Nothing to watch (flow never ran) — stop the interval.

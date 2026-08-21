@@ -55,6 +55,10 @@ export type FlowRunDetail = {
    *  once, and each reply must say which one it answers. */
   waitingAll?: RunWaitingEntry[] | null
   steps: RunStep[]
+  /** Persisted at finalize (execute-flow.ts) from the FULL step set. Absent on
+   *  pre-migration rows / older cached payloads — only then does
+   *  runIsDegraded fall back to inferring over `steps`. */
+  degraded?: boolean
 }
 export type RunWaitingEntry = {
   nodeId: string
@@ -71,7 +75,12 @@ export type RunWaitingEntry = {
  * warnings, or a step that failed while the run continued (on-error continue).
  * Shared by the run selector, the run header, and the activity table.
  */
-export function runIsDegraded(status: string, steps: { status: string; warnings?: string[] | null }[]): boolean {
+export function runIsDegraded(
+  status: string,
+  steps: { status: string; warnings?: string[] | null }[],
+  persisted?: boolean,
+): boolean {
+  if (persisted !== undefined) return persisted
   if (status !== 'succeeded') return false
   return steps.some((step) => (step.warnings?.length ?? 0) > 0 || step.status === 'failed')
 }
@@ -571,7 +580,7 @@ export function RunPanel({
           <>
             <div className="border-b border-border px-3 py-2">
               <span className={cn('text-xs font-semibold capitalize', STATUS_TEXT[selected.status])}>{selected.status === 'running' ? <TypewriterStatus /> : selected.status}</span>
-              {runIsDegraded(selected.status, selected.steps) && (
+              {runIsDegraded(selected.status, selected.steps, selected.degraded) && (
                 <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                   Some steps have warnings — the run finished, but parts of it came back empty, failed quietly, or skipped items. Open the marked steps below.
                 </p>

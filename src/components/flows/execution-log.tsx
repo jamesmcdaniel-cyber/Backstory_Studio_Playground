@@ -29,6 +29,10 @@ type FlowExecution = {
   error?: string | null
   flow: { id: string; name: string; icon?: string }
   steps: ExecutionLogStep[]
+  /** Persisted at finalize (execute-flow.ts) from the FULL step set. Absent on
+   *  pre-migration rows / older cached payloads — only then does
+   *  executionIsDegraded fall back to inferring over `steps`. */
+  degraded?: boolean
 }
 
 type StatusFilter = 'all' | 'running' | 'succeeded' | 'failed' | 'waiting' | 'cancelled'

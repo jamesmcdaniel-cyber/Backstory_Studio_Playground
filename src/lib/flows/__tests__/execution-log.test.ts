@@ -49,3 +49,18 @@ test('execution health and trigger helpers describe degraded successes', () => {
   assert.equal(executionTriggerLabel({ type: 'webhook' }), 'Webhook')
   assert.equal(executionTriggerLabel(null), 'Manual')
 })
+
+test('executionIsDegraded prefers the persisted column over per-client inference, falling back only when it is absent', () => {
+  const cleanSteps = [{ nodeId: 'a', status: 'succeeded', order: 0 }]
+  const warnedSteps = [{ nodeId: 'a', status: 'succeeded', order: 0, warnings: ['partial'] }]
+
+  // Persisted true wins even though the (possibly-truncated) steps look clean.
+  assert.equal(executionIsDegraded({ status: 'succeeded', steps: cleanSteps, degraded: true }), true)
+  // Persisted false wins even though steps look degraded — the column is
+  // authoritative because it was computed over the FULL step set.
+  assert.equal(executionIsDegraded({ status: 'succeeded', steps: warnedSteps, degraded: false }), false)
+  // Absent (undefined) — not merely falsy — is what triggers the fallback:
+  // pre-migration rows / older cached payloads never carried this field.
+  assert.equal(executionIsDegraded({ status: 'succeeded', steps: warnedSteps }), true)
+  assert.equal(executionIsDegraded({ status: 'succeeded', steps: cleanSteps }), false)
+})

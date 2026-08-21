@@ -1485,6 +1485,11 @@ model FlowRun {
   id                String    @id @default(cuid())
   flowId            String
   status            String    @default("running") // running | succeeded | failed | waiting | cancelling | cancelled
+  /// True only for a succeeded run with fine print: some step failed (on-error
+  /// continue) or carried engine warnings. Computed once at finalize from the
+  /// FULL step set — see execute-flow.ts — so the UI never re-infers this over
+  /// a possibly-truncated summary payload.
+  degraded          Boolean   @default(false)
   trigger           Json      @default("{}")
   input             Json      @default("{}")
   output            Json?

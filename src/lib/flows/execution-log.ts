@@ -14,6 +14,10 @@ export type ExecutionLogRun = {
   error?: string | null
   trigger?: { type?: string; [key: string]: unknown } | null
   steps: ExecutionLogStep[]
+  /** Persisted at finalize (execute-flow.ts) from the FULL step set. Absent on
+   *  pre-migration rows / older cached payloads — only then does
+   *  executionIsDegraded fall back to inferring over `steps`. */
+  degraded?: boolean
 }
 
 /** Short, stable duration text for run-history tables. */
@@ -42,7 +46,8 @@ export function executionFailureSummary(run: Pick<ExecutionLogRun, 'status' | 'e
   return ''
 }
 
-export function executionIsDegraded(run: Pick<ExecutionLogRun, 'status' | 'steps'>): boolean {
+export function executionIsDegraded(run: Pick<ExecutionLogRun, 'status' | 'steps' | 'degraded'>): boolean {
+  if (run.degraded !== undefined) return run.degraded
   return run.status === 'succeeded' && run.steps.some(
     (step) => step.status === 'failed' || (step.warnings?.length ?? 0) > 0,
   )

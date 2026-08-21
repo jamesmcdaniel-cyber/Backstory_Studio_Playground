@@ -32,6 +32,10 @@ type RunSummary = {
   /** Every live pause — a loop can be waiting on several reviews at once. */
   waitingAll?: RunWaiting[] | null
   steps: RunStepSummary[]
+  /** Persisted at finalize (execute-flow.ts) from the FULL step set. Absent on
+   *  pre-migration rows / older cached payloads — only then does
+   *  runIsDegraded fall back to inferring over `steps`. */
+  degraded?: boolean
 }
 
 /** The pauses a run is blocked on, falling back to the single-pause shape. */
@@ -326,7 +330,7 @@ export default function FlowActivityPage() {
                         <Badge variant={STATUS_BADGE[run.status] || 'outline'} className="capitalize">
                           {run.status}
                         </Badge>
-                        {runIsDegraded(run.status, run.steps) && (
+                        {runIsDegraded(run.status, run.steps, run.degraded) && (
                           <span
                             className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
                             title="Finished with warnings — some steps came back empty, failed quietly, or skipped items"

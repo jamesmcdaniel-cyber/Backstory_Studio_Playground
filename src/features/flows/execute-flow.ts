@@ -1872,9 +1872,17 @@ async function runFlowExecutionInner(
   // open-ended webhook callback) and every terminal state clear resumeAt.
   const resumeAt = status === 'waiting' && result.waiting?.resumeAt ? new Date(result.waiting.resumeAt) : null
   await tenantTransaction(job.organizationId, async (tx) => {
+    // "Degraded" = succeeded but with fine print: a step that carried engine
+    // warnings, or one that failed while the run continued (on-error
+    // continue). Computed once here from the FULL persisted step set — never
+    // the possibly-truncated summary the runs API returns — so the UI no
+    // longer has to re-infer it per client over a partial view.
+    const degraded = status === 'succeeded' && (
+      await tx.flowRunStep.findMany({ where: { flowRunId: run.id }, select: { status: true, warnings: true } })
+    ).some((step) => step.status === 'failed' || (Array.isArray(step.warnings) && step.warnings.length > 0))
     await tx.flowRun.update({
       where: { id: run.id, organizationId: job.organizationId },
-      data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt },
+      data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt, degraded },
     })
     // Commit the terminal state and its downstream signal atomically. The
     // outbox worker handles delivery/retry after commit, so a process crash can

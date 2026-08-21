@@ -41,6 +41,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         finishedAt: true,
         trigger: true,
         error: true,
+        degraded: true,
         graphSnapshot: true,
         flow: { select: { id: true, name: true, icon: true } },
         steps: {
@@ -63,6 +64,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       finishedAt: run.finishedAt,
       trigger: run.trigger,
       error: run.error,
+      degraded: run.degraded,
       flow: run.flow,
       steps: run.steps.map((step) => ({
         nodeId: step.nodeId,

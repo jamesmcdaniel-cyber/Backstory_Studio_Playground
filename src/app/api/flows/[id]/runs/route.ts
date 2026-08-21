@@ -54,6 +54,10 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     trigger: run.trigger,
     ...(summary ? {} : { input: run.input, output: run.output }),
     error: run.error,
+    // Persisted at finalize from the FULL step set (execute-flow.ts) — the
+    // readers below prefer this over their own inference, which only ever saw
+    // this possibly-truncated (summary=1) step list.
+    degraded: run.degraded,
     // What the run is blocked on (agent question / approval), non-null only
     // when the run is waiting — reply UIs key off this.
     waiting: deriveRunWaiting(run.status, run.steps),

@@ -44,6 +44,34 @@ if (TEST_DB) {
     pinData: { pinned: { value: 'mocked value' } },
   }
 
+  // Same shape, but `pinned` is an INTERPRETER-NATIVE type (transform) rather
+  // than an adapter-persisted one. Those already got a row from interpret.ts's
+  // own resume-replay emit before this fix — the gap was that the row carried
+  // no log line saying it was a substitution. `consumer` is `code` so it can
+  // read `context.steps.pinned.output` to prove it saw the pinned value.
+  const interpreterNativeGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', position: { x: -200, y: 0 }, data: { trigger: { type: 'manual' } } },
+      {
+        id: 'pinned',
+        type: 'transform',
+        position: { x: 0, y: 0 },
+        data: { label: 'pinned', fields: [{ name: 'value', value: 'would compute from live input' }] },
+      },
+      {
+        id: 'consumer',
+        type: 'code',
+        position: { x: 200, y: 0 },
+        data: { label: 'consumer', language: 'javascript', mode: 'all', code: 'return { seen: context.steps.pinned.output.value }' },
+      },
+    ],
+    edges: [
+      { id: 'e0', source: 'trigger', target: 'pinned' },
+      { id: 'e1', source: 'pinned', target: 'consumer' },
+    ],
+    pinData: { pinned: { value: 'mocked value' } },
+  }
+
   before(async () => {
     ;({ prisma } = await import('@/lib/prisma'))
     ;({ runFlowExecution } = await import('@/features/flows/execute-flow'))
@@ -59,6 +87,10 @@ if (TEST_DB) {
       data: { name: 'Pin provenance flow', organizationId: org.id, userId: user.id, graph },
     })
     ids.flow = flow.id
+    const interpreterNativeFlow = await prisma.flow.create({
+      data: { name: 'Pin provenance flow (interpreter-native)', organizationId: org.id, userId: user.id, graph: interpreterNativeGraph },
+    })
+    ids.interpreterNativeFlow = interpreterNativeFlow.id
   })
 
   after(async () => {
@@ -93,5 +125,35 @@ if (TEST_DB) {
     // emit for this node type is a no-op (see run-step-persistence.ts), so
     // there is nothing else that could have written a second one.
     assert.equal(steps.filter((step) => step.nodeId === 'pinned').length, 1)
+  })
+
+  test('an INTERPRETER-NATIVE pinned node (transform) also carries the pin log on the row interpret.ts writes for it', async () => {
+    const result = await runFlowExecution({ flowId: ids.interpreterNativeFlow, organizationId: ids.org, userId: ids.user, input: '' })
+    assert.equal(result.status, 'succeeded')
+
+    const steps: any[] = await prisma.flowRunStep.findMany({
+      where: { flowRunId: result.flowRunId },
+      orderBy: { order: 'asc' },
+    })
+
+    const pinnedRow = steps.find((step) => step.nodeId === 'pinned')
+    assert.ok(pinnedRow, 'interpret.ts already wrote a row for this type before this fix — it must still be there')
+    assert.equal(pinnedRow.status, 'skipped')
+    assert.deepEqual(pinnedRow.output, { value: 'mocked value' })
+    assert.ok(
+      Array.isArray(pinnedRow.logs) && pinnedRow.logs.includes('value pinned — node not executed'),
+      'before this fix, interpret.ts\'s own resume-replay emit carried no log at all — this is the gap the finding named',
+    )
+    assert.equal(pinnedRow.warnings ?? null, null, 'still never a warning — must not flip the run degraded')
+
+    const consumerRow = steps.find((step) => step.nodeId === 'consumer')
+    assert.deepEqual(consumerRow.output, { seen: 'mocked value' }, 'downstream still reads the pinned value, unaffected by the log addition')
+
+    // Still exactly one row — the log rides on interpret.ts's existing emit,
+    // it does not add a second write path for this node type.
+    assert.equal(steps.filter((step) => step.nodeId === 'pinned').length, 1)
+
+    const run = await prisma.flowRun.findFirst({ where: { id: result.flowRunId, organizationId: ids.org } })
+    assert.equal(run.degraded, false)
   })
 }

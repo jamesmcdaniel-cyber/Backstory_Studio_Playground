@@ -39,6 +39,14 @@ export type StepOutcome = {
    */
   warnings?: string[]
   /**
+   * Provenance notes for a step that never actually executed (e.g. it replayed
+   * a pinned/overridden value instead — see `Opts.completedProvenance`).
+   * Persisted into the same `logs` column code steps use for console output;
+   * deliberately NOT `warnings` — a pin/override substitution is not a
+   * degraded-success signal and must never flip a clean run `degraded`.
+   */
+  logs?: string[]
+  /**
    * Real execution wall-clock span, measured immediately around the node's
    * execution in the interpreter loop (one measurement site — see `execNode`'s
    * `emit` closure) — never fabricated at persistence time.
@@ -129,6 +137,13 @@ type Opts = {
   // attempt: replay must follow the node's error edge again (the completed
   // map alone can't express which edge the walk took).
   completedRoutes?: Set<string>
+  // Step keys in `completed` that are pre-completed by a pinData/stateOverride
+  // seed rather than a genuine prior execution, mapped to the log line that
+  // should ride on the replay's step row ("value pinned — node not executed" /
+  // "state override — node not executed"). Absent for an ordinary resume
+  // replay of a step that actually ran. See execute-flow.ts's pinData/
+  // stateOverrides seeding.
+  completedProvenance?: Record<string, string>
   resumeNodeId?: string
   // The user's reply for the resuming node. Agent steps receive the reply
   // inside their adapter (execute-flow re-enters the paused execution with
@@ -625,16 +640,22 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // value from before a later completed write.
     if (opts.completed && Object.prototype.hasOwnProperty.call(opts.completed, stepKey)) {
       const output = opts.completed[stepKey]
+      // Pinned/overridden nodes replay through this exact branch — carry the
+      // "why" onto the step row so downstream inputs are traceable back to a
+      // substitution rather than a real execution. Absent for an ordinary
+      // resume of a step that actually ran.
+      const provenanceNote = opts.completedProvenance?.[stepKey]
+      const provenanceLogs = provenanceNote ? [provenanceNote] : undefined
       // A completed FILTER must replay its gate decision, not a plain 'ok': a
       // filter that dropped (`output === false`) re-drops so its downstream
       // stays dead on resume; one that passed re-passes. Otherwise the scheduler
       // would read the replay as a normal step and revive the dropped path.
       if (node.type === 'filter') {
-        emit({ nodeId: node.id, status: output ? 'succeeded' : 'skipped', output })
+        emit({ nodeId: node.id, status: output ? 'succeeded' : 'skipped', output, ...(provenanceLogs ? { logs: provenanceLogs } : {}) })
         return output ? { kind: 'ok', output: undefined } : { kind: 'drop' }
       }
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'skipped', output })
+      emit({ nodeId: node.id, status: 'skipped', output, ...(provenanceLogs ? { logs: provenanceLogs } : {}) })
       // A completed condition/switch must replay as the SAME branch it took, not
       // a plain 'ok' (which the scheduler would read as "fan out to all edges").
       // The recorded output IS the branch (boolean for condition, case id for

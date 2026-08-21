@@ -39,7 +39,20 @@ function createGuardedClient(base: PrismaClient) {
           // and a read-time filter would leave the plaintext in every backup and
           // replica anyway. The value of a secret in run history is that it is
           // stored, not that it is displayed.
-          const runScoped = applyRunDataRedaction(model, operation, ownerScoped) as typeof args
+          const runScoped = (await applyRunDataRedaction(model, operation, ownerScoped, async (where) => {
+            // Read via the UNEXTENDED base client so the read itself never
+            // recurses back through this same guard. Only ever called for a
+            // FlowRunStep update/updateMany whose write doesn't mention
+            // `warnings` and DID redact something — the rare path, not the
+            // common one. The executor's update/updateMany calls on this
+            // model target one row at a time (flowRunId+nodeId(+status)), so
+            // reading the first match's warnings mirrors the same
+            // single-row assumption every other field in these writes
+            // already makes.
+            if (model !== 'FlowRunStep') return undefined
+            const row = await base.flowRunStep.findFirst({ where: where as never, select: { warnings: true } })
+            return row?.warnings
+          })) as typeof args
           // Same chokepoint, opposite direction: run data is REDACTED on the way
           // in, and a flow graph is ANNOTATED with the literal credentials it
           // appears to carry. Advisory — the save always succeeds — but computed

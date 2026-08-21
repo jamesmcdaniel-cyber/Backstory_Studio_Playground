@@ -50,17 +50,27 @@ const WRITE_OPERATIONS = new Set([
   'createManyAndReturn',
 ])
 
+/** Reads the CURRENTLY PERSISTED `warnings` array for the row(s) a write's
+ *  `where` clause targets. Supplied by the Prisma extension (via the
+ *  unextended base client, so the read itself never recurses back through
+ *  this guard) and invoked ONLY when a write needs to append the redaction
+ *  marker but does not otherwise carry `warnings` in its own payload — the
+ *  rare case, not the common one. Absent (e.g. plain unit tests calling this
+ *  function directly), the guard skips the append rather than guess. */
+export type WarningsReader = (where: unknown) => Promise<unknown>
+
 /**
  * Rewrite a Prisma write so any run-data field is redacted.
  *
  * Returns `args` unchanged for every model and operation it does not govern,
  * so it costs one Set lookup on the overwhelming majority of queries.
  */
-export function applyRunDataRedaction(
+export async function applyRunDataRedaction(
   model: string | undefined,
   operation: string,
   args: unknown,
-): unknown {
+  readWarnings?: WarningsReader,
+): Promise<unknown> {
   if (!model || !WRITE_OPERATIONS.has(operation)) return args
   const fields = REDACTED_WRITE_FIELDS[model]
   if (!fields) return args
@@ -70,23 +80,38 @@ export function applyRunDataRedaction(
   let changed = false
   const next: Record<string, unknown> = { ...input }
 
-  // `data` is an object for create/update and an array for createMany.
+  // update/updateMany write onto a row that may ALREADY carry warnings this
+  // write never mentions — appending the marker there must read-then-append,
+  // never blindly set. create/createMany/upsert's `create` branch always
+  // insert a fresh row, so there is nothing prior to lose.
+  const targetsExistingRow = operation === 'update' || operation === 'updateMany'
+  const readerFor = (existingRow: boolean) =>
+    existingRow && readWarnings ? () => readWarnings(input.where) : undefined
+
+  // `data` is an object for create/update/updateMany and an array for
+  // createMany/createManyAndReturn.
   if (input.data) {
-    const redacted = redactDataPayload(input.data, fields, model)
+    const redacted = await redactDataPayload(input.data, fields, model, targetsExistingRow, readerFor(targetsExistingRow))
     if (redacted !== input.data) {
       next.data = redacted
       changed = true
     }
   }
 
-  // upsert carries two payloads and both write run data.
-  for (const key of ['create', 'update'] as const) {
-    if (input[key]) {
-      const redacted = redactDataPayload(input[key], fields, model)
-      if (redacted !== input[key]) {
-        next[key] = redacted
-        changed = true
-      }
+  // upsert carries two payloads: `create` never targets an existing row;
+  // `update` does, sharing the same `where` as the statement itself.
+  if (input.create) {
+    const redacted = await redactDataPayload(input.create, fields, model, false)
+    if (redacted !== input.create) {
+      next.create = redacted
+      changed = true
+    }
+  }
+  if (input.update) {
+    const redacted = await redactDataPayload(input.update, fields, model, true, readerFor(true))
+    if (redacted !== input.update) {
+      next.update = redacted
+      changed = true
     }
   }
 
@@ -113,9 +138,18 @@ function sameJson(a: unknown, b: unknown): boolean {
   }
 }
 
-function redactDataPayload(data: unknown, fields: readonly string[], model?: string): unknown {
+async function redactDataPayload(
+  data: unknown,
+  fields: readonly string[],
+  model?: string,
+  // True when `data` is being applied to a row that may already exist (and so
+  // may already carry warnings this payload never mentions) — createMany's
+  // array entries are always fresh inserts, so recursion always passes false.
+  existingRow = false,
+  getExistingWarnings?: () => Promise<unknown>,
+): Promise<unknown> {
   if (Array.isArray(data)) {
-    const mapped = data.map((entry) => redactDataPayload(entry, fields, model))
+    const mapped = await Promise.all(data.map((entry) => redactDataPayload(entry, fields, model, false)))
     return mapped.some((entry, index) => entry !== data[index]) ? mapped : data
   }
   if (!data || typeof data !== 'object') return data
@@ -147,13 +181,30 @@ function redactDataPayload(data: unknown, fields: readonly string[], model?: str
   }
 
   if (contentRedacted && model === 'FlowRunStep') {
-    const priorWarnings = Array.isArray(next.warnings)
-      ? (next.warnings as unknown[])
-      : Array.isArray(record.warnings)
-        ? (record.warnings as unknown[])
-        : []
-    next.warnings = [...priorWarnings, REDACTED_AT_REST_WARNING]
-    changed = true
+    if (Array.isArray(next.warnings)) {
+      // This write already fully specifies `warnings` (author-provided, or
+      // just redacted above) — appending onto exactly that array is what the
+      // write itself declares, so it is never lossy.
+      next.warnings = [...(next.warnings as unknown[]), REDACTED_AT_REST_WARNING]
+      changed = true
+    } else if (!existingRow) {
+      // A fresh insert (create/createMany/upsert's create branch): there is
+      // no prior row, so nothing already-persisted can be lost.
+      next.warnings = [REDACTED_AT_REST_WARNING]
+      changed = true
+    } else if (getExistingWarnings) {
+      // update/updateMany that never mentions `warnings`: the row may
+      // already carry one (e.g. an earlier item's degraded-success note on
+      // the same aggregate row) — setting `[marker]` here would silently
+      // discard it, breaking the additive-warnings invariant every other
+      // write path in this file relies on. Read the row's CURRENT warnings
+      // first so the append can never clobber them.
+      const existing = await getExistingWarnings()
+      next.warnings = [...(Array.isArray(existing) ? existing : []), REDACTED_AT_REST_WARNING]
+      changed = true
+    }
+    // existingRow with no reader available (e.g. a bare unit-test call):
+    // never guess — skip the append rather than risk a lossy overwrite.
   }
 
   return changed ? next : data

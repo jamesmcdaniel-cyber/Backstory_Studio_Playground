@@ -761,23 +761,35 @@ async function runFlowExecutionInner(
   // makes the substitution visible in the same run panel that shows every
   // other step, using a status the UI already renders.
   //
-  // `alreadyRecorded` guards against a duplicate row on resume/patch/replay: by
-  // the time this section runs, `completed` may already hold this nodeId's
-  // value from a prior row read out of the DB above (including a skipped-pin
-  // row this very section wrote on an earlier attempt) — in that case the
-  // node's provenance is already on record and only the replayed VALUE should
-  // win, not a second row.
+  // Pin/override provenance, keyed exactly like `completed` — read by
+  // interpret.ts's resume-replay branch (`opts.completedProvenance`) so an
+  // INTERPRETER-NATIVE node type (condition/loop/parallel/stop/variable/…)
+  // carries the same log line on the row IT writes for itself, every single
+  // time the walk reaches it (every resume attempt re-walks the whole graph
+  // and re-emits a fresh row for each already-completed node — see the
+  // `opts.completed` branch in interpret.ts — so this must be set on every
+  // invocation, not just the first).
+  const completedProvenance: Record<string, string> = {}
+
+  // The explicit row write below is for ADAPTER_PERSISTED_TYPES (agent/tool/
+  // http/ai/subflow/code/knowledge — see run-step-persistence.ts) ONLY: those
+  // are the types whose row is normally written by the adapter, which a
+  // pre-completed node never reaches, so nothing else will ever write one.
+  // Every other node type is persisted generically by interpret.ts itself
+  // (via `completedProvenance` above), so writing a row here for those would
+  // duplicate it.
   //
-  // Scoped to ADAPTER_PERSISTED_TYPES (agent/tool/http/ai/subflow/code/
-  // knowledge — see run-step-persistence.ts): those are the types whose row
-  // is normally written by the adapter, which a pre-completed node never
-  // reaches, so nothing else will ever write one. Every OTHER node type
-  // (condition/loop/parallel/stop/variable/…) is persisted generically by
-  // `interpret.ts`'s own resume-replay path the moment the walk reaches it
-  // (see the `opts.completed` branch there) — writing a second row here for
-  // those would duplicate that one.
-  const recordSkippedSeed = (nodeId: string, value: unknown, log: string) => {
-    if (shouldPersistInterpreterStep(nodeTypeById.get(nodeId.split('#')[0]))) return
+  // `alreadyRecorded` guards THIS explicit write against a duplicate on
+  // resume/patch/replay: unlike the interpreter's own emit (which produces a
+  // genuinely new row per attempt, appended alongside earlier ones by
+  // design), this create() has no such attempt-scoping — by the time this
+  // section runs, `completed` may already hold this nodeId's value from a
+  // prior row read out of the DB above (including a skipped-pin row this very
+  // section wrote on an earlier attempt), so the row already exists and only
+  // the replayed VALUE should win here, not a second row.
+  const recordSkippedSeed = (nodeId: string, value: unknown, log: string, alreadyRecorded: boolean) => {
+    completedProvenance[nodeId] = log
+    if (alreadyRecorded || shouldPersistInterpreterStep(nodeTypeById.get(nodeId.split('#')[0]))) return
     const seedOrder = order++
     pending.push(
       prisma.flowRunStep
@@ -806,7 +818,7 @@ async function runFlowExecutionInner(
       if (!nodeById.has(nodeId)) continue
       const alreadyRecorded = nodeId in completed
       completed[nodeId] = value ?? null
-      if (!alreadyRecorded) recordSkippedSeed(nodeId, value, 'value pinned — node not executed')
+      recordSkippedSeed(nodeId, value, 'value pinned — node not executed', alreadyRecorded)
     }
   }
 
@@ -820,7 +832,7 @@ async function runFlowExecutionInner(
       if (!hit) continue
       const alreadyRecorded = nodeId in completed
       completed[nodeId] = value
-      if (!alreadyRecorded) recordSkippedSeed(nodeId, value, 'state override — node not executed')
+      recordSkippedSeed(nodeId, value, 'state override — node not executed', alreadyRecorded)
     }
     // Iteration-specific keys name rows (`node#i`) that are not bare graph
     // nodes, so they need seeding directly.
@@ -828,10 +840,10 @@ async function runFlowExecutionInner(
       if (!key.includes('#') || !nodeById.has(key.split('#')[0])) continue
       const alreadyRecorded = key in completed
       completed[key] = overrides[key]
-      if (!alreadyRecorded) recordSkippedSeed(key, overrides[key], 'state override — node not executed')
+      recordSkippedSeed(key, overrides[key], 'state override — node not executed', alreadyRecorded)
     }
   }
-  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[]; startedAt: Date; finishedAt: Date }) => {
+  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[]; logs?: string[]; startedAt: Date; finishedAt: Date }) => {
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
     trackDetached(broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status }))
@@ -970,6 +982,11 @@ async function runFlowExecutionInner(
             output: jsonValue(outcome.output ?? null),
             error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
             ...(outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}),
+            // Pin/override provenance for a node the interpreter never
+            // actually ran (see interpret.ts's completedProvenance). Never
+            // `warnings` — a pin/override substitution must not flip a clean
+            // run `degraded`.
+            ...(outcome.logs?.length ? { logs: jsonValue(outcome.logs) } : {}),
             startedAt: outcome.startedAt,
             finishedAt: outcome.finishedAt,
           },
@@ -1890,6 +1907,7 @@ async function runFlowExecutionInner(
       // tokens like {{Previous Agent.output}} resolve to the right step.
       stepLabels: stepLabelsOf(graph, orgAgents),
       ...(resuming || replaySource || Object.keys(completed).length ? { completed, completedRoutes } : {}),
+      ...(Object.keys(completedProvenance).length ? { completedProvenance } : {}),
       ...(resuming ? { resumeNodeId, resumeReply: job.reply } : {}),
       ...(job.stopAfterNodeId ? { stopAfterNodeId: job.stopAfterNodeId } : {}),
       ...(job.stopBeforeNodeId ? { stopBeforeNodeId: job.stopBeforeNodeId } : {}),

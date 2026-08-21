@@ -9,13 +9,14 @@ import {
   tolerantObject,
   parseProposalsReply,
   usageSignals,
+  runsAnalyzedLine,
   MAX_PROPOSALS,
   PROPOSAL_SCHEMA,
   type RawProposal,
   type GenerateDeps,
   type NormalizeContext,
 } from '../generate-proposals'
-import type { UsageProfile } from '../usage-profile'
+import { MAX_AUDIT_ROWS, type UsageProfile } from '../usage-profile'
 import type { ProposalInput } from '../proposals'
 
 // --- Fixtures ---------------------------------------------------------------
@@ -33,6 +34,7 @@ const profile: UsageProfile = {
   windowDays: 90,
   capabilities: [{ provider: 'slack', capabilities: ['send', 'list_channels'] }],
   themes: ['deal.risk_detected', 'forecast.updated'],
+  sampled: false,
 }
 
 const rawTemplate = (over: Partial<RawProposal> = {}): RawProposal => ({
@@ -283,6 +285,20 @@ test('usageSignals: bounded, PII-free signal bundle', () => {
   const signals = usageSignals(profile)
   assert.deepEqual(signals.providers, ['slack', 'people.ai', 'salesforce'])
   assert.equal(signals.runCount, 20)
+})
+
+test('runsAnalyzedLine: an unsampled profile states the exact run count plainly', () => {
+  assert.equal(
+    runsAnalyzedLine({ runCount: 20, windowDays: 90, sampled: false }),
+    'Runs analyzed: 20 over the last 90 days.',
+  )
+})
+
+test('runsAnalyzedLine: a sampled profile says so in plain English, naming the cap', () => {
+  assert.equal(
+    runsAnalyzedLine({ runCount: MAX_AUDIT_ROWS, windowDays: 90, sampled: true }),
+    `Runs analyzed: ${MAX_AUDIT_ROWS} runs from the most recent ${MAX_AUDIT_ROWS} events, over the last 90 days.`,
+  )
 })
 
 test('PROPOSAL_SCHEMA: strict object with a required proposals array', () => {

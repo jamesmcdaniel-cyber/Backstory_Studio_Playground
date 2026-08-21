@@ -37,6 +37,8 @@ import {
   createModelRunner,
   generateHeadline,
   billableTokens,
+  accumulateUsage,
+  emptyUsage,
   DEFAULT_AGENT_MODEL,
   type ToolDefinition,
   type ToolResult,
@@ -740,7 +742,7 @@ async function runAgentExecutionInner(
 
   const executionMetadata = metadataOf(execution.metadata)
   const segmentStart = Date.now()
-  const usage = { inputTokens: 0, outputTokens: 0 }
+  const usage = emptyUsage()
 
   // Single graceful cancel-finalize path, shared by the in-loop per-turn check
   // AND the completion/failure guards below. A cancel request only ever flips
@@ -768,6 +770,8 @@ async function runAgentExecutionInner(
           transcript: jsonValue(transcript),
           inputTokens: { increment: usage.inputTokens },
           outputTokens: { increment: usage.outputTokens },
+          cacheWriteTokens: { increment: usage.cacheWriteTokens },
+          cacheReadTokens: { increment: usage.cacheReadTokens },
           executionTime: { increment: Date.now() - segmentStart },
           completedAt: new Date(),
         },
@@ -1211,18 +1215,18 @@ async function runAgentExecutionInner(
         surface: 'agent_turn',
         agentExecutionId: execution.id,
       })
-      // billableTokens folds the three input buckets back together, so these
-      // totals (and every budget check below) mean exactly what they did before
-      // usage was split for cost accounting.
-      usage.inputTokens += billableTokens(turnResult.usage) - turnResult.usage.outputTokens
-      usage.outputTokens += turnResult.usage.outputTokens
+      // Keep fresh input, cache-write, cache-read, and output in their own
+      // buckets all the way to the persisted row (accumulateUsage never folds
+      // cache volume back into inputTokens) — billableTokens below still sums
+      // all four for budget/cap purposes, so enforcement is unchanged.
+      accumulateUsage(usage, turnResult.usage)
       treeTokens.used += billableTokens(turnResult.usage)
 
       // Record this turn's spend on the live cross-process counter, then enforce
       // both the per-run cap and the (in-flight-aware) monthly ceiling mid-run so
       // a runaway can't blow far past the budget between the start-of-run check
       // and completion.
-      const runTotal = usage.inputTokens + usage.outputTokens
+      const runTotal = billableTokens(usage)
       const monthTotal = await recordTokenUsage(organizationId, billableTokens(turnResult.usage))
       if (perRunTokenCap > 0 && runTotal >= perRunTokenCap) {
         finalText = turnResult.text || 'Run stopped: it reached its per-run token cap.'
@@ -1519,6 +1523,8 @@ async function runAgentExecutionInner(
             transcript: jsonValue(transcript),
             inputTokens: { increment: usage.inputTokens },
             outputTokens: { increment: usage.outputTokens },
+            cacheWriteTokens: { increment: usage.cacheWriteTokens },
+            cacheReadTokens: { increment: usage.cacheReadTokens },
             executionTime: { increment: Date.now() - segmentStart },
             metadata: jsonValue({
               ...executionMetadata,
@@ -1559,6 +1565,8 @@ async function runAgentExecutionInner(
             transcript: jsonValue(transcript),
             inputTokens: { increment: usage.inputTokens },
             outputTokens: { increment: usage.outputTokens },
+            cacheWriteTokens: { increment: usage.cacheWriteTokens },
+            cacheReadTokens: { increment: usage.cacheReadTokens },
             executionTime: { increment: Date.now() - segmentStart },
             metadata: jsonValue({
               ...executionMetadata,
@@ -1661,6 +1669,8 @@ async function runAgentExecutionInner(
           transcript: jsonValue(transcript),
           inputTokens: { increment: usage.inputTokens },
           outputTokens: { increment: usage.outputTokens },
+          cacheWriteTokens: { increment: usage.cacheWriteTokens },
+          cacheReadTokens: { increment: usage.cacheReadTokens },
           executionTime: { increment: Date.now() - segmentStart },
           completedAt: new Date(),
           metadata: jsonValue({ ...executionMetadata, pendingQuestion: null, ...(headline ? { headline } : {}) }),
@@ -1757,6 +1767,8 @@ async function runAgentExecutionInner(
         transcript: jsonValue(transcript),
         inputTokens: { increment: usage.inputTokens },
         outputTokens: { increment: usage.outputTokens },
+        cacheWriteTokens: { increment: usage.cacheWriteTokens },
+        cacheReadTokens: { increment: usage.cacheReadTokens },
         executionTime: { increment: Date.now() - segmentStart },
         completedAt: new Date(),
       },

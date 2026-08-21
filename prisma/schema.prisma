@@ -852,7 +852,23 @@ model AgentExecution {
   metadata        Json?
   model           String?
   transcript      Json?
+  /// Fresh (non-cached) prompt tokens only, as of the cache-column split below.
+  ///
+  /// Rows written BEFORE this split fold cacheReadTokens+cacheWriteTokens into
+  /// this column with both cache columns at their 0 default — that is a
+  /// re-labeling, not a data loss: inputTokens + cacheReadTokens +
+  /// cacheWriteTokens is the same total for a legacy row as for a new one, so
+  /// any reader that sums all three across old and new rows stays correct.
+  /// Only a reader that treats inputTokens ALONE as "the prompt" changes
+  /// meaning at the split point — from "everything sent" to "the part not
+  /// served from cache".
   inputTokens     Int       @default(0)
+  /// Tokens that WROTE a new prompt-cache entry this turn (billed ~1.25x).
+  /// 0 for every row predating the split (see inputTokens doc-comment).
+  cacheWriteTokens Int      @default(0)
+  /// Tokens served FROM the prompt cache this turn (billed ~0.1x). 0 for every
+  /// row predating the split (see inputTokens doc-comment).
+  cacheReadTokens  Int      @default(0)
   outputTokens    Int       @default(0)
   /// Denormalized sum of this execution's LlmCall rows, so list views never
   /// aggregate. Internal ops estimate — see src/lib/usage/pricing.ts.

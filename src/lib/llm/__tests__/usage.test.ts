@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { billableTokens, emptyUsage } from '@/lib/llm/model-runner'
+import { accumulateUsage, billableTokens, emptyUsage } from '@/lib/llm/model-runner'
 
 test('billableTokens counts every input bucket plus output', () => {
   assert.equal(
@@ -26,4 +26,26 @@ test('emptyUsage is all zeros', () => {
     cacheReadTokens: 0,
     outputTokens: 0,
   })
+})
+
+test('accumulateUsage keeps cache buckets separate from inputTokens -- a cache-heavy turn must not inflate fresh input', () => {
+  const total = emptyUsage()
+  accumulateUsage(total, { inputTokens: 100, cacheWriteTokens: 40, cacheReadTokens: 900, outputTokens: 60 })
+  assert.equal(total.inputTokens, 100, 'inputTokens must stay fresh-input only, not folded with cache reads/writes')
+  assert.equal(total.cacheReadTokens, 900)
+  assert.equal(total.cacheWriteTokens, 40)
+  assert.equal(total.outputTokens, 60)
+})
+
+test('accumulateUsage sums across multiple turns', () => {
+  const total = emptyUsage()
+  accumulateUsage(total, { inputTokens: 100, cacheWriteTokens: 40, cacheReadTokens: 900, outputTokens: 60 })
+  accumulateUsage(total, { inputTokens: 10, cacheWriteTokens: 5, cacheReadTokens: 20, outputTokens: 15 })
+  assert.deepEqual(total, { inputTokens: 110, cacheWriteTokens: 45, cacheReadTokens: 920, outputTokens: 75 })
+})
+
+test('accumulateUsage total still matches billableTokens (budget enforcement unchanged)', () => {
+  const total = emptyUsage()
+  accumulateUsage(total, { inputTokens: 100, cacheWriteTokens: 40, cacheReadTokens: 900, outputTokens: 60 })
+  assert.equal(billableTokens(total), 1100)
 })

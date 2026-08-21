@@ -75,6 +75,23 @@ export function billableTokens(usage: TokenUsage): number {
 }
 
 /**
+ * Fold one turn's usage onto a running total, mutating `total` in place, and
+ * keeping each billing bucket separate the whole way through a run.
+ *
+ * This exists because the naive `total.inputTokens += billableTokens(turn) -
+ * turn.outputTokens` used to re-fold cache reads/writes back into
+ * `inputTokens` at the accumulation point — defeating the whole split above.
+ * A persisted `AgentExecution.inputTokens` built from this function means
+ * "fresh input", full stop; cache volume lives in its own columns.
+ */
+export function accumulateUsage(total: TokenUsage, turn: TokenUsage): void {
+  total.inputTokens += turn.inputTokens
+  total.cacheWriteTokens += turn.cacheWriteTokens
+  total.cacheReadTokens += turn.cacheReadTokens
+  total.outputTokens += turn.outputTokens
+}
+
+/**
  * Which ENDPOINT served a call, for cost and performance attribution.
  *
  * Deliberately not `ProviderKind`, which answers a different question: that

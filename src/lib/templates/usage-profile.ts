@@ -40,6 +40,16 @@ export type UsageProfile = {
    * connection exists, else []. Populated by {@link buildUsageProfile}.
    */
   themes: string[]
+  /**
+   * True when the underlying audit read hit {@link MAX_AUDIT_ROWS} and was
+   * therefore truncated -- `runCount` (and everything derived from it) reflects
+   * only the most-recent {@link MAX_AUDIT_ROWS} events, not the workspace's full
+   * history for the window. Consumers that surface `runCount` to a person or a
+   * gate MUST say so in plain English rather than presenting a sampled number
+   * as a complete one. Always `false` for the pure `aggregateUsage` (it has no
+   * notion of a DB-side cap); only {@link buildUsageProfile} can set it `true`.
+   */
+  sampled: boolean
 }
 
 /** Window: last 90 days AND at most the most-recent 500 audit rows (whichever tighter). */
@@ -198,7 +208,7 @@ export function aggregateUsage(rows: UsageRow[], windowDays: number = USAGE_WIND
   // capabilities/themes are enrichment layers keyed off CONNECTED providers and
   // People.ai — data the pure aggregator has no access to. buildUsageProfile
   // fills them; here they're empty so aggregateUsage stays a pure fn of `rows`.
-  return { providers, topTools, coOccurrence, sequences, runCount: runs.size, windowDays, capabilities: [], themes: [] }
+  return { providers, topTools, coOccurrence, sequences, runCount: runs.size, windowDays, capabilities: [], themes: [], sampled: false }
 }
 
 /**
@@ -389,5 +399,10 @@ export async function buildUsageProfile(organizationId: string): Promise<UsagePr
     readThemes(organizationId, since),
   ])
 
-  return { ...base, capabilities, themes }
+  // The audit read is `take: MAX_AUDIT_ROWS` -- hitting that count exactly means
+  // there may be MORE rows in the window that were never read, so `runCount`
+  // undercounts the true window and callers must say so (see `sampled` above).
+  const sampled = auditRows.length >= MAX_AUDIT_ROWS
+
+  return { ...base, capabilities, themes, sampled }
 }

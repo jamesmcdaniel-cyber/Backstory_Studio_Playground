@@ -2,8 +2,18 @@ import { deriveGroupRoleLabel, deriveRoleLabel } from '@/lib/agents/derive-role'
 
 import type { Agent, Teammate } from '@/lib/types'
 
-/** Lifetime run stats for one card, aggregated across whatever it fronts. */
-export type CardStats = { runs: number; completed: number; failed: number }
+/**
+ * Lifetime run stats for one card, aggregated across whatever it fronts.
+ *
+ * `runs`/`completed`/`failed` are QUERY-DERIVED (from the KPI groupBy) — exact,
+ * and the only source `successRate` reads. `approximateRuns` is a SEPARATE
+ * bucket: additional runs known only via an agent's own optimistic counter
+ * (see `statsFor`), with no completed/failed breakdown available. Keeping the
+ * two apart means a mixed-provenance group never inflates its measured total
+ * with a number that carries no success/failure signal, and never divides a
+ * success rate across runs whose outcome is unknown.
+ */
+export type CardStats = { runs: number; completed: number; failed: number; approximateRuns: number }
 
 /** How busy a card looks at a glance. */
 export type Presence = 'working' | 'ready' | 'idle'
@@ -43,10 +53,15 @@ export type RosterCardModel = TeammateCard | AgentCard
 
 function statsFor(agent: Agent, kpis: Record<string, CardStats>): CardStats {
   const kpi = kpis[agent.id]
+  // A KPI hit is exact (from the groupBy query) -- normalize away any missing
+  // `approximateRuns` on the wire shape (the /api/agents/kpis payload only
+  // ever sends runs/completed/failed) rather than trust the caller's object.
+  if (kpi) return { runs: kpi.runs, completed: kpi.completed, failed: kpi.failed, approximateRuns: 0 }
   // executionCount is the agent's own counter and survives run pruning, so it
-  // is the better "runs" figure when no execution rows are left to count.
-  if (kpi) return kpi
-  return { runs: agent.executionCount ?? 0, completed: 0, failed: 0 }
+  // is the better "runs" figure when no execution rows are left to count --
+  // but it carries no completed/failed split, so it lands in approximateRuns,
+  // never in the measured `runs` bucket successRate reads.
+  return { runs: 0, completed: 0, failed: 0, approximateRuns: agent.executionCount ?? 0 }
 }
 
 export function presenceFor(agent: Agent): Presence {
@@ -62,6 +77,11 @@ function groupPresence(agents: Agent[]): Presence {
   return 'idle'
 }
 
+/**
+ * Add up a roster's stats, keeping query-derived and counter-approximate
+ * numbers in their own buckets throughout -- never combined into one total
+ * that would look measured but isn't.
+ */
 function sumStats(agents: Agent[], kpis: Record<string, CardStats>): CardStats {
   return agents.reduce<CardStats>((total, agent) => {
     const stats = statsFor(agent, kpis)
@@ -69,12 +89,19 @@ function sumStats(agents: Agent[], kpis: Record<string, CardStats>): CardStats {
       runs: total.runs + stats.runs,
       completed: total.completed + stats.completed,
       failed: total.failed + stats.failed,
+      approximateRuns: total.approximateRuns + stats.approximateRuns,
     }
-  }, { runs: 0, completed: 0, failed: 0 })
+  }, { runs: 0, completed: 0, failed: 0, approximateRuns: 0 })
 }
 
-/** Percentage of FINISHED runs that succeeded, or null while nothing has finished. */
-export function successRate(stats: CardStats): number | null {
+/**
+ * Percentage of FINISHED runs that succeeded, or null while nothing has
+ * finished. Reads only the query-derived completed/failed split -- an agent
+ * counted in `approximateRuns` (no known outcome) never enters this
+ * denominator, so a group of purely counter-fallback agents correctly reports
+ * "no rate" rather than a rate over runs whose result is unknown.
+ */
+export function successRate(stats: Pick<CardStats, 'completed' | 'failed'>): number | null {
   const finished = stats.completed + stats.failed
   if (finished <= 0) return null
   return Math.round((stats.completed / finished) * 100)

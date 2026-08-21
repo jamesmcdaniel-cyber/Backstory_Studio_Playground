@@ -18,6 +18,9 @@ test('empty rows produce an empty profile with the default window', () => {
   // aggregator always leaves them empty.
   assert.deepEqual(profile.capabilities, [])
   assert.deepEqual(profile.themes, [])
+  // The pure aggregator has no notion of the DB-side row cap -- only
+  // buildUsageProfile can ever mark a profile sampled.
+  assert.equal(profile.sampled, false)
 })
 
 test('providers count rows per provider, desc with a deterministic tie-break', () => {

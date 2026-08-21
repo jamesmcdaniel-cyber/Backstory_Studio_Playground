@@ -165,6 +165,32 @@ if (TEST_DB) {
     }
   })
 
+  test('buildUsageProfile marks the profile sampled exactly when the audit read hits the 500-row cap', async () => {
+    const { MAX_AUDIT_ROWS } = await import('@/lib/templates/usage-profile')
+    const org = await prisma.organization.create({ data: { name: 'usage cap', slug: `usage-cap-${Date.now()}` } })
+    try {
+      // One row short of the cap: the full window is read, nothing is hidden.
+      const under = Array.from({ length: MAX_AUDIT_ROWS - 1 }, (_, i) =>
+        prisma.auditEvent.create({
+          data: { organizationId: org.id, action: 'tool.call', resourceType: 'slack', tool: 'send', executionId: `r${i}` },
+        }))
+      await Promise.all(under)
+      const beforeCap = await buildUsageProfile(org.id)
+      assert.equal(beforeCap.runCount, MAX_AUDIT_ROWS - 1)
+      assert.equal(beforeCap.sampled, false, 'reading fewer than the cap means the window is complete')
+
+      // One more row lands the read exactly ON the cap -- now truncated.
+      await prisma.auditEvent.create({
+        data: { organizationId: org.id, action: 'tool.call', resourceType: 'slack', tool: 'send', executionId: `r${MAX_AUDIT_ROWS}` },
+      })
+      const atCap = await buildUsageProfile(org.id)
+      assert.equal(atCap.runCount, MAX_AUDIT_ROWS, 'the read itself is capped at MAX_AUDIT_ROWS')
+      assert.equal(atCap.sampled, true, 'hitting the cap exactly means more rows may exist beyond what was read')
+    } finally {
+      await prisma.organization.delete({ where: { id: org.id } }).catch(() => {})
+    }
+  })
+
   test('buildUsageProfile is empty for an org with no activity', async () => {
     const org = await prisma.organization.create({ data: { name: 'usage empty', slug: `usage-empty-${Date.now()}` } })
     try {

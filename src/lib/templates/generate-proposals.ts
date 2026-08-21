@@ -28,7 +28,7 @@ import {
   countConnectedIntegrations,
   meetsTemplateGate,
 } from '@/lib/integrations/integration-count'
-import { buildUsageProfile, type UsageProfile } from '@/lib/templates/usage-profile'
+import { buildUsageProfile, MAX_AUDIT_ROWS, type UsageProfile } from '@/lib/templates/usage-profile'
 import { listStoredCatalogue } from '@/lib/templates/catalogue'
 import { listAllProposalTitles, writeProposals, type ProposalInput } from '@/lib/templates/proposals'
 import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
@@ -413,6 +413,21 @@ async function defaultReadTargets(organizationId: string): Promise<{ flows: Impr
   }
 }
 
+/**
+ * The "Runs analyzed" line, in plain English about whether that count is the
+ * workspace's full window or a sample of it. `profile.runCount` is exact
+ * either way (see {@link buildUsageProfile}); what changes is whether more
+ * runs may exist beyond it -- `sampled` is the qualified truth the model (and
+ * the {@link MIN_RUNS_FOR_TEMPLATES} gate above it) both key off, and a person
+ * reading this line deserves the same caveat.
+ */
+export function runsAnalyzedLine(profile: Pick<UsageProfile, 'runCount' | 'windowDays' | 'sampled'>): string {
+  if (profile.sampled) {
+    return `Runs analyzed: ${profile.runCount} runs from the most recent ${MAX_AUDIT_ROWS} events, over the last ${profile.windowDays} days.`
+  }
+  return `Runs analyzed: ${profile.runCount} over the last ${profile.windowDays} days.`
+}
+
 /** Compact grounding lines for the model prompt. Pure over its inputs. */
 export function buildGenerationUser(
   profile: UsageProfile,
@@ -422,7 +437,7 @@ export function buildGenerationUser(
 ): string {
   const lines: string[] = []
   lines.push('## Observed usage')
-  lines.push(`Runs analyzed: ${profile.runCount} over the last ${profile.windowDays} days.`)
+  lines.push(runsAnalyzedLine(profile))
   if (profile.providers.length) lines.push(`Providers (by calls): ${profile.providers.map((p) => `${p.provider}(${p.calls})`).join(', ')}`)
   if (profile.topTools.length) lines.push(`Top tools: ${profile.topTools.slice(0, 12).map((t) => `${t.provider}.${t.tool}(${t.calls})`).join(', ')}`)
   if (profile.coOccurrence.length) lines.push(`Providers used together in a run: ${profile.coOccurrence.map((c) => `[${c.providers.join('+')}]×${c.runs}`).join(', ')}`)

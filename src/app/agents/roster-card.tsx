@@ -4,8 +4,14 @@ import { Settings2 } from 'lucide-react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { cn } from '@/lib/utils'
 
-/** Lifetime run stats for one card, already aggregated by the caller. */
-export type CardStats = { runs: number; completed: number; failed: number }
+/**
+ * Lifetime run stats for one card, already aggregated by the caller.
+ *
+ * `runs`/`completed`/`failed` are query-derived (exact); `approximateRuns` is
+ * additional volume known only via an agent's own counter, with no
+ * completed/failed split available -- see `@/lib/agents/roster`.
+ */
+export type CardStats = { runs: number; completed: number; failed: number; approximateRuns: number }
 
 /**
  * One tile on the agents roster. The same card serves a solo agent and a
@@ -39,7 +45,15 @@ export function RosterCard({
   configureLabel: string
 }) {
   const finished = stats.completed + stats.failed
+  // Success rate is measured-only: an agent whose runs are known solely via
+  // its counter (approximateRuns) never enters completed/failed, so it never
+  // dilutes or inflates this rate.
   const successRate = finished > 0 ? `${Math.round((stats.completed / finished) * 100)}%` : '—'
+  const totalRuns = stats.runs + stats.approximateRuns
+  // A "~" prefix is the plain-English cue that some of this total is only a
+  // counter estimate (no query rows survive to confirm it), never a number
+  // presented as exact when it isn't.
+  const runsLabel = stats.approximateRuns > 0 ? `~${totalRuns.toLocaleString()}` : totalRuns.toLocaleString()
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-1 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200/80 hover:shadow-lg focus-within:shadow-md">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-indigo-50/80 via-slate-50/50 to-transparent opacity-90 transition-opacity duration-200 group-hover:opacity-100" />
@@ -81,7 +95,7 @@ export function RosterCard({
         {subtitle && <span className="mt-1 line-clamp-1 w-full text-xs text-muted-foreground">{subtitle}</span>}
         <span className="mt-4 grid w-full grid-cols-2 divide-x border-t pt-3">
           <span className="flex flex-col gap-0.5 px-2">
-            <span className="text-base font-semibold tabular-nums text-foreground">{stats.runs.toLocaleString()}</span>
+            <span className="text-base font-semibold tabular-nums text-foreground">{runsLabel}</span>
             <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Runs</span>
           </span>
           <span className="flex flex-col gap-0.5 px-2">

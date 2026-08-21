@@ -40,7 +40,7 @@ import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
  * name the same step differently is a bug users read as two different steps.
  */
 
-export type StepStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'waiting' | 'skipped' | 'stopped' | 'resumed'
+export type StepStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'waiting' | 'skipped' | 'stopped' | 'resumed' | 'cancelled'
 
 export const NODE_ICON: Record<FlowNode['type'], LucideIcon> = {
   trigger: Zap,
@@ -101,6 +101,7 @@ export const STATUS_DOT: Record<StepStatus, string> = {
   skipped: 'bg-gray-300',
   stopped: 'bg-slate-500',
   resumed: 'bg-gray-300',
+  cancelled: 'bg-slate-500',
 }
 
 /** Status → text color. The one map behind the run panel and activity views,
@@ -114,6 +115,7 @@ export const STATUS_TEXT: Record<StepStatus, string> = {
   skipped: 'text-fg-muted',
   stopped: 'text-slate-500',
   resumed: 'text-fg-muted',
+  cancelled: 'text-slate-500',
 }
 
 /** Everything the label functions need that isn't on the node itself. */

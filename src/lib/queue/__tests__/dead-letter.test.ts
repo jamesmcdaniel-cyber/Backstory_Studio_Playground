@@ -188,17 +188,24 @@ describe('agent dead-letter', () => {
 })
 
 describe('flow dead-letter', () => {
-  function harness(updateMany: (args: any) => Promise<unknown> = async () => ({ count: 1 })) {
+  function harness(
+    updateMany: (args: any) => Promise<unknown> = async () => ({ count: 1 }),
+    stepUpdateMany: (args: any) => Promise<unknown> = async () => ({ count: 1 }),
+  ) {
     const queues = queueRecorder()
     const logs = logRecorder()
     const updates: any[] = []
+    const stepUpdates: any[] = []
     const deps: FlowDeadLetterDeps = {
-      db: { flowRun: { updateMany: (args) => { updates.push(args); return updateMany(args) } } },
+      db: {
+        flowRun: { updateMany: (args) => { updates.push(args); return updateMany(args) } },
+        flowRunStep: { updateMany: (args) => { stepUpdates.push(args); return stepUpdateMany(args) } },
+      },
       createQueue: queues.createQueue,
       logger: logs.logger,
       capture: logs.capture,
     }
-    return { deps, queues, logs, updates }
+    return { deps, queues, logs, updates, stepUpdates }
   }
 
   const input = {
@@ -225,12 +232,25 @@ describe('flow dead-letter', () => {
     assert.deepEqual(queues.added[QUEUE_NAMES.FLOW_DEAD_LETTER][0].data, input)
   })
 
+  test('a still-running step row is swept to failed alongside the run', async () => {
+    // Without this sweep a dead-lettered run shows as failed while one of its
+    // steps is stuck `running` forever — the exact orphan this pins.
+    const { deps, stepUpdates } = harness()
+
+    await recordFlowDeadLetter(input, deps)
+
+    assert.deepEqual(stepUpdates[0].where, { flowRunId: 'run-1', status: 'running' })
+    assert.equal(stepUpdates[0].data.status, 'failed')
+    assert.ok(stepUpdates[0].data.finishedAt instanceof Date)
+  })
+
   test('a fresh-execution job with no run row still dead-letters', async () => {
-    const { deps, updates, queues } = harness()
+    const { deps, updates, stepUpdates, queues } = harness()
 
     await recordFlowDeadLetter({ ...input, flowRunId: undefined }, deps)
 
     assert.deepEqual(updates, [])
+    assert.deepEqual(stepUpdates, [])
     assert.equal(queues.added[QUEUE_NAMES.FLOW_DEAD_LETTER].length, 1)
   })
 
@@ -242,6 +262,15 @@ describe('flow dead-letter', () => {
     assert.match(logs.errors[0].message, /failed to terminalize/)
     assert.equal(logs.errors[0].meta.flowRunId, 'run-1')
     assert.ok(logs.captured.some((entry) => entry.context.source === 'flow-dead-letter.terminalize'))
+    assert.equal(queues.added[QUEUE_NAMES.FLOW_DEAD_LETTER].length, 1)
+  })
+
+  test('a failed step sweep is logged but never swallows the dead-letter', async () => {
+    const { deps, logs, queues } = harness(async () => ({ count: 1 }), async () => { throw new Error('db down') })
+
+    await recordFlowDeadLetter(input, deps)
+
+    assert.match(logs.errors.at(-1)!.message, /failed to sweep running steps/)
     assert.equal(queues.added[QUEUE_NAMES.FLOW_DEAD_LETTER].length, 1)
   })
 

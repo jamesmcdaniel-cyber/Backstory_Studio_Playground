@@ -6,10 +6,13 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 export const runtime = 'nodejs'
 
 // POST /api/flows/[id]/cancel — request cancellation of an in-progress run.
-// Flips FlowRun.status to 'cancelling'; the interpreter polls this once per tick
-// (see execute-flow's isCancelled) and aborts, terminalizing the run as
-// 'cancelled'. Org- + visibility-scoped (a private flow's run is cancellable
-// only by its owner). id is the path segment before "cancel".
+// A `running` run flips to 'cancelling'; the interpreter polls this once per
+// tick (see execute-flow's isCancelled) and aborts, terminalizing the run as
+// 'cancelled' itself. A `waiting` run has no executor polling it — nothing
+// would ever pick up 'cancelling' and finish the job — so it is cancelled
+// immediately here, with its still-open step rows swept in the same request.
+// Org- + visibility-scoped (a private flow's run is cancellable only by its
+// owner). id is the path segment before "cancel".
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-2)
   if (!id) throw new ApiError('Flow id is required')
@@ -21,15 +24,27 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
 
-  // Only an in-progress run can be cancelled; the status guard makes this a
-  // no-op (count 0) for already-terminal runs.
+  // A waiting run completes the cancellation itself: there is no executor to
+  // hand `cancelling` off to, so leaving it there would be a permanent dead
+  // end. Try this branch first so a waiting run never falls through into the
+  // 'cancelling' handoff below.
+  const waitingResult = await prisma.flowRun.updateMany({
+    where: { id: flowRunId, flowId: flow.id, organizationId: auth.organizationId, status: 'waiting' },
+    data: { status: 'cancelled', finishedAt: new Date() },
+  })
+  if (waitingResult.count > 0) {
+    await prisma.flowRunStep.updateMany({
+      where: { flowRunId, status: { in: ['running', 'waiting'] } },
+      data: { status: 'cancelled', finishedAt: new Date() },
+    })
+    return { success: true, status: 'cancelled' }
+  }
+
+  // Only a `running` run passes through 'cancelling' now — the interpreter's
+  // own poll loop terminalizes it. The status guard makes this a no-op
+  // (count 0) for a run that's already terminal.
   const result = await prisma.flowRun.updateMany({
-    where: {
-      id: flowRunId,
-      flowId: flow.id,
-      organizationId: auth.organizationId,
-      status: { in: ['running', 'waiting'] },
-    },
+    where: { id: flowRunId, flowId: flow.id, organizationId: auth.organizationId, status: 'running' },
     data: { status: 'cancelling' },
   })
   if (result.count === 0) {

@@ -362,12 +362,40 @@ async function createFlowRunRow(
  * outside the interpreter's own failure paths. Status-guarded: a run that
  * legitimately settled or paused (`waiting`) is never clobbered.
  */
-async function failPreparedRun(flowRunId: string, organizationId: string, message: string): Promise<void> {
-  await prisma.flowRun
+export async function failPreparedRun(flowRunId: string, organizationId: string, message: string): Promise<void> {
+  const errorMessage = truncateWithMarker(message, 300)
+  const terminalized = await prisma.flowRun
     .updateMany({
       where: { id: flowRunId, organizationId, status: 'running' },
-      data: { status: 'failed', error: truncateWithMarker(message, 300), finishedAt: new Date() },
+      data: { status: 'failed', error: errorMessage, finishedAt: new Date() },
     })
+    .catch(() => undefined)
+  // Sweep phantom 'running' step rows — but only when THIS call actually
+  // failed the run: a run left untouched (already settled, or legitimately
+  // `waiting`) may have a step genuinely still in flight, which must not be
+  // clobbered. Mirrors the interpreter's own end-of-run sweep (~1889 below) so
+  // a run failed here never leaves an orphaned step.
+  if (terminalized?.count) {
+    await prisma.flowRunStep
+      .updateMany({
+        where: { flowRunId, status: 'running' },
+        data: { status: 'failed', error: errorMessage, finishedAt: new Date() },
+      })
+      .catch(() => undefined)
+  }
+}
+
+/**
+ * Best-effort link from a running FlowRunStep row to the AgentExecution it
+ * started, so the runs panel can follow the agent's live process events
+ * while the step is still in flight. Status-guarded like every other write
+ * to this row: once a sweep has already closed the row out (timeout,
+ * dead-letter, cancel, failPreparedRun), a late-arriving execution id must
+ * not resurrect a terminal row by writing back onto it.
+ */
+export async function linkExecutionToRunningStep(stepId: string, executionId: string): Promise<void> {
+  await prisma.flowRunStep
+    .updateMany({ where: { id: stepId, status: 'running' }, data: { agentExecutionId: executionId } })
     .catch(() => undefined)
 }
 
@@ -764,18 +792,22 @@ async function runFlowExecutionInner(
       if (outcome.status === 'succeeded' && outcome.output !== undefined) {
         const aggregateOrder = order++
         pending.push(
-          (async () => {
+          // The check-then-write (updateMany, then create only if it matched
+          // nothing) is a single transaction so two concurrent per-item
+          // completions racing this same rowKey can't both see count 0 and
+          // both create a duplicate aggregate row.
+          prisma.$transaction(async (tx) => {
             // Warnings only ever ADD here (never null out): the interpreter's
             // producers (empty result, item-policy counts) and any adapter-side
             // note are disjoint by construction, so a present outcome.warnings
             // is authoritative for this row.
             const warningsPatch = outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}
-            const updated = await prisma.flowRunStep.updateMany({
+            const updated = await tx.flowRunStep.updateMany({
               where: { flowRunId: run.id, nodeId: rowKey, status: 'succeeded' },
               data: { output: jsonValue(outcome.output), ...warningsPatch },
             })
             if (updated.count === 0) {
-              await prisma.flowRunStep.create({
+              await tx.flowRunStep.create({
                 data: {
                   flowRunId: run.id,
                   nodeId: rowKey,
@@ -789,7 +821,7 @@ async function runFlowExecutionInner(
                 },
               })
             }
-          })().catch(() => undefined),
+          }).catch(() => undefined),
         )
         return
       }
@@ -803,7 +835,11 @@ async function runFlowExecutionInner(
       if (outcome.status === 'failed') {
         const failedOrder = order++
         pending.push(
-          (async () => {
+          // Same reasoning as the succeeded branch: the check-then-write
+          // (updateMany/count, then create only if nothing matched) is one
+          // transaction so a concurrent emit for the same rowKey can't both
+          // observe "no row" and both create a duplicate.
+          prisma.$transaction(async (tx) => {
             // Same additive rule as the succeeded branch above: warnings only
             // ever ADD. Needed here so a retried 'agent' step (whose row is
             // created/finished per attempt by `runAgent`, before this attempt
@@ -811,7 +847,7 @@ async function runFlowExecutionInner(
             // when the failure itself carries no output patch.
             const warningsPatch = outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}
             if (outcome.output !== undefined || Object.keys(warningsPatch).length) {
-              const updated = await prisma.flowRunStep.updateMany({
+              const updated = await tx.flowRunStep.updateMany({
                 where: { flowRunId: run.id, nodeId: rowKey, status: 'failed' },
                 data: { ...(outcome.output !== undefined ? { output: jsonValue(outcome.output) } : {}), ...warningsPatch },
               })
@@ -823,9 +859,9 @@ async function runFlowExecutionInner(
             // offending node. Only create when NO row exists for this key: a
             // timed-out adapter leaves a 'running' row the end-of-run sweep
             // closes, and a second row here would duplicate it.
-            const existing = await prisma.flowRunStep.count({ where: { flowRunId: run.id, nodeId: rowKey } })
+            const existing = await tx.flowRunStep.count({ where: { flowRunId: run.id, nodeId: rowKey } })
             if (existing === 0) {
-              await prisma.flowRunStep.create({
+              await tx.flowRunStep.create({
                 data: {
                   flowRunId: run.id,
                   nodeId: rowKey,
@@ -840,7 +876,7 @@ async function runFlowExecutionInner(
                 },
               })
             }
-          })().catch(() => undefined),
+          }).catch(() => undefined),
         )
       }
       // A retried 'agent' step that ends up pausing for human input: its row
@@ -907,12 +943,8 @@ async function runFlowExecutionInner(
     // Link the agent execution to this step row the moment the execution row
     // exists (not only at the end of the run), so the runs panel can follow
     // the agent's live process events while the step is still running.
-    // Best-effort write — the end-of-run updates below remain authoritative
-    // (idempotent overwrite of the same id).
     const onExecutionCreated = (executionId: string) => {
-      void prisma.flowRunStep
-        .update({ where: { id: step.id }, data: { agentExecutionId: executionId } })
-        .catch(() => undefined)
+      void linkExecutionToRunningStep(step.id, executionId)
     }
     try {
       // Resuming this node? Re-enter the paused agent execution with the reply.

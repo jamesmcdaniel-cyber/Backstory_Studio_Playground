@@ -1484,7 +1484,7 @@ model HuddleNote {
 model FlowRun {
   id                String    @id @default(cuid())
   flowId            String
-  status            String    @default("running") // running | succeeded | failed | waiting
+  status            String    @default("running") // running | succeeded | failed | waiting | cancelling | cancelled
   trigger           Json      @default("{}")
   input             Json      @default("{}")
   output            Json?
@@ -1590,7 +1590,7 @@ model FlowRunStep {
   nodeId           String
   agentExecutionId String?
   order            Int       @default(0)
-  status           String    @default("queued") // queued | running | succeeded | failed | skipped | waiting
+  status           String    @default("queued") // queued | running | succeeded | failed | skipped | waiting | resumed | cancelled | stopped
   input            Json      @default("{}")
   output           Json?
   error            String?

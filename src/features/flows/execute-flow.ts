@@ -43,6 +43,7 @@ import {
   type ResolvedHttpCredential,
 } from './http-auth'
 import { shouldPersistInterpreterStep, persistedCodeStepInput } from './run-step-persistence'
+import { truncateWithMarker } from '@/lib/flows/truncate'
 import { prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
@@ -353,7 +354,7 @@ async function failPreparedRun(flowRunId: string, organizationId: string, messag
   await prisma.flowRun
     .updateMany({
       where: { id: flowRunId, organizationId, status: 'running' },
-      data: { status: 'failed', error: message.slice(0, 300), finishedAt: new Date() },
+      data: { status: 'failed', error: truncateWithMarker(message, 300), finishedAt: new Date() },
     })
     .catch(() => undefined)
 }
@@ -804,7 +805,7 @@ async function runFlowExecutionInner(
                   status: 'failed',
                   input: jsonValue(outcome.input ?? {}),
                   output: jsonValue(outcome.output ?? null),
-                  error: outcome.error ? outcome.error.slice(0, 300) : null,
+                  error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
                   startedAt: new Date(),
                   finishedAt: new Date(),
                 },
@@ -827,7 +828,7 @@ async function runFlowExecutionInner(
             // `{}` only for outcomes that genuinely carry none (skips, stop).
             input: jsonValue(outcome.input ?? {}),
             output: jsonValue(outcome.output ?? null),
-            error: outcome.error ? outcome.error.slice(0, 300) : null,
+            error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
             ...(outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}),
             startedAt: new Date(),
             finishedAt: new Date(),
@@ -906,7 +907,7 @@ async function runFlowExecutionInner(
       return { output }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await finishStep({ status: 'failed', error: message.slice(0, 300), finishedAt: new Date() })
+      await finishStep({ status: 'failed', error: truncateWithMarker(message, 300), finishedAt: new Date() })
       return { error: message }
     }
   }
@@ -960,7 +961,7 @@ async function runFlowExecutionInner(
         data: {
           status: patch.status,
           output: patch.output !== undefined ? jsonValue(patch.output) : undefined,
-          error: patch.error ? patch.error.slice(0, 300) : undefined,
+          error: patch.error ? truncateWithMarker(patch.error, 300) : undefined,
           logs: patch.logs && patch.logs.length ? jsonValue(patch.logs) : undefined,
           // Degraded-success notes (e.g. a ledger replay): without this the
           // replay would be invisible in the run panel and the step would read
@@ -1459,7 +1460,7 @@ async function runFlowExecutionInner(
                 // the bytes — which succeeded. A corrupt or password-protected
                 // DOCX/PDF therefore yields empty text instead of failing the
                 // step. Same treatment as the /api/files upload route.
-                content = (await extractTextAuto(buffer, saved.mimeType, filename).catch(() => '')).slice(0, 200_000)
+                content = truncateWithMarker(await extractTextAuto(buffer, saved.mimeType, filename).catch(() => ''), 200_000)
               }
               return fileReference(saved, { content }) as unknown as Record<string, unknown>
             } catch (error) {
@@ -1756,7 +1757,7 @@ async function runFlowExecutionInner(
   const effectiveOutput = hasNamedOutputs ? result.namedOutputs : result.output
   // A failed run persists WHY it failed (e.g. the step-timeout message) — the
   // runs API surfaces FlowRun.error, so it must never stay null on failure.
-  const runError = status === 'failed' ? (result.error ?? 'The flow failed.').slice(0, 300) : null
+  const runError = status === 'failed' ? truncateWithMarker(result.error ?? 'The flow failed.', 300) : null
   // A `wait` step that paused on a timer records when the run should resume, so
   // the cron scan can wake it. Any other waiting state (human reply, approval,
   // open-ended webhook callback) and every terminal state clear resumeAt.

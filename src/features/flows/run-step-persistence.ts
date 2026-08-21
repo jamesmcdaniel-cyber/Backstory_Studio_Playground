@@ -24,7 +24,7 @@ export function persistedCodeStepInput(config: Record<string, unknown>): Record<
     ...config,
     context: {
       ...(context as Record<string, unknown>),
-      steps: '[prior step outputs — available to the code as steps.*; see each step’s own row]',
+      steps: '[the executed input contained the full prior-step context (steps.*) — elided at persistence; see each step’s own row]',
     },
   }
 }

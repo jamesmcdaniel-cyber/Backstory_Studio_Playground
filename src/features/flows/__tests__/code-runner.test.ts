@@ -69,6 +69,50 @@ test('prefixes per-item logs in each mode', async () => {
   assert.deepEqual(logs, ['[item 0] log: row 10', '[item 1] log: row 20'])
 })
 
+test('marks a JavaScript log entry truncated instead of silently cutting it', async () => {
+  const { logs } = await runFlowCode({
+    language: 'javascript',
+    mode: 'all',
+    code: 'console.log("x".repeat(2010)); return input;',
+    input: null,
+  })
+  assert.equal(logs.length, 1)
+  assert.match(logs[0], /^log: x+\n… \[truncated 15 chars\]$/)
+})
+
+test('marks a Python log entry truncated instead of silently cutting it', async () => {
+  const { logs } = await runFlowCode({
+    language: 'python',
+    mode: 'all',
+    code: 'print("y" * 2010)\nreturn input',
+    input: null,
+  })
+  assert.equal(logs.length, 1)
+  assert.match(logs[0], /^y+\n… \[truncated 10 chars\]$/)
+})
+
+test('appends an explicit marker once the 200-entry log cap is hit', async () => {
+  const { logs } = await runFlowCode({
+    language: 'javascript',
+    mode: 'all',
+    code: 'for (let i = 0; i < 210; i++) console.log(i); return null;',
+    input: null,
+  })
+  assert.equal(logs.length, 201)
+  assert.equal(logs[200], '… [log truncated at 200 entries]')
+})
+
+test('appends an explicit marker once the 200-entry log cap is hit across each-mode items', async () => {
+  const { logs } = await runFlowCode({
+    language: 'javascript',
+    mode: 'each',
+    code: 'console.log("row", input); return input;',
+    input: Array.from({ length: 210 }, (_, i) => i),
+  })
+  assert.equal(logs.length, 201)
+  assert.equal(logs[200], '… [log truncated at 200 entries]')
+})
+
 test('blocks privileged Python capabilities', async () => {
   await assert.rejects(
     runFlowCode({

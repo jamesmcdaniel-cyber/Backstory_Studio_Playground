@@ -248,5 +248,6 @@ test('a JSON response larger than the display cap stays STRUCTURED (parsed befor
   assert.ok(Array.isArray(output.body), 'body must remain a parsed array, not a truncated string')
   assert.equal((output.body as unknown[]).length, 400, 'all records survive — no silent data loss')
   assert.equal((output.body as { name: string }[])[399].name, 'Account 399')
-  assert.equal(output.bodyText.length, 500, 'the raw-text mirror is still capped for display/persistence')
+  assert.equal(output.bodyText.slice(0, 500), json.slice(0, 500), 'the raw-text mirror is still capped for display/persistence')
+  assert.match(output.bodyText, /\[truncated \d+ chars\]$/, 'truncation is marked explicitly, not silent')
 })

@@ -37,3 +37,13 @@ test('inBandErrorWarning leaves real data and empty errors alone', () => {
   assert.equal(inBandErrorWarning([1, 2]), undefined)
   assert.equal(inBandErrorWarning(undefined), undefined)
 })
+
+test('inBandErrorWarning ignores benign metadata keys so an error carrying a request_id is still caught', () => {
+  const warning = inBandErrorWarning({ error: 'no such channel', request_id: 'req_123' })
+  assert.match(warning ?? '', /no such channel/)
+  assert.match(warning ?? '', /in-band tool error detected via key heuristic/)
+})
+
+test('inBandErrorWarning does not flag a legitimate success payload that happens to carry a status field', () => {
+  assert.equal(inBandErrorWarning({ status: 'ok', id: 'req_123', data: { rows: 3 } }), undefined)
+})

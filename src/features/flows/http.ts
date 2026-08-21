@@ -1,4 +1,5 @@
 import { readResponseTextLimited } from '@/lib/net/response-body'
+import { truncateWithMarker } from '@/lib/flows/truncate'
 
 export type FlowHttpConfig = {
   credentialId?: unknown
@@ -301,7 +302,7 @@ export async function responseOutput(response: Response, responseType: 'auto' | 
   // capped, for display/persistence.
   const raw = await readResponseTextLimited(response, RESPONSE_MAX_BYTES, 'HTTP response')
   const headers = Object.fromEntries(response.headers.entries())
-  const bodyText = raw.slice(0, maxChars)
+  const bodyText = truncateWithMarker(raw, maxChars)
   const parseSource = raw.length > PARSE_MAX_CHARS ? raw.slice(0, PARSE_MAX_CHARS) : raw
   let body: unknown = bodyText
   if (parseSource && shouldParseJson(headers['content-type'] ?? '', responseType, parseSource)) {

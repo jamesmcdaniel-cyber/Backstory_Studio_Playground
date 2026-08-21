@@ -70,7 +70,13 @@ try:
     def flow_print(*values, **kwargs):
         if len(logs) < ${MAX_LOG_ENTRIES}:
             sep = kwargs.get("sep", " ")
-            logs.append(sep.join(str(v) for v in values)[:2000])
+            entry = sep.join(str(v) for v in values)
+            if len(entry) > 2000:
+                logs.append(entry[:2000] + "\n… [truncated " + str(len(entry) - 2000) + " chars]")
+            else:
+                logs.append(entry)
+        elif len(logs) == ${MAX_LOG_ENTRIES}:
+            logs.append("… [log truncated at ${MAX_LOG_ENTRIES} entries]")
 
     safe_builtins = {
         "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
@@ -125,7 +131,14 @@ async function runJavaScript(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: n
         const context = JSON.parse(${JSON.stringify(contextJson)});
         const __logs__ = [];
         const __fmt__ = (args) => args.map((a) => typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch (_) { return String(a); } })()).join(' ');
-        const __push__ = (level, args) => { if (__logs__.length < ${MAX_LOG_ENTRIES}) __logs__.push((level + ': ' + __fmt__(args)).slice(0, 2000)); };
+        const __push__ = (level, args) => {
+          if (__logs__.length < ${MAX_LOG_ENTRIES}) {
+            const __entry__ = level + ': ' + __fmt__(args);
+            __logs__.push(__entry__.length > 2000 ? __entry__.slice(0, 2000) + '\n… [truncated ' + (__entry__.length - 2000) + ' chars]' : __entry__);
+          } else if (__logs__.length === ${MAX_LOG_ENTRIES}) {
+            __logs__.push('… [log truncated at ${MAX_LOG_ENTRIES} entries]');
+          }
+        };
         const console = Object.freeze({ log: (...a) => __push__('log', a), info: (...a) => __push__('info', a), warn: (...a) => __push__('warn', a), error: (...a) => __push__('error', a), debug: (...a) => __push__('debug', a) });
         try {
           const value = await (async (input, context, console) => {
@@ -240,7 +253,11 @@ export async function runFlowCode(options: CodeRunOptions): Promise<CodeRunResul
     })
     output.push(result.output)
     for (const entry of result.logs) {
-      if (logs.length < MAX_LOG_ENTRIES) logs.push(`[item ${index}] ${entry}`)
+      if (logs.length < MAX_LOG_ENTRIES) {
+        logs.push(`[item ${index}] ${entry}`)
+      } else if (logs.length === MAX_LOG_ENTRIES) {
+        logs.push(`… [log truncated at ${MAX_LOG_ENTRIES} entries]`)
+      }
     }
   }
   return { output, logs }

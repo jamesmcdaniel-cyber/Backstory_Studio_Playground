@@ -5,6 +5,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import type { AuthContext } from '@/lib/server/auth'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { readAgentMetadata } from '@/lib/agents/metadata'
+import { roleLabelInputsChanged } from '@/lib/agents/role-label'
 import { serializeAgent } from '@/lib/agents/serialize'
 import { indexAgent, removeAgentFromGraph } from '@/lib/rag/indexer'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
@@ -241,6 +242,15 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   if (!existing) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
   const teammateId = body.teammateId ? await assertTeammateInOrg(body.teammateId, auth.organizationId) : null
   const metadata = existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata) ? existing.metadata : {}
+  const typedMetadata = readAgentMetadata(existing.metadata)
+  const jobChanged = roleLabelInputsChanged(
+    {
+      title: typedMetadata.title || existing.description.split('\n')[0] || 'Untitled agent',
+      description: typedMetadata.description || existing.description,
+      instructions: existing.objective,
+    },
+    body,
+  )
   const agent = await prisma.agentTask.update({
     where: { id: body.id, organizationId: auth.organizationId },
     data: {
@@ -278,9 +288,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(typeof body.goal === 'string' && body.goal.trim() ? { suggestedGoal: undefined } : {}),
         // What the agent does may have changed — drop the AI role label so the
         // gallery regenerates it from the new configuration.
-        ...(body.title !== undefined || body.description !== undefined || body.instructions !== undefined
-          ? { roleLabel: undefined }
-          : {}),
+        ...(jobChanged ? { roleLabel: undefined } : {}),
       },
     },
   })
@@ -292,7 +300,6 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   // An avatar's role label summarises the jobs on its roster, so both the
   // teammate it left and the one it joined are now describing a lineup they no
   // longer have. Same for an edit that changed what this agent does.
-  const jobChanged = body.title !== undefined || body.description !== undefined || body.instructions !== undefined
   const affected = [...new Set([existing.teammateId, agent.teammateId].filter((id): id is string => Boolean(id)))]
   if (affected.length && (body.teammateId !== undefined || jobChanged)) {
     await invalidateTeammateLabels(affected, auth.organizationId)

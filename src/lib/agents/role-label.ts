@@ -22,3 +22,26 @@ export function sanitizeRoleLabel(raw: unknown): string | null {
   const label = words.join(' ')
   return label.length <= MAX_LABEL_LENGTH ? label : null
 }
+
+export type RoleLabelInputs = {
+  title: string
+  description: string
+  instructions: string
+}
+
+/**
+ * Whether an agent edit changed what its generated role label describes.
+ *
+ * The configuration form submits a complete draft even for an avatar-only
+ * edit, so field PRESENCE cannot be used as evidence of a content change.
+ */
+export function roleLabelInputsChanged(
+  current: RoleLabelInputs,
+  update: Partial<RoleLabelInputs>,
+): boolean {
+  return (
+    (update.title !== undefined && update.title !== current.title) ||
+    (update.description !== undefined && update.description !== current.description) ||
+    (update.instructions !== undefined && update.instructions !== current.instructions)
+  )
+}

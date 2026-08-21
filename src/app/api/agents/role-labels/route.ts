@@ -8,6 +8,7 @@ import { sanitizeRoleLabel } from '@/lib/agents/role-label'
 import { UNTRUSTED_DATA_RULE, fenceUntrusted } from '@/lib/security/prompt'
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
+import { apiLogger } from '@/lib/logger'
 
 /**
  * Lazy backfill for the gallery's 1–2 word role labels, for both kinds of card:
@@ -119,41 +120,53 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   if (!subjects.length) return { success: true, labels, teammateLabels }
 
-  // Gate only when a model call is actually about to happen — a fully-labeled
-  // gallery poll must not burn the caller's AI rate budget.
-  await assertAiCallAllowed({
-    organizationId: auth.organizationId,
-    rateKey: `role-labels:${auth.dbUser.id}`,
-    limit: 6,
-  })
-
   const roster = subjects.map((subject, index) => `[${index + 1}]\n${subject.block}`).join('\n\n')
-  const text = await generateStructured({
-    schemaName: 'agent_role_labels',
-    schema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        labels: {
-          type: 'array',
-          items: { type: 'string', description: 'A 1-2 word job title, e.g. "Deal Researcher".' },
-          minItems: subjects.length,
-          maxItems: subjects.length,
-          description: 'One label per numbered subject, in the same order they were listed.',
+  let text: string
+  try {
+    // Gate only when a model call is actually about to happen — a fully-labeled
+    // gallery poll must not burn the caller's AI rate budget.
+    await assertAiCallAllowed({
+      organizationId: auth.organizationId,
+      rateKey: `role-labels:${auth.dbUser.id}`,
+      limit: 6,
+    })
+    text = await generateStructured({
+      schemaName: 'agent_role_labels',
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          labels: {
+            type: 'array',
+            items: { type: 'string', description: 'A 1-2 word job title, e.g. "Deal Researcher".' },
+            minItems: subjects.length,
+            maxItems: subjects.length,
+            description: 'One label per numbered subject, in the same order they were listed.',
+          },
         },
+        required: ['labels'],
       },
-      required: ['labels'],
-    },
-    system: [
-      'You write job titles for AI agents on a team roster. For each numbered subject, produce a 1-2 word role that says WHAT IT DOES — like a coworker\'s job title ("Deal Researcher", "Pipeline Reporter", "Meeting Scribe").',
-      'Base the role on what the work actually is, not on the name it was given — names are often vague or stale.',
-      'A subject that covers several agents gets ONE role describing the group, broad enough to fit every job listed.',
-      'Return exactly one label per subject, in order. No punctuation, no numbering.',
-      UNTRUSTED_DATA_RULE,
-    ].join('\n'),
-    user: fenceUntrusted('agent roster', roster),
-    maxTokens: 1000,
-  })
+      system: [
+        'You write job titles for AI agents on a team roster. For each numbered subject, produce a 1-2 word role that says WHAT IT DOES — like a coworker\'s job title ("Deal Researcher", "Pipeline Reporter", "Meeting Scribe").',
+        'Base the role on what the work actually is, not on the name it was given — names are often vague or stale.',
+        'A subject that covers several agents gets ONE role describing the group, broad enough to fit every job listed.',
+        'Return exactly one label per subject, in order. No punctuation, no numbering.',
+        UNTRUSTED_DATA_RULE,
+      ].join('\n'),
+      user: fenceUntrusted('agent roster', roster),
+      maxTokens: 1000,
+    })
+  } catch (error) {
+    // Role labels are decorative and every card already has a deterministic
+    // derived-role fallback. A provider outage, exhausted budget, or blocked AI
+    // policy must not turn an avatar edit into a failed network request.
+    apiLogger.warn('agent role-label backfill deferred', {
+      organizationId: auth.organizationId,
+      subjects: subjects.length,
+      error: error instanceof Error ? error.message.slice(0, 200) : String(error),
+    })
+    return { success: true, labels, teammateLabels, deferred: true }
+  }
 
   if (text) {
     // Rough metering (~chars/4), same convention as the draft builder.

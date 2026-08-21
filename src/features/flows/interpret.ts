@@ -4,6 +4,7 @@ import type { ToolPolicy } from '@/lib/agents/tool-policy'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, type NodeRunState } from '@/lib/flows/dag-scheduler'
 import { shouldRetryAfterTimeout } from './action-reliability'
+import { truncateError } from '@/lib/flows/truncate'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { runDataOp, chunkItems, coerceFieldType, LIST_ENVELOPE_KEYS } from '@/lib/flows/data-ops'
 import { mergeAppend, mergeAllCombinations, mergeByKey, mergeByPosition } from '@/lib/flows/merge'
@@ -45,7 +46,19 @@ export type StepOutcome = {
   startedAt: Date
   finishedAt: Date
 }
-export type RunAgentResult = { output?: unknown; error?: string; waiting?: { status: string; question?: string } }
+export type RunAgentResult = {
+  output?: unknown
+  error?: string
+  waiting?: { status: string; question?: string }
+  /**
+   * Retry evidence: total calls made (including the final one) and one
+   * `"attempt i/max failed: …"` string per failed attempt, in order — only
+   * `runAgentWithReliability` populates these; a plain `opts.runAgent` result
+   * (a single attempt) never carries them.
+   */
+  attempts?: number
+  attemptErrors?: string[]
+}
 /** Per-step agent configuration (n8n-style sub-node parity): a chat-model
  * override, conversation memory for this step's runs (sessionKey already
  * template-resolved), and extra tool connections granted for the run. */
@@ -453,6 +466,13 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     const retries = node.data.retries ?? 0
     const timeoutMs = node.data.timeoutMs
     const resume = opts.resumeNodeId === stepKey
+    // Ceiling on total attempts, fixed up front so every pushed string names
+    // the same denominator regardless of which branch stops the loop.
+    const max = retries + 1
+    // Every failed attempt's evidence, in order — mirrors runWithRetries
+    // (action-reliability.ts) so both retry helpers leave the same shape of
+    // proof behind: a retry that eventually succeeds is otherwise invisible.
+    const attemptErrors: string[] = []
     let attempt = 0
     for (;;) {
       const call = opts.runAgent({ id: stepKey, agentId: node.data.agentId, input: resolvedInput, resume, ...(overrides ? { overrides } : {}) })
@@ -464,14 +484,18 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // terminal; `retries` still applies to hard errors below.
       if (raced === TIMED_OUT) {
         const error = `Timed out after ${Math.round((timeoutMs ?? 0) / 1000)}s — the agent may still be finishing in the background.`
-        if (!shouldRetryAfterTimeout('agent') || attempt >= retries) return { error }
+        const canRetry = shouldRetryAfterTimeout('agent') && attempt < retries
+        attemptErrors.push(`attempt ${attempt + 1}/${max} failed: ${truncateError(error)}`)
+        if (!canRetry) return { error, attempts: attemptErrors.length, attemptErrors }
         attempt += 1
         await sleep(Math.min(8000, 250 * 2 ** attempt))
         continue
       }
       const res = raced
       // Retry only hard errors (never a waiting/paused result).
-      if (!res.error || res.waiting || attempt >= retries) return res
+      if (!res.error || res.waiting) return { ...res, attempts: attemptErrors.length + 1, attemptErrors }
+      attemptErrors.push(`attempt ${attempt + 1}/${max} failed: ${truncateError(res.error)}`)
+      if (attempt >= retries) return { ...res, attempts: attemptErrors.length, attemptErrors }
       attempt += 1
       await sleep(Math.min(8000, 250 * 2 ** attempt))
     }
@@ -1185,11 +1209,15 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
             }
           : undefined
       const res = await runAgentWithReliability(node, resolved, stepKey, overrides)
+      // Retry evidence: every failed attempt before this settled result, so a
+      // step that eventually succeeded (or gave up) is not indistinguishable
+      // from one that never had to retry. Empty when nothing failed.
+      const agentWarnings = res.attemptErrors?.length ? res.attemptErrors : undefined
       if (res.waiting) {
         if (node.data.humanAssistance === false) {
           const error = 'The agent asked for help, but human assistance is turned off for this step.'
           const mode = node.data.onError ?? 'stop'
-          emit({ nodeId: node.id, status: 'failed', error, ...(mode === 'route' || mode === 'continue' ? { output: { error, input: resolved } } : {}) })
+          emit({ nodeId: node.id, status: 'failed', error, ...(mode === 'route' || mode === 'continue' ? { output: { error, input: resolved } } : {}), ...(agentWarnings ? { warnings: agentWarnings } : {}) })
           return onFailure(mode, error, resolved)
         }
         emit({ nodeId: node.id, status: 'waiting' })
@@ -1197,7 +1225,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       }
       if (res.error) {
         const mode = node.data.onError ?? 'stop'
-        emit({ nodeId: node.id, status: 'failed', error: res.error, ...(mode === 'route' || mode === 'continue' ? { output: { error: res.error, input: resolved } } : {}) })
+        emit({ nodeId: node.id, status: 'failed', error: res.error, ...(mode === 'route' || mode === 'continue' ? { output: { error: res.error, input: resolved } } : {}), ...(agentWarnings ? { warnings: agentWarnings } : {}) })
         return onFailure(mode, res.error, resolved)
       }
       let output: unknown
@@ -1205,7 +1233,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         const parsed = parseStructuredAgentOutput(res.output, outputFields)
         if (parsed.error) {
           const mode = node.data.onError ?? 'stop'
-          emit({ nodeId: node.id, status: 'failed', error: parsed.error, ...(mode === 'route' || mode === 'continue' ? { output: { error: parsed.error, input: resolved } } : {}) })
+          emit({ nodeId: node.id, status: 'failed', error: parsed.error, ...(mode === 'route' || mode === 'continue' ? { output: { error: parsed.error, input: resolved } } : {}), ...(agentWarnings ? { warnings: agentWarnings } : {}) })
           return onFailure(mode, parsed.error, resolved)
         }
         output = parsed.output
@@ -1213,7 +1241,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         output = asStructured(res.output)
       }
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', output })
+      emit({ nodeId: node.id, status: 'succeeded', output, ...(agentWarnings ? { warnings: agentWarnings } : {}) })
       return { kind: 'ok', output }
     }
 

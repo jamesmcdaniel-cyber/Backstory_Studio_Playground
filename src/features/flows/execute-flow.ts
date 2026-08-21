@@ -26,7 +26,7 @@ import { applyInputDefaults, missingRequiredInputFields } from '@/lib/flows/inpu
 import { shouldReuseInput, storedRunInput } from '@/lib/flows/reuse-input'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { interpretFlow, FlowCancelledError, type RunAgentFn, type RunActionFn } from './interpret'
-import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout, classifyRetry } from './action-reliability'
+import { flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout, classifyRetry, type RetryEvidenceError } from './action-reliability'
 import { runHttpWithRetries } from './http-retry'
 import { prepareHttpRequest, responseOutput, redactHttpStepInput, withBearerAuthorization, type FlowHttpOutput } from './http'
 import { getByPath, setQueryParam, pageItems, optimizeForAi, paginationComplete } from '@/lib/flows/http-pagination'
@@ -792,10 +792,16 @@ async function runFlowExecutionInner(
         const failedOrder = order++
         pending.push(
           (async () => {
-            if (outcome.output !== undefined) {
+            // Same additive rule as the succeeded branch above: warnings only
+            // ever ADD. Needed here so a retried 'agent' step (whose row is
+            // created/finished per attempt by `runAgent`, before this attempt
+            // count exists) still gets its attempt-error trail persisted even
+            // when the failure itself carries no output patch.
+            const warningsPatch = outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}
+            if (outcome.output !== undefined || Object.keys(warningsPatch).length) {
               const updated = await prisma.flowRunStep.updateMany({
                 where: { flowRunId: run.id, nodeId: rowKey, status: 'failed' },
-                data: { output: jsonValue(outcome.output) },
+                data: { ...(outcome.output !== undefined ? { output: jsonValue(outcome.output) } : {}), ...warningsPatch },
               })
               if (updated.count > 0) return
             }
@@ -816,6 +822,7 @@ async function runFlowExecutionInner(
                   input: jsonValue(outcome.input ?? {}),
                   output: jsonValue(outcome.output ?? null),
                   error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
+                  ...warningsPatch,
                   startedAt: outcome.startedAt,
                   finishedAt: outcome.finishedAt,
                 },
@@ -1066,7 +1073,7 @@ async function runFlowExecutionInner(
           throw new Error(blockedMessage)
         }
 
-        const output = await runWithRetries(
+        const { result: output, attemptErrors: toolAttemptErrors } = await runWithRetries(
           async () => flowToolOutput(await executor.execute(toolName, args)),
           {
             retries,
@@ -1100,7 +1107,7 @@ async function runFlowExecutionInner(
           resourceType: executor.provider,
           payload: args,
         })
-        await finish({ status: 'succeeded', output })
+        await finish({ status: 'succeeded', output, ...(toolAttemptErrors.length ? { warnings: toolAttemptErrors } : {}) })
         return { output }
       }
       if (node.kind === 'ai') {
@@ -1153,7 +1160,7 @@ async function runFlowExecutionInner(
         // timed-out model call is only abandoned, not cancelled, so retrying
         // could run it a second time concurrently (double token spend). Hard
         // errors keep the retry budget.
-        const turn = await runWithRetries(
+        const { result: turn, attemptErrors: aiAttemptErrors } = await runWithRetries(
           async () =>
             runner.next(runner.start(user), prompt.system, [], {
               organizationId: job.organizationId,
@@ -1196,7 +1203,7 @@ async function runFlowExecutionInner(
         })
 
         if (!prompt.structuredFields) {
-          await finish({ status: 'succeeded', output: turn.text, warnings: modelWarnings })
+          await finish({ status: 'succeeded', output: turn.text, warnings: [...modelWarnings, ...aiAttemptErrors] })
           return { output: turn.text }
         }
         // Structured ops never throw on a malformed/invalid reply — parse and
@@ -1204,15 +1211,15 @@ async function runFlowExecutionInner(
         // exactly like a rejected approval above.
         const parsed = parseStructuredAgentOutput(turn.text, prompt.structuredFields)
         if (parsed.error) {
-          await finish({ status: 'failed', error: parsed.error })
+          await finish({ status: 'failed', error: parsed.error, ...(aiAttemptErrors.length ? { warnings: aiAttemptErrors } : {}) })
           return { error: parsed.error }
         }
         const validationError = prompt.postValidate(parsed.output ?? {})
         if (validationError) {
-          await finish({ status: 'failed', error: validationError })
+          await finish({ status: 'failed', error: validationError, ...(aiAttemptErrors.length ? { warnings: aiAttemptErrors } : {}) })
           return { error: validationError }
         }
-        await finish({ status: 'succeeded', output: parsed.output, warnings: modelWarnings })
+        await finish({ status: 'succeeded', output: parsed.output, warnings: [...modelWarnings, ...aiAttemptErrors] })
         return { output: parsed.output }
       }
       if (node.kind === 'subflow') {
@@ -1304,7 +1311,7 @@ async function runFlowExecutionInner(
           await finish({ status: 'succeeded', output })
           return { output }
         }
-        const result = await runWithRetries(
+        const { result, attemptErrors: subflowAttemptErrors } = await runWithRetries(
           async () =>
             runFlowExecution({
               flowId: child.id,
@@ -1329,15 +1336,19 @@ async function runFlowExecutionInner(
           // The child paused — suspend the PARENT too. The waiting row carries
           // the child run id so a reply to the parent resumes the child.
           const question = await subflowChildQuestion(result.flowRunId, child.name)
-          await finish({ status: 'waiting', output: { waiting: { kind: 'input', question, childRunId: result.flowRunId, childFlowId: child.id } } })
+          await finish({
+            status: 'waiting',
+            output: { waiting: { kind: 'input', question, childRunId: result.flowRunId, childFlowId: child.id } },
+            ...(subflowAttemptErrors.length ? { warnings: subflowAttemptErrors } : {}),
+          })
           return { waiting: { status: 'waiting_for_input', question } }
         }
         if (result.status !== 'succeeded') {
           const error = `"${child.name}" failed — open its latest run in Activity to see why.`
-          await finish({ status: 'failed', error })
+          await finish({ status: 'failed', error, ...(subflowAttemptErrors.length ? { warnings: subflowAttemptErrors } : {}) })
           return { error }
         }
-        await finish({ status: 'succeeded', output: result.output })
+        await finish({ status: 'succeeded', output: result.output, ...(subflowAttemptErrors.length ? { warnings: subflowAttemptErrors } : {}) })
         return { output: result.output }
       }
       if (node.kind === 'knowledge') {
@@ -1443,7 +1454,7 @@ async function runFlowExecutionInner(
         // file reference (with extracted text when the type supports it), rather
         // than parsing the body. Files flow onward as references, not bytes.
         if (node.config.responseType === 'file') {
-          const output = await runWithRetries(async () => {
+          const { result: output, attemptErrors: fileAttemptErrors } = await runWithRetries(async () => {
             await assertPublicUrl(request.url)
             const controller = new AbortController()
             let timedOut = false
@@ -1480,7 +1491,7 @@ async function runFlowExecutionInner(
               clearTimeout(timer)
             }
           }, { retries, retryDelayMs })
-          await finish({ status: 'succeeded', output })
+          await finish({ status: 'succeeded', output, ...(fileAttemptErrors.length ? { warnings: fileAttemptErrors } : {}) })
           return { output }
         }
 
@@ -1619,7 +1630,12 @@ async function runFlowExecutionInner(
       throw new Error('Unsupported flow action kind')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await finish({ status: 'failed', error: message })
+      // A retry budget exhausted by runWithRetries attaches its full attempt
+      // trail to the thrown error (see RetryEvidenceError) — surface it as
+      // step warnings so every failed attempt stays visible, not only the
+      // last one that lands in `error`.
+      const attemptErrors = error instanceof Error ? (error as RetryEvidenceError).attemptErrors : undefined
+      await finish({ status: 'failed', error: message, ...(attemptErrors?.length ? { warnings: attemptErrors } : {}) })
       return { error: message }
     }
   }

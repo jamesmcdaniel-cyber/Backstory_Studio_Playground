@@ -23,14 +23,72 @@ test('flow action reliability clamps retries and timeouts', () => {
 })
 
 test('runWithRetries retries failed attempts before succeeding', async () => {
-  let attempts = 0
-  const result = await runWithRetries(async () => {
-    attempts += 1
-    if (attempts < 3) throw new Error('temporary failure')
+  let calls = 0
+  const { result } = await runWithRetries(async () => {
+    calls += 1
+    if (calls < 3) throw new Error('temporary failure')
     return 'ok'
   }, { retries: 2, retryDelayMs: 0 })
   assert.equal(result, 'ok')
+  assert.equal(calls, 3)
+})
+
+// ---------------------------------------------------------------------------
+// Task 4: retries leave evidence. Only the last error used to survive — the
+// two that came before it vanished. Every retry helper now resolves (or, on
+// final failure, throws an error carrying) `attempts` and one
+// `"attempt i/max failed: …"` string per failed attempt.
+// ---------------------------------------------------------------------------
+
+test('a function failing twice then succeeding yields attempts:3 and two attempt-error strings', async () => {
+  let calls = 0
+  const { result, attempts, attemptErrors } = await runWithRetries(
+    async () => {
+      calls += 1
+      if (calls < 3) throw new Error(`boom ${calls}`)
+      return 'ok'
+    },
+    { retries: 2, retryDelayMs: 0 },
+  )
+  assert.equal(result, 'ok')
+  assert.equal(calls, 3)
   assert.equal(attempts, 3)
+  assert.deepEqual(attemptErrors, [
+    'attempt 1/3 failed: boom 1',
+    'attempt 2/3 failed: boom 2',
+  ])
+})
+
+test('a success on the first attempt reports attempts:1 and no attempt errors — zero-retry success adds no noise', async () => {
+  const { result, attempts, attemptErrors } = await runWithRetries(async () => 'ok', { retries: 2, retryDelayMs: 0 })
+  assert.equal(result, 'ok')
+  assert.equal(attempts, 1)
+  assert.deepEqual(attemptErrors, [])
+})
+
+test('exhausting the retry budget throws an error carrying the full attempt-error trail', async () => {
+  let calls = 0
+  await assert.rejects(
+    runWithRetries(
+      async () => {
+        calls += 1
+        throw new Error(`fail ${calls}`)
+      },
+      { retries: 2, retryDelayMs: 0 },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error)
+      const withEvidence = error as Error & { attempts?: number; attemptErrors?: string[] }
+      assert.equal(withEvidence.attempts, 3)
+      assert.deepEqual(withEvidence.attemptErrors, [
+        'attempt 1/3 failed: fail 1',
+        'attempt 2/3 failed: fail 2',
+        'attempt 3/3 failed: fail 3',
+      ])
+      return true
+    },
+  )
+  assert.equal(calls, 3)
 })
 
 test('withTimeout surfaces the timeout message', async () => {
@@ -65,7 +123,7 @@ test('runWithRetries with retryOnTimeout=false fails on the first timeout withou
 
 test('runWithRetries with retryOnTimeout=false still retries hard errors', async () => {
   let attempts = 0
-  const result = await runWithRetries(
+  const { result } = await runWithRetries(
     async () => {
       attempts += 1
       if (attempts < 2) throw new Error('temporary failure')

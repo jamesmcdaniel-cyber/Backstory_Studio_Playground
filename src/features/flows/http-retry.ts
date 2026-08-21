@@ -40,7 +40,7 @@ export async function runHttpWithRetries(
   } = {},
 ): Promise<FlowHttpOutput> {
   try {
-    return await runWithRetries(
+    const { result } = await runWithRetries(
       async (attempt) => {
         const response = await operation(attempt)
         if (!response.ok && classifyRetry(null, response.status) === 'retryable') {
@@ -57,6 +57,7 @@ export async function runHttpWithRetries(
           error instanceof RetryableStatus ? parseRetryAfter(error.response.headers?.['retry-after'] ?? null) : null,
       },
     )
+    return result
   } catch (error) {
     // Budget exhausted on a retryable status: hand back the response, exactly
     // as the caller has always received it. ONLY RetryableStatus is converted —

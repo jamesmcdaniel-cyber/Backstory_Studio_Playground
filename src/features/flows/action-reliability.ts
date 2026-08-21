@@ -1,3 +1,5 @@
+import { truncateError } from '@/lib/flows/truncate'
+
 const DEFAULT_RETRY_DELAY_MS = 500
 
 /** Delay ceiling for one wait between attempts. */
@@ -121,6 +123,11 @@ export async function withTimeout<T>(operation: Promise<T>, timeoutMs: number | 
   }
 }
 
+/** Extra properties attached to the error thrown when the retry budget is
+ *  exhausted, so a caller who only has the caught error can still recover
+ *  the full retry evidence trail (used to persist step warnings). */
+export type RetryEvidenceError = Error & { attempts?: number; attemptErrors?: string[] }
+
 export async function runWithRetries<T>(
   operation: (attempt: number) => Promise<T>,
   options: {
@@ -143,24 +150,33 @@ export async function runWithRetries<T>(
     sleep?: (ms: number) => Promise<unknown>
     now?: () => number
   } = {},
-): Promise<T> {
+): Promise<{ result: T; attempts: number; attemptErrors: string[] }> {
   const retries = flowActionRetries(options.retries)
   const timeoutMs = flowActionTimeoutMs(options.timeoutMs)
   const base = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS
   const sleep = options.sleep ?? sleepMs
   const clock = options.now ?? Date.now
   const startedAt = clock()
+  // Ceiling on total attempts this call could ever make — fixed up front so
+  // every pushed string names the same denominator regardless of when the
+  // chain stops (terminal error, timeout policy, or elapsed budget).
+  const max = retries + 1
+  // Every failed attempt's evidence, in order — a retry that eventually
+  // succeeds is otherwise invisible (only the last error used to survive).
+  const attemptErrors: string[] = []
   let lastError: unknown
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      return await withTimeout(
+      const result = await withTimeout(
         operation(attempt),
         timeoutMs,
         options.timeoutMessage ?? `Step timed out after ${timeoutMs}ms`,
       )
+      return { result, attempts: attemptErrors.length + 1, attemptErrors }
     } catch (error) {
       lastError = error
+      attemptErrors.push(`attempt ${attempt + 1}/${max} failed: ${truncateError(error)}`)
       if (attempt >= retries) break
       const kind = classifyRetry(error)
       // A timeout only ABANDONS the in-flight call; the per-kind policy decides
@@ -176,5 +192,8 @@ export async function runWithRetries<T>(
       await sleep(delay)
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError))
+  const finalError: RetryEvidenceError = lastError instanceof Error ? lastError : new Error(String(lastError))
+  finalError.attempts = attemptErrors.length
+  finalError.attemptErrors = attemptErrors
+  throw finalError
 }

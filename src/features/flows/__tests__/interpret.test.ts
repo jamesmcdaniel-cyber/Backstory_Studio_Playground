@@ -1315,6 +1315,49 @@ test('agent hard errors still retry up to the configured budget', async () => {
   assert.equal(result.output, 'recovered')
 })
 
+// Task 4: retries leave evidence. A retry that eventually succeeds used to be
+// indistinguishable from one that never failed — now the succeeded step
+// carries one "attempt i/max failed: …" warning per failed attempt.
+test('a retried agent step that eventually succeeds persists one warning per failed attempt', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'n1', type: 'agent', data: { agentId: 'a1', input: 'x', retries: 2, timeoutMs: 30000 } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'n1' }],
+  }
+  let calls = 0
+  const runAgent: RunAgentFn = async () => {
+    calls += 1
+    return calls < 3 ? { error: `boom ${calls}` } : { output: 'recovered' }
+  }
+  const result = await interpretFlow(graph, '', { runAgent })
+  assert.equal(result.status, 'succeeded')
+  assert.equal(calls, 3)
+  const step = result.steps.find((s) => s.nodeId === 'n1')
+  assert.deepEqual(step?.warnings, [
+    'attempt 1/3 failed: boom 1',
+    'attempt 2/3 failed: boom 2',
+  ])
+})
+
+// Zero-retry success must add no noise: a step that never failed carries no
+// warnings entry at all.
+test('an agent step that succeeds on the first attempt gets no attempt-error warnings', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'n1', type: 'agent', data: { agentId: 'a1', input: 'x', retries: 2, timeoutMs: 30000 } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'n1' }],
+  }
+  const runAgent: RunAgentFn = async () => ({ output: 'ok' })
+  const result = await interpretFlow(graph, '', { runAgent })
+  assert.equal(result.status, 'succeeded')
+  const step = result.steps.find((s) => s.nodeId === 'n1')
+  assert.equal(step?.warnings, undefined)
+})
+
 // ── Variables: a typed symbol table threaded through the run ──────────────
 
 test('variable initialize + set + read across steps', async () => {

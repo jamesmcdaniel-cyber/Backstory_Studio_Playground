@@ -222,4 +222,25 @@ if (TEST_DB) {
     const cleanRow = loopRun.steps.find((s: any) => s.nodeId === 'inner#0')
     assert.equal(cleanRow.warnings, null)
   })
+
+  test('an interpreter-persisted step (loop) persists the real execution span onStep measured, not a persist-time fabrication', async () => {
+    const graph = {
+      nodes: [
+        { id: 'trigger', type: 'trigger', data: {} },
+        { id: 'loop', type: 'loop', data: { over: '{{trigger.input.items}}', body: ['inner'] } },
+        {
+          id: 'inner',
+          type: 'code',
+          data: { language: 'javascript', mode: 'all', code: 'const start = Date.now(); while (Date.now() - start < 50) {} return input', input: '{{item}}' },
+        },
+      ],
+      edges: [{ id: 'e1', source: 'trigger', target: 'loop' }],
+    }
+    const { result, steps } = await run(graph, { items: ['a'] })
+    assert.equal(result.status, 'succeeded')
+    const loopStep = steps.find((s: any) => s.nodeId === 'loop')
+    assert.ok(loopStep.startedAt && loopStep.finishedAt, 'the loop row must carry real timestamps')
+    const span = new Date(loopStep.finishedAt).getTime() - new Date(loopStep.startedAt).getTime()
+    assert.ok(span >= 45, `the loop's body took ~50ms, so its own span must reflect that (got ${span}ms)`)
+  })
 }

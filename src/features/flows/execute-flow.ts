@@ -723,7 +723,7 @@ async function runFlowExecutionInner(
   // `outcome.iterationKey` (the per-iteration `${nodeId}#${index}` inside a
   // loop, or the bare id on the main chain).
   const pending: Promise<unknown>[] = []
-  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[] }) => {
+  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[]; startedAt: Date; finishedAt: Date }) => {
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
     broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status })
@@ -762,8 +762,8 @@ async function runFlowExecutionInner(
                   input: jsonValue(outcome.input ?? {}),
                   output: jsonValue(outcome.output ?? null),
                   ...warningsPatch,
-                  startedAt: new Date(),
-                  finishedAt: new Date(),
+                  startedAt: outcome.startedAt,
+                  finishedAt: outcome.finishedAt,
                 },
               })
             }
@@ -806,8 +806,8 @@ async function runFlowExecutionInner(
                   input: jsonValue(outcome.input ?? {}),
                   output: jsonValue(outcome.output ?? null),
                   error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
-                  startedAt: new Date(),
-                  finishedAt: new Date(),
+                  startedAt: outcome.startedAt,
+                  finishedAt: outcome.finishedAt,
                 },
               })
             }
@@ -830,8 +830,8 @@ async function runFlowExecutionInner(
             output: jsonValue(outcome.output ?? null),
             error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
             ...(outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}),
-            startedAt: new Date(),
-            finishedAt: new Date(),
+            startedAt: outcome.startedAt,
+            finishedAt: outcome.finishedAt,
           },
         })
         .catch(() => undefined),

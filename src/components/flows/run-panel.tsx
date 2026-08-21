@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/client'
 import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { agentExecChannel } from '@/lib/flows/run-stream'
 import { STATUS_TEXT as SHARED_STATUS_TEXT } from '@/lib/flows/node-presentation'
+import { executionDuration } from '@/lib/flows/execution-log'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
 import { buildProcessTimeline, processFeedRows, type ProcessFeedRow } from '@/lib/agents/process-feed'
 import type { TriggerInputField } from '@/lib/flows/graph'
@@ -236,6 +237,9 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
             className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
             title={`${step.warnings!.length === 1 ? '1 warning' : `${step.warnings!.length} warnings`} — open the step for details`}
           />
+        )}
+        {step.startedAt && step.finishedAt && (
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{executionDuration({ startedAt: step.startedAt, finishedAt: step.finishedAt })}</span>
         )}
         <span className={cn('text-xs font-medium', !waitingKind && 'capitalize', STATUS_TEXT[step.status] || 'text-muted-foreground')}>{step.status === 'running' && !live ? <TypewriterStatus seed={step.nodeId.length ? step.nodeId.charCodeAt(step.nodeId.length - 1) : 0} /> : statusLabel}</span>
       </button>

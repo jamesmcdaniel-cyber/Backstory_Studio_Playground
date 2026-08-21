@@ -37,6 +37,13 @@ export type StepOutcome = {
    * a succeeded run with any step warnings renders as degraded in the UI.
    */
   warnings?: string[]
+  /**
+   * Real execution wall-clock span, measured immediately around the node's
+   * execution in the interpreter loop (one measurement site — see `execNode`'s
+   * `emit` closure) — never fabricated at persistence time.
+   */
+  startedAt: Date
+  finishedAt: Date
 }
 export type RunAgentResult = { output?: unknown; error?: string; waiting?: { status: string; question?: string } }
 /** Per-step agent configuration (n8n-style sub-node parity): a chat-model
@@ -484,7 +491,15 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // `stepKey === node.id` — byte-identical to before. `emit` reports the bare
     // node id but tags each outcome with `iterationKey` for the persistence layer.
     const stepKey = node.id + indexKey
-    const emit = (outcome: StepOutcome) => emitOutcome({ ...outcome, iterationKey: stepKey })
+    // Single measurement site: `startedAt` is captured once, at entry to this
+    // node's execution, and `finishedAt` the instant each outcome is emitted —
+    // never per node type, so every producer below (condition/loop/parallel/
+    // data/transform/variable/output/merge/filter/etc.) gets a real span for
+    // free. A recursive per-item child re-enters `execNode` and gets its own
+    // `startedAt`, so each iteration's row times only its own iteration.
+    const startedAt = new Date()
+    const emit = (outcome: Omit<StepOutcome, 'iterationKey' | 'startedAt' | 'finishedAt'>) =>
+      emitOutcome({ ...outcome, iterationKey: stepKey, startedAt, finishedAt: new Date() })
 
     // Resolved comparison operands for condition/filter capture — handles both
     // the multi-clause shape and the legacy single left/op/right.

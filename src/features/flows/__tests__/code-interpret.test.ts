@@ -66,3 +66,28 @@ test('code step applies continue-on-error without executing downstream twice', a
   assert.equal(result.status, 'succeeded')
   assert.deepEqual(result.output, { ok: true })
 })
+
+test('a slow node reports a real execution span, not a fabricated zero', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: { trigger: { type: 'manual' } } },
+      { id: 'code1', type: 'code', data: { language: 'javascript', mode: 'all', code: 'return input', input: '{{trigger.input}}' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'code1' }],
+  }
+  const before = Date.now()
+  const result = await interpretFlow(graph, 'x', {
+    runAgent: async () => ({ output: 'unused' }),
+    runAction: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      return { output: 'done' }
+    },
+  })
+  const elapsed = Date.now() - before
+  assert.equal(result.status, 'succeeded')
+  const step = result.steps.find((s) => s.nodeId === 'code1')
+  assert.ok(step, 'the slow step must have an outcome')
+  const span = step!.finishedAt.getTime() - step!.startedAt.getTime()
+  assert.ok(span >= 45, `expected a real span (>=45ms for a 50ms node), got ${span}ms`)
+  assert.ok(span <= elapsed + 5, `span (${span}ms) must not exceed the run's total wall-clock time (${elapsed}ms)`)
+})

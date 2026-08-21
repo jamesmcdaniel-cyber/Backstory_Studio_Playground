@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
+import http from 'node:http'
 import { NextRequest } from 'next/server'
 
 /**
@@ -32,6 +33,10 @@ if (TEST_DB) {
   let operator: any
   let subject: any
   let installTestAuth: any
+  let server: http.Server
+  let savedUrl: string | undefined
+  let savedKey: string | undefined
+  const liveIdentities = new Set<string>()
 
   const get = (search = '') => new NextRequest(new URL(`http://test/api/admin/users${search}`))
   const action = (userId: string, body: unknown) =>
@@ -42,6 +47,26 @@ if (TEST_DB) {
     })
 
   before(async () => {
+    server = http.createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        const path = (request.url ?? '').split('?')[0]
+        if (request.method === 'GET' && path === '/auth/v1/admin/users') {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ users: [...liveIdentities].map((id) => ({ id })) }))
+          return
+        }
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ id: crypto.randomUUID() }))
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, resolve))
+
+    savedUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    savedKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.NEXT_PUBLIC_SUPABASE_URL = `http://127.0.0.1:${(server.address() as any).port}`
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'stub-service-role-key'
+
     ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     const testAuth = await import('@/lib/server/__tests__/test-auth')
     installTestAuth = testAuth.installTestAuth
@@ -57,6 +82,11 @@ if (TEST_DB) {
       where: { id: subject.userId },
       data: { email: `subject-${crypto.randomUUID()}@example.com`, name: 'Subject Person' },
     })
+    const identities = await systemPrisma.user.findMany({
+      where: { id: { in: [operator.userId, subject.userId] } },
+      select: { supabaseId: true },
+    })
+    for (const identity of identities) liveIdentities.add(identity.supabaseId)
 
     installTestAuth(operator.auth)
     listRoute = await import('../users/route')
@@ -69,6 +99,11 @@ if (TEST_DB) {
       .catch(() => {})
     await subject?.cleanup()
     await operator?.cleanup()
+    server?.close()
+    if (savedUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = savedUrl
+    if (savedKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = savedKey
   })
 
   test('an operator sees users from OTHER workspaces', async () => {

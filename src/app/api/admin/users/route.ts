@@ -1,5 +1,6 @@
+import type { Prisma } from '@prisma/client'
 import { systemPrisma } from '@/lib/prisma'
-import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
 import { supabaseIdentitySweep } from '@/lib/scim/server'
 import { listConnectedProviders } from '@/lib/integrations/connected'
@@ -30,19 +31,37 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const days = WINDOWS.has(requested) ? requested : 30
   const query = (request.nextUrl.searchParams.get('q') ?? '').trim().slice(0, 200)
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-  // Deactivated accounts are hidden by DEFAULT, not permanently: reactivating
-  // one, and deleting an orphaned row, are both actions of this console, and a
-  // row it can never show is a row it can never fix.
+  // Deactivated identities still exist in Supabase and remain available through
+  // the explicit recovery view. Deleted identities never belong in this usage
+  // report: Supabase Auth is the source of truth for who is a platform user.
   const includeDeactivated = request.nextUrl.searchParams.get('deactivated') === '1'
 
-  const where = query
-    ? {
+  // Reconcile BEFORE the database query so orphaned application rows cannot
+  // consume the 200-row window or leak into the table/totals. If Supabase is
+  // unavailable, fail closed instead of presenting a stale database-only list
+  // as an authoritative user roster.
+  const identities = await supabaseIdentitySweep()
+  if (!identities) {
+    throw new ApiError(
+      'Could not reconcile the user list with Supabase Auth.',
+      503,
+      'SUPABASE_IDENTITY_SWEEP_UNAVAILABLE',
+    )
+  }
+  const eligibleSupabaseIds = [...identities.present].filter(
+    (id) => includeDeactivated || !identities.disabled.has(id),
+  )
+
+  const where: Prisma.UserWhereInput = {
+    supabaseId: { in: eligibleSupabaseIds },
+    ...(includeDeactivated ? {} : { isActive: true }),
+    ...(query ? {
         OR: [
           { email: { contains: query, mode: 'insensitive' as const } },
           { name: { contains: query, mode: 'insensitive' as const } },
         ],
-      }
-    : {}
+      } : {}),
+  }
 
   const users = await systemPrisma.user.findMany({
     where,
@@ -73,7 +92,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 
   // Four batched aggregates plus one integration read per DISTINCT workspace —
   // never per user. A naive per-user loop is ~5 queries × 200 rows.
-  const [agentRuns, flowRuns, tokens, integrationsByOrg, identities] = await Promise.all([
+  const [agentRuns, flowRuns, tokens, integrationsByOrg] = await Promise.all([
     systemPrisma.agentExecution.groupBy({
       by: ['userId'],
       where: { userId: { in: userIds }, startedAt: { gte: since } },
@@ -105,13 +124,6 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         ] as const
       }),
     ),
-    // The console's rows are ours alone: nothing prunes or flags a user row when
-    // its identity is banned or deleted straight out of the Supabase dashboard,
-    // so without this sweep a deactivated account is indistinguishable from a
-    // healthy one and an orphan from someone who simply never signed in. One
-    // paginated read per page load, and it fails to `null` rather than to an
-    // empty set — see supabaseIdentitySweep.
-    supabaseIdentitySweep(),
   ])
 
   const agentByUser = new Map<string, Rollup>()
@@ -144,29 +156,8 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
    * returned by the admin listing, so it used to read as 'present'. Someone
    * revoked in Supabase went on appearing here as an ordinary active account.
    */
-  const identityState = (supabaseId: string): 'present' | 'disabled' | 'missing' | 'unknown' => {
-    if (!identities) return 'unknown'
-    if (identities.disabled.has(supabaseId)) return 'disabled'
-    return identities.present.has(supabaseId) ? 'present' : 'missing'
-  }
-
-  /**
-   * Whether this account is deactivated, from either side.
-   *
-   * Our own flag counts too, and not only for symmetry: when Supabase is
-   * unconfigured the sweep returns null, and without this the default view
-   * would quietly go back to listing every deactivated account.
-   *
-   * An ORPHAN — a row whose identity is gone entirely — is deliberately NOT
-   * hidden. That is a data-integrity problem an operator has to resolve, not an
-   * account someone chose to switch off, and hiding it by default is how it
-   * would stay unresolved.
-   */
-  const deactivated = (user: { isActive: boolean; supabaseId: string }) =>
-    !user.isActive || identityState(user.supabaseId) === 'disabled'
-
-  const hidden = users.filter(deactivated).length
-  const visible = includeDeactivated ? users : users.filter((user) => !deactivated(user))
+  const identityState = (supabaseId: string): 'present' | 'disabled' =>
+    identities.disabled.has(supabaseId) ? 'disabled' : 'present'
 
   // One audit row per view, naming the operator and how wide the look was.
   // Reading a whole platform's personal details is itself a consequential act.
@@ -175,21 +166,15 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     actorUserId: auth.userId,
     action: 'platform.users.viewed',
     resourceType: 'user',
-    detail: { days, query: query || null, returned: visible.length, includeDeactivated },
+    detail: { days, query: query || null, returned: users.length, includeDeactivated },
   })
 
   return {
     success: true,
     days,
     truncated: users.length === PAGE_SIZE,
-    // Lets the UI say "could not check" instead of silently showing every row
-    // as fine when the sweep did not run.
-    identitiesReconciled: identities !== null,
-    // How many rows the default view is holding back, so the UI can offer them
-    // by name rather than leaving an operator to wonder where someone went.
-    deactivatedHidden: includeDeactivated ? 0 : hidden,
     includeDeactivated,
-    users: visible.map((user) => {
+    users: users.map((user) => {
       const agent = agentByUser.get(user.id) ?? { runs: 0, costUsd: 0 }
       const flow = flowByUser.get(user.id) ?? { runs: 0, costUsd: 0 }
       const orgIntegrations = user.organizationId ? integrations.get(user.organizationId) : undefined

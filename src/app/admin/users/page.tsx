@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge, Smartphone, Trash2, UserX } from 'lucide-react'
+import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge, Smartphone, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -32,13 +32,8 @@ type PlatformUser = {
   role: string
   platformRole: string | null
   isActive: boolean
-  /** 'unknown' means the Supabase sweep did not run — absence of evidence. */
-  /**
-   * 'disabled' — banned or soft-deleted in Supabase, so it can no longer sign
-   * in. 'missing' — no identity at all, an orphaned row for an operator to
-   * clean up. The two are different problems and read differently below.
-   */
-  supabaseIdentity: 'present' | 'disabled' | 'missing' | 'unknown'
+  /** Disabled identities only appear in the explicit deactivated view. */
+  supabaseIdentity: 'present' | 'disabled'
   createdAt: string
   lastSeenAt: string | null
   runAllowanceResetAt: string | null
@@ -56,9 +51,6 @@ type PlatformUser = {
 type Report = {
   days: number
   truncated: boolean
-  identitiesReconciled: boolean
-  /** Deactivated accounts the default view is holding back. */
-  deactivatedHidden: number
   includeDeactivated: boolean
   users: PlatformUser[]
 }
@@ -96,11 +88,13 @@ export default function PlatformUsersPage() {
       if (search) params.set('q', search)
       if (showDeactivated) params.set('deactivated', '1')
       const response = await fetch(`/api/admin/users?${params}`, { cache: 'no-store' })
-      if (!response.ok) {
-        toast.error('Could not load users.')
-        return
-      }
+      if (!response.ok) throw new Error(`User report returned ${response.status}`)
       setReport(await response.json())
+    } catch {
+      // Never leave a stale database-only roster on screen when Supabase can no
+      // longer confirm who is an active identity.
+      setReport(null)
+      toast.error('Could not load users.')
     } finally {
       setLoading(false)
     }
@@ -161,13 +155,10 @@ export default function PlatformUsersPage() {
     // who actually showed up inside the selected window, which is what the rest
     // of this page's numbers mean.
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
-    // Deactivated accounts are filtered out of `users` by default, so the
-    // denominator has to add them back — otherwise "Enabled" reads "12 of 12"
-    // for the same reason it once read "7 of 7 active": the tile would be
-    // counting the filter, not the platform.
-    const hidden = report?.deactivatedHidden ?? 0
     return {
-      people: users.length + hidden,
+      // The API has already intersected these rows with Supabase Auth, so every
+      // tile is calculated from exactly the people visible in this report.
+      people: users.length,
       enabled: users.filter((user) => user.isActive && user.supabaseIdentity !== 'disabled').length,
       seen: users.filter((user) => user.lastSeenAt && new Date(user.lastSeenAt).getTime() >= cutoff).length,
       tokens: users.reduce((sum, user) => sum + user.tokens, 0),
@@ -181,7 +172,7 @@ export default function PlatformUsersPage() {
         <div>
           <h1 className="text-2xl font-semibold">Admin</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every account on the platform and every model it reaches, across every workspace. Activity, spend
+            Every Supabase-backed account on the platform and every model it reaches, across every workspace. Activity, spend
             and latency are for the selected window; personal details and integration counts are current. Each
             view is recorded in the audit log.
           </p>
@@ -238,10 +229,8 @@ export default function PlatformUsersPage() {
         )}
       </form>
 
-      {/* Deactivated accounts are out of the list by default — banned in
-          Supabase, switched off here, or both. The count is named rather than
-          left implicit, so an operator looking for someone who has gone missing
-          can see there is somewhere else to look. */}
+      {/* Missing Supabase identities never enter this report. Deactivated
+          identities still exist upstream and remain available for recovery. */}
       <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
         <input
           type="checkbox"
@@ -250,9 +239,6 @@ export default function PlatformUsersPage() {
           onChange={(event) => setShowDeactivated(event.target.checked)}
         />
         Show deactivated accounts
-        {!showDeactivated && report && report.deactivatedHidden > 0 && (
-          <span className="tabular-nums">({report.deactivatedHidden} hidden)</span>
-        )}
       </label>
 
       {report?.truncated && (
@@ -296,12 +282,6 @@ export default function PlatformUsersPage() {
                     {user.platformRole ? ` · ${user.platformRole}` : ''}
                     {!user.isActive ? ' · deactivated' : ''}
                   </div>
-                  {user.supabaseIdentity === 'missing' && (
-                    <span className="mt-1 inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
-                      <UserX className="h-3 w-3" />
-                      No Supabase identity
-                    </span>
-                  )}
                   {user.supabaseIdentity === 'disabled' && (
                     <span className="mt-1 inline-flex items-center gap-1 rounded bg-[var(--status-warn-bg)] px-1.5 py-0.5 text-xs font-medium text-[var(--status-warn-fg)]">
                       <ShieldOff className="h-3 w-3" />
@@ -346,10 +326,7 @@ export default function PlatformUsersPage() {
             <Detail
               label="Supabase identity"
               value={
-                selected.supabaseIdentity === 'missing' ? 'Deleted upstream'
-                : selected.supabaseIdentity === 'disabled' ? 'Banned upstream — cannot sign in'
-                : selected.supabaseIdentity === 'present' ? 'Live'
-                : 'Could not check'
+                selected.supabaseIdentity === 'disabled' ? 'Banned upstream — cannot sign in' : 'Live'
               }
             />
             <Detail label="Account created" value={when(selected.createdAt)} />

@@ -6,11 +6,11 @@ import { NextRequest } from 'next/server'
 
 /**
  * Deleting an account from the operator console, and the Supabase sweep that
- * tells an operator which rows are worth deleting.
+ * keeps the usage report aligned with the upstream identity roster.
  *
- * The console's rows are ours alone — nothing prunes them when an identity is
- * removed in the Supabase dashboard — so the orphans it accumulates are the
- * whole reason this action exists. Every case here runs against a stand-in
+ * The database rows are ours alone — nothing prunes them when an identity is
+ * removed in the Supabase dashboard — but the report must never display those
+ * orphans as users. Every case here runs against a stand-in
  * GoTrue on a real socket for the reason the sibling suite documents: a
  * hand-written fake gets written to behave, and the behaviour under test is
  * exactly what the real client does when things are missing.
@@ -35,7 +35,7 @@ if (TEST_DB) {
   let savedKey: string | undefined
 
   /** Identities the stand-in GoTrue admits to holding. */
-  let liveIdentities = new Set<string>()
+  const liveIdentities = new Set<string>()
   /** Of those, the ones it reports as banned — deactivated, but still listed. */
   const bannedIdentities = new Set<string>()
   /** Set to make DELETE report the identity as already gone. */
@@ -230,15 +230,14 @@ if (TEST_DB) {
     }
   })
 
-  test('the list flags rows whose Supabase identity is gone', async () => {
+  test('the list includes live identities and removes rows absent from Supabase', async () => {
     const live = await seedSubject()
     const orphan = await seedSubject()
     liveIdentities.delete(orphan.supabaseId)
     try {
       const body = await (await listRoute.GET(new NextRequest(new URL('http://test/api/admin/users')))).json()
-      assert.equal(body.identitiesReconciled, true)
       const find = (id: string) => body.users.find((user: any) => user.id === id)
-      assert.equal(find(orphan.userId).supabaseIdentity, 'missing')
+      assert.equal(find(orphan.userId), undefined)
       assert.equal(find(live.userId).supabaseIdentity, 'present')
     } finally {
       await live.cleanup().catch(() => {})
@@ -257,43 +256,40 @@ if (TEST_DB) {
       // which is exactly the case that used to read as a healthy account.
       const shown = await list()
       assert.equal(shown.users.some((user: any) => user.id === banned.userId), false)
-      assert.ok(shown.deactivatedHidden >= 1, 'the hidden count must name what was withheld')
 
-      // Recoverable, or the console could never reactivate or delete the row.
+      // Recoverable because the identity still exists in Supabase.
       const all = await list('?deactivated=1')
       const row = all.users.find((user: any) => user.id === banned.userId)
       assert.ok(row, 'the account must still be reachable with ?deactivated=1')
       assert.equal(row.supabaseIdentity, 'disabled')
-      assert.equal(all.deactivatedHidden, 0)
     } finally {
       bannedIdentities.delete(banned.supabaseId)
       await banned.cleanup().catch(() => {})
     }
   })
 
-  test('an orphaned row stays visible — it is a cleanup task, not a switched-off account', async () => {
+  test('an orphaned row stays out of both active and deactivated views', async () => {
     const orphan = await seedSubject()
     liveIdentities.delete(orphan.supabaseId)
     try {
-      const body = await (await listRoute.GET(new NextRequest(new URL('http://test/api/admin/users')))).json()
-      const row = body.users.find((user: any) => user.id === orphan.userId)
-      assert.ok(row, 'hiding orphans by default is how they would stay unresolved')
-      assert.equal(row.supabaseIdentity, 'missing')
+      for (const search of ['', '?deactivated=1']) {
+        const body = await (await listRoute.GET(new NextRequest(new URL(`http://test/api/admin/users${search}`)))).json()
+        assert.equal(body.users.some((user: any) => user.id === orphan.userId), false)
+      }
     } finally {
       await orphan.cleanup().catch(() => {})
     }
   })
 
-  test('an unavailable sweep reports unknown, never a table full of orphans', async () => {
+  test('an unavailable sweep fails closed instead of returning a stale roster', async () => {
     const subject = await seedSubject()
     delete process.env.SUPABASE_SERVICE_ROLE_KEY
     try {
-      const body = await (await listRoute.GET(new NextRequest(new URL('http://test/api/admin/users')))).json()
-      // The dangerous failure mode: a sweep that returns nothing must not read
-      // as "every account was deleted upstream", or the console invites an
-      // operator to delete the entire platform.
-      assert.equal(body.identitiesReconciled, false)
-      assert.equal(body.users.find((user: any) => user.id === subject.userId).supabaseIdentity, 'unknown')
+      const response = await listRoute.GET(new NextRequest(new URL('http://test/api/admin/users')))
+      const body = await response.json()
+      assert.equal(response.status, 503)
+      assert.equal(body.code, 'SUPABASE_IDENTITY_SWEEP_UNAVAILABLE')
+      assert.equal(body.users, undefined)
     } finally {
       process.env.SUPABASE_SERVICE_ROLE_KEY = 'stub-service-role-key'
       await subject.cleanup().catch(() => {})

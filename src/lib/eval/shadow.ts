@@ -27,7 +27,7 @@
  * Off by default: SHADOW_EVAL_RATE=0 unless an operator sets it.
  */
 import { randomUUID } from 'node:crypto'
-import { createPinnedRunner, generateStructured } from '@/lib/llm/model-runner'
+import { createPinnedRunner, generateStructured, type TokenUsage } from '@/lib/llm/model-runner'
 import { qwenModel } from '@/lib/llm/qwen'
 import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
@@ -67,6 +67,27 @@ const PAIR_JUDGE_SCHEMA = {
 
 const clamp = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null
+
+/**
+ * Token/cost/latency fields shared by BOTH sides of a shadow pair. Pulled out
+ * as a pure function (no I/O) so a unit test can assert the champion side
+ * gets real numbers from its own usage — the bug this fixes is the champion
+ * row silently defaulting every one of these to 0 while the challenger row
+ * next to it carried real figures.
+ */
+export function shadowUsageFields(
+  usage: TokenUsage,
+  provider: string,
+  model: string,
+  latencyMs: number,
+): { inputTokens: number; outputTokens: number; latencyMs: number; costUsd: number } {
+  return {
+    inputTokens: usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
+    outputTokens: usage.outputTokens,
+    latencyMs,
+    costUsd: computeCostUsd(provider, model, usage).costUsd,
+  }
+}
 
 /**
  * Judge two answers to one task, blind. The caller randomizes which side is A:
@@ -117,6 +138,12 @@ export async function maybeShadowFlowAiStep(input: {
   championText: string
   championProvider: string
   championModel: string
+  /** The champion call's own token usage, so its shadow row carries real
+   *  spend instead of the zeros a fresh row defaults to. */
+  championUsage: TokenUsage
+  /** The champion call's own wall-clock latency (measured by the caller, no
+   *  extra call here) — comparable to the challenger's latencyMs below. */
+  championLatencyMs: number
 }): Promise<void> {
   try {
     const config = shadowConfig({ rate: process.env.SHADOW_EVAL_RATE, model: process.env.SHADOW_EVAL_MODEL })
@@ -175,6 +202,7 @@ export async function maybeShadowFlowAiStep(input: {
           judgeModel,
           pairId,
           champion: true,
+          ...shadowUsageFields(input.championUsage, input.championProvider, input.championModel, input.championLatencyMs),
           organizationId: input.organizationId,
         },
         {
@@ -186,10 +214,7 @@ export async function maybeShadowFlowAiStep(input: {
           judgeModel,
           pairId,
           champion: false,
-          inputTokens: turn.usage.inputTokens + turn.usage.cacheReadTokens + turn.usage.cacheWriteTokens,
-          outputTokens: turn.usage.outputTokens,
-          latencyMs,
-          costUsd: computeCostUsd(turn.provider, turn.servedModel, turn.usage).costUsd,
+          ...shadowUsageFields(turn.usage, turn.provider, turn.servedModel, latencyMs),
           organizationId: input.organizationId,
         },
       ],

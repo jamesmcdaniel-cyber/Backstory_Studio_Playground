@@ -10,8 +10,25 @@
 
 export const NEVER_PICKED_UP_TIMEOUT_MS = 5 * 60 * 1000
 
+/**
+ * The server-CONFIRMED message: written by the reaper (reap.ts) only once it
+ * has actually failed the run under the same guarded re-check every reap
+ * write uses. Safe to state as fact — by the time this string lands anywhere,
+ * the run really is done.
+ */
 export const NEVER_PICKED_UP_ERROR =
   'The execution backend never picked up this run. Check worker health (/api/health), then run the flow again.'
+
+/**
+ * The client-side, NOT-YET-CONFIRMED message: shown while the builder's own
+ * poller suspects (but the server has not yet ruled on) a stalled pickup. A
+ * run that looks stalled from here can still resolve — the reaper's window is
+ * wider than the client's, and a slow-but-live worker can still claim it — so
+ * this reads as a possibility being watched, not a verdict. Polling continues
+ * after this fires; only a terminal status from the server stops it.
+ */
+export const NEVER_PICKED_UP_ADVISORY =
+  "This run hasn't been picked up yet — still checking. If it stays this way, check worker health (/api/health)."
 
 export function isRunPickupStalled(
   run: { status: string; startedAt: string | Date; stepCount: number },

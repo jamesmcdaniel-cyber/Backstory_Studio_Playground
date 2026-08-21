@@ -2,6 +2,7 @@ import { systemPrisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { MODEL_LIMITS } from '@/lib/usage/model-tiers'
 import { shadowConfig } from '@/lib/eval/shadow'
+import { fetchCompleteShadowPairs } from '@/lib/eval/shadow-pairs'
 import { benchableModels } from '@/lib/eval/bench'
 import { CURRENT_HARNESS_VERSION } from '@/lib/eval/harness'
 import { createQueue, getRedisConnection, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
@@ -277,7 +278,7 @@ export const GET = withAuthenticatedApi(async (request) => {
   // Prisma groupBy (not raw SQL) — this table is platform-level, but staying on
   // the model API keeps the raw-SQL surface of this file to the one statement
   // the exemption list documents.
-  const [benchGroups, shadowRows] = await Promise.all([
+  const [benchGroups, { rows: shadowRows, capped: shadowPairCapHit }] = await Promise.all([
     systemPrisma.modelEvalResult.groupBy({
       by: ['provider', 'model', 'judgeModel'],
       // Legacy rows (harnessVersion default 'pre-2026-08-20', from before
@@ -293,14 +294,9 @@ export const GET = withAuthenticatedApi(async (request) => {
       _count: { _all: true, score: true },
       _max: { createdAt: true },
     }),
-    systemPrisma.modelEvalResult.findMany({
-      where: { kind: 'shadow', createdAt: { gte: since } },
-      select: { pairId: true, provider: true, model: true, score: true, champion: true, costUsd: true },
-      orderBy: { createdAt: 'desc' },
-      // Bounded: pairs are aggregated in memory. 4000 rows = 2000 comparisons,
-      // far past what a sampled shadow rate produces in 90 days.
-      take: 4000,
-    }),
+    // Complete pairs only — see shadow-pairs.ts. Bounded by PAIR count (not row
+    // count), so a cap never has a chance of returning one side of a pair.
+    fetchCompleteShadowPairs(systemPrisma, since),
   ])
 
   const bench = benchGroups
@@ -411,6 +407,9 @@ export const GET = withAuthenticatedApi(async (request) => {
     bench,
     benchDetail,
     shadow: [...matchups.values()].sort((a, b) => b.samples - a.samples),
+    // True only when the window held at least SHADOW_PAIR_CAP pairs — the
+    // panel says so rather than silently showing a partial picture.
+    shadowPairCapHit,
     benchRunning: await benchRunning(),
     // What the candidate picker may offer: the model roster filtered to
     // endpoints this deployment has keys for.

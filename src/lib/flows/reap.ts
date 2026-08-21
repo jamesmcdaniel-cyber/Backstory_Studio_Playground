@@ -9,14 +9,34 @@
 
 import { systemPrisma } from '@/lib/prisma'
 import { NEVER_PICKED_UP_TIMEOUT_MS, NEVER_PICKED_UP_ERROR } from '@/lib/flows/run-stall'
+import { truncateWithMarker } from '@/lib/flows/truncate'
 
 // Dispatch/execute routes cap at maxDuration 1800s; 45 min = budget + slack.
 // The cutoff must exceed the route budget or the reaper kills runs that are
 // still legitimately executing inside a request.
 export const STUCK_FLOW_RUN_TIMEOUT_MS = 45 * 60 * 1000
 
-const STUCK_RUN_ERROR = 'The run was interrupted and timed out.'
 const REAP_BATCH_LIMIT = 500
+
+// Error-column budget for the reaper's own message (matches the shared
+// truncateError default elsewhere in the flow engine) — a pathological node
+// name can't blow past what the column is expected to hold.
+const REAP_MESSAGE_MAX = 300
+
+/**
+ * Build the run-level failure message the reaper writes: what was known,
+ * stated plainly, instead of a flat "interrupted and timed out" that hides
+ * how far the run actually got. `lastCompletedStepNodeId` is the node id of
+ * the most recently succeeded step, or null when the run never completed one
+ * (e.g. the never-picked-up case, or a run that died on its very first step).
+ */
+export function formatReapMessage(startedAt: Date, now: Date, lastCompletedStepNodeId: string | null): string {
+  const elapsedMin = Math.max(0, Math.round((now.getTime() - startedAt.getTime()) / 60_000))
+  const stepPart = lastCompletedStepNodeId
+    ? `last completed step: ${lastCompletedStepNodeId}`
+    : 'no step completed before the timeout'
+  return truncateWithMarker(`interrupted after ${elapsedMin}m; ${stepPart}`, REAP_MESSAGE_MAX)
+}
 
 /**
  * Fail runs stuck `running` past the cutoff (and their still-live steps).
@@ -33,7 +53,7 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
   // systemPrisma: global reaper sweep — runs across all orgs by design (invoked from CRON_SECRET-gated dispatch).
   const stuck = await systemPrisma.flowRun.findMany({
     where: { status: 'running', startedAt: { lt: cutoff } },
-    select: { id: true },
+    select: { id: true, startedAt: true },
     take: REAP_BATCH_LIMIT,
   })
   if (stuck.length === 0) return 0
@@ -44,23 +64,40 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
     // Status re-checked here so a run that legitimately left `running`
     // (e.g. paused for approval) between the read above and this write is
     // left alone.
-    const reaped = await tx.flowRun.updateMany({
+    const stillRunning = await tx.flowRun.findMany({
       where: { id: { in: runIds }, status: 'running' },
-      data: { status: 'failed', error: STUCK_RUN_ERROR, finishedAt: now },
+      select: { id: true, startedAt: true },
     })
-    if (reaped.count === 0) return 0
-    // Only fail steps belonging to runs THIS pass actually reaped — re-query
-    // rather than reuse runIds, since a run this pass skipped (already
-    // transitioned away from `running`) must keep its steps untouched.
-    const reapedRuns = await tx.flowRun.findMany({
-      where: { id: { in: runIds }, status: 'failed', error: STUCK_RUN_ERROR },
-      select: { id: true },
+    if (stillRunning.length === 0) return 0
+    // Last succeeded step per still-running run, so the failure message can
+    // name how far the run actually got instead of a flat "timed out".
+    const doneSteps = await tx.flowRunStep.findMany({
+      where: { flowRunId: { in: stillRunning.map((run) => run.id) }, status: 'succeeded' },
+      select: { flowRunId: true, nodeId: true, finishedAt: true },
+      orderBy: { finishedAt: 'desc' },
     })
-    await tx.flowRunStep.updateMany({
-      where: { flowRunId: { in: reapedRuns.map((run) => run.id) }, status: { in: ['queued', 'running', 'waiting'] } },
-      data: { status: 'failed', error: STUCK_RUN_ERROR, finishedAt: now },
-    })
-    return reaped.count
+    const lastStepByRun = new Map<string, string>()
+    for (const step of doneSteps) if (!lastStepByRun.has(step.flowRunId)) lastStepByRun.set(step.flowRunId, step.nodeId)
+
+    // Each run gets its own message (elapsed + last step differ per run), so
+    // this writes one run at a time rather than a single blanket updateMany —
+    // the conditional `status: 'running'` in each where clause is the same
+    // race guard the old bulk updateMany used, just applied per row.
+    let reapedCount = 0
+    for (const run of stillRunning) {
+      const message = formatReapMessage(run.startedAt, now, lastStepByRun.get(run.id) ?? null)
+      const result = await tx.flowRun.updateMany({
+        where: { id: run.id, status: 'running' },
+        data: { status: 'failed', error: message, finishedAt: now },
+      })
+      if (result.count === 0) continue // diverted away from `running` since stillRunning was read
+      reapedCount += 1
+      await tx.flowRunStep.updateMany({
+        where: { flowRunId: run.id, status: { in: ['queued', 'running', 'waiting'] } },
+        data: { status: 'failed', error: message, finishedAt: now },
+      })
+    }
+    return reapedCount
   })
 }
 

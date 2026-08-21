@@ -9,6 +9,31 @@ test('stuck-run cutoff exceeds the 1800s route budget', async () => {
   assert.ok(STUCK_FLOW_RUN_TIMEOUT_MS > 1800 * 1000)
 })
 
+// Regression for the generic "The run was interrupted and timed out." error
+// that gave no clue what actually happened. formatReapMessage is pure (no
+// Prisma), so its content is tested directly here.
+test('formatReapMessage names the last completed step and elapsed time', async () => {
+  const { formatReapMessage } = await import('../reap')
+  const startedAt = new Date('2026-08-20T10:00:00.000Z')
+  const now = new Date('2026-08-20T10:47:00.000Z')
+  assert.equal(formatReapMessage(startedAt, now, 'enrich-contacts'), 'interrupted after 47m; last completed step: enrich-contacts')
+})
+
+test('formatReapMessage says so when no step ever completed', async () => {
+  const { formatReapMessage } = await import('../reap')
+  const startedAt = new Date('2026-08-20T10:00:00.000Z')
+  const now = new Date('2026-08-20T10:05:00.000Z')
+  assert.equal(formatReapMessage(startedAt, now, null), 'interrupted after 5m; no step completed before the timeout')
+})
+
+test('formatReapMessage stays inside the error-column budget even with a pathological node id', async () => {
+  const { formatReapMessage } = await import('../reap')
+  const hugeNodeId = 'x'.repeat(1000)
+  const message = formatReapMessage(new Date(0), new Date(60_000), hugeNodeId)
+  assert.ok(message.length <= 350, `expected a bounded message, got ${message.length} chars`)
+  assert.match(message, /truncated/)
+})
+
 const TEST_DB = process.env.TEST_DATABASE_URL
 if (TEST_DB) {
   process.env.DATABASE_URL = TEST_DB
@@ -79,11 +104,14 @@ if (TEST_DB) {
 
     const staleRun = await prisma.flowRun.findUnique({ where: { id: ids.staleRunning, organizationId: ids.org } })
     assert.equal(staleRun.status, 'failed')
-    assert.equal(staleRun.error, 'The run was interrupted and timed out.')
+    // States what is known instead of a flat "timed out": elapsed time, and
+    // the last step that actually finished before the reaper caught it.
+    assert.match(staleRun.error, /^interrupted after \d+m; last completed step: n0$/)
     assert.ok(staleRun.finishedAt)
 
     const staleStep = await prisma.flowRunStep.findUnique({ where: { id: ids.staleStep } })
     assert.equal(staleStep.status, 'failed')
+    assert.match(staleStep.error, /last completed step: n0/)
 
     const doneStep = await prisma.flowRunStep.findUnique({ where: { id: ids.staleDoneStep } })
     assert.equal(doneStep.status, 'succeeded')

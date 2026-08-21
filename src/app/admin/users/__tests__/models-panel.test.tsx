@@ -28,6 +28,7 @@ const baseReport = {
   bench: [],
   benchDetail: [],
   shadow: [],
+  shadowPairCapHit: false,
   benchable: [],
   shadowSampling: null,
   limits: { frontierClaudeRunsPerDay: 10, claudeRunsPerDay: 50 },
@@ -69,4 +70,30 @@ test('benchRunning: true still renders "bench running" and polls', async () => {
   render(<ModelsPanel days={30} />)
 
   await screen.findByText(/bench running/i)
+})
+
+/**
+ * Sampling disclosure: bench's mean is over 3 judge samples per fixture,
+ * shadow's is a single judge sample per pair — different sample sizes that
+ * must never be read as the same strength of evidence. Plain-English labels
+ * next to each heading, not a shared "score" word doing both jobs silently.
+ */
+test('bench and shadow headings disclose their different sample depths', async () => {
+  stubModelsApi(null)
+  render(<ModelsPanel days={30} />)
+
+  await screen.findByText(/mean of 3 judge samples/i)
+  await screen.findByText(/single judge sample/i)
+})
+
+test('a capped shadow-pair window says so instead of silently showing a partial picture', async () => {
+  globalThis.fetch = (async (input: unknown) => {
+    if (typeof input === 'string' && input.includes('/api/admin/models')) {
+      return { ok: true, json: async () => ({ ...baseReport, benchRunning: null, shadowPairCapHit: true }) } as unknown as Response
+    }
+    return { ok: false, json: async () => ({}) } as unknown as Response
+  }) as typeof fetch
+  render(<ModelsPanel days={30} />)
+
+  await screen.findByText(/more shadow pairs than fit/i)
 })

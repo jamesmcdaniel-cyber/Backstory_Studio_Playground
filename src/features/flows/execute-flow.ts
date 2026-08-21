@@ -1297,6 +1297,10 @@ async function runFlowExecutionInner(
         // timed-out model call is only abandoned, not cancelled, so retrying
         // could run it a second time concurrently (double token spend). Hard
         // errors keep the retry budget.
+        // Wall-clock only — no extra call, so this costs nothing on the user
+        // path. Feeds the shadow row below so champion latency is comparable
+        // to the challenger's (which times its own call the same way).
+        const championStartedAt = Date.now()
         const { result: turn, attempts: aiAttempts, attemptErrors: aiAttemptErrors } = await runWithRetries(
           async () =>
             runner.next(
@@ -1350,6 +1354,8 @@ async function runFlowExecutionInner(
             championText: turn.text,
             championProvider: turn.provider,
             championModel: turn.servedModel,
+            championUsage: turn.usage,
+            championLatencyMs: Date.now() - championStartedAt,
           }),
         )
 

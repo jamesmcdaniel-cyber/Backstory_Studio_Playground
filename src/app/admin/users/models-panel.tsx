@@ -99,6 +99,8 @@ type Report = {
   bench: BenchRow[]
   benchDetail: BenchDetailRow[]
   shadow: ShadowMatchup[]
+  /** True only when the window held at least SHADOW_PAIR_CAP pairs — some pairs are not shown. */
+  shadowPairCapHit: boolean
   /** null = could not check (inline mode / Redis unreachable). */
   benchRunning: boolean | null
   /** Models the candidate picker may offer (endpoint configured). */
@@ -319,7 +321,10 @@ export function ModelsPanel({ days }: { days: number }) {
           rows appear per provider:model straight from the eval table. */}
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">Quality — bench</h2>
+          <h2 className="text-sm font-medium">
+            Quality — bench
+            <span className="ml-2 text-xs font-normal text-muted-foreground">mean of 3 judge samples per fixture</span>
+          </h2>
           <Button
             size="sm"
             variant="secondary"
@@ -502,7 +507,15 @@ export function ModelsPanel({ days }: { days: number }) {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">Quality — shadow (real production tasks)</h2>
+        <h2 className="text-sm font-medium">
+          Quality — shadow (real production tasks)
+          <span className="ml-2 text-xs font-normal text-muted-foreground">single judge sample per pair</span>
+        </h2>
+        {report?.shadowPairCapHit && (
+          <p className="text-xs text-muted-foreground">
+            This window has more shadow pairs than fit here — showing the most recent ones only.
+          </p>
+        )}
         {(report?.shadow.length ?? 0) > 0 ? (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full min-w-[44rem] text-sm">

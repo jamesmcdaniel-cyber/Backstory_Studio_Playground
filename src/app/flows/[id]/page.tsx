@@ -12,7 +12,7 @@ import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
 import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
 import { useQueueHealth } from '@/components/flows/use-queue-health'
-import { isRunPickupStalled, NEVER_PICKED_UP_ERROR } from '@/lib/flows/run-stall'
+import { isRunPickupStalled, NEVER_PICKED_UP_ADVISORY } from '@/lib/flows/run-stall'
 import { shouldPersistGraph, shouldRecordJamAudit } from '@/lib/flows/collab-roles'
 import { toContentSpace } from '@/lib/flows/cursor-space'
 import { joinErrorMessage } from '@/lib/flows/join-error'
@@ -1544,22 +1544,21 @@ function FlowBuilder() {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
-      // Never-picked-up stop: a run still `running` with zero steps past the
-      // pickup window was never consumed by the execution backend. Stop
-      // polling and say so — the server-side reaper will fail the run; a
-      // fresh Run (or a poll restart) clears the banner.
+      // Never-picked-up SUSPICION: a run still `running` with zero steps past
+      // the pickup window looks stalled from here — but the client cannot
+      // confirm that (the server's reap window is wider, and a slow-but-live
+      // worker can still claim it any moment). So this only flags an advisory
+      // and keeps polling; it never stops the interval itself. Polling stops
+      // for exactly one reason everywhere in this function: `done(latest)`
+      // below reports a terminal status from the server.
       if (
         !done(latest) &&
         isRunPickupStalled({ status: latest.status, startedAt: latest.startedAt ?? '', stepCount: latest.steps.length }, Date.now())
       ) {
         setPickupStalledRunId((prev) => {
-          if (prev !== latest.id) toast.error(NEVER_PICKED_UP_ERROR)
+          if (prev !== latest.id) toast(NEVER_PICKED_UP_ADVISORY)
           return latest.id
         })
-        if (pollRef.current) {
-          clearInterval(pollRef.current)
-          pollRef.current = null
-        }
       } else {
         // Terminal or healthy-and-progressing latest run: drop a stale banner
         // (covers both the stalled run resolving and a newer run starting).
@@ -2743,7 +2742,7 @@ function FlowBuilder() {
           dotLevel={dotLevel}
           startBlocked={huddleStartBlocked}
           healthTitle={[
-            `Flows: ${queueAlert ?? (pickupStalledRunId ? NEVER_PICKED_UP_ERROR : 'online — runs will start')}`,
+            `Flows: ${queueAlert ?? (pickupStalledRunId ? NEVER_PICKED_UP_ADVISORY : 'online — runs will start')}`,
             `Jam: ${
               jamStatus === 'live'
                 ? 'live'

@@ -462,6 +462,16 @@ async function runFlowExecutionInner(
       if (existingRun.status !== 'running') {
         return { flowRunId: existingRun.id, status: existingRun.status, output: existingRun.output }
       }
+      // First pickup of this prepared row: startFlowExecution set startedAt at
+      // ROW CREATION, before dispatch — in queue mode that is before the queue
+      // wait, not before execution. Refresh it here, exactly as the resume/patch
+      // claims above do, so the persisted duration measures execution only.
+      const adoptedAt = new Date()
+      await prisma.flowRun.updateMany({
+        where: { id: existingRun.id, organizationId: job.organizationId, status: 'running' },
+        data: { startedAt: adoptedAt },
+      })
+      existingRun = { ...existingRun, startedAt: adoptedAt }
     }
     if (!resuming) replaySource = await loadReplaySource(job)
     const resolvedGraph = await resolveValidatedGraph(job, flow, existingRun, replaySource)

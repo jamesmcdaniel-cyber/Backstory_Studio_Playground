@@ -13,27 +13,34 @@ import { apiLogger } from '@/lib/logger'
  * embeds the unguessable run id (the same capability model as Jam collab), so no
  * sensitive data rides the wire.
  */
-export function broadcastFlowRunTick(runId: string, payload: { nodeId?: string; status: string }): void {
-  broadcastChannelTick(flowRunChannel(runId), payload)
+// Returns the in-flight fetch so callers can register it against the engine's
+// detached-work tracking (see @/lib/flows/keep-alive's trackDetached) — a
+// floating `void fetch(...)` here would be as droppable on serverless teardown
+// as any other unregistered side channel. `undefined` when unconfigured
+// (local/CI): there is nothing in flight to track.
+export function broadcastFlowRunTick(runId: string, payload: { nodeId?: string; status: string }): Promise<void> | undefined {
+  return broadcastChannelTick(flowRunChannel(runId), payload)
 }
 
 /** Agent-process streaming: a tick per agent event (thinking / tool call / etc.)
  *  on a per-execution channel, so a flow's agent step feed updates live instead
  *  of on its poll. Same ephemeral-broadcast model as the run channel. */
 export function broadcastAgentEventTick(executionId: string): void {
-  broadcastChannelTick(agentExecChannel(executionId), { status: 'event' })
+  void broadcastChannelTick(agentExecChannel(executionId), { status: 'event' })
 }
 
 /** Low-level: fire a `tick` on a broadcast topic. No-op without Supabase. */
-function broadcastChannelTick(topic: string, payload: { nodeId?: string; status: string }): void {
+function broadcastChannelTick(topic: string, payload: { nodeId?: string; status: string }): Promise<void> | undefined {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !key) return
-  void fetch(`${url}/realtime/v1/api/broadcast`, {
+  if (!url || !key) return undefined
+  return fetch(`${url}/realtime/v1/api/broadcast`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', apikey: key, Authorization: `Bearer ${key}` },
     body: JSON.stringify({ messages: [{ topic, event: 'tick', payload }] }),
-  }).catch((error) => apiLogger.warn('broadcastChannelTick failed', { topic, error: error instanceof Error ? error.message : String(error) }))
+  })
+    .then(() => undefined)
+    .catch((error) => apiLogger.warn('broadcastChannelTick failed', { topic, error: error instanceof Error ? error.message : String(error) }))
 }
 
 /** The Realtime channel name for a run — shared by the server broadcaster and

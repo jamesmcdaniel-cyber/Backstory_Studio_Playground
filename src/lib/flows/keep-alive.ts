@@ -30,6 +30,32 @@ export function keepDetachedWorkAlive(
 }
 
 /**
+ * Convenience wrapper for the many `void someBestEffortCall(...)` side channels
+ * scattered through the engine (ledger writes, token-usage rollups, shadow
+ * sampling, PII egress recording, run-tick broadcasts). A bare `void` expression
+ * leaves the promise floating: on a serverless host the invocation can freeze
+ * before it settles, silently dropping the write it represents. Routing it
+ * through here instead registers it with `keepDetachedWorkAlive` so the host
+ * holds the invocation open until it resolves.
+ *
+ * Accepts `undefined`/`null` so callers that only sometimes produce a promise
+ * (e.g. a broadcaster that no-ops when unconfigured) can pass their call
+ * straight through without a conditional. Swallows the work's own rejection
+ * before registering it — every current caller is already best-effort and
+ * must never surface as an unhandled rejection or a teardown-time log.
+ */
+export function trackDetached(
+  work: Promise<unknown> | null | undefined,
+  register: (work: Promise<unknown>) => void = after,
+): void {
+  if (!work) return
+  keepDetachedWorkAlive(
+    work.catch(() => undefined),
+    register,
+  )
+}
+
+/**
  * "Always Output Data" (n8n parity): a step that succeeded but produced nothing
  * still emits an empty object, so the branch below it runs instead of stalling
  * on a value that never arrives.

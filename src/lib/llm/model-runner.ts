@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { apiLogger } from '@/lib/logger'
-import { recordLlmCall } from '@/lib/usage/ledger'
+import { recordLlmCall, type LlmSurface } from '@/lib/usage/ledger'
+import { trackDetached } from '@/lib/flows/keep-alive'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { qwenClient, qwenConfigured, qwenModel } from './qwen'
@@ -29,7 +30,7 @@ export type LedgerContext = {
   organizationId: string
   /** The run's owner, so spend can be attributed to a person, not just a tenant. */
   userId?: string | null
-  surface?: 'agent_turn' | 'structured' | 'headline' | 'embedding' | 'eval_judge' | 'shadow_eval'
+  surface?: LlmSurface
   agentExecutionId?: string | null
   flowRunId?: string | null
   flowRunStepId?: string | null
@@ -321,18 +322,20 @@ class AgentRunner implements ModelRunner {
         // exactly one row — for the attempt that actually served the turn.
         // Fire-and-forget: the ledger is best-effort and must not add latency.
         if (ledger) {
-          void recordLlmCall({
-            organizationId: ledger.organizationId,
-            userId: ledger.userId ?? null,
-            surface: ledger.surface ?? 'agent_turn',
-            provider: turn.provider,
-            model: turn.servedModel,
-            usage: turn.usage,
-            latencyMs: turn.latencyMs,
-            agentExecutionId: ledger.agentExecutionId,
-            flowRunId: ledger.flowRunId,
-            flowRunStepId: ledger.flowRunStepId,
-          })
+          trackDetached(
+            recordLlmCall({
+              organizationId: ledger.organizationId,
+              userId: ledger.userId ?? null,
+              surface: ledger.surface ?? 'agent_turn',
+              provider: turn.provider,
+              model: turn.servedModel,
+              usage: turn.usage,
+              latencyMs: turn.latencyMs,
+              agentExecutionId: ledger.agentExecutionId,
+              flowRunId: ledger.flowRunId,
+              flowRunStepId: ledger.flowRunStepId,
+            }),
+          )
         }
         return turn
       } catch (error) {
@@ -463,6 +466,19 @@ function summaryTarget(): { target: 'claude' | 'qwen'; model: string } | null {
   return null
 }
 
+/**
+ * The model id actually sent to the provider for a routed target. Claude's UI
+ * id IS its wire id; Qwen's is not — QWEN_MODEL (the endpoint's exact model
+ * string, e.g. qwen3.7-plus) overrides the UI-facing alias (e.g. 'qwen-3.7')
+ * whenever it's set. Ledger attribution must key on THIS, the served id, not
+ * the alias, or every Qwen call is misattributed to a model that was never
+ * actually served. Exported so the mapping is unit-testable without a live
+ * provider call.
+ */
+export function resolveServedModel(target: { target: 'claude' | 'qwen'; model: string }): string {
+  return target.target === 'qwen' ? qwenModel(target.model) : target.model
+}
+
 // Cheap one-line summary for the activity feed. Best-effort: returns null when
 // no provider is configured or the call fails.
 export async function generateHeadline(summary: string, ledger?: LedgerContext): Promise<string | null> {
@@ -473,30 +489,33 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
   const startedAt = Date.now()
   try {
     // Both endpoints speak the Anthropic Messages API.
+    const servedModel = resolveServedModel(target)
     const client = target.target === 'qwen' ? qwenClient() : claudeClient()
     const response = await client.messages.create({
-      model: target.target === 'qwen' ? qwenModel(target.model) : target.model,
+      model: servedModel,
       max_tokens: 64,
       system,
       messages: [{ role: 'user', content: summary.slice(0, 4000) }],
     })
     if (ledger) {
-      void recordLlmCall({
-        organizationId: ledger.organizationId,
-        userId: ledger.userId ?? null,
-        surface: 'headline',
-        provider: target.target === 'qwen' ? 'qwen' : 'anthropic',
-        model: target.model,
-        usage: {
-          inputTokens: response.usage.input_tokens,
-          cacheWriteTokens: response.usage.cache_creation_input_tokens || 0,
-          cacheReadTokens: response.usage.cache_read_input_tokens || 0,
-          outputTokens: response.usage.output_tokens,
-        },
-        latencyMs: Date.now() - startedAt,
-        agentExecutionId: ledger.agentExecutionId,
-        flowRunId: ledger.flowRunId,
-      })
+      trackDetached(
+        recordLlmCall({
+          organizationId: ledger.organizationId,
+          userId: ledger.userId ?? null,
+          surface: 'headline',
+          provider: target.target === 'qwen' ? 'qwen' : 'anthropic',
+          model: servedModel,
+          usage: {
+            inputTokens: response.usage.input_tokens,
+            cacheWriteTokens: response.usage.cache_creation_input_tokens || 0,
+            cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+            outputTokens: response.usage.output_tokens,
+          },
+          latencyMs: Date.now() - startedAt,
+          agentExecutionId: ledger.agentExecutionId,
+          flowRunId: ledger.flowRunId,
+        }),
+      )
     }
     const text = response.content
       .filter((block): block is Anthropic.TextBlock => block.type === 'text')
@@ -679,22 +698,24 @@ async function anthropicWireStructured(
     }),
   )
   if (opts.ledger) {
-    void recordLlmCall({
-      organizationId: opts.ledger.organizationId,
-      userId: opts.ledger.userId ?? null,
-      surface: opts.ledger.surface ?? 'structured',
-      provider,
-      model,
-      usage: {
-        inputTokens: response.usage.input_tokens,
-        cacheWriteTokens: response.usage.cache_creation_input_tokens || 0,
-        cacheReadTokens: response.usage.cache_read_input_tokens || 0,
-        outputTokens: response.usage.output_tokens,
-      },
-      latencyMs: Date.now() - startedAt,
-      agentExecutionId: opts.ledger.agentExecutionId,
-      flowRunId: opts.ledger.flowRunId,
-    })
+    trackDetached(
+      recordLlmCall({
+        organizationId: opts.ledger.organizationId,
+        userId: opts.ledger.userId ?? null,
+        surface: opts.ledger.surface ?? 'structured',
+        provider,
+        model,
+        usage: {
+          inputTokens: response.usage.input_tokens,
+          cacheWriteTokens: response.usage.cache_creation_input_tokens || 0,
+          cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+          outputTokens: response.usage.output_tokens,
+        },
+        latencyMs: Date.now() - startedAt,
+        agentExecutionId: opts.ledger.agentExecutionId,
+        flowRunId: opts.ledger.flowRunId,
+      }),
+    )
   }
   const text = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
@@ -725,14 +746,16 @@ async function anthropicWireStructured(
 function recordStructuredEgress(opts: StructuredOpts): void {
   const organizationId = opts.ledger?.organizationId ?? ambientOrganization.getStore()
   if (!organizationId) return
-  void recordPiiEgress({
-    organizationId,
-    userId: opts.ledger?.userId ?? null,
-    // schemaName identifies the endpoint far better than 'structured' does —
-    // 'flow_edit_ops' and 'huddle_note' are different processors of PII.
-    surface: `llm.structured:${opts.schemaName}`,
-    text: opts.user,
-  })
+  trackDetached(
+    recordPiiEgress({
+      organizationId,
+      userId: opts.ledger?.userId ?? null,
+      // schemaName identifies the endpoint far better than 'structured' does —
+      // 'flow_edit_ops' and 'huddle_note' are different processors of PII.
+      surface: `llm.structured:${opts.schemaName}`,
+      text: opts.user,
+    }),
+  )
 }
 
 export async function generateStructured(opts: StructuredOpts): Promise<string> {

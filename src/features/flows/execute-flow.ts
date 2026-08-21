@@ -3,7 +3,8 @@ import type { Job } from 'bullmq'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { hashToken } from '@/lib/crypto/secrets'
-import { applyAlwaysOutputData, keepDetachedWorkAlive } from '@/lib/flows/keep-alive'
+import { applyAlwaysOutputData, keepDetachedWorkAlive, trackDetached } from '@/lib/flows/keep-alive'
+import { buildFlowAiLedgerContext } from '@/lib/flows/ai-step-ledger'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { assertQueueConsumerAlive } from '@/lib/queue/heartbeat'
 import { inlineExecution } from '@/lib/queue/execution-mode'
@@ -776,7 +777,7 @@ async function runFlowExecutionInner(
   const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[]; startedAt: Date; finishedAt: Date }) => {
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
-    broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status })
+    trackDetached(broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status }))
     const rowKey = outcome.iterationKey ?? outcome.nodeId
     if (!shouldPersistInterpreterStep(nodeTypeById.get(outcome.nodeId))) {
       // Adapter (agent/tool/http/ai/subflow/code/knowledge) rows are written
@@ -1199,7 +1200,7 @@ async function runFlowExecutionInner(
         const model = aiData.model === 'smart' ? DEFAULT_AGENT_MODEL : DEFAULT_SUMMARY_MODEL
         // Same record as the agent path: the resolved input is tenant data on
         // its way to a model provider.
-        void recordPiiEgress({ organizationId: job.organizationId, userId: job.userId, surface: 'flow.ai_step', text: prompt.user })
+        trackDetached(recordPiiEgress({ organizationId: job.organizationId, userId: job.userId, surface: 'flow.ai_step', text: prompt.user }))
         // Same daily model ceilings as the agent plane, applied to the run's
         // owner. A spent allowance moves the step to Qwen rather than failing
         // it. See usage/model-allowance.ts.
@@ -1224,12 +1225,22 @@ async function runFlowExecutionInner(
         // errors keep the retry budget.
         const { result: turn, attempts: aiAttempts, attemptErrors: aiAttemptErrors } = await runWithRetries(
           async () =>
-            runner.next(runner.start(user), prompt.system, [], {
-              organizationId: job.organizationId,
-              userId: run.userId,
-              surface: 'agent_turn',
-              flowRunId: run.id,
-            }),
+            runner.next(
+              runner.start(user),
+              prompt.system,
+              [],
+              // 'flow_ai' — a standalone AI step, not the agent runtime's own
+              // turns (which record as 'agent_turn') — so per-surface cost
+              // breakdowns don't conflate the two very different call shapes.
+              // Carries flowRunStepId too, so a per-step cost breakdown is
+              // possible (see @/lib/flows/ai-step-ledger).
+              buildFlowAiLedgerContext({
+                organizationId: job.organizationId,
+                userId: run.userId,
+                flowRunId: run.id,
+                flowRunStepId: step.id,
+              }),
+            ),
           {
             retries,
             retryDelayMs,
@@ -1244,25 +1255,29 @@ async function runFlowExecutionInner(
         // record their own spend inside runAgentExecution; a bare 'ai' step calls
         // the model directly, so without this a loop of ai steps would spend
         // unmetered and never trip the ceiling.
-        void recordTokenUsage(
-          job.organizationId,
-          turn.usage ? billableTokens(turn.usage) : 0,
-        ).catch(() => undefined)
+        trackDetached(
+          recordTokenUsage(
+            job.organizationId,
+            turn.usage ? billableTokens(turn.usage) : 0,
+          ),
+        )
 
         // Sampled challenger comparison (off unless SHADOW_EVAL_RATE is set).
         // This is the only run surface shadowed, because it is the only one
         // with no side effects to double-fire — see lib/eval/shadow.ts. Fire
         // and forget: never awaited, never able to fail the step.
-        void maybeShadowFlowAiStep({
-          organizationId: job.organizationId,
-          userId: run.userId,
-          flowRunId: run.id,
-          system: prompt.system,
-          user,
-          championText: turn.text,
-          championProvider: turn.provider,
-          championModel: turn.servedModel,
-        })
+        trackDetached(
+          maybeShadowFlowAiStep({
+            organizationId: job.organizationId,
+            userId: run.userId,
+            flowRunId: run.id,
+            system: prompt.system,
+            user,
+            championText: turn.text,
+            championProvider: turn.provider,
+            championModel: turn.servedModel,
+          }),
+        )
 
         const aiRetryWarnings = retryWarnings(aiAttempts, aiAttemptErrors)
         if (!prompt.structuredFields) {
@@ -1885,7 +1900,7 @@ async function runFlowExecutionInner(
   })
   // Final realtime nudge on the terminal/waiting status, so the builder settles
   // immediately instead of on the next poll.
-  broadcastFlowRunTick(run.id, { status })
+  trackDetached(broadcastFlowRunTick(run.id, { status }))
   // A humanReview ("Request information") pause has no adapter: its waiting
   // FlowRunStep row was persisted by the interpreter's onStep path (the
   // outcome carries `{ waiting: { kind: 'input', question } }`), so the only

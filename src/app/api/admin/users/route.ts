@@ -90,9 +90,19 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const userIds = users.map((user) => user.id)
   const organizationIds = [...new Set(users.map((user) => user.organizationId).filter((id): id is string => Boolean(id)))]
 
+  // All eligible ids, unbounded — the query above is capped at PAGE_SIZE for
+  // the table, but the five tiles above it must share one honest scope: every
+  // user this report is entitled to see, not just the 200 most recently
+  // active. Enabled = eligible minus whoever Supabase reports as disabled;
+  // eligibleSupabaseIds already excludes them unless includeDeactivated is on.
+  const enabledSupabaseIds = eligibleSupabaseIds.filter((id) => !identities.disabled.has(id))
+  const allEligible = await systemPrisma.user.findMany({ where, select: { id: true } })
+  const allEligibleIds = allEligible.map((user) => user.id)
+
   // Four batched aggregates plus one integration read per DISTINCT workspace —
   // never per user. A naive per-user loop is ~5 queries × 200 rows.
-  const [agentRuns, flowRuns, tokens, integrationsByOrg] = await Promise.all([
+  const [agentRuns, flowRuns, tokens, integrationsByOrg, totalSeen, totalEnabled, totalAgentAgg, totalFlowAgg, totalTokenAgg] =
+    await Promise.all([
     systemPrisma.agentExecution.groupBy({
       by: ['userId'],
       where: { userId: { in: userIds }, startedAt: { gte: since } },
@@ -124,6 +134,23 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         ] as const
       }),
     ),
+    // The four totals below are scoped by `allEligibleIds` (unbounded), not
+    // `userIds` (the PAGE_SIZE page) — this is what makes the tiles honest
+    // for a workspace with more than 200 active accounts.
+    systemPrisma.user.count({ where: { ...where, lastSeenAt: { gte: since } } }),
+    systemPrisma.user.count({ where: { ...where, supabaseId: { in: enabledSupabaseIds } } }),
+    systemPrisma.agentExecution.aggregate({
+      where: { userId: { in: allEligibleIds }, startedAt: { gte: since } },
+      _sum: { costUsd: true },
+    }),
+    systemPrisma.flowRun.aggregate({
+      where: { userId: { in: allEligibleIds }, startedAt: { gte: since } },
+      _sum: { costUsd: true },
+    }),
+    systemPrisma.llmCall.aggregate({
+      where: { userId: { in: allEligibleIds }, createdAt: { gte: since } },
+      _sum: { inputTokens: true, cacheReadTokens: true, cacheWriteTokens: true, outputTokens: true },
+    }),
   ])
 
   const agentByUser = new Map<string, Rollup>()
@@ -174,6 +201,19 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     days,
     truncated: users.length === PAGE_SIZE,
     includeDeactivated,
+    // Unbounded — every eligible account, not just the PAGE_SIZE page below.
+    // All five tiles the page renders share this one scope.
+    totals: {
+      people: allEligibleIds.length,
+      seen: totalSeen,
+      enabled: totalEnabled,
+      tokens:
+        (totalTokenAgg._sum.inputTokens ?? 0) +
+        (totalTokenAgg._sum.cacheReadTokens ?? 0) +
+        (totalTokenAgg._sum.cacheWriteTokens ?? 0) +
+        (totalTokenAgg._sum.outputTokens ?? 0),
+      costUsd: Number(totalAgentAgg._sum.costUsd ?? 0) + Number(totalFlowAgg._sum.costUsd ?? 0),
+    },
     users: users.map((user) => {
       const agent = agentByUser.get(user.id) ?? { runs: 0, costUsd: 0 }
       const flow = flowByUser.get(user.id) ?? { runs: 0, costUsd: 0 }

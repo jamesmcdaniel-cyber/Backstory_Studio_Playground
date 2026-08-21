@@ -12,7 +12,7 @@ export const GET = withAuthenticatedApi(async (request) => {
   const days = Math.min(90, Math.max(1, Number(request.nextUrl.searchParams.get('days')) || 30))
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
 
-  const [byOrg, bySurface, byModel] = await Promise.all([
+  const [byOrg, bySurface, byModel, totalAgg] = await Promise.all([
     systemPrisma.llmCall.groupBy({
       by: ['organizationId'],
       where: { createdAt: { gte: since } },
@@ -34,6 +34,17 @@ export const GET = withAuthenticatedApi(async (request) => {
       orderBy: { _sum: { costUsd: 'desc' } },
       take: 50,
     }),
+    // Unbounded — byOrg above is capped at 50 workspaces for the table, but the
+    // headline total must never be "the sum of whichever 50 happened to sort
+    // highest". _min(createdAt) doubles as the honest floor of the window: on a
+    // 90-day request against a table with a 90-day retention prune, the true
+    // earliest row can be newer than `since`, and the page needs to say so.
+    systemPrisma.llmCall.aggregate({
+      where: { createdAt: { gte: since } },
+      _sum: { costUsd: true, inputTokens: true, cacheReadTokens: true, outputTokens: true },
+      _count: { _all: true },
+      _min: { createdAt: true },
+    }),
   ])
 
   const organizations = await systemPrisma.organization.findMany({
@@ -45,6 +56,20 @@ export const GET = withAuthenticatedApi(async (request) => {
   return {
     success: true,
     days,
+    // The true totals for the window, from an unbounded aggregate — never the
+    // sum of the top-50 lists below, which drop everything past the 50th
+    // workspace or model by spend.
+    total: {
+      costUsd: Number(totalAgg._sum.costUsd ?? 0),
+      inputTokens: totalAgg._sum.inputTokens ?? 0,
+      cacheReadTokens: totalAgg._sum.cacheReadTokens ?? 0,
+      outputTokens: totalAgg._sum.outputTokens ?? 0,
+      calls: totalAgg._count._all,
+    },
+    // Earliest row actually in the window — may be newer than `since` once the
+    // 90-day retention prune has removed anything older, so the page can say
+    // "data since {date}" instead of implying the full requested window exists.
+    dataSince: totalAgg._min.createdAt,
     byOrg: byOrg.map((row) => ({
       organizationId: row.organizationId,
       name: nameById.get(row.organizationId) ?? 'unknown',

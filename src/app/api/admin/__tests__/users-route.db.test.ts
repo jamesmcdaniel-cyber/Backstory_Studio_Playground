@@ -123,6 +123,24 @@ if (TEST_DB) {
     assert.equal(typeof row.integrations, 'number')
   })
 
+  test('totals are unbounded — not a reduce over the returned (PAGE_SIZE-capped) users array', async () => {
+    const response = await listRoute.GET(get())
+    const body = await response.json()
+    assert.equal(response.status, 200, JSON.stringify(body))
+
+    assert.ok(body.totals, 'response must carry a totals object')
+    assert.equal(typeof body.totals.people, 'number')
+    assert.equal(typeof body.totals.seen, 'number')
+    assert.equal(typeof body.totals.enabled, 'number')
+    assert.equal(typeof body.totals.tokens, 'number')
+    assert.equal(typeof body.totals.costUsd, 'number')
+    // Every returned row's own scope check: the aggregate total must be at
+    // least the sum visible in the (possibly truncated) table, never less.
+    const pageTokenSum = body.users.reduce((sum: number, user: any) => sum + user.tokens, 0)
+    assert.ok(body.totals.tokens >= pageTokenSum, 'the unbounded total must cover at least what the page shows')
+    assert.ok(body.totals.people >= body.users.length, 'the unbounded people count must cover at least the page')
+  })
+
   test('search narrows by email', async () => {
     const target = await prisma.user.findUnique({ where: { id: subject.userId } })
     const response = await listRoute.GET(get(`?q=${encodeURIComponent(target.email)}`))

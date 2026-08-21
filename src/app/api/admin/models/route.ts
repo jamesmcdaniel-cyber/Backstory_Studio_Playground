@@ -134,6 +134,18 @@ export const GET = withAuthenticatedApi(async (request) => {
     LIMIT 50
   `
 
+  // Unbounded — the raw-SQL rollup above is capped at the top 50 models by
+  // spend for the table, but the Spend/Calls tiles must never be the sum of
+  // that capped list. Same org scope as everything else on this route
+  // (systemPrisma, no organizationId filter): cross-org by design, matching
+  // the rollup above.
+  const totalAgg = await systemPrisma.llmCall.aggregate({
+    where: { createdAt: { gte: since } },
+    _sum: { costUsd: true },
+    _count: { _all: true },
+    _min: { createdAt: true },
+  })
+
   // ── Outcomes ─────────────────────────────────────────────────────────────
   //
   // Attribution is by which model SERVED the run — the model with the most
@@ -374,6 +386,12 @@ export const GET = withAuthenticatedApi(async (request) => {
   return {
     success: true,
     days,
+    // The true totals for the window, from an unbounded aggregate — never the
+    // sum of `models` below, which is capped at the top 50 by spend.
+    total: { costUsd: Number(totalAgg._sum.costUsd ?? 0), calls: totalAgg._count._all },
+    // Earliest row actually in the window — may be newer than the requested
+    // window's start once the 90-day retention prune has removed older rows.
+    dataSince: totalAgg._min.createdAt,
     models,
     bench,
     benchDetail,

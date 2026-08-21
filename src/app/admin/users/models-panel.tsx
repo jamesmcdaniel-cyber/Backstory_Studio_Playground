@@ -91,6 +91,10 @@ type ShadowMatchup = {
 
 type Report = {
   days: number
+  /** True totals for the window, from an unbounded aggregate — never the sum of `models`, which is capped at the top 50 by spend. */
+  total: { costUsd: number; calls: number }
+  /** Earliest call actually in the window; may be newer than the requested window if the 90-day retention prune has already removed older rows. */
+  dataSince: string | null
   models: ModelRow[]
   bench: BenchRow[]
   benchDetail: BenchDetailRow[]
@@ -156,7 +160,10 @@ export function ModelsPanel({ days }: { days: number }) {
 
   // While a bench is queued or running, refresh quietly so its rows appear
   // without the operator hammering reload. Stops the moment it is not.
-  const benchInFlight = benchBusy || report?.benchRunning === true
+  // null ("could not check" — inline mode or an unreachable queue) keeps
+  // polling too: silently treating "unknown" as "idle" is how a second bench
+  // gets started on top of one that is actually still running.
+  const benchInFlight = benchBusy || report?.benchRunning === true || report?.benchRunning === null
   useEffect(() => {
     if (!benchInFlight) return
     const timer = setInterval(() => void load(true), 15_000)
@@ -197,21 +204,30 @@ export function ModelsPanel({ days }: { days: number }) {
   }
 
   const models = report?.models ?? []
-  const totalCost = models.reduce((sum, row) => sum + row.costUsd, 0)
-  const totalCalls = models.reduce((sum, row) => sum + row.calls, 0)
   const unpriced = models.filter((row) => row.unpriced)
+  // Coverage of the visible (top-50) rows only — how much of what is on
+  // screen has a latency measurement. Never presented as a window-wide total.
+  const shownTimedCalls = models.reduce((sum, row) => sum + row.timedCalls, 0)
+  const shownCalls = models.reduce((sum, row) => sum + row.calls, 0)
 
   return (
     <div className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Spend" value={usd(totalCost)} />
-        <Stat label="Calls" value={totalCalls.toLocaleString()} />
-        <Stat label="Models in use" value={String(models.length)} />
+        <Stat label="Spend" value={usd(report?.total.costUsd ?? 0)} />
+        <Stat label="Calls" value={(report?.total.calls ?? 0).toLocaleString()} />
+        <Stat label="Models in use (top 50 by spend)" value={String(models.length)} />
         <Stat
-          label="Endpoints"
+          label="Endpoints (top 50 by spend)"
           value={String(new Set(models.map((row) => row.provider)).size)}
         />
       </div>
+
+      {report?.dataSince && (
+        <p className="text-xs text-muted-foreground">
+          Data since {new Date(report.dataSince).toLocaleDateString()} — the oldest call still on record, which may
+          be more recent than the {days}-day window if older rows have already been pruned.
+        </p>
+      )}
 
       {unpriced.length > 0 && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
@@ -225,12 +241,13 @@ export function ModelsPanel({ days }: { days: number }) {
         </div>
       )}
 
+      <p className="text-xs text-muted-foreground">Table below: top 50 models by spend in this window.</p>
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full min-w-[64rem] text-sm">
           <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
             <tr>
               <th className="px-4 py-2 font-medium">Model</th>
-              <th className="px-4 py-2 font-medium">Runs</th>
+              <th className="px-4 py-2 font-medium">Runs touched</th>
               <th className="px-4 py-2 font-medium">Calls</th>
               <th className="px-4 py-2 font-medium">Cost</th>
               <th className="px-4 py-2 font-medium">Per run</th>
@@ -309,10 +326,15 @@ export function ModelsPanel({ days }: { days: number }) {
             onClick={() => void startBench()}
             disabled={benchInFlight || (candidates !== null && candidates.length === 0)}
           >
-            {benchInFlight ? (
+            {benchBusy || report?.benchRunning === true ? (
               <>
                 <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
                 Bench running…
+              </>
+            ) : report?.benchRunning === null ? (
+              <>
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                Status unknown…
               </>
             ) : (
               <>
@@ -322,6 +344,11 @@ export function ModelsPanel({ days }: { days: number }) {
             )}
           </Button>
         </div>
+        {report?.benchRunning === null && !benchBusy && (
+          <p className="text-xs text-muted-foreground">
+            Could not confirm whether a bench is already running, so the button stays disabled until the next check.
+          </p>
+        )}
         {/* Which models the next Run bench covers. Only endpoints this
             deployment holds keys for appear; the selection is honored by the
             worker after re-validation, so a chip is a promise, not a hint. */}
@@ -519,11 +546,17 @@ export function ModelsPanel({ days }: { days: number }) {
       </section>
 
       <p className="text-sm text-muted-foreground">
+        &quot;Runs touched&quot; counts a run once for every model that served part of it, so a run split across two
+        models is counted under both — the column can add up to more than the number of distinct runs in the
+        window. Per-run cost divides this model&apos;s cost by the runs it touched, not by all runs in the window.
         Success and turns attribute each run to the model that actually served most of its calls — a run that asked
-        for one model and was served by another (fallback) counts under the model that did the work.
-        Latency columns cover only calls made since per-call timing was recorded, so a window reaching further
-        back than that shows fewer timed calls than total calls. Everyone outside the operator tier is held to{' '}
-        {report?.limits.frontierClaudeRunsPerDay ?? '—'} frontier-Claude runs and{' '}
+        for one model and was served by another (fallback) counts under the model that did the work. Success rate
+        only counts runs that finished (succeeded or failed); runs still in flight or cancelled are excluded from
+        both, so succeeded plus failed can be less than runs touched.
+        Latency columns cover only calls made since per-call timing was recorded — of the {shownCalls.toLocaleString()}{' '}
+        calls in the table above, {shownTimedCalls.toLocaleString()} carry a latency measurement — so a window
+        reaching further back than that shows fewer timed calls than total calls. Everyone outside the operator tier
+        is held to {report?.limits.frontierClaudeRunsPerDay ?? '—'} frontier-Claude runs and{' '}
         {report?.limits.claudeRunsPerDay ?? '—'} Claude runs a day; past either ceiling their runs route to Qwen
         rather than failing.
       </p>

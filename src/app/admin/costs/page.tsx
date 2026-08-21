@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 
 type Report = {
   days: number
+  total: { costUsd: number; inputTokens: number; cacheReadTokens: number; outputTokens: number; calls: number }
+  dataSince: string | null
   byOrg: {
     organizationId: string
     name: string
@@ -30,7 +32,7 @@ export default function CostsPage() {
   }, [days])
 
   const unknownPricing = report?.byModel.filter((row) => row.priceVersion === 'unknown') ?? []
-  const total = report?.byOrg.reduce((sum, row) => sum + row.costUsd, 0) ?? 0
+  const total = report?.total.costUsd ?? 0
 
   return (
     <div className="space-y-8">
@@ -54,10 +56,22 @@ export default function CostsPage() {
       </header>
 
       {report && (
-        <p className="text-3xl font-semibold tabular-nums">
-          {usd(total)}
-          <span className="ml-2 text-sm font-normal text-muted-foreground">across all workspaces</span>
-        </p>
+        <div>
+          <p className="text-3xl font-semibold tabular-nums">
+            {usd(total)}
+            <span className="ml-2 text-sm font-normal text-muted-foreground">across all workspaces</span>
+          </p>
+          {report.dataSince && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Data since {new Date(report.dataSince).toLocaleDateString()}
+              {/* The 90-day retention prune can make the true floor of the table
+                  newer than the requested window — this is that floor, not a
+                  restatement of the days picker above. */}
+              {' '}— the oldest call still on record, which may be more recent than the {days}-day window if older
+              rows have already been pruned.
+            </p>
+          )}
+        </div>
       )}
 
       {unknownPricing.length > 0 && (
@@ -71,7 +85,7 @@ export default function CostsPage() {
       )}
 
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">By workspace</h2>
+        <h2 className="text-sm font-medium">By workspace — top 50 by spend</h2>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[36rem] text-sm">
             <thead className="text-left text-xs text-muted-foreground">
@@ -117,10 +131,10 @@ export default function CostsPage() {
             beside per-model latency — the two are only useful read together,
             and a copy here would be the one that drifts out of the same window. */}
         <div className="space-y-2">
-          <h2 className="text-sm font-medium">By model</h2>
+          <h2 className="text-sm font-medium">By model — top 50 by spend</h2>
           <div className="rounded-lg border px-4 py-3 text-sm">
             <p className="text-muted-foreground">
-              {report?.byModel.length ?? 0} models served calls in this window.
+              {report?.byModel.length ?? 0} models (up to the top 50 by spend) served calls in this window.
             </p>
             <a href="/admin/users" className="mt-1 inline-block font-medium underline underline-offset-4">
               Cost and performance per model →

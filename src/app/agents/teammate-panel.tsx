@@ -134,7 +134,7 @@ export function TeammatePanel({
                 title="Change avatar"
                 className="group relative shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
               >
-                <AgentAvatar seed={teammate.avatarSeed || teammate.id} className="h-14 w-14 rounded-full ring-1 ring-black/5" />
+                <AgentAvatar seed={teammate.avatarSeed || teammate.id} className="h-20 w-16 rounded-2xl ring-1 ring-black/5" />
                 <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/45 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                   <Camera className="h-4 w-4 text-white" aria-hidden="true" />
                 </span>

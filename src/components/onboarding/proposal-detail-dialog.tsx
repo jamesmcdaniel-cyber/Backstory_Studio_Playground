@@ -36,7 +36,7 @@ export function ProposalDetailDialog({
           <>
             <DialogHeader>
               <div className="flex items-start gap-3">
-                <AgentAvatar seed={persona!.seed} className="h-12 w-12 shrink-0 rounded-full ring-1 ring-black/5" />
+                <AgentAvatar seed={persona!.seed} className="h-16 w-14 shrink-0 rounded-2xl ring-1 ring-black/5" />
                 <div className="min-w-0">
                   <span
                     className={cn(

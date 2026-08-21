@@ -84,7 +84,7 @@ export function AssignTemplateDialog({
                   choice === teammate.id ? 'border-indigo-300 bg-indigo-50/60' : 'hover:bg-gray-50',
                 )}
               >
-                <AgentAvatar seed={teammate.id} className="h-10 w-10 shrink-0 rounded-full ring-1 ring-black/5" />
+                <AgentAvatar seed={teammate.id} className="h-12 w-10 shrink-0 rounded-xl ring-1 ring-black/5" />
                 <span className="min-w-0 flex-1">
                   <span className="line-clamp-1 block text-sm font-medium text-foreground">{teammate.name}</span>
                   {teammate.roleLabel && (

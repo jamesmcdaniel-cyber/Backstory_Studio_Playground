@@ -58,7 +58,7 @@ export function RecommendationsBar() {
         {/* A stack of faces: the bar reads as people waiting, even collapsed. */}
         <span className="flex shrink-0 -space-x-2" aria-hidden="true">
           {personas.slice(0, 3).map((persona) => (
-            <AgentAvatar key={persona.seed} seed={persona.seed} className="h-7 w-7 rounded-full ring-2 ring-white" />
+            <AgentAvatar key={persona.seed} seed={persona.seed} className="h-8 w-7 rounded-lg ring-2 ring-white" />
           ))}
         </span>
         <span className="min-w-0">
@@ -77,7 +77,7 @@ export function RecommendationsBar() {
             const persona = personas[index]
             return (
               <li key={proposal.id} className="flex items-center gap-3 px-4 py-2.5">
-                <AgentAvatar seed={persona.seed} className="h-9 w-9 shrink-0 rounded-full ring-1 ring-black/5" />
+                <AgentAvatar seed={persona.seed} className="h-11 w-10 shrink-0 rounded-xl ring-1 ring-black/5" />
                 <button
                   type="button"
                   onClick={() => openDetail(proposal)}

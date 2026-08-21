@@ -111,7 +111,7 @@ export function AgentsGallery({
       <div className="mx-auto w-full max-w-6xl p-6">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {Array.from({ length: 8 }).map((_, index) => (
-            <Skeleton key={index} className="h-56 rounded-2xl" />
+            <Skeleton key={index} className="h-72 rounded-2xl" />
           ))}
         </div>
       </div>
@@ -214,7 +214,7 @@ export function AgentsGallery({
           <button
             type="button"
             onClick={onCreateAgent}
-            className="flex min-h-56 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-200 text-muted-foreground transition-colors duration-150 hover:border-indigo-300 hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+            className="flex min-h-72 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-200 text-muted-foreground transition-colors duration-150 hover:border-indigo-300 hover:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
           >
             <Plus className="h-6 w-6" aria-hidden="true" />
             <span className="text-sm font-medium">New agent</span>

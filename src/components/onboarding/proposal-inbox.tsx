@@ -121,7 +121,7 @@ export function ProposalInbox({
         return (
         <li key={proposal.id} className="rounded-lg border p-4">
           <div className="flex items-start gap-3">
-            <AgentAvatar seed={persona.seed} className="h-10 w-10 shrink-0 rounded-full ring-1 ring-black/5" />
+            <AgentAvatar seed={persona.seed} className="h-12 w-11 shrink-0 rounded-xl ring-1 ring-black/5" />
             <div className="min-w-0">
               <span
                 className={cn(

@@ -32,6 +32,7 @@ import {
 } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { EVENT_TRIGGER_LABELS } from '@/lib/flows/trigger'
+import { activitySourceDisplayName } from '@/lib/flows/activity-source'
 import { selectedToolPresentation, stepBrandFallback, type PresentableConnection } from '@/lib/flows/tool-presentation'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 
@@ -222,7 +223,12 @@ export function subtitleFor(node: FlowNode, ctx: PresentationContext): string | 
       if (type === 'activity') {
         const kindCount = (trigger.kinds ?? []).filter((kind) => kind.trim()).length
         if (!trigger.source) return 'Pick an app and at least one event type to watch'
-        return `Watches ${trigger.source} for ${kindCount} event type${kindCount === 1 ? '' : 's'}`
+        // NEVER interpolate trigger.source raw — stored values look like
+        // `nango:github`, which is a raw scheme string, not something a user
+        // should read on the canvas. activitySourceDisplayName is the one
+        // place (shared with trigger-editor.tsx's source picker) that turns a
+        // stored source into a plain-English app name.
+        return `Watches ${activitySourceDisplayName(trigger.source)} for ${kindCount} event type${kindCount === 1 ? '' : 's'}`
       }
       if (type === 'slack') {
         return trigger.channelId

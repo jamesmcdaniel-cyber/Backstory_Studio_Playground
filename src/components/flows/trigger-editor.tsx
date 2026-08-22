@@ -6,6 +6,7 @@ import { Link2, RefreshCw, Copy, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CONDITION_OPS, CONDITION_OP_LABELS, type ConditionOp, type ConditionClause, type TriggerInputField } from '@/lib/flows/graph'
 import { ACTIVITY_KINDS_CLIENT, ACTIVITY_KIND_LABELS, KNOWN_SIGNALS, KNOWN_SIGNAL_LABELS } from '@/lib/flows/trigger'
+import { activitySourceDisplayName, activitySourceForToolKey } from '@/lib/flows/activity-source'
 import { nextOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
 import {
   DAY_LABELS,
@@ -59,22 +60,6 @@ export type TriggerData = {
 /** One connected-app chip from GET /api/integrations/available, as far as the
  *  trigger editor needs it. */
 type AvailableTool = { key: string; label: string; connected: boolean }
-
-/**
- * Map a connected tool's registry key to the `source` string an activity
- * trigger stores and `normalizeNangoForward`/`normalizeSlackEvent`
- * (src/lib/activity/normalize.ts) actually produce: 'slack' and 'salesforce'
- * are literal matches, everything else falls to Nango's generic
- * `nango:<provider>` source the same way an unmapped provider does there.
- * Keeping this in lockstep with normalize.ts's own mapping is what makes the
- * source picker honest — it only ever lists a source some connected app can
- * actually emit, never an aspirational one.
- */
-function activitySourceForToolKey(key: string): string {
-  const k = key.toLowerCase()
-  if (k === 'slack' || k === 'salesforce') return k
-  return `nango:${k}`
-}
 
 /** Minimal tool catalog shape the poll picker needs (no step-drawer dependency). */
 export type TriggerToolCatalog = { id: string; name?: string; tools?: { name: string }[] }[]
@@ -216,7 +201,13 @@ export function TriggerEditor({
   const slackConnected = availableTools.some((tool) => tool.key.toLowerCase() === 'slack' && tool.connected)
   const connectedSources = availableTools
     .filter((tool) => tool.connected)
-    .map((tool) => ({ value: activitySourceForToolKey(tool.key), label: tool.label }))
+    .map((tool) => {
+      const value = activitySourceForToolKey(tool.key)
+      // Same humanizer the canvas subtitle uses (activitySourceDisplayName),
+      // not the raw tool.label — guarantees the picker and the subtitle can
+      // never show two different names for the same stored source value.
+      return { value, label: activitySourceDisplayName(value) }
+    })
   const selectedKinds = new Set((trigger.kinds ?? []).filter((kind) => kind.trim()))
   const toggleKind = (kind: string) => {
     const next = new Set(selectedKinds)

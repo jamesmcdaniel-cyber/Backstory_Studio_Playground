@@ -215,6 +215,63 @@ now caught before merge. What CI still does NOT prove is the production
 configuration — the split-brain Redis in §2 is an env problem and remains a
 deploy-time check.
 
+## 6. Automated watch (cron alerting, no human required)
+
+`/api/cron/queue-watch` (`src/app/api/cron/queue-watch/route.ts`) runs every 5
+minutes on Vercel Cron (`vercel.json`) and calls the same
+`probeQueueConsumers()` `/api/health` uses (via `src/lib/queue/queue-watch.ts`
+— no duplicated probe logic). It is CRON_SECRET-gated exactly like
+`/api/cron/dispatch` and `/api/cron/retention`: fails closed with 503 if
+`CRON_SECRET` is unset, 401 on a bad/missing bearer token.
+
+**What it checks**, each tick:
+- `queueConsumers.ok === false` — a critical queue (agent-execution,
+  scheduled-agent-execution, flow-execution) has jobs waiting with no
+  registered consumer and no fresh worker heartbeat (§2 above).
+- `queueConsumers.deadLetters.total > 0` — any job has landed in a
+  dead-letter queue (§1 above), independent of consumer health.
+
+**Where alerts land**: the platform owner (`PLATFORM_OWNER_EMAILS`,
+`src/lib/authz/platform-owner.ts`) — the only operator identity guaranteed to
+exist in every environment. For each owner account found:
+- an in-app notification + best-effort web push via the existing
+  `notify()` pathway (`src/lib/notifications/service.ts` — the same one
+  run-completion notifications use), level `error`, linking to `/admin`;
+- an `AuditEvent` (`action: 'platform.queue.alert'`, `actorKind: 'system'`)
+  recording the reason, stranded queues, and dead-letter counts — durable and
+  queryable even if push/in-app delivery is misconfigured;
+- an `apiLogger.error` + `captureError` call, so a Sentry-integrated
+  environment gets it there too (error-level is what Sentry picks up per the
+  existing convention).
+
+**Cooldown semantics**: edge-triggered, not level-triggered. State is one
+cache key (`queue-watch:alert-cooldown`, Redis-backed via `src/lib/cache.ts`
+in production — so it survives across serverless invocations) with a 1 hour
+TTL (`QUEUE_WATCH_COOLDOWN_MS`, override via env). While the condition stays
+unhealthy, only the FIRST tick alerts; every tick after that is silent until
+either the TTL lapses or the condition recovers. On a healthy tick the key is
+cleared immediately (not left to expire), so a flap — recovers, then breaks
+again — alerts again right away instead of waiting out the rest of an
+hour-long window for what is really a new incident.
+
+**External uptime monitor recommendation**: point a third-party monitor
+(Pingdom, UptimeRobot, Better Uptime, etc.) at `GET /api/health` expecting
+HTTP `200` with this anonymous body:
+
+```json
+{ "status": "ok", "timestamp": "<ISO 8601>" }
+```
+
+A `503` (body `{"status":"unhealthy",...}`) means Postgres, cache, or the
+queue consumer check failed — see §§1-3 above. This is complementary to the
+cron watch, not redundant: the external monitor catches the whole app being
+unreachable (DNS, TLS, Vercel outage) or a non-queue failure (Postgres down),
+which a queue-scoped cron running inside the same deployment cannot detect
+about itself. The existing `.github/workflows/health-monitor.yml` already
+does exactly this against `HEALTH_MONITOR_URL` every 10 minutes and files a
+GitHub issue on failure — an external monitor is an additional,
+infrastructure-independent channel for the same signal, not a replacement.
+
 ## Related
 
 - `docs/runbooks/incident-response.md` — severity levels, escalation, postmortem template.

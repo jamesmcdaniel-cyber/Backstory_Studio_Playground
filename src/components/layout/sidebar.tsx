@@ -777,7 +777,14 @@ export function Sidebar() {
         {/* Footer: usage + user */}
         <div className={cn('border-t p-3', desktopCollapsed && 'lg:px-2')}>
           {usage && (
-            <div className={cn('mb-2 px-1', desktopCollapsed && 'lg:hidden')}>
+            // Links to the per-user breakdown behind this bar: what the
+            // credits went to, split by run type and by model — the bar
+            // itself only ever showed the workspace-wide percentage.
+            <Link
+              href="/usage"
+              className={cn('mb-2 block rounded-md px-1 py-0.5 hover:bg-graphite-100', desktopCollapsed && 'lg:hidden')}
+              title="See your usage"
+            >
               <div className="mb-1 flex justify-between text-xs text-graphite-500">
                 <span>Usage this month</span>
                 <span>{usage.exempt ? 'Unlimited' : `${creditPct}% of credits`}</span>
@@ -787,7 +794,7 @@ export function Sidebar() {
                   <div className="h-full rounded-full bg-horizon-500 transition-[width] duration-slow ease-out-quart" style={{ width: `${creditPct}%` }} />
                 </div>
               )}
-            </div>
+            </Link>
           )}
           <Link
             href="/settings"

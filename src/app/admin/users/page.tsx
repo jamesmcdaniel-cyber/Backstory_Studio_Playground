@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ModelsPanel } from './models-panel'
+import { UserUsageDrilldown } from './usage-drilldown'
 import { cn } from '@/lib/utils'
 
 type PlatformUser = {
@@ -330,6 +331,14 @@ export default function PlatformUsersPage() {
             <Detail label={`Runs (${report?.days ?? 30}d)`} value={`${selected.agentRuns} agent · ${selected.flowRuns} flow`} />
             <Detail label={`Tokens (${report?.days ?? 30}d)`} value={`${selected.tokens.toLocaleString()} · ${usd(selected.costUsd)}`} />
           </dl>
+
+          {/* Lazy per-user fetch, keyed on the selected row: expanding one
+              account never pulls model/surface detail for the other 199 on
+              the page. */}
+          <div className="border-t pt-4">
+            <h3 className="mb-2 text-sm font-semibold">Model usage</h3>
+            <UserUsageDrilldown userId={selected.id} days={report?.days ?? 30} />
+          </div>
 
           {selected.runAllowanceResetAt && (
             <p className="text-xs text-muted-foreground">

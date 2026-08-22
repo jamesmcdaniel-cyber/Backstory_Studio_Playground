@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Prisma } from '@prisma/client'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { buildAuthConfig } from '@/lib/crypto/secrets'
+import { mergeAuthConfig, encryptSecret } from '@/lib/crypto/secrets'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import {
   CREDENTIAL_FIELD,
@@ -42,12 +42,22 @@ function providerFrom(request: NextRequest): CredentialProvider {
 
 async function state(organizationId: string, provider: CredentialProvider) {
   const spec = CREDENTIAL_SPECS[provider]
-  const [orgSecret, organization] = await Promise.all([
+  const [orgSecret, organization, secretRow] = await Promise.all([
     readOrgSecret(organizationId, provider, CREDENTIAL_FIELD),
     prisma.organization.findUnique({ where: { id: organizationId }, select: { kind: true } }),
+    provider === 'slack'
+      ? prisma.integrationSecret.findUnique({
+          where: { organizationId_provider: { organizationId, provider } },
+          select: { authConfig: true },
+        })
+      : null,
   ])
 
   const envAvailable = Boolean(ENV_VALUE[provider]()) && envFallbackAllowed(organization?.kind)
+  const slackConfig =
+    provider === 'slack' && secretRow?.authConfig && typeof secretRow.authConfig === 'object' && !Array.isArray(secretRow.authConfig)
+      ? (secretRow.authConfig as Record<string, unknown>)
+      : null
   return {
     provider,
     label: spec.label,
@@ -59,6 +69,11 @@ async function state(organizationId: string, provider: CredentialProvider) {
     /** The integration resolves at all (own key, or a permitted env fallback). */
     configured: Boolean(orgSecret) || envAvailable,
     source: orgSecret ? ('org' as const) : envAvailable ? ('env' as const) : null,
+    // Slack-only: whether the Events API receiver (src/app/api/slack/events/
+    // route.ts) has a signing secret to verify this workspace's deliveries
+    // with — a saved Slack credential missing this can post outbound but
+    // can never receive verified inbound events.
+    ...(provider === 'slack' ? { hasSigningSecret: Boolean(slackConfig?.signingSecret) } : {}),
   }
 }
 
@@ -74,9 +89,35 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const provider = providerFrom(request)
   const spec = CREDENTIAL_SPECS[provider]
-  const { credential } = z
-    .object({ credential: z.string().trim().min(1) })
+  const { credential, signingSecret } = z
+    .object({
+      credential: z.string().trim().min(1),
+      // Slack only: the app's signing secret, needed by the Events API
+      // receiver (src/app/api/slack/events/route.ts) to verify inbound
+      // deliveries. Optional on every call so replacing/rotating the bot
+      // token alone doesn't force re-entering it (mergeAuthConfig below
+      // carries the existing one forward) — but required the first time,
+      // since without it this workspace's events can never be verified.
+      signingSecret: z.string().trim().min(1).optional(),
+    })
     .parse(await request.json())
+
+  const existing = await prisma.integrationSecret.findUnique({
+    where: { organizationId_provider: { organizationId: auth.organizationId, provider } },
+    select: { id: true, authConfig: true },
+  })
+  const existingConfig =
+    existing?.authConfig && typeof existing.authConfig === 'object' && !Array.isArray(existing.authConfig)
+      ? (existing.authConfig as Record<string, unknown>)
+      : {}
+
+  if (provider === 'slack' && !signingSecret && !existingConfig.signingSecret) {
+    throw new ApiError(
+      'Slack needs a signing secret the first time you connect this workspace, so incoming events can be verified.',
+      400,
+      'MISSING_SIGNING_SECRET',
+    )
+  }
 
   const check = await verifyCredential(provider, credential)
   if (!check.ok) {
@@ -88,21 +129,30 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError(`Could not reach ${spec.label} to verify the credential. Please try again.`, 502, 'UPSTREAM_ERROR')
   }
 
-  const authConfig = buildAuthConfig({ authType: 'api_key', apiKey: credential }) as Prisma.InputJsonObject
+  // mergeAuthConfig (not buildAuthConfig) so Slack's extra, non-generic
+  // fields below (signingSecret/teamId/botUserId) survive a bot-token-only
+  // rotation instead of being dropped by a full replace.
+  let authConfig = mergeAuthConfig(existingConfig, { authType: 'api_key', apiKey: credential }) as Record<string, unknown>
+  if (provider === 'slack') {
+    authConfig = {
+      ...authConfig,
+      // Captured from the same auth.test call verifyCredential just made —
+      // connect-time capture, not a lazy first-event fallback (see
+      // .superpowers/sdd/2026-08-21-activity-event-substrate/task-4-report.md).
+      ...(check.slackIdentity ? { teamId: check.slackIdentity.teamId, botUserId: check.slackIdentity.botUserId } : {}),
+      ...(signingSecret ? { signingSecret: encryptSecret(signingSecret) } : {}),
+    }
+  }
 
-  const existing = await prisma.integrationSecret.findUnique({
-    where: { organizationId_provider: { organizationId: auth.organizationId, provider } },
-    select: { id: true },
-  })
-
+  const authConfigJson = authConfig as Prisma.InputJsonObject
   const secret = await prisma.integrationSecret.upsert({
     where: { organizationId_provider: { organizationId: auth.organizationId, provider } },
-    update: { authType: 'api_key', authConfig, isActive: true, lastRotatedAt: new Date() },
+    update: { authType: 'api_key', authConfig: authConfigJson, isActive: true, lastRotatedAt: new Date() },
     create: {
       organizationId: auth.organizationId,
       provider,
       authType: 'api_key',
-      authConfig,
+      authConfig: authConfigJson,
       isActive: true,
       lastRotatedAt: new Date(),
     },

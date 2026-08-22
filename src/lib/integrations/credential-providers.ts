@@ -69,6 +69,18 @@ export interface CredentialCheck {
   ok: boolean
   /** Upstream status, so callers can tell a bad key (401/403) from an outage. */
   status: number | null
+  /**
+   * Slack only: identity captured from the same `auth.test` call that
+   * verifies the token, at connect time — so the workspace's Events API
+   * receiver (src/app/api/slack/events/route.ts) never has to make a second
+   * round trip or wait for a first event to learn who it is.
+   *  - `teamId` binds this credential to the Slack workspace that owns it,
+   *    which is how an inbound webhook (carrying `team_id`, not an org id)
+   *    is routed back to the right organization.
+   *  - `botUserId` is the bot's own posting identity, used to mark events
+   *    the bot authored as `selfOrigin` (loop prevention) at normalize time.
+   */
+  slackIdentity?: { teamId: string; botUserId: string }
 }
 
 /** Prove a credential works, using each provider's cheapest identity endpoint. */
@@ -87,7 +99,14 @@ export async function verifyCredential(
       })
       const body = (await response.json().catch(() => ({}))) as Record<string, unknown>
       // A live token that failed auth is a 401 to the caller, not an outage.
-      return { ok: body.ok === true, status: body.ok === true ? 200 : 401 }
+      if (body.ok !== true) return { ok: false, status: 401 }
+      const teamId = typeof body.team_id === 'string' ? body.team_id : undefined
+      const botUserId = typeof body.user_id === 'string' ? body.user_id : undefined
+      return {
+        ok: true,
+        status: 200,
+        ...(teamId && botUserId ? { slackIdentity: { teamId, botUserId } } : {}),
+      }
     }
 
     if (provider === 'email') {

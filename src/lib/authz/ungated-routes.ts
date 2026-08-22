@@ -32,6 +32,7 @@ export const UNGATED_ROUTES: readonly string[] = [
   'flows/[id]/runs/[runId]/resume',       // per-run resume token
   'signals/people-ai',                    // HMAC-signed webhook
   'nango/webhook',                        // HMAC-signed webhook
+  'slack/events',                         // HMAC-signed webhook (per-workspace Slack signing secret)
   'agents/[id]/trigger',                  // per-agent trigger token
   'scim/v2/Users',                        // SCIM bearer token
   'scim/v2/Users/[id]',                   // SCIM bearer token

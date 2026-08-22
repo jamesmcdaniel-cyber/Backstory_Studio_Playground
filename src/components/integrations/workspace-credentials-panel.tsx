@@ -34,6 +34,8 @@ type CredentialState = {
   hasOwnKey: boolean
   configured: boolean
   source: 'org' | 'env' | null
+  /** Slack only — see hasSigningSecret in the route's `state()`. */
+  hasSigningSecret?: boolean
 }
 
 const url = (provider: Provider) => `/api/integrations/credentials/${provider}`
@@ -41,6 +43,7 @@ const url = (provider: Provider) => `/api/integrations/credentials/${provider}`
 function CredentialRow({ provider }: { provider: Provider }) {
   const [state, setState] = useState<CredentialState | null>(null)
   const [value, setValue] = useState('')
+  const [signingSecret, setSigningSecret] = useState('')
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -58,14 +61,20 @@ function CredentialRow({ provider }: { provider: Provider }) {
     void load()
   }, [load])
 
+  const needsSigningSecret = provider === 'slack' && !state?.hasSigningSecret
+
   const save = async () => {
     if (!value.trim() || busy) return
+    if (needsSigningSecret && !signingSecret.trim()) return
     setBusy(true)
     try {
       const response = await fetch(url(provider), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential: value.trim() }),
+        body: JSON.stringify({
+          credential: value.trim(),
+          ...(signingSecret.trim() ? { signingSecret: signingSecret.trim() } : {}),
+        }),
       })
       const body = await response.json()
       if (!response.ok) {
@@ -74,6 +83,7 @@ function CredentialRow({ provider }: { provider: Provider }) {
       }
       setState(body as CredentialState)
       setValue('')
+      setSigningSecret('')
       toast.success(`${body.label} connected for this workspace.`)
     } catch {
       toast.error('Could not save that credential.')
@@ -149,7 +159,20 @@ function CredentialRow({ provider }: { provider: Provider }) {
             if (event.key === 'Enter') void save()
           }}
         />
-        <Button onClick={() => void save()} disabled={!value.trim() || busy}>
+        {provider === 'slack' && (
+          <Input
+            type="password"
+            autoComplete="new-password"
+            value={signingSecret}
+            onChange={(event) => setSigningSecret(event.target.value)}
+            placeholder={state.hasSigningSecret ? 'Replace signing secret (optional)' : 'Signing secret'}
+            className="min-w-[16rem] flex-1"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void save()
+            }}
+          />
+        )}
+        <Button onClick={() => void save()} disabled={!value.trim() || (needsSigningSecret && !signingSecret.trim()) || busy}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : state.hasOwnKey ? 'Replace' : 'Connect'}
         </Button>
         {state.hasOwnKey && (
@@ -158,6 +181,12 @@ function CredentialRow({ provider }: { provider: Provider }) {
           </Button>
         )}
       </div>
+      {provider === 'slack' && (
+        <p className="mt-2 text-xs text-gray-400">
+          From your Slack app&rsquo;s Basic Information page — the signing secret lets Backstory verify events your workspace
+          sends it. Set your app&rsquo;s Event Subscriptions request URL to this workspace&rsquo;s events endpoint after saving.
+        </p>
+      )}
     </div>
   )
 }

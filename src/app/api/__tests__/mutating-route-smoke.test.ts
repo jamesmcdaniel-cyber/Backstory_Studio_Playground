@@ -292,6 +292,7 @@ const SKIPS: Record<string, string> = {
   'flows/signals/[name]:POST': 'no coverage: signal fan-out — features/flows/__tests__/signals.test.ts covers the matching rules, not this route',
   'signals/people-ai:POST': 'covered by src/app/api/signals/people-ai/__tests__/receiver.test.ts',
   'nango/webhook:POST': 'no coverage: Nango-signed external webhook',
+  'slack/events:POST': 'no coverage: Slack-signed external webhook — own coverage: src/app/api/slack/events/__tests__/route.db.test.ts',
   'nango/session-token:POST': 'covered by src/app/api/__tests__/free-tier-enforcement.db.test.ts — the integration ceiling, against a fake Nango on localhost',
   'nango/connections/[integrationId]/verify:POST': 'no coverage: calls Nango live',
   'integrations/granola/test:POST': 'no coverage: calls Granola live',

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { flowSignalOutboxEvent, providerSignalOutboxEvent, outboxRetryDelayMs } from '../outbox'
+import { flowSignalOutboxEvent, providerSignalOutboxEvent, activityDispatchOutboxEvent, outboxRetryDelayMs } from '../outbox'
 
 test('outbox retry delay backs off exponentially and caps at one hour', () => {
   assert.equal(outboxRetryDelayMs(1), 1_000)
@@ -43,4 +43,18 @@ test('nango provider events shape into durable provider.<app> flow signals', () 
     signal: 'provider.salesforce',
     payload: { provider: 'salesforce', connectionId: 'conn-9', event: 'sync', model: 'Contact', records: [{ id: 1 }] },
   })
+})
+
+test('activity-dispatch outbox rows carry the activity.dispatch topic and dedupe by [source, sourceEventId]', () => {
+  const event = activityDispatchOutboxEvent({
+    organizationId: 'org-1',
+    activityEventId: 'evt-uuid-1',
+    source: 'slack',
+    sourceEventId: 'Ev0123',
+  })
+  assert.equal(event.organizationId, 'org-1')
+  assert.equal(event.topic, 'activity.dispatch')
+  assert.equal(event.aggregateId, 'evt-uuid-1')
+  assert.equal(event.dedupeKey, 'activity-dispatch:slack:Ev0123')
+  assert.deepEqual(event.payload, { activityEventId: 'evt-uuid-1', source: 'slack', sourceEventId: 'Ev0123' })
 })

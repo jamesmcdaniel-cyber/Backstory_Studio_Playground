@@ -41,6 +41,12 @@ const READ_EXEMPT: Record<string, string> = {
     'signature is not acting with a credential, and auditing every inbound webhook would ' +
     'bury the events that matter.',
   'app/api/signals/people-ai/route.ts': 'Same inbound-signature verification path as webhook-secret.ts.',
+  'lib/integrations/slack.ts':
+    'Decrypts the workspace\'s own Slack SIGNING secret to verify an inbound Events API ' +
+    'signature (src/app/api/slack/events/route.ts) — same rationale as peopleai/webhook-secret.ts: ' +
+    'verifying a signature is not acting with a credential. The bot TOKEN this file also handles ' +
+    'goes through getSlackToken -> resolveOrgCredential -> readOrgSecret in org-credential.ts, ' +
+    'which is what records its reads.',
 }
 
 /**

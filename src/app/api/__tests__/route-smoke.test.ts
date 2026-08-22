@@ -45,6 +45,7 @@ const mutatingExempt = new Set([
   // client, size capped, and never echoes input back.
   'csp-report',
   'nango/webhook',       // Nango webhook signature (verifyIncomingWebhookRequest)
+  'slack/events',        // Slack Events API signature (per-workspace signing secret, HMAC-SHA256 v0)
   'flows/[id]/trigger',  // per-flow webhook secret (constant-time)
   'agents/[id]/trigger', // per-agent trigger secret (constant-time)
   'cron/dispatch',       // CRON_SECRET, fail-closed

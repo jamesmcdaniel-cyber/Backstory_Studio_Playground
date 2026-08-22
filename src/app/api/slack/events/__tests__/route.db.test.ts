@@ -1,0 +1,244 @@
+import { test, before, after } from 'node:test'
+import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
+import { NextRequest } from 'next/server'
+
+/**
+ * Task 4 (activity-event substrate): the Slack Events API receiver — see
+ * docs/superpowers/specs/2026-08-21-activity-event-substrate-design.md and
+ * .superpowers/sdd/2026-08-21-activity-event-substrate/task-4-brief.md.
+ *
+ * Covers, against a real Postgres:
+ *  - a bad signature (wrong secret) is rejected 401.
+ *  - a stale timestamp (>5 min old) is rejected 401, even with a correct
+ *    HMAC over the (still-visible) body.
+ *  - `url_verification` echoes the challenge once the signature verifies
+ *    (org resolution isn't needed — no team_id on that payload shape).
+ *  - a `message` `event_callback` persists an ActivityEvent AND an
+ *    `activity.dispatch` outbox row.
+ *  - a redelivery of the identical `event_id` (Slack's own retry behavior,
+ *    tolerated via `x-slack-retry-num`) acks without a second row in either
+ *    table.
+ *  - an event authored by the workspace's own bot user id persists with
+ *    `selfOrigin: true`.
+ *  - an unresolvable `team_id` (no workspace connected) acks 200 rather than
+ *    erroring, and writes nothing.
+ */
+
+const TEST_DB = process.env.TEST_DATABASE_URL
+const ENABLED = Boolean(TEST_DB)
+
+if (!ENABLED) {
+  test('slack events receiver (skipped: TEST_DATABASE_URL not set)', { skip: true }, () => {})
+}
+
+if (ENABLED) {
+  process.env.DATABASE_URL = TEST_DB
+  process.env.DIRECT_URL = TEST_DB
+  process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test-key'
+
+  let systemPrisma: any
+  let encryptSecret: (v: string) => string
+  const ids: Record<string, string> = {}
+  const SIGNING_SECRET = 'test-slack-signing-secret'
+  const OTHER_SIGNING_SECRET = 'a-different-workspace-secret'
+  const TEAM_ID = 'T_TASK4_TEST'
+  const BOT_USER_ID = 'U_TASK4_BOT'
+
+  before(async () => {
+    ;({ systemPrisma } = await import('@/lib/prisma'))
+    ;({ encryptSecret } = await import('@/lib/crypto/secrets'))
+
+    const stamp = Date.now()
+    const org = await systemPrisma.organization.create({ data: { name: 'Slack Events Test', slug: `slack-events-${stamp}` } })
+    ids.org = org.id
+
+    await systemPrisma.integrationSecret.create({
+      data: {
+        organizationId: org.id,
+        provider: 'slack',
+        authType: 'api_key',
+        authConfig: {
+          apiKey: encryptSecret('xoxb-test-token'),
+          signingSecret: encryptSecret(SIGNING_SECRET),
+          teamId: TEAM_ID,
+          botUserId: BOT_USER_ID,
+        },
+        isActive: true,
+      },
+    })
+  })
+
+  after(async () => {
+    if (ids.org) {
+      await systemPrisma.activityEvent.deleteMany({ where: { organizationId: ids.org } })
+      await systemPrisma.outboxEvent.deleteMany({ where: { organizationId: ids.org } })
+      await systemPrisma.integrationSecret.deleteMany({ where: { organizationId: ids.org } })
+      await systemPrisma.organization.deleteMany({ where: { id: ids.org } })
+    }
+  })
+
+  function sign(secret: string, timestamp: string, rawBody: string): string {
+    const base = `v0:${timestamp}:${rawBody}`
+    return `v0=${crypto.createHmac('sha256', secret).update(base, 'utf8').digest('hex')}`
+  }
+
+  async function post(body: Record<string, unknown>, opts: { secret?: string; timestamp?: string; badSignature?: boolean } = {}) {
+    const raw = JSON.stringify(body)
+    const timestamp = opts.timestamp ?? String(Math.floor(Date.now() / 1000))
+    const secret = opts.secret ?? SIGNING_SECRET
+    const signature = opts.badSignature ? 'v0=' + '0'.repeat(64) : sign(secret, timestamp, raw)
+    const { POST } = await import('../route')
+    return POST(
+      new NextRequest('https://app.test/api/slack/events', {
+        method: 'POST',
+        body: raw,
+        headers: {
+          'content-type': 'application/json',
+          'x-slack-request-timestamp': timestamp,
+          'x-slack-signature': signature,
+        },
+      }),
+    )
+  }
+
+  function messageEnvelope(eventId: string, overrides: Record<string, unknown> = {}) {
+    return {
+      token: 'legacy-verification-token',
+      team_id: TEAM_ID,
+      api_app_id: 'A_TEST',
+      type: 'event_callback',
+      event_id: eventId,
+      event_time: Math.floor(Date.now() / 1000),
+      event: {
+        type: 'message',
+        channel: 'C_GENERAL',
+        user: 'U_HUMAN',
+        text: 'hello from a test',
+        ts: '1700000000.000100',
+        ...overrides,
+      },
+    }
+  }
+
+  test('bad signature (wrong secret) is rejected 401', async () => {
+    const res = await post(messageEnvelope(`evt-bad-sig-${Date.now()}`), { secret: 'not-the-real-secret' })
+    assert.equal(res.status, 401)
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, kind: 'message.posted' } })
+    assert.equal(events.length, 0, 'nothing persisted from an unverified request')
+  })
+
+  test('stale timestamp (>5 minutes old) is rejected 401', async () => {
+    const staleTimestamp = String(Math.floor((Date.now() - 6 * 60_000) / 1000))
+    const res = await post(messageEnvelope(`evt-stale-${Date.now()}`), { timestamp: staleTimestamp })
+    assert.equal(res.status, 401)
+  })
+
+  test('url_verification echoes the challenge once verified', async () => {
+    const challenge = `chal-${Date.now()}`
+    const res = await post({ type: 'url_verification', token: 'legacy-verification-token', challenge })
+    assert.equal(res.status, 200)
+    const data = await res.json()
+    assert.equal(data.challenge, challenge)
+  })
+
+  test('url_verification with a bad signature is still rejected 401 (no org to resolve it against)', async () => {
+    const res = await post(
+      { type: 'url_verification', token: 'legacy-verification-token', challenge: 'chal-bad' },
+      { secret: OTHER_SIGNING_SECRET },
+    )
+    assert.equal(res.status, 401)
+  })
+
+  test('message event persists an ActivityEvent and an activity.dispatch outbox row', async () => {
+    const eventId = `evt-msg-${Date.now()}`
+    const res = await post(messageEnvelope(eventId))
+    assert.equal(res.status, 200)
+    const data = await res.json()
+    assert.equal(data.ok, true)
+
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    assert.equal(events.length, 1)
+    assert.equal(events[0].kind, 'message.posted')
+    assert.equal(events[0].ownerUserId, null, 'workspace-shared Slack credential -> org-visible, no owner')
+    assert.equal(events[0].visibility, 'org')
+    assert.equal(events[0].selfOrigin, false, 'a human user authored this one')
+
+    const outboxRows = await systemPrisma.outboxEvent.findMany({
+      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${eventId}` },
+    })
+    assert.equal(outboxRows.length, 1)
+    assert.equal(outboxRows[0].topic, 'activity.dispatch')
+    ids.firstOutboxId = outboxRows[0].id
+  })
+
+  test('retry delivery of the identical event_id acks without a second row in either table', async () => {
+    const eventId = `evt-retry-${Date.now()}`
+    const first = await post(messageEnvelope(eventId))
+    assert.equal(first.status, 200)
+
+    const raw = JSON.stringify(messageEnvelope(eventId))
+    const timestamp = String(Math.floor(Date.now() / 1000))
+    const signature = sign(SIGNING_SECRET, timestamp, raw)
+    const { POST } = await import('../route')
+    const retry = await POST(
+      new NextRequest('https://app.test/api/slack/events', {
+        method: 'POST',
+        body: raw,
+        headers: {
+          'content-type': 'application/json',
+          'x-slack-request-timestamp': timestamp,
+          'x-slack-signature': signature,
+          // Slack marks redeliveries with this header; the receiver must
+          // tolerate it (dedupe makes the retry an ack, not a rejection).
+          'x-slack-retry-num': '1',
+          'x-slack-retry-reason': 'http_timeout',
+        },
+      }),
+    )
+    assert.equal(retry.status, 200, 'a retry delivery still acks 200')
+    const retryData = await retry.json()
+    assert.equal(retryData.ok, true)
+
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    assert.equal(events.length, 1, 'still exactly one row — P2002 was swallowed as a dedupe ack')
+
+    const outboxRows = await systemPrisma.outboxEvent.findMany({
+      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${eventId}` },
+    })
+    assert.equal(outboxRows.length, 1, 'still exactly one outbox row for the retried event')
+  })
+
+  test('an event authored by the workspace bot user persists with selfOrigin: true', async () => {
+    const eventId = `evt-self-${Date.now()}`
+    const res = await post(messageEnvelope(eventId, { user: BOT_USER_ID }))
+    assert.equal(res.status, 200)
+
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    assert.equal(events.length, 1)
+    assert.equal(events[0].selfOrigin, true, 'authored by the workspace\'s own captured botUserId')
+  })
+
+  test('an unresolvable team_id acks 200 and persists nothing (no workspace connected)', async () => {
+    const eventId = `evt-unknown-team-${Date.now()}`
+    const raw = JSON.stringify({ ...messageEnvelope(eventId), team_id: 'T_NEVER_CONNECTED' })
+    const timestamp = String(Math.floor(Date.now() / 1000))
+    // Signed with SOME secret — since team_id resolves to no org at all, the
+    // route never even reaches a signature check for this delivery.
+    const signature = sign(SIGNING_SECRET, timestamp, raw)
+    const { POST } = await import('../route')
+    const res = await POST(
+      new NextRequest('https://app.test/api/slack/events', {
+        method: 'POST',
+        body: raw,
+        headers: { 'content-type': 'application/json', 'x-slack-request-timestamp': timestamp, 'x-slack-signature': signature },
+      }),
+    )
+    assert.equal(res.status, 200, 'unknown team_id acks rather than erroring, per the Nango-webhook precedent')
+    const data = await res.json()
+    assert.equal(data.ok, true)
+
+    const events = await systemPrisma.activityEvent.findMany({ where: { source: 'slack', sourceEventId: eventId } })
+    assert.equal(events.length, 0)
+  })
+}

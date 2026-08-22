@@ -92,6 +92,9 @@ model Organization {
   huddleNotes          HuddleNote[]
   flowWebhookReceipts  FlowWebhookReceipt[]
   outboxEvents         OutboxEvent[]
+  activityEvents       ActivityEvent[]
+  activityTriggerClaims ActivityTriggerClaim[]
+  activitySourceCursors ActivitySourceCursor[]
   domains              OrganizationDomain[]
   allowedDomains       PlatformAllowedDomain[]
   scimTokens           ScimToken[]
@@ -791,6 +794,34 @@ model Signal {
   @@map("signals")
 }
 
+/// Normalized, persisted provider-activity event (Slack messages, Salesforce
+/// record changes, GitHub events, ...) — the substrate exactly-once flow
+/// triggers and graph-RAG indexing are built on. Duplicate provider deliveries
+/// are acks, not new rows (@@unique below), same as Signal.
+model ActivityEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  source         String    // 'slack' | 'salesforce' | 'github' | 'nango:<provider>'
+  sourceEventId  String
+  kind           String    // normalized verb: 'message.posted' | 'record.updated' | 'pr.opened' | ...
+  occurredAt     DateTime
+  actorExternalId String?
+  ownerUserId    String?   @db.Uuid
+  visibility     String    @default("org") // 'org' | 'private'
+  selfOrigin     Boolean   @default(false)
+  backfill       Boolean   @default(false)
+  chainDepth     Int       @default(0)
+  subject        Json?     // { channelId?, threadTs?, recordId?, repo?, ... }
+  payload        Json
+  indexedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, source, sourceEventId])
+  @@index([organizationId, indexedAt])
+  @@index([organizationId, source, kind, createdAt])
+  @@map("activity_events")
+}
+
 // Routing rule: signal type + JSON filter → run an agent, with the signal
 // injected as structured context.
 model SignalSubscription {
@@ -1184,6 +1215,21 @@ model NangoConnection {
   @@index([organizationId, providerConfigKey])
   @@index([userId])
   @@map("nango_connections")
+}
+
+/// Per-connection checkpoint for backfill workers: how far a source has been
+/// paged, so backfill resumes idempotently instead of re-walking history.
+/// Backfilled events never fire triggers (ActivityEvent.backfill = true).
+model ActivitySourceCursor {
+  id              String    @id @default(uuid()) @db.Uuid
+  organizationId  String    @db.Uuid
+  source          String
+  connectionId    String
+  cursor          Json
+  lastBackfilledAt DateTime?
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, source, connectionId])
+  @@map("activity_source_cursors")
 }
 
 // Per-organization secret for built-in integrations (e.g. the Granola API
@@ -1586,6 +1632,23 @@ model FlowWebhookReceipt {
   @@index([expiresAt])
   @@index([organizationId, receivedAt])
   @@map("flow_webhook_receipts")
+}
+
+/// Exactly-once claim for (ActivityEvent, Flow): the dispatcher creates this
+/// row first (P2002 = already fired) and dispatches only on success — the
+/// flow-side twin of AgentExecution.idempotencyKey in signals/router.ts.
+model ActivityTriggerClaim {
+  id              String   @id @default(uuid()) @db.Uuid
+  organizationId  String   @db.Uuid
+  activityEventId String   @db.Uuid
+  flowId          String   @db.Uuid
+  status          String   @default("claimed") // 'claimed'|'dispatched'|'throttled'|'failed'
+  flowRunId       String?  @db.Uuid
+  createdAt       DateTime @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, activityEventId, flowId])
+  @@index([organizationId, flowId, createdAt])
+  @@map("activity_trigger_claims")
 }
 
 /// Durable handoff for side effects that must survive a process crash after the

@@ -71,6 +71,9 @@ export const EXCLUDED: Record<string, string> = {
   PushSubscription: 'device endpoints — a demo org must not be able to notify real devices',
   StoredFile: 'binary storage with quota accounting; out of demo scope per the design',
   PlatformAllowedDomain: 'platform admission control — global policy, not workspace scenery',
+  ActivityEvent: 'raw provider-event ingest (substrate only as of this migration, no writer ships with it yet); a copy would be inert rows with nothing pointing at them',
+  ActivityTriggerClaim: 'exactly-once dispatch ledger tied to real event/flow ids — same class as FlowSideEffect',
+  ActivitySourceCursor: 'backfill checkpoint tied to a real connection; meaningless without the connection it advances',
 }
 
 const BOUND = 25

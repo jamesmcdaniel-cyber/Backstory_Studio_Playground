@@ -63,21 +63,30 @@ export async function GET(request: Request) {
       select: { id: true },
       take: CAP,
     })
+    // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
+    const staleActivityEvents = await systemPrisma.activityEvent.findMany({
+      where: { createdAt: { lt: cutoff } }, select: { id: true, organizationId: true }, take: CAP,
+    })
 
-    // Graph parity: prune the run:/signal: nodes for the rows this sweep is
-    // about to delete — graph-first, because after the Postgres delete the
-    // ids are gone and a missed node would linger forever (audit: deleted
-    // PII resurfacing in RAG context).
-    const graphGroups = new Map<string, { organizationId: string; executionIds: string[]; signalIds: string[] }>()
+    // Graph parity: prune the run:/signal:/activity: nodes for the rows this
+    // sweep is about to delete — graph-first, because after the Postgres
+    // delete the ids are gone and a missed node would linger forever (audit:
+    // deleted PII resurfacing in RAG context).
+    const graphGroups = new Map<string, { organizationId: string; executionIds: string[]; signalIds: string[]; activityIds: string[] }>()
     for (const e of staleExecutions) {
-      const group = graphGroups.get(e.organizationId) ?? { organizationId: e.organizationId, executionIds: [], signalIds: [] }
+      const group = graphGroups.get(e.organizationId) ?? { organizationId: e.organizationId, executionIds: [], signalIds: [], activityIds: [] }
       group.executionIds.push(e.id)
       graphGroups.set(e.organizationId, group)
     }
     for (const s of staleSignals) {
-      const group = graphGroups.get(s.organizationId) ?? { organizationId: s.organizationId, executionIds: [], signalIds: [] }
+      const group = graphGroups.get(s.organizationId) ?? { organizationId: s.organizationId, executionIds: [], signalIds: [], activityIds: [] }
       group.signalIds.push(s.id)
       graphGroups.set(s.organizationId, group)
+    }
+    for (const a of staleActivityEvents) {
+      const group = graphGroups.get(a.organizationId) ?? { organizationId: a.organizationId, executionIds: [], signalIds: [], activityIds: [] }
+      group.activityIds.push(a.id)
+      graphGroups.set(a.organizationId, group)
     }
     try {
       await removeRetiredFromGraph(Array.from(graphGroups.values()))
@@ -98,6 +107,18 @@ export async function GET(request: Request) {
     const flowRunsDeleted = staleFlowRuns.length
       ? (await systemPrisma.flowRun.deleteMany({ where: { id: { in: staleFlowRuns.map((run) => run.id) } } })).count
       : 0
+    // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
+    const activityEventsDeleted = staleActivityEvents.length
+      ? (await systemPrisma.activityEvent.deleteMany({ where: { id: { in: staleActivityEvents.map((a) => a.id) } } })).count
+      : 0
+
+    // Claim rows are the dispatch-idempotency ledger; terminal ones (fired,
+    // failed, or throttled) are pure history once past the retention window —
+    // the ones still 'claimed' are in-flight and must never be swept.
+    // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
+    const activityTriggerClaimsPruned = (await systemPrisma.activityTriggerClaim.deleteMany({
+      where: { createdAt: { lt: cutoff }, status: { in: ['dispatched', 'throttled', 'failed'] } },
+    })).count
 
     // Public webhook replay receipts only need to cover the retry window.
     // systemPrisma: global expiry sweep by an intrinsic timestamp.
@@ -182,8 +203,8 @@ export async function GET(request: Request) {
       where: { createdAt: { lt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) } },
     })).count
 
-    apiLogger.info('cron/retention complete', { days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned, sideEffectsPruned })
-    return Response.json({ success: true, days, executionsDeleted, flowRunsDeleted, signalsDeleted, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned, sideEffectsPruned })
+    apiLogger.info('cron/retention complete', { days, executionsDeleted, flowRunsDeleted, signalsDeleted, activityEventsDeleted, activityTriggerClaimsPruned, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned, sideEffectsPruned })
+    return Response.json({ success: true, days, executionsDeleted, flowRunsDeleted, signalsDeleted, activityEventsDeleted, activityTriggerClaimsPruned, transcriptsPruned, webhookReceiptsPruned, outboxEventsPruned, storedFilesPruned, storedFileDeleteFailures, huddleSegmentsPruned, llmCallsPruned, sideEffectsPruned })
   } catch (error) {
     apiLogger.error('cron/retention failed', { error: error instanceof Error ? error.message : String(error) })
     return Response.json({ success: false, error: 'Internal server error' }, { status: 500 })

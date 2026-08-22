@@ -29,6 +29,7 @@ export const nodeIds = {
   signal: (id: string) => `signal:${id}`,
   run: (id: string) => `run:${id}`,
   agent: (id: string) => `agent:${id}`,
+  activity: (id: string) => `activity:${id}`,
 }
 const nid = nodeIds
 
@@ -363,12 +364,16 @@ export async function removeExecutionFromGraph(organizationId: string, execution
  * ids are still known, so callers should delete graph-first or tolerate loss.
  */
 export async function removeRetiredFromGraph(
-  groups: Array<{ organizationId: string; executionIds: string[]; signalIds: string[] }>,
+  groups: Array<{ organizationId: string; executionIds: string[]; signalIds: string[]; activityIds?: string[] }>,
 ): Promise<void> {
   if (!graphRagPersistent()) return
   const store = getGraphRagStore()
   for (const group of groups) {
-    const ids = [...group.executionIds.map((id) => nid.run(id)), ...group.signalIds.map((id) => nid.signal(id))]
+    const ids = [
+      ...group.executionIds.map((id) => nid.run(id)),
+      ...group.signalIds.map((id) => nid.signal(id)),
+      ...(group.activityIds ?? []).map((id) => nid.activity(id)),
+    ]
     if (ids.length === 0) continue
     try {
       await store.deleteNodes(group.organizationId, ids)

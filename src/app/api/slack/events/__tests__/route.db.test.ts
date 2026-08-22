@@ -9,11 +9,17 @@ import { NextRequest } from 'next/server'
  * .superpowers/sdd/2026-08-21-activity-event-substrate/task-4-brief.md.
  *
  * Covers, against a real Postgres:
- *  - a bad signature (wrong secret) is rejected 401.
- *  - a stale timestamp (>5 min old) is rejected 401, even with a correct
- *    HMAC over the (still-visible) body.
+ *  - a bad signature (wrong secret) for a KNOWN team_id acks 200 (not 401) —
+ *    see the enumeration-oracle ruling in the route's doc comment: this
+ *    outcome must be byte-identical to the unknown-team_id ack below, so the
+ *    response code itself never reveals whether a workspace is connected.
+ *  - a stale timestamp (>5 min old) for a known team_id is the same
+ *    ack-not-401 outcome, even with a correct HMAC over the (still-visible)
+ *    body.
  *  - `url_verification` echoes the challenge once the signature verifies
- *    (org resolution isn't needed — no team_id on that payload shape).
+ *    (org resolution isn't needed — no team_id on that payload shape); a bad
+ *    signature on THAT branch still 401s, since there's no per-workspace
+ *    connection state to leak for it.
  *  - a `message` `event_callback` persists an ActivityEvent AND an
  *    `activity.dispatch` outbox row.
  *  - a redelivery of the identical `event_id` (Slack's own retry behavior,
@@ -23,6 +29,10 @@ import { NextRequest } from 'next/server'
  *    `selfOrigin: true`.
  *  - an unresolvable `team_id` (no workspace connected) acks 200 rather than
  *    erroring, and writes nothing.
+ *
+ * The pure signature-correctness assertions (good/bad/stale all verify
+ * exactly as expected) live in src/lib/activity/__tests__/slack-verify.test.ts
+ * — this file only asserts what the ROUTE does with each outcome.
  */
 
 const TEST_DB = process.env.TEST_DATABASE_URL
@@ -121,17 +131,25 @@ if (ENABLED) {
     }
   }
 
-  test('bad signature (wrong secret) is rejected 401', async () => {
-    const res = await post(messageEnvelope(`evt-bad-sig-${Date.now()}`), { secret: 'not-the-real-secret' })
-    assert.equal(res.status, 401)
-    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, kind: 'message.posted' } })
+  test('bad signature (wrong secret) for a known team_id acks 200, not 401 (enumeration-oracle fix)', async () => {
+    const eventId = `evt-bad-sig-${Date.now()}`
+    const res = await post(messageEnvelope(eventId), { secret: 'not-the-real-secret' })
+    assert.equal(res.status, 200, 'a known team_id\'s failed verification acks identically to an unknown team_id')
+    const data = await res.json()
+    assert.deepEqual(data, { ok: true }, 'byte-identical ack shape to the unknown-team_id case below')
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
     assert.equal(events.length, 0, 'nothing persisted from an unverified request')
   })
 
-  test('stale timestamp (>5 minutes old) is rejected 401', async () => {
+  test('stale timestamp (>5 minutes old) for a known team_id also acks 200, not 401', async () => {
+    const eventId = `evt-stale-${Date.now()}`
     const staleTimestamp = String(Math.floor((Date.now() - 6 * 60_000) / 1000))
-    const res = await post(messageEnvelope(`evt-stale-${Date.now()}`), { timestamp: staleTimestamp })
-    assert.equal(res.status, 401)
+    const res = await post(messageEnvelope(eventId), { timestamp: staleTimestamp })
+    assert.equal(res.status, 200)
+    const data = await res.json()
+    assert.deepEqual(data, { ok: true })
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    assert.equal(events.length, 0, 'a stale-but-known-team delivery still persists nothing')
   })
 
   test('url_verification echoes the challenge once verified', async () => {
@@ -236,7 +254,7 @@ if (ENABLED) {
     )
     assert.equal(res.status, 200, 'unknown team_id acks rather than erroring, per the Nango-webhook precedent')
     const data = await res.json()
-    assert.equal(data.ok, true)
+    assert.deepEqual(data, { ok: true }, 'byte-identical to a KNOWN team_id\'s failed-verification ack above — no oracle')
 
     const events = await systemPrisma.activityEvent.findMany({ where: { source: 'slack', sourceEventId: eventId } })
     assert.equal(events.length, 0)

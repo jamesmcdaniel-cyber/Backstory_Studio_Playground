@@ -12,6 +12,7 @@ import {
   type CredentialProvider,
 } from '@/lib/integrations/credential-providers'
 import { readOrgSecret, envFallbackAllowed } from '@/lib/integrations/org-credential'
+import { findConflictingSlackOrg } from '@/lib/integrations/slack'
 import { recordAudit } from '@/lib/audit'
 import { recordCredentialGrant, recordCredentialRotation } from '@/lib/credentials/audit'
 
@@ -127,6 +128,29 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       throw new ApiError(`${spec.label} rejected that credential. Check it and try again.`, 400, 'INVALID_CREDENTIAL')
     }
     throw new ApiError(`Could not reach ${spec.label} to verify the credential. Please try again.`, 502, 'UPSTREAM_ERROR')
+  }
+
+  // A Slack `team_id` is how the Events API receiver (src/app/api/slack/
+  // events/route.ts) routes an inbound delivery back to an org — so two orgs
+  // claiming the SAME team_id is not a cosmetic conflict, it's every event
+  // for that workspace silently misrouted to whichever org
+  // findSlackWorkspaceByTeamId's deterministic scan happens to return first,
+  // with no error and no audit trail pointing at why. Rejected here, before
+  // ever reaching that ambiguity, and audited either way this org's own
+  // token check turns out.
+  if (provider === 'slack' && check.slackIdentity) {
+    const conflictOrgId = await findConflictingSlackOrg(check.slackIdentity.teamId, auth.organizationId)
+    if (conflictOrgId) {
+      await recordAudit({
+        organizationId: auth.organizationId,
+        action: 'credential.rejected',
+        actorUserId: auth.userId,
+        resourceType: 'integration_secret',
+        resourceId: `slack:${check.slackIdentity.teamId}`,
+        detail: { provider: 'slack', reason: 'team_id_already_connected', teamId: check.slackIdentity.teamId },
+      })
+      throw new ApiError('This Slack workspace is already connected to a different Backstory workspace.', 409, 'SLACK_TEAM_ALREADY_CONNECTED')
+    }
   }
 
   // mergeAuthConfig (not buildAuthConfig) so Slack's extra, non-generic

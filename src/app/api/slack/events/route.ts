@@ -51,16 +51,23 @@ export const runtime = 'nodejs'
  *
  * ── Failure modes (never a 500 to Slack) ───────────────────────────────────
  *
- *  - Signature verified but `team_id` matches no saved credential: this
- *    workspace was never connected on our side (or was disconnected) — ack
- *    200 + WARN, exactly like the Nango webhook's unresolvable-connection
- *    case. Nothing to protect, no data to write; a retry storm would achieve
- *    nothing since there is still no matching credential.
- *  - `team_id` resolves to an org, but that org has no signing secret to
- *    verify with (own or env fallback): this is NOT the same as the above —
- *    the org exists and a forged event for it would otherwise be trusted —
- *    so this is treated as a verification failure (401), not an ack.
- *  - Any other signature mismatch, or a stale timestamp: 401.
+ * Every `team_id`-scoped failure — unknown team, an org with no signing
+ * secret to verify with, or a signature that fails to verify — returns the
+ * SAME `200 { ok: true }` ack. Those cases used to be split (401 for a known
+ * org's bad signature, 200 for a `team_id` we'd never heard of), which made
+ * the response code itself an oracle: an attacker could tell "this workspace
+ * IS connected to Backstory" from "it is NOT" without any other signal, just
+ * by trying candidate team ids. There is nothing operationally useful about
+ * that distinction being visible to the caller — Slack does nothing
+ * different with a 401 versus a 200 — so it is not surfaced. The real signal
+ * moved to logs instead: an unknown `team_id` is WARN (routine — a
+ * disconnected or never-connected workspace is not an incident); a KNOWN
+ * team's signature failing is ERROR (Sentry-visible — that one is either a
+ * misconfigured signing secret or a forged request, and is worth a human
+ * looking at). `url_verification` (no `team_id` at all — see below) is not
+ * part of this oracle, since there is no per-workspace state to distinguish
+ * for it, and keeps returning 401 on a failed signature.
+ *
  *  - Unparseable body: 200 ack (verified-but-inert, same as the Nango
  *    webhook's `unparseable` branch) once resolvable at all, else 400 (no
  *    team_id/type to act on before a secret can even be chosen).
@@ -68,6 +75,22 @@ export const runtime = 'nodejs'
 
 const ADMISSION_LIMIT = { limit: 600, windowMs: 60_000, failureMode: 'closed' } as const
 const REJECTED_LIMIT = { limit: 30, windowMs: 60_000, failureMode: 'closed' } as const
+/**
+ * `url_verification` carries no `team_id`, so verifying it means trying every
+ * configured workspace's own secret (see `resolveVerification` below) — an
+ * O(N) HMAC computation per request, driven entirely by attacker-controlled
+ * request volume, on a route with no session and no per-org gate. Two
+ * mitigations, both because this handshake genuinely only ever happens once
+ * per workspace during Slack app setup, never in steady-state traffic:
+ *  - a MUCH tighter rate limit than the general admission gate, keyed
+ *    separately so a legitimate `event_callback` flood from one IP never
+ *    starves this bucket and vice versa.
+ *  - a hard cap on how many stored secrets are even fetched to try, so the
+ *    per-request cost has a fixed ceiling regardless of how many workspaces
+ *    are configured system-wide.
+ */
+const URL_VERIFICATION_RATE_LIMIT = { limit: 5, windowMs: 60_000, failureMode: 'closed' } as const
+const URL_VERIFICATION_TRIAL_CAP = 50
 
 function tooMany(retryAfterMs?: number) {
   return NextResponse.json(
@@ -85,10 +108,19 @@ function asRecord(value: unknown): Record<string, unknown> {
  * `event_callback`) the organization it belongs to.
  *
  *  - `team_id` present → exactly one org's credential is tried (the one
- *    `team_id` names). No match → `{ outcome: 'unknown-team' }`.
+ *    `team_id` names). No match → `{ outcome: 'unknown-team' }`; a match
+ *    that fails to verify (missing secret OR bad signature) →
+ *    `{ outcome: 'team-verification-failed' }` — deliberately NOT split into
+ *    separate cases, so the route can't accidentally respond to them
+ *    differently and reopen the enumeration oracle these two used to be
+ *    (see the file-level doc comment).
  *  - `team_id` absent (`url_verification`) → every configured workspace's
- *    secret is tried until one verifies (see the file-level doc comment for
- *    why this is safe: no org-scoped action follows from this branch).
+ *    secret is tried, up to `URL_VERIFICATION_TRIAL_CAP`, until one verifies
+ *    (see the file-level doc comment for why this is safe: no org-scoped
+ *    action follows from this branch). A signature that matches none of them
+ *    is `{ outcome: 'url-verification-failed' }` — kept distinct from the
+ *    team_id branch's failure because there is no per-workspace connection
+ *    state to leak here in the first place.
  */
 async function resolveVerification(
   body: Record<string, unknown>,
@@ -96,8 +128,8 @@ async function resolveVerification(
 ): Promise<
   | { outcome: 'verified'; organizationId: string | null; credential: SlackWorkspaceCredential | null }
   | { outcome: 'unknown-team' }
-  | { outcome: 'unverifiable' }
-  | { outcome: 'bad-signature' }
+  | { outcome: 'team-verification-failed' }
+  | { outcome: 'url-verification-failed' }
 > {
   const teamId = typeof body.team_id === 'string' ? body.team_id : null
 
@@ -105,7 +137,7 @@ async function resolveVerification(
     const credential = await findSlackWorkspaceByTeamId(teamId)
     if (!credential) return { outcome: 'unknown-team' }
     const signingSecret = await resolveSigningSecretForOrg(credential)
-    if (!signingSecret) return { outcome: 'unverifiable' }
+    if (!signingSecret) return { outcome: 'team-verification-failed' }
     const ok = verifySlackSignature({
       signingSecret,
       timestampHeader: headers.timestampHeader,
@@ -113,7 +145,7 @@ async function resolveVerification(
       rawBody: headers.rawBody,
       now: headers.now,
     })
-    if (!ok) return { outcome: 'bad-signature' }
+    if (!ok) return { outcome: 'team-verification-failed' }
     return { outcome: 'verified', organizationId: credential.organizationId, credential }
   }
 
@@ -122,8 +154,25 @@ async function resolveVerification(
   // org id to resolve, so they're not reachable from this branch — a purely
   // env-configured internal/partner secret with no IntegrationSecret row at
   // all cannot receive a url_verification handshake by this design; it must
-  // save at least a bot token first).
-  const candidates = await allSlackWorkspaceCredentials()
+  // save at least a bot token first), bounded by URL_VERIFICATION_TRIAL_CAP
+  // so this branch's cost has a fixed ceiling regardless of how many
+  // workspaces are configured system-wide. Fetching one extra row is how the
+  // cap's own truncation is detected without a second query.
+  const fetched = await allSlackWorkspaceCredentials(URL_VERIFICATION_TRIAL_CAP + 1)
+  const truncated = fetched.length > URL_VERIFICATION_TRIAL_CAP
+  if (truncated) {
+    // Honest tradeoff, not a silent one: if the system ever has more
+    // configured Slack workspaces than the cap, whichever ones sort AFTER
+    // the cap in claimantsForTeamId's deterministic order cannot complete
+    // their url_verification handshake through this branch until the count
+    // drops back under the cap (or the cap is raised). That's an acceptable
+    // cost for a handshake that happens once per workspace at setup time,
+    // against the alternative of an unbounded per-request HMAC cost driven
+    // entirely by request volume — but it's a real, visible limit, hence the
+    // WARN rather than letting it pass unnoticed.
+    apiLogger.warn('slack url_verification trial set capped', { cap: URL_VERIFICATION_TRIAL_CAP })
+  }
+  const candidates = truncated ? fetched.slice(0, URL_VERIFICATION_TRIAL_CAP) : fetched
   for (const credential of candidates) {
     if (!credential.ownSigningSecret) continue
     const ok = verifySlackSignature({
@@ -135,7 +184,7 @@ async function resolveVerification(
     })
     if (ok) return { outcome: 'verified', organizationId: null, credential }
   }
-  return { outcome: 'bad-signature' }
+  return { outcome: 'url-verification-failed' }
 }
 
 export async function POST(request: NextRequest) {
@@ -156,24 +205,50 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Invalid JSON body' }, { status: 400 })
   }
 
+  const teamId = typeof body.team_id === 'string' ? body.team_id : null
+  if (!teamId) {
+    // The url_verification branch is the one attacker-triggerable O(N) crypto
+    // path (see the constant's doc comment) — a much tighter, separately
+    // keyed limit than general admission, since this handshake only ever
+    // happens once per workspace at setup time.
+    const allowedUrlVerification = await rateLimit(`slack-events-no-team:${ip}`, URL_VERIFICATION_RATE_LIMIT)
+    if (!allowedUrlVerification.ok) return tooMany(allowedUrlVerification.retryAfterMs)
+  }
+
   const timestampHeader = request.headers.get('x-slack-request-timestamp')
   const signatureHeader = request.headers.get('x-slack-signature')
   const resolution = await resolveVerification(body, { timestampHeader, signatureHeader, rawBody, now: new Date() })
 
   if (resolution.outcome === 'unknown-team') {
     // Signature can't even be attempted — nothing on our side names this
-    // team_id. Never 500, never retried into: ack and move on.
+    // team_id. Never 500, never retried into: ack and move on. WARN, not
+    // ERROR — a disconnected/never-connected workspace is routine, not an
+    // incident (see the file-level doc comment on why this ack is
+    // byte-identical to `team-verification-failed`'s below).
     apiLogger.warn('slack event dropped — team_id matches no connected workspace', { teamId: body.team_id })
-    return NextResponse.json({ ok: true, skipped: 'unknown-team' })
+    return NextResponse.json({ ok: true })
   }
 
-  if (resolution.outcome === 'unverifiable' || resolution.outcome === 'bad-signature') {
+  if (resolution.outcome === 'team-verification-failed') {
     const allowed = await rateLimit(`slack-events-rejected:${ip}`, REJECTED_LIMIT)
     if (!allowed.ok) return tooMany(allowed.retryAfterMs)
-    await recordTokenRejection(request, {
-      surface: 'slack-events',
-      reason: resolution.outcome === 'unverifiable' ? 'no_signing_secret' : 'invalid_signature',
-    })
+    await recordTokenRejection(request, { surface: 'slack-events', reason: 'invalid_signature' })
+    // ERROR, not WARN: unlike an unknown team_id, this IS a connected
+    // workspace — a signature that fails to verify for it is either a
+    // misconfigured signing secret or a forged request, either of which is
+    // worth a human looking at. The response is still the uniform 200 ack
+    // (see the file-level doc comment): Slack's dashboard is not where this
+    // gets diagnosed, logs are.
+    apiLogger.error('slack event verification failed for a connected workspace', { teamId })
+    return NextResponse.json({ ok: true })
+  }
+
+  if (resolution.outcome === 'url-verification-failed') {
+    const allowed = await rateLimit(`slack-events-rejected:${ip}`, REJECTED_LIMIT)
+    if (!allowed.ok) return tooMany(allowed.retryAfterMs)
+    await recordTokenRejection(request, { surface: 'slack-events', reason: 'invalid_signature_url_verification' })
+    // No team_id to leak connection status for — this stays a distinguishable
+    // 401, unlike the two ack'd outcomes above.
     return NextResponse.json({ ok: false, error: 'Invalid signature' }, { status: 401 })
   }
 

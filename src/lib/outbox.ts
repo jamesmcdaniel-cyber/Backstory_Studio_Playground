@@ -169,7 +169,12 @@ async function deliver(event: { id: string; organizationId: string; topic: strin
     // than an unsupported topic — throwing here would retry every
     // `activity.dispatch` row up to MAX_ATTEMPTS and dead-letter it before
     // Task 6 ever ships, poisoning the batch with churn (log noise, wasted
-    // claims) for a topic that's deliberately parked, not broken.
+    // claims) for a topic that's deliberately parked, not broken. This is a
+    // dev-only loss window, not a production one: substrate commits are not
+    // pushed/deployed until the final gate, and Task 6's real deliver switch
+    // replacing this no-op lands in that same push — so no production event
+    // can ever actually traverse this branch marked "delivered" without ever
+    // having been dispatched.
     return
   }
   if (event.topic !== OUTBOX_TOPIC_FLOW_SIGNAL) throw new Error(`Unsupported outbox topic: ${event.topic}`)

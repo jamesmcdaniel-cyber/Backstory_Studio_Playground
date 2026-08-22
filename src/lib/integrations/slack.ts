@@ -22,6 +22,7 @@ import { resolveOrgCredential, type ResolvedCredential } from './org-credential'
 import { demoFetchOr } from '@/lib/demo/transport'
 import { systemPrisma } from '@/lib/prisma'
 import { decryptSecret } from '@/lib/crypto/secrets'
+import { apiLogger } from '@/lib/logger'
 
 const SLACK_API_URL = 'https://slack.com/api/chat.postMessage'
 
@@ -100,6 +101,27 @@ function toWorkspaceCredential(row: { organizationId: string; authConfig: unknow
 }
 
 /**
+ * Every org whose ACTIVE Slack credential currently claims `teamId`, ordered
+ * deterministically (`organizationId` ascending — arbitrary but stable, NOT
+ * insertion order, which an unordered `findMany` does not guarantee across
+ * calls). The credential-save path (see the credentials route) rejects a new
+ * claim on a `team_id` another org already holds, so this should only ever
+ * return 0 or 1 rows in practice; it still scans and reports every claimant
+ * rather than assuming that, both because the guard postdates this code (an
+ * older collision could already exist) and because a race between two
+ * concurrent saves is not fully closed by an application-level check (see the
+ * credentials route's own comment on that gap).
+ */
+async function claimantsForTeamId(teamId: string): Promise<{ organizationId: string; authConfig: unknown }[]> {
+  const rows = await systemPrisma.integrationSecret.findMany({
+    where: { provider: SLACK_PROVIDER, isActive: true },
+    select: { organizationId: true, authConfig: true },
+    orderBy: { organizationId: 'asc' },
+  })
+  return rows.filter((row) => toWorkspaceCredential(row).teamId === teamId)
+}
+
+/**
  * Resolve the organization that owns a Slack `team_id`, for an `event_callback`
  * delivery (which always carries one). There is no dedicated index for this —
  * the set of workspaces with a saved Slack credential is small, so a full
@@ -109,15 +131,43 @@ function toWorkspaceCredential(row: { organizationId: string; authConfig: unknow
  */
 export async function findSlackWorkspaceByTeamId(teamId: string): Promise<SlackWorkspaceCredential | null> {
   if (!teamId) return null
-  const rows = await systemPrisma.integrationSecret.findMany({
-    where: { provider: SLACK_PROVIDER, isActive: true },
-    select: { organizationId: true, authConfig: true },
-  })
-  for (const row of rows) {
-    const credential = toWorkspaceCredential(row)
-    if (credential.teamId === teamId) return credential
+  const claimants = await claimantsForTeamId(teamId)
+  if (claimants.length > 1) {
+    // Defense in depth: this should be unreachable once the credential-save
+    // path's conflict check is in place, but if it ever IS reached (a
+    // collision that predates the guard, or a race the guard didn't close),
+    // every event for BOTH orgs silently routing to a nondeterministic
+    // winner is exactly the failure mode that guard exists to prevent — so
+    // this stays loud (error-level, Sentry-visible) rather than quietly
+    // resolving to whichever row sorts first.
+    apiLogger.error('slack team_id claimed by more than one organization', {
+      teamId,
+      organizationIds: claimants.map((row) => row.organizationId),
+    })
   }
-  return null
+  return claimants.length > 0 ? toWorkspaceCredential(claimants[0]) : null
+}
+
+/**
+ * Does any org OTHER than `excludeOrganizationId` already claim `teamId`?
+ * Used by the credential-save path to reject a new claim on a `team_id`
+ * another workspace already owns — without this, `findSlackWorkspaceByTeamId`
+ * would silently pick ONE of the colliding orgs (see `claimantsForTeamId`)
+ * with no error, no audit trail, and every event misrouted to whichever org
+ * happened to sort first.
+ *
+ * This is a check-then-act, not a database constraint (there's no unique
+ * index on `authConfig`'s `teamId` field — it lives inside an opaque JSON
+ * blob), so two saves for the same never-before-seen `team_id` racing each
+ * other could theoretically both pass this check before either commits. That
+ * residual gap is exactly why `findSlackWorkspaceByTeamId` keeps its own
+ * defense-in-depth logging above rather than trusting this guard alone.
+ */
+export async function findConflictingSlackOrg(teamId: string, excludeOrganizationId: string): Promise<string | null> {
+  if (!teamId) return null
+  const claimants = await claimantsForTeamId(teamId)
+  const conflict = claimants.find((row) => row.organizationId !== excludeOrganizationId)
+  return conflict?.organizationId ?? null
 }
 
 /**
@@ -128,11 +178,18 @@ export async function findSlackWorkspaceByTeamId(teamId: string): Promise<SlackW
  * org's data, so verifying its signature against whichever configured
  * workspace's secret matches (rather than a pre-resolved org) is enough to
  * gate the echo — no ActivityEvent or outbox row is ever written from it.
+ *
+ * `limit`, when given, caps how many rows are fetched (ordered the same
+ * deterministic way as `claimantsForTeamId`) — see the route's own comment on
+ * why an unauthenticated caller must not be able to force an unbounded number
+ * of HMAC computations per request.
  */
-export async function allSlackWorkspaceCredentials(): Promise<SlackWorkspaceCredential[]> {
+export async function allSlackWorkspaceCredentials(limit?: number): Promise<SlackWorkspaceCredential[]> {
   const rows = await systemPrisma.integrationSecret.findMany({
     where: { provider: SLACK_PROVIDER, isActive: true },
     select: { organizationId: true, authConfig: true },
+    orderBy: { organizationId: 'asc' },
+    ...(limit != null ? { take: limit } : {}),
   })
   return rows.map(toWorkspaceCredential)
 }

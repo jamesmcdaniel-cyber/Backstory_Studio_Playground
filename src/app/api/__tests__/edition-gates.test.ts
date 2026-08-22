@@ -41,6 +41,11 @@ export const INTERNAL_ONLY_ROUTES = [
   // Dead-letter operator tooling: a parked payload is some other workspace's
   // raw job data, and replay re-runs it.
   'admin/queue/dead-letters',
+  // Activity backfill trigger (Task 7 of the activity-event substrate plan):
+  // a cross-tenant operator action (body-supplied organizationId, not the
+  // caller's own) that spends provider API quota walking a workspace's Slack
+  // history, same posture as the bench trigger it mirrors.
+  'admin/activity/backfill',
 ]
 
 const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>; methods: string[] }> = [
@@ -60,6 +65,7 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'admin/users/[id]/actions', load: () => import('../admin/users/[id]/actions/route'), methods: ['POST'] },
   { name: 'admin/users/[id]/usage', load: () => import('../admin/users/[id]/usage/route'), methods: ['GET'] },
   { name: 'admin/queue/dead-letters', load: () => import('../admin/queue/dead-letters/route'), methods: ['GET', 'POST'] },
+  { name: 'admin/activity/backfill', load: () => import('../admin/activity/backfill/route'), methods: ['POST'] },
 ]
 
 const BODYLESS = new Set(['GET', 'DELETE'])

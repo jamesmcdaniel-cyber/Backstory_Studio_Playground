@@ -23,6 +23,13 @@ export const QUEUE_NAMES = {
   // row is persisted as it lands, so a failed run leaves partial results and a
   // log line, and re-running simply adds a fresh batch.
   MODEL_BENCH: 'model-bench',
+  // Cursor-checkpointed activity backfill (Admin → Activity → Backfill; Task 7
+  // of the activity-event substrate plan). Internal-edition operator surface,
+  // same as MODEL_BENCH/TEMPLATE_GENERATION — no dead-letter queue: every page
+  // persists idempotently (createMany/skipDuplicates) and only advances the
+  // cursor after persisting, so a failed job leaves the cursor exactly where
+  // the last successful page left it and re-triggering resumes cleanly.
+  ACTIVITY_BACKFILL: 'activity-backfill',
 } as const
 
 const buildPhase = process.env.NEXT_PHASE === 'phase-production-build'

@@ -10,6 +10,7 @@ import { deadLetterFromFlowJob } from '@/lib/queue/flow-dead-letter'
 import { deadLetterFromTemplateGenerationJob } from '@/lib/queue/template-generation-dead-letter'
 import { executeTemplateGenerationJob } from '@/lib/templates/generation-queue'
 import { runBench } from '@/lib/eval/bench'
+import { runActivityBackfill } from '@/lib/activity/backfill'
 import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
 import { runDispatchTick } from '@/lib/scheduling/dispatch-tick'
 import { assertWorkerEnv } from '@/lib/workers/assert-env'
@@ -65,6 +66,26 @@ async function executeModelBenchJob(job: { id?: string; data?: { models?: string
   return summary
 }
 
+/**
+ * One backfill job per `(organizationId, source, connectionId)` cursor — see
+ * src/lib/activity/backfill.ts. Additive-only and idempotent (cursor only
+ * ever advances past durably-persisted rows), so a thrown error here needs no
+ * dead-letter target: the cursor is exactly where the last successful page
+ * left it, and re-triggering the same admin action resumes from there.
+ */
+async function executeActivityBackfillJob(job: { id?: string; data?: { organizationId?: string; source?: string; connectionId?: string } }) {
+  const { organizationId, source, connectionId } = job.data ?? {}
+  if (!organizationId || !source || !connectionId) {
+    throw new Error(`activity-backfill job ${job.id ?? '?'} is missing organizationId/source/connectionId`)
+  }
+  const result = await runActivityBackfill(organizationId, source, connectionId)
+  console.log(`[activity-backfill ${job.id ?? ''}] ${JSON.stringify(result)}`)
+  if (result.status === 'no-connection') {
+    throw new Error(`activity-backfill: no connected NangoConnection ${connectionId} for org ${organizationId}`)
+  }
+  return result
+}
+
 export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerSpec[] {
   return [
     { queue: QUEUE_NAMES.AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.AGENT_EXECUTION) },
@@ -92,6 +113,15 @@ export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerS
           handler: executeModelBenchJob as Processor<any, any, string>,
           onFailed: (job: any, error: Error) =>
             console.error(`model-bench job ${job?.id ?? '?'} failed: ${error.message}`),
+        },
+        // Operator-triggered activity backfill (internal edition only, same as
+        // bench/template generation above — the customer edition has no
+        // Activity admin surface to trigger it from).
+        {
+          queue: QUEUE_NAMES.ACTIVITY_BACKFILL,
+          handler: executeActivityBackfillJob as Processor<any, any, string>,
+          onFailed: (job: any, error: Error) =>
+            console.error(`activity-backfill job ${job?.id ?? '?'} failed: ${error.message}`),
         }]),
   ]
 }

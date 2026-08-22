@@ -199,6 +199,46 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
   }
 }
 
+/**
+ * Normalize one Slack `conversations.history` message object (Task 7's
+ * backfill worker, src/lib/activity/backfill.ts) into a `NormalizedActivity`.
+ *
+ * Slack's history API returns message objects, not Events API envelopes — a
+ * history message has no `event_id`, no `team_id`, and (unlike a live event)
+ * no `channel` field of its own (the channel is implicit in the request that
+ * fetched it). Rather than duplicate `normalizeSlackEvent`'s field mapping,
+ * this wraps a message into the same `{ event: {...} }` shape that function
+ * already knows how to read — folding the known channel id into the wrapped
+ * event so `subject.channelId` comes out populated — and delegates to it.
+ * This keeps exactly one place that knows how to read a Slack message's
+ * fields, at the cost of one intermediate object per message.
+ *
+ * The one deliberate divergence: `normalizeSlackEvent` falls back to a
+ * `sha256:` content hash for `sourceEventId` when no `event_id` is present,
+ * which every history message hits. A content hash is unstable across a
+ * message *edit* (same `ts`, different `text`), so this function overrides it
+ * with `slack:history:<channelId>:<ts>` whenever the message carries a `ts` —
+ * `channel + ts` is Slack's own stable identity for a message (edits keep the
+ * same `ts`), so backfill paging the same history twice (idempotent re-run)
+ * or re-fetching an edited message both dedupe correctly against the
+ * `@@unique([organizationId, source, sourceEventId])` row already persisted.
+ * Falls through to the hash fallback only for the pathological case of a
+ * history message with no `ts` at all.
+ */
+export function normalizeSlackHistoryMessage(
+  orgId: string,
+  message: unknown,
+  channelId: string,
+  opts: NormalizeOpts,
+): NormalizedActivity | null {
+  const record = asRecord(message)
+  const envelope = { event: { ...record, type: record.type ?? 'message', channel: channelId } }
+  const normalized = normalizeSlackEvent(orgId, envelope, opts)
+  if (!normalized) return null
+  const ts = firstString([record], ['ts'])
+  return ts ? { ...normalized, sourceEventId: `slack:history:${channelId}:${ts}` } : normalized
+}
+
 function normalizeSalesforce(payload: Record<string, unknown>): { kind: ActivityKind; subject: Record<string, unknown>; actorExternalId: string | null } {
   const recordId = firstString([payload], ['recordId', 'record_id', 'id', 'Id'])
   const changeType = firstString([payload], ['changeType', 'change_type', 'eventType', 'event_type', 'type'])

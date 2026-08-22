@@ -338,6 +338,12 @@ const SKIPS: Record<string, string> = {
   // Redis queue. The customer-edition 404 and permission gate are covered by
   // edition-gates.test.ts + the platform-administer route walk.
   'admin/models/bench:POST': 'covered by src/app/api/__tests__/edition-gates.test.ts',
+  // Operator-only backfill trigger, same posture as bench above: needs a
+  // live Redis queue in queue mode, and the smoke org holds no
+  // platform.administer. The customer-edition 404 is covered by
+  // edition-gates.test.ts; core persistence/idempotency/cap behavior is
+  // covered by src/lib/activity/__tests__/backfill.db.test.ts.
+  'admin/activity/backfill:POST': 'covered by src/app/api/__tests__/edition-gates.test.ts',
   // Operator-only, and its body needs a live Redis rather than a database: the
   // smoke org holds no platform.administer, so invoking it here would only
   // ever produce a 403. The gate is covered in

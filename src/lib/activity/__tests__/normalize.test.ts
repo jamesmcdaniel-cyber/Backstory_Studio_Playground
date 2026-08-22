@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeSlackEvent, normalizeNangoForward } from '../normalize'
+import { normalizeSlackEvent, normalizeNangoForward, normalizeSlackHistoryMessage } from '../normalize'
 
 const RECEIVED_AT = new Date('2026-08-22T12:00:00.000Z')
 
@@ -237,4 +237,46 @@ test('nango payload with no timestamp anywhere falls back to the required receiv
   const activity = normalizeNangoForward('org-1', 'salesforce', { id: 'evt-x', recordId: 'rec-x' }, { receivedAt: RECEIVED_AT })
   assert.ok(activity)
   assert.equal(activity!.occurredAt.getTime(), RECEIVED_AT.getTime())
+})
+
+// ── normalizeSlackHistoryMessage (Task 7 backfill) ──────────────────────────
+
+test('slack history message → message.posted with the fetched channel folded into subject', () => {
+  const message = { type: 'message', user: 'U100', text: 'hello', ts: '1691000010.000200' }
+  const activity = normalizeSlackHistoryMessage('org-1', message, 'C200', { receivedAt: RECEIVED_AT })
+  assert.ok(activity)
+  assert.equal(activity!.source, 'slack')
+  assert.equal(activity!.kind, 'message.posted')
+  assert.equal(activity!.subject.channelId, 'C200')
+  assert.equal(activity!.actorExternalId, 'U100')
+})
+
+test('slack history message sourceEventId is channel+ts, not a content hash', () => {
+  const message = { type: 'message', user: 'U100', text: 'hello', ts: '1691000010.000200' }
+  const activity = normalizeSlackHistoryMessage('org-1', message, 'C200', { receivedAt: RECEIVED_AT })
+  assert.ok(activity)
+  assert.equal(activity!.sourceEventId, 'slack:history:C200:1691000010.000200')
+})
+
+test('an edited message (same ts, different text) still dedupes to the same sourceEventId', () => {
+  const original = { type: 'message', user: 'U100', text: 'hello', ts: '1691000010.000200' }
+  const edited = { type: 'message', user: 'U100', text: 'hello world', ts: '1691000010.000200', edited: { ts: '1691000099.000000' } }
+  const a = normalizeSlackHistoryMessage('org-1', original, 'C200', { receivedAt: RECEIVED_AT })
+  const b = normalizeSlackHistoryMessage('org-1', edited, 'C200', { receivedAt: RECEIVED_AT })
+  assert.ok(a && b)
+  assert.equal(a!.sourceEventId, b!.sourceEventId)
+})
+
+test('a message with no ts falls back to the hash-based id rather than throwing', () => {
+  const message = { type: 'message', user: 'U100', text: 'no timestamp somehow' }
+  const activity = normalizeSlackHistoryMessage('org-1', message, 'C200', { receivedAt: RECEIVED_AT })
+  assert.ok(activity)
+  assert.ok(activity!.sourceEventId.startsWith('sha256:'))
+})
+
+test('a self-authored (bot_id) history message is marked selfOrigin', () => {
+  const message = { type: 'message', bot_id: 'B999', text: 'automated', ts: '1691000020.000000' }
+  const activity = normalizeSlackHistoryMessage('org-1', message, 'C200', { receivedAt: RECEIVED_AT })
+  assert.ok(activity)
+  assert.equal(activity!.selfOrigin, true)
 })

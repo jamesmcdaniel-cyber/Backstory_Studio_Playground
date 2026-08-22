@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { createQueue, getRedisConnection, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
-import { runActivityBackfill } from '@/lib/activity/backfill'
+import { runActivityBackfill, defaultSlackConnectionId } from '@/lib/activity/backfill'
 import { recordAudit } from '@/lib/audit'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 
@@ -16,12 +16,20 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
  * `organizationId` is caller-supplied, not `auth.organizationId` — this is a
  * cross-tenant platform-administer surface (same posture as
  * /api/admin/domains), not a self-service org action.
+ *
+ * `connectionId` is optional for `source: 'slack'` only: an operator who
+ * doesn't know (or care) which Slack plane an org is on can omit it, and
+ * `defaultSlackConnectionId` auto-selects — see that function's doc comment
+ * for the resolution order (a real Nango connection first, else the native
+ * BYO-app sentinel `'native'`). Every other source still requires an explicit
+ * `connectionId`; there is no auto-select story for sources with no real
+ * transport yet.
  */
 
 const bodySchema = z.object({
   organizationId: z.string().uuid(),
   source: z.string().min(1).max(50),
-  connectionId: z.string().min(1).max(200),
+  connectionId: z.string().min(1).max(200).optional(),
 })
 
 function inFlightKey(organizationId: string, source: string, connectionId: string): string {
@@ -36,13 +44,18 @@ function inFlightKey(organizationId: string, source: string, connectionId: strin
  * connection's history is what must be prevented, not the queue as a whole.
  * Job ids are timestamped (never reused, same as bench), so this can't rely
  * on jobId collision — it inspects each pending job's own payload instead.
- * `getJobs` here is bounded by BullMQ's own default page size, which is far
- * larger than this queue could plausibly have pending at once for an
- * internal-only, human-triggered admin action.
+ * `getJobs(types, start, end)` with no explicit `start`/`end` defaults to
+ * `(0, -1)` in BullMQ, i.e. "every matching job in Redis" — NOT a bounded
+ * page. Explicitly bounded to the first 200 here: this is a human-triggered,
+ * internal-only admin action, so 200 pending jobs is already an operationally
+ * absurd backlog, and an unbounded scan is the wrong default for a route that
+ * runs on every click regardless.
  */
+const IN_FLIGHT_SCAN_LIMIT = 200
+
 async function queuedBackfillInFlight(organizationId: string, source: string, connectionId: string): Promise<boolean> {
   const queue = createQueue(QUEUE_NAMES.ACTIVITY_BACKFILL)
-  const jobs = await queue.getJobs(['waiting', 'active', 'delayed'])
+  const jobs = await queue.getJobs(['waiting', 'active', 'delayed'], 0, IN_FLIGHT_SCAN_LIMIT - 1)
   return jobs.some(
     (job) => job.data?.organizationId === organizationId && job.data?.source === source && job.data?.connectionId === connectionId,
   )
@@ -55,7 +68,25 @@ async function queuedBackfillInFlight(organizationId: string, source: string, co
 const inlineBackfillsRunning = new Set<string>()
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { organizationId, source, connectionId } = bodySchema.parse(await request.json())
+  const parsed = bodySchema.parse(await request.json())
+  const { organizationId, source } = parsed
+
+  let connectionId = parsed.connectionId
+  if (!connectionId) {
+    if (source !== 'slack') {
+      throw new ApiError(`connectionId is required for source '${source}' — there is no auto-select for it.`, 400, 'CONNECTION_ID_REQUIRED')
+    }
+    const resolved = await defaultSlackConnectionId(organizationId)
+    if (!resolved) {
+      throw new ApiError(
+        'This organization has no connected Slack integration to backfill — neither a Nango connection nor a native bot token.',
+        400,
+        'NO_SLACK_CONNECTION',
+      )
+    }
+    connectionId = resolved
+  }
+
   const inFlightKeyValue = inFlightKey(organizationId, source, connectionId)
 
   await recordAudit({

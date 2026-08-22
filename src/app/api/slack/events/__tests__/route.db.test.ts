@@ -112,7 +112,24 @@ if (ENABLED) {
     )
   }
 
-  function messageEnvelope(eventId: string, overrides: Record<string, unknown> = {}) {
+  // Task 7's cross-scheme identity fix (docs/superpowers/specs/2026-08-21-
+  // activity-event-substrate-design.md) makes `sourceEventId` derive from
+  // `channel:ts`, not Slack's `event_id`, whenever both are present — which
+  // every `message` event carries. So each test needs its OWN `ts` (not the
+  // fixed default this file used to hardcode), or every test's envelope would
+  // collide on the same persisted row. `nextTs()` hands out a fresh one per
+  // call; `slackMsgSourceEventId` builds the same key the route computes, so
+  // assertions can look up the row without depending on `event_id` at all.
+  let tsSeq = 0
+  function nextTs(): string {
+    tsSeq += 1
+    return `${1700000000 + tsSeq}.000100`
+  }
+  function slackMsgSourceEventId(channel: string, ts: string): string {
+    return `slack:msg:${channel}:${ts}`
+  }
+
+  function messageEnvelope(eventId: string, ts: string, overrides: Record<string, unknown> = {}) {
     return {
       token: 'legacy-verification-token',
       team_id: TEAM_ID,
@@ -125,7 +142,7 @@ if (ENABLED) {
         channel: 'C_GENERAL',
         user: 'U_HUMAN',
         text: 'hello from a test',
-        ts: '1700000000.000100',
+        ts,
         ...overrides,
       },
     }
@@ -133,22 +150,24 @@ if (ENABLED) {
 
   test('bad signature (wrong secret) for a known team_id acks 200, not 401 (enumeration-oracle fix)', async () => {
     const eventId = `evt-bad-sig-${Date.now()}`
-    const res = await post(messageEnvelope(eventId), { secret: 'not-the-real-secret' })
+    const ts = nextTs()
+    const res = await post(messageEnvelope(eventId, ts), { secret: 'not-the-real-secret' })
     assert.equal(res.status, 200, 'a known team_id\'s failed verification acks identically to an unknown team_id')
     const data = await res.json()
     assert.deepEqual(data, { ok: true }, 'byte-identical ack shape to the unknown-team_id case below')
-    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: slackMsgSourceEventId('C_GENERAL', ts) } })
     assert.equal(events.length, 0, 'nothing persisted from an unverified request')
   })
 
   test('stale timestamp (>5 minutes old) for a known team_id also acks 200, not 401', async () => {
     const eventId = `evt-stale-${Date.now()}`
+    const ts = nextTs()
     const staleTimestamp = String(Math.floor((Date.now() - 6 * 60_000) / 1000))
-    const res = await post(messageEnvelope(eventId), { timestamp: staleTimestamp })
+    const res = await post(messageEnvelope(eventId, ts), { timestamp: staleTimestamp })
     assert.equal(res.status, 200)
     const data = await res.json()
     assert.deepEqual(data, { ok: true })
-    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: slackMsgSourceEventId('C_GENERAL', ts) } })
     assert.equal(events.length, 0, 'a stale-but-known-team delivery still persists nothing')
   })
 
@@ -170,20 +189,24 @@ if (ENABLED) {
 
   test('message event persists an ActivityEvent and an activity.dispatch outbox row', async () => {
     const eventId = `evt-msg-${Date.now()}`
-    const res = await post(messageEnvelope(eventId))
+    const ts = nextTs()
+    const res = await post(messageEnvelope(eventId, ts))
     assert.equal(res.status, 200)
     const data = await res.json()
     assert.equal(data.ok, true)
 
-    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    const sourceEventId = slackMsgSourceEventId('C_GENERAL', ts)
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId } })
     assert.equal(events.length, 1)
     assert.equal(events[0].kind, 'message.posted')
     assert.equal(events[0].ownerUserId, null, 'workspace-shared Slack credential -> org-visible, no owner')
     assert.equal(events[0].visibility, 'org')
     assert.equal(events[0].selfOrigin, false, 'a human user authored this one')
 
+    // The outbox dedupeKey is built from the SAME sourceEventId the row was
+    // persisted under (channel:ts now, not event_id) — see activity.ts.
     const outboxRows = await systemPrisma.outboxEvent.findMany({
-      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${eventId}` },
+      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${sourceEventId}` },
     })
     assert.equal(outboxRows.length, 1)
     assert.equal(outboxRows[0].topic, 'activity.dispatch')
@@ -192,10 +215,11 @@ if (ENABLED) {
 
   test('retry delivery of the identical event_id acks without a second row in either table', async () => {
     const eventId = `evt-retry-${Date.now()}`
-    const first = await post(messageEnvelope(eventId))
+    const ts = nextTs()
+    const first = await post(messageEnvelope(eventId, ts))
     assert.equal(first.status, 200)
 
-    const raw = JSON.stringify(messageEnvelope(eventId))
+    const raw = JSON.stringify(messageEnvelope(eventId, ts))
     const timestamp = String(Math.floor(Date.now() / 1000))
     const signature = sign(SIGNING_SECRET, timestamp, raw)
     const { POST } = await import('../route')
@@ -218,28 +242,31 @@ if (ENABLED) {
     const retryData = await retry.json()
     assert.equal(retryData.ok, true)
 
-    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    const sourceEventId = slackMsgSourceEventId('C_GENERAL', ts)
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId } })
     assert.equal(events.length, 1, 'still exactly one row — P2002 was swallowed as a dedupe ack')
 
     const outboxRows = await systemPrisma.outboxEvent.findMany({
-      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${eventId}` },
+      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${sourceEventId}` },
     })
     assert.equal(outboxRows.length, 1, 'still exactly one outbox row for the retried event')
   })
 
   test('an event authored by the workspace bot user persists with selfOrigin: true', async () => {
     const eventId = `evt-self-${Date.now()}`
-    const res = await post(messageEnvelope(eventId, { user: BOT_USER_ID }))
+    const ts = nextTs()
+    const res = await post(messageEnvelope(eventId, ts, { user: BOT_USER_ID }))
     assert.equal(res.status, 200)
 
-    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: eventId } })
+    const events = await systemPrisma.activityEvent.findMany({ where: { organizationId: ids.org, source: 'slack', sourceEventId: slackMsgSourceEventId('C_GENERAL', ts) } })
     assert.equal(events.length, 1)
     assert.equal(events[0].selfOrigin, true, 'authored by the workspace\'s own captured botUserId')
   })
 
   test('an unresolvable team_id acks 200 and persists nothing (no workspace connected)', async () => {
     const eventId = `evt-unknown-team-${Date.now()}`
-    const raw = JSON.stringify({ ...messageEnvelope(eventId), team_id: 'T_NEVER_CONNECTED' })
+    const ts = nextTs()
+    const raw = JSON.stringify({ ...messageEnvelope(eventId, ts), team_id: 'T_NEVER_CONNECTED' })
     const timestamp = String(Math.floor(Date.now() / 1000))
     // Signed with SOME secret — since team_id resolves to no org at all, the
     // route never even reaches a signature check for this delivery.
@@ -256,7 +283,7 @@ if (ENABLED) {
     const data = await res.json()
     assert.deepEqual(data, { ok: true }, 'byte-identical to a KNOWN team_id\'s failed-verification ack above — no oracle')
 
-    const events = await systemPrisma.activityEvent.findMany({ where: { source: 'slack', sourceEventId: eventId } })
+    const events = await systemPrisma.activityEvent.findMany({ where: { source: 'slack', sourceEventId: slackMsgSourceEventId('C_GENERAL', ts) } })
     assert.equal(events.length, 0)
   })
 }

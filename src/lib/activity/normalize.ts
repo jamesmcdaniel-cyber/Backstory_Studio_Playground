@@ -160,6 +160,20 @@ function chainDepthFromMetadata(event: Record<string, unknown>): number {
  * (`{ team_id, event: { type, user, bot_id, channel, ts, thread_ts, ... },
  * event_id, event_time }`) into a `NormalizedActivity`, or `null` if the
  * envelope carries no recognizable event.
+ *
+ * `sourceEventId` derivation order — and why it's `channel:ts` FIRST, not
+ * Slack's own `event_id`: the backfill worker (src/lib/activity/backfill.ts)
+ * ingests the exact same messages from `conversations.history`, which carries
+ * no `event_id` at all (only Events API deliveries do). For live and
+ * backfilled ingestion of the SAME message to dedupe into one row —
+ * across the two entirely different transports — they have to agree on one
+ * identity scheme, and the only field both transports carry is
+ * `channel` + `ts` (Slack's own stable identity for a message: edits keep
+ * the same `ts`). So: `channel` + `ts` present (every message event has
+ * both) → `slack:msg:<channel>:<ts>`, unaffected by whether this is a live
+ * delivery or a backfilled page. Only event *subtypes* that carry neither
+ * (no `message` event lacks them, but plenty of other Slack event types do)
+ * fall back to `event_id`, then to the `sha256:` content hash.
  */
 export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: NormalizeOpts): NormalizedActivity | null {
   void orgId // not part of the output shape; reserved for future per-org logic
@@ -180,7 +194,10 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
     (firstNumber([outer], ['event_time']) != null ? new Date((firstNumber([outer], ['event_time']) as number) * 1000) : null) ??
     opts.receivedAt
 
-  const sourceEventId = firstString([outer], ['event_id']) ?? sha256Id(type, outer)
+  const channelId = firstString([event], ['channel'])
+  const ts = firstString([event], ['ts'])
+  const sourceEventId =
+    channelId && ts ? `slack:msg:${channelId}:${ts}` : (firstString([outer], ['event_id']) ?? sha256Id(type, outer))
 
   return {
     source: 'slack',
@@ -190,7 +207,7 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
     actorExternalId,
     ownerUserId: null,
     subject: {
-      channelId: firstString([event], ['channel']),
+      channelId,
       threadTs: firstString([event], ['thread_ts']),
     },
     payload: capPayload(outer),
@@ -209,21 +226,15 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
  * fetched it). Rather than duplicate `normalizeSlackEvent`'s field mapping,
  * this wraps a message into the same `{ event: {...} }` shape that function
  * already knows how to read — folding the known channel id into the wrapped
- * event so `subject.channelId` comes out populated — and delegates to it.
- * This keeps exactly one place that knows how to read a Slack message's
- * fields, at the cost of one intermediate object per message.
- *
- * The one deliberate divergence: `normalizeSlackEvent` falls back to a
- * `sha256:` content hash for `sourceEventId` when no `event_id` is present,
- * which every history message hits. A content hash is unstable across a
- * message *edit* (same `ts`, different `text`), so this function overrides it
- * with `slack:history:<channelId>:<ts>` whenever the message carries a `ts` —
- * `channel + ts` is Slack's own stable identity for a message (edits keep the
- * same `ts`), so backfill paging the same history twice (idempotent re-run)
- * or re-fetching an edited message both dedupe correctly against the
- * `@@unique([organizationId, source, sourceEventId])` row already persisted.
- * Falls through to the hash fallback only for the pathological case of a
- * history message with no `ts` at all.
+ * event so both `subject.channelId` AND `sourceEventId` come out populated —
+ * and delegates to it entirely. This keeps exactly one place that knows how
+ * to read a Slack message's fields AND exactly one place that decides its
+ * identity: `normalizeSlackEvent` already derives `slack:msg:<channel>:<ts>`
+ * whenever both are present (every message carries both, live or backfilled),
+ * which is precisely the scheme that makes live ingestion and backfill of the
+ * SAME message collide into one row instead of two — no override needed here
+ * at all. See `normalizeSlackEvent`'s own doc comment for why that scheme
+ * (not `event_id`, which history messages never carry) was chosen.
  */
 export function normalizeSlackHistoryMessage(
   orgId: string,
@@ -233,10 +244,7 @@ export function normalizeSlackHistoryMessage(
 ): NormalizedActivity | null {
   const record = asRecord(message)
   const envelope = { event: { ...record, type: record.type ?? 'message', channel: channelId } }
-  const normalized = normalizeSlackEvent(orgId, envelope, opts)
-  if (!normalized) return null
-  const ts = firstString([record], ['ts'])
-  return ts ? { ...normalized, sourceEventId: `slack:history:${channelId}:${ts}` } : normalized
+  return normalizeSlackEvent(orgId, envelope, opts)
 }
 
 function normalizeSalesforce(payload: Record<string, unknown>): { kind: ActivityKind; subject: Record<string, unknown>; actorExternalId: string | null } {

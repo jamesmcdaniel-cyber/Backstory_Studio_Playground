@@ -210,6 +210,41 @@ export async function resolveSigningSecretForOrg(credential: SlackWorkspaceCrede
 }
 
 // ---------------------------------------------------------------------------
+// Native-plane read transport (activity backfill's fallback)
+// ---------------------------------------------------------------------------
+
+const SLACK_API_BASE = 'https://slack.com/api'
+
+/**
+ * A generic GET against the Slack Web API using this workspace's own bot
+ * token — the native plane's read transport, used by the activity backfill
+ * worker (src/lib/activity/backfill.ts) for orgs on the Task-4 BYO-app path
+ * that have no `NangoConnection` at all (this plane is one bot token per org,
+ * saved via POST /api/integrations/credentials/slack — see that route's
+ * `apiKey` field, the same `CREDENTIAL_FIELD` `getSlackToken`/`readOrgSecret`
+ * already decrypt for `post_message`). Wrapped in `demoFetchOr` for parity
+ * with `SlackToolClient.executeTool` above, and races a fixed timeout the
+ * same way the Nango proxy does (`NANGO_PROXY_TIMEOUT_MS`) since `fetch` has
+ * no default one of its own.
+ */
+export async function nativeSlackGet(
+  token: string,
+  endpoint: string,
+  params: Record<string, string | number> = {},
+): Promise<unknown> {
+  const url = new URL(`${SLACK_API_BASE}${endpoint}`)
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value))
+  const response = await demoFetchOr('slack', () =>
+    fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(20_000),
+    }),
+  )
+  return response.json()
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
 

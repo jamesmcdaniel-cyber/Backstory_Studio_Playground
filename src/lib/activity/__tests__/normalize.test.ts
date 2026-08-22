@@ -21,7 +21,10 @@ test('slack message event → message.posted with channel/threadTs subject', () 
   assert.ok(activity)
   assert.equal(activity!.source, 'slack')
   assert.equal(activity!.kind, 'message.posted')
-  assert.equal(activity!.sourceEventId, 'Ev123')
+  // channel+ts wins over event_id — this is the identity live ingestion and
+  // backfill (which never has an event_id at all) must agree on to dedupe
+  // the same message across both transports. See normalizeSlackEvent's doc.
+  assert.equal(activity!.sourceEventId, 'slack:msg:C200:1691000010.000200')
   assert.equal(activity!.subject.channelId, 'C200')
   assert.equal(activity!.subject.threadTs, '1691000000.000100')
   assert.equal(activity!.actorExternalId, 'U100')
@@ -51,12 +54,32 @@ test('slack event authored by the workspace\'s own bot user id → selfOrigin: t
   assert.equal(activity!.selfOrigin, true)
 })
 
-test('slack envelope missing event_id falls back to a stable sha256 id', () => {
+test('a message event missing event_id still gets a stable id — derived from channel+ts, not a hash', () => {
+  // Every message event carries channel+ts, so this is the COMMON case, not
+  // the hash-fallback one — Slack's Events API delivery itself never sets
+  // event_id for anything but the outer envelope in some client libraries,
+  // and this must still dedupe deterministically without it.
   const envelope = { event: { type: 'message', user: 'U1', channel: 'C1', ts: '1691000000.000100' } }
+  const a = normalizeSlackEvent('org-1', { ...envelope }, { receivedAt: RECEIVED_AT })
+  const b = normalizeSlackEvent('org-1', { ...envelope }, { receivedAt: RECEIVED_AT })
+  assert.equal(a!.sourceEventId, 'slack:msg:C1:1691000000.000100')
+  assert.equal(a!.sourceEventId, b!.sourceEventId)
+})
+
+test('an event with neither channel+ts nor event_id falls back to a stable sha256 id', () => {
+  // channel_created-style events: no channel/ts pair on the event itself
+  // (the channel is nested in an object, not a flat string field).
+  const envelope = { event: { type: 'channel_created', user: 'U1' } }
   const a = normalizeSlackEvent('org-1', { ...envelope }, { receivedAt: RECEIVED_AT })
   const b = normalizeSlackEvent('org-1', { ...envelope }, { receivedAt: RECEIVED_AT })
   assert.ok(a!.sourceEventId.startsWith('sha256:'))
   assert.equal(a!.sourceEventId, b!.sourceEventId)
+})
+
+test('event_id wins over the sha256 fallback when channel+ts are both absent', () => {
+  const envelope = { event_id: 'Ev777', event: { type: 'channel_created', user: 'U1' } }
+  const activity = normalizeSlackEvent('org-1', envelope, { receivedAt: RECEIVED_AT })
+  assert.equal(activity!.sourceEventId, 'Ev777')
 })
 
 test('slack envelope with no event returns null', () => {
@@ -251,11 +274,20 @@ test('slack history message → message.posted with the fetched channel folded i
   assert.equal(activity!.actorExternalId, 'U100')
 })
 
-test('slack history message sourceEventId is channel+ts, not a content hash', () => {
+test('slack history message sourceEventId uses the same slack:msg: scheme live ingestion does', () => {
   const message = { type: 'message', user: 'U100', text: 'hello', ts: '1691000010.000200' }
   const activity = normalizeSlackHistoryMessage('org-1', message, 'C200', { receivedAt: RECEIVED_AT })
   assert.ok(activity)
-  assert.equal(activity!.sourceEventId, 'slack:history:C200:1691000010.000200')
+  assert.equal(activity!.sourceEventId, 'slack:msg:C200:1691000010.000200')
+})
+
+test('the same message normalized live (envelope) and via backfill (history) produces the SAME sourceEventId', () => {
+  const liveEnvelope = { event_id: 'Ev999', event: { type: 'message', user: 'U100', channel: 'C200', ts: '1691000010.000200', text: 'hello' } }
+  const historyMessage = { type: 'message', user: 'U100', text: 'hello', ts: '1691000010.000200' }
+  const live = normalizeSlackEvent('org-1', liveEnvelope, { receivedAt: RECEIVED_AT })
+  const backfilled = normalizeSlackHistoryMessage('org-1', historyMessage, 'C200', { receivedAt: RECEIVED_AT })
+  assert.ok(live && backfilled)
+  assert.equal(live!.sourceEventId, backfilled!.sourceEventId)
 })
 
 test('an edited message (same ts, different text) still dedupes to the same sourceEventId', () => {

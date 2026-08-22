@@ -11,6 +11,7 @@ export const UNGATED_ROUTES: readonly string[] = [
   'cron/retention',                       // CRON_SECRET header
   'cron/dispatch',                        // CRON_SECRET header
   'cron/queue-watch',                     // CRON_SECRET header
+  'cron/indexer-sweep',                   // CRON_SECRET header
   'invitations/lookup',                   // pre-auth: resolves an invite token
   // The OAuth client-credentials token endpoint. It cannot sit behind
   // authentication because it IS the authentication step — it takes a client

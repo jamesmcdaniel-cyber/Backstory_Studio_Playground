@@ -1677,6 +1677,12 @@ model ActivityTriggerClaim {
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   @@unique([organizationId, activityEventId, flowId])
   @@index([organizationId, flowId, createdAt])
+  /// Backs the 5-minute stale-claim proactive sweep
+  /// (`countStaleActivityTriggerClaims` in queue-watch.ts), which counts
+  /// `status: 'claimed', createdAt: { lt: cutoff }` cross-org — without this
+  /// it seq-scans the whole table every tick. Deferred from Task 6, added
+  /// here (Task 8's schema slot per the plan).
+  @@index([status, createdAt])
   @@map("activity_trigger_claims")
 }
 

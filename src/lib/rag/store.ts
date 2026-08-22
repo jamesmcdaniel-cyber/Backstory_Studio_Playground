@@ -20,6 +20,7 @@ export type NodeType =
   | 'agent'
   | 'run'
   | 'insight'
+  | 'activity'
 
 /** Who may see a node. 'shared' = the whole org; 'private' = only its owner. */
 export type NodeVisibility = 'shared' | 'private'
@@ -65,6 +66,8 @@ export type EdgeRelation =
   | 'triggered_run'
   | 'ran_agent'
   | 'belongs_to' // opportunity/stakeholder → account
+  | 'about_activity' // run → activity: this run is about the activity event that triggered it (mirrors about_account/about_opportunity's run-perspective direction)
+  | 'activity_triggered_run' // activity → run: this activity event dispatched the run (mirrors signal's triggered_run)
 
 export interface GraphEdge {
   organizationId: string

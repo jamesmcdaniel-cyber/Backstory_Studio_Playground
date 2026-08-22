@@ -19,7 +19,7 @@ import { getPeopleAiReadClient } from '@/lib/peopleai/client'
 import { enrichAccount, enrichOpportunity } from '@/lib/peopleai/salesai-facts'
 import { embedTexts } from './embeddings'
 import { getGraphRagStore, graphRagPersistent, ragEnabled } from './get-store'
-import type { EdgeRelation, GraphEdge, GraphNode, NodeType, NodeVisibility } from './store'
+import type { EdgeRelation, GraphEdge, GraphNode, GraphRagStore, NodeType, NodeVisibility } from './store'
 
 // ── Node id scheme (stable, so re-indexing upserts in place) ─────────────────
 export const nodeIds = {
@@ -44,16 +44,27 @@ export interface PendingNode {
   visibility?: NodeVisibility
 }
 
+/**
+ * Test seam: inject a store + embeddings fetch so a suite can exercise the
+ * real upsert path (node/edge shapes, visibility) against `MemoryGraphStore`
+ * without VOYAGE_API_KEY/NEO4J_* configured. Production callers never pass
+ * this — `store` unset falls through to the normal `ragEnabled()` gate.
+ */
+export interface CommitOptions {
+  store?: GraphRagStore
+  fetchImpl?: typeof fetch
+}
+
 /** Embed pending nodes in one batch and persist nodes + edges. Reused by backfill. */
-export async function commitGraph(organizationId: string, nodes: PendingNode[], edges: GraphEdge[]): Promise<void> {
-  return commit(organizationId, nodes, edges)
+export async function commitGraph(organizationId: string, nodes: PendingNode[], edges: GraphEdge[], options?: CommitOptions): Promise<void> {
+  return commit(organizationId, nodes, edges, options)
 }
 
 /** Embed pending nodes in one batch and persist nodes + edges. */
-async function commit(organizationId: string, nodes: PendingNode[], edges: GraphEdge[]): Promise<void> {
-  if (!ragEnabled() || nodes.length === 0) return
-  const store = getGraphRagStore()
-  const embeddings = await embedTexts(nodes.map((n) => n.text), { inputType: 'document' })
+async function commit(organizationId: string, nodes: PendingNode[], edges: GraphEdge[], options: CommitOptions = {}): Promise<void> {
+  if ((!options.store && !ragEnabled()) || nodes.length === 0) return
+  const store = options.store ?? getGraphRagStore()
+  const embeddings = await embedTexts(nodes.map((n) => n.text), { inputType: 'document', fetchImpl: options.fetchImpl })
   const graphNodes: GraphNode[] = nodes.map((n, i) => ({
     id: n.id,
     organizationId,
@@ -131,6 +142,119 @@ export async function indexSignal(signal: SignalRecord): Promise<void> {
   } catch (error) {
     warn('indexSignal', error)
   }
+}
+
+export interface ActivityIndexInput {
+  id: string
+  organizationId: string
+  /** 'slack' | 'salesforce' | 'github' | 'nango:<provider>' */
+  source: string
+  /** Normalized verb, e.g. 'message.posted' | 'record.updated' | 'pr.opened'. */
+  kind: string
+  /** ActivityEvent.subject — { channelId?, threadTs?, recordId?, sobject?, repo?, ... }. */
+  subject: unknown
+  /** ActivityEvent.visibility: 'org' | 'private'. */
+  visibility: string
+  ownerUserId: string | null
+  /** FlowRun ids from this event's dispatched (fired) ActivityTriggerClaim rows. */
+  dispatchedRunIds?: string[]
+}
+
+/**
+ * Plain-English label for an activity node: source + normalized kind + the
+ * non-sensitive subject identifiers already stored on the row (channel id,
+ * sobject type, repo, PR/issue number). Deliberately excludes `payload` —
+ * unlike `indexSignal`'s Sales AI payload text (a curated, already-scoped
+ * event body), an activity's raw payload can carry a full Slack message body
+ * or Salesforce record diff never meant for the graph. Comparable restraint
+ * to `indexExecution`, which stores ids/status in `props`, not raw JSON.
+ */
+function activityLabel(source: string, kind: string, subject: Record<string, unknown>): string {
+  const verb = kind.replace(/[._]/g, ' ')
+  const bits = [`${source} activity: ${verb}`]
+  if (typeof subject.channelId === 'string') bits.push(`channel ${subject.channelId}`)
+  if (typeof subject.sobject === 'string') bits.push(String(subject.sobject))
+  if (typeof subject.repo === 'string') bits.push(String(subject.repo))
+  if (subject.prNumber != null) bits.push(`PR #${subject.prNumber}`)
+  if (subject.issueNumber != null) bits.push(`issue #${subject.issueNumber}`)
+  return bits.join(' — ').slice(0, 300)
+}
+
+/** Resolve an account/opportunity ref from a Salesforce-shaped subject (sobject + recordId). */
+function subjectEntityRefs(subject: Record<string, unknown>): { accountId?: string; opportunityId?: string } {
+  const sobject = typeof subject.sobject === 'string' ? subject.sobject.toLowerCase() : null
+  const recordId = typeof subject.recordId === 'string' ? subject.recordId : null
+  if (!sobject || !recordId) return {}
+  if (sobject === 'account') return { accountId: recordId }
+  if (sobject === 'opportunity') return { opportunityId: recordId }
+  return {}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Build the pending nodes/edges for one org's batch of activity events (pure, no I/O). */
+function buildActivityGraph(organizationId: string, events: ActivityIndexInput[]): { nodes: PendingNode[]; edges: GraphEdge[] } {
+  const nodes: PendingNode[] = []
+  const edges: GraphEdge[] = []
+  for (const event of events) {
+    const subject = isRecord(event.subject) ? event.subject : {}
+    const nodeId = nid.activity(event.id)
+    // ActivityEvent.visibility is 'org'|'private'; GraphNode.visibility is
+    // 'shared'|'private' — mirror the store's contract exactly (nodeVisibleTo).
+    const visibility: NodeVisibility = event.visibility === 'private' ? 'private' : 'shared'
+    nodes.push({
+      id: nodeId, type: 'activity',
+      text: activityLabel(event.source, event.kind, subject),
+      props: { source: event.source, kind: event.kind, subject },
+      ownerUserId: event.ownerUserId ?? null,
+      visibility,
+    })
+    const refs = subjectEntityRefs(subject)
+    const { nodes: entityNodes, edgesFromSignal } = entityNodesFor(refs)
+    nodes.push(...entityNodes)
+    for (const e of edgesFromSignal) edges.push({ organizationId, from: nodeId, to: e.to, rel: e.rel })
+    for (const runId of event.dispatchedRunIds ?? []) {
+      edges.push({ organizationId, from: nodeId, to: nid.run(runId), rel: 'activity_triggered_run' })
+      edges.push({ organizationId, from: nid.run(runId), to: nodeId, rel: 'about_activity' })
+    }
+  }
+  return { nodes, edges }
+}
+
+/**
+ * Batch-index activity events into the graph, grouped per org (a store
+ * commit is per-org). Returns the ids that actually committed — the caller
+ * (the indexer sweep) stamps `ActivityEvent.indexedAt` ONLY for those, so a
+ * partial-org failure never marks an unindexed row as indexed. When
+ * `ragEnabled()` is false (no options.store override), nothing commits and
+ * `committedIds` is empty — `indexedAt` never lies about disabled RAG.
+ *
+ * One pass, no internal retry: a failing org's batch is WARN-logged and
+ * skipped for this call; its rows stay `indexedAt: null` and are retried on
+ * the NEXT sweep tick (bounded by cron cadence, not a spin loop here).
+ */
+export async function commitActivity(events: ActivityIndexInput[], options: CommitOptions = {}): Promise<{ committedIds: string[] }> {
+  if (events.length === 0) return { committedIds: [] }
+  if (!options.store && !ragEnabled()) return { committedIds: [] }
+  const byOrg = new Map<string, ActivityIndexInput[]>()
+  for (const event of events) {
+    const list = byOrg.get(event.organizationId) ?? []
+    list.push(event)
+    byOrg.set(event.organizationId, list)
+  }
+  const committedIds: string[] = []
+  for (const [organizationId, orgEvents] of byOrg) {
+    const { nodes, edges } = buildActivityGraph(organizationId, orgEvents)
+    try {
+      await commit(organizationId, nodes, edges, options)
+      committedIds.push(...orgEvents.map((e) => e.id))
+    } catch (error) {
+      warn('commitActivity', error)
+    }
+  }
+  return { committedIds }
 }
 
 /** Replace basic account/opp node text with Sales AI facts, in place. */

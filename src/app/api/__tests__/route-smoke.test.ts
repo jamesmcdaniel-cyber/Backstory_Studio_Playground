@@ -73,6 +73,7 @@ const readExempt = new Set([
   'cron/dispatch',                  // CRON_SECRET, fail-closed
   'cron/retention',                 // CRON_SECRET, fail-closed
   'cron/queue-watch',               // CRON_SECRET, fail-closed
+  'cron/indexer-sweep',             // CRON_SECRET, fail-closed
   'mcp-connections/oauth/callback', // OAuth state/PKCE cookie minted by the authenticated start route
   'peopleai/callback',              // authenticated-encryption state cookie, bound to user + org
   // Session-authenticated, but deliberately NOT through withAuthenticatedApi:

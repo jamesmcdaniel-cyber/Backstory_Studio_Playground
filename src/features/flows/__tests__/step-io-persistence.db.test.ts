@@ -10,6 +10,7 @@ const TEST_DB = process.env.TEST_DATABASE_URL
 if (TEST_DB) {
   process.env.DATABASE_URL = TEST_DB
   process.env.DIRECT_URL = TEST_DB
+  process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test-key'
 
   let prisma: any
   let runFlowExecution: any

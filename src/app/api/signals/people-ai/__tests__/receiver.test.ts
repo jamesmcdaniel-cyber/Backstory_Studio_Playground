@@ -13,6 +13,7 @@ if (ENABLED) {
   process.env.DATABASE_URL = TEST_DB
   process.env.DIRECT_URL = TEST_DB
   process.env.PEOPLE_AI_WEBHOOK_SECRET = 'whsec_receiver_test'
+  process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test-key'
 
   let prisma: any
   let POST: any

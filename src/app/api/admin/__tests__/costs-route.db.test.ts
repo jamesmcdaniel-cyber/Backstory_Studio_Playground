@@ -118,37 +118,45 @@ if (TEST_DB) {
     // this route's cross-org aggregate, every "top spender" and headline total
     // would count fiction as real spend. Assert the delta, not an absolute
     // value: seeding the demo org must leave the total unchanged.
-    const before1 = await total()
+    //
+    // models-route-demo.db.test.ts runs the identical before/seed/after dance
+    // against the same cross-org total; a shared Postgres advisory lock
+    // serializes the two critical sections instead of merely racing them.
+    await prisma.$transaction(async (tx: any) => {
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(918273645)')
 
-    const demoOrg = await prisma.organization.create({
-      data: { name: 'Demo Clone Org', slug: `demo-org-${crypto.randomUUID()}`, kind: 'demo' },
-    })
-    const demoCostUsd = '999999.00'
-    await prisma.llmCall.create({
-      data: {
-        organizationId: demoOrg.id,
-        surface: 'agent_turn',
-        provider: 'anthropic',
-        model: 'claude-test',
-        priceVersion: 'test-2026-08',
-        costUsd: demoCostUsd,
-        inputTokens: 10,
-        outputTokens: 10,
-      },
-    })
+      const before1 = await total()
 
-    try {
-      const body = await total()
+      const demoOrg = await prisma.organization.create({
+        data: { name: 'Demo Clone Org', slug: `demo-org-${crypto.randomUUID()}`, kind: 'demo' },
+      })
+      const demoCostUsd = '999999.00'
+      await prisma.llmCall.create({
+        data: {
+          organizationId: demoOrg.id,
+          surface: 'agent_turn',
+          provider: 'anthropic',
+          model: 'claude-test',
+          priceVersion: 'test-2026-08',
+          costUsd: demoCostUsd,
+          inputTokens: 10,
+          outputTokens: 10,
+        },
+      })
 
-      assert.ok(
-        !body.byOrg.some((row: any) => row.organizationId === demoOrg.id),
-        'the demo org must not appear in byOrg',
-      )
-      const delta = round2(body.total.costUsd - before1.total.costUsd)
-      assert.equal(delta, 0, 'seeding the demo org must leave the unbounded total unchanged')
-    } finally {
-      await prisma.llmCall.deleteMany({ where: { organizationId: demoOrg.id } })
-      await prisma.organization.delete({ where: { id: demoOrg.id } })
-    }
+      try {
+        const body = await total()
+
+        assert.ok(
+          !body.byOrg.some((row: any) => row.organizationId === demoOrg.id),
+          'the demo org must not appear in byOrg',
+        )
+        const delta = round2(body.total.costUsd - before1.total.costUsd)
+        assert.equal(delta, 0, 'seeding the demo org must leave the unbounded total unchanged')
+      } finally {
+        await prisma.llmCall.deleteMany({ where: { organizationId: demoOrg.id } })
+        await prisma.organization.delete({ where: { id: demoOrg.id } })
+      }
+    }, { timeout: 20000, maxWait: 20000 })
   })
 }

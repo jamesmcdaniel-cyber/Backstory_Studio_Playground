@@ -1,4 +1,4 @@
-import { test, before } from 'node:test'
+import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 
 /**
@@ -85,6 +85,21 @@ if (TEST_DB) {
     ids.cleanFlow = clean.id
 
     await seedFailures(ids.flow, 3)
+  })
+
+  after(async () => {
+    if (!ids.org) return
+    // Leftover rows here are exactly the residue that starves
+    // MAX_REFLECTIONS_PER_TICK for every later local run: the sweep is a
+    // global cross-org scan, and an uncleaned "Reflect" org from a prior run
+    // is indistinguishable from a real candidate competing for this tick's
+    // 5-flow budget.
+    await prisma.templateProposal.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.flowRunStep.deleteMany({ where: { run: { organizationId: ids.org } } })
+    await prisma.flowRun.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.flow.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.user.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.organization.delete({ where: { id: ids.org } })
   })
 
   test('a flow with a pattern produces one process_improvement proposal', async () => {

@@ -50,41 +50,45 @@ if (TEST_DB) {
   test('a demo-clone organization does not appear in the models rollup or headline total', async () => {
     // costs/route.ts and models/route.ts aggregate the SAME cross-org
     // LlmCall table, and the shared bs_ci_repro database runs suites
-    // concurrently — a sibling suite mutating that table mid-test (seeding or
-    // cleaning up its own rows) can land between two calls to this route.
-    // Bracketing the baseline capture, the seed, and the final read all
-    // inside ONE test body (no `before`/`after` boundary crossing, no
-    // unrelated awaits in between) keeps that window as small as it can be.
-    const before1 = await total()
+    // concurrently — a sibling suite (costs-route.db.test.ts runs the
+    // identical before/seed/after dance) mutating that table mid-test can
+    // land between our two reads of the unbounded total. A session-scoped
+    // Postgres advisory lock, shared by key with that sibling, serializes the
+    // two critical sections instead of merely shrinking the race window.
+    await prisma.$transaction(async (tx: any) => {
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(918273645)')
 
-    const demoOrg = await prisma.organization.create({
-      data: { name: 'Demo Clone Org', slug: `demo-org-${crypto.randomUUID()}`, kind: 'demo' },
-    })
-    await prisma.llmCall.create({
-      data: {
-        organizationId: demoOrg.id,
-        surface: 'agent_turn',
-        provider: 'anthropic',
-        model: DEMO_MODEL,
-        priceVersion: 'test-2026-08',
-        costUsd: '999999.00',
-        inputTokens: 10,
-        outputTokens: 10,
-      },
-    })
+      const before1 = await total()
 
-    try {
-      const body = await total()
+      const demoOrg = await prisma.organization.create({
+        data: { name: 'Demo Clone Org', slug: `demo-org-${crypto.randomUUID()}`, kind: 'demo' },
+      })
+      await prisma.llmCall.create({
+        data: {
+          organizationId: demoOrg.id,
+          surface: 'agent_turn',
+          provider: 'anthropic',
+          model: DEMO_MODEL,
+          priceVersion: 'test-2026-08',
+          costUsd: '999999.00',
+          inputTokens: 10,
+          outputTokens: 10,
+        },
+      })
 
-      assert.ok(
-        !body.models.some((row: any) => row.model === DEMO_MODEL),
-        'the demo-only model must not appear in the rollup',
-      )
-      const delta = Number((body.total.costUsd - before1.total.costUsd).toFixed(2))
-      assert.equal(delta, 0, 'seeding the demo org\'s fabricated spend must leave the unbounded total unchanged')
-    } finally {
-      await prisma.llmCall.deleteMany({ where: { organizationId: demoOrg.id } })
-      await prisma.organization.delete({ where: { id: demoOrg.id } })
-    }
+      try {
+        const body = await total()
+
+        assert.ok(
+          !body.models.some((row: any) => row.model === DEMO_MODEL),
+          'the demo-only model must not appear in the rollup',
+        )
+        const delta = Number((body.total.costUsd - before1.total.costUsd).toFixed(2))
+        assert.equal(delta, 0, 'seeding the demo org\'s fabricated spend must leave the unbounded total unchanged')
+      } finally {
+        await prisma.llmCall.deleteMany({ where: { organizationId: demoOrg.id } })
+        await prisma.organization.delete({ where: { id: demoOrg.id } })
+      }
+    }, { timeout: 20000, maxWait: 20000 })
   })
 }

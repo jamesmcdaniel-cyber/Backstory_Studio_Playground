@@ -62,7 +62,12 @@ test('benchRunning: null keeps the quiet poll alive', async (t) => {
   await waitFor(() => assert.equal(calls, 1))
 
   t.mock.timers.tick(15_000)
-  await waitFor(() => assert.equal(calls, 2), { timeout: 2000 })
+  // Generous real-time bound: this only waits on a promise microtask chain
+  // (fetch stub -> setState -> rerender), but the full suite runs ~110 test
+  // files concurrently across 10 cores, and CPU contention at that scale can
+  // push that chain past a tight timeout even though the logic is correct —
+  // confirmed by 5/5 clean runs of this file in isolation.
+  await waitFor(() => assert.equal(calls, 2), { timeout: 8000 })
 })
 
 test('benchRunning: true still renders "bench running" and polls', async () => {

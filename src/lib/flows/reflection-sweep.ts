@@ -81,6 +81,7 @@ export async function sweepFlowReflection(
     where: { status: 'failed', startedAt: { gte: new Date(now.getTime() - CANDIDATE_WINDOW_MS) } },
     select: { flowId: true },
     distinct: ['flowId'],
+    orderBy: { startedAt: 'desc' },
     take: MAX_CANDIDATES,
   })
 

@@ -6,12 +6,14 @@
  * Nango sync/forward payloads) into the single `NormalizedActivity` shape
  * that `ActivityEvent` rows are built from. They do NO I/O: no prisma, no
  * fetch, no `Date.now()`. Any timestamp that can't be parsed out of the
- * payload falls back to the caller-supplied `opts.receivedAt` (the caller —
- * the webhook receiver — is the one allowed to read the clock), never to a
- * clock read inside this module. If a caller omits `receivedAt` AND the
- * payload carries no parseable timestamp, `occurredAt` falls back to the
- * Unix epoch (`new Date(0)`) — callers should always pass `receivedAt` to
- * avoid this degenerate case.
+ * payload falls back to `opts.receivedAt`, which is a REQUIRED parameter —
+ * the caller (the webhook receiver, the one I/O boundary allowed to read the
+ * clock) must supply it. This is deliberate: an optional fallback that quietly
+ * defaulted to the Unix epoch when both the payload and the caller omitted a
+ * timestamp would silently stamp bogus 1970 dates with no marker, which is
+ * worse than a compile error — making `receivedAt` required makes that
+ * degenerate path unrepresentable instead of documented-and-hoped-against,
+ * while keeping this module itself clock-free.
  *
  * Style follows `mapEventToSignal` (src/lib/signals/map.ts): defensive
  * multi-key extraction across flat/nested payload shapes, and a `sha256:`
@@ -69,13 +71,20 @@ export interface NormalizedActivity {
 
 const PAYLOAD_MAX_CHARS = 50_000
 
+/**
+ * Shared opts for both producers. `botUserId` is Slack-specific (ignored by
+ * `normalizeNangoForward`); `receivedAt` is required by both — it's the only
+ * clock read either function is allowed to rely on, and it must come from
+ * the caller.
+ */
 export interface NormalizeOpts {
   /** The workspace's own bot user id, captured at connect time. Slack events
    *  authored by this identity (or carrying any `bot_id`) are `selfOrigin`. */
   botUserId?: string
-  /** Fallback timestamp when the payload carries none. Caller-supplied so
-   *  this module never reads the clock itself. */
-  receivedAt?: Date
+  /** Fallback timestamp when the payload carries none. Required: the I/O
+   *  boundary (webhook receiver) must supply it so this module never reads
+   *  the clock and never fabricates a timestamp. */
+  receivedAt: Date
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -152,7 +161,7 @@ function chainDepthFromMetadata(event: Record<string, unknown>): number {
  * event_id, event_time }`) into a `NormalizedActivity`, or `null` if the
  * envelope carries no recognizable event.
  */
-export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: NormalizeOpts = {}): NormalizedActivity | null {
+export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: NormalizeOpts): NormalizedActivity | null {
   void orgId // not part of the output shape; reserved for future per-org logic
   const outer = asRecord(envelope)
   const event = asRecord(outer.event)
@@ -169,8 +178,7 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
   const occurredAt =
     parseSlackTimestamp(event.event_ts ?? event.ts) ??
     (firstNumber([outer], ['event_time']) != null ? new Date((firstNumber([outer], ['event_time']) as number) * 1000) : null) ??
-    opts.receivedAt ??
-    new Date(0)
+    opts.receivedAt
 
   const sourceEventId = firstString([outer], ['event_id']) ?? sha256Id(type, outer)
 
@@ -250,11 +258,15 @@ export function normalizeNangoForward(
   orgId: string,
   provider: string,
   payload: unknown,
-  opts: { receivedAt?: Date } = {},
+  opts: NormalizeOpts,
 ): NormalizedActivity | null {
   void orgId // not part of the output shape; reserved for future per-org logic
   const data = asRecord(payload)
-  const providerKey = provider.toLowerCase()
+  // `provider` is caller-supplied and not guaranteed to be a string at
+  // runtime (a malformed webhook forward, a bad call site) — never throw
+  // out of a pure normalizer just because a required-looking arg was
+  // null/undefined.
+  const providerKey = String(provider ?? '').toLowerCase()
 
   let mapped: { kind: ActivityKind; subject: Record<string, unknown>; actorExternalId: string | null }
   let source: string
@@ -284,10 +296,21 @@ export function normalizeNangoForward(
       if (epochSeconds != null) return new Date(epochSeconds * 1000)
       return null
     })() ??
-    opts.receivedAt ??
-    new Date(0)
+    opts.receivedAt
 
   const eventId = firstString([data], ['id', 'event_id', 'eventId', 'delivery_id', 'deliveryId'])
+  // The hash prefix includes `mapped.kind`, not just the raw provider/type —
+  // deliberate, but it's a tradeoff worth flagging: if a future change
+  // refines the kind heuristics (e.g. a payload that used to fall through to
+  // `generic` starts resolving to a specific kind), the hash-derived
+  // `sourceEventId` for that same payload changes too. That's fine for a
+  // *new* delivery (first-seen either way) but means a *redelivery* of an
+  // event that previously hashed under the old kind will no longer match the
+  // `@@unique([organizationId, source, sourceEventId])` row from before the
+  // heuristic change, and will insert as a "new" event rather than dedupe
+  // against it. Only matters for providers without a stable id field at all
+  // (most do supply one); accepted because kind precision is worth more here
+  // than dedupe stability across a heuristic refinement of an id-less shape.
   const sourceEventId = eventId ?? sha256Id(`${provider}:${mapped.kind}`, data)
 
   return {

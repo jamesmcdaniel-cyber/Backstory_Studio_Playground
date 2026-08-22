@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
-import { triggerFromGraph } from '@/lib/flows/trigger'
+import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { missingIntegrations } from '@/lib/templates/instantiate'
 import {
@@ -78,6 +78,7 @@ export async function instantiateFlowTemplate(
   const missing = await missingIntegrations(organizationId, userId, template.integrations)
   const setup = buildSetupChecklist(resolutions, (template.notes as FlowTemplateNotes) ?? null, missing)
 
+  const trigger = triggerFromGraph(graph)
   const flow = await prisma.flow.create({
     data: {
       name: template.name,
@@ -88,10 +89,11 @@ export async function instantiateFlowTemplate(
       // unfilled slots must never start firing on its own.
       status: 'DRAFT',
       visibility: 'shared',
-      trigger: jsonValue(triggerFromGraph(graph)),
+      trigger: jsonValue(trigger),
       graph: jsonValue(graph),
       organizationId,
       userId,
+      ...activityMatchColumns(trigger),
     },
   })
   return { flow, setup, issues: validation.errors.map((error) => error.message) }

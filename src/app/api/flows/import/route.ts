@@ -12,7 +12,7 @@ import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { parseN8nInstanceUrl, type N8nInstanceRef } from '@/lib/flows/import/n8n-instance'
 import { fetchWithHttpCredential, resolveHttpCredential } from '@/features/flows/http-auth'
 import { readResponseTextLimited } from '@/lib/net/response-body'
-import { triggerFromGraph } from '@/lib/flows/trigger'
+import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
@@ -284,6 +284,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     const warnings = notes.map((note) => note.message)
     const validation = validateFlowGraph(graph, { requireRunnable: false })
     const importNotes = { notes, blocking: validation.errors.length }
+    const trigger = triggerFromGraph(graph)
     const flow = await prisma.flow.create({
       data: {
         organizationId: auth.organizationId,
@@ -291,8 +292,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         name: converted.name,
         status: 'DRAFT',
         graph: JSON.parse(JSON.stringify(graph)),
-        trigger: JSON.parse(JSON.stringify(triggerFromGraph(graph))),
+        trigger: JSON.parse(JSON.stringify(trigger)),
         ...(importNotes.notes.length || importNotes.blocking ? { importNotes } : {}),
+        ...activityMatchColumns(trigger),
       },
     })
     // What the flow is asking to be ALLOWED to do, as distinct from whether it
@@ -323,6 +325,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError('That JSON is neither a Backstory flow package nor an n8n workflow export.', 400, 'UNRECOGNIZED_IMPORT')
   }
   const input = parsed.data
+  const nativeTrigger = triggerFromGraph(input.flow.graph)
   const flow = await prisma.flow.create({
     data: {
       organizationId: auth.organizationId,
@@ -333,7 +336,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       visibility: input.flow.visibility,
       status: 'DRAFT',
       graph: JSON.parse(JSON.stringify(input.flow.graph)),
-      trigger: JSON.parse(JSON.stringify(triggerFromGraph(input.flow.graph))),
+      trigger: JSON.parse(JSON.stringify(nativeTrigger)),
+      ...activityMatchColumns(nativeTrigger),
     },
   })
   // Native packages get the same review. A flow exported from another

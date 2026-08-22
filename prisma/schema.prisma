@@ -1346,6 +1346,22 @@ model Flow {
   /// validation blocker count. Null once the user clears the notes (or for
   /// flows that weren't imported).
   importNotes    Json?
+  /// Denormalized match index for the activity-event dispatcher (Task 6) —
+  /// NOT the source of truth (that's `trigger`'s JSON, synced from the
+  /// builder's trigger node by `triggerFromGraph`'s write path on every
+  /// save/publish/import/instantiate). Kept in lockstep with `trigger` so the
+  /// dispatcher can do one indexed `WHERE organizationId = ? AND
+  /// activitySource = ?` scan instead of a full-table scan decoding JSON on
+  /// every ACTIVE flow. `activitySource` is the app the flow listens to
+  /// ('slack', 'salesforce', 'nango:<provider>', ...) — null for every
+  /// non-event trigger type (manual/schedule/webhook/signal/poll). A 'slack'
+  /// trigger is sugar over the same matcher: it always writes
+  /// activitySource = 'slack', activityKinds = ['message.posted'].
+  activitySource String?
+  /// The normalized `ActivityKind` verbs (see ACTIVITY_KINDS in
+  /// lib/activity/normalize.ts) this flow fires on. Empty for non-event
+  /// triggers, and for an 'activity' trigger with no kinds configured yet.
+  activityKinds  String[] @default([])
   organizationId String   @db.Uuid
   userId         String?
   /// Set when the owner was deprovisioned. Quarantined work never dispatches
@@ -1368,6 +1384,8 @@ model Flow {
   @@index([organizationId, updatedAt])
   // Scheduler cursor scan, as on agent_tasks.
   @@index([status, id])
+  // The activity dispatcher's match query — see activitySource's doc comment.
+  @@index([organizationId, activitySource])
   @@map("flows")
 }
 
@@ -1646,9 +1664,15 @@ model ActivityTriggerClaim {
   id              String   @id @default(uuid()) @db.Uuid
   organizationId  String   @db.Uuid
   activityEventId String   @db.Uuid
-  flowId          String   @db.Uuid
+  /// Plain text, NOT @db.Uuid: Flow.id is a cuid (see model Flow), not a
+  /// uuid — same fix as ActivityEvent.ownerUserId (20260822093000). Shipped
+  /// typed uuid in Task 1's migration; every real Flow.id failed to write
+  /// here at all until this was caught wiring the first writer that
+  /// populates a non-null value (Task 6, the dispatcher itself).
+  flowId          String
   status          String   @default("claimed") // 'claimed'|'dispatched'|'throttled'|'failed'
-  flowRunId       String?  @db.Uuid
+  /// Same fix as flowId above: FlowRun.id is also a cuid, not a uuid.
+  flowRunId       String?
   createdAt       DateTime @default(now())
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   @@unique([organizationId, activityEventId, flowId])

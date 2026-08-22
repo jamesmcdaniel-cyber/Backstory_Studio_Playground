@@ -86,6 +86,31 @@ export function preserveWebhookSecretHash(next: unknown, existing: unknown): Flo
   return trigger
 }
 
+/**
+ * The denormalized match columns (`Flow.activitySource`/`Flow.activityKinds`)
+ * for a trigger, kept in lockstep with `Flow.trigger` at every write site that
+ * calls `triggerFromGraph` — see the columns' doc comments in schema.prisma.
+ * An 'activity' trigger writes its configured source + kinds; a 'slack'
+ * trigger is sugar over the same matcher, so it always writes activitySource
+ * 'slack' + kinds ['message.posted'] regardless of its own config (channelId/
+ * threadOnly are per-event filters applied by the dispatcher, not part of the
+ * match index). Every other trigger type clears both back to null/[] — a flow
+ * whose trigger changed away from an event type must stop matching.
+ */
+export function activityMatchColumns(trigger: FlowTrigger): { activitySource: string | null; activityKinds: string[] } {
+  if (trigger.type === 'activity') {
+    const source = typeof trigger.source === 'string' && trigger.source.trim() ? trigger.source.trim() : null
+    const kinds = Array.isArray(trigger.kinds)
+      ? trigger.kinds.filter((kind): kind is string => typeof kind === 'string' && kind.trim() !== '')
+      : []
+    return { activitySource: source, activityKinds: kinds }
+  }
+  if (trigger.type === 'slack') {
+    return { activitySource: 'slack', activityKinds: ['message.posted'] }
+  }
+  return { activitySource: null, activityKinds: [] }
+}
+
 /** Normalize the trigger's declared input fields from untrusted JSON. */
 export function triggerInputFieldsFromTrigger(trigger: unknown): TriggerInputField[] {
   if (!isRecord(trigger) || !Array.isArray(trigger.inputFields)) return []

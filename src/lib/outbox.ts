@@ -8,9 +8,9 @@ export const OUTBOX_TOPIC_CREDENTIAL_REVOKE = 'credential.revoke'
 /**
  * Durable handoff from an activity-event receiver (Slack Events API, Task 4;
  * Nango forward/sync, Task 3) to the dispatcher that matches a persisted
- * `ActivityEvent` against subscriptions and runs whatever should react to it.
- * The dispatcher itself (the matcher + delivery) lands in Task 6 — see
- * `deliver()` below for how a row on this topic is handled in the meantime.
+ * `ActivityEvent` against subscriptions and runs whatever should react to it
+ * — `dispatchActivityEvent` in src/lib/activity/dispatch.ts (Task 6), routed
+ * to below in `deliver()`.
  */
 export const OUTBOX_TOPIC_ACTIVITY_DISPATCH = 'activity.dispatch'
 const MAX_ATTEMPTS = 8
@@ -115,8 +115,9 @@ export function providerSignalOutboxEvent(input: {
 }
 
 /**
- * A persisted `ActivityEvent`'s durable handoff to the (not-yet-built) Task 6
- * dispatcher. `dedupeKey` reuses the same `[source, sourceEventId]` pairing
+ * A persisted `ActivityEvent`'s durable handoff to `dispatchActivityEvent`
+ * (src/lib/activity/dispatch.ts, Task 6). `dedupeKey` reuses the same
+ * `[source, sourceEventId]` pairing
  * the `ActivityEvent` row's own unique key is built from — same reasoning as
  * `providerSignalOutboxEvent` above: a redelivery hits this outbox row's own
  * `[organizationId, dedupeKey]` unique constraint and is acked, not
@@ -157,6 +158,10 @@ function parseSignalPayload(value: Prisma.JsonValue): FlowSignalPayload {
   }
 }
 
+function isActivityDispatchPayload(value: Prisma.JsonValue): value is { activityEventId: string } {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).activityEventId === 'string'
+}
+
 async function deliver(event: { id: string; organizationId: string; topic: string; payload: Prisma.JsonValue }) {
   if (event.topic === OUTBOX_TOPIC_CREDENTIAL_REVOKE) {
     const { handleCredentialRevoke } = await import('@/lib/nango/revoke-connection')
@@ -164,17 +169,10 @@ async function deliver(event: { id: string; organizationId: string; topic: strin
     return
   }
   if (event.topic === OUTBOX_TOPIC_ACTIVITY_DISPATCH) {
-    // TODO(Task 6): route to the activity dispatcher (subscription matcher +
-    // delivery). Until that lands, treat this as a successful no-op rather
-    // than an unsupported topic — throwing here would retry every
-    // `activity.dispatch` row up to MAX_ATTEMPTS and dead-letter it before
-    // Task 6 ever ships, poisoning the batch with churn (log noise, wasted
-    // claims) for a topic that's deliberately parked, not broken. This is a
-    // dev-only loss window, not a production one: substrate commits are not
-    // pushed/deployed until the final gate, and Task 6's real deliver switch
-    // replacing this no-op lands in that same push — so no production event
-    // can ever actually traverse this branch marked "delivered" without ever
-    // having been dispatched.
+    const { dispatchActivityEvent } = await import('@/lib/activity/dispatch')
+    const payload = isActivityDispatchPayload(event.payload) ? event.payload : null
+    if (!payload) throw new Error('Invalid activity.dispatch outbox payload')
+    await dispatchActivityEvent(payload.activityEventId)
     return
   }
   if (event.topic !== OUTBOX_TOPIC_FLOW_SIGNAL) throw new Error(`Unsupported outbox topic: ${event.topic}`)

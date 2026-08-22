@@ -1,7 +1,7 @@
 import { emptyGraph } from '@/lib/flows/graph'
 import { nativeFlowPackageSchema } from '@/lib/flows/native-package'
 import { serializeFlow } from '@/lib/flows/serialize'
-import { triggerFromGraph } from '@/lib/flows/trigger'
+import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
 import { prisma } from '@/lib/prisma'
 import { authenticatePublicApi, publicApiJson } from '@/lib/public-api/auth'
 import { agentVisibilityScope } from '@/lib/server/visibility'
@@ -27,6 +27,7 @@ export async function POST(request: Request) {
   const parsed = nativeFlowPackageSchema.safeParse(raw)
   if (!parsed.success) return publicApiJson({ error: { code: 'INVALID_PACKAGE', message: 'Expected a backstory.flow.v1 package.', issues: parsed.error.issues } }, 400)
   const graph = parsed.data.flow.graph ?? emptyGraph()
+  const trigger = triggerFromGraph(graph)
   const flow = await prisma.flow.create({
     data: {
       organizationId: auth.organizationId,
@@ -37,7 +38,8 @@ export async function POST(request: Request) {
       visibility: parsed.data.flow.visibility,
       status: 'DRAFT',
       graph: JSON.parse(JSON.stringify(graph)),
-      trigger: JSON.parse(JSON.stringify(triggerFromGraph(graph))),
+      trigger: JSON.parse(JSON.stringify(trigger)),
+      ...activityMatchColumns(trigger),
     },
   })
   return publicApiJson({ data: serializeFlow(flow) }, 201)

@@ -1,6 +1,6 @@
 import { nativeFlowPackage, nativeFlowPackageSchema } from '@/lib/flows/native-package'
 import { serializeFlow } from '@/lib/flows/serialize'
-import { triggerFromGraph } from '@/lib/flows/trigger'
+import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
 import { prisma } from '@/lib/prisma'
 import { authenticatePublicApi, publicApiJson } from '@/lib/public-api/auth'
 import { agentVisibilityScope } from '@/lib/server/visibility'
@@ -30,6 +30,7 @@ export async function PUT(request: Request) {
   const parsed = nativeFlowPackageSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) return publicApiJson({ error: { code: 'INVALID_PACKAGE', message: 'Expected a backstory.flow.v1 package.', issues: parsed.error.issues } }, 400)
   const id = idOf(request)
+  const trigger = triggerFromGraph(parsed.data.flow.graph)
   const updated = await prisma.flow.updateMany({
     where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.userId) },
     data: {
@@ -38,7 +39,8 @@ export async function PUT(request: Request) {
       folder: parsed.data.flow.folder,
       visibility: parsed.data.flow.visibility,
       graph: JSON.parse(JSON.stringify(parsed.data.flow.graph)),
-      trigger: JSON.parse(JSON.stringify(triggerFromGraph(parsed.data.flow.graph))),
+      trigger: JSON.parse(JSON.stringify(trigger)),
+      ...activityMatchColumns(trigger),
     },
   })
   if (!updated.count) return publicApiJson({ error: { code: 'NOT_FOUND', message: 'Flow not found.' } }, 404)

@@ -5,7 +5,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { flowGraphSchema, emptyGraph } from '@/lib/flows/graph'
 import { serializeFlow } from '@/lib/flows/serialize'
-import { FLOW_TRIGGER_TYPES, anchorTriggerSchedule, normalizeFlowTrigger, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
+import { FLOW_TRIGGER_TYPES, activityMatchColumns, anchorTriggerSchedule, normalizeFlowTrigger, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
 import { assertFlowEditable, resolveFlowRole } from '@/lib/flows/access'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
@@ -84,6 +84,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       graph: jsonValue(graph),
       organizationId: auth.organizationId,
       userId: auth.dbUser.id,
+      ...activityMatchColumns(trigger),
     },
   })
   return { success: true, flow: serializeFlow(flow) }
@@ -152,7 +153,10 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     ...(body.folder !== undefined && { folder: body.folder }),
     // Preserve the webhook secret hash across trigger edits — the client
     // never sees it, so a plain PUT would silently wipe it.
-    ...(nextTrigger !== undefined && { trigger: jsonValue(anchorTriggerSchedule(preserveWebhookSecretHash(nextTrigger, existing.trigger), existing.trigger)) }),
+    ...(nextTrigger !== undefined && (() => {
+      const anchored = anchorTriggerSchedule(preserveWebhookSecretHash(nextTrigger, existing.trigger), existing.trigger)
+      return { trigger: jsonValue(anchored), ...activityMatchColumns(anchored) }
+    })()),
     ...(body.graph !== undefined && { graph: jsonValue(body.graph) }),
     ...(body.clearImportNotes ? { importNotes: Prisma.DbNull } : {}),
   }

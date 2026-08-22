@@ -26,6 +26,14 @@ type TriggerLike = { type?: unknown; dedupeValue?: unknown }
  * item as a brand new run with a new id. Sharing the scope is what makes that
  * second run replay instead of firing the writes again.
  *
+ * Activity/Slack-triggered runs (the activity-event substrate's dispatcher,
+ * src/lib/activity/dispatch.ts) scope by the `ActivityEvent` id the same way:
+ * exactly-once dispatch is already enforced by `ActivityTriggerClaim`'s unique
+ * `[organizationId, activityEventId, flowId]` index, but should the dispatcher
+ * ever be re-run for an event it already claimed for this flow (a replay, a
+ * manual retry), the run's own side effects still must not fire twice — same
+ * reasoning as poll's dedupeValue.
+ *
  * Falls back to the run id whenever there is no single item to key on — the
  * batch-dispatch shape, or a malformed trigger. That is exactly today's
  * behavior, so the fallback is safe rather than merely defensive.
@@ -33,7 +41,9 @@ type TriggerLike = { type?: unknown; dedupeValue?: unknown }
 export function runScopeKey(run: { id: string; flowId: string; trigger: unknown }): string {
   const trigger = (run.trigger && typeof run.trigger === 'object' ? run.trigger : {}) as TriggerLike
   const dedupeValue = typeof trigger.dedupeValue === 'string' ? trigger.dedupeValue.trim() : ''
-  if (trigger.type === 'poll' && dedupeValue) return `${run.flowId}:${dedupeValue}`
+  if ((trigger.type === 'poll' || trigger.type === 'activity' || trigger.type === 'slack') && dedupeValue) {
+    return `${run.flowId}:${dedupeValue}`
+  }
   return run.id
 }
 

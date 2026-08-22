@@ -806,7 +806,12 @@ model ActivityEvent {
   kind           String    // normalized verb: 'message.posted' | 'record.updated' | 'pr.opened' | ...
   occurredAt     DateTime
   actorExternalId String?
-  ownerUserId    String?   @db.Uuid
+  // Plain text, NOT @db.Uuid: User.id is a cuid (see model User), not a uuid —
+  // matching NangoConnection.userId's convention. The original migration
+  // typed this column uuid, which any real user id fails to write to at all;
+  // fixed alongside the writer that first needed to populate a non-null value
+  // (Task 3 of the activity-event substrate plan).
+  ownerUserId    String?
   visibility     String    @default("org") // 'org' | 'private'
   selfOrigin     Boolean   @default(false)
   backfill       Boolean   @default(false)

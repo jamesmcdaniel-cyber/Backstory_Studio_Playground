@@ -28,11 +28,17 @@ test('nango provider events shape into durable provider.<app> flow signals', () 
     event: 'sync',
     model: 'Contact',
     records: [{ id: 1 }],
+    source: 'salesforce',
+    sourceEventId: 'evt-1',
   })
   assert.equal(event.organizationId, 'org-1')
   assert.equal(event.topic, 'flow.signal')
   assert.equal(event.aggregateId, 'conn-9')
-  assert.equal(event.dedupeKey, null, 'provider events have no natural idempotency key — never collide two real events')
+  assert.equal(
+    event.dedupeKey,
+    'activity:salesforce:evt-1',
+    'dedupeKey reuses the ActivityEvent unique key so redelivery of the same event never double-emits the signal',
+  )
   assert.deepEqual(event.payload, {
     signal: 'provider.salesforce',
     payload: { provider: 'salesforce', connectionId: 'conn-9', event: 'sync', model: 'Contact', records: [{ id: 1 }] },

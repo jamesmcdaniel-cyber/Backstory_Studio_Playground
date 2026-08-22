@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getNangoClient, nangoConfigured } from '@/lib/nango/client'
+import { Prisma } from '@prisma/client'
+import { getNangoClient, nangoConfigured, NANGO_ORG_TAG } from '@/lib/nango/client'
 import { syncOrgNangoConnections } from '@/lib/nango/mirror'
 import { MIN_INTEGRATIONS_FOR_TEMPLATES } from '@/lib/integrations/integration-count'
 import { maybeGenerateOnGateClear } from '@/lib/templates/generation-queue'
 import { apiLogger } from '@/lib/logger'
 import { systemPrisma } from '@/lib/prisma'
 import { providerSignalOutboxEvent } from '@/lib/outbox'
+import { normalizeNangoForward } from '@/lib/activity/normalize'
 import { clientIp, recordTokenRejection } from '@/lib/security/events'
 import { rateLimit } from '@/lib/ratelimit'
 
@@ -102,33 +104,111 @@ export async function POST(request: NextRequest) {
   // flow with a signal trigger listening for that name runs with the event as
   // its input — "when a new record appears in <app>" as a push trigger. The org
   // isn't on these payloads, so it's resolved from the connection mirror row.
+  //
+  // Every delivery is ALSO persisted as an ActivityEvent — the durable,
+  // queryable substrate this signal is derived from (see
+  // docs/superpowers/specs/2026-08-21-activity-event-substrate-design.md).
+  // That row's unique key is `[organizationId, source, sourceEventId]`, so a
+  // redelivered event (Nango retries on anything but a 200) hits P2002 and is
+  // acked without a second row — no dedupe table needed on our side.
   if (body.type === 'sync' || body.type === 'forward') {
     const connectionId = typeof body.connectionId === 'string' ? body.connectionId : undefined
     const providerConfigKey = typeof body.providerConfigKey === 'string' ? body.providerConfigKey : undefined
     if (connectionId && providerConfigKey) {
       try {
         // systemPrisma: org-less webhook — resolve the owning org from the mirror.
-        const conn = await systemPrisma.nangoConnection.findFirst({ where: { connectionId }, select: { organizationId: true } })
+        let conn = await systemPrisma.nangoConnection.findFirst({
+          where: { connectionId },
+          select: { organizationId: true, userId: true },
+        })
         if (!conn) {
-          // A provider event for a connection we have no mirror row for is a
-          // DROPPED event — without this line it vanished without a trace
-          // (webhook acked ok, no signal emitted, no flow ran).
-          apiLogger.warn('nango provider event dropped — no mirror row for connection', { connectionId, providerConfigKey })
+          // Mirror-less doesn't have to mean org-unresolvable: the connect
+          // session that created this connection tagged it with the owning
+          // org (session-token route, NANGO_ORG_TAG), and Nango still has
+          // that tag even when our mirror row is missing (missed/raced auth
+          // webhook, or a connection older than the mirror itself). One
+          // bounded, best-effort lookup recovers it without waiting on a
+          // full org-wide `syncOrgNangoConnections` (which needs the org id
+          // as an INPUT, so it can't be the first step here, and would add a
+          // second, unbounded-fanout network call to this hot path).
+          try {
+            const remote = await getNangoClient().getConnection(providerConfigKey, connectionId)
+            const orgId = remote.tags?.[NANGO_ORG_TAG]
+            if (typeof orgId === 'string' && orgId) {
+              conn = { organizationId: orgId, userId: remote.end_user?.id ?? null }
+            }
+          } catch {
+            // Best-effort only — fall through to the drop-WARN below if this
+            // didn't resolve anything either.
+          }
         }
-        if (conn) {
-          // Durable handoff: Nango never retries an acked delivery, so an
-          // inline emit that failed used to lose the event forever. The
-          // outbox loop (worker + cron fallback) delivers with retries.
-          await systemPrisma.outboxEvent.create({
-            data: providerSignalOutboxEvent({
-              organizationId: conn.organizationId,
-              connectionId,
-              providerConfigKey,
-              event: body.type,
-              model: typeof body.model === 'string' ? body.model : undefined,
-              records: body.records ?? body.data ?? body.payload ?? null,
-            }),
-          })
+        if (!conn) {
+          // The ONLY remaining drop: no mirror row AND Nango itself has no
+          // org tag for this connection (deleted upstream, never tagged, or
+          // the lookup above failed). There is no organization to attribute
+          // an ActivityEvent to, and every row in that table is tenant-scoped
+          // by a NOT NULL organizationId — so persisting is not an option,
+          // only recording that it happened is.
+          apiLogger.warn('nango provider event dropped — connection unresolvable to any organization', { connectionId, providerConfigKey })
+        } else {
+          const receivedAt = new Date()
+          const records = body.records ?? body.data ?? body.payload ?? null
+          const normalized = normalizeNangoForward(conn.organizationId, providerConfigKey, records, { receivedAt })
+          if (normalized) {
+            try {
+              await systemPrisma.activityEvent.create({
+                data: {
+                  organizationId: conn.organizationId,
+                  source: normalized.source,
+                  sourceEventId: normalized.sourceEventId,
+                  kind: normalized.kind,
+                  occurredAt: normalized.occurredAt,
+                  actorExternalId: normalized.actorExternalId,
+                  // A user-owned mirror (or resolved end_user) makes this
+                  // event visible only to that person — same ownership split
+                  // as the connection it came from; org-owned → null + 'org'.
+                  ownerUserId: conn.userId,
+                  visibility: conn.userId ? 'private' : 'org',
+                  selfOrigin: normalized.selfOrigin,
+                  chainDepth: normalized.chainDepth,
+                  subject: normalized.subject as Prisma.InputJsonValue,
+                  payload: normalized.payload as Prisma.InputJsonValue,
+                },
+              })
+            } catch (error) {
+              // P2002 on the [organizationId, source, sourceEventId] unique
+              // key = a redelivery of an event we already have — ack it
+              // without a second row. Anything else is a real failure.
+              if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error
+            }
+          }
+          try {
+            // Durable handoff: Nango never retries an acked delivery, so an
+            // inline emit that failed used to lose the event forever. The
+            // outbox loop (worker + cron fallback) delivers with retries.
+            await systemPrisma.outboxEvent.create({
+              data: providerSignalOutboxEvent({
+                organizationId: conn.organizationId,
+                connectionId,
+                providerConfigKey,
+                event: body.type,
+                model: typeof body.model === 'string' ? body.model : undefined,
+                records,
+                // Falls back to a per-delivery random source/id pairing only in
+                // the (unreachable in practice) case the normalizer returns
+                // null — keeps this outbox row's dedupeKey well-formed instead
+                // of throwing on a hot path over a defensive nullable type.
+                source: normalized?.source ?? `nango:${providerConfigKey}`,
+                sourceEventId: normalized?.sourceEventId ?? connectionId,
+              }),
+            })
+          } catch (error) {
+            // dedupeKey now derives from the same [source, sourceEventId] the
+            // ActivityEvent row does, so a redelivery hits the outbox's own
+            // `[organizationId, dedupeKey]` unique constraint here too — same
+            // "already recorded, nothing more to do" case, not a failure.
+            if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error
+          }
         }
       } catch (error) {
         apiLogger.error('nango provider-event signal failed', {

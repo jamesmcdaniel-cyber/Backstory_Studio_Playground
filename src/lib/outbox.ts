@@ -66,9 +66,15 @@ export function flowSignalOutboxEvent(input: {
  * A Nango provider event (sync/forward) as a durable `provider.<app>` flow
  * signal. Previously emitted inline from the webhook route: a transient
  * failure was logged, acked ok to Nango, and the event was gone — Nango never
- * retries an acked delivery. dedupeKey is null on purpose: provider events
- * carry no natural idempotency key, and inventing one from the payload would
- * collide two legitimately identical events.
+ * retries an acked delivery.
+ *
+ * `dedupeKey` used to be null here with a comment that provider events carry
+ * no natural idempotency key. That stopped being true once the webhook route
+ * started persisting every delivery as an `ActivityEvent` first: that row's
+ * own unique key is `[organizationId, source, sourceEventId]`, and `source`/
+ * `sourceEventId` are exactly what the normalizer already computed (a stable
+ * hash when the provider itself supplies no id) — so the same triple is
+ * reused here instead of leaving the outbox signal undeduplicated.
  */
 export function providerSignalOutboxEvent(input: {
   organizationId: string
@@ -77,12 +83,14 @@ export function providerSignalOutboxEvent(input: {
   event: string
   model?: string
   records: unknown
+  source: string
+  sourceEventId: string
 }) {
   return {
     organizationId: input.organizationId,
     topic: OUTBOX_TOPIC_FLOW_SIGNAL,
     aggregateId: input.connectionId,
-    dedupeKey: null,
+    dedupeKey: `activity:${input.source}:${input.sourceEventId}`,
     payload: JSON.parse(
       JSON.stringify({
         signal: `provider.${input.providerConfigKey}`,

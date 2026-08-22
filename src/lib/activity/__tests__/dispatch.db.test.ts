@@ -86,7 +86,20 @@ if (TEST_DB) {
     })
     assert.ok(claim)
     assert.equal(claim.status, 'dispatched')
-    assert.ok(claim.flowRunId)
+    assert.ok(claim.flowRunId, 'a dispatched claim must carry a real flowRunId')
+
+    // dispatch.ts calls startFlowExecution, not dispatchFlowExecution — the
+    // FlowRun row is created (createFlowRunRow) BEFORE inline/queue mode is
+    // even decided (dispatchDetachedFlowExecution branches on inlineExecution
+    // only after that row exists), so this assertion is mode-independent: it
+    // holds in queue mode (production) exactly as it does here in inline
+    // mode (test/CI), because the row-creation step it's checking runs
+    // identically in both. See execute-flow-start.test.ts's own "creates the
+    // run row BEFORE execution finishes" case for the same proof on
+    // startFlowExecution directly.
+    const run = await prisma.flowRun.findFirst({ where: { id: claim.flowRunId, organizationId: ids.org } })
+    assert.ok(run, 'the claim\'s flowRunId must resolve to a real, matching FlowRun row')
+    assert.equal(run.flowId, ids.flow)
 
     const runsAfterFirst = await prisma.flowRun.count({ where: { flowId: ids.flow, organizationId: ids.org } })
     assert.equal(runsAfterFirst, 1)

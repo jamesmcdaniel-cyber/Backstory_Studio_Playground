@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { runQueueWatch, queueWatchReason, type QueueWatchDeps } from '../queue-watch'
+import { runQueueWatch, queueWatchReason, strandedActivityClaimsReason, type QueueWatchDeps } from '../queue-watch'
 import type { QueueConsumerCheck } from '../consumer-probe'
 
 const healthy: QueueConsumerCheck = {
@@ -39,14 +39,20 @@ const dlqOnlyStillPresent: QueueConsumerCheck = {
   deadLetters: { total: 2, queues: ['agent-dead-letter'] },
 }
 
-function harness(sequence: QueueConsumerCheck[]) {
+function harness(sequence: QueueConsumerCheck[], strandedClaimCounts: number[] = []) {
   const store = new Map<string, boolean>()
   const notified: unknown[] = []
   const audited: unknown[] = []
   let call = 0
+  let claimCall = 0
 
   const deps: Partial<QueueWatchDeps> = {
     probe: async () => sequence[Math.min(call++, sequence.length - 1)],
+    // Healthy (0) by default in every existing test below — none of them are
+    // about the stranded-claims condition, so it must never contribute an
+    // alert unless a test explicitly passes its own count sequence.
+    countStrandedActivityClaims: async () =>
+      strandedClaimCounts.length ? strandedClaimCounts[Math.min(claimCall++, strandedClaimCounts.length - 1)] : 0,
     cacheGetFn: async (key) => (store.has(key) ? (store.get(key) as boolean) : null),
     cacheSetFn: async (key, value) => {
       store.set(key, value)
@@ -179,5 +185,72 @@ describe('runQueueWatch', () => {
     const tick4 = await runQueueWatch(deps) // consumer loss breaks AGAIN (fresh incident, key was cleared); dlq still in cooldown -> 1 alert
     assert.equal(tick4.alerted, true, 'tick 4: consumer loss is a NEW incident (its cooldown was cleared on recovery) — must alert regardless of the dlq cooldown state')
     assert.equal(notified.length, 3, 'only the consumer-loss condition alerted again — dlq is still within its own cooldown')
+  })
+})
+
+describe('strandedActivityClaimsReason', () => {
+  test('a fresh count of 0 is not alertable', () => {
+    assert.equal(strandedActivityClaimsReason(0), null)
+  })
+  test('any positive count is alertable and names the count', () => {
+    assert.match(strandedActivityClaimsReason(2) ?? '', /2 activity-dispatch claim/)
+  })
+})
+
+describe('runQueueWatch: stranded activity-dispatch claims', () => {
+  test('a stale claimed row (count > 0) alerts, with the queue plane otherwise healthy', async () => {
+    const { deps, notified } = harness([healthy], [1])
+    const result = await runQueueWatch(deps)
+    assert.equal(result.unhealthy, true)
+    assert.equal(result.alerted, true)
+    assert.match(result.reason ?? '', /activity-dispatch claim/)
+    assert.equal(notified.length, 1)
+  })
+
+  test('a fresh claimed row (count 0) does not alert', async () => {
+    const { deps, notified } = harness([healthy], [0])
+    const result = await runQueueWatch(deps)
+    assert.equal(result.unhealthy, false)
+    assert.equal(result.alerted, false)
+    assert.equal(notified.length, 0)
+  })
+
+  test('a countStrandedActivityClaims failure fails safe (no alert), rather than taking the tick down', async () => {
+    const { deps, notified } = harness([healthy])
+    deps.countStrandedActivityClaims = async () => {
+      throw new Error('db down')
+    }
+    const result = await runQueueWatch(deps)
+    assert.equal(result.unhealthy, false)
+    assert.equal(notified.length, 0)
+  })
+
+  test('per-condition independence: a stranded-claims alert does not suppress, and is not suppressed by, consumer-loss or dead-letter alerts', async () => {
+    // Tick 1: consumer loss AND stranded claims are both newly unhealthy —
+    // two independent alerts, neither masking the other.
+    const { deps, notified } = harness([unhealthy, unhealthy], [1, 1])
+    const first = await runQueueWatch(deps)
+    assert.equal(first.alerted, true)
+    assert.equal(notified.length, 2, 'tick 1: consumer-loss and stranded-claims each alert independently')
+
+    // Tick 2: consumer loss still within its cooldown (quiet), but stranded
+    // claims is ALSO still within ITS OWN cooldown — own gate, not reset by
+    // the other condition's state.
+    const second = await runQueueWatch(deps)
+    assert.equal(second.unhealthy, true)
+    assert.equal(second.alerted, false, 'both conditions are within their own, independent cooldowns')
+    assert.equal(notified.length, 2)
+  })
+
+  test('stranded claims recovering (count back to 0) clears its cooldown independently of the queue-plane conditions', async () => {
+    const { deps, notified } = harness([unhealthy, unhealthy, unhealthy], [1, 0, 1])
+    await runQueueWatch(deps) // consumer loss + stranded claims both alert
+    assert.equal(notified.length, 2)
+    const second = await runQueueWatch(deps) // stranded claims recovered; consumer loss still in cooldown
+    assert.equal(second.unhealthy, true, 'consumer loss alone keeps this tick unhealthy')
+    assert.equal(notified.length, 2, 'no new alert — consumer loss is cooling down, stranded claims recovered')
+    const third = await runQueueWatch(deps) // stranded claims breaks again — a NEW incident, must alert
+    assert.equal(third.alerted, true)
+    assert.equal(notified.length, 3, 'stranded claims alerts again on its fresh incident, independent of consumer loss')
   })
 })

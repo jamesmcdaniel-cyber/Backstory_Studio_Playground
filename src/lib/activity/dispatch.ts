@@ -22,7 +22,7 @@ import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
-import { dispatchFlowExecution } from '@/features/flows/execute-flow'
+import { startFlowExecution } from '@/features/flows/execute-flow'
 
 /**
  * Loop guard (ruling 2 of the design doc): an event-chain depth cap analogous
@@ -51,15 +51,25 @@ export function activityRunsPerFlowPerHour(): number {
 // reasoning/shape as emitFlowSignal's MAX_FLOWS_PER_EMIT.
 const MAX_FLOWS_PER_EVENT = 200
 
-// A 'claimed' row this old, with no dispatched/failed row to show for it, is
-// not "in flight" — a crash between claim-create and run-dispatch left it
-// stranded. Never auto-recovered (that would mean risking a double-fire,
-// which is the one thing exactly-once dispatch promises not to do); this is
-// purely an observability threshold so a stranded claim is diagnosable
-// instead of silently invisible. Matches the outbox's own stale-lock window
-// (CLAIM_TIMEOUT_MS in src/lib/outbox.ts) — both are "how long is a claim
-// allowed to look in-flight before it's worth a human looking at instead."
-const STALE_CLAIM_MS = 10 * 60_000
+/**
+ * A 'claimed' row this old, with no dispatched/failed row to show for it, is
+ * not "in flight" — a crash between claim-create and run-dispatch left it
+ * stranded. Never auto-recovered (that would mean risking a double-fire,
+ * which is the one thing exactly-once dispatch promises not to do); this is
+ * purely an observability threshold. Two independent watchers use it, not
+ * one: the P2002-conflict branch below WARNs the instant a redelivery
+ * happens to touch the same event+flow pair again (passive — depends on a
+ * redelivery ever arriving), and `countStaleActivityTriggerClaims` in
+ * src/lib/queue/queue-watch.ts sweeps for it PROACTIVELY on its own cron
+ * cadence regardless of whether any redelivery ever comes — that sweep is
+ * what makes a stranded claim visible even when nothing else touches its
+ * event again. Exported so both share one definition of "how old is too old"
+ * rather than two constants drifting apart. Value chosen to comfortably
+ * exceed the outbox's own stale-lock window (`CLAIM_TIMEOUT_MS` in
+ * src/lib/outbox.ts, 10 min) — a claim isn't "stranded" while a redelivery
+ * could still legitimately be retrying it.
+ */
+export const STALE_CLAIM_MS = 15 * 60_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -189,7 +199,10 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
     try {
       const trigger = (isRecord(flow.trigger) ? flow.trigger : {}) as ActivityFlowTrigger
       // Actor filter lives here (not matchesEventFilters) because it reads the
-      // EVENT, not its subject blob.
+      // EVENT, not its subject blob. Intentionally 'activity'-only: a 'slack'
+      // trigger's config has no actorExternalId filter at all (see the config
+      // shapes documented on FLOW_TRIGGER_TYPES in lib/flows/trigger.ts) — a
+      // Slack-triggered flow narrows by channel/thread only.
       if (trigger.type === 'activity') {
         const filters = isRecord(trigger.filters) ? trigger.filters : {}
         if (
@@ -250,9 +263,12 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
         })
       } catch (error) {
         if (!isP2002(error)) throw error
-        // See the module doc comment / STALE_CLAIM_MS: surface a stranded
-        // 'claimed' row so it's diagnosable, without ever re-dispatching it —
-        // that would risk a double-fire, which exactly-once must never do.
+        // See STALE_CLAIM_MS's doc comment: this WARN is the passive,
+        // redelivery-dependent half of stranded-claim visibility (fires only
+        // if something redelivers this exact event again); the proactive
+        // half is queue-watch.ts's own cron sweep, which does not depend on
+        // that. Never re-dispatch here regardless — that would risk a
+        // double-fire, which exactly-once must never do.
         const existing = await prisma.activityTriggerClaim.findFirst({
           where: { organizationId: event.organizationId, activityEventId: event.id, flowId: flow.id },
           select: { status: true, createdAt: true },
@@ -289,7 +305,19 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
       try {
         const flowTriggerType: 'activity' | 'slack' = trigger.type === 'slack' ? 'slack' : 'activity'
         const chainDepth = event.chainDepth + 1
-        const result = await dispatchFlowExecution({
+        // startFlowExecution, not dispatchFlowExecution: the latter returns
+        // `{ queued: true }` with NO flowRunId in queue mode (production) —
+        // the FlowRun row doesn't exist yet, the worker creates it once it
+        // picks the job up. That left every real (queue-mode) claim's
+        // flowRunId permanently null, which is exactly the observability the
+        // stale-claim story above depends on. startFlowExecution creates the
+        // FlowRun row FIRST (validated input + pinned graph persisted) and
+        // only then hands execution to the detached dispatcher — so it
+        // returns a real flowRunId synchronously in BOTH inline and queue
+        // mode, the same "prepared run" pattern the webhook trigger route's
+        // 202 path uses for the identical reason (an interactive/durable
+        // caller that must have the id in hand immediately).
+        const result = await startFlowExecution({
           flowId: flow.id,
           organizationId: event.organizationId,
           userId: owner.id,
@@ -309,12 +337,11 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
           },
           deliveryId: `${event.id}-${flow.id}`,
         })
-        const flowRunId = 'flowRunId' in result ? result.flowRunId : null
         await prisma.activityTriggerClaim.updateMany({
           where: { id: claim.id, organizationId: event.organizationId, status: 'claimed' },
-          data: { status: 'dispatched', flowRunId },
+          data: { status: 'dispatched', flowRunId: result.flowRunId },
         })
-        outcomes.push({ flowId: flow.id, outcome: 'dispatched', flowRunId })
+        outcomes.push({ flowId: flow.id, outcome: 'dispatched', flowRunId: result.flowRunId })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         await prisma.activityTriggerClaim.updateMany({

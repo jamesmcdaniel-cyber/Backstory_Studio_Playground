@@ -14,22 +14,34 @@
  * and re-alerting every tick (every cron interval) would be noise nobody
  * reads. State is ONE CACHE KEY PER CONDITION (see cache.ts — Redis-backed in
  * production, so the cooldown survives across serverless invocations) —
- * consumer loss and dead letters are independent incident classes (a worker
- * fleet can die with an empty DLQ, or jobs can dead-letter with a perfectly
- * healthy fleet), so they get independent gates:
+ * consumer loss, dead letters, and stranded activity-dispatch claims (see
+ * below) are independent incident classes (a worker fleet can die with an
+ * empty DLQ, jobs can dead-letter with a perfectly healthy fleet, and a
+ * stranded claim can happen with both of the other two healthy), so they
+ * each get an independent gate:
  *   - condition newly unhealthy, no cooldown key set  -> alert, set the key (TTL below)
  *   - condition still unhealthy, cooldown key set     -> stay quiet for THIS condition
  *   - condition healthy                               -> clear THIS condition's key
- * A single shared key would let one condition's alert suppress the other's
- * for up to an hour — e.g. a consumer-loss alert firing, then dead letters
+ * A single shared key would let one condition's alert suppress another's for
+ * up to an hour — e.g. a consumer-loss alert firing, then dead letters
  * appearing 10 minutes later, going unreported until the shared cooldown
  * lapsed. Per-condition keys mean each incident class alerts on its own
- * edge regardless of the other's cooldown state.
+ * edge regardless of the others' cooldown state.
  * Clearing on recovery (rather than just letting the TTL lapse) means a
  * flap — recovers, then breaks again — alerts again immediately instead of
  * waiting out the rest of an hour-long window for a NEW incident.
+ *
+ * The third condition — stranded `ActivityTriggerClaim` rows — is not a
+ * queue-plane signal at all (it reads Postgres, not Redis/BullMQ), but it
+ * lives here rather than in a fourth cron route because it needs exactly the
+ * same edge-triggered/cooldown machinery this file already has, and because
+ * it's the PROACTIVE half of the same story src/lib/activity/dispatch.ts's
+ * `STALE_CLAIM_MS` doc comment tells: that module's own WARN only fires if
+ * something happens to redeliver the same event again; this sweep finds a
+ * stranded claim on its own cron cadence even if nothing ever does.
  */
 import { probeQueueConsumers, type QueueConsumerCheck } from './consumer-probe'
+import { STALE_CLAIM_MS } from '@/lib/activity/dispatch'
 import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
 import { systemPrisma } from '@/lib/prisma'
 import { recordAudit } from '@/lib/audit'
@@ -45,10 +57,26 @@ export const QUEUE_WATCH_COOLDOWN_MS = Number(process.env.QUEUE_WATCH_COOLDOWN_M
 const COOLDOWN_KEYS = {
   consumerLoss: 'queue-watch:alert-cooldown:consumer-loss',
   deadLetters: 'queue-watch:alert-cooldown:dead-letters',
+  strandedActivityClaims: 'queue-watch:alert-cooldown:stranded-activity-claims',
 } as const
+
+/**
+ * How many `ActivityTriggerClaim` rows are still `'claimed'` past
+ * `STALE_CLAIM_MS` right now — dispatchActivityEvent's exactly-once claim
+ * create happens strictly before the run it guards, so a claim this old with
+ * no dispatched/failed row to show for it means a crash left it stranded
+ * between the two. systemPrisma: a platform-wide count across every org's
+ * claims, cron/owner-alert-only — no tenant to scope it by.
+ */
+export async function countStaleActivityTriggerClaims(now: Date = new Date()): Promise<number> {
+  return systemPrisma.activityTriggerClaim.count({
+    where: { status: 'claimed', createdAt: { lt: new Date(now.getTime() - STALE_CLAIM_MS) } },
+  })
+}
 
 export type QueueWatchDeps = {
   probe: () => Promise<QueueConsumerCheck>
+  countStrandedActivityClaims: () => Promise<number>
   cacheGetFn: (key: string) => Promise<boolean | null>
   cacheSetFn: (key: string, value: boolean, ttlMs: number) => Promise<void>
   cacheDeleteFn: (key: string) => Promise<void>
@@ -61,6 +89,7 @@ export type QueueWatchDeps = {
 
 const defaultDeps: QueueWatchDeps = {
   probe: probeQueueConsumers,
+  countStrandedActivityClaims: () => countStaleActivityTriggerClaims(),
   cacheGetFn: (key) => cacheGet<boolean>(key),
   cacheSetFn: (key, value, ttlMs) => cacheSet(key, value, ttlMs),
   cacheDeleteFn: (key) => cacheDelete(key),
@@ -100,21 +129,36 @@ export function deadLettersReason(check: QueueConsumerCheck): string | null {
 }
 
 /**
- * Pure verdict over an already-computed probe result: is EITHER condition
- * alertable, and why (both, when both are). Exists for the combined summary
- * string and for callers that only care whether anything is wrong at all —
- * the cooldown state machine in runQueueWatch evaluates each condition
- * independently rather than using this.
+ * Pure verdict: is the stranded-activity-claim condition alertable right now,
+ * and why. `staleMinutes` is folded into the message so an on-call reader
+ * doesn't have to go look up STALE_CLAIM_MS to know what "stale" means here.
+ */
+export function strandedActivityClaimsReason(count: number): string | null {
+  if (count <= 0) return null
+  const staleMinutes = Math.round(STALE_CLAIM_MS / 60_000)
+  return `${count} activity-dispatch claim(s) stuck in 'claimed' for over ${staleMinutes}m — a dispatch likely crashed before starting the run`
+}
+
+/**
+ * Pure verdict over an already-computed probe result: is EITHER queue-plane
+ * condition alertable, and why (both, when both are). Exists for the
+ * combined summary string and for callers that only care whether anything is
+ * wrong at all — the cooldown state machine in runQueueWatch evaluates each
+ * condition independently rather than using this. Deliberately excludes the
+ * stranded-claims condition: that one has no `QueueConsumerCheck` to read a
+ * verdict from (see strandedActivityClaimsReason instead) — this function's
+ * signature is queue-probe-shaped, not "every condition this file knows
+ * about."
  */
 export function queueWatchReason(check: QueueConsumerCheck): string | null {
   const reasons = [consumerLossReason(check), deadLettersReason(check)].filter((r): r is string => Boolean(r))
   return reasons.length > 0 ? reasons.join('; ') : null
 }
 
-async function deliverAlert(reason: string, check: QueueConsumerCheck, deps: QueueWatchDeps): Promise<void> {
+async function deliverAlert(reason: string, detail: Record<string, unknown>, deps: QueueWatchDeps): Promise<void> {
   // Never let a failed audit/notify attempt take the whole check down — the
   // cron route still needs to report the unhealthy condition either way.
-  apiLogger.error('queue watch: alertable condition detected', { reason, stranded: check.stranded, deadLetters: check.deadLetters })
+  apiLogger.error('queue watch: alertable condition detected', { reason, ...detail })
   captureError(new Error(`queue watch alert: ${reason}`), { scope: 'queue-watch' })
 
   let owners: Array<{ id: string; organizationId: string | null }> = []
@@ -146,7 +190,7 @@ async function deliverAlert(reason: string, check: QueueConsumerCheck, deps: Que
           actorUserId: owner.id,
           actorKind: 'system',
           resourceType: 'queue',
-          detail: { reason, stranded: check.stranded, deadLetters: check.deadLetters, heartbeat: check.heartbeat },
+          detail: { reason, ...detail },
         })
         .catch(() => undefined)
     }),
@@ -156,12 +200,15 @@ async function deliverAlert(reason: string, check: QueueConsumerCheck, deps: Que
 /**
  * Evaluate one condition against its own cooldown key: clear on recovery,
  * alert-and-set on a fresh trip, stay quiet while still within cooldown.
- * Returns whether THIS condition fired a new alert this tick.
+ * Returns whether THIS condition fired a new alert this tick. `detail` is
+ * whatever this condition wants logged/audited alongside the reason — the
+ * queue-probe conditions pass the probe's own fields, the stranded-claims
+ * condition passes its count.
  */
 async function watchCondition(
   reason: string | null,
   cooldownKey: string,
-  check: QueueConsumerCheck,
+  detail: Record<string, unknown>,
   deps: QueueWatchDeps,
 ): Promise<boolean> {
   if (!reason) {
@@ -179,7 +226,7 @@ async function watchCondition(
   // the window open for a concurrent or immediately-following tick to also
   // fire — one incident, one alert, even under retry.
   await deps.cacheSetFn(cooldownKey, true, QUEUE_WATCH_COOLDOWN_MS).catch(() => undefined)
-  await deliverAlert(reason, check, deps)
+  await deliverAlert(reason, detail, deps)
   return true
 }
 
@@ -193,17 +240,26 @@ async function watchCondition(
 export async function runQueueWatch(overrides: Partial<QueueWatchDeps> = {}): Promise<QueueWatchResult> {
   const deps: QueueWatchDeps = { ...defaultDeps, ...overrides }
   const check = await deps.probe()
+  const strandedClaimCount = await deps.countStrandedActivityClaims().catch(() => 0)
 
   const consumerReason = consumerLossReason(check)
   const dlqReason = deadLettersReason(check)
+  const strandedClaimsReason = strandedActivityClaimsReason(strandedClaimCount)
 
-  const consumerAlerted = await watchCondition(consumerReason, COOLDOWN_KEYS.consumerLoss, check, deps)
-  const dlqAlerted = await watchCondition(dlqReason, COOLDOWN_KEYS.deadLetters, check, deps)
+  const queueDetail = { stranded: check.stranded, deadLetters: check.deadLetters, heartbeat: check.heartbeat }
+  const consumerAlerted = await watchCondition(consumerReason, COOLDOWN_KEYS.consumerLoss, queueDetail, deps)
+  const dlqAlerted = await watchCondition(dlqReason, COOLDOWN_KEYS.deadLetters, queueDetail, deps)
+  const strandedClaimsAlerted = await watchCondition(
+    strandedClaimsReason,
+    COOLDOWN_KEYS.strandedActivityClaims,
+    { strandedActivityClaims: strandedClaimCount },
+    deps,
+  )
 
-  const reasons = [consumerReason, dlqReason].filter((r): r is string => Boolean(r))
+  const reasons = [consumerReason, dlqReason, strandedClaimsReason].filter((r): r is string => Boolean(r))
   return {
     unhealthy: reasons.length > 0,
-    alerted: consumerAlerted || dlqAlerted,
+    alerted: consumerAlerted || dlqAlerted || strandedClaimsAlerted,
     reason: reasons.length > 0 ? reasons.join('; ') : undefined,
     check,
   }

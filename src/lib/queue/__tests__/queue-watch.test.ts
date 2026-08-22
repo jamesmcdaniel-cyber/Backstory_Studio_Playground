@@ -24,6 +24,21 @@ const withDeadLetters: QueueConsumerCheck = {
   deadLetters: { total: 3, queues: ['flow-dead-letter'] },
 }
 
+const bothUnhealthy: QueueConsumerCheck = {
+  configured: true,
+  ok: false,
+  stranded: ['agent-execution'],
+  deadLetters: { total: 2, queues: ['agent-dead-letter'] },
+}
+
+/** Consumer loss recovered, dead letters still present. */
+const dlqOnlyStillPresent: QueueConsumerCheck = {
+  configured: true,
+  ok: true,
+  stranded: [],
+  deadLetters: { total: 2, queues: ['agent-dead-letter'] },
+}
+
 function harness(sequence: QueueConsumerCheck[]) {
   const store = new Map<string, boolean>()
   const notified: unknown[] = []
@@ -123,5 +138,46 @@ describe('runQueueWatch', () => {
     const result = await runQueueWatch(deps)
     assert.equal(result.unhealthy, true)
     assert.equal(result.alerted, true)
+  })
+
+  test('cross-condition: a consumer-loss alert must not suppress a dead-letter alert that starts within the same hour', async () => {
+    // Tick 1: consumer loss only -> alert 1, and its cooldown key is set.
+    // Tick 2 (still within the hour): consumers recovered, but dead letters
+    // are now present -- a DIFFERENT condition, with its own cooldown key
+    // that has never been set, so it must fire alert 2 rather than being
+    // masked by the still-live consumer-loss cooldown.
+    const { deps, notified } = harness([unhealthy, withDeadLetters])
+    const first = await runQueueWatch(deps)
+    const second = await runQueueWatch(deps)
+    assert.equal(first.alerted, true, 'consumer-loss alert fires')
+    assert.match(first.reason ?? '', /agent-execution/)
+    assert.equal(second.alerted, true, 'dead-letter alert must fire — previously masked by the shared cooldown')
+    assert.match(second.reason ?? '', /dead-letter/)
+    assert.equal(notified.length, 2, 'one notification per condition, not suppressed by the other')
+  })
+
+  test('each condition\'s cooldown clears independently on its own recovery', async () => {
+    const { deps, notified } = harness([bothUnhealthy, bothUnhealthy, dlqOnlyStillPresent, bothUnhealthy])
+
+    // Assertions are interleaved between ticks (rather than batched at the
+    // end) so each `notified.length` check reflects state at that point in
+    // time, not after every tick has already run.
+    const tick1 = await runQueueWatch(deps) // both conditions newly unhealthy -> 2 alerts
+    assert.equal(tick1.alerted, true)
+    assert.equal(notified.length, 2, 'tick 1: both conditions alert independently')
+
+    const tick2 = await runQueueWatch(deps) // both still unhealthy, both within cooldown -> 0 alerts
+    assert.equal(tick2.unhealthy, true)
+    assert.equal(tick2.alerted, false, 'tick 2: both conditions still within their own cooldowns')
+    assert.equal(notified.length, 2)
+
+    const tick3 = await runQueueWatch(deps) // consumer loss recovered (clears its key); dlq still in cooldown -> 0 alerts
+    assert.equal(tick3.unhealthy, true, 'dead letters alone keep this tick unhealthy')
+    assert.equal(tick3.alerted, false, 'tick 3: consumer loss recovered (no alert to fire); dlq still cooling down')
+    assert.equal(notified.length, 2)
+
+    const tick4 = await runQueueWatch(deps) // consumer loss breaks AGAIN (fresh incident, key was cleared); dlq still in cooldown -> 1 alert
+    assert.equal(tick4.alerted, true, 'tick 4: consumer loss is a NEW incident (its cooldown was cleared on recovery) — must alert regardless of the dlq cooldown state')
+    assert.equal(notified.length, 3, 'only the consumer-loss condition alerted again — dlq is still within its own cooldown')
   })
 })

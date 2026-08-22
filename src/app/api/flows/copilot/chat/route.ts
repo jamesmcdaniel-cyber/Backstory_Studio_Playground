@@ -11,6 +11,7 @@ import { buildCopilotGrounding } from '@/lib/flows/copilot-grounding'
 import { applyCopilotOps } from '@/lib/flows/copilot-ops'
 import { parseCopilotChatReply, sanitizeCopilotOps, discardNotice } from '@/lib/flows/copilot-chat'
 import { assertAiCallAllowed, recordEstimatedUsage } from '@/lib/usage/ai-guard'
+import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
 
 // Anthropic strict structured outputs can't express free-form objects (a
 // {type:'object'} with no declared properties — see strictifySchema and the
@@ -106,7 +107,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   ].join('\n')
 
   try {
-    const raw = await generateStructured({ system, user, schema: OPS_JSON_SCHEMA, schemaName: 'flow_edit_ops', maxTokens: 3500 })
+    const raw = await generateStructured({
+      system,
+      user,
+      schema: OPS_JSON_SCHEMA,
+      schemaName: 'flow_edit_ops',
+      maxTokens: 3500,
+      // Same 'run.chat' surface as /api/chat and the per-agent assistant
+      // thread — all three are interactive chat, and the /usage page's chat
+      // bucket keys on this literal string (see src/lib/usage/chat-ledger.ts).
+      ledger: buildChatLedgerContext({ organizationId: auth.organizationId, userId: auth.dbUser.id }),
+    })
     recordEstimatedUsage(auth.organizationId, system, user, raw)
     const reply = parseCopilotChatReply(raw)
     const { ops, discarded } = sanitizeCopilotOps(reply.candidates, { agents: roster, toolCatalog })

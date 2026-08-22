@@ -22,10 +22,9 @@ type Bucket = 'agent' | 'flow' | 'chat' | 'other'
 const BUCKET_BY_SURFACE: Record<string, Bucket> = {
   agent_turn: 'agent',
   flow_ai: 'flow',
-  // No current write path stamps this value (run-chat only records against
-  // the budget counter, not the LlmCall ledger) — carried here so a future
-  // chat-surface ledger write lands in the right bucket without a route
-  // change, not because rows exist under it today.
+  // Written by /api/chat, /api/agents/[id]/chat, and
+  // /api/flows/copilot/chat (see src/lib/usage/chat-ledger.ts) — every
+  // interactive chat surface.
   'run.chat': 'chat',
 }
 const bucketFor = (surface: string): Bucket => BUCKET_BY_SURFACE[surface] ?? 'other'

@@ -1,5 +1,6 @@
 import type { StepType } from '@/lib/flows/mutate'
 import type { AiOp, DataOp, VariableOp } from '@/lib/flows/graph'
+import { EVENT_TRIGGER_LABELS } from '@/lib/flows/trigger'
 
 /** One pickable item in the Add-trigger/Add-action catalog. */
 export type PickerLeaf = {
@@ -142,13 +143,15 @@ export const AI_CAPABILITY_LEAVES: PickerLeaf[] = [
   { id: 'ai-custom-agent', label: 'Custom agent', description: 'Define a new agent right on this step — instructions, chat model, memory, and tools.', mode: 'action', stepType: 'agent' },
 ]
 
-/** Trigger-mode top level: the four ways a flow can start. */
+/** Trigger-mode top level: the ways a flow can start. */
 export const TRIGGER_LEAVES: PickerLeaf[] = [
   { id: 'trigger-manual', label: 'Manually trigger a flow', description: 'Start it from the builder or with typed inputs.', mode: 'trigger', triggerType: 'manual' },
   { id: 'trigger-schedule', label: 'Schedule', description: 'Run on a recurrence you define.', mode: 'trigger', triggerType: 'schedule' },
   { id: 'trigger-poll', label: 'When new items appear in an app', description: 'Check a connected app on a schedule and start for each new item.', mode: 'trigger', triggerType: 'poll' },
   { id: 'trigger-webhook', label: 'When an HTTP request is received', description: 'Start when an external system posts to a secret URL.', mode: 'trigger', triggerType: 'webhook' },
   { id: 'trigger-signal', label: 'When a signal fires', description: 'Start from an in-platform event, like another flow completing.', mode: 'trigger', triggerType: 'signal' },
+  { id: 'trigger-slack', label: EVENT_TRIGGER_LABELS.slack, description: 'Start instantly when a message lands in your connected Slack workspace.', mode: 'trigger', triggerType: 'slack' },
+  { id: 'trigger-activity', label: EVENT_TRIGGER_LABELS.activity, description: 'Start instantly when a connected app reports an event — a new record, a pull request, and more.', mode: 'trigger', triggerType: 'activity' },
 ]
 
 export function searchCorpus(leaf: PickerLeaf): string {

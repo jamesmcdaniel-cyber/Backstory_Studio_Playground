@@ -40,6 +40,49 @@ export const KNOWN_SIGNAL_LABELS: Record<KnownSignal, string> = {
   'agent.completed': 'When any agent finishes',
 }
 
+/**
+ * Plain-English labels for the activity trigger's event-type chips — no raw
+ * verb codes shown to the user (per the no-raw-token mandate).
+ *
+ * This is a LITERAL COPY of the kind vocabulary in `ACTIVITY_KINDS`
+ * (src/lib/activity/normalize.ts), not an import: that module pulls in
+ * `node:crypto` for its content-hash fallback, which has no business in a
+ * client bundle, and this file (trigger.ts) is imported directly by
+ * client-side builder components (trigger-editor.tsx, builtin-catalog.ts).
+ * Keep this list in sync with normalize.ts's `ACTIVITY_KINDS` by hand — a
+ * kind that exists there and is missing here would render as a raw code
+ * instead of a label, which `ACTIVITY_KIND_LABELS`'s callers must never do.
+ */
+export const ACTIVITY_KINDS_CLIENT = [
+  'message.posted',
+  'record.created',
+  'record.updated',
+  'record.deleted',
+  'pr.opened',
+  'pr.closed',
+  'pr.merged',
+  'issue.opened',
+  'issue.closed',
+  'push',
+  'generic',
+] as const
+
+export type ActivityKindClient = (typeof ACTIVITY_KINDS_CLIENT)[number]
+
+export const ACTIVITY_KIND_LABELS: Record<ActivityKindClient, string> = {
+  'message.posted': 'New message posted',
+  'record.created': 'Record created',
+  'record.updated': 'Record updated',
+  'record.deleted': 'Record deleted',
+  'pr.opened': 'Pull request opened',
+  'pr.closed': 'Pull request closed',
+  'pr.merged': 'Pull request merged',
+  'issue.opened': 'Issue opened',
+  'issue.closed': 'Issue closed',
+  push: 'Code pushed',
+  generic: 'Other activity',
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

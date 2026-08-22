@@ -285,6 +285,8 @@ export default function FlowActivityPage() {
             <SelectItem value="poll">Poll</SelectItem>
             <SelectItem value="webhook">Webhook</SelectItem>
             <SelectItem value="signal">Signal</SelectItem>
+            <SelectItem value="slack">Slack</SelectItem>
+            <SelectItem value="activity">App activity</SelectItem>
           </SelectContent>
         </Select>
         <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="h-9 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-indigo-400" aria-label="From date" />

@@ -209,6 +209,14 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
     subject: {
       channelId,
       threadTs: firstString([event], ['thread_ts']),
+      // The message's OWN ts — distinct from threadTs (the THREAD ROOT's ts,
+      // present only on a reply). A flow triggered by a top-level channel post
+      // has no threadTs at all; carrying the post's own ts here lets a
+      // thread-binding delivery step reply in-thread to THAT message (starting
+      // a new thread) instead of only ever having something to bind to when
+      // the trigger itself was already a reply. See execute-flow.ts's
+      // applySlackThreadDefault (src/features/flows/tool-args.ts).
+      ts,
     },
     payload: capPayload(outer),
     selfOrigin,

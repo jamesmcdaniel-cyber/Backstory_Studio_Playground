@@ -2715,10 +2715,17 @@ function FlowBuilder() {
                       const current = isRecordLike(triggerNode.data.trigger) ? triggerNode.data.trigger : {}
                       // Schedule + poll both need a schedule to be due — seed a
                       // sensible default so the trigger is valid on first pick.
+                      // Activity/slack need no default worth seeding: an empty
+                      // activity source/kinds is meant to surface the "pick an
+                      // app and event type" validation message rather than
+                      // silently guess one, and a bare slack trigger ({}) is
+                      // already valid (any channel, no thread restriction).
                       const seed =
                         (type === 'schedule' || type === 'poll') && !isRecordLike((current as { schedule?: unknown }).schedule)
                           ? { schedule: { type: type === 'poll' ? 'hourly' : 'daily', time: '09:00', timezone: 'UTC', isActive: true } }
-                          : {}
+                          : type === 'activity'
+                            ? { source: undefined, kinds: [] }
+                            : {}
                       commitGraph(updateNode(graph, { ...triggerNode, data: { trigger: { ...current, ...seed, type } } }))
                       setSelectedId(triggerNode.id)
                     }

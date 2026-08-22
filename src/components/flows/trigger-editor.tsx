@@ -5,7 +5,7 @@ import { indentOnTab } from '@/components/ui/textarea'
 import { Link2, RefreshCw, Copy, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CONDITION_OPS, CONDITION_OP_LABELS, type ConditionOp, type ConditionClause, type TriggerInputField } from '@/lib/flows/graph'
-import { KNOWN_SIGNALS, KNOWN_SIGNAL_LABELS } from '@/lib/flows/trigger'
+import { ACTIVITY_KINDS_CLIENT, ACTIVITY_KIND_LABELS, KNOWN_SIGNALS, KNOWN_SIGNAL_LABELS } from '@/lib/flows/trigger'
 import { nextOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
 import {
   DAY_LABELS,
@@ -43,6 +43,37 @@ export type TriggerData = {
   itemsPath?: string
   dedupeKey?: string
   emit?: 'perItem' | 'batch'
+  // Activity trigger: which app + event types to watch, config shape from
+  // src/lib/flows/trigger.ts's doc comment on FLOW_TRIGGER_TYPES.
+  source?: string
+  kinds?: string[]
+  filters?: { channelId?: string; actorExternalId?: string }
+  // Slack trigger: channelId + threadOnly narrow which Slack messages fire it;
+  // shared with the activity trigger's own channelId-shaped filter above only
+  // in spirit — the slack trigger keeps its own top-level fields (see
+  // FLOW_TRIGGER_TYPES's doc comment: `{ type: 'slack', channelId?, threadOnly? }`).
+  channelId?: string
+  threadOnly?: boolean
+}
+
+/** One connected-app chip from GET /api/integrations/available, as far as the
+ *  trigger editor needs it. */
+type AvailableTool = { key: string; label: string; connected: boolean }
+
+/**
+ * Map a connected tool's registry key to the `source` string an activity
+ * trigger stores and `normalizeNangoForward`/`normalizeSlackEvent`
+ * (src/lib/activity/normalize.ts) actually produce: 'slack' and 'salesforce'
+ * are literal matches, everything else falls to Nango's generic
+ * `nango:<provider>` source the same way an unmapped provider does there.
+ * Keeping this in lockstep with normalize.ts's own mapping is what makes the
+ * source picker honest — it only ever lists a source some connected app can
+ * actually emit, never an aspirational one.
+ */
+function activitySourceForToolKey(key: string): string {
+  const k = key.toLowerCase()
+  if (k === 'slack' || k === 'salesforce') return k
+  return `nango:${k}`
 }
 
 /** Minimal tool catalog shape the poll picker needs (no step-drawer dependency). */
@@ -127,6 +158,7 @@ export function TriggerEditor({
   const uid = useId()
   const [webhook, setWebhook] = useState<{ url: string; secret: string | null; hasSecret: boolean } | null>(null)
   const [minting, setMinting] = useState(false)
+  const [availableTools, setAvailableTools] = useState<AvailableTool[]>([])
   const type = trigger.type ?? 'manual'
   const schedule = trigger.schedule ?? { type: 'daily', time: '09:00', timezone: 'UTC', isActive: true }
   const sampleWebhookBody = JSON.stringify({ input: { account: 'Acme', priority: 'high' } }, null, 2)
@@ -162,6 +194,39 @@ export function TriggerEditor({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, flowId])
+
+  // Which apps this workspace has actually connected — feeds the activity
+  // trigger's source picker and the slack trigger's "connect Slack" hint. Only
+  // fetched for the two event-trigger types; every other type never needs it.
+  useEffect(() => {
+    if (type !== 'activity' && type !== 'slack') return
+    let alive = true
+    fetch('/api/integrations/available', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d?.success) return
+        setAvailableTools(Array.isArray(d.tools) ? d.tools : [])
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [type])
+
+  const slackConnected = availableTools.some((tool) => tool.key.toLowerCase() === 'slack' && tool.connected)
+  const connectedSources = availableTools
+    .filter((tool) => tool.connected)
+    .map((tool) => ({ value: activitySourceForToolKey(tool.key), label: tool.label }))
+  const selectedKinds = new Set((trigger.kinds ?? []).filter((kind) => kind.trim()))
+  const toggleKind = (kind: string) => {
+    const next = new Set(selectedKinds)
+    if (next.has(kind)) next.delete(kind)
+    else next.add(kind)
+    onChange({ ...trigger, kinds: Array.from(next) })
+  }
+  const activityFilters = trigger.filters ?? {}
+  const setActivityFilters = (patch: Partial<NonNullable<TriggerData['filters']>>) =>
+    onChange({ ...trigger, filters: { ...activityFilters, ...patch } })
 
   // Chip-editor handles for the "only run when…" condition rows — the same
   // register/focus/insert pattern StepDrawer uses for step fields, scoped
@@ -294,6 +359,8 @@ export function TriggerEditor({
           <option value="poll">When new items appear in an app (check on a schedule)</option>
           <option value="webhook">When an HTTP request is received</option>
           <option value="signal">Signal (in-platform event)</option>
+          <option value="slack">When someone posts in Slack</option>
+          <option value="activity">When something happens in a connected app</option>
         </select>
       </div>
 
@@ -423,6 +490,112 @@ export function TriggerEditor({
             </div>
           )}
           <p className="text-xs text-muted-foreground">Polls the <strong>published</strong> version. The first check just learns what already exists; new items after that start the flow.</p>
+        </div>
+      )}
+
+      {type === 'slack' && (
+        <div className="space-y-3">
+          {!slackConnected && (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-300">
+              Connect Slack in{' '}
+              <a href="/credentials" className="font-medium underline underline-offset-2">
+                workspace credentials
+              </a>{' '}
+              to arm this trigger.
+            </p>
+          )}
+          <div>
+            <label className={label} htmlFor={`${uid}-slack-channel`}>Channel (optional)</label>
+            <input
+              id={`${uid}-slack-channel`}
+              className={field}
+              value={trigger.channelId ?? ''}
+              placeholder="#revenue or C0123456"
+              onChange={(e) => onChange({ ...trigger, channelId: e.target.value || undefined })}
+            />
+            <p className="mt-1.5 text-xs text-muted-foreground">Leave blank to fire for any channel in the connected workspace.</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={trigger.threadOnly === true}
+              onChange={(e) => onChange({ ...trigger, threadOnly: e.target.checked || undefined })}
+            />
+            Only replies in threads
+          </label>
+          <p className="text-xs text-muted-foreground">Fires as soon as a matching message posts. Runs the <strong>published</strong> version.</p>
+        </div>
+      )}
+
+      {type === 'activity' && (
+        <div className="space-y-3">
+          <div>
+            <label className={label} htmlFor={`${uid}-activity-source`}>Watch this app</label>
+            <select
+              id={`${uid}-activity-source`}
+              className={field}
+              value={trigger.source ?? ''}
+              onChange={(e) => onChange({ ...trigger, source: e.target.value || undefined })}
+            >
+              <option value="">Select a connected app…</option>
+              {connectedSources.map((source) => (
+                <option key={source.value} value={source.value}>{source.label}</option>
+              ))}
+            </select>
+            {connectedSources.length === 0 && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Connect an app in{' '}
+                <a href="/credentials" className="font-medium underline underline-offset-2">workspace credentials</a>{' '}
+                before picking a source.
+              </p>
+            )}
+          </div>
+          <div>
+            <span className={label}>Event types</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Event types">
+              {ACTIVITY_KINDS_CLIENT.map((kind) => {
+                const on = selectedKinds.has(kind)
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleKind(kind)}
+                    className={
+                      on
+                        ? 'rounded-full border border-indigo-500 bg-indigo-500 px-3 py-1 text-xs font-medium text-white transition-colors'
+                        : 'rounded-full border border-border bg-transparent px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-indigo-400 hover:text-foreground'
+                    }
+                  >
+                    {ACTIVITY_KIND_LABELS[kind]}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className={label} htmlFor={`${uid}-activity-channel`}>Channel filter (optional)</label>
+              <input
+                id={`${uid}-activity-channel`}
+                className={field}
+                value={activityFilters.channelId ?? ''}
+                placeholder="#revenue"
+                onChange={(e) => setActivityFilters({ channelId: e.target.value || undefined })}
+              />
+            </div>
+            <div>
+              <label className={label} htmlFor={`${uid}-activity-actor`}>Actor filter (optional)</label>
+              <input
+                id={`${uid}-activity-actor`}
+                className={field}
+                value={activityFilters.actorExternalId ?? ''}
+                placeholder="Who triggered it"
+                onChange={(e) => setActivityFilters({ actorExternalId: e.target.value || undefined })}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">Fires as soon as the app reports a matching event. Runs the <strong>published</strong> version.</p>
         </div>
       )}
 

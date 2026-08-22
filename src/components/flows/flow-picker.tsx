@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
+  Activity,
   Bot,
   BookOpen,
   Braces,
@@ -14,6 +15,7 @@ import {
   GitBranch,
   GitMerge,
   Globe,
+  MessageSquare,
   Play,
   RefreshCw,
   Repeat,
@@ -135,6 +137,8 @@ const TRIGGER_ICON: Record<string, LucideIcon> = {
   webhook: Webhook,
   signal: Zap,
   poll: RefreshCw,
+  slack: MessageSquare,
+  activity: Activity,
 }
 
 const TRIGGER_TONE: Record<string, string> = {
@@ -143,6 +147,8 @@ const TRIGGER_TONE: Record<string, string> = {
   webhook: 'bg-violet-600 text-white',
   signal: 'bg-purple-600 text-white',
   poll: 'bg-cyan-600 text-white',
+  slack: 'bg-fuchsia-600 text-white',
+  activity: 'bg-rose-600 text-white',
 }
 
 type Row = {

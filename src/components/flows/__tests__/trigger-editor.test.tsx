@@ -125,3 +125,98 @@ test('classes prop overrides the default field class', () => {
   cleanup()
   void container
 })
+
+test('slack trigger panel: plain-English copy, no connected workspace yet', async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (url: unknown) => {
+    if (String(url).includes('/api/integrations/available')) {
+      return { ok: true, json: async () => ({ success: true, tools: [{ key: 'Slack', label: 'Slack', slug: 'slack', connected: false }] }) }
+    }
+    return { ok: true, json: async () => ({ success: true }) }
+  }) as unknown as typeof fetch
+  try {
+    render(React.createElement(TriggerEditor, { flowId: 'f1', trigger: { type: 'slack' }, onChange: () => {} }))
+    await screen.findByText(/connect slack in/i)
+    assert.ok(screen.getByText(/workspace credentials/i))
+    assert.ok(screen.getByLabelText(/channel \(optional\)/i))
+    assert.ok(screen.getByText(/only replies in threads/i))
+    // Never a raw event code or a bracketed token anywhere in the panel.
+    assert.ok(!document.body.textContent?.includes('{{'))
+    assert.ok(!document.body.textContent?.includes('message.posted'))
+  } finally {
+    globalThis.fetch = realFetch
+    cleanup()
+  }
+})
+
+test('slack trigger panel: connected workspace hides the connect prompt', async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (url: unknown) => {
+    if (String(url).includes('/api/integrations/available')) {
+      return { ok: true, json: async () => ({ success: true, tools: [{ key: 'Slack', label: 'Slack', slug: 'slack', connected: true }] }) }
+    }
+    return { ok: true, json: async () => ({ success: true }) }
+  }) as unknown as typeof fetch
+  try {
+    render(React.createElement(TriggerEditor, { flowId: 'f1', trigger: { type: 'slack' }, onChange: () => {} }))
+    await screen.findByLabelText(/channel \(optional\)/i)
+    assert.equal(screen.queryByText(/connect slack in/i), null)
+  } finally {
+    globalThis.fetch = realFetch
+    cleanup()
+  }
+})
+
+test('activity trigger panel: plain-English source picker and event-type chips, no raw codes', async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (url: unknown) => {
+    if (String(url).includes('/api/integrations/available')) {
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          tools: [
+            { key: 'salesforce', label: 'Salesforce', slug: 'salesforce', connected: true },
+            { key: 'Slack', label: 'Slack', slug: 'slack', connected: false },
+          ],
+        }),
+      }
+    }
+    return { ok: true, json: async () => ({ success: true }) }
+  }) as unknown as typeof fetch
+  try {
+    render(React.createElement(TriggerEditor, { flowId: 'f1', trigger: { type: 'activity' }, onChange: () => {} }))
+    await screen.findByText('Salesforce')
+    // Only the connected app shows up — the source list is honest, not aspirational.
+    assert.equal(screen.queryByText('Slack'), null)
+    assert.ok(screen.getByText('New message posted'))
+    assert.ok(screen.getByText('Pull request opened'))
+    assert.ok(screen.getByText('Other activity'))
+    assert.ok(!document.body.textContent?.includes('message.posted'))
+    assert.ok(!document.body.textContent?.includes('{{'))
+  } finally {
+    globalThis.fetch = realFetch
+    cleanup()
+  }
+})
+
+test('activity trigger: toggling an event-type chip writes through onChange', async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async () => ({ ok: true, json: async () => ({ success: true, tools: [] }) })) as unknown as typeof fetch
+  const seen: { kinds?: string[] }[] = []
+  try {
+    render(
+      React.createElement(TriggerEditor, {
+        flowId: 'f1',
+        trigger: { type: 'activity' },
+        onChange: (t: { kinds?: string[] }) => seen.push(t),
+      }),
+    )
+    const chip = await screen.findByText('Record created')
+    fireEvent.click(chip)
+    assert.deepEqual(seen.at(-1)?.kinds, ['record.created'])
+  } finally {
+    globalThis.fetch = realFetch
+    cleanup()
+  }
+})

@@ -8,6 +8,8 @@ import { executionVisibilityScope } from '@/lib/server/visibility'
 import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { assertAiCallAllowed, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
+import { recordLlmCall } from '@/lib/usage/ledger'
+import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
 
 // The run record folded into the prompt below carries whatever the agent's
 // tools returned — email bodies, ticket text, fetched pages. That is
@@ -54,6 +56,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     ? (DEFAULT_SUMMARY_MODEL.startsWith('claude') ? DEFAULT_SUMMARY_MODEL : 'claude-haiku-4-5')
     : qwenModel(DEFAULT_SUMMARY_MODEL.startsWith('claude') ? 'qwen-3.7' : DEFAULT_SUMMARY_MODEL)
 
+  const startedAt = Date.now()
   const response = await client.messages.create({
     model,
     max_tokens: 1024,
@@ -65,6 +68,24 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     auth.organizationId,
     (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
   ).catch(() => undefined)
+  // recordTokenUsage above is the Redis budget counter (separate by design);
+  // this is the LlmCall ledger — admin costs, per-user usage, and the
+  // /usage page's chat bucket all read from it, and until now this surface
+  // never wrote a row here because it calls the Messages API directly rather
+  // than through lib/llm/model-runner's shared ledger seam.
+  void recordLlmCall({
+    ...buildChatLedgerContext({ organizationId: auth.organizationId, userId: auth.dbUser.id }),
+    provider: useClaude ? 'anthropic' : 'qwen',
+    model,
+    usage: {
+      inputTokens: response.usage?.input_tokens ?? 0,
+      cacheWriteTokens: response.usage?.cache_creation_input_tokens ?? 0,
+      cacheReadTokens: response.usage?.cache_read_input_tokens ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
+    },
+    latencyMs: Date.now() - startedAt,
+    agentExecutionId: executionId,
+  }).catch(() => undefined)
   const answer = response.content
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)

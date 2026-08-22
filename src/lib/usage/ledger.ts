@@ -27,6 +27,12 @@ export type LlmSurface =
   // Consumed by the eval bench runner (a later task); added here only so the
   // union carries it from the start.
   | 'eval_bench'
+  // Interactive run/agent chat — the follow-up Q&A over a completed run
+  // (/api/chat) and the per-agent assistant thread (/api/agents/[id]/chat).
+  // Matches the literal string the /api/usage/me bucket map already keys on
+  // (BUCKET_BY_SURFACE in src/app/api/usage/me/route.ts), which predates any
+  // write path actually stamping it.
+  | 'run.chat'
 
 export type LlmCallInput = {
   organizationId: string

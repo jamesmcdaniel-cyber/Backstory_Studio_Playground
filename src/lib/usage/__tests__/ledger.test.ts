@@ -89,6 +89,24 @@ describe('recordLlmCall', () => {
     assert.deepEqual(client.calls, ['llmCall.create'])
   })
 
+  it('records a run.chat call with the chatting user attributed — the chat surface joining the ledger like every other surface', async () => {
+    const client = fakeClient()
+    await recordLlmCall(
+      {
+        organizationId: 'org-1',
+        userId: 'user-1',
+        surface: 'run.chat',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        usage: { inputTokens: 500, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 50 },
+      },
+      client,
+    )
+
+    assert.equal(client.transactionCount, 1)
+    assert.deepEqual(client.calls, ['llmCall.create'], 'no agentExecutionId/flowRunId on this call — no rollup to bump')
+  })
+
   it('never throws when the transaction itself fails — the ledger is best-effort', async () => {
     const client = {
       $transaction: async () => {

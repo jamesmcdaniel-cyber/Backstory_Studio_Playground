@@ -12,6 +12,7 @@ import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { rateLimit } from '@/lib/ratelimit'
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
+import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
 import {
   agentIdFromRequest,
   requireAgent,
@@ -232,6 +233,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       // instructions inline, which can be long — a tight cap truncates the JSON
       // and turns a valid answer into a parse failure.
       maxTokens: 8192,
+      // Same 'run.chat' surface as /api/chat's follow-up Q&A — both are
+      // interactive chat, and the /usage page's chat bucket keys on this
+      // literal string (see src/lib/usage/chat-ledger.ts).
+      ledger: buildChatLedgerContext({ organizationId: auth.organizationId, userId: auth.dbUser.id }),
     })
     const parsed = JSON.parse(text || '{}') as { reply?: unknown; proposal?: unknown; run?: unknown }
     reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : ''

@@ -15,6 +15,7 @@ import {
   GitMerge,
   Globe,
   Play,
+  RefreshCw,
   Repeat,
   Rows3,
   Search,
@@ -133,6 +134,7 @@ const TRIGGER_ICON: Record<string, LucideIcon> = {
   schedule: Clock,
   webhook: Webhook,
   signal: Zap,
+  poll: RefreshCw,
 }
 
 const TRIGGER_TONE: Record<string, string> = {
@@ -140,6 +142,7 @@ const TRIGGER_TONE: Record<string, string> = {
   schedule: 'bg-blue-600 text-white',
   webhook: 'bg-violet-600 text-white',
   signal: 'bg-purple-600 text-white',
+  poll: 'bg-cyan-600 text-white',
 }
 
 type Row = {
@@ -212,7 +215,7 @@ export function FlowPicker({
   agents: Agent[]
   toolCatalog: ToolCatalog
   onPick: (type: StepType, seed?: FlowInsertSeed) => void
-  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll') => void
+  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack') => void
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')

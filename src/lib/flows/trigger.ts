@@ -1,9 +1,27 @@
 import { FIELD_TYPES, type FlowGraph, type TriggerInputField } from '@/lib/flows/graph'
 import { anchorSchedule } from '@/lib/scheduling/due'
 
-export const FLOW_TRIGGER_TYPES = ['manual', 'schedule', 'webhook', 'signal', 'poll'] as const
+// 'activity' and 'slack' are the two event-trigger types (activity-event
+// substrate): 'activity' fires from a normalized ActivityEvent (Nango
+// ingestion — provider webhooks/polling across connected apps), 'slack'
+// fires from the workspace's own Slack Events API receiver. Their config
+// shapes:
+//   { type: 'activity', source, kinds: string[], filters?: { channelId?, actorExternalId? } }
+//   { type: 'slack', channelId?, threadOnly?: boolean }
+// Both are configurable by anyone but ARM (are reachable at publish/run
+// time) only for workspaces above free tier or internal/partner — see
+// validateTriggerConfig in validate.ts and canArmEventTriggers in
+// free-tier-limits.ts.
+export const FLOW_TRIGGER_TYPES = ['manual', 'schedule', 'webhook', 'signal', 'poll', 'activity', 'slack'] as const
 export type FlowTriggerType = (typeof FLOW_TRIGGER_TYPES)[number]
 export type FlowTrigger = { type: FlowTriggerType; [key: string]: unknown }
+
+/** Plain-English labels for the two event-trigger types — no raw event codes
+ *  or provider jargon shown to the user (per the no-raw-token mandate). */
+export const EVENT_TRIGGER_LABELS = {
+  slack: 'When someone posts in Slack',
+  activity: 'When something happens in a connected app',
+} as const satisfies Record<'slack' | 'activity', string>
 
 // Signals a flow's trigger can listen for (a signal-type trigger fires when a
 // flow or agent completes — or fails — elsewhere in the org). Client-safe — no

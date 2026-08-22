@@ -11,6 +11,8 @@ import { anchorTriggerSchedule, preserveWebhookSecretHash, triggerFromGraph } fr
 import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
+import { slackConfigured } from '@/lib/integrations/slack'
+import { canArmEventTriggers } from '@/lib/usage/free-tier-limits'
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
@@ -67,7 +69,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const usedHttpCredentialIds = Array.from(new Set(graph.nodes.flatMap((node) =>
     node.type === 'http' ? [node.data.credentialId] : [],
   ).filter((id): id is string => Boolean(id))))
-  const [agents, connections, httpCredentials] = await Promise.all([
+  // Which of the two event-trigger types (if either) this flow's trigger is,
+  // so the slack/entitlement lookups below only run when they're actually
+  // needed — same conditional-fetch pattern as usedConnectionIds above.
+  const graphTriggerType = triggerFromGraph(graph, existing.trigger).type
+  const isEventTrigger = graphTriggerType === 'activity' || graphTriggerType === 'slack'
+  const [agents, connections, httpCredentials, slackConnected, org] = await Promise.all([
     prisma.agentTask.findMany({
       where: { organizationId: auth.organizationId, status: 'ACTIVE', ...agentVisibilityScope(auth.dbUser.id) },
       select: { id: true, description: true },
@@ -82,6 +89,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           select: { id: true },
         })
       : Promise.resolve([]),
+    graphTriggerType === 'slack' ? slackConfigured(auth.organizationId) : Promise.resolve(undefined),
+    isEventTrigger
+      ? prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { plan: true, kind: true } })
+      : Promise.resolve(undefined),
   ])
   const persistedTrigger = existing.trigger && typeof existing.trigger === 'object' && !Array.isArray(existing.trigger)
     ? existing.trigger as Record<string, unknown>
@@ -91,6 +102,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     toolCatalog: connections,
     httpCredentials,
     webhookSecretConfigured: typeof persistedTrigger.webhookSecretHash === 'string',
+    ...(graphTriggerType === 'slack' ? { slackWorkspaceConnected: slackConnected === true } : {}),
+    ...(isEventTrigger ? { eventTriggerEntitled: org ? canArmEventTriggers(org) : false } : {}),
   })
   if (!validation.ok) {
     throw new ApiError(validationErrorMessage(validation), 400, 'FLOW_VALIDATION_ERROR')

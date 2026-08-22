@@ -126,6 +126,26 @@ export async function checkIntegrationAllowance(args: {
   return { over: used >= FREE_TIER_LIMITS.integrations, used, limit: FREE_TIER_LIMITS.integrations }
 }
 
+/**
+ * Event triggers (activity/slack — the activity-event substrate) are
+ * configurable by anyone but ARM (become reachable at publish time) only for
+ * workspaces above free tier or internal/partner — see the design spec's
+ * ruling 3. This keeps the abuse surface (an uncapped inbound event firehose)
+ * off the free tier without distorting the per-person run caps above.
+ *
+ * 'internal' = Backstory, 'partner' = People.ai — both exempt regardless of
+ * plan. Every other org kind must be on a paid plan (anything but the TRIAL
+ * default) to arm an event trigger.
+ */
+const EVENT_TRIGGER_EXEMPT_ORG_KINDS = new Set(['internal', 'partner'])
+
+export function canArmEventTriggers(org: { plan: string; kind: string }): boolean {
+  return org.plan !== 'TRIAL' || EVENT_TRIGGER_EXEMPT_ORG_KINDS.has(org.kind)
+}
+
+/** The message shown when publish/arming is refused for the free tier. */
+export const EVENT_TRIGGER_ENTITLEMENT_MESSAGE = 'Event triggers are available on paid workspaces.'
+
 /** The message a refused actor sees. Plain English, no enum or quota jargon. */
 export function limitMessage(kind: RunKind | 'integration', limit: number): string {
   if (kind === 'integration') {

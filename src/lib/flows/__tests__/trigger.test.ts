@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { FlowGraph } from '../graph'
-import { preserveWebhookSecretHash, triggerFromGraph, triggerInputFieldsFromTrigger } from '../trigger'
+import { normalizeFlowTrigger, preserveWebhookSecretHash, triggerFromGraph, triggerInputFieldsFromTrigger } from '../trigger'
 
 test('triggerFromGraph extracts the editable trigger from the trigger node', () => {
   const graph: FlowGraph = {
@@ -61,4 +61,19 @@ test('triggerInputFieldsFromTrigger normalizes fields, required flags, and defau
   ])
   assert.deepEqual(triggerInputFieldsFromTrigger(undefined), [])
   assert.deepEqual(triggerInputFieldsFromTrigger({ type: 'manual' }), [])
+})
+
+test('normalizeFlowTrigger round-trips an activity trigger config', () => {
+  const activity = {
+    type: 'activity',
+    source: 'salesforce',
+    kinds: ['opportunity.updated', 'opportunity.closed'],
+    filters: { channelId: undefined, actorExternalId: 'user-1' },
+  }
+  assert.deepEqual(normalizeFlowTrigger(activity), activity)
+})
+
+test('normalizeFlowTrigger round-trips a slack trigger config', () => {
+  const slack = { type: 'slack', channelId: 'C0123', threadOnly: true }
+  assert.deepEqual(normalizeFlowTrigger(slack), slack)
 })

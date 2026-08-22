@@ -19,6 +19,21 @@ export type FlowValidationContext = {
   httpCredentials?: { id: string }[]
   /** Set by publish validation; omitted for draft/manual-run validation. */
   webhookSecretConfigured?: boolean
+  /**
+   * Set by publish validation for a `slack`-type trigger: whether this org has
+   * a connected Slack workspace (BYO app — see src/lib/integrations/slack.ts's
+   * slackConfigured). Omitted for draft/manual-run validation, same as
+   * webhookSecretConfigured above.
+   */
+  slackWorkspaceConnected?: boolean
+  /**
+   * Set by publish validation for an `activity` or `slack` trigger: whether
+   * this org is entitled to ARM an event trigger (above free tier, or
+   * internal/partner — see canArmEventTriggers in free-tier-limits.ts and
+   * design spec ruling 3). Omitted for draft/manual-run validation — event
+   * triggers stay configurable for everyone; only arming is gated.
+   */
+  eventTriggerEntitled?: boolean
   requireRunnable?: boolean
   /** The flow being validated — lets subflow steps flag direct self-reference. */
   flowId?: string
@@ -184,7 +199,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validateTriggerConfig(
   issues: FlowValidationIssue[],
   trigger: unknown,
-  context: Pick<FlowValidationContext, 'webhookSecretConfigured'> = {},
+  context: Pick<FlowValidationContext, 'webhookSecretConfigured' | 'slackWorkspaceConnected' | 'eventTriggerEntitled'> = {},
 ) {
   if (trigger === undefined) return
   if (!isRecord(trigger)) {
@@ -235,6 +250,25 @@ function validateTriggerConfig(
   }
   if (type === 'webhook' && context.webhookSecretConfigured === false) {
     add(issues, 'error', 'MISSING_WEBHOOK_SECRET', 'Create a webhook secret before publishing this flow.', 'trigger')
+  }
+  if (type === 'activity') {
+    const kinds = Array.isArray(trigger.kinds)
+      ? trigger.kinds.filter((kind): kind is string => typeof kind === 'string' && kind.trim() !== '')
+      : []
+    if (!String(trigger.source ?? '').trim() || kinds.length === 0) {
+      add(issues, 'error', 'MISSING_ACTIVITY_CONFIG', 'An app activity trigger needs an app and at least one event type to watch.', 'trigger')
+    }
+    if (context.eventTriggerEntitled === false) {
+      add(issues, 'error', 'EVENT_TRIGGER_NOT_ENTITLED', 'Event triggers are available on paid workspaces.', 'trigger')
+    }
+  }
+  if (type === 'slack') {
+    if (context.slackWorkspaceConnected === false) {
+      add(issues, 'error', 'MISSING_SLACK_WORKSPACE', 'A Slack trigger needs a connected Slack workspace.', 'trigger')
+    }
+    if (context.eventTriggerEntitled === false) {
+      add(issues, 'error', 'EVENT_TRIGGER_NOT_ENTITLED', 'Event triggers are available on paid workspaces.', 'trigger')
+    }
   }
   if (type !== 'schedule') return
   const schedule = trigger.schedule

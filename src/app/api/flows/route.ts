@@ -5,7 +5,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { flowGraphSchema, emptyGraph } from '@/lib/flows/graph'
 import { serializeFlow } from '@/lib/flows/serialize'
-import { anchorTriggerSchedule, normalizeFlowTrigger, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
+import { FLOW_TRIGGER_TYPES, anchorTriggerSchedule, normalizeFlowTrigger, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
 import { assertFlowEditable, resolveFlowRole } from '@/lib/flows/access'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
@@ -21,7 +21,7 @@ function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
 }
 
-const triggerSchema = z.object({ type: z.enum(['manual', 'schedule', 'webhook', 'signal', 'poll']).default('manual') }).passthrough()
+const triggerSchema = z.object({ type: z.enum(FLOW_TRIGGER_TYPES).default('manual') }).passthrough()
 const flowSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(''),

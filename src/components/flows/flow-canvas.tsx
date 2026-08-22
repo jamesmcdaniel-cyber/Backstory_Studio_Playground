@@ -178,7 +178,7 @@ export function FlowCanvas({
   onMakeSubflow?: (startId: string) => void
   onDeleteNode?: (id: string) => void
   onBackgroundClick?: () => void
-  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll') => void
+  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack') => void
   onMoveAfter?: (nodeId: string, afterId: string) => void
   onReorderContainer?: (containerId: string, from: number, to: number, branchIndex?: number) => void
   /** nodeId → remote collaborators with that node selected (editing ring + name chip). */

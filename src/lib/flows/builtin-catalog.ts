@@ -9,7 +9,7 @@ export type PickerLeaf = {
   mode: 'action' | 'trigger' | 'both'
   stepType?: StepType
   seed?: { agentId?: string; connectionId?: string; toolName?: string; label?: string; variableOp?: VariableOp; dataOp?: DataOp; aiOp?: AiOp; codeLanguage?: 'javascript' | 'python' }
-  triggerType?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll'
+  triggerType?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack'
 }
 
 export type PickerGroup = {

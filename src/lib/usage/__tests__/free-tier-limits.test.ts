@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  EVENT_TRIGGER_ENTITLEMENT_MESSAGE,
   FREE_TIER_LIMITS,
+  canArmEventTriggers,
   countableIntegrations,
   isUnlimitedActor,
   limitMessage,
@@ -75,6 +77,19 @@ test('a stale reset stamp cannot widen the window into previous days', () => {
 
   const lastMonth = new Date('2026-07-01T00:00:00.000Z')
   assert.equal(runWindowStart(lastMonth, now).toISOString(), '2026-08-09T00:00:00.000Z')
+})
+
+test('event triggers arm only above free tier or for internal/partner orgs', () => {
+  // Free-tier customer: refused.
+  assert.equal(canArmEventTriggers({ plan: 'TRIAL', kind: 'customer' }), false)
+  // Paid customer: allowed regardless of tier.
+  assert.equal(canArmEventTriggers({ plan: 'STARTER', kind: 'customer' }), true)
+  assert.equal(canArmEventTriggers({ plan: 'PROFESSIONAL', kind: 'customer' }), true)
+  assert.equal(canArmEventTriggers({ plan: 'ENTERPRISE', kind: 'customer' }), true)
+  // Internal/partner orgs are exempt even on the TRIAL plan.
+  assert.equal(canArmEventTriggers({ plan: 'TRIAL', kind: 'internal' }), true)
+  assert.equal(canArmEventTriggers({ plan: 'TRIAL', kind: 'partner' }), true)
+  assert.equal(EVENT_TRIGGER_ENTITLEMENT_MESSAGE, 'Event triggers are available on paid workspaces.')
 })
 
 test('refusal messages say what to do next, without quota jargon', () => {

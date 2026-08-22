@@ -31,6 +31,7 @@ import {
   type FlowNode,
 } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
+import { EVENT_TRIGGER_LABELS } from '@/lib/flows/trigger'
 import { selectedToolPresentation, stepBrandFallback, type PresentableConnection } from '@/lib/flows/tool-presentation'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
 
@@ -135,6 +136,8 @@ export function titleFor(node: FlowNode, ctx: PresentationContext): string {
       if (type === 'poll') return 'When new items appear'
       if (type === 'webhook') return 'When an HTTP request is received'
       if (type === 'signal') return 'Signal trigger'
+      if (type === 'activity') return EVENT_TRIGGER_LABELS.activity
+      if (type === 'slack') return EVENT_TRIGGER_LABELS.slack
       return 'Manually trigger a flow'
     }
     case 'agent':
@@ -195,7 +198,17 @@ export function subtitleFor(node: FlowNode, ctx: PresentationContext): string | 
   switch (node.type) {
     case 'trigger': {
       const trigger = (node.data.trigger as
-        | { type?: string; schedule?: { type?: string; time?: string; timezone?: string }; signal?: string; inputFields?: unknown[]; toolName?: string }
+        | {
+            type?: string
+            schedule?: { type?: string; time?: string; timezone?: string }
+            signal?: string
+            inputFields?: unknown[]
+            toolName?: string
+            source?: string
+            kinds?: string[]
+            channelId?: string
+            threadOnly?: boolean
+          }
         | undefined) ?? {}
       const type = trigger.type ?? 'manual'
       const inputCount = (trigger.inputFields ?? []).length
@@ -206,6 +219,16 @@ export function subtitleFor(node: FlowNode, ctx: PresentationContext): string | 
       }
       if (type === 'poll') return trigger.toolName ? `Checks ${trigger.toolName} ${trigger.schedule?.type ?? 'hourly'}` : 'Pick an app and read action to poll'
       if (type === 'signal') return `Listens for "${trigger.signal || 'unnamed signal'}"`
+      if (type === 'activity') {
+        const kindCount = (trigger.kinds ?? []).filter((kind) => kind.trim()).length
+        if (!trigger.source) return 'Pick an app and at least one event type to watch'
+        return `Watches ${trigger.source} for ${kindCount} event type${kindCount === 1 ? '' : 's'}`
+      }
+      if (type === 'slack') {
+        return trigger.channelId
+          ? `Posts in ${trigger.channelId}${trigger.threadOnly ? ' (thread replies only)' : ''}`
+          : 'Any channel in the connected Slack workspace'
+      }
       if (type === 'webhook') return ctx.published === false ? `${inputLine} · publish to arm` : inputLine
       // manual keeps the original input-count line.
       return inputLine

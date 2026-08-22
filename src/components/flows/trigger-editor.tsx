@@ -24,7 +24,7 @@ import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 
 export type TriggerData = {
-  type?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll'
+  type?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack'
   schedule?: { type?: string; time?: string; cron?: string; timezone?: string; runAt?: string; isActive?: boolean }
   input?: string
   inputFields?: TriggerInputField[]
@@ -285,7 +285,7 @@ export function TriggerEditor({
           className={field}
           value={type}
           onChange={(e) => {
-            const next = e.target.value as 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll'
+            const next = e.target.value as 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack'
             onChange(next === 'schedule' || next === 'poll' ? { ...trigger, type: next, schedule: { ...schedule, isActive: true } } : { ...trigger, type: next })
           }}
         >

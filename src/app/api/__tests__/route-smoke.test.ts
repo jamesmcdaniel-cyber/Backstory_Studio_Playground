@@ -216,6 +216,7 @@ if (TEST_DB) {
     { name: 'GET /api/signals/custom', run: async () => (await import('../signals/custom/route')).GET(req('/api/signals/custom')) },
     { name: 'GET /api/skills', run: async () => (await import('../skills/route')).GET(req('/api/skills')) },
     { name: 'GET /api/usage', run: async () => (await import('../usage/route')).GET(req('/api/usage')) },
+    { name: 'GET /api/usage/me', run: async () => (await import('../usage/me/route')).GET(req('/api/usage/me')) },
     { name: 'GET /api/workflows/executions', run: async () => (await import('../workflows/executions/route')).GET(req('/api/workflows/executions')) },
     // Dynamic [id] routes — real seeded ids.
     { name: 'GET /api/agents/[id]/knowledge', run: async () => (await import('../agents/[id]/knowledge/route')).GET(req(`/api/agents/${agentId}/knowledge`)) },
@@ -277,6 +278,7 @@ if (TEST_DB) {
     // Operator-only, so the smoke org gets a 403 by design. Covered instead by
     // admin/__tests__/users-route.db.test.ts, which seeds a real operator.
     { route: 'admin/users', reason: 'operator-only — 403 for the smoke org by design' },
+    { route: 'admin/users/[id]/usage', reason: 'operator-only — 403 for the smoke org by design, same as admin/users' },
     // Reads the caller's factors through the Supabase service-role admin API,
     // which is unreachable here. Covered against the seam (both refusals and
     // the audit row) in auth/__tests__/mfa-factors-route.db.test.ts.

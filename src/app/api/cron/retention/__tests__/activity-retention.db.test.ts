@@ -8,8 +8,13 @@ import assert from 'node:assert/strict'
  * both the log line and the JSON response (house convention — see
  * cron/retention/route.ts).
  *
- * A 'claimed' (in-flight) claim must survive the sweep even past the cutoff —
- * only terminal statuses (dispatched/throttled/failed) are history.
+ * A 'claimed' claim still WITHIN the retention window survives (it may
+ * genuinely be in flight); one OLDER than the cutoff is pruned too — by that
+ * age (default 90 days, ~8,600x STALE_CLAIM_MS) it is not "in flight," it is
+ * a crashed dispatch nobody ever finished, and leaving it forever meant
+ * queue-watch's stale-claim alert re-fired on every single cron tick with no
+ * way to clear it. See the fix's doc comment on activityTriggerClaimsPruned
+ * in cron/retention/route.ts.
  */
 
 const TEST_DB = process.env.TEST_DATABASE_URL
@@ -66,6 +71,8 @@ if (TEST_DB) {
     })
     ids.staleTerminalClaim = staleTerminalClaim.id
 
+    // Old enough to be a stranded, crashed-dispatch claim, not "in flight" —
+    // this one MUST be pruned now.
     const staleClaimedClaim = await prisma.activityTriggerClaim.create({
       data: {
         organizationId: ids.org,
@@ -76,6 +83,18 @@ if (TEST_DB) {
       },
     })
     ids.staleClaimedClaim = staleClaimedClaim.id
+
+    // Genuinely recent — this one is still plausibly in flight and must
+    // survive the sweep.
+    const freshClaimedClaim = await prisma.activityTriggerClaim.create({
+      data: {
+        organizationId: ids.org,
+        activityEventId: freshEvent.id,
+        flowId: crypto.randomUUID(),
+        status: 'claimed',
+      },
+    })
+    ids.freshClaimedClaim = freshClaimedClaim.id
   })
 
   after(async () => {
@@ -86,10 +105,26 @@ if (TEST_DB) {
   })
 
   test('sweep deletes the 91-day-old event, spares the fresh one, and reports the counter', async () => {
+    // The retention route is a GLOBAL, cross-org sweep (systemPrisma, no
+    // organizationId filter on any of its queries) — same shape as the
+    // cross-org aggregates costs-route.db.test.ts and models-route-demo.db.
+    // test.ts serialize against each other with a shared Postgres advisory
+    // lock, for the same reason: this suite runs concurrently against a
+    // shared bs_ci_repro database, so this test's own sweep invocation could
+    // otherwise interleave with another cross-cutting global sweep touching
+    // the same tables from a sibling test file. Holding the lock for the
+    // GET call's whole duration keeps this test's own before/after deltas
+    // (already org-scoped below) honest even under full-suite parallelism.
     const { GET } = await import('../route')
-    const response = await GET(new Request('http://localhost/api/cron/retention', {
-      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
-    }))
+    const response = await prisma.$transaction(
+      async (tx: any) => {
+        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(918273646)')
+        return GET(new Request('http://localhost/api/cron/retention', {
+          headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+        }))
+      },
+      { timeout: 30_000 },
+    )
     const body = await response.json()
 
     assert.equal(response.status, 200)
@@ -108,7 +143,10 @@ if (TEST_DB) {
     const terminalClaimStillThere = await prisma.activityTriggerClaim.findFirst({ where: { id: ids.staleTerminalClaim, organizationId: ids.org } })
     assert.equal(terminalClaimStillThere, null, 'the terminal claim was pruned')
 
-    const claimedClaimStillThere = await prisma.activityTriggerClaim.findFirst({ where: { id: ids.staleClaimedClaim, organizationId: ids.org } })
-    assert.ok(claimedClaimStillThere, 'an in-flight "claimed" claim is never swept, however old')
+    const staleClaimedGone = await prisma.activityTriggerClaim.findFirst({ where: { id: ids.staleClaimedClaim, organizationId: ids.org } })
+    assert.equal(staleClaimedGone, null, 'a 91-day-old "claimed" row is a stranded crashed dispatch, not in-flight — it is pruned too')
+
+    const freshClaimedStillThere = await prisma.activityTriggerClaim.findFirst({ where: { id: ids.freshClaimedClaim, organizationId: ids.org } })
+    assert.ok(freshClaimedStillThere, 'a recent "claimed" row may genuinely be in flight and must survive')
   })
 }

@@ -71,7 +71,7 @@ export const EXCLUDED: Record<string, string> = {
   PushSubscription: 'device endpoints — a demo org must not be able to notify real devices',
   StoredFile: 'binary storage with quota accounting; out of demo scope per the design',
   PlatformAllowedDomain: 'platform admission control — global policy, not workspace scenery',
-  ActivityEvent: 'the Nango webhook now writes these (Task 3 of the activity-event substrate), but nothing reads them yet — no UI surface, no trigger dispatch (that is Task 6) — so a copy would still be inert rows nothing in a demo session points at; revisit once a reader ships',
+  ActivityEvent: 'readers exist now (dispatchActivityEvent, the builder trigger surfaces) — this is excluded for a different reason: rows carry raw provider payloads (Slack message text, Salesforce/GitHub record bodies) and external ids (sourceEventId, actorExternalId) scoped to the REAL workspace\'s connected accounts, none of which is safe or meaningful to hand a sandbox that has no live connection behind it',
   ActivityTriggerClaim: 'exactly-once dispatch ledger tied to real event/flow ids — same class as FlowSideEffect',
   ActivitySourceCursor: 'backfill checkpoint tied to a real connection; meaningless without the connection it advances',
 }

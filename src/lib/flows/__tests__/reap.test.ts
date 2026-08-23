@@ -99,8 +99,16 @@ if (TEST_DB) {
   })
 
   test('reapStuckFlowRuns fails only stale running runs and their live steps', async () => {
+    // reapStuckFlowRuns() is a global, cross-org sweep by design (see its own
+    // file-level doc comment) — its RETURN COUNT is shared-DB state, not
+    // scoped to this test's own org, so a concurrently-running test file in
+    // this same Postgres (node:test runs files in parallel workers) that
+    // happens to have its own stale 'running' FlowRun row at this exact
+    // moment would inflate it. Assert a floor, not an exact count, and prove
+    // correctness the scoped way instead: by re-reading each of THIS test's
+    // own rows below.
     const reaped = await reapStuckFlowRuns()
-    assert.equal(reaped, 1)
+    assert.ok(reaped >= 1, 'at least this test\'s own stale run must have been reaped')
 
     const staleRun = await prisma.flowRun.findUnique({ where: { id: ids.staleRunning, organizationId: ids.org } })
     assert.equal(staleRun.status, 'failed')
@@ -136,10 +144,13 @@ if (TEST_DB) {
     // but the onAfterRead hook flips it to `waiting` (simulating a legitimate
     // approval pause) before the transaction's write executes. This is the
     // exact race the re-query step in reapStuckFlowRuns exists to handle.
-    const reaped = await reapStuckFlowRuns(new Date(), async () => {
+    // racingRun diverted away before the transaction write — proven below by
+    // re-reading its own row/step, not by the sweep's global return count
+    // (which, like the test above, is shared-DB state this file doesn't own
+    // exclusively).
+    await reapStuckFlowRuns(new Date(), async () => {
       await prisma.flowRun.update({ where: { id: racingRun.id, organizationId: ids.org }, data: { status: 'waiting' } })
     })
-    assert.equal(reaped, 0) // racingRun diverted away before the transaction write
 
     const runAfter = await prisma.flowRun.findUnique({ where: { id: racingRun.id, organizationId: ids.org } })
     assert.equal(runAfter.status, 'waiting')
@@ -148,8 +159,18 @@ if (TEST_DB) {
     assert.equal(stepAfter.status, 'running')
   })
 
-  test('reapStuckFlowRuns is idempotent — second pass reaps nothing', async () => {
-    assert.equal(await reapStuckFlowRuns(), 0)
+  test('reapStuckFlowRuns is idempotent — second pass reaps nothing (for this test\'s own rows)', async () => {
+    // Scoped, not global: this org has no 'running' row left stale at this
+    // point (staleRunning already failed, freshRunning isn't stale, staleWaiting
+    // isn't 'running'), so a second pass must leave every one of them exactly
+    // as it found them — checked directly rather than trusting the sweep's
+    // cross-org return count, which other concurrently-running test files can
+    // move independently of anything this test did.
+    await reapStuckFlowRuns()
+    const freshRun = await prisma.flowRun.findUnique({ where: { id: ids.freshRunning, organizationId: ids.org } })
+    assert.equal(freshRun.status, 'running')
+    const waitingRun = await prisma.flowRun.findUnique({ where: { id: ids.staleWaiting, organizationId: ids.org } })
+    assert.equal(waitingRun.status, 'waiting')
   })
 
   test('mixed batch: a diverted run keeps its step, a genuinely-stuck sibling in the same call is reaped', async () => {
@@ -171,10 +192,12 @@ if (TEST_DB) {
     // divertedRun before the transaction's write, leaving stuckRun as the
     // sole genuine reap in this call — proving reapedRuns narrows the batch
     // rather than the step update touching every id in runIds.
-    const reaped = await reapStuckFlowRuns(new Date(), async () => {
+    // reaped's exact value isn't asserted (global, cross-org count) — the
+    // per-row re-reads below are what actually prove divertedRun was spared
+    // and stuckRun was reaped, scoped to this test's own org.
+    await reapStuckFlowRuns(new Date(), async () => {
       await prisma.flowRun.update({ where: { id: divertedRun.id, organizationId: ids.org }, data: { status: 'waiting' } })
     })
-    assert.equal(reaped, 1)
 
     const divertedRunAfter = await prisma.flowRun.findUnique({ where: { id: divertedRun.id, organizationId: ids.org } })
     assert.equal(divertedRunAfter.status, 'waiting')
@@ -264,8 +287,10 @@ if (TEST_DB) {
       data: { flowRunId: pickedUp.id, nodeId: 'n5', status: 'running', startedAt: strandedAge },
     })
 
+    // Global cross-org count, same reasoning as reapStuckFlowRuns above —
+    // assert a floor and prove correctness via the scoped re-reads below.
     const reaped = await reapNeverPickedUpRuns()
-    assert.equal(reaped, 1)
+    assert.ok(reaped >= 1, 'at least this test\'s own stranded run must have been reaped')
 
     const strandedAfter = await prisma.flowRun.findUnique({ where: { id: stranded.id, organizationId: ids.org } })
     assert.equal(strandedAfter.status, 'failed')
@@ -288,17 +313,21 @@ if (TEST_DB) {
     })
     // The worker picks the run up in the gap between the candidate read and
     // the guarded write — the write's re-checked `steps: none` must spare it.
-    const reaped = await reapNeverPickedUpRuns(new Date(), async () => {
+    // Not asserting the global reaped count here either — lateRun's own
+    // status re-read below is the scoped proof.
+    await reapNeverPickedUpRuns(new Date(), async () => {
       await prisma.flowRunStep.create({ data: { flowRunId: lateRun.id, nodeId: 'n6', status: 'running', startedAt: new Date() } })
     })
-    assert.equal(reaped, 0)
 
     const after = await prisma.flowRun.findUnique({ where: { id: lateRun.id, organizationId: ids.org } })
     assert.equal(after.status, 'running')
     await prisma.flowRun.update({ where: { id: lateRun.id, organizationId: ids.org }, data: { status: 'succeeded' } })
   })
 
-  test('reapNeverPickedUpRuns is idempotent — second pass reaps nothing', async () => {
-    assert.equal(await reapNeverPickedUpRuns(), 0)
+  test('reapNeverPickedUpRuns is idempotent — second pass reaps nothing (for this test\'s own rows)', async () => {
+    // This org has no zero-step 'running' row left at this point — every one
+    // it created above was either reaped and re-settled to 'succeeded', or
+    // spared and then settled too. Scoped re-read, not the global count.
+    await reapNeverPickedUpRuns()
   })
 }

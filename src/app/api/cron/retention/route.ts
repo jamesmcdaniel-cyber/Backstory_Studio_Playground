@@ -113,11 +113,23 @@ export async function GET(request: Request) {
       : 0
 
     // Claim rows are the dispatch-idempotency ledger; terminal ones (fired,
-    // failed, or throttled) are pure history once past the retention window —
-    // the ones still 'claimed' are in-flight and must never be swept.
+    // failed, or throttled) are pure history once past the retention window.
+    // A row still 'claimed' at this age is NOT "in-flight" — see
+    // STALE_CLAIM_MS's doc comment (src/lib/activity/dispatch.ts, 15 minutes):
+    // by the time it's `days` (default 90) old, it has long since crossed
+    // from "in-flight" to "the dispatch that created it crashed and nothing
+    // ever finished it." Previously this sweep only pruned the three terminal
+    // statuses, so a stranded 'claimed' row lived forever — and queue-watch's
+    // stale-claim alert (countStaleActivityTriggerClaims) re-fired on every
+    // single cron tick for it, indefinitely, with no way to clear the alert
+    // short of a manual DB fix. Including 'claimed' rows past the SAME
+    // retention cutoff here (not a separate, tighter window — 90 days is
+    // already ~8,600x STALE_CLAIM_MS, so there is no risk of pruning a claim
+    // that is still legitimately in flight) lets that alert eventually clear
+    // on its own once the row ages out.
     // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
     const activityTriggerClaimsPruned = (await systemPrisma.activityTriggerClaim.deleteMany({
-      where: { createdAt: { lt: cutoff }, status: { in: ['dispatched', 'throttled', 'failed'] } },
+      where: { createdAt: { lt: cutoff }, status: { in: ['dispatched', 'throttled', 'failed', 'claimed'] } },
     })).count
 
     // Public webhook replay receipts only need to cover the retry window.

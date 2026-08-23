@@ -108,10 +108,11 @@ Slack flow didn't fire," walk this path top to bottom:
    = 'ACTIVE'`). A flow only matches if it is `ACTIVE`, has a
    `publishedGraph`, and its `activitySource`/`activityKinds` columns —
    built by `activityMatchColumns()` in `src/lib/flows/trigger.ts` — line up
-   with the event's `source`/`kind`. **Five** call sites write these columns,
+   with the event's `source`/`kind`. **Seven** call sites write these columns,
    not one: `POST /api/flows` (create), `PUT /api/flows` (every trigger
    edit, including on an already-published flow), `POST /api/flows/[id]/
-   publish`, `POST /api/flows/import`, `PUT /api/v1/flows/[id]`, and
+   publish`, `POST /api/flows/import` (two call sites internally),
+   `POST /api/v1/flows` (v1 create), `PUT /api/v1/flows/[id]`, and
    template instantiation (`src/lib/flows/templates/instantiate.ts`). Only
    the publish route ever checked entitlement (§6) — every other site,
    `PUT /api/flows` in particular, syncs these columns on a plain trigger

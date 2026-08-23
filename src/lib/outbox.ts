@@ -181,6 +181,10 @@ async function deliver(event: { id: string; organizationId: string; topic: strin
   await emitFlowSignal({ ...signal, organizationId: event.organizationId, deliveryId: event.id, strictDelivery: true })
 }
 
+function isRecordNotFound(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025'
+}
+
 /** Claim and deliver a bounded batch. Compare-and-set claims make this safe to
  * run from every worker and the cron fallback concurrently. */
 export async function processOutboxBatch(limit = 50, now = new Date()): Promise<{ delivered: number; retried: number; failed: number }> {
@@ -210,25 +214,55 @@ export async function processOutboxBatch(limit = 50, now = new Date()): Promise<
     const attempts = event.attempts + 1
     try {
       await deliver(event)
-      // systemPrisma: terminal write for the claimed infrastructure row.
-      await systemPrisma.outboxEvent.update({
-        where: { id: event.id },
-        data: { status: 'delivered', deliveredAt: new Date(), lockedAt: null, lastError: null },
-      })
+      // systemPrisma: terminal write for the claimed infrastructure row. The
+      // row can legitimately vanish between the claim above and this write —
+      // its owning Organization was deleted (onDelete: Cascade) while
+      // delivery was in flight. That is a fine terminal state by
+      // definition (nothing left to mark 'delivered'), so a P2025 here is
+      // swallowed rather than left to propagate out of the whole batch loop
+      // (see the catch branch's own P2025 handling below for why this
+      // matters: an uncaught throw here would abort every OTHER candidate
+      // still waiting in this batch, not just this one row).
+      try {
+        await systemPrisma.outboxEvent.update({
+          where: { id: event.id },
+          data: { status: 'delivered', deliveredAt: new Date(), lockedAt: null, lastError: null },
+        })
+      } catch (updateError) {
+        if (!isRecordNotFound(updateError)) throw updateError
+        apiLogger.warn('outbox row vanished after successful delivery — its aggregate was likely deleted concurrently', {
+          outboxEventId: event.id,
+          topic: event.topic,
+        })
+      }
       deliveredCount += 1
     } catch (error) {
       const terminal = attempts >= MAX_ATTEMPTS
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 300)
-      // systemPrisma: retry/dead-letter transition for the claimed infrastructure row.
-      await systemPrisma.outboxEvent.update({
-        where: { id: event.id },
-        data: {
-          status: terminal ? 'failed' : 'pending',
-          availableAt: terminal ? now : new Date(now.getTime() + outboxRetryDelayMs(attempts)),
-          lockedAt: null,
-          lastError: message,
-        },
-      })
+      // systemPrisma: retry/dead-letter transition for the claimed
+      // infrastructure row. Same vanished-row race as the success path above
+      // — delivery itself failed AND the row disappeared out from under this
+      // write (e.g. its Organization was deleted mid-flight). Nothing to
+      // retry or dead-letter for a row that no longer exists, so this is
+      // swallowed too, rather than crashing the rest of the batch.
+      try {
+        await systemPrisma.outboxEvent.update({
+          where: { id: event.id },
+          data: {
+            status: terminal ? 'failed' : 'pending',
+            availableAt: terminal ? now : new Date(now.getTime() + outboxRetryDelayMs(attempts)),
+            lockedAt: null,
+            lastError: message,
+          },
+        })
+      } catch (updateError) {
+        if (!isRecordNotFound(updateError)) throw updateError
+        apiLogger.warn('outbox row vanished after a failed delivery attempt — its aggregate was likely deleted concurrently', {
+          outboxEventId: event.id,
+          topic: event.topic,
+          attempts,
+        })
+      }
       if (terminal && event.topic === OUTBOX_TOPIC_CREDENTIAL_REVOKE) {
         // The grant is STILL LIVE at the provider. The failed row carries the
         // connection id in aggregateId, so this is recoverable rather than lost

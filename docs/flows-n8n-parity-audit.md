@@ -84,6 +84,15 @@ These are places where the platforms diverge by design. Copying n8n here would e
 - **Ours:** `manual | schedule | webhook | signal`, with only 2 hard-coded signals (`flow.completed`, `agent.completed`); Nango webhooks are connection-lifecycle only, never per-record events; cron via a single Vercel-cron tick capped at `MAX_FLOWS_PER_TICK = 10`.
 - **Consequence:** "when a deal moves stage in Salesforce / when a Slack message arrives" — the most common automation entry point — cannot start a flow. Everything is schedule-pull or generic-webhook-push.
 - **Recommendation:** (a) generalize the signal registry into a per-provider event catalog fed by Nango webhook forwarding (Nango supports sync/forward events you currently ignore — `nango/webhook/route.ts`); (b) add a **polling trigger** (interval + tool-call + new-item dedupe cursor) — one generic node covers every read-tool in the catalog, which n8n needs 103 nodes to do. That's the plane-model advantage; use it. (c) Audit `MAX_FLOWS_PER_TICK=10` against expected org counts — it's a silent scale cliff.
+- **Closed (2026-08-22):** (a) shipped as the activity-event substrate — a
+  normalized `ActivityEvent` row (Slack Events API, per-workspace BYO app;
+  Nango forward/sync) feeds an outbox-driven, exactly-once dispatcher
+  (`src/lib/activity/dispatch.ts`) with a per-flow hourly throttle and
+  loop-guard (selfOrigin/chainDepth) — "when a Slack message arrives" now
+  starts a flow. See `docs/runbooks/activity-plane.md` for the ingestion →
+  claim → run trace path, throttle/backfill/stale-claim operations, and
+  Slack app setup steps; `docs/superpowers/specs/2026-08-21-activity-event-substrate-design.md`
+  for the design. (b)/(c) still open, unaffected by this work.
 
 ### 2.8 No streaming
 - **n8n:** `sendChunk` lifecycle hook streams agent tokens to the logs panel; queue mode streams worker→main→browser.

@@ -220,6 +220,17 @@ export async function POST(request: NextRequest) {
   const resolution = await resolveVerification(body, { timestampHeader, signatureHeader, rawBody, now: new Date() })
 
   if (resolution.outcome === 'unknown-team') {
+    // Same REJECTED_LIMIT gate as team-verification-failed below, and for the
+    // same reason: an unknown team_id and a bad-signature-for-a-known-team
+    // both ack 200 with no side effects, but if only ONE of the two branches
+    // is rate-limited, an attacker can distinguish "connected workspace,
+    // wrong signature" from "not connected at all" purely by which one starts
+    // 429ing after 30 requests/min — the exact enumeration oracle the
+    // byte-identical 200 body was already meant to close. Applying the
+    // identical limit here closes the observable-timing/behavior half of
+    // that gap too.
+    const allowed = await rateLimit(`slack-events-rejected:${ip}`, REJECTED_LIMIT)
+    if (!allowed.ok) return tooMany(allowed.retryAfterMs)
     // Signature can't even be attempted — nothing on our side names this
     // team_id. Never 500, never retried into: ack and move on. WARN, not
     // ERROR — a disconnected/never-connected workspace is routine, not an
@@ -304,12 +315,68 @@ export async function POST(request: NextRequest) {
       })
       activityEventId = created.id
     } catch (error) {
-      // P2002 on [organizationId, source, sourceEventId] = a retry
-      // (Slack resends on anything but a 200, and tolerates `x-slack-retry-num`
-      // deliveries the same way). The first delivery already wrote the
-      // outbox row below, so this ack needs no second one — a redelivery is
-      // fully idempotent without a lookup back to the original row's id.
+      // P2002 on [organizationId, source, sourceEventId] — TWO distinct cases
+      // collide on this same conflict, and they must be told apart:
+      //
+      //  1. A genuine Slack REDELIVERY of a message this route already
+      //     persisted live. The first delivery already wrote the outbox row
+      //     below, so this ack needs no second one.
+      //  2. `conversations.history` is newest-first, so a backfill walk's
+      //     first pages overlap the LIVE head of the channel: backfill can
+      //     persist a message (`backfill: true`, no outbox row by design —
+      //     see runActivityBackfill) BEFORE the live Events API delivery for
+      //     that same message arrives. Naively treating this collision like
+      //     case 1 — ack, write nothing — would silently swallow that live
+      //     delivery forever: the row already exists, so it looks like a
+      //     redelivery, but no outbox row was ever written for it and never
+      //     will be.
+      //
+      // Distinguish them by re-reading the existing row's own `backfill`
+      // flag. If it's `true`, this delivery IS live (a real Events API
+      // envelope only reaches this branch), so the message is live now —
+      // flip `backfill` to `false` (atomic, conditioned on it still being
+      // `true`, so a concurrent duplicate delivery only flips it once) and
+      // emit the `activity.dispatch` outbox row for it, exactly as the fresh-
+      // insert path below does. The outbox's own `[organizationId,
+      // dedupeKey]` unique constraint makes this safe even if two live
+      // deliveries race here: at most one outbox row is created either way.
       if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error
+
+      const existing = await systemPrisma.activityEvent.findUnique({
+        where: { organizationId_source_sourceEventId: { organizationId, source: normalized.source, sourceEventId: normalized.sourceEventId } },
+        select: { id: true, backfill: true },
+      })
+      if (!existing) {
+        // Should not happen (the P2002 just proved a row exists), but never
+        // throw out of a webhook receiver over a lookup miss — ack.
+        return NextResponse.json({ ok: true })
+      }
+      if (!existing.backfill) {
+        // Case 1: a real redelivery of a row already live. Nothing to do.
+        return NextResponse.json({ ok: true })
+      }
+
+      // Case 2: backfill saw this message first. Flip it live and drive the
+      // outbox exactly once for it.
+      await systemPrisma.activityEvent.updateMany({
+        where: { id: existing.id, organizationId, backfill: true },
+        data: { backfill: false },
+      })
+      try {
+        await systemPrisma.outboxEvent.create({
+          data: activityDispatchOutboxEvent({
+            organizationId,
+            activityEventId: existing.id,
+            source: normalized.source,
+            sourceEventId: normalized.sourceEventId,
+          }),
+        })
+      } catch (outboxError) {
+        // Same P2002-as-ack reasoning as the fresh-insert path below — a
+        // concurrent live delivery already raced this outbox row into
+        // existence.
+        if (!(outboxError instanceof Prisma.PrismaClientKnownRequestError && outboxError.code === 'P2002')) throw outboxError
+      }
       return NextResponse.json({ ok: true })
     }
 

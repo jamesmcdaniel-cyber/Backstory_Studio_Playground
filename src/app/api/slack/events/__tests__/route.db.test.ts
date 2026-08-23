@@ -286,4 +286,116 @@ if (ENABLED) {
     const events = await systemPrisma.activityEvent.findMany({ where: { source: 'slack', sourceEventId: slackMsgSourceEventId('C_GENERAL', ts) } })
     assert.equal(events.length, 0)
   })
+
+  // Finding 6: unknown-team and team-verification-failed must be rate-limited
+  // IDENTICALLY (same REJECTED_LIMIT, same key shape) — otherwise a caller
+  // can enumerate connected workspaces by noticing WHICH branch starts
+  // 429ing after 30 bad requests/min and which doesn't.
+  async function postFrom(ip: string, body: Record<string, unknown>, opts: { secret?: string } = {}) {
+    const raw = JSON.stringify(body)
+    const timestamp = String(Math.floor(Date.now() / 1000))
+    const secret = opts.secret ?? SIGNING_SECRET
+    const signature = sign(secret, timestamp, raw)
+    const { POST } = await import('../route')
+    return POST(
+      new NextRequest('https://app.test/api/slack/events', {
+        method: 'POST',
+        body: raw,
+        headers: {
+          'content-type': 'application/json',
+          'x-slack-request-timestamp': timestamp,
+          'x-slack-signature': signature,
+          'x-forwarded-for': ip,
+        },
+      }),
+    )
+  }
+
+  test('unknown-team probing hits the same 429 rate limit as a known team with a bad signature', async () => {
+    // Deterministic, collision-free IPs (not random) — the in-memory rate
+    // limiter is keyed by ip, and two tests racing onto the same random
+    // octet would let one test's requests count against the other's budget.
+    const stamp = Date.now() % 250
+    const unknownIp = `10.6.1.${stamp || 1}`
+    const knownIp = `10.6.2.${stamp || 1}`
+
+    let lastUnknown
+    for (let i = 0; i < 31; i++) {
+      const ts = nextTs()
+      lastUnknown = await postFrom(unknownIp, { ...messageEnvelope(`evt-unk-${i}-${Date.now()}`, ts), team_id: 'T_NEVER_CONNECTED_2' })
+    }
+    assert.equal(lastUnknown!.status, 429, 'the 31st unknown-team probe from one IP must be rate-limited')
+
+    let lastKnownBad
+    for (let i = 0; i < 31; i++) {
+      const ts = nextTs()
+      lastKnownBad = await postFrom(knownIp, messageEnvelope(`evt-badsig-${i}-${Date.now()}`, ts), { secret: 'not-the-real-secret' })
+    }
+    assert.equal(lastKnownBad!.status, 429, 'the 31st bad-signature probe against a KNOWN team from one IP must be rate-limited identically')
+
+    const unknownBody = await lastUnknown!.json()
+    const knownBody = await lastKnownBad!.json()
+    assert.deepEqual(unknownBody, knownBody, 'both branches 429 with the identical body shape')
+    assert.equal(lastUnknown!.headers.get('retry-after') !== null, true)
+    assert.equal(lastKnownBad!.headers.get('retry-after') !== null, true)
+  })
+
+  // Finding 3: conversations.history is newest-first, so a backfill walk's
+  // first pages can persist a message BEFORE its live Events API delivery
+  // arrives. A live delivery of a message backfill already wrote must fire
+  // exactly once, not be swallowed as a no-op "redelivery".
+  test('a message backfill saw first still fires exactly once when the live delivery arrives', async () => {
+    const channel = 'C_BACKFILL_OVERLAP'
+    const ts = nextTs()
+    const sourceEventId = slackMsgSourceEventId(channel, ts)
+
+    // Simulate the backfill worker having already persisted this message
+    // (backfill: true, no outbox row — exactly runActivityBackfill's shape).
+    const backfilled = await systemPrisma.activityEvent.create({
+      data: {
+        organizationId: ids.org,
+        source: 'slack',
+        sourceEventId,
+        kind: 'message.posted',
+        occurredAt: new Date(),
+        ownerUserId: null,
+        visibility: 'org',
+        selfOrigin: false,
+        backfill: true,
+        chainDepth: 0,
+        subject: { channelId: channel, ts },
+        payload: { text: 'hello' },
+      },
+    })
+    const outboxBefore = await systemPrisma.outboxEvent.findMany({
+      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${sourceEventId}` },
+    })
+    assert.equal(outboxBefore.length, 0, 'backfill itself never writes an outbox row')
+
+    // Now the LIVE delivery of that same message arrives.
+    const eventId = `evt-overlap-${Date.now()}`
+    const res = await post(messageEnvelope(eventId, ts, { channel }))
+    assert.equal(res.status, 200)
+
+    const row = await systemPrisma.activityEvent.findUnique({ where: { id: backfilled.id } })
+    assert.equal(row.backfill, false, 'the row is live now — backfill flipped to false on the collision')
+
+    const outboxAfter = await systemPrisma.outboxEvent.findMany({
+      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${sourceEventId}` },
+    })
+    assert.equal(outboxAfter.length, 1, 'exactly one outbox row is emitted for the now-live message')
+    assert.equal(outboxAfter[0].aggregateId, backfilled.id, 'the outbox row points at the SAME row backfill created, not a new one')
+
+    const total = await systemPrisma.activityEvent.count({ where: { organizationId: ids.org, source: 'slack', sourceEventId } })
+    assert.equal(total, 1, 'still exactly one ActivityEvent row — no duplicate insert')
+
+    // A replayed live delivery after that must still ack without firing a
+    // second outbox row.
+    const replay = await post(messageEnvelope(`evt-overlap-replay-${Date.now()}`, ts, { channel }))
+    assert.equal(replay.status, 200)
+    const outboxReplay = await systemPrisma.outboxEvent.findMany({
+      where: { organizationId: ids.org, dedupeKey: `activity-dispatch:slack:${sourceEventId}` },
+    })
+    assert.equal(outboxReplay.length, 1, 'replayed live delivery after the flip acks without a second outbox row')
+  })
 }

@@ -23,6 +23,7 @@ import { apiLogger } from '@/lib/logger'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
 import { startFlowExecution } from '@/features/flows/execute-flow'
+import { canArmEventTriggers } from '@/lib/usage/free-tier-limits'
 
 /**
  * Loop guard (ruling 2 of the design doc): an event-chain depth cap analogous
@@ -165,6 +166,32 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
     return { skipped: 'depth-cap', outcomes: [] }
   }
 
+  // Entitlement re-check (fix for the arming-bypass finding): publish-time
+  // admission (§6 of the runbook) only ever ran once, at the moment a flow
+  // was published — an already-ACTIVE flow's trigger can be edited afterward
+  // (PUT /api/flows, import, template instantiate, the v1 PUT) and its
+  // activitySource/activityKinds match columns are synced on EVERY such edit
+  // with no entitlement check at all (that write path stays permissive on
+  // purpose — see those routes). Without a second check here, a free-tier org
+  // could publish a harmless manual-trigger flow, then edit the trigger to an
+  // activity/slack source post-publish and have it silently arm. This is one
+  // indexed org read per event (not per flow) so it costs nothing extra when
+  // there's nothing to match anyway, and it also closes the plan-downgrade
+  // residual the runbook used to document as a known gap: an org that drops
+  // back to TRIAL after publishing an event-triggered flow now stops firing
+  // it immediately instead of "until unpublished or edited."
+  const org = await systemPrisma.organization.findUnique({
+    where: { id: event.organizationId },
+    select: { plan: true, kind: true },
+  })
+  if (!org || !canArmEventTriggers(org)) {
+    apiLogger.warn('dispatchActivityEvent: organization not entitled to event triggers, dropping event before match', {
+      activityEventId,
+      organizationId: event.organizationId,
+    })
+    return { skipped: 'not-entitled', outcomes: [] }
+  }
+
   const subject = isRecord(event.subject) ? event.subject : {}
 
   // Indexed query: organizationId + activitySource narrows on the
@@ -231,11 +258,25 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
         continue
       }
 
-      // Rolling per-flow throttle: count this flow's claims (any status) in
-      // the trailing hour using the [organizationId, flowId, createdAt] index.
+      // Rolling per-flow throttle: count this flow's claims in the trailing
+      // hour using the [organizationId, flowId, createdAt] index. Only
+      // 'dispatched' (a real run happened) and 'claimed' (a run is actively
+      // in flight for it) count toward the cap — NOT 'throttled' or 'failed'.
+      // Counting throttled claims here was a starvation bug: once a busy
+      // channel pushed the count to the cap, every THROTTLED claim (created
+      // below) kept the count pinned at-or-above the cap forever, so the flow
+      // never recovered even after the busy period ended and its real
+      // dispatched-run rate dropped back well under 60/hr. 'failed' claims
+      // are similarly not the flow's fault (an owner-ladder miss or a
+      // downstream error) and must not count against its budget either.
       const hourAgo = new Date(Date.now() - 60 * 60_000)
       const recentClaims = await prisma.activityTriggerClaim.count({
-        where: { organizationId: event.organizationId, flowId: flow.id, createdAt: { gte: hourAgo } },
+        where: {
+          organizationId: event.organizationId,
+          flowId: flow.id,
+          createdAt: { gte: hourAgo },
+          status: { in: ['dispatched', 'claimed'] },
+        },
       })
       if (recentClaims >= activityRunsPerFlowPerHour()) {
         try {

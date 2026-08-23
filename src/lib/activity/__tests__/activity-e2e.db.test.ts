@@ -63,7 +63,11 @@ if (ENABLED) {
     ;({ activityMatchColumns } = await import('@/lib/flows/trigger'))
 
     const stamp = Date.now()
-    const org = await systemPrisma.organization.create({ data: { name: 'Activity E2E', slug: `activity-e2e-${stamp}` } })
+    // plan: 'STARTER' — dispatchActivityEvent re-checks canArmEventTriggers
+    // per-event now (see dispatch.ts); a default TRIAL/customer org would be
+    // dropped as not-entitled before this suite's end-to-end trace ever
+    // reaches the flow scan.
+    const org = await systemPrisma.organization.create({ data: { name: 'Activity E2E', slug: `activity-e2e-${stamp}`, plan: 'STARTER' } })
     ids.org = org.id
     const user = await systemPrisma.user.create({
       data: { supabaseId: crypto.randomUUID(), email: `activity-e2e-${stamp}@example.com`, name: 'E2E', organizationId: org.id },

@@ -35,7 +35,7 @@ if (TEST_DB) {
     ;({ dispatchActivityEvent } = await import('../dispatch'))
 
     const stamp = Date.now()
-    const org = await prisma.organization.create({ data: { name: 'Activity Dispatch', slug: `activity-dispatch-${stamp}` } })
+    const org = await prisma.organization.create({ data: { name: 'Activity Dispatch', slug: `activity-dispatch-${stamp}`, plan: 'STARTER' } })
     ids.org = org.id
     const user = await prisma.user.create({
       data: { supabaseId: crypto.randomUUID(), email: `activity-dispatch-${stamp}@example.com`, name: 'A', organizationId: org.id },
@@ -149,7 +149,7 @@ if (TEST_DB) {
 
   test('the 61st claim in an hour is throttled, not dispatched', async () => {
     const stamp = Date.now()
-    const org = await prisma.organization.create({ data: { name: 'Throttle Org', slug: `throttle-org-${stamp}` } })
+    const org = await prisma.organization.create({ data: { name: 'Throttle Org', slug: `throttle-org-${stamp}`, plan: 'STARTER' } })
     const user = await prisma.user.create({
       data: { supabaseId: crypto.randomUUID(), email: `throttle-${stamp}@example.com`, name: 'T', organizationId: org.id },
     })
@@ -203,7 +203,7 @@ if (TEST_DB) {
 
   test('owner ladder WARN+skip: no active member in the org fails the claim without a run', async () => {
     const stamp = Date.now()
-    const org = await prisma.organization.create({ data: { name: 'Ownerless Org', slug: `ownerless-org-${stamp}` } })
+    const org = await prisma.organization.create({ data: { name: 'Ownerless Org', slug: `ownerless-org-${stamp}`, plan: 'STARTER' } })
     const flow = await prisma.flow.create({
       data: {
         name: 'Ownerless flow',
@@ -240,5 +240,159 @@ if (TEST_DB) {
 
     const runs = await prisma.flowRun.count({ where: { flowId: flow.id, organizationId: org.id } })
     assert.equal(runs, 0)
+  })
+
+  test('an un-entitled org (TRIAL, customer) does not fire an armed-looking flow', async () => {
+    const stamp = Date.now()
+    const org = await prisma.organization.create({
+      data: { name: 'Unentitled Org', slug: `unentitled-org-${stamp}`, plan: 'TRIAL', kind: 'customer' },
+    })
+    const user = await prisma.user.create({
+      data: { supabaseId: crypto.randomUUID(), email: `unentitled-${stamp}@example.com`, name: 'U', organizationId: org.id },
+    })
+    // Trigger edited post-publish (e.g. via PUT /api/flows) to an activity
+    // source — activitySource/activityKinds are synced permissively by that
+    // route, so this flow LOOKS armed even though the org was never entitled.
+    const flow = await prisma.flow.create({
+      data: {
+        name: 'Bypass-armed flow',
+        organizationId: org.id,
+        userId: user.id,
+        status: 'ACTIVE',
+        graph: RUNNABLE_GRAPH,
+        publishedGraph: RUNNABLE_GRAPH,
+        trigger: { type: 'activity', source: 'github', kinds: ['pr.opened'] },
+        activitySource: 'github',
+        activityKinds: ['pr.opened'],
+      },
+    })
+    const event = await prisma.activityEvent.create({
+      data: {
+        organizationId: org.id,
+        source: 'github',
+        sourceEventId: `evt-unentitled-${stamp}`,
+        kind: 'pr.opened',
+        occurredAt: new Date(),
+        payload: {},
+      },
+    })
+
+    const result = await dispatchActivityEvent(event.id)
+    assert.equal(result.skipped, 'not-entitled')
+    assert.equal(result.outcomes.length, 0)
+
+    const claims = await prisma.activityTriggerClaim.count({
+      where: { organizationId: org.id, activityEventId: event.id, flowId: flow.id },
+    })
+    assert.equal(claims, 0)
+    const runs = await prisma.flowRun.count({ where: { flowId: flow.id, organizationId: org.id } })
+    assert.equal(runs, 0)
+  })
+
+  test('an entitled org (paid plan) dispatches normally, including a flow PUT-armed after publish', async () => {
+    const stamp = Date.now()
+    const org = await prisma.organization.create({
+      data: { name: 'Entitled Org', slug: `entitled-org-${stamp}`, plan: 'STARTER', kind: 'customer' },
+    })
+    const user = await prisma.user.create({
+      data: { supabaseId: crypto.randomUUID(), email: `entitled-${stamp}@example.com`, name: 'E', organizationId: org.id },
+    })
+    const flow = await prisma.flow.create({
+      data: {
+        name: 'PUT-armed flow',
+        organizationId: org.id,
+        userId: user.id,
+        status: 'ACTIVE',
+        graph: RUNNABLE_GRAPH,
+        publishedGraph: RUNNABLE_GRAPH,
+        trigger: { type: 'activity', source: 'github', kinds: ['pr.opened'] },
+        activitySource: 'github',
+        activityKinds: ['pr.opened'],
+      },
+    })
+    const event = await prisma.activityEvent.create({
+      data: {
+        organizationId: org.id,
+        source: 'github',
+        sourceEventId: `evt-entitled-${stamp}`,
+        kind: 'pr.opened',
+        occurredAt: new Date(),
+        payload: {},
+      },
+    })
+
+    const result = await dispatchActivityEvent(event.id)
+    assert.equal(result.outcomes.length, 1)
+    assert.equal(result.outcomes[0].outcome, 'dispatched')
+    const runs = await prisma.flowRun.count({ where: { flowId: flow.id, organizationId: org.id } })
+    assert.equal(runs, 1)
+  })
+
+  test('throttled claims do not starve the count — only dispatched/claimed count toward the cap', async () => {
+    const stamp = Date.now()
+    const org = await prisma.organization.create({ data: { name: 'Starve Org', slug: `starve-org-${stamp}`, plan: 'STARTER' } })
+    const user = await prisma.user.create({
+      data: { supabaseId: crypto.randomUUID(), email: `starve-${stamp}@example.com`, name: 'S', organizationId: org.id },
+    })
+    const flow = await prisma.flow.create({
+      data: {
+        name: 'Starve-guard flow',
+        organizationId: org.id,
+        userId: user.id,
+        status: 'ACTIVE',
+        graph: RUNNABLE_GRAPH,
+        publishedGraph: RUNNABLE_GRAPH,
+        trigger: { type: 'activity', source: 'github', kinds: ['pr.opened'] },
+        activitySource: 'github',
+        activityKinds: ['pr.opened'],
+      },
+    })
+
+    // 60 THROTTLED claims (busy channel) in the trailing hour, zero dispatched.
+    await prisma.activityTriggerClaim.createMany({
+      data: Array.from({ length: 60 }, () => ({
+        organizationId: org.id,
+        activityEventId: crypto.randomUUID(),
+        flowId: flow.id,
+        status: 'throttled',
+      })),
+    })
+
+    const event = await prisma.activityEvent.create({
+      data: {
+        organizationId: org.id,
+        source: 'github',
+        sourceEventId: `evt-starve-${stamp}`,
+        kind: 'pr.opened',
+        occurredAt: new Date(),
+        payload: {},
+      },
+    })
+    const result = await dispatchActivityEvent(event.id)
+    assert.equal(result.outcomes.length, 1)
+    assert.equal(result.outcomes[0].outcome, 'dispatched', 'a flow with 60 THROTTLED (not dispatched) claims in the trailing hour must still be able to fire')
+
+    // Now push it to 60 DISPATCHED claims and confirm it throttles as before.
+    await prisma.activityTriggerClaim.createMany({
+      data: Array.from({ length: 59 }, () => ({
+        organizationId: org.id,
+        activityEventId: crypto.randomUUID(),
+        flowId: flow.id,
+        status: 'dispatched',
+      })),
+    })
+    const secondEvent = await prisma.activityEvent.create({
+      data: {
+        organizationId: org.id,
+        source: 'github',
+        sourceEventId: `evt-starve2-${stamp}`,
+        kind: 'pr.opened',
+        occurredAt: new Date(),
+        payload: {},
+      },
+    })
+    const secondResult = await dispatchActivityEvent(secondEvent.id)
+    assert.equal(secondResult.outcomes.length, 1)
+    assert.equal(secondResult.outcomes[0].outcome, 'throttled', '60 real dispatched claims in the trailing hour must still throttle')
   })
 }

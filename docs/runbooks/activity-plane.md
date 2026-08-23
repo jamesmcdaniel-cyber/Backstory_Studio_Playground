@@ -107,13 +107,22 @@ Slack flow didn't fire," walk this path top to bottom:
    "activityKinds" from flows where "organizationId" = '<org-id>' and status
    = 'ACTIVE'`). A flow only matches if it is `ACTIVE`, has a
    `publishedGraph`, and its `activitySource`/`activityKinds` columns —
-   which are written ONLY by `activityMatchColumns()` in
-   `src/lib/flows/trigger.ts`, called from the publish route
-   (`src/app/api/flows/[id]/publish/route.ts`) — line up with the event's
-   `source`/`kind`. If a flow's trigger was edited in the builder but never
-   **republished**, its match columns are stale (draft `graph` changed,
-   `activitySource`/`activityKinds` didn't) — that's the single most common
-   "I changed the trigger and it stopped firing" cause.
+   built by `activityMatchColumns()` in `src/lib/flows/trigger.ts` — line up
+   with the event's `source`/`kind`. **Five** call sites write these columns,
+   not one: `POST /api/flows` (create), `PUT /api/flows` (every trigger
+   edit, including on an already-published flow), `POST /api/flows/[id]/
+   publish`, `POST /api/flows/import`, `PUT /api/v1/flows/[id]`, and
+   template instantiation (`src/lib/flows/templates/instantiate.ts`). Only
+   the publish route ever checked entitlement (§6) — every other site,
+   `PUT /api/flows` in particular, syncs these columns on a plain trigger
+   edit with NO entitlement check at all, including on a flow that is
+   ALREADY `ACTIVE`. That is deliberate: the write path stays permissive so
+   editing is never blocked mid-flow; see §6 for where entitlement is
+   actually enforced (dispatch time, not write time). If a flow's trigger
+   was edited in the builder but never **republished**, its match columns
+   are stale (draft `graph` changed, `activitySource`/`activityKinds`
+   didn't) — that's the single most common "I changed the trigger and it
+   stopped firing" cause.
    A row with `status = 'skipped'`-shaped reasoning doesn't exist as a
    status — "skipped" outcomes (actor/subject/condition filter, no active
    owner) are only visible in the `dispatchActivityEvent` caller's return
@@ -139,7 +148,7 @@ Slack flow didn't fire," walk this path top to bottom:
 
 ## 2. Throttle + loop-guard semantics
 
-Three independent guards run in `dispatchActivityEvent`
+Four independent guards run in `dispatchActivityEvent`
 (`src/lib/activity/dispatch.ts`), checked in this order, before any flow is
 matched or after a flow is matched but before a run is created:
 
@@ -148,33 +157,61 @@ matched or after a flow is matched but before a run is created:
   captured at connect time via `auth.test`). Dropped before the flow scan
   even runs (`{ skipped: 'self-origin' }`). This is the primary anti-loop
   guard for "flow posts a Slack reply → that reply itself becomes an
-  ActivityEvent → flow fires on itself forever."
+  ActivityEvent → flow fires on itself forever," and it is Slack-only — it
+  covers the ONE plane where a flow's own post can be recognized as
+  bot-authored on the way back in.
 - **`backfill`** — events written by `runActivityBackfill`
   (`src/lib/activity/backfill.ts`, §3) are trigger-silent by construction:
   `dispatchActivityEvent` refuses to match them at all
   (`{ skipped: 'backfill' }`), and in fact no `OutboxEvent` row is ever
   written for a backfilled event in the first place — this guard is belt and
-  suspenders.
+  suspenders. The one exception is documented in §3: a LIVE delivery that
+  collides with a row backfill already wrote flips that row's `backfill`
+  flag to `false` before driving it through the outbox, precisely so it is
+  no longer this guard that's skipping it.
 - **`chainDepth` / `ACTIVITY_CHAIN_DEPTH_CAP` (= 3)** — every run started
   from an activity event carries `chainDepth: event.chainDepth + 1` on its
-  own trigger. If that run's own side effects (e.g. a Slack post) produce a
-  NEW `ActivityEvent`, that event inherits the run's `chainDepth` rather than
-  resetting to 0. Once an event's `chainDepth >= 3`, it's dropped before
-  matching (`{ skipped: 'depth-cap' }`) — this is the fallback for a longer
-  A→B→A→B loop that `selfOrigin` alone wouldn't catch (e.g. two different
-  flows posting to each other).
+  own trigger. **Slack is the only plane with a depth PRODUCER today**: a
+  flow-authored Slack post (native `SlackToolClient.post_message` or the
+  Nango-plane `slack_post_message` delivery tool, both in
+  `applySlackChainDepthMetadata`, `src/features/flows/tool-args.ts`) stamps
+  `chat.postMessage`'s own `metadata` field with the posting run's
+  `chainDepth`, and the Slack receiver's `chainDepthFromMetadata`
+  (`src/lib/activity/normalize.ts`) reads it straight back off the resulting
+  message event — so a Slack-mediated A→B→A→B loop (two different flows
+  volleying replies) is capped even though `selfOrigin` alone only catches a
+  bot replying to itself. A run NOT started from an activity/slack trigger
+  has no `chainDepth` on its `trigger` at all, and a Slack post from such a
+  run omits `metadata` entirely — there's nothing to propagate. **No other
+  plane propagates chain depth** — a flow's Salesforce/GitHub/other Nango
+  writes do not stamp anything analogous, and this is an accepted ruling,
+  not a gap to close: every plane's own per-flow hourly throttle (below)
+  already bounds runaway looping regardless of how many hops a chain takes,
+  so depth-capping is a Slack-specific refinement on top of a guard that
+  already exists everywhere. Once an event's `chainDepth >= 3` (Slack only,
+  in practice), it's dropped before matching (`{ skipped: 'depth-cap' }`).
+- **Entitlement (`canArmEventTriggers`)** — re-checked once per event,
+  before the flow scan, against the event's own organization (see §6). An
+  un-entitled org's event is dropped (`{ skipped: 'not-entitled' }`) even if
+  some flow's `activitySource`/`activityKinds` columns already look armed.
 
 **Per-flow hourly throttle** — `ACTIVITY_RUNS_PER_FLOW_PER_HOUR`
 (`src/lib/activity/dispatch.ts`, default 60, env-overridable via the
 `ACTIVITY_RUNS_PER_FLOW_PER_HOUR` environment variable, same override
 convention as `orgMaxInFlightRuns`). For each matching flow, before creating
-the exactly-once claim, the dispatcher counts that flow's OWN claims of ANY
-status in the trailing 60 minutes
+the exactly-once claim, the dispatcher counts that flow's OWN claims with
+status `dispatched` OR `claimed` in the trailing 60 minutes
 (`activity_trigger_claims` where `flowId` = this flow and `createdAt >= now
-- 1h`). At or above the cap, a `throttled` claim is written instead of a run
-— visible via the claim-status query in §1. There is no automatic recovery
-or backlog replay for throttled events; the flow simply resumes firing once
-its trailing-hour count drops back under the cap.
+- 1h` and `status IN ('dispatched', 'claimed')`). At or above the cap, a
+`throttled` claim is written instead of a run — visible via the claim-status
+query in §1. `throttled` and `failed` claims deliberately do NOT count toward
+the cap: counting every status (as this used to) meant a busy channel's
+`throttled` claims kept the trailing-hour count pinned at-or-above the cap
+forever, starving the flow to zero real dispatches even long after the
+busy period ended and its actual (`dispatched`) run rate had dropped back
+well under 60/hr. There is no automatic recovery or backlog replay for
+throttled events; the flow simply resumes firing once its trailing-hour
+`dispatched`/`claimed` count drops back under the cap.
 
 **Exactly-once guarantee.** The claim's unique index —
 `[organizationId, activityEventId, flowId]` — is the ONLY thing that makes a
@@ -186,6 +223,22 @@ throws Postgres error code `P2002`, which is swallowed and logged as a
 to `pending` and re-draining through the real `processOutboxBatch`.
 
 ## 3. Backfill operations
+
+**Live/backfill overlap (Slack).** `conversations.history` is newest-first,
+so a backfill walk's FIRST pages read the same recent messages the live
+Events API receiver may be ingesting at the same time — the two can race on
+the identical `[organizationId, source, sourceEventId]` row. If backfill
+wins that race (persists the row first, `backfill: true`, no outbox row —
+see below), the live delivery's own insert hits a `P2002` conflict. The
+receiver (`src/app/api/slack/events/route.ts`) tells this apart from an
+ordinary Slack redelivery by re-reading the existing row's own `backfill`
+flag: `false` means a real redelivery (ack, nothing else to do); `true`
+means THIS message is live now — the receiver flips `backfill` to `false`
+(atomic, conditioned on it still being `true`) and drives the SAME row
+through the outbox exactly once, so it fires like any other live message
+instead of being silently swallowed as a false "redelivery." Backfill itself
+is unaffected by this — it never writes an outbox row and this collision
+handling doesn't change that.
 
 Backfill (`src/lib/activity/backfill.ts`, `runActivityBackfill`) pages a
 connected app's own history into `ActivityEvent` rows, cursor-checkpointed,
@@ -347,26 +400,40 @@ a subscribed channel.
 
 Event triggers (`activity` and `slack` trigger types) are **configurable by
 anyone**, but only **ARMED** (able to actually fire) for orgs above the free
-tier. This gate is enforced ONCE, at publish-time admission — not at
-dispatch time and not as a standing runtime check:
+tier. There are TWO layers to this now — write-time admission (permissive)
+and dispatch-time enforcement (the actual gate):
 
 - `canArmEventTriggers(org)` (`src/lib/usage/free-tier-limits.ts`):
   `org.plan !== 'TRIAL'`, OR `org.kind` is `internal` or `partner`
   (`EVENT_TRIGGER_EXEMPT_ORG_KINDS`) — internal/partner orgs are exempt from
-  the plan check entirely.
-- Checked in `POST /api/flows/[id]/publish` via
+  the plan check entirely. One function, two call sites.
+- **Write-time (`POST /api/flows/[id]/publish` only, and only there)**:
   `validateFlowGraph(..., { eventTriggerEntitled: canArmEventTriggers(org) })`
-  — a TRIAL-plan org (not internal/partner) attempting to publish a flow
+  — a TRIAL-plan org (not internal/partner) attempting to PUBLISH a flow
   with an `activity`/`slack` trigger gets a 400
   (`EVENT_TRIGGER_ENTITLEMENT_MESSAGE`: "Event triggers are available on
-  paid workspaces.").
-- **This is a publish-time gate only.** Once a flow IS published (its
-  `status` is `ACTIVE` and its `activitySource`/`activityKinds` match
-  columns are set), `dispatchActivityEvent` does not re-check the org's plan
-  at all — there is no independent runtime enforcement. If an org's plan
-  changes to TRIAL after a flow with an event trigger is already live, that
-  flow keeps firing until it is unpublished or edited and republished. This
-  is a known, documented boundary from Task 5, not an oversight to fix here.
+  paid workspaces."). This is the only one of the five
+  `activityMatchColumns()` call sites (§1) that ever checked entitlement —
+  `PUT /api/flows`, `PUT /api/v1/flows/[id]`, `POST /api/flows/import`, and
+  template instantiation all sync `activitySource`/`activityKinds` on an
+  edit with NO entitlement check, by design (an edit must never be blocked
+  mid-flow by a plan check). This meant a free-tier org could publish a
+  harmless manual-trigger flow, then edit the trigger to `slack`/`activity`
+  afterward and have it silently arm — the write path alone could never have
+  closed that without becoming needlessly restrictive.
+- **Dispatch-time (`dispatchActivityEvent`, `src/lib/activity/dispatch.ts`)
+  — the actual enforcement point.** Before the flow scan, for every event,
+  one indexed read (`organization.findUnique({ select: { plan, kind } })`)
+  re-checks `canArmEventTriggers` against the event's OWN organization. An
+  un-entitled org's event is dropped right there (`{ skipped: 'not-entitled'
+  }`, WARN-logged) regardless of how "armed" any flow's match columns look —
+  this is what actually closes the write-time bypass above, and it is also
+  what makes a plan DOWNGRADE take effect immediately: an org that drops
+  back to TRIAL after publishing an event-triggered flow stops it from
+  firing on the very next event, not "whenever it's next unpublished or
+  edited." The write-time check in publish stays exactly as permissive as
+  before — it's a first-line UX rejection (fail fast with a clear message at
+  the moment of publishing), not the security boundary; dispatch is.
 
 ## Appendix: constants at a glance
 

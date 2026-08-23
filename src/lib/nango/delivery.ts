@@ -178,7 +178,7 @@ export function slackData(data: unknown): unknown {
 
 export async function slackPostMessage(
   connection: DeliveryConnection,
-  args: { channel: string; text: string; thread_ts?: string },
+  args: { channel: string; text: string; thread_ts?: string; metadata?: unknown },
   proxy: NangoProxy = defaultProxy(),
 ): Promise<unknown> {
   const response = await proxy({
@@ -186,7 +186,15 @@ export async function slackPostMessage(
     endpoint: '/chat.postMessage',
     connectionId: connection.connectionId,
     providerConfigKey: connection.providerConfigKey,
-    data: { channel: args.channel, text: args.text, ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}) },
+    data: {
+      channel: args.channel,
+      text: args.text,
+      ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}),
+      // Chain-depth producer (ruling 4) — see the native-plane SlackToolClient
+      // doc comment (src/lib/integrations/slack.ts) for the full mechanism;
+      // this is the Nango-plane half of the same fix.
+      ...(args.metadata !== undefined ? { metadata: args.metadata } : {}),
+    },
   })
   return slackData(response.data)
 }
@@ -342,7 +350,12 @@ export const DELIVERY_TOOLS: DeliveryToolSpec[] = [
     run: (connection, args, proxy) =>
       slackPostMessage(
         connection,
-        { channel: String(args.channel), text: String(args.text), ...(args.thread_ts ? { thread_ts: String(args.thread_ts) } : {}) },
+        {
+          channel: String(args.channel),
+          text: String(args.text),
+          ...(args.thread_ts ? { thread_ts: String(args.thread_ts) } : {}),
+          ...(args.metadata !== undefined ? { metadata: args.metadata } : {}),
+        },
         proxy,
       ),
   },

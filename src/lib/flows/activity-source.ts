@@ -19,9 +19,17 @@
  * tool's registry key (src/lib/connectors/registry.ts's `ConnectorDescriptor.
  * key` / `fromNangoProviderKey`'s derived key). Mirrors
  * `normalizeNangoForward`'s own source derivation (src/lib/activity/
- * normalize.ts): 'slack' and 'salesforce' are literal matches (that function
- * maps them by name), everything else falls to Nango's generic
- * `nango:<provider>` shape, exactly like an unmapped provider does there.
+ * normalize.ts) for the two keys this function special-cases: 'slack' and
+ * 'salesforce' are literal matches in BOTH places, and — specifically for
+ * slack — that identity holds regardless of which plane a message arrives
+ * through (native Slack Events API vs. a Nango-forwarded Slack message both
+ * normalize to `source: 'slack'`; see `normalizeNangoSlack`). Everything
+ * else this function sees falls to `nango:<provider>`, matching
+ * `normalizeNangoForward`'s own fallback for an unmapped provider — EXCEPT
+ * 'github', which `normalizeNangoForward` maps to a literal `'github'` but
+ * which this function does not special-case (a pre-existing gap, not
+ * introduced or fixed here: a GitHub trigger's stored `source` should read
+ * 'github', not 'nango:github', for its match columns to actually line up).
  * Kept in this shared module (not duplicated in trigger-editor.tsx) per
  * code review — one definition, so the picker's stored `source` value and
  * normalize.ts's real output can't quietly drift apart.

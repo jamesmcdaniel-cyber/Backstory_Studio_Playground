@@ -270,6 +270,39 @@ function normalizeSalesforce(payload: Record<string, unknown>): { kind: Activity
   }
 }
 
+/**
+ * Nango-plane Slack forward: a slack message delivered through Nango's own
+ * forward/sync webhook (as opposed to the native Events API receiver,
+ * src/app/api/slack/events/route.ts) lands here with a Slack Web API message
+ * object shape, not an Events API envelope. Mirrors `normalizeSlackEvent`'s
+ * OWN identity scheme (`slack:msg:<channel>:<ts>`) deliberately — a flow
+ * trigger's `source: 'slack'` match, and cross-plane dedupe on
+ * `[organizationId, source, sourceEventId]`, both depend on a Slack message
+ * ingested through EITHER plane landing under the exact same identity. A
+ * message forwarded through both planes (native app connected AND a Nango
+ * Slack connection both wired to the same workspace) collides into the same
+ * row instead of firing twice.
+ */
+function normalizeNangoSlack(payload: Record<string, unknown>): {
+  kind: ActivityKind
+  subject: Record<string, unknown>
+  actorExternalId: string | null
+  sourceEventId: string | null
+} {
+  const type = firstString([payload], ['type'])
+  const channelId = firstString([payload], ['channel', 'channel_id', 'channelId'])
+  const ts = firstString([payload], ['ts', 'event_ts'])
+  const threadTs = firstString([payload], ['thread_ts'])
+  const kind: ActivityKind = type === 'message' || (!type && ts) ? 'message.posted' : 'generic'
+  const actorExternalId = firstString([payload], ['user', 'bot_id', 'actor_id', 'actorId', 'user_id', 'userId'])
+  return {
+    kind,
+    subject: { channelId, threadTs, ts },
+    actorExternalId,
+    sourceEventId: channelId && ts ? `slack:msg:${channelId}:${ts}` : null,
+  }
+}
+
 function normalizeGithub(payload: Record<string, unknown>): { kind: ActivityKind; subject: Record<string, unknown>; actorExternalId: string | null } {
   const pullRequest = asRecord(payload.pull_request)
   const issue = asRecord(payload.issue)
@@ -324,7 +357,7 @@ export function normalizeNangoForward(
   // null/undefined.
   const providerKey = String(provider ?? '').toLowerCase()
 
-  let mapped: { kind: ActivityKind; subject: Record<string, unknown>; actorExternalId: string | null }
+  let mapped: { kind: ActivityKind; subject: Record<string, unknown>; actorExternalId: string | null; sourceEventId?: string | null }
   let source: string
   if (providerKey.includes('salesforce')) {
     source = 'salesforce'
@@ -332,6 +365,15 @@ export function normalizeNangoForward(
   } else if (providerKey.includes('github')) {
     source = 'github'
     mapped = normalizeGithub(data)
+  } else if (providerKey.includes('slack')) {
+    // Literal 'slack', not 'nango:slack' — a flow's `activity`/`slack`
+    // trigger matches on `source: 'slack'` regardless of which plane the
+    // message arrived through (see activity-source.ts's
+    // `activitySourceForToolKey`); without this branch a Nango-forwarded
+    // Slack message landed as `source: 'nango:slack', kind: 'generic'` and
+    // could never match a slack-trigger flow at all.
+    source = 'slack'
+    mapped = normalizeNangoSlack(data)
   } else {
     source = `nango:${provider}`
     mapped = {
@@ -354,7 +396,7 @@ export function normalizeNangoForward(
     })() ??
     opts.receivedAt
 
-  const eventId = firstString([data], ['id', 'event_id', 'eventId', 'delivery_id', 'deliveryId'])
+  const eventId = mapped.sourceEventId ?? firstString([data], ['id', 'event_id', 'eventId', 'delivery_id', 'deliveryId'])
   // The hash prefix includes `mapped.kind`, not just the raw provider/type —
   // deliberate, but it's a tradeoff worth flagging: if a future change
   // refines the kind heuristics (e.g. a payload that used to fall through to

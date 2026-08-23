@@ -46,7 +46,7 @@ import {
 } from './http-auth'
 import { shouldPersistInterpreterStep, persistedCodeStepInput } from './run-step-persistence'
 import { truncateWithMarker } from '@/lib/flows/truncate'
-import { prepareToolArgs, applySlackThreadDefault } from './tool-args'
+import { prepareToolArgs, applySlackThreadDefault, applySlackChainDepthMetadata } from './tool-args'
 import { flowToolOutput } from './tool-output'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { buildAiPrompt, type AiPromptInput } from '@/lib/flows/ai-prompts'
@@ -1199,7 +1199,11 @@ async function runFlowExecutionInner(
         // defaults an unset `thread_ts` on a slack_post_message step to that
         // message's thread — see applySlackThreadDefault's doc comment. An
         // explicit `thread_ts` on the step always wins.
-        const args = applySlackThreadDefault(toolName, prepareToolArgs(node.config.args), run.trigger)
+        const args = applySlackChainDepthMetadata(
+          toolName,
+          applySlackThreadDefault(toolName, prepareToolArgs(node.config.args), run.trigger),
+          run.trigger,
+        )
         const executor = await resolveFlowToolExecutor({
           organizationId: job.organizationId,
           userId: job.userId,

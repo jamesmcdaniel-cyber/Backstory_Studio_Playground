@@ -207,6 +207,43 @@ test('nango github push (ref + commits) → push', () => {
   assert.equal(activity!.subject.ref, 'refs/heads/main')
 })
 
+// Finding 5: a Nango-forwarded Slack message must land as source: 'slack',
+// not 'nango:slack', with the SAME channel:ts identity scheme
+// normalizeSlackEvent uses — otherwise a slack-trigger flow never matches a
+// Nango-plane Slack forward, and the same message ingested through both
+// planes would insert as two rows instead of deduping into one.
+test('nango slack forward → source: "slack", kind: "message.posted", channel:ts identity mirrors the native plane', () => {
+  const activity = normalizeNangoForward(
+    'org-1',
+    'slack',
+    { type: 'message', channel: 'C500', user: 'U900', ts: '1700000000.000100', text: 'hi from nango' },
+    { receivedAt: RECEIVED_AT },
+  )
+  assert.ok(activity)
+  assert.equal(activity!.source, 'slack')
+  assert.equal(activity!.kind, 'message.posted')
+  assert.equal(activity!.sourceEventId, 'slack:msg:C500:1700000000.000100')
+  assert.equal(activity!.subject.channelId, 'C500')
+  assert.equal(activity!.actorExternalId, 'U900')
+})
+
+test('nango slack forward and a native slack event for the SAME message dedupe to the identical sourceEventId', () => {
+  const nango = normalizeNangoForward(
+    'org-1',
+    'slack',
+    { channel: 'C700', user: 'U1', ts: '1700000005.000100' },
+    { receivedAt: RECEIVED_AT },
+  )
+  const native = normalizeSlackEvent(
+    'org-1',
+    { team_id: 'T1', event: { type: 'message', user: 'U1', channel: 'C700', ts: '1700000005.000100' } },
+    { receivedAt: RECEIVED_AT },
+  )
+  assert.ok(nango && native)
+  assert.equal(nango!.source, native!.source)
+  assert.equal(nango!.sourceEventId, native!.sourceEventId, 'one plane\'s Slack message and the other\'s must collide into one row')
+})
+
 test('nango unknown provider/shape → generic kind with hash id', () => {
   const a = normalizeNangoForward('org-1', 'some_weird_provider', { foo: 'bar' }, { receivedAt: RECEIVED_AT })
   const b = normalizeNangoForward('org-1', 'some_weird_provider', { foo: 'bar' }, { receivedAt: RECEIVED_AT })

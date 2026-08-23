@@ -299,6 +299,14 @@ export class SlackToolClient {
         body: JSON.stringify({
           channel: args.channel,
           text: args.text,
+          // Chain-depth producer (ruling 4 of the activity-event substrate
+          // plan): stamped by applySlackChainDepthMetadata
+          // (src/features/flows/tool-args.ts) only when the posting run was
+          // itself started from an activity/slack trigger. `metadata` is
+          // chat.postMessage's own field for this — the receiver
+          // (chainDepthFromMetadata, src/lib/activity/normalize.ts) reads it
+          // straight back out of the resulting message event.
+          ...(args.metadata !== undefined ? { metadata: args.metadata } : {}),
         }),
         signal: AbortSignal.timeout(30_000),
       }))

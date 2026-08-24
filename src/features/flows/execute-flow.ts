@@ -11,8 +11,9 @@ import { inlineExecution } from '@/lib/queue/execution-mode'
 import { flowJobOptions } from '@/lib/flows/queue-options'
 import { runAgentExecution } from '@/features/agents/execute-agent'
 import { flowGraphSchema } from '@/lib/flows/graph'
-import { validateFlowGraph, validationErrorMessage } from '@/lib/flows/validate'
-import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
+import { validationErrorMessage } from '@/lib/flows/validate'
+import { validateGraphForRun } from '@/lib/flows/run-validation'
+import { isDeterministicUserFailure } from '@/lib/queue/flow-dead-letter'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { resolveFlowToolExecutor } from '@/features/agents/tool-planes'
 import { parseApprovalDecision, shouldConsumeApprovalDecision } from '@/lib/flows/approval-decision'
@@ -62,7 +63,6 @@ import { modelAllowanceFor } from '@/lib/usage/model-allowance'
 import { downgradeNotice } from '@/lib/usage/model-tiers'
 import { maybeShadowFlowAiStep } from '@/lib/eval/shadow'
 import { runFlowCode } from './code-runner'
-import { agentVisibilityScope } from '@/lib/server/visibility'
 import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
 import { flowSideEffectKey, withIdempotencyHeader } from '@/lib/flows/idempotency'
 import { runScopeKey, readLedger, writeLedger, LEDGER_REPLAY_WARNING } from '@/lib/flows/side-effect-ledger'
@@ -233,42 +233,20 @@ async function resolveValidatedGraph(
       ? replaySource.graphSnapshot ?? currentGraph
       : currentGraph
   const graph = flowGraphSchema.parse(source)
-  const usedConnectionIds = Array.from(new Set(graph.nodes.flatMap((node) =>
-    node.type === 'tool' || node.type === 'http'
-      ? [node.data.connectionId]
-      : node.type === 'agent'
-        ? node.data.toolConnectionIds ?? []
-        : [],
-  ).filter((id): id is string => Boolean(id))))
-  const usedHttpCredentialIds = Array.from(new Set(graph.nodes.flatMap((node) =>
-    node.type === 'http' ? [node.data.credentialId] : [],
-  ).filter((id): id is string => Boolean(id))))
-  const [agents, toolCatalog, httpCredentials] = await Promise.all([
-    prisma.agentTask.findMany({
-      where: { organizationId: job.organizationId, status: 'ACTIVE', ...agentVisibilityScope(job.userId) },
-      select: { id: true, description: true, updatedAt: true },
-      take: 500,
-    }),
-    usedConnectionIds.length
-      ? loadFlowToolCatalog(job.organizationId, { userId: job.userId, connectionIds: usedConnectionIds, takeConnections: usedConnectionIds.length, takeTools: 100 })
-      : Promise.resolve([]),
-    usedHttpCredentialIds.length
-      ? prisma.httpCredential.findMany({
-          where: { organizationId: job.organizationId, id: { in: usedHttpCredentialIds }, status: { in: ['verified', 'error'] } },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
-  ])
-  const agentRefs = agents.map((agent) => ({ id: agent.id, title: agent.description }))
-  const validation = validateFlowGraph(graph, {
-    agents: agentRefs,
-    toolCatalog,
-    httpCredentials,
+  // Same load-and-validate the publish route and the resume endpoint use, so
+  // "this graph is runnable" cannot mean three different things in three
+  // places (src/lib/flows/run-validation.ts).
+  const { validation, context } = await validateGraphForRun(graph, {
+    organizationId: job.organizationId,
+    userId: job.userId,
     flowId: job.flowId,
   })
   if (!validation.ok) {
     throw new ApiError(validationErrorMessage(validation), 400, 'FLOW_VALIDATION_ERROR')
   }
+  const agents = context.agents
+  const agentRefs = context.agentRefs
+  const toolCatalog = context.toolCatalog
   const manifest = buildFlowExecutionManifest({
     graph,
     agents,
@@ -553,10 +531,32 @@ async function runFlowExecutionInner(
     // The `status: 'running'` guard means we only roll back a claim we
     // ourselves hold — never stomp a reaper's terminal `failed` write.
     if (resuming) {
+      // Rolling back to `waiting` says "try that reply again" — right for a
+      // transient failure (a crash, a lost race), wrong for one that is
+      // deterministic. A resume executes the run's PINNED snapshot, so a
+      // snapshot naming an agent that has since been deleted can never
+      // validate again no matter how the flow is edited afterwards: the run
+      // would sit `waiting` forever, swallowing every reply in silence (the
+      // user clicks send, the run flicks to running and back, nothing is
+      // said). Terminalize instead — the failure becomes visible on the run,
+      // with the reason on it. Same predicate as the dead-letter path, for
+      // the same reason: a replay of this cannot succeed.
+      const terminal = isDeterministicUserFailure(error)
+      const message = error instanceof Error ? error.message : 'This run could not be resumed.'
       await prisma.flowRun.updateMany({
         where: { id: job.flowRunId, organizationId: job.organizationId, status: 'running' },
-        data: { status: 'waiting' },
+        data: terminal
+          ? { status: 'failed', error: message.slice(0, 300), finishedAt: new Date() }
+          : { status: 'waiting' },
       })
+      if (terminal) {
+        // A step left `waiting` would keep the run looking answerable in the
+        // UI after the run itself has stopped. Mirrors the dead-letter sweep.
+        await prisma.flowRunStep.updateMany({
+          where: { flowRunId: job.flowRunId, status: { in: ['waiting', 'running'] } },
+          data: { status: 'failed', error: message.slice(0, 300), finishedAt: new Date() },
+        })
+      }
     }
     // A patch claim that never got to execute rolls back to `failed` — the
     // state it was in — so the run stays patchable instead of being stranded

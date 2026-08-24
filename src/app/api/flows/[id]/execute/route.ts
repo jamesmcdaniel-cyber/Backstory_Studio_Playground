@@ -4,6 +4,9 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { dispatchDetachedFlowExecution, startFlowExecution } from '@/features/flows/execute-flow'
 import { parseFlowInput } from '@/lib/flows/input'
+import { flowGraphSchema } from '@/lib/flows/graph'
+import { validateGraphForRun } from '@/lib/flows/run-validation'
+import { validationErrorMessage } from '@/lib/flows/validate'
 import { deriveRunWaiting, deriveRunWaitingAll, chooseWaitingReply } from '@/lib/flows/run-waiting'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkMonthlyTokenBudget } from '@/lib/usage/budget'
@@ -12,6 +15,34 @@ import { recordAudit } from '@/lib/audit'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
+
+/**
+ * Both re-entry paths (resume a waiting run, patch a failed one) execute the
+ * run's PINNED graph snapshot, not the flow as it stands now — and the things
+ * that snapshot points at can disappear under it (an agent deleted while the
+ * run waited for an answer). Checked here, synchronously, for the same reason
+ * the run-is-waiting and reply-routing checks above are: the dispatch is
+ * detached, so a failure inside it reaches nobody. Left unchecked, a reply to
+ * such a run was accepted, dropped in the worker, and the run rolled back to
+ * `waiting` — the send button did nothing and said nothing.
+ */
+async function assertPinnedGraphRunnable(
+  pinned: unknown,
+  fallback: unknown,
+  scope: { organizationId: string; userId: string; flowId: string },
+): Promise<void> {
+  const parsed = flowGraphSchema.safeParse(pinned ?? fallback)
+  // A snapshot too malformed to parse is the worker's problem to report, not
+  // a reason to refuse the reply here.
+  if (!parsed.success) return
+  const { validation } = await validateGraphForRun(parsed.data, scope)
+  if (validation.ok) return
+  throw new ApiError(
+    `${validationErrorMessage(validation)} This run continues the flow as it was when it started, so editing the flow now will not change what it runs — restore what that step points at, or cancel this run and start a new one.`,
+    400,
+    'FLOW_VALIDATION_ERROR',
+  )
+}
 
 // POST /api/flows/[id]/execute — run a flow manually. id is the path segment
 // before "execute".
@@ -40,7 +71,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // Visibility gate: a private flow may only be run by its owner.
   const flow = await prisma.flow.findFirst({
     where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
-    select: { id: true },
+    // graph: the fallback source for a pre-snapshot (legacy) run, matching
+    // what runFlowExecution itself falls back to.
+    select: { id: true, graph: true },
   })
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   const body = await request.json().catch(() => ({}))
@@ -94,7 +127,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (parsed.flowRunId) {
     const owned = await prisma.flowRun.findFirst({
       where: { id: parsed.flowRunId, flowId: flow.id, organizationId: auth.organizationId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, graphSnapshot: true },
     })
     if (!owned) throw new ApiError('Run not found', 404, 'NOT_FOUND')
     // Friendly synchronous check — the worker's atomic waiting→running claim
@@ -125,6 +158,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         throw new ApiError('This run is waiting for an approval decision, not a reply.', 400, 'FLOW_RUN_AWAITING_APPROVAL')
       }
     }
+    await assertPinnedGraphRunnable(owned.graphSnapshot, flow.graph, {
+      organizationId: auth.organizationId,
+      userId: auth.dbUser.id,
+      flowId: flow.id,
+    })
     // Resume durably: hand the reply to the dispatcher and return at once.
     // The run row already exists; the builder/activity pages poll it live.
     await dispatchDetachedFlowExecution({
@@ -144,7 +182,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (parsed.mode === 'patch' && parsed.fromRunId && parsed.fromNodeId) {
     const owned = await prisma.flowRun.findFirst({
       where: { id: parsed.fromRunId, flowId: flow.id, organizationId: auth.organizationId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, graphSnapshot: true },
     })
     if (!owned) throw new ApiError('Run not found', 404, 'NOT_FOUND')
     // Friendly synchronous check; the worker's atomic failed→running claim is
@@ -156,6 +194,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         'FLOW_PATCH_NOT_FAILED',
       )
     }
+    await assertPinnedGraphRunnable(owned.graphSnapshot, flow.graph, {
+      organizationId: auth.organizationId,
+      userId: auth.dbUser.id,
+      flowId: flow.id,
+    })
     await dispatchDetachedFlowExecution({
       flowId: id,
       organizationId: auth.organizationId,

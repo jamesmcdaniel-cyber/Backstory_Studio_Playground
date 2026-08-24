@@ -85,12 +85,14 @@ if (TEST_DB) {
     assert.ok(!steps.some((step) => step.nodeId === 'current-only'), 'the flow\'s current-graph-only node must never execute on resume')
   })
 
-  test('a resume claim that fails validation rolls the run back to `waiting`, not stuck `running`', async () => {
+  test('a resume whose snapshot can never validate again FAILS the run — it does not sit `waiting` swallowing replies', async () => {
     // The snapshot references an agent that no longer exists (deleted while
-    // the run waited) — validateFlowGraph rejects it AFTER the atomic claim
-    // has already flipped the run to `running`. That claim must be undone so
-    // the user's reply stays retryable instead of stranding the run until the
-    // reaper terminalizes it.
+    // the run waited). A resume runs the PINNED snapshot, so no amount of
+    // editing the flow afterwards can make this validate — rolling the claim
+    // back to `waiting` left the run accepting replies it could only ever
+    // drop in silence. It must stop, with the reason on the row. (The claim
+    // must still never be left `running`, which is what the rollback was
+    // there to prevent.)
     const snapshot = {
       nodes: [...emptyGraph.nodes, { id: 'agent1', type: 'agent', position: { x: 0, y: 0 }, data: { agentId: 'deleted-agent-id', input: 'hi' } }],
       edges: [{ id: 'e-agent', source: 'trigger', target: 'agent1' }],
@@ -103,7 +105,24 @@ if (TEST_DB) {
       (error: any) => error.code === 'FLOW_VALIDATION_ERROR',
     )
     const after2 = await prisma.flowRun.findUnique({ where: { id: run.id, organizationId: ids.org } })
-    assert.equal(after2.status, 'waiting') // claim rolled back — the reply stays retryable
+    assert.equal(after2.status, 'failed')
+    assert.match(after2.error ?? '', /agent that is not available/)
+    assert.ok(after2.finishedAt, 'a terminal run carries a finish time')
+  })
+
+  test('a failure the runtime cannot classify still rolls the claim back to `waiting`', async () => {
+    // Anything outside the narrow "this can never pass" set keeps the old
+    // behaviour: the reply stays retryable rather than being terminalized on
+    // what might be a transient fault. Here the snapshot is not a graph at
+    // all, so it throws before validation ever runs.
+    const run = await prisma.flowRun.create({
+      data: { flowId: ids.flow, organizationId: ids.org, userId: ids.user, status: 'waiting', graphSnapshot: { nodes: 'not-a-list' }, input: { prompt: '' } },
+    })
+    await assert.rejects(() =>
+      runFlowExecution({ flowId: ids.flow, organizationId: ids.org, userId: ids.user, flowRunId: run.id, reply: 'go' }),
+    )
+    const settled = await prisma.flowRun.findUnique({ where: { id: run.id, organizationId: ids.org } })
+    assert.equal(settled.status, 'waiting')
   })
 
   test('a second concurrent resume of the same run loses cleanly after the first claims it', async () => {

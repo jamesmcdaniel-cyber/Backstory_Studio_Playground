@@ -8,7 +8,7 @@ import { serializeFlow } from '@/lib/flows/serialize'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph, validationErrorMessage } from '@/lib/flows/validate'
 import { activityMatchColumns, anchorTriggerSchedule, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
-import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
+import { loadRunValidationContext } from '@/lib/flows/run-validation'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
 import { slackConfigured } from '@/lib/integrations/slack'
@@ -59,36 +59,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   const graph = flowGraphSchema.parse(existing.graph)
-  const usedConnectionIds = Array.from(new Set(graph.nodes.flatMap((node) =>
-    node.type === 'tool' || node.type === 'http'
-      ? [node.data.connectionId]
-      : node.type === 'agent'
-        ? node.data.toolConnectionIds ?? []
-        : [],
-  ).filter((id): id is string => Boolean(id))))
-  const usedHttpCredentialIds = Array.from(new Set(graph.nodes.flatMap((node) =>
-    node.type === 'http' ? [node.data.credentialId] : [],
-  ).filter((id): id is string => Boolean(id))))
   // Which of the two event-trigger types (if either) this flow's trigger is,
   // so the slack/entitlement lookups below only run when they're actually
-  // needed — same conditional-fetch pattern as usedConnectionIds above.
+  // needed.
   const graphTriggerType = triggerFromGraph(graph, existing.trigger).type
   const isEventTrigger = graphTriggerType === 'activity' || graphTriggerType === 'slack'
-  const [agents, connections, httpCredentials, slackConnected, org] = await Promise.all([
-    prisma.agentTask.findMany({
-      where: { organizationId: auth.organizationId, status: 'ACTIVE', ...agentVisibilityScope(auth.dbUser.id) },
-      select: { id: true, description: true },
-      take: 500,
-    }),
-    usedConnectionIds.length
-      ? loadFlowToolCatalog(auth.organizationId, { userId: auth.dbUser.id, connectionIds: usedConnectionIds, takeConnections: usedConnectionIds.length, takeTools: 100 })
-      : Promise.resolve([]),
-    usedHttpCredentialIds.length
-      ? prisma.httpCredential.findMany({
-          where: { organizationId: auth.organizationId, id: { in: usedHttpCredentialIds }, status: { in: ['verified', 'error'] } },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
+  // The agents/connections/credentials half is the same question the run paths
+  // ask (src/lib/flows/run-validation.ts) — shared so publishing and running
+  // can never disagree about what "available" means. The trigger-shaped extras
+  // below are publish-only.
+  const [context, slackConnected, org] = await Promise.all([
+    loadRunValidationContext(graph, { organizationId: auth.organizationId, userId: auth.dbUser.id }),
     graphTriggerType === 'slack' ? slackConfigured(auth.organizationId) : Promise.resolve(undefined),
     isEventTrigger
       ? prisma.organization.findUnique({ where: { id: auth.organizationId }, select: { plan: true, kind: true } })
@@ -98,9 +79,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     ? existing.trigger as Record<string, unknown>
     : {}
   const validation = validateFlowGraph(graph, {
-    agents: agents.map((agent) => ({ id: agent.id, title: agent.description })),
-    toolCatalog: connections,
-    httpCredentials,
+    agents: context.agentRefs,
+    toolCatalog: context.toolCatalog,
+    httpCredentials: context.httpCredentials,
     webhookSecretConfigured: typeof persistedTrigger.webhookSecretHash === 'string',
     ...(graphTriggerType === 'slack' ? { slackWorkspaceConnected: slackConnected === true } : {}),
     ...(isEventTrigger ? { eventTriggerEntitled: org ? canArmEventTriggers(org) : false } : {}),

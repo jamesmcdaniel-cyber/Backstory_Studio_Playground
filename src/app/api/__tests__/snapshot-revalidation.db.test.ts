@@ -107,8 +107,37 @@ describe('snapshot revalidation', { skip: SKIP }, () => {
     try {
       // A validator from a different workspace-version must not match. This is
       // the failure that would serve one shell's data against another's request.
-      const response = await GET(request('W/"snap1-999999-someone-else-20268"'))
+      const response = await GET(request('W/"snap2-999999-someone-else-20268-0"'))
       assert.equal(response.status, 200)
+    } finally {
+      await seeded.cleanup()
+    }
+  })
+
+  test('clearing notifications changes the validator, so the panel cannot refill from cache', async () => {
+    // Clearing writes the reader's watermark on the USER row — not workspace
+    // content, so the workspace version does not move. Without the watermark
+    // in the validator the next poll would 304 and the client would keep
+    // serving the list it just emptied.
+    const seeded = await seedTestOrg(prisma)
+    installTestAuth(seeded.auth)
+    try {
+      const first = await GET(request())
+      const etag = first.headers.get('etag')
+      assert.ok(etag)
+      assert.equal((await GET(request(etag))).status, 304)
+
+      const cleared = await prisma.user.update({
+        where: { id: seeded.userId },
+        data: { notificationsClearedAt: new Date() },
+      })
+      // The fixture's auth context holds the row as it was seeded; the route
+      // reads the watermark off it exactly as requireAuthContext would.
+      installTestAuth({ ...seeded.auth, dbUser: cleared })
+
+      const after = await GET(request(etag))
+      assert.equal(after.status, 200, 'a clear must invalidate the client\'s copy')
+      assert.notEqual(after.headers.get('etag'), etag)
     } finally {
       await seeded.cleanup()
     }

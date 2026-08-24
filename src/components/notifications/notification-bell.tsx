@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { AlertCircle, Bell, CheckCircle2, HelpCircle, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { getSnapshot } from '@/lib/client/snapshot'
+import { getSnapshot, resetSnapshotCache } from '@/lib/client/snapshot'
 import { notificationHref } from '@/lib/notifications/href'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { cn } from '@/lib/utils'
@@ -105,6 +105,31 @@ export function NotificationBell() {
     probe().catch(() => setPushState('unavailable'))
   }, [])
 
+  /**
+   * Empty the panel. Read and cleared are different states: opening the bell
+   * marks things read (badge quiet, list intact), this is the person saying
+   * they are done with them. Optimistic — the list is theirs, and a failed
+   * request is reconciled by the next poll rather than by blocking the click.
+   */
+  const clearAll = async () => {
+    if (!items.length) return
+    setItems([])
+    setUnread(0)
+    const response = await fetch('/api/notifications/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clear: true }),
+    }).catch(() => null)
+    if (!response?.ok) {
+      await load().catch(() => {})
+      return
+    }
+    // The shared shell snapshot (memory + localStorage) still holds the list
+    // that was just emptied — without dropping it, a reload would paint the
+    // cleared notifications back for the instant before the refresh lands.
+    resetSnapshotCache()
+  }
+
   const markRead = async () => {
     if (!unread) return
     setUnread(0)
@@ -196,10 +221,21 @@ export function NotificationBell() {
           className="fixed z-[60] rounded-lg border bg-white shadow-lg"
           style={{ top: panelPos.top, left: panelPos.left, width: panelPos.width }}
         >
-            <div className="flex items-center justify-between border-b px-3 py-2">
+            <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
               <span className="text-sm font-semibold">Notifications</span>
-              {pushState === 'available' && <button className="text-xs font-medium text-indigo-600" onClick={enablePush}>Enable push</button>}
-              {pushState === 'enabled' && <span className="text-xs text-fg-muted">Push on</span>}
+              <div className="flex items-center gap-3">
+                {pushState === 'available' && <button className="text-xs font-medium text-indigo-600" onClick={enablePush}>Enable push</button>}
+                {pushState === 'enabled' && <span className="text-xs text-fg-muted">Push on</span>}
+                {items.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-fg-muted hover:text-foreground"
+                    onClick={() => void clearAll()}
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
             </div>
             <div className="max-h-96 overflow-y-auto">
               {items.length === 0 && <p className="px-3 py-6 text-center text-sm text-fg-muted">No notifications yet.</p>}

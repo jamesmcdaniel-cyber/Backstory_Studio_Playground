@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
+import { visibleNotificationScope } from '@/lib/notifications/scope'
 import { serializeAgent } from '@/lib/agents/serialize'
 import { checkMonthlyTokenBudget, isUsageExemptEmail } from '@/lib/usage/budget'
 import { readSnapshotVersion } from '@/lib/server/snapshot-version'
@@ -34,9 +35,15 @@ export const runtime = 'nodejs'
  *             after a UTC month boundary would revalidate against a body whose
  *             counters had silently reset, in a quiet workspace possibly for
  *             hours.
+ *   cleared — the reader's notification watermark. Clearing the bell writes a
+ *             User row, which the workspace version does not track (it counts
+ *             workspace content), so without this the next poll would 304 and
+ *             the client would keep serving the body it just emptied — the
+ *             notifications would reappear seconds after being cleared.
  */
-function snapshotEtag(version: number, userId: string, monthStart: Date): string {
-  return `W/"snap1-${version}-${userId}-${monthStart.getUTCFullYear()}${monthStart.getUTCMonth() + 1}"`
+function snapshotEtag(version: number, userId: string, monthStart: Date, clearedAt: Date | null): string {
+  const month = `${monthStart.getUTCFullYear()}${monthStart.getUTCMonth() + 1}`
+  return `W/"snap2-${version}-${userId}-${month}-${clearedAt ? clearedAt.getTime() : 0}"`
 }
 
 export const GET = withAuthenticatedApi(async (request, auth) => {
@@ -54,14 +61,23 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   // is unreachable. That path emits no ETag and runs the queries exactly as this
   // route did before — degraded to slower, never to stale.
   const version = await readSnapshotVersion(auth.organizationId)
-  const etag = version === null ? null : snapshotEtag(version, auth.dbUser.id, monthStart)
+  const etag =
+    version === null
+      ? null
+      : snapshotEtag(version, auth.dbUser.id, monthStart, auth.dbUser.notificationsClearedAt)
   if (etag && request.headers.get('if-none-match') === etag) {
     // 304 carries no body by definition, and must repeat the validator so the
     // client can revalidate against it again next cycle.
     return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': 'private, no-cache' } })
   }
 
-  const notificationScope = { organizationId: auth.organizationId, OR: [{ userId: auth.dbUser.id }, { userId: null }] }
+  // Same scope the bell's own endpoint uses, watermark included — a badge that
+  // counted rows the panel no longer lists would be unclearable.
+  const notificationScope = visibleNotificationScope(
+    auth.organizationId,
+    auth.dbUser.id,
+    auth.dbUser.notificationsClearedAt,
+  )
 
   const [agents, workspaceFolders, activities, executionCount, budget, organization, notifications, unread] = await Promise.all([
     prisma.agentTask.findMany({

@@ -187,6 +187,11 @@ model User {
   /// fresh allowance mid-day. Null means the plain midnight window applies.
   /// A stamp cannot be gamed to LENGTHEN the window — see checkDailyRunAllowance.
   runAllowanceResetAt  DateTime? @db.Timestamptz(6)
+  /// Watermark for "clear my notifications": the bell lists only rows created
+  /// strictly after this. On the READER, not on the notifications, because a
+  /// row with a null userId belongs to the whole workspace — deleting on clear
+  /// would empty a colleague's bell. Null means nothing has been cleared.
+  notificationsClearedAt DateTime? @db.Timestamptz(6)
   timezone             String    @default("UTC")
   metadata             Json?
   /// Stable identity supplied by SCIM. Unique only inside a workspace.

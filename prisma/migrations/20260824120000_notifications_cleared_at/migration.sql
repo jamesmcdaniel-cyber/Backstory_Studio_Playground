@@ -1,0 +1,15 @@
+-- Per-person "clear my notifications" watermark.
+--
+-- The bell had no way to empty itself: marking everything read zeroed the badge
+-- but the panel still listed the same 30 rows, so a burst of alerts stayed on
+-- screen forever.
+--
+-- The watermark lives on the READER rather than on the notifications because a
+-- notification row with a null userId is workspace-wide: clearing by deleting
+-- (or by stamping the rows) would empty every colleague's bell at the same
+-- time. A nullable column on the user cannot reach anyone else's view, and it
+-- keeps the rows for whatever reads notification history later.
+--
+-- No backfill: NULL means "nothing cleared", which is exactly right for every
+-- existing account.
+ALTER TABLE "users" ADD COLUMN "notificationsClearedAt" TIMESTAMPTZ(6);

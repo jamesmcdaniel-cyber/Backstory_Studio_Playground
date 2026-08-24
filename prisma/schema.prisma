@@ -105,6 +105,8 @@ model Organization {
   featureGrants         FeatureGrant[]
   workspaceFolders      WorkspaceFolder[]
   agentTeammates        AgentTeammate[]
+  adoptionWeeks         AdoptionWeek[]
+  agentCohortWeeks      AgentCohortWeek[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
@@ -166,38 +168,38 @@ model Invitation {
 }
 
 model User {
-  id                   String    @id @default(cuid())
-  supabaseId           String    @unique @db.Uuid
-  email                String?
-  name                 String?
-  imageUrl             String?
+  id                     String    @id @default(cuid())
+  supabaseId             String    @unique @db.Uuid
+  email                  String?
+  name                   String?
+  imageUrl               String?
   // People.ai membership id from the MCP OAuth context — the delegated
   // identity used for user-scoped People.ai tool calls.
-  peopleAiMembershipId String?
-  role                 UserRole  @default(USER)
+  peopleAiMembershipId   String?
+  role                   UserRole  @default(USER)
   /// Platform tier, independent of the org role. null for everyone outside
   /// Backstory. 'staff' = internal employee; 'reviewer' = may decide and
   /// publish catalogue submissions.
-  platformRole         String?
-  organizationId       String?   @db.Uuid
-  isActive             Boolean   @default(true)
-  lastSeenAt           DateTime? @db.Timestamptz(6)
+  platformRole           String?
+  organizationId         String?   @db.Uuid
+  isActive               Boolean   @default(true)
+  lastSeenAt             DateTime? @db.Timestamptz(6)
   /// Watermark for the per-person daily run cap. The cap counts runs since the
   /// LATER of midnight UTC and this stamp, so an operator can hand someone a
   /// fresh allowance mid-day. Null means the plain midnight window applies.
   /// A stamp cannot be gamed to LENGTHEN the window — see checkDailyRunAllowance.
-  runAllowanceResetAt  DateTime? @db.Timestamptz(6)
+  runAllowanceResetAt    DateTime? @db.Timestamptz(6)
   /// Watermark for "clear my notifications": the bell lists only rows created
   /// strictly after this. On the READER, not on the notifications, because a
   /// row with a null userId belongs to the whole workspace — deleting on clear
   /// would empty a colleague's bell. Null means nothing has been cleared.
   notificationsClearedAt DateTime? @db.Timestamptz(6)
-  timezone             String    @default("UTC")
-  metadata             Json?
+  timezone               String    @default("UTC")
+  metadata               Json?
   /// Stable identity supplied by SCIM. Unique only inside a workspace.
-  scimExternalId       String?
-  createdAt            DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
+  scimExternalId         String?
+  createdAt              DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @db.Timestamptz(6)
 
   organization        Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   executions          AgentExecution[]
@@ -635,6 +637,11 @@ model AgentTask {
   teammateId     String?
   /// See Flow.quarantinedAt — set when the owner was deprovisioned.
   quarantinedAt  DateTime? @db.Timestamptz(6)
+  /// Set when the agent is soft-deleted (status -> 'DELETED'). Null for a live
+  /// agent AND for anything deleted before this column existed — `updatedAt`
+  /// moves on every edit, so historical deletion dates are unrecoverable and
+  /// are deliberately left null rather than guessed.
+  deletedAt      DateTime? @db.Timestamptz(6)
   metadata       Json?
   lastExecutedAt DateTime?
   /// When the scheduler should next LOOK at this row — a pre-filter, never the
@@ -1952,4 +1959,67 @@ enum UserRole {
   USER
   OWNER
   VIEWER
+}
+
+/// Weekly adoption aggregate, one row per organization per ISO week.
+///
+/// Exists because /api/cron/retention prunes AgentExecution at RETENTION_DAYS
+/// (default 90), which makes any longer-horizon behavioural question
+/// unanswerable by live query. Stores COUNTS ONLY — no user ids, no payloads —
+/// which is precisely why it may outlive the retention window that exists to
+/// bound inputs and outputs.
+model AdoptionWeek {
+  id                      String   @id @default(cuid())
+  organizationId          String   @db.Uuid
+  /// ISO week Monday, UTC.
+  weekStart               DateTime @db.Date
+  agentsCreated           Int      @default(0)
+  agentsDeleted           Int      @default(0)
+  execTotal               Int      @default(0)
+  execManual              Int      @default(0)
+  /// Full trigger mix, e.g. {"manual":61,"schedule":40,"signal":9}. Stored
+  /// whole so a new trigger type needs no migration.
+  execByTrigger           Json     @default("{}")
+  /// Distinct humans who ran an agent manually or sent an agent chat message.
+  /// A COUNT — the ids are deliberately not retained.
+  engagedUsers            Int      @default(0)
+  approvalsApproved       Int      @default(0)
+  approvalsRejected       Int      @default(0)
+  /// pending + approving + failed + superseded.
+  approvalsOther          Int      @default(0)
+  /// Median decidedAt - createdAt over DECIDED requests only; null when none
+  /// were decided.
+  approvalLatencyMedianMs Int?
+  computedAt              DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, weekStart])
+  @@index([weekStart])
+  @@map("adoption_weeks")
+}
+
+/// One row per agent per week in which it executed. Feeds the cohort survival
+/// curve.
+///
+/// `agentTaskId` carries NO foreign key to AgentTask, deliberately. This
+/// table's whole purpose is history that outlives its source row, and an
+/// ON DELETE CASCADE would erase the record proving an agent was abandoned —
+/// abandonment being the signal. `cohortWeek` is denormalized onto every row
+/// so the survival query never joins back to AgentTask.
+model AgentCohortWeek {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  agentTaskId    String
+  /// ISO week of AgentTask.createdAt.
+  cohortWeek     DateTime @db.Date
+  /// ISO week in which this agent executed at least once.
+  activeWeek     DateTime @db.Date
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([agentTaskId, activeWeek])
+  @@index([organizationId, cohortWeek])
+  @@index([cohortWeek, activeWeek])
+  @@map("agent_cohort_weeks")
 }

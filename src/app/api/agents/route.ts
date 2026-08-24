@@ -312,7 +312,9 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const { id } = z.object({ id: z.string().min(1) }).parse(await request.json())
   const result = await prisma.agentTask.updateMany({
     where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
-    data: { status: 'DELETED' },
+    // deletedAt is what makes "agents abandoned this week" computable: updatedAt
+    // moves on every edit, so it can never stand in for a deletion date.
+    data: { status: 'DELETED', deletedAt: new Date() },
   })
   if (!result.count) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
   // Purge the agent + its run nodes from the graph so deleted content can't

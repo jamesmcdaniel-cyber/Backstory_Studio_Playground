@@ -58,6 +58,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'HuddleSegment', 'HuddleNote', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
   'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent',
   'ActivityEvent', 'ActivityTriggerClaim', 'ActivitySourceCursor',
+  'AdoptionWeek', 'AgentCohortWeek',
   // PLATFORM config, listed here only because it carries a required
   // organizationId. That column names the workspace domain members JOIN — it is
   // not the row's owner. Every real access is via systemPrisma (the sign-in gate

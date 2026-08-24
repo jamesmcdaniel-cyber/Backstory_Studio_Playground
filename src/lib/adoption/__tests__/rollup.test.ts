@@ -20,6 +20,13 @@ test('weekStartUtc uses UTC, not local time', () => {
   assert.equal(weekKey(weekStartUtc(new Date('2026-08-23T23:30:00Z'))), '2026-08-17')
 })
 
+test('addWeeks moves whole weeks in both directions', () => {
+  const monday = weekStartUtc(new Date('2026-08-24T00:00:00Z'))
+  assert.equal(weekKey(addWeeks(monday, 1)), '2026-08-31')
+  assert.equal(weekKey(addWeeks(monday, -2)), '2026-08-10')
+  assert.equal(weekKey(addWeeks(monday, 0)), '2026-08-24')
+})
+
 test('completeWeeksBack excludes the in-progress week', () => {
   const weeks = completeWeeksBack(new Date('2026-08-26T10:00:00Z'), 2)
   assert.deepEqual(weeks.map(weekKey), ['2026-08-10', '2026-08-17'])

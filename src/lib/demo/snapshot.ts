@@ -74,6 +74,8 @@ export const EXCLUDED: Record<string, string> = {
   ActivityEvent: 'readers exist now (dispatchActivityEvent, the builder trigger surfaces) — this is excluded for a different reason: rows carry raw provider payloads (Slack message text, Salesforce/GitHub record bodies) and external ids (sourceEventId, actorExternalId) scoped to the REAL workspace\'s connected accounts, none of which is safe or meaningful to hand a sandbox that has no live connection behind it',
   ActivityTriggerClaim: 'exactly-once dispatch ledger tied to real event/flow ids — same class as FlowSideEffect',
   ActivitySourceCursor: 'backfill checkpoint tied to a real connection; meaningless without the connection it advances',
+  AdoptionWeek: 'operator adoption aggregates for the REAL workspace, and the rollup job excludes demo orgs by construction — copying them in would be the one place demo activity could masquerade as real adoption',
+  AgentCohortWeek: 'survival history for the REAL workspace\'s agents; same reason as AdoptionWeek',
 }
 
 const BOUND = 25

@@ -182,6 +182,19 @@ export default function PlatformUsersPage() {
         </select>
       </header>
 
+      {/* /admin/costs and /admin/adoption are separate routes with nothing in
+          the app linking to them — reachable only by typing the URL. The
+          sidebar lands operators here, so here is where the rest of the console
+          becomes findable. */}
+      <nav aria-label="Operator consoles" className="flex flex-wrap gap-4 text-sm">
+        <a href="/admin/adoption" className="font-medium underline underline-offset-4">
+          Adoption →
+        </a>
+        <a href="/admin/costs" className="font-medium underline underline-offset-4">
+          Model spend →
+        </a>
+      </nav>
+
       <Tabs defaultValue="people" className="space-y-6">
         <TabsList>
           <TabsTrigger value="people">People</TabsTrigger>

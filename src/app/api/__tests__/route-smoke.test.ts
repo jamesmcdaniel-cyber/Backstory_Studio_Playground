@@ -276,6 +276,10 @@ if (TEST_DB) {
     { route: 'admin/domains', reason: 'reviewer-only — 403 for the smoke org by design' },
     { route: 'admin/costs', reason: 'reviewer-only — 403 for the smoke org by design' },
     { route: 'admin/models', reason: 'operator-only — 403 for the smoke org by design' },
+    // Same operator tier as costs/models. Real reviewer behaviour against a
+    // real internal org is covered in
+    // src/app/api/admin/__tests__/adoption-route.db.test.ts.
+    { route: 'admin/adoption', reason: 'operator-only — 403 for the smoke org by design' },
     // Operator-only, so the smoke org gets a 403 by design. Covered instead by
     // admin/__tests__/users-route.db.test.ts, which seeds a real operator.
     { route: 'admin/users', reason: 'operator-only — 403 for the smoke org by design' },

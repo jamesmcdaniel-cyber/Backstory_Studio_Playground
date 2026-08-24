@@ -33,6 +33,9 @@ export const INTERNAL_ONLY_ROUTES = [
   // The Run-bench trigger: spends platform tokens across every candidate
   // model, so it belongs to the operator console like the panel it serves.
   'admin/models/bench',
+  // Cross-workspace adoption rollups — the same cross-tenant read as costs,
+  // aggregating every workspace's agent usage into one operator view.
+  'admin/adoption',
   // The user console reaches furthest of the three: every account on the
   // platform, their personal details, and the account actions.
   'admin/users',

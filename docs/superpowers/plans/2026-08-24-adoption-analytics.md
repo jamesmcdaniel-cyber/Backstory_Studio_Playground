@@ -18,7 +18,7 @@
 - Weeks are **ISO weeks starting Monday, UTC**. `AgentTask.createdAt`, `AgentExecution.startedAt`, `AgentChatMessage.createdAt` and `ApprovalRequest.createdAt` are Prisma-default naive `timestamp(3)` columns holding UTC, so bare `date_trunc('week', col)` is already UTC-correct — do **not** add `AT TIME ZONE`, which would double-convert.
 - The page renders **complete weeks only**. Never render the current partial week.
 - A ratio over a zero denominator is `null`, never `0`. A week with no runs has no automation ratio; rendering `0` reads as "fully manual", which is the opposite conclusion.
-- DB tests run concurrently against a shared `bs_ci_repro` database. **Every assertion must be delta-scoped** — capture a baseline, seed, assert the delta. Never assert an absolute global count.
+- DB tests run concurrently against a shared CI-mode database (`ci_repro` locally). **Every assertion must be delta-scoped** — capture a baseline, seed, assert the delta. Never assert an absolute global count.
 - New routes must be registered: read route in `INTERNAL_ONLY_ROUTES` (`src/app/api/__tests__/edition-gates.test.ts`), cron route in `UNGATED_ROUTES` (`src/lib/authz/ungated-routes.ts`). Both lists have completeness tests that fail the build on drift.
 - Run a single test file with: `TSX_TSCONFIG_PATH=tsconfig.test.json npx tsx --test <path>`
 
@@ -30,7 +30,7 @@ The spec calls for an `agentsDeleted` weekly count. `AgentTask` has no deletion 
 
 **Files:**
 - Modify: `prisma/schema.prisma` (add 2 models, add `deletedAt` to `AgentTask`)
-- Create: `prisma/migrations/20260824120000_adoption_rollups/migration.sql`
+- Create: `prisma/migrations/20260824130000_adoption_rollups/migration.sql`
 - Modify: `src/lib/tenant-guard.ts:48-70` (add both models to `ORG_SCOPED_MODELS`)
 - Modify: `src/app/api/agents/route.ts:315` (stamp `deletedAt`)
 - Test: `src/lib/__tests__/rls-coverage.db.test.ts` (existing — must still pass)
@@ -127,7 +127,7 @@ Add the back-relations to the `Organization` model (find it near the top of the 
 
 - [ ] **Step 2: Write the migration**
 
-Create `prisma/migrations/20260824120000_adoption_rollups/migration.sql`. The RLS block copies `20260818160000_agent_teammates` exactly.
+Create `prisma/migrations/20260824130000_adoption_rollups/migration.sql`. The RLS block copies `20260818160000_agent_teammates` exactly.
 
 ```sql
 -- Adoption rollups: durable weekly aggregates that outlive the execution prune.
@@ -242,7 +242,7 @@ In `src/app/api/agents/route.ts`, find the soft-delete write at line ~315 and ch
 - [ ] **Step 5: Generate the client and apply the migration**
 
 Run: `npx prisma generate && npx prisma migrate deploy`
-Expected: migration `20260824120000_adoption_rollups` applied, client regenerated with both models.
+Expected: migration `20260824130000_adoption_rollups` applied, client regenerated with both models.
 
 - [ ] **Step 6: Verify RLS coverage passes**
 
@@ -257,7 +257,7 @@ Expected: clean.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add prisma/schema.prisma prisma/migrations/20260824120000_adoption_rollups src/lib/tenant-guard.ts src/app/api/agents/route.ts
+git add prisma/schema.prisma prisma/migrations/20260824130000_adoption_rollups src/lib/tenant-guard.ts src/app/api/agents/route.ts
 git commit -m "feat(adoption): rollup tables + agent deletedAt
 
 Two RLS-scoped weekly aggregate tables that outlive the 90-day execution
@@ -600,7 +600,7 @@ import crypto from 'node:crypto'
 /**
  * The rollup job against a real database.
  *
- * Runs concurrently against a shared bs_ci_repro database, so every assertion
+ * Runs concurrently against a shared CI-mode database, so every assertion
  * is scoped to organizations this suite created. Absolute global counts are
  * flaky by construction here — sibling suites leave residue.
  *
@@ -721,7 +721,7 @@ if (TEST_DB) {
 
   after(async () => {
     // Org delete cascades to agents, executions, approvals and both rollup
-    // tables, so the shared ci_repro database keeps no residue from this suite.
+    // tables, so the shared CI-mode database keeps no residue from this suite.
     for (const id of [realOrgId, demoOrgId]) {
       await prisma.organization.delete({ where: { id } }).catch(() => {})
     }
@@ -1144,7 +1144,7 @@ import { NextRequest } from 'next/server'
 /**
  * /api/admin/adoption against a real database.
  *
- * Shared bs_ci_repro, so assertions are delta-scoped: this suite seeds one
+ * Shared CI-mode database, so assertions are delta-scoped: this suite seeds one
  * organization and asserts only about that organization's row inside the
  * response, never about platform totals a sibling suite also writes to.
  */

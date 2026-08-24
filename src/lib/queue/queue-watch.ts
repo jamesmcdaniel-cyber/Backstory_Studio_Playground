@@ -31,6 +31,21 @@
  * flap — recovers, then breaks again — alerts again immediately instead of
  * waiting out the rest of an hour-long window for a NEW incident.
  *
+ * The dead-letter condition needs one thing more than a cooldown. Nothing
+ * consumes a DLQ, so its count is CUMULATIVE: a job parked once sits there
+ * until an operator drops or replays it, which means "total > 0" is true
+ * forever after the first failure and re-alerted on every cooldown lapse —
+ * the same "8 job(s) in dead-letter queue(s)" notification every 65 minutes,
+ * for weeks, describing nothing new. So the alertable edge for THIS condition
+ * is growth, not presence: the last observed total is kept in its own cache
+ * key (DEAD_LETTER_BASELINE_KEY) and an alert requires the total to have
+ * risen above it. A standing backlog goes quiet after one alert; the next job
+ * to dead-letter alerts immediately, even while the old ones are still
+ * parked. The condition still reports unhealthy the whole time — that is the
+ * LEVEL, which /api/health and this route's response both still carry; only
+ * the notification is edge-gated. If the baseline key is ever lost (eviction,
+ * a cache flush) the worst case is one re-alert for an existing backlog.
+ *
  * The third condition — stranded `ActivityTriggerClaim` rows — is not a
  * queue-plane signal at all (it reads Postgres, not Redis/BullMQ), but it
  * lives here rather than in a fourth cron route because it needs exactly the
@@ -42,7 +57,7 @@
  */
 import { probeQueueConsumers, type QueueConsumerCheck } from './consumer-probe'
 import { STALE_CLAIM_MS } from '@/lib/activity/dispatch'
-import { cacheGet, cacheSet, cacheDelete } from '@/lib/cache'
+import { cacheGet, cacheGetNumber, cacheSet, cacheDelete } from '@/lib/cache'
 import { systemPrisma } from '@/lib/prisma'
 import { recordAudit } from '@/lib/audit'
 import { notify } from '@/lib/notifications/service'
@@ -59,6 +74,16 @@ const COOLDOWN_KEYS = {
   deadLetters: 'queue-watch:alert-cooldown:dead-letters',
   strandedActivityClaims: 'queue-watch:alert-cooldown:stranded-activity-claims',
 } as const
+
+/**
+ * Last observed dead-letter total — the bar a new alert has to clear. Not a
+ * cooldown key: it is not about time at all, and it must outlive one (a
+ * backlog nobody drains stays quiet for as long as it stays the same size).
+ */
+export const DEAD_LETTER_BASELINE_KEY = 'queue-watch:dead-letter-baseline'
+
+/** Long enough that a quiet backlog never re-alerts on TTL alone. */
+const DEAD_LETTER_BASELINE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
  * How many `ActivityTriggerClaim` rows are still `'claimed'` past
@@ -80,6 +105,9 @@ export type QueueWatchDeps = {
   cacheGetFn: (key: string) => Promise<boolean | null>
   cacheSetFn: (key: string, value: boolean, ttlMs: number) => Promise<void>
   cacheDeleteFn: (key: string) => Promise<void>
+  /** Last dead-letter total this watch saw, or null when it has none on record. */
+  readDeadLetterBaseline: () => Promise<number | null>
+  writeDeadLetterBaseline: (total: number) => Promise<void>
   /** Platform owner rows to notify — one per PLATFORM_OWNER_EMAILS address that
    *  has actually signed in (a fresh clone may have neither yet). */
   findOwners: () => Promise<Array<{ id: string; organizationId: string | null }>>
@@ -93,6 +121,8 @@ const defaultDeps: QueueWatchDeps = {
   cacheGetFn: (key) => cacheGet<boolean>(key),
   cacheSetFn: (key, value, ttlMs) => cacheSet(key, value, ttlMs),
   cacheDeleteFn: (key) => cacheDelete(key),
+  readDeadLetterBaseline: () => cacheGetNumber(DEAD_LETTER_BASELINE_KEY),
+  writeDeadLetterBaseline: (total) => cacheSet(DEAD_LETTER_BASELINE_KEY, total, DEAD_LETTER_BASELINE_TTL_MS),
   findOwners: async () =>
     systemPrisma.user.findMany({
       where: { email: { in: [...PLATFORM_OWNER_EMAILS], mode: 'insensitive' } },
@@ -126,6 +156,24 @@ export function consumerLossReason(check: QueueConsumerCheck): string | null {
 export function deadLettersReason(check: QueueConsumerCheck): string | null {
   if (!check.configured || !check.deadLetters || check.deadLetters.total <= 0) return null
   return `${check.deadLetters.total} job(s) in dead-letter queue(s): ${check.deadLetters.queues.join(', ')}`
+}
+
+/**
+ * Pure verdict: has the dead-letter backlog GROWN since the last tick, and by
+ * how much — the alertable edge for a condition whose level never recovers on
+ * its own (see the file header). `baseline` is the total this watch last
+ * recorded; 0 for a watch that has never seen one, which makes a first
+ * observation of any backlog alertable.
+ *
+ * Says both numbers: how many are new (what happened) and how many are parked
+ * in total (what an operator is walking into at /admin/queue).
+ */
+export function newDeadLettersReason(check: QueueConsumerCheck, baseline: number): string | null {
+  if (!check.configured || !check.deadLetters) return null
+  const total = check.deadLetters.total
+  const added = total - Math.max(0, baseline)
+  if (total <= 0 || added <= 0) return null
+  return `${added} new job(s) dead-lettered — ${total} now parked in: ${check.deadLetters.queues.join(', ')}`
 }
 
 /**
@@ -180,7 +228,7 @@ async function deliverAlert(reason: string, detail: Record<string, unknown>, dep
           level: 'error',
           title: 'Queue plane needs attention',
           body: reason,
-          link: '/admin',
+          link: '/admin/queue',
         })
         .catch(() => undefined)
       await deps
@@ -243,12 +291,30 @@ export async function runQueueWatch(overrides: Partial<QueueWatchDeps> = {}): Pr
   const strandedClaimCount = await deps.countStrandedActivityClaims().catch(() => 0)
 
   const consumerReason = consumerLossReason(check)
+  // Level (does a backlog exist?) and edge (did it grow?) are different
+  // questions for this condition — the first is what we REPORT, the second is
+  // the only thing worth NOTIFYING about. See the file header.
   const dlqReason = deadLettersReason(check)
+  const dlqBaseline = (await deps.readDeadLetterBaseline().catch(() => null)) ?? 0
+  const dlqGrowthReason = newDeadLettersReason(check, dlqBaseline)
   const strandedClaimsReason = strandedActivityClaimsReason(strandedClaimCount)
 
   const queueDetail = { stranded: check.stranded, deadLetters: check.deadLetters, heartbeat: check.heartbeat }
   const consumerAlerted = await watchCondition(consumerReason, COOLDOWN_KEYS.consumerLoss, queueDetail, deps)
-  const dlqAlerted = await watchCondition(dlqReason, COOLDOWN_KEYS.deadLetters, queueDetail, deps)
+  const dlqAlerted = await watchCondition(
+    dlqGrowthReason,
+    COOLDOWN_KEYS.deadLetters,
+    { ...queueDetail, deadLetterBaseline: dlqBaseline },
+    deps,
+  )
+  // Record what we saw AFTER deciding, and on every change in either
+  // direction: growth so the same jobs never alert twice, and shrinkage
+  // (an operator drained the queue at /admin/queue) so the next job to park
+  // is once again above the bar.
+  const dlqTotal = check.deadLetters?.total
+  if (check.configured && typeof dlqTotal === 'number' && dlqTotal !== dlqBaseline) {
+    await deps.writeDeadLetterBaseline(dlqTotal).catch(() => undefined)
+  }
   const strandedClaimsAlerted = await watchCondition(
     strandedClaimsReason,
     COOLDOWN_KEYS.strandedActivityClaims,

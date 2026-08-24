@@ -54,7 +54,7 @@ export interface FlowDeadLetterDeps {
     $transaction: <T>(fn: (tx: FlowDeadLetterDb) => Promise<T>) => Promise<T>
   }
   createQueue: typeof createQueue
-  logger: Pick<typeof apiLogger, 'error'>
+  logger: Pick<typeof apiLogger, 'error' | 'warn'>
   capture: typeof captureError
 }
 
@@ -65,7 +65,15 @@ const defaultDeps = (): FlowDeadLetterDeps => ({
   capture: captureError,
 })
 
-export async function recordFlowDeadLetter(
+/**
+ * Stop the owning run from saying `running`, whether or not the failure is
+ * one an operator ever needs to see. Split out of recordFlowDeadLetter
+ * because those two halves answer to different people: terminalizing is what
+ * the flow's OWNER sees (their run stopped, and why), parking is what an
+ * OPERATOR triages. A failure can deserve the first without the second — see
+ * isDeterministicUserFailure.
+ */
+export async function terminalizeDeadLetteredFlowRun(
   input: FlowDeadLetterInput,
   deps: FlowDeadLetterDeps = defaultDeps(),
 ): Promise<void> {
@@ -123,6 +131,13 @@ export async function recordFlowDeadLetter(
         })
       })
   }
+}
+
+export async function recordFlowDeadLetter(
+  input: FlowDeadLetterInput,
+  deps: FlowDeadLetterDeps = defaultDeps(),
+): Promise<void> {
+  await terminalizeDeadLetteredFlowRun(input, deps)
 
   try {
     const dlq = deps.createQueue(QUEUE_NAMES.FLOW_DEAD_LETTER)
@@ -161,10 +176,48 @@ export function flowDeadLetterInputFromJob(queueName: string, job: Job, error: E
   }
 }
 
+/**
+ * Failures a dead-letter record can do nothing for.
+ *
+ * A parked record is a payload an operator can replay once the cause is
+ * fixed, plus a page saying it is worth looking at. A flow whose graph no
+ * longer validates — a step pointing at an agent that was deleted — offers
+ * neither: the graph is re-validated on every attempt, so a replay fails
+ * identically, and the fix belongs to the flow's owner, who already has the
+ * message on their run. Parking these was what filled the dead-letter queue
+ * with non-incidents and kept the queue-plane alert (queue-watch.ts) firing
+ * over a backlog nothing could act on.
+ *
+ * Deliberately narrow: only validation, keyed on the error CODE rather than
+ * on 4xx generally. A dependency drift (409) is a genuine operator signal
+ * whose payload becomes replayable the moment the web and worker fleets agree
+ * again, and an unrecognised failure always parks — this list must earn each
+ * entry, because the cost of being wrong is a lost job record.
+ */
+export function isDeterministicUserFailure(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === 'FLOW_VALIDATION_ERROR'
+}
+
 /** Wire onto a Worker's 'failed' event. */
-export function deadLetterFromFlowJob(queueName: string) {
+export function deadLetterFromFlowJob(queueName: string, deps?: FlowDeadLetterDeps) {
   return (job: Job | undefined, error: Error) => {
     if (!job) return
-    void recordFlowDeadLetter(flowDeadLetterInputFromJob(queueName, job, error))
+    const input = flowDeadLetterInputFromJob(queueName, job, error)
+    const resolved = deps ?? defaultDeps()
+    if (isDeterministicUserFailure(error)) {
+      // Still terminalize — the run must stop saying `running` either way.
+      // Nothing is parked and nothing is reported: the run row carries the
+      // message to the only person who can act on it.
+      resolved.logger.warn('flow job failed validation — terminalized without dead-lettering', {
+        queue: input.queue,
+        jobId: input.jobId,
+        flowRunId: input.flowRunId,
+        organizationId: input.organizationId,
+        error: input.error,
+      })
+      void terminalizeDeadLetteredFlowRun(input, resolved)
+      return
+    }
+    void recordFlowDeadLetter(input, resolved)
   }
 }

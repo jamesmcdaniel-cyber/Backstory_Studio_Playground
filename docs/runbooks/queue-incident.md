@@ -58,11 +58,17 @@ originating queue, the run id, and the failure message. `--json` on any
 subcommand gives machine-readable output. `replay` and `drop` refuse to run
 without `--confirm`.
 
-### `/api/admin/queue/dead-letters`
+### `/admin/queue` and `/api/admin/queue/dead-letters`
 
-The same operations over HTTP, JSON only, no UI. Gated on `platform.administer`
-and internal-edition only, because a parked payload is another workspace's raw
-job data.
+The same operations over HTTP. Gated on `platform.administer` and
+internal-edition only, because a parked payload is another workspace's raw job
+data.
+
+`/admin/queue` is the operator page over this route — the backlog, each
+failure, each payload, and replay/drop behind a confirm. It is where the
+"Queue plane needs attention" notification links, so an owner who gets the
+alert on a phone can triage without production secrets. `curl` below is the
+same surface for a terminal.
 
 ```bash
 curl -s "$HOST/api/admin/queue/dead-letters" -H "Cookie: $OPERATOR_SESSION" | jq
@@ -228,15 +234,24 @@ minutes on Vercel Cron (`vercel.json`) and calls the same
 - `queueConsumers.ok === false` — a critical queue (agent-execution,
   scheduled-agent-execution, flow-execution) has jobs waiting with no
   registered consumer and no fresh worker heartbeat (§2 above).
-- `queueConsumers.deadLetters.total > 0` — any job has landed in a
-  dead-letter queue (§1 above), independent of consumer health.
+- `queueConsumers.deadLetters.total` has GROWN since the last tick — a job
+  newly landed in a dead-letter queue (§1 above), independent of consumer
+  health. Growth, not presence: nothing consumes a DLQ, so a parked job sits
+  there until an operator drops or replays it, and alerting on presence meant
+  the same "N job(s) in dead-letter queue(s)" notification every time the
+  cooldown lapsed, for as long as the backlog stood. The last observed total
+  lives in `queue-watch:dead-letter-baseline` (`DEAD_LETTER_BASELINE_KEY`, 30
+  day TTL); it follows the count in both directions, so draining the queue
+  re-arms the alert for the next failure. The condition still REPORTS
+  unhealthy the whole time — only the notification is growth-gated.
 
 **Where alerts land**: the platform owner (`PLATFORM_OWNER_EMAILS`,
 `src/lib/authz/platform-owner.ts`) — the only operator identity guaranteed to
 exist in every environment. For each owner account found:
 - an in-app notification + best-effort web push via the existing
   `notify()` pathway (`src/lib/notifications/service.ts` — the same one
-  run-completion notifications use), level `error`, linking to `/admin`;
+  run-completion notifications use), level `error`, linking to `/admin/queue`
+  (the operator page over the backlog — §1 above);
 - an `AuditEvent` (`action: 'platform.queue.alert'`, `actorKind: 'system'`)
   recording the reason, stranded queues, and dead-letter counts — durable and
   queryable even if push/in-app delivery is misconfigured;
@@ -245,14 +260,28 @@ exist in every environment. For each owner account found:
   existing convention).
 
 **Cooldown semantics**: edge-triggered, not level-triggered. State is one
-cache key (`queue-watch:alert-cooldown`, Redis-backed via `src/lib/cache.ts`
-in production — so it survives across serverless invocations) with a 1 hour
-TTL (`QUEUE_WATCH_COOLDOWN_MS`, override via env). While the condition stays
+cache key PER CONDITION (`queue-watch:alert-cooldown:*`, Redis-backed via
+`src/lib/cache.ts` in production — so it survives across serverless
+invocations) with a 1 hour TTL (`QUEUE_WATCH_COOLDOWN_MS`, override via env). While the condition stays
 unhealthy, only the FIRST tick alerts; every tick after that is silent until
 either the TTL lapses or the condition recovers. On a healthy tick the key is
 cleared immediately (not left to expire), so a flap — recovers, then breaks
 again — alerts again right away instead of waiting out the rest of an
 hour-long window for what is really a new incident.
+
+A cooldown alone is not enough for a condition whose level never recovers on
+its own, which is why the dead-letter check is additionally gated on growth
+(above): the cooldown decides how often ONE incident may speak, the baseline
+decides whether there is a new incident at all.
+
+**Failures that are deliberately not dead-lettered**: a flow job that fails
+`FLOW_VALIDATION_ERROR` (its graph no longer validates — e.g. a step pointing
+at a deleted agent) terminalizes its run but parks nothing
+(`isDeterministicUserFailure`, `src/lib/queue/flow-dead-letter.ts`). Replaying
+it would fail identically, and the fix belongs to the flow's owner, who
+already has the message on the run. Everything else — including
+`FLOW_DEPENDENCY_DRIFT`, whose payload becomes replayable once the fleets
+agree — still parks.
 
 **External uptime monitor recommendation**: point a third-party monitor
 (Pingdom, UptimeRobot, Better Uptime, etc.) at `GET /api/health` expecting

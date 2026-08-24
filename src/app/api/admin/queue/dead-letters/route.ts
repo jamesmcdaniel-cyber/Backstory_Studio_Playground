@@ -12,9 +12,11 @@ import {
 } from '@/lib/queue/dead-letter-admin'
 
 /**
- * Operator read/repair surface over the dead-letter queues. JSON only — there
- * is deliberately no UI: this is incident tooling, and the terminal equivalent
- * (`npm run queue:dlq`) is the primary path. See docs/runbooks/queue-incident.md.
+ * Operator read/repair surface over the dead-letter queues. `npm run queue:dlq`
+ * is still the primary path mid-incident (it needs only REDIS_URL and a
+ * terminal), but this route also backs /admin/queue — the page the queue-plane
+ * alert links to, for the operator who just got the notification and does not
+ * have production secrets to hand. See docs/runbooks/queue-incident.md.
  *
  * Internal edition only, `platform.administer`: a dead-lettered payload is the
  * raw job data of some workspace's run, so this reaches across every tenant for

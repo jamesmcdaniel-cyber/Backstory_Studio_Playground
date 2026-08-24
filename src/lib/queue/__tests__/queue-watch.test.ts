@@ -1,6 +1,14 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { runQueueWatch, queueWatchReason, strandedActivityClaimsReason, type QueueWatchDeps } from '../queue-watch'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  runQueueWatch,
+  queueWatchReason,
+  newDeadLettersReason,
+  strandedActivityClaimsReason,
+  type QueueWatchDeps,
+} from '../queue-watch'
 import type { QueueConsumerCheck } from '../consumer-probe'
 
 const healthy: QueueConsumerCheck = {
@@ -31,6 +39,14 @@ const bothUnhealthy: QueueConsumerCheck = {
   deadLetters: { total: 2, queues: ['agent-dead-letter'] },
 }
 
+/** One MORE job parked on top of `withDeadLetters`' three. */
+const withMoreDeadLetters: QueueConsumerCheck = {
+  configured: true,
+  ok: true,
+  stranded: [],
+  deadLetters: { total: 4, queues: ['flow-dead-letter'] },
+}
+
 /** Consumer loss recovered, dead letters still present. */
 const dlqOnlyStillPresent: QueueConsumerCheck = {
   configured: true,
@@ -43,6 +59,9 @@ function harness(sequence: QueueConsumerCheck[], strandedClaimCounts: number[] =
   const store = new Map<string, boolean>()
   const notified: unknown[] = []
   const audited: unknown[] = []
+  // Stands in for the Redis-backed baseline key — the dead-letter condition
+  // alerts on growth past this, not on the backlog merely existing.
+  const baseline = { value: null as number | null }
   let call = 0
   let claimCall = 0
 
@@ -60,6 +79,10 @@ function harness(sequence: QueueConsumerCheck[], strandedClaimCounts: number[] =
     cacheDeleteFn: async (key) => {
       store.delete(key)
     },
+    readDeadLetterBaseline: async () => baseline.value,
+    writeDeadLetterBaseline: async (total) => {
+      baseline.value = total
+    },
     findOwners: async () => [{ id: 'owner-1', organizationId: 'org-owner' }],
     notifyFn: (async (input: unknown) => {
       notified.push(input)
@@ -69,7 +92,7 @@ function harness(sequence: QueueConsumerCheck[], strandedClaimCounts: number[] =
       audited.push(input)
     }) as QueueWatchDeps['recordAuditFn'],
   }
-  return { deps, store, notified, audited }
+  return { deps, store, notified, audited, baseline }
 }
 
 describe('queueWatchReason', () => {
@@ -87,6 +110,30 @@ describe('queueWatchReason', () => {
   })
 })
 
+describe('newDeadLettersReason', () => {
+  test('a backlog seen for the first time is alertable', () => {
+    assert.match(newDeadLettersReason(withDeadLetters, 0) ?? '', /3 new job/)
+  })
+  test('the SAME backlog on the next tick is not — nothing new happened', () => {
+    assert.equal(newDeadLettersReason(withDeadLetters, 3), null)
+  })
+  test('a backlog that shrank without new arrivals is not alertable', () => {
+    assert.equal(newDeadLettersReason(withDeadLetters, 8), null)
+  })
+  test('growth names the new jobs and the running total', () => {
+    const reason = newDeadLettersReason(withMoreDeadLetters, 3) ?? ''
+    assert.match(reason, /1 new job/)
+    assert.match(reason, /4 now parked/)
+    assert.match(reason, /flow-dead-letter/)
+  })
+  test('an empty queue plane is never alertable', () => {
+    assert.equal(newDeadLettersReason(healthy, 0), null)
+  })
+  test('unconfigured is never alertable', () => {
+    assert.equal(newDeadLettersReason({ configured: false, ok: true, stranded: [] }, 0), null)
+  })
+})
+
 describe('runQueueWatch', () => {
   test('healthy tick: no alert, nothing notified', async () => {
     const { deps, notified, audited } = harness([healthy])
@@ -95,6 +142,20 @@ describe('runQueueWatch', () => {
     assert.equal(result.alerted, false)
     assert.equal(notified.length, 0)
     assert.equal(audited.length, 0)
+  })
+
+  test('the alert deep-links at an admin page that actually exists', async () => {
+    // Regression guard: the link was '/admin', a segment that holds a layout
+    // and four child routes but NO page.tsx — so every alert an owner clicked
+    // landed on Next's 404 instead of the backlog it was telling them about.
+    const { deps, notified } = harness([withDeadLetters])
+    await runQueueWatch(deps)
+    const link = (notified[0] as { link: string }).link
+    assert.equal(link, '/admin/queue')
+    assert.ok(
+      existsSync(join(process.cwd(), 'src/app', link, 'page.tsx')),
+      `${link} has no page.tsx — the notification would 404`,
+    )
   })
 
   test('unhealthy tick fires exactly one alert to the platform owner', async () => {
@@ -252,5 +313,47 @@ describe('runQueueWatch: stranded activity-dispatch claims', () => {
     const third = await runQueueWatch(deps) // stranded claims breaks again — a NEW incident, must alert
     assert.equal(third.alerted, true)
     assert.equal(notified.length, 3, 'stranded claims alerts again on its fresh incident, independent of consumer loss')
+  })
+})
+
+describe('runQueueWatch: dead-letter backlog', () => {
+  const DLQ_COOLDOWN_KEY = 'queue-watch:alert-cooldown:dead-letters'
+
+  test('a standing backlog stops alerting once the cooldown lapses — nothing new happened', async () => {
+    // The bug this fixes: nothing consumes a DLQ, so the count never falls on
+    // its own. Every cooldown lapse re-fired the identical "8 job(s) in
+    // dead-letter queue(s)" notification — one every 65 minutes for weeks.
+    const { deps, notified, store } = harness([withDeadLetters, withDeadLetters])
+    const first = await runQueueWatch(deps)
+    assert.equal(first.alerted, true)
+    assert.equal(notified.length, 1)
+
+    store.delete(DLQ_COOLDOWN_KEY) // the hour lapses; the backlog is untouched
+    const second = await runQueueWatch(deps)
+    assert.equal(second.unhealthy, true, 'the backlog is still a real, reportable condition')
+    assert.equal(second.alerted, false, 'but it is not NEWS — no second notification')
+    assert.equal(notified.length, 1)
+  })
+
+  test('a job parked on top of a standing backlog alerts, counting only the new one', async () => {
+    const { deps, notified, store } = harness([withDeadLetters, withMoreDeadLetters])
+    await runQueueWatch(deps)
+    store.delete(DLQ_COOLDOWN_KEY)
+    const second = await runQueueWatch(deps)
+    assert.equal(second.alerted, true)
+    assert.equal(notified.length, 2)
+    assert.match((notified[1] as { body: string }).body, /1 new job/)
+    assert.match((notified[1] as { body: string }).body, /4 now parked/)
+  })
+
+  test('draining the queue re-arms it: the next dead letter alerts again', async () => {
+    const { deps, notified, baseline } = harness([withDeadLetters, healthy, withDeadLetters])
+    await runQueueWatch(deps)
+    assert.equal(baseline.value, 3, 'the observed total is recorded')
+    await runQueueWatch(deps) // operator drained it at /admin/queue
+    assert.equal(baseline.value, 0, 'baseline follows the count back down')
+    const third = await runQueueWatch(deps)
+    assert.equal(third.alerted, true, 'a fresh backlog after a drain is news again')
+    assert.equal(notified.length, 2)
   })
 })

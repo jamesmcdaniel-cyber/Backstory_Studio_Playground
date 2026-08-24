@@ -52,7 +52,7 @@ Unique on `[organizationId, weekStart]`; index on `[weekStart]` for cross-org re
 | --- | --- |
 | `weekStart` (`@db.Date`) | ISO week Monday, UTC |
 | `agentsCreated` | `AgentTask` rows with `createdAt` in the week |
-| `agentsDeleted` | agents whose `status` became `DELETED` in the week |
+| `agentsDeleted` | agents soft-deleted in the week, via a new `AgentTask.deletedAt` |
 | `execTotal` | all `AgentExecution` with `startedAt` in the week |
 | `execManual` | subset with `trigger->>'type' = 'manual'` |
 | `execByTrigger` (`Json`) | full mix, e.g. `{schedule: 40, signal: 9, manual: 61}` |
@@ -79,6 +79,13 @@ abandoned. Abandonment is the signal; it must not be cascade-deletable.
 that never joins back to `AgentTask`.
 
 Growth is agents × weeks-active — bounded and small; no pruning needed.
+
+**One upstream change is required.** `agentsDeleted` is not computable today:
+deletion is soft (`status: 'DELETED'`) and carries no timestamp, and `updatedAt`
+moves on any edit. `AgentTask` gains a nullable `deletedAt`, stamped at the single
+soft-delete site. Agents deleted before the column existed keep `deletedAt = null` and
+are excluded from weekly deletion counts — their dates are unrecoverable, and guessing
+from `updatedAt` would fabricate a number that looks authoritative.
 
 ### 2. The rollup job
 

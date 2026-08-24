@@ -51,6 +51,16 @@ primary_region = "iad"
   NODE_ENV = "production"
   EXECUTION_MODE = "queue"
   WORKER_PORT = "3002"
+  # Consume only the queues someone is WAITING on: agent-execution,
+  # scheduled-agent-execution, flow-execution. Operator batch work (template
+  # generation, model bench, activity backfill) is served by fly.worker-batch.toml.
+  #
+  # Before the split, one long backfill over a slow provider API could hold
+  # interactive slots for minutes while people's runs queued behind it — and
+  # scaling this app did not fix that, it just bought more slots for the same
+  # contention. Leaving WORKER_POOL unset consumes everything, which is the
+  # pre-split behaviour and still correct for a single-machine deployment.
+  WORKER_POOL = "interactive"
   # Per-worker, PER-QUEUE concurrency; the runtime starts four queues, so
   # in-flight jobs per machine ≈ 4x this. Size DATABASE_URL's connection_limit
   # against that product.
@@ -75,5 +85,25 @@ primary_region = "iad"
 [[vm]]
   size = "shared-cpu-2x"
   memory = "1gb"
-  # Competing consumers on one Redis — scale with `fly scale count N`
-  # (render.yaml ran numInstances: 3).
+  # Competing consumers on one Redis — scale with `fly scale count N`.
+  #
+  # CAPACITY MATH, because the two ceilings here are easy to breach silently:
+  #
+  #   slots      = AGENT_WORKER_CONCURRENCY x (queues this pool consumes)
+  #              = 5 x 3 = 15 in-flight jobs per machine
+  #   fleet      = slots x machine count
+  #   ORG_MAX_INFLIGHT_RUNS = 10 caps any ONE workspace's share of that fleet.
+  #
+  # At 3 machines the fleet is 45 slots, so FIVE busy workspaces saturate the
+  # whole platform. That is the number to size against — not the user count.
+  #
+  # And every slot is a database connection: DATABASE_URL's connection_limit
+  # must be >= slots, while (connection_limit x machine count) must stay under
+  # the Supabase pooler's own client ceiling. connection_limit=20 x 3 machines
+  # = 60 client connections from this app ALONE, before Vercel's lambdas take
+  # theirs. Raise the machine count and the pooler plan together, or Prisma
+  # starts throwing P2024 pool timeouts under exactly the load you scaled for.
+  #
+  # Fly does not autoscale a process with no [[services]] block on queue depth.
+  # /api/cron/queue-watch is the signal; scaling is a deliberate
+  # `fly scale count N` against it. See docs/runbooks/.

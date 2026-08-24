@@ -38,6 +38,22 @@ const DEFAULT_FRESH_MS = 8_000
 let cached: { data: Snapshot; ts: number } | null = null
 let inflight: Promise<Snapshot> | null = null
 
+/**
+ * The ETag the server stamped on the copy in `cached`.
+ *
+ * Sent back as If-None-Match so an unchanged shell is answered with a bodyless
+ * 304 that costs the server no database queries at all — the single biggest
+ * lever on platform capacity, since this poll runs for every signed-in tab
+ * every 8 seconds whether or not anything is happening.
+ *
+ * Held in a module variable rather than left to the browser's HTTP cache
+ * because the fetch below is `cache: 'no-store'`, which suppresses automatic
+ * revalidation. Kept in memory only, deliberately: it must never outlive the
+ * `cached` body it validates, and localStorage would let a persisted ETag
+ * survive a reset and revalidate against data that is no longer there.
+ */
+let etag: string | null = null
+
 // Bumped on every reset. A fetch that STARTED before a reset can resolve
 // after it carrying pre-reset data; comparing the epoch it captured keeps
 // that response from re-poisoning the cache it was evicted from. Its own
@@ -68,13 +84,37 @@ function persist(entry: { data: Snapshot; ts: number }) {
 
 async function fetchSnapshot(): Promise<Snapshot> {
   const startedIn = epoch
-  const res = await fetch('/api/snapshot', { cache: 'no-store' })
+  // Only offer the validator when there is a body it belongs to. An
+  // If-None-Match with no corresponding `cached` entry would earn a 304 that
+  // this function then has nothing to return.
+  const priorEtag = cached && etag ? etag : null
+  const res = await fetch('/api/snapshot', {
+    cache: 'no-store',
+    headers: priorEtag ? { 'If-None-Match': priorEtag } : undefined,
+  })
+
+  if (res.status === 304 && cached) {
+    // Unchanged. Refresh the timestamp so the freshness window restarts —
+    // without this, every subsequent call inside the window would re-request,
+    // turning the cheapest possible answer into a request loop.
+    const entry = { data: cached.data, ts: Date.now() }
+    if (startedIn === epoch) {
+      cached = entry
+      persist(entry)
+    }
+    return entry.data
+  }
+
   const body = (await res.json().catch(() => ({}))) as Partial<Snapshot> & { error?: string; code?: string }
   if (!res.ok) throw new SnapshotError(body.error || `Snapshot failed (${res.status})`, body.code, res.status)
   const entry = { data: body as Snapshot, ts: Date.now() }
   if (startedIn === epoch) {
     cached = entry
     persist(entry)
+    // Set alongside the body, and only under the same epoch check, so the
+    // validator and the data it describes can never come from different
+    // responses.
+    etag = res.headers.get('ETag')
   }
   return entry.data
 }
@@ -107,6 +147,10 @@ export function resetSnapshotCache(): void {
   epoch += 1
   cached = null
   inflight = null
+  // Cleared WITH the body: a surviving ETag would revalidate against a
+  // workspace's data that this reset exists to forget, and a 304 would then
+  // leave the next identity with no body at all.
+  etag = null
   if (typeof window === 'undefined') return
   try {
     window.localStorage.removeItem(LS_KEY)

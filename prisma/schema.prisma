@@ -59,59 +59,59 @@ model Organization {
   /// must authenticate through an enterprise SSO provider.
   ssoEnforced           Boolean   @default(false)
 
-  users                User[]
-  agents               AgentTask[]
-  executions           AgentExecution[]
-  templates            AgentTemplate[]
-  flowTemplates        FlowTemplate[]
-  integrations         Integration[]
-  notifications        Notification[]
-  mcpConnections       McpConnection[]
-  nangoConnections     NangoConnection[]
-  integrationSecrets   IntegrationSecret[]
-  httpCredentials      HttpCredential[]
-  peopleAiConnections  PeopleAiConnection[]
-  signals              Signal[]
-  signalSubscriptions  SignalSubscription[]
-  auditEvents          AuditEvent[]
-  approvalRequests     ApprovalRequest[]
-  agentMemories        AgentMemory[]
-  flowVersions         FlowVersion[]
-  flowEditSnapshots    FlowEditSnapshot[]
-  flowTemplateVersions FlowTemplateVersion[]
-  flows                Flow[]
-  storedFiles          StoredFile[]
-  customSignals        CustomSignal[]
-  pushSubscriptions    PushSubscription[]
-  knowledgeDocuments   KnowledgeDocument[]
-  sharedSkills         SharedSkill[]
-  templateProposals    TemplateProposal[]
-  invitations          Invitation[]
-  catalogueSubmissions CatalogueSubmission[]
-  huddleSegments       HuddleSegment[]
-  huddleNotes          HuddleNote[]
-  flowWebhookReceipts  FlowWebhookReceipt[]
-  outboxEvents         OutboxEvent[]
-  activityEvents       ActivityEvent[]
+  users                 User[]
+  agents                AgentTask[]
+  executions            AgentExecution[]
+  templates             AgentTemplate[]
+  flowTemplates         FlowTemplate[]
+  integrations          Integration[]
+  notifications         Notification[]
+  mcpConnections        McpConnection[]
+  nangoConnections      NangoConnection[]
+  integrationSecrets    IntegrationSecret[]
+  httpCredentials       HttpCredential[]
+  peopleAiConnections   PeopleAiConnection[]
+  signals               Signal[]
+  signalSubscriptions   SignalSubscription[]
+  auditEvents           AuditEvent[]
+  approvalRequests      ApprovalRequest[]
+  agentMemories         AgentMemory[]
+  flowVersions          FlowVersion[]
+  flowEditSnapshots     FlowEditSnapshot[]
+  flowTemplateVersions  FlowTemplateVersion[]
+  flows                 Flow[]
+  storedFiles           StoredFile[]
+  customSignals         CustomSignal[]
+  pushSubscriptions     PushSubscription[]
+  knowledgeDocuments    KnowledgeDocument[]
+  sharedSkills          SharedSkill[]
+  templateProposals     TemplateProposal[]
+  invitations           Invitation[]
+  catalogueSubmissions  CatalogueSubmission[]
+  huddleSegments        HuddleSegment[]
+  huddleNotes           HuddleNote[]
+  flowWebhookReceipts   FlowWebhookReceipt[]
+  outboxEvents          OutboxEvent[]
+  activityEvents        ActivityEvent[]
   activityTriggerClaims ActivityTriggerClaim[]
   activitySourceCursors ActivitySourceCursor[]
-  domains              OrganizationDomain[]
-  allowedDomains       PlatformAllowedDomain[]
-  scimTokens           ScimToken[]
-  apiKeys              ApiKey[]
-  apiAccessTokens      ApiAccessToken[]
-  identityProviders    IdentityProvider[]
-  teams                Team[]
-  featureGrants        FeatureGrant[]
-  workspaceFolders     WorkspaceFolder[]
-  agentTeammates       AgentTeammate[]
+  domains               OrganizationDomain[]
+  allowedDomains        PlatformAllowedDomain[]
+  scimTokens            ScimToken[]
+  apiKeys               ApiKey[]
+  apiAccessTokens       ApiAccessToken[]
+  identityProviders     IdentityProvider[]
+  teams                 Team[]
+  featureGrants         FeatureGrant[]
+  workspaceFolders      WorkspaceFolder[]
+  agentTeammates        AgentTeammate[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
   ///     social sign-in are refused for this workspace's verified domains.
   /// Defaulted to `optional` so enabling it is always a deliberate act: a
   /// default of `required` would lock every existing workspace out on deploy.
-  ssoEnforcement       String            @default("optional")
+  ssoEnforcement        String                  @default("optional")
 
   @@map("organizations")
 }
@@ -208,8 +208,8 @@ model User {
   featureGrants       FeatureGrant[]
   apiKeys             ApiKey[]
 
-  @@index([organizationId])
   @@unique([organizationId, scimExternalId])
+  @@index([organizationId])
   @@map("users")
 }
 
@@ -228,7 +228,7 @@ model Team {
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   members      TeamMember[]
   features     FeatureGrant[]
 
@@ -541,8 +541,8 @@ model ApiKey {
   revokedAt      DateTime? @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
 
-  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   accessTokens ApiAccessToken[]
 
   @@index([organizationId, revokedAt])
@@ -561,17 +561,17 @@ model ApiKey {
 /// revocation is the property the rest of this system is built around. The
 /// lookup is one indexed read on a hash we already compute.
 model ApiAccessToken {
-  id             String   @id @default(cuid())
-  organizationId String   @db.Uuid
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
   apiKeyId       String
-  tokenHash      String   @unique
+  tokenHash      String    @unique
   /// Snapshotted at issue: narrowing a key's scopes must not silently widen a
   /// token already in flight, and a token must never outrank its key.
-  scopes         Json     @default("[]")
-  expiresAt      DateTime @db.Timestamptz(6)
+  scopes         Json      @default("[]")
+  expiresAt      DateTime  @db.Timestamptz(6)
   revokedAt      DateTime? @db.Timestamptz(6)
   lastUsedAt     DateTime? @db.Timestamptz(6)
-  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   apiKey       ApiKey       @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
@@ -632,6 +632,11 @@ model AgentTask {
   quarantinedAt  DateTime? @db.Timestamptz(6)
   metadata       Json?
   lastExecutedAt DateTime?
+  /// When the scheduler should next LOOK at this row — a pre-filter, never the
+  /// authority (the tick still calls isDue on everything it reads).
+  /// NULL means "recompute me": always read, which is what an un-backfilled row
+  /// or a just-edited schedule looks like. See src/lib/scheduling/next-run.ts.
+  nextRunAt      DateTime? @db.Timestamptz(6)
   executionCount Int       @default(0)
   lastResult     Json?
   createdAt      DateTime  @default(now())
@@ -655,6 +660,10 @@ model AgentTask {
   // orgs. The [organizationId, status] index above can't serve it — wrong
   // leading column — so without this the sweep is a full table scan every tick.
   @@index([status, id])
+  // The scheduler's due-range read: `status = 'ACTIVE' AND (nextRunAt IS NULL OR
+  // nextRunAt <= now)`. Replaces a full cursor scan of every active agent on
+  // every tick, which was O(table) once a minute and forever growing.
+  @@index([status, nextRunAt])
   @@map("agent_tasks")
 }
 
@@ -799,28 +808,29 @@ model Signal {
 /// triggers and graph-RAG indexing are built on. Duplicate provider deliveries
 /// are acks, not new rows (@@unique below), same as Signal.
 model ActivityEvent {
-  id             String    @id @default(uuid()) @db.Uuid
-  organizationId String    @db.Uuid
-  source         String    // 'slack' | 'salesforce' | 'github' | 'nango:<provider>'
-  sourceEventId  String
-  kind           String    // normalized verb: 'message.posted' | 'record.updated' | 'pr.opened' | ...
-  occurredAt     DateTime
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @db.Uuid
+  source          String // 'slack' | 'salesforce' | 'github' | 'nango:<provider>'
+  sourceEventId   String
+  kind            String // normalized verb: 'message.posted' | 'record.updated' | 'pr.opened' | ...
+  occurredAt      DateTime
   actorExternalId String?
   // Plain text, NOT @db.Uuid: User.id is a cuid (see model User), not a uuid —
   // matching NangoConnection.userId's convention. The original migration
   // typed this column uuid, which any real user id fails to write to at all;
   // fixed alongside the writer that first needed to populate a non-null value
   // (Task 3 of the activity-event substrate plan).
-  ownerUserId    String?
-  visibility     String    @default("org") // 'org' | 'private'
-  selfOrigin     Boolean   @default(false)
-  backfill       Boolean   @default(false)
-  chainDepth     Int       @default(0)
-  subject        Json?     // { channelId?, threadTs?, recordId?, repo?, ... }
-  payload        Json
-  indexedAt      DateTime?
-  createdAt      DateTime  @default(now())
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ownerUserId     String?
+  visibility      String       @default("org") // 'org' | 'private'
+  selfOrigin      Boolean      @default(false)
+  backfill        Boolean      @default(false)
+  chainDepth      Int          @default(0)
+  subject         Json? // { channelId?, threadTs?, recordId?, repo?, ... }
+  payload         Json
+  indexedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@unique([organizationId, source, sourceEventId])
   @@index([organizationId, indexedAt])
   @@index([organizationId, source, kind, createdAt])
@@ -872,22 +882,22 @@ model CustomSignal {
 }
 
 model AgentExecution {
-  id              String    @id @default(cuid())
-  agentType       String
-  agentTemplateId String?
-  agentTaskId     String?
+  id               String    @id @default(cuid())
+  agentType        String
+  agentTemplateId  String?
+  agentTaskId      String?
   // Replay/duplicate guard for signal-triggered runs (signalId:agentId).
-  idempotencyKey  String?
-  signalId        String?
-  status          String    @default("pending")
-  input           Json
-  output          Json?
-  error           String?
-  executionTime   Int?      @default(0)
-  trigger         Json
-  metadata        Json?
-  model           String?
-  transcript      Json?
+  idempotencyKey   String?
+  signalId         String?
+  status           String    @default("pending")
+  input            Json
+  output           Json?
+  error            String?
+  executionTime    Int?      @default(0)
+  trigger          Json
+  metadata         Json?
+  model            String?
+  transcript       Json?
   /// Fresh (non-cached) prompt tokens only, as of the cache-column split below.
   ///
   /// Rows written BEFORE this split fold cacheReadTokens+cacheWriteTokens into
@@ -898,21 +908,21 @@ model AgentExecution {
   /// Only a reader that treats inputTokens ALONE as "the prompt" changes
   /// meaning at the split point — from "everything sent" to "the part not
   /// served from cache".
-  inputTokens     Int       @default(0)
+  inputTokens      Int       @default(0)
   /// Tokens that WROTE a new prompt-cache entry this turn (billed ~1.25x).
   /// 0 for every row predating the split (see inputTokens doc-comment).
-  cacheWriteTokens Int      @default(0)
+  cacheWriteTokens Int       @default(0)
   /// Tokens served FROM the prompt cache this turn (billed ~0.1x). 0 for every
   /// row predating the split (see inputTokens doc-comment).
-  cacheReadTokens  Int      @default(0)
-  outputTokens    Int       @default(0)
+  cacheReadTokens  Int       @default(0)
+  outputTokens     Int       @default(0)
   /// Denormalized sum of this execution's LlmCall rows, so list views never
   /// aggregate. Internal ops estimate — see src/lib/usage/pricing.ts.
-  costUsd         Decimal   @default(0) @db.Decimal(12, 6)
-  userId          String
-  organizationId  String    @db.Uuid
-  startedAt       DateTime  @default(now())
-  completedAt     DateTime?
+  costUsd          Decimal   @default(0) @db.Decimal(12, 6)
+  userId           String
+  organizationId   String    @db.Uuid
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
 
   user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization  Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1138,7 +1148,7 @@ model PeopleAiConnection {
   scope          String?
   /// Normalised form of `scope`, for the same review surface as the other
   /// credential kinds. `scope` stays as the provider sent it.
-  grantedScopes  String[] @default([])
+  grantedScopes  String[]  @default([])
   accessToken    String // encrypted (src/lib/crypto/secrets.ts)
   refreshToken   String? // encrypted
   status         String    @default("active") // 'active' | 'refresh_failed' | 'revoked'
@@ -1226,13 +1236,14 @@ model NangoConnection {
 /// paged, so backfill resumes idempotently instead of re-walking history.
 /// Backfilled events never fire triggers (ActivityEvent.backfill = true).
 model ActivitySourceCursor {
-  id              String    @id @default(uuid()) @db.Uuid
-  organizationId  String    @db.Uuid
-  source          String
-  connectionId    String
-  cursor          Json
+  id               String       @id @default(uuid()) @db.Uuid
+  organizationId   String       @db.Uuid
+  source           String
+  connectionId     String
+  cursor           Json
   lastBackfilledAt DateTime?
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@unique([organizationId, source, connectionId])
   @@map("activity_source_cursors")
 }
@@ -1240,17 +1251,17 @@ model ActivitySourceCursor {
 // Per-organization secret for built-in integrations (e.g. the Granola API
 // key). authConfig holds the encrypted blob produced by buildAuthConfig().
 model IntegrationSecret {
-  id             String   @id @default(cuid())
-  organizationId String   @db.Uuid
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
   provider       String
-  authType       String   @default("api_key") // 'none' | 'api_key' | 'oauth2'
-  authConfig     Json     @default("{}") // encrypted secret blob + non-secret fields
+  authType       String    @default("api_key") // 'none' | 'api_key' | 'oauth2'
+  authConfig     Json      @default("{}") // encrypted secret blob + non-secret fields
   /// See HttpCredential.lastRotatedAt.
   lastRotatedAt  DateTime?
   expiresAt      DateTime?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -1304,48 +1315,50 @@ model HttpCredential {
 /// via runAgentExecution. Distinct from WorkflowStep/WorkflowEvent (those are a
 /// single agent's internal tool-call trace). See docs/superpowers/specs.
 model Flow {
-  id             String   @id @default(cuid())
-  name           String
-  description    String   @default("")
+  id               String    @id @default(cuid())
+  name             String
+  description      String    @default("")
   /// Emoji shown on the flow's card and in the builder ('' = the generic
   /// Workflow glyph). Seeded from the template's icon on instantiate.
-  icon           String   @default("")
-  status         String   @default("DRAFT") // DRAFT | ACTIVE | DISABLED
-  trigger        Json     @default("{}") // { type: 'manual'|'schedule'|'signal', ... }
-  graph          Json     @default("{}") // working draft: { nodes, edges }
-  publishedGraph Json? // the live version scheduled/triggered runs execute
+  icon             String    @default("")
+  status           String    @default("DRAFT") // DRAFT | ACTIVE | DISABLED
+  /// See AgentTask.nextRunAt — same contract, same pre-filter role.
+  nextRunAt        DateTime? @db.Timestamptz(6)
+  trigger          Json      @default("{}") // { type: 'manual'|'schedule'|'signal', ... }
+  graph            Json      @default("{}") // working draft: { nodes, edges }
+  publishedGraph   Json? // the live version scheduled/triggered runs execute
   /// Literal credentials the save-time scanner found in the graph. Advisory:
   /// a save is never blocked (that reads as data loss to the author), but a
   /// flow carrying a hardcoded key says so on its own card until it is fixed.
   /// Written by the Prisma extension on every graph write, so it cannot go
   /// stale relative to the graph it describes.
-  secretFindings Json?
-  secretScanAt   DateTime?
-  version        Int      @default(1) // bumped on each publish
-  visibility     String   @default("shared")
+  secretFindings   Json?
+  secretScanAt     DateTime?
+  version          Int       @default(1) // bumped on each publish
+  visibility       String    @default("shared")
   /// SHA-256 digest of the rotatable cross-workspace share-link token. The raw
   /// token is a bearer credential — it opens a flow from another workspace, or
   /// with no session at all — so it is never stored. It is returned exactly
   /// once, from the mint/rotate response, and every later presentation is
   /// resolved by hashing what the caller sent and matching this digest.
-  shareTokenDigest String? @unique
-  shareRole      String   @default("view") // role a share-link grants: 'view' | 'edit'
+  shareTokenDigest String?   @unique
+  shareRole        String    @default("view") // role a share-link grants: 'view' | 'edit'
   /// May the share token be opened WITHOUT signing in? Anonymous opens land on
   /// a separate read-only page with a sanitized graph — never the builder, and
   /// never 'edit' regardless of shareRole.
-  shareAnonymous Boolean  @default(false)
+  shareAnonymous   Boolean   @default(false)
   /// Count of anonymous opens, surfaced to the owner so a public link is never
   /// silently accumulating traffic.
-  anonymousViews Int      @default(0)
-  folder         String   @default("") // workbook-style grouping ('' = ungrouped)
+  anonymousViews   Int       @default(0)
+  folder           String    @default("") // workbook-style grouping ('' = ungrouped)
   // Polling-trigger dedupe state ({ seen: string[] }) — the keys of items already
   // emitted, so a poll only starts the flow for genuinely new records.
-  pollCursor     Json?
+  pollCursor       Json?
   /// Import report ({ notes: [{code, severity, message, nodeId?}], blocking }):
   /// what the importer couldn't translate faithfully plus the post-import
   /// validation blocker count. Null once the user clears the notes (or for
   /// flows that weren't imported).
-  importNotes    Json?
+  importNotes      Json?
   /// Denormalized match index for the activity-event dispatcher (Task 6) —
   /// NOT the source of truth (that's `trigger`'s JSON, synced from the
   /// builder's trigger node by `triggerFromGraph`'s write path on every
@@ -1357,20 +1370,20 @@ model Flow {
   /// non-event trigger type (manual/schedule/webhook/signal/poll). A 'slack'
   /// trigger is sugar over the same matcher: it always writes
   /// activitySource = 'slack', activityKinds = ['message.posted'].
-  activitySource String?
+  activitySource   String?
   /// The normalized `ActivityKind` verbs (see ACTIVITY_KINDS in
   /// lib/activity/normalize.ts) this flow fires on. Empty for non-event
   /// triggers, and for an 'activity' trigger with no kinds configured yet.
-  activityKinds  String[] @default([])
-  organizationId String   @db.Uuid
-  userId         String?
+  activityKinds    String[]  @default([])
+  organizationId   String    @db.Uuid
+  userId           String?
   /// Set when the owner was deprovisioned. Quarantined work never dispatches
   /// and appears in the admin claim queue until someone takes ownership.
   /// Deliberately ORTHOGONAL to `status`: overwriting status would destroy the
   /// prior value, so a claimed draft would come back as ACTIVE.
-  quarantinedAt  DateTime? @db.Timestamptz(6)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  quarantinedAt    DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   runs            FlowRun[]
@@ -1384,6 +1397,10 @@ model Flow {
   @@index([organizationId, updatedAt])
   // Scheduler cursor scan, as on agent_tasks.
   @@index([status, id])
+  // Same due-range read as agent_tasks. Matters more here: examining a flow also
+  // costs a correlated lookup of its most recent run, so narrowing WHICH flows
+  // are examined removes that subquery for every row that cannot be due.
+  @@index([status, nextRunAt])
   // The activity dispatcher's match query — see activitySource's doc comment.
   @@index([organizationId, activitySource])
   @@map("flows")
@@ -1661,20 +1678,21 @@ model FlowWebhookReceipt {
 /// row first (P2002 = already fired) and dispatches only on success — the
 /// flow-side twin of AgentExecution.idempotencyKey in signals/router.ts.
 model ActivityTriggerClaim {
-  id              String   @id @default(uuid()) @db.Uuid
-  organizationId  String   @db.Uuid
-  activityEventId String   @db.Uuid
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @db.Uuid
+  activityEventId String       @db.Uuid
   /// Plain text, NOT @db.Uuid: Flow.id is a cuid (see model Flow), not a
   /// uuid — same fix as ActivityEvent.ownerUserId (20260822093000). Shipped
   /// typed uuid in Task 1's migration; every real Flow.id failed to write
   /// here at all until this was caught wiring the first writer that
   /// populates a non-null value (Task 6, the dispatcher itself).
   flowId          String
-  status          String   @default("claimed") // 'claimed'|'dispatched'|'throttled'|'failed'
+  status          String       @default("claimed") // 'claimed'|'dispatched'|'throttled'|'failed'
   /// Same fix as flowId above: FlowRun.id is also a cuid, not a uuid.
   flowRunId       String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime     @default(now())
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@unique([organizationId, activityEventId, flowId])
   @@index([organizationId, flowId, createdAt])
   /// Backs the 5-minute stale-claim proactive sweep
@@ -1746,7 +1764,7 @@ model FlowRunStep {
 /// what makes tool writes on every plane — Slack, Gmail, Drive, any delivery
 /// tool — actually replay-safe.
 model FlowSideEffect {
-  id String @id @default(cuid())
+  id             String   @id @default(cuid())
   /// The idempotency SCOPE. Normally the flow run id; for poll-triggered runs
   /// `${flowId}:${dedupeValue}`, so two runs for the same polled item share
   /// keys and the second replays instead of re-firing. See runScopeKey.

@@ -3,6 +3,7 @@ import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
 import { serializeAgent } from '@/lib/agents/serialize'
 import { checkMonthlyTokenBudget, isUsageExemptEmail } from '@/lib/usage/budget'
+import { readSnapshotVersion } from '@/lib/server/snapshot-version'
 
 export const runtime = 'nodejs'
 
@@ -20,10 +21,45 @@ export const runtime = 'nodejs'
  * the shared serializer, activity lean rows, usage aggregate, organizations
  * list, notifications + unread) so consumers can switch freely.
  */
-export const GET = withAuthenticatedApi(async (_request, auth) => {
+/**
+ * The validator for a snapshot response.
+ *
+ * Three components, each because leaving it out produces a wrong answer:
+ *   version — the workspace's mutation counter (snapshot-version.ts). Moves
+ *             whenever anything this endpoint reads is written.
+ *   userId  — the response is filtered by per-user visibility scope and carries
+ *             that person's notifications, so two members of one workspace at
+ *             the same version hold genuinely different bodies.
+ *   month   — the usage window is month-to-date. Without this, the first poll
+ *             after a UTC month boundary would revalidate against a body whose
+ *             counters had silently reset, in a quiet workspace possibly for
+ *             hours.
+ */
+function snapshotEtag(version: number, userId: string, monthStart: Date): string {
+  return `W/"snap1-${version}-${userId}-${monthStart.getUTCFullYear()}${monthStart.getUTCMonth() + 1}"`
+}
+
+export const GET = withAuthenticatedApi(async (request, auth) => {
   const monthStart = new Date()
   monthStart.setUTCDate(1)
   monthStart.setUTCHours(0, 0, 0, 0)
+
+  // The point of the whole mechanism: when the client's copy is still current,
+  // answer without touching Postgres at all. At 1,000 concurrent users the shell
+  // poll is ~125 req/s and ~1,100 queries/s, the overwhelming majority of it
+  // re-reading unchanged rows. A matching validator turns each of those into one
+  // cache read.
+  //
+  // `readSnapshotVersion` returns null when no cache backend is configured or it
+  // is unreachable. That path emits no ETag and runs the queries exactly as this
+  // route did before — degraded to slower, never to stale.
+  const version = await readSnapshotVersion(auth.organizationId)
+  const etag = version === null ? null : snapshotEtag(version, auth.dbUser.id, monthStart)
+  if (etag && request.headers.get('if-none-match') === etag) {
+    // 304 carries no body by definition, and must repeat the validator so the
+    // client can revalidate against it again next cycle.
+    return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': 'private, no-cache' } })
+  }
 
   const notificationScope = { organizationId: auth.organizationId, OR: [{ userId: auth.dbUser.id }, { userId: null }] }
 
@@ -64,7 +100,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     prisma.notification.count({ where: { ...notificationScope, readAt: null } }),
   ])
 
-  return {
+  const body = {
     success: true,
     agents: agents.map(serializeAgent),
     workspaceFolders,
@@ -82,4 +118,20 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     notifications,
     unread,
   }
+
+  // Stamped with the version read BEFORE the queries ran, and that ordering is
+  // the whole safety argument. A write landing mid-flight advances the counter,
+  // so this body is labelled with the older number: the client's next poll
+  // presents a stale validator, misses, and recomputes. Re-reading the counter
+  // here would do the opposite — label a body that may predate the write with
+  // the post-write number, and the client would then revalidate successfully
+  // against data that never contained it, indefinitely.
+  //
+  // The failure this direction can produce is one unnecessary recompute. The
+  // other direction produces a shell that is silently wrong.
+  return Response.json(body, {
+    headers: etag
+      ? { ETag: etag, 'Cache-Control': 'private, no-cache' }
+      : { 'Cache-Control': 'private, no-store' },
+  })
 }, { permission: 'agent.read' })

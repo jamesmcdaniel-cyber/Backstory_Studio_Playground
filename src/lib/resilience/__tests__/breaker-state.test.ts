@@ -6,7 +6,7 @@ import {
   breakerOnProbeStart,
   breakerOnSuccess,
   initialBreakerState,
-} from '@/lib/rag/circuit-breaker'
+} from '@/lib/resilience/breaker-state'
 
 const OPTS = { threshold: 2, cooldownMs: 60_000 }
 

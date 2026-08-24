@@ -16,6 +16,7 @@ import { apiLogger } from '@/lib/logger'
 import { fromNangoProviderKey } from '@/lib/connectors/registry'
 import { getNangoClient, nangoConfigured } from './client'
 import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
+import { withBreaker } from '@/lib/resilience/circuit-breaker'
 
 export interface DeliveryConnection {
   connectionId: string
@@ -88,10 +89,37 @@ export function defaultProxy(): NangoProxy {
     if (await demoAmbientActive()) {
       return cannedResponse('nango-proxy', { endpoint: args.endpoint, method: args.method }) as { data: unknown }
     }
-    return withTimeout(
-      nango.proxy(args as never) as Promise<{ data: unknown }>,
-      proxyTimeoutMs(),
-      `Nango proxy ${args.method} ${args.endpoint}`,
+    // Keyed per CONNECTION, not per provider and not globally. The thing that
+    // is usually sick here is one workspace's credential — expired, revoked,
+    // rate-limited by the provider against that tenant's own quota — and a
+    // provider-wide breaker would let that one connection stop Slack for every
+    // other workspace. A genuinely down provider trips every connection's
+    // breaker independently, which reaches the same outcome without the blast
+    // radius.
+    //
+    // The timeout stays INSIDE the breaker so a hung proxy counts as a failure:
+    // the whole point is that these dependencies fail by getting slow, and a
+    // breaker that only sees explicit errors would never open on the failure
+    // mode that actually costs worker slots.
+    return withBreaker(
+      `nango:${args.providerConfigKey ?? 'unknown'}:${args.connectionId ?? 'unknown'}`,
+      () =>
+        withTimeout(
+          nango.proxy(args as never) as Promise<{ data: unknown }>,
+          proxyTimeoutMs(),
+          `Nango proxy ${args.method} ${args.endpoint}`,
+        ),
+      {
+        // A 4xx that is not 401/403/429 is a fact about the REQUEST — a bad
+        // channel id, a malformed payload — not about the provider's health.
+        // Counting those would let one misconfigured flow step take down an
+        // integration for the whole workspace.
+        isFailure: (error) => {
+          const status = (error as { status?: unknown })?.status
+          if (typeof status !== 'number') return true
+          return status === 401 || status === 403 || status === 429 || status >= 500
+        },
+      },
     )
   }
 }

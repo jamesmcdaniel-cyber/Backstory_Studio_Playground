@@ -18,7 +18,7 @@ import {
   breakerOnSuccess,
   initialBreakerState,
   type BreakerState,
-} from './circuit-breaker'
+} from '@/lib/resilience/breaker-state'
 import { cosineSimilarity, EMBEDDING_DIM } from './embeddings'
 import { nodeVisibleTo, type GraphEdge, type GraphNode, type GraphRagStore, type NodeType, type NodeVisibility, type SearchHit } from './store'
 

@@ -1,7 +1,15 @@
 /**
- * Pure consecutive-failure circuit breaker for the graph-RAG store.
+ * Pure consecutive-failure circuit breaker. The state machine only — see
+ * circuit-breaker.ts in this directory for the keyed registry that most callers
+ * want.
  *
- * Why: every RAG call site is already best-effort (retrieval catches and
+ * Written for the graph-RAG store and moved here when a second dependency
+ * needed the same thing. It is deliberately still a pure state machine with no
+ * clock and no registry: that is what makes it exhaustively testable, and the
+ * two consumers hold their state differently — the Neo4j store keeps one
+ * breaker as an instance field, while the registry keys many by dependency.
+ *
+ * Why it exists at all: every RAG call site is already best-effort (retrieval catches and
  * returns [], indexing logs and moves on) — but "best-effort" was still paying
  * full price per attempt. With NEO4J_URI set and the server unreachable, each
  * driver call blocked on routing discovery for tens of seconds, and an agent

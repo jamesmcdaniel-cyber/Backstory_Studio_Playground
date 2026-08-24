@@ -6,6 +6,7 @@ import { amrMethods } from '@/lib/auth/enterprise-policy'
 import { normalizeStaffEmail, staffBootstrapAllowlist } from '@/lib/catalogue/staff-emails'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
 import { isCustomerEdition } from '@/lib/edition'
+import { readCachedAuthUser, writeCachedAuthUser } from '@/lib/server/auth-cache'
 
 function findDbUser(supabaseId: string) {
   return prisma.user.findFirst({
@@ -20,7 +21,20 @@ function findDbUser(supabaseId: string) {
  * resolveAuthUser may use it — every other reader wants findDbUser, which
  * refuses inactive rows.
  */
-function findUserRow(supabaseId: string) {
+async function findUserRow(supabaseId: string) {
+  // The one query every authenticated request makes. Served from the shared
+  // cache when it is warm, and evicted globally by any write to this row — see
+  // src/lib/server/auth-cache.ts for why that is the only acceptable shape and
+  // what the residual staleness is. A miss, or no cache backend at all, falls
+  // straight through to the unique index.
+  const cached = await readCachedAuthUser<Awaited<ReturnType<typeof readUserRow>>>(supabaseId)
+  if (cached) return cached
+  const row = await readUserRow(supabaseId)
+  if (row) await writeCachedAuthUser(supabaseId, row.id, row)
+  return row
+}
+
+function readUserRow(supabaseId: string) {
   return prisma.user.findUnique({
     where: { supabaseId },
     include: { organization: true },
@@ -30,22 +44,21 @@ function findUserRow(supabaseId: string) {
 type DbUserRow = Awaited<ReturnType<typeof findDbUser>>
 
 /**
- * This lookup is deliberately NOT cached.
+ * This lookup IS cached — in the shared backend, never per instance.
  *
- * It used to be memoized per process for 60s to save a round-trip on the auth
- * hot path. Every field it returns is an authority field — `organizationId`,
- * `role`, `platformRole`, `isActive` — so there is no subset that is safe to
- * serve stale, and a module-level Map is per-instance: an invalidation on the
- * lambda that handled the mutation is invisible to every other warm instance.
- * That made member removal, role demotion, and org transfer take effect on one
- * instance and be ignored by the rest for up to a minute.
+ * The history matters, because the obvious version of this is a live bug. It
+ * was once memoized in a module-level Map for 60s. Every field it returns is an
+ * authority field (organizationId, role, platformRole, isActive), and a
+ * per-instance Map cannot be invalidated across instances — so member removal
+ * and role demotion took effect on the one lambda that handled the mutation and
+ * were ignored by every other warm one for up to a minute. That cache was
+ * deleted, and the comment left here specified its only acceptable replacement:
+ * a shared backend with explicit invalidation.
  *
- * The replacement is one lookup on a unique index (`users.supabaseId`) per
- * authenticated request. It is a smaller cost than the class of bug it removes,
- * and it is the ONLY thing standing between a revoked member and their old
- * workspace until RLS lands. If this ever shows up in a profile, the fix is a
- * shared-backend cache with explicit invalidation (src/lib/cache.ts), never a
- * per-instance one.
+ * src/lib/server/auth-cache.ts is that, with the invalidation moved off the
+ * call sites and into the Prisma extension — because two member routes
+ * forgetting to invalidate is how the original bug reached production in the
+ * first place. Read that file before changing anything here.
  */
 
 /**

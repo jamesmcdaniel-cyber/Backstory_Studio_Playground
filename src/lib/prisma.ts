@@ -5,6 +5,9 @@ import { applyOwnerLiveness } from '@/lib/authz/credential-owner-guard'
 import { ambientOrganization, exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
 import { assertRlsContext, RLS_PARENT_SCOPED_MODELS, rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
 import { applyFlowSecretScan, applyRunDataRedaction } from '@/lib/flows/run-data-guard'
+import { bumpSnapshotVersion, isSnapshotMutation, organizationIdForSnapshotBump } from '@/lib/server/snapshot-version'
+import { noteUserMutation } from '@/lib/server/auth-cache'
+import { applyScheduleRecompute } from '@/lib/scheduling/next-run'
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: ReturnType<typeof createGuardedClient>
@@ -12,10 +15,73 @@ const globalForPrisma = globalThis as unknown as {
   appPrismaBase?: PrismaClient
 }
 
-function createPrismaClient(datasourceUrl?: string) {
-  return new PrismaClient({
+function createPrismaClient(datasourceUrl?: string): PrismaClient {
+  const client = new PrismaClient({
     ...(datasourceUrl ? { datasourceUrl } : {}),
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+  })
+  // The cast is deliberate and safe in a way most `as unknown as` are not: this
+  // extension adds NO surface — no new models, fields, or methods — it only
+  // attaches a side effect to operations that already exist. So `PrismaClient`
+  // remains a truthful description of everything a caller may do with it.
+  //
+  // Keeping the extended type instead would be actively worse: Prisma's
+  // extended client hands its `$transaction` callback a tx that is not
+  // assignable to `Prisma.TransactionClient`, which every helper in this
+  // codebase takes. Propagating it turns one internal detail into a type change
+  // at dozens of unrelated call sites.
+  return withSnapshotVersioning(client) as unknown as PrismaClient
+}
+
+/**
+ * Advance the shell's per-workspace mutation counter on every write that could
+ * change what /api/snapshot returns.
+ *
+ * Applied to the BASE clients, deliberately — one layer below the tenant guard.
+ * The guarded `prisma` client is not the only writer that matters: the worker
+ * updates run status through `systemPrisma` (execute-agent.ts writes
+ * agentExecution ~8 times per run), and those are precisely the writes the
+ * activity pane exists to show. A bump attached to the guarded client alone
+ * would leave a shell that never noticed a run finishing — the cache would be
+ * wrong in the one place users watch most closely. Sitting underneath both
+ * clients means every write path is covered, including ones not written yet.
+ *
+ * Writes through `prisma` pass through this extension too (the guard's
+ * `query()` delegates into it), so they bump exactly once, here.
+ */
+function withSnapshotVersioning<T extends PrismaClient>(base: T) {
+  return base.$extends({
+    query: {
+      $allModels: {
+        async $allOperations({ model, operation, args, query }) {
+          // Marks a row "recompute my next due time" whenever a write could have
+          // moved it. Applied on the way IN, at the same chokepoint and for the
+          // same reason as everything else here: a write site that forgets would
+          // leave a stale future instant in place and silently skip the new
+          // schedule. See src/lib/scheduling/next-run.ts.
+          const scheduled = applyScheduleRecompute(model, operation, args) as typeof args
+          const result = await query(scheduled)
+          // AFTER the write resolves, never before. Bumping first would open a
+          // window in which a concurrent poll computes a snapshot from
+          // pre-write data and stores it under the POST-write version — a stale
+          // shell that nothing would ever invalidate, because the counter had
+          // already moved past it.
+          if (isSnapshotMutation(model, operation)) {
+            bumpSnapshotVersion(
+              organizationIdForSnapshotBump(model, scheduled, ambientOrganization.getStore()) ?? '',
+            )
+          }
+          // AWAITED, unlike the snapshot bump, and the asymmetry is deliberate.
+          // A shell that refreshes a cycle late is invisible; an authority row
+          // that survives its own deletion is the member-removal bug this
+          // codebase already shipped once. The write does not complete until the
+          // stale identity is gone from every instance.
+          const eviction = noteUserMutation(model, operation, scheduled)
+          if (eviction) await eviction
+          return result
+        },
+      },
+    },
   })
 }
 
@@ -59,27 +125,28 @@ function createGuardedClient(base: PrismaClient) {
           // in the same write, so the findings can never describe a graph that
           // is no longer stored.
           const guardedArgs = applyFlowSecretScan(model, operation, runScoped) as typeof args
-          // Parent-scoped models (flow run steps, collaborators, execution
-          // messages) have no organizationId to route on, but their policies
-          // still read app.organization_id. Absent it, PostgreSQL returns zero
-          // rows with no error.
-          //
-          // Inside a tenantTransaction the setting is already there. Otherwise
-          // fall back to the ambient organization the API wrapper or execution
-          // engine established, and open a transaction for just this query.
-          // Only when there is neither is the query genuinely unattributable,
-          // and assertRlsContext throws rather than let it return empty.
-          if (model && rlsActive() && RLS_PARENT_SCOPED_MODELS.has(model)) {
-            const active = tenantDatabaseContext.getStore()
-            if (!active) {
-              const organizationId = ambientOrganization.getStore()
-              assertRlsContext(model, operation, Boolean(organizationId))
-              return appPrismaBase.$transaction(async (tx) => {
-                await tx.$queryRaw`SELECT set_config('app.organization_id', ${organizationId!}, true)`
-                const delegate = (tx as unknown as Record<string, Record<string, (value: unknown) => unknown>>)[model.charAt(0).toLowerCase() + model.slice(1)]
-                return delegate[operation](guardedArgs)
-              })
-            }
+          const execute = async (): Promise<unknown> => {
+            // Parent-scoped models (flow run steps, collaborators, execution
+            // messages) have no organizationId to route on, but their policies
+            // still read app.organization_id. Absent it, PostgreSQL returns zero
+            // rows with no error.
+            //
+            // Inside a tenantTransaction the setting is already there. Otherwise
+            // fall back to the ambient organization the API wrapper or execution
+            // engine established, and open a transaction for just this query.
+            // Only when there is neither is the query genuinely unattributable,
+            // and assertRlsContext throws rather than let it return empty.
+            if (model && rlsActive() && RLS_PARENT_SCOPED_MODELS.has(model)) {
+              const active = tenantDatabaseContext.getStore()
+              if (!active) {
+                const organizationId = ambientOrganization.getStore()
+                assertRlsContext(model, operation, Boolean(organizationId))
+                return appPrismaBase.$transaction(async (tx) => {
+                  await tx.$queryRaw`SELECT set_config('app.organization_id', ${organizationId!}, true)`
+                  const delegate = (tx as unknown as Record<string, Record<string, (value: unknown) => unknown>>)[model.charAt(0).toLowerCase() + model.slice(1)]
+                  return delegate[operation](guardedArgs)
+                })
+              }
           }
           // Per-model, not a global boolean: see src/lib/authz/rls-rollout.ts
           // for why enabling every table at once is what caused the outages.
@@ -99,6 +166,9 @@ function createGuardedClient(base: PrismaClient) {
             })
           }
           return query(guardedArgs)
+          }
+
+          return execute()
         },
       },
     },

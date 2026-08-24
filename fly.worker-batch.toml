@@ -1,0 +1,65 @@
+# The BATCH half of the worker fleet — operator work, not user-facing runs.
+#
+# Consumes template-generation, model-bench and activity-backfill. Every job here
+# is measured in minutes: a generation sweep over an org's integration graph, a
+# cross-model bench (fixtures x candidates x judge samples), a cursor-checkpointed
+# backfill paging a provider API.
+#
+# ── Why this is a separate app rather than more machines on the main one ──────
+# These queues used to share the interactive pool's ~20 slots. One backfill
+# against a slow provider could hold slots for minutes while people's runs queued
+# behind it, and adding machines did not fix that — it bought more slots for the
+# same contention. They also fail differently: a bench holds fixtures and
+# candidates in flight and is the most memory-hungry thing the platform runs, so
+# on a shared 1 GB machine it is what pushes the interactive queues into an OOM.
+#
+# Splitting also lets the halves scale on their own signals. Interactive depth
+# tracks user activity and wants headroom. Batch depth is bursty and
+# operator-driven — one small machine, idle most of the day, is the right shape.
+#
+# ── Deploy ───────────────────────────────────────────────────────────────────
+#   fly deploy --config fly.worker-batch.toml
+#
+# Same image and the same secrets as fly.worker.toml — including the SAME
+# REDIS_URL, which is the trap worth repeating: a different Redis means this app
+# consumes queues nothing writes to, and the symptom is an operator button that
+# appears to work and never produces anything.
+#
+# Both apps write `worker:heartbeat`, so a healthy heartbeat does NOT prove this
+# app is alive. Confirm consumption per queue with /api/cron/queue-watch.
+#
+# NOT deployed in the customer edition: buildWorkerSpecs returns no batch queues
+# there, so this app would idle. Deploy the interactive app only.
+
+app = "backstory-worker-batch"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  NODE_ENV = "production"
+  EXECUTION_MODE = "queue"
+  WORKER_PORT = "3002"
+  WORKER_POOL = "batch"
+  # Low on purpose. These jobs are long and memory-heavy, and the thing being
+  # rationed on a batch machine is RAM, not slots — three concurrent benches on
+  # one 2 GB machine is an OOM, not three times the throughput.
+  BATCH_WORKER_CONCURRENCY = "2"
+  AGENT_MODEL = "claude-opus-4-8"
+  SUMMARY_MODEL = "claude-haiku-4-5"
+
+[checks]
+  [checks.health]
+    type = "http"
+    port = 3002
+    path = "/health"
+    interval = "60s"
+    timeout = "10s"
+    grace_period = "60s"
+
+[[vm]]
+  # More memory, fewer machines, than the interactive pool: the constraint here
+  # is one job's working set, not how many jobs run at once.
+  size = "shared-cpu-2x"
+  memory = "2gb"

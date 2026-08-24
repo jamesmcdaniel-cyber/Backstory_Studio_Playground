@@ -36,7 +36,60 @@ export interface WorkerSpec {
   queue: string
   handler: Processor<any, any, string>
   onFailed: (job: any, error: Error) => void
+  /**
+   * Which machine pool consumes this queue. See `resolveWorkerPool`.
+   *
+   * `interactive` is work somebody is waiting on: a person clicked Run, or a
+   * schedule fired and its output is expected soon. `batch` is operator work
+   * measured in minutes — a template generation sweep, a cross-model bench, an
+   * activity backfill over a paginated provider API.
+   */
+  pool: WorkerPool
+  /**
+   * Per-queue concurrency override.
+   *
+   * Batch jobs are long and memory-hungry (a bench holds fixtures × candidates
+   * in flight; a backfill holds a provider page). Running them at the same
+   * concurrency as short agent turns is how a 1 GB machine reaches its memory
+   * ceiling, and on a shared pool it takes the interactive queues down with it.
+   */
+  concurrency?: number
 }
+
+export type WorkerPool = 'interactive' | 'batch' | 'all'
+
+/**
+ * Which queues this process consumes, from WORKER_POOL.
+ *
+ * ── Why the split exists ──────────────────────────────────────────────────
+ * One pool consumed all six queues, so its ~20 in-flight slots were shared
+ * between "a person is waiting for this" and "an operator kicked off a bench".
+ * A single backfill over a slow provider API could hold slots for minutes while
+ * interactive runs queued behind it, and no amount of scaling fixes that — it
+ * just buys more slots for the same contention.
+ *
+ * Splitting also lets the two halves scale on different signals. Interactive
+ * depth should track user activity and wants headroom; batch depth is bursty,
+ * operator-driven, and can be served by one small machine that is idle most of
+ * the day.
+ *
+ * `all` is the default deliberately: it is what a single `fly deploy`, a
+ * docker-compose, and every existing deployment already do, so nothing changes
+ * until someone opts into the split by setting WORKER_POOL on each app.
+ */
+export function resolveWorkerPool(raw = process.env.WORKER_POOL): WorkerPool {
+  if (raw === 'interactive' || raw === 'batch' || raw === 'all') return raw
+  if (raw) {
+    // Never silently: a typo here would produce a fleet consuming the wrong
+    // queues, which presents as "runs are stuck" with a perfectly healthy
+    // worker reporting a heartbeat.
+    console.warn(`WORKER_POOL is invalid (${JSON.stringify(raw)}) — consuming ALL queues. Use "interactive", "batch" or "all".`)
+  }
+  return 'all'
+}
+
+/** Batch concurrency, well below the interactive default — see WorkerSpec.concurrency. */
+const BATCH_CONCURRENCY = Math.max(1, Number(process.env.BATCH_WORKER_CONCURRENCY) || 2)
 
 /**
  * The consumer topology, as a pure function of the edition.
@@ -86,13 +139,16 @@ async function executeActivityBackfillJob(job: { id?: string; data?: { organizat
   return result
 }
 
-export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerSpec[] {
-  return [
-    { queue: QUEUE_NAMES.AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.AGENT_EXECUTION) },
-    { queue: QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION) },
+export function buildWorkerSpecs(
+  customerEdition = isCustomerEdition(),
+  pool: WorkerPool = resolveWorkerPool(),
+): WorkerSpec[] {
+  const all: WorkerSpec[] = [
+    { queue: QUEUE_NAMES.AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.AGENT_EXECUTION), pool: 'interactive' },
+    { queue: QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION, handler: executeAgentJob, onFailed: deadLetterFromJob(QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION), pool: 'interactive' },
     // Flow execution: same worker pool, its own queue and dead-letter target
     // (flowRun rows, not agentExecution rows) — see flow-dead-letter.ts.
-    { queue: QUEUE_NAMES.FLOW_EXECUTION, handler: executeFlowJob, onFailed: deadLetterFromFlowJob(QUEUE_NAMES.FLOW_EXECUTION) },
+    { queue: QUEUE_NAMES.FLOW_EXECUTION, handler: executeFlowJob, onFailed: deadLetterFromFlowJob(QUEUE_NAMES.FLOW_EXECUTION), pool: 'interactive' },
     // Gated AI template generation: its own queue + dead-letter target. The
     // dead-letter terminalizes nothing (generation is additive) — see
     // template-generation-dead-letter.ts. Absent entirely in the customer
@@ -103,6 +159,8 @@ export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerS
           queue: QUEUE_NAMES.TEMPLATE_GENERATION,
           handler: executeTemplateGenerationJob as Processor<any, any, string>,
           onFailed: deadLetterFromTemplateGenerationJob(QUEUE_NAMES.TEMPLATE_GENERATION),
+          pool: 'batch' as const,
+          concurrency: BATCH_CONCURRENCY,
         },
         // Operator bench (internal edition only — the customer edition has no
         // Models console to trigger it). Additive-only, so no dead-letter
@@ -113,6 +171,8 @@ export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerS
           handler: executeModelBenchJob as Processor<any, any, string>,
           onFailed: (job: any, error: Error) =>
             console.error(`model-bench job ${job?.id ?? '?'} failed: ${error.message}`),
+          pool: 'batch' as const,
+          concurrency: BATCH_CONCURRENCY,
         },
         // Operator-triggered activity backfill (internal edition only, same as
         // bench/template generation above — the customer edition has no
@@ -122,8 +182,11 @@ export function buildWorkerSpecs(customerEdition = isCustomerEdition()): WorkerS
           handler: executeActivityBackfillJob as Processor<any, any, string>,
           onFailed: (job: any, error: Error) =>
             console.error(`activity-backfill job ${job?.id ?? '?'} failed: ${error.message}`),
+          pool: 'batch' as const,
+          concurrency: BATCH_CONCURRENCY,
         }]),
   ]
+  return pool === 'all' ? all : all.filter((spec) => spec.pool === pool)
 }
 
 /** The subset of a BullMQ Worker this runtime drives. */
@@ -175,7 +238,13 @@ class WorkerRuntime {
     this.server = this.deps.createServer()
     this.workerSpecs = this.deps.specs
     this.workers = this.workerSpecs.map((spec) =>
-      this.deps.createWorker(spec.queue, spec.handler, { ...workerConfig, connection: this.deps.connection() as never }),
+      this.deps.createWorker(spec.queue, spec.handler, {
+        ...workerConfig,
+        // Per-queue override where one is declared, so a long batch job cannot
+        // be run at the interactive queues' concurrency.
+        ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+        connection: this.deps.connection() as never,
+      }),
     )
 
     // Real readiness: reflect that the workers are running AND Redis is

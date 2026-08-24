@@ -29,6 +29,7 @@ import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { dispatchFlowExecution, dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
 import { runFlowPoll, lastPolledAt } from '@/features/flows/poll-dispatch'
 import { scanAll, stalestFirst } from '@/lib/scheduling/scan'
+import { computeNextRunAt } from '@/lib/scheduling/next-run'
 import { resolveRunOwners, type OwnedCandidate } from '@/lib/scheduling/owners'
 import { OrgCapacity, orgMaxInFlightRuns } from '@/lib/queue/org-capacity'
 import { parseFlowInput } from '@/lib/flows/input'
@@ -63,6 +64,47 @@ const MAX_AGENTS_PER_TICK = Math.max(1, Number(process.env.AGENT_DISPATCH_PER_TI
 const MAX_FLOWS_PER_TICK = Math.max(1, Number(process.env.FLOW_DISPATCH_PER_TICK) || 50)
 const STUCK_RUN_TIMEOUT_MS = AGENT_RUN_TIMEOUT_MS
 const MAX_ERROR_LENGTH = 300
+
+/**
+ * Persist recomputed `nextRunAt` values for rows the tick examined and did not
+ * dispatch.
+ *
+ * Grouped by instant so a tick costs a handful of `updateMany`s rather than one
+ * UPDATE per row — the population being stamped is dominated by manual and
+ * inactive rows, which all collapse to the same NOT_SCHEDULED_AT value, and by
+ * daily schedules that share a wall-clock time. Without the grouping this would
+ * trade a large read for an equally large pile of writes.
+ *
+ * Best-effort by design. Stamping is an OPTIMISATION: if it fails, the affected
+ * rows keep whatever value they had (NULL for new ones), and the next tick reads
+ * and evaluates them exactly as the pre-index scheduler did. A failure here must
+ * never abort a tick that has real work to dispatch.
+ */
+async function stampNextRunAt<T extends { id: string }>(
+  label: string,
+  rows: T[],
+  nextFor: (row: T) => Date,
+  write: (ids: string[], at: Date) => Promise<unknown>,
+): Promise<void> {
+  if (rows.length === 0) return
+  const byInstant = new Map<number, string[]>()
+  for (const row of rows) {
+    const at = nextFor(row).getTime()
+    const bucket = byInstant.get(at)
+    if (bucket) bucket.push(row.id)
+    else byInstant.set(at, [row.id])
+  }
+  try {
+    await Promise.all(
+      [...byInstant.entries()].map(([at, ids]) => write(ids, new Date(at))),
+    )
+  } catch (error) {
+    apiLogger.warn(`cron/dispatch: ${label} nextRunAt stamping failed — next tick falls back to a full scan`, {
+      rows: rows.length,
+      error: capError(error),
+    })
+  }
+}
 
 export function capError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
@@ -259,17 +301,30 @@ export async function runDispatchTick(
     // only path that can fire them — dispatch those even in worker mode.
     const workerOwnsRecurring = workersEnabled && EXECUTION_MODE === 'queue'
 
-    // Scan EVERY active agent, not an arbitrary window of them. Dueness lives in
-    // a JSON schedule column (and cron expressions), so it cannot be pushed into
-    // SQL — the only way to be sure a due agent is noticed is to look at all of
-    // them. The cap that used to sit here was on the SCAN, which meant agents
-    // outside a stable, unordered 200-row window were never examined at all.
+    // Read only the agents that could be due, using the (status, nextRunAt)
+    // index, instead of every active agent on every tick.
+    //
+    // This is a PRE-FILTER and nothing more — isDue below is still the
+    // authority, and still runs on every row read. `nextRunAt IS NULL` means
+    // "not computed yet, or just edited", and is always included, so the failure
+    // mode of a write path that does not maintain the column is a wasted read
+    // rather than a schedule that stops firing. On the first tick after the
+    // migration every row is NULL, so it behaves exactly like the old full scan
+    // and stamps as it goes; from the second tick on it is a range read.
+    //
+    // The complete cursor scan is retained underneath, so the ordering guarantee
+    // that fixed the original starvation bug (no row excluded from being
+    // EXAMINED) still holds over the candidate set.
     // systemPrisma: global scheduling scan — reads active agents across all orgs by design (CRON_SECRET-gated).
     const agentScan = await scanAll((cursorId, take) =>
       systemPrisma.agentTask.findMany({
         // quarantinedAt: work whose owner was deprovisioned. systemPrisma
         // bypasses the credential owner guard, so the exclusion is explicit here.
-        where: { status: 'ACTIVE', quarantinedAt: null },
+        where: {
+          status: 'ACTIVE',
+          quarantinedAt: null,
+          OR: [{ nextRunAt: null }, { nextRunAt: { lte: now } }],
+        },
         orderBy: { id: 'asc' },
         take,
         ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
@@ -291,6 +346,36 @@ export async function runDispatchTick(
       if (workerOwnsRecurring && schedule.type !== 'once') return false
       return true
     })
+
+    // Stamp every agent this tick EXAMINED with when it should next be looked
+    // at. This is what shrinks the next tick's read set, and it is deliberately
+    // done for the not-due rows too — those are the ones worth removing from
+    // the range, and the only place their whole row is already in hand.
+    //
+    // Rows being dispatched below are skipped here: dispatching advances
+    // lastExecutedAt, which nulls the column again through the write chokepoint,
+    // and the following tick recomputes from the post-run state.
+    const dueAgentIds = new Set(dueAgentsAll.map((agent) => agent.id))
+    await stampNextRunAt(
+      'agent',
+      agentScan.rows.filter((agent) => !dueAgentIds.has(agent.id)),
+      (agent) => {
+        const schedule = agent.schedule as unknown as AgentSchedule | null
+        // A recurring agent in queue mode is due, but this tick is not what
+        // fires it — the BullMQ JobScheduler is. Stamping it from its real
+        // lastExecutedAt would compute "due now", pinning every recurring agent
+        // into every tick's read set forever and leaving the index with nothing
+        // to exclude in exactly the configuration production runs.
+        //
+        // Anchoring at `now` instead asks the honest question for this tick's
+        // purposes: when is the NEXT occurrence after this moment. The row drops
+        // out of the range until then, and BullMQ's ownership is unaffected —
+        // this column has no bearing on what the scheduler queue does.
+        const ownedByQueue = workerOwnsRecurring && schedule?.type !== undefined && schedule.type !== 'once'
+        return computeNextRunAt(agent.schedule, ownedByQueue ? now : agent.lastExecutedAt, now)
+      },
+      (ids, at) => systemPrisma.agentTask.updateMany({ where: { id: { in: ids } }, data: { nextRunAt: at } }),
+    )
 
     // Stalest first, THEN cap. Dispatching advances lastExecutedAt, so anything
     // deferred here sorts ahead of what just ran and goes out next tick — the
@@ -454,7 +539,16 @@ export async function runDispatchTick(
         // on the table — out of the result set entirely.
         // quarantinedAt: work whose owner was deprovisioned. systemPrisma
         // bypasses the credential owner guard, so the exclusion is explicit here.
-        where: { status: 'ACTIVE', publishedGraph: { not: Prisma.AnyNull }, quarantinedAt: null },
+        // nextRunAt: the same due-range pre-filter as agents above. It matters
+        // more here — examining a flow also costs the correlated `runs` lookup
+        // below, so every row this excludes is a subquery avoided, not just a
+        // row read.
+        where: {
+          status: 'ACTIVE',
+          publishedGraph: { not: Prisma.AnyNull },
+          quarantinedAt: null,
+          OR: [{ nextRunAt: null }, { nextRunAt: { lte: now } }],
+        },
         // Explicit select, NOT include: this scan now reads every active flow,
         // and pulling whole rows (graph JSON and all) into memory once per tick
         // would trade the starvation bug for a memory one. These are the only
@@ -465,6 +559,7 @@ export async function runDispatchTick(
           userId: true,
           trigger: true,
           pollCursor: true,
+          nextRunAt: true,
           runs: { orderBy: { startedAt: 'desc' }, take: 1, select: { startedAt: true, status: true } },
         },
         orderBy: { id: 'asc' },
@@ -528,6 +623,21 @@ export async function runDispatchTick(
         occurrence: isPoll ? null : dueOccurrence(schedule, lastExecuted, now),
       })
     }
+
+    // Same stamping as agents: narrow the next tick's range by recording when
+    // each examined-but-not-due flow could next matter.
+    const dueFlowIds = new Set(dueFlowsAll.map((entry) => entry.flow.id))
+    await stampNextRunAt(
+      'flow',
+      flowScan.rows.filter((flow) => !dueFlowIds.has(flow.id)),
+      (flow) => {
+        const trigger = flow.trigger as FlowTrigger | null
+        const isPoll = trigger?.type === 'poll'
+        const lastExecuted = isPoll ? lastPolledAt(flow.pollCursor) : (flow.runs[0]?.startedAt ?? null)
+        return computeNextRunAt(trigger?.schedule, lastExecuted, now)
+      },
+      (ids, at) => systemPrisma.flow.updateMany({ where: { id: { in: ids } }, data: { nextRunAt: at } }),
+    )
 
     const dueFlows = stalestFirst(dueFlowsAll, (entry) => entry.lastExecuted).slice(0, MAX_FLOWS_PER_TICK)
     if (dueFlowsAll.length > dueFlows.length) {

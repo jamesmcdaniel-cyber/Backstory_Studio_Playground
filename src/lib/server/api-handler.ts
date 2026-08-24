@@ -9,6 +9,7 @@ import { isCustomerEdition } from '@/lib/edition'
 import { clientIp, recordSecurityEvent } from '@/lib/security/events'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { recordPresence } from '@/lib/server/presence'
+import { CircuitOpenError } from '@/lib/resilience/circuit-breaker'
 
 /**
  * Default write budget, per user per minute, applied to every mutating request.
@@ -244,6 +245,26 @@ export function withAuthenticatedApi(
         return NextResponse.json(
           { success: false, error: error.message, code: error.code },
           { status: error.status },
+        )
+      }
+
+      // An open circuit is backpressure, not a bug: a dependency this request
+      // needs has failed repeatedly and is being given room to recover. 503 with
+      // Retry-After says exactly that, and says it in the vocabulary clients and
+      // proxies already understand — a 500 would invite an immediate retry into
+      // the dependency the breaker is protecting, and would page someone about
+      // an application fault that is not one.
+      //
+      // Not recorded as a security event: nobody did anything abusive. The
+      // breaker's own log line, emitted once when it opened rather than once per
+      // refused request, is the operational signal.
+      if (error instanceof CircuitOpenError) {
+        return NextResponse.json(
+          { success: false, error: error.message, code: error.code, detail: { dependency: error.dependency } },
+          {
+            status: 503,
+            headers: { 'Retry-After': String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))) },
+          },
         )
       }
 

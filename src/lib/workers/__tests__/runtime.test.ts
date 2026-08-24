@@ -132,16 +132,26 @@ describe('worker construction', () => {
   })
 
   test('workers are built with the shared workerConfig', () => {
-    // These four are the Upstash-command-burn settings that took the plane down
-    // once already; a silent default would restore the old bill.
+    // These three are the Upstash-command-burn settings that took the plane down
+    // once already; a silent default would restore the old bill. They are shared
+    // by every queue and must never be overridden per spec.
     const { workers } = harness()
+    const specs = buildWorkerSpecs()
 
-    for (const worker of workers) {
-      assert.equal(worker.options.concurrency, workerConfig.concurrency)
+    for (const [index, worker] of workers.entries()) {
       assert.equal(worker.options.lockDuration, workerConfig.lockDuration)
       assert.equal(worker.options.drainDelay, workerConfig.drainDelay)
       assert.equal(worker.options.stalledInterval, workerConfig.stalledInterval)
       assert.ok(worker.options.connection, 'the worker must be given a connection')
+      // Concurrency, unlike the three above, is deliberately per-queue: batch
+      // queues run long, memory-heavy jobs and declare a lower ceiling. It must
+      // still come from one of the two known sources rather than a BullMQ
+      // default, which is what this asserts.
+      assert.equal(
+        worker.options.concurrency,
+        specs[index].concurrency ?? workerConfig.concurrency,
+        `${worker.queue} concurrency must be its declared override or the shared default`,
+      )
     }
   })
 

@@ -7,6 +7,7 @@ import { ambientOrganization } from '@/lib/tenant-database-context'
 import { qwenClient, qwenConfigured, qwenModel } from './qwen'
 import { modelTier, UNLIMITED_MODEL_ALLOWANCE, type ModelAllowance } from '@/lib/usage/model-tiers'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
+import { withBreaker, CircuitOpenError } from '@/lib/resilience/circuit-breaker'
 import {
   type IRMessage,
   irUser,
@@ -334,7 +335,25 @@ class AgentRunner implements ModelRunner {
     for (let i = 0; i < this.chain.length; i += 1) {
       const provider = this.chain[i]
       try {
-        const turn = await provider.next(ir, system, tools)
+        // Keyed by ENDPOINT, not by tenant: an Anthropic outage is global, and
+        // the credentials are the platform's rather than a workspace's, so
+        // there is nothing per-tenant to isolate.
+        //
+        // What this buys is the fallback becoming immediate. The chain already
+        // falls back on an availability error — but only after paying that
+        // provider's full timeout, per turn, per run. During a real provider
+        // outage every multi-turn run on the platform pays that toll repeatedly
+        // while holding a worker slot the whole time. With the breaker open the
+        // sick endpoint is skipped in microseconds and the run proceeds on the
+        // other one.
+        const turn = await withBreaker(
+          `llm:${provider.providerId}`,
+          () => provider.next(ir, system, tools),
+          // The same predicate the fallback itself uses, so the breaker counts
+          // exactly the failures the chain already considers "this endpoint is
+          // unwell" — a schema error is ours and must not open a circuit.
+          { isFailure: isProviderAvailabilityError },
+        )
         // Recorded here rather than inside the provider so a fallback writes
         // exactly one row — for the attempt that actually served the turn.
         // Fire-and-forget: the ledger is best-effort and must not add latency.
@@ -357,8 +376,14 @@ class AgentRunner implements ModelRunner {
         return turn
       } catch (error) {
         lastError = error
+        // An open circuit IS an availability failure — it is the record of
+        // several, made cheap. Treating it as one keeps the fallback behaviour
+        // identical to the pre-breaker code; without this branch a tripped
+        // breaker would propagate instead of falling back, turning a degraded
+        // provider into a failed run.
+        const unavailable = error instanceof CircuitOpenError || isProviderAvailabilityError(error)
         // Only fall back on availability failures, and only if a fallback exists.
-        if (!isProviderAvailabilityError(error) || i === this.chain.length - 1) throw error
+        if (!unavailable || i === this.chain.length - 1) throw error
         apiLogger.warn('model-runner: provider unavailable mid-run, falling back', {
           from: `${provider.providerId}:${provider.model}`,
           to: `${this.chain[i + 1].providerId}:${this.chain[i + 1].model}`,

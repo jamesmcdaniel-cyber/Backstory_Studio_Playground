@@ -563,6 +563,15 @@ function ToolConfigurationSection({
     node.data.connectionId,
     node.data.toolName,
   )
+  // An MCP connection is a SERVER exposing TOOLS — n8n's words, and the ones
+  // the schema and the protocol use. "Connector / Action / Arguments" is our
+  // vocabulary for app integrations, and reading it on a step that calls an MCP
+  // server makes the same call look like a different kind of thing.
+  const plane = node.data.connectionId ? parseFlowToolConnectionId(node.data.connectionId).plane : null
+  const isMcp = plane === 'mcp' || plane === 'people_ai'
+  const vocab = isMcp
+    ? { picker: 'Server', action: 'Tool', args: 'Values to send', change: 'Change server' }
+    : { picker: 'Connector', action: 'Action', args: 'Arguments', change: 'Change app' }
   const providerGroups = groupToolConnections(toolCatalog)
   const actions = connection ? toolActionChoices(toolCatalog, connection) : []
   const selectedAction = actions.find(
@@ -615,11 +624,11 @@ function ToolConfigurationSection({
               onClick={() => onChange({ ...node, data: { ...node.data, connectionId: '', toolName: '', args: '{}' } })}
               className="shrink-0 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
             >
-              Change app
+              {vocab.change}
             </button>
           </div>
           <div>
-            <label className={labelClass} htmlFor={`${uid}-action`}>Action</label>
+            <label className={labelClass} htmlFor={`${uid}-action`}>{vocab.action}</label>
             <select
               id={`${uid}-action`}
               className={fieldClass}
@@ -664,6 +673,7 @@ function ToolConfigurationSection({
                 labelCtx={labelCtx}
                 connectionId={node.data.connectionId}
                 pickerTools={Array.from(new Set(actions.map((entry) => entry.tool.name)))}
+                argsLabel={vocab.args}
               />
               <FieldIssues issues={issueFor('toolArgs')} />
             </>
@@ -763,7 +773,17 @@ export function StepDrawer({
   const { byField: fieldIssues, rest: bannerIssues } = useMemo(() => splitIssuesByField(issues), [issues])
   const issueFor = (field: string) => fieldIssues.get(field)
   const issueCount = fieldIssues.size
-  const defaultStepName = NODE_TYPES.find((entry) => entry.value === node.type)?.label ?? node.type
+  const defaultStepName = (() => {
+    const base = NODE_TYPES.find((entry) => entry.value === node.type)?.label ?? node.type
+    // A tool step bound to an MCP server is an MCP request. Calling it "Tool
+    // call" is technically true and tells the reader nothing about which of the
+    // two very different things on this canvas they are looking at.
+    if (node.type !== 'tool') return base
+    const bound = (node.data as { connectionId?: string }).connectionId
+    if (!bound) return base
+    const { plane } = parseFlowToolConnectionId(bound)
+    return plane === 'mcp' || plane === 'people_ai' ? 'MCP request' : base
+  })()
   // Connected MCP servers, for spotting an HTTP step that is really an MCP call.
   const mcpSuggestion = useMemo(
     () => mcpStepSuggestion(node as { type: string; data: Record<string, unknown> }, groupToolConnections(toolCatalog).flatMap((group) => group.connections)),

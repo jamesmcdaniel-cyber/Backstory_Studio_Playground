@@ -434,6 +434,7 @@ export function ToolArgsEditor({
   labelCtx,
   connectionId,
   pickerTools,
+  argsLabel = 'Arguments',
 }: {
   inputSchema: unknown
   args: string | undefined
@@ -446,6 +447,8 @@ export function ToolArgsEditor({
   /** For the "pick from a list" resource picker: the connection + its read tools. */
   connectionId?: string
   pickerTools?: string[]
+  /** "Arguments" for an app integration; "Values to send" for an MCP tool. */
+  argsLabel?: string
 }) {
   const fields = schemaFields(inputSchema)
   const [raw, setRaw] = useState(fields.length === 0)
@@ -521,7 +524,7 @@ export function ToolArgsEditor({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <label className={`${labelClass} mb-0`} htmlFor={rawArgsId}>Arguments</label>
+        <label className={`${labelClass} mb-0`} htmlFor={rawArgsId}>{argsLabel}</label>
         {fields.length > 0 && (
           <button
             type="button"

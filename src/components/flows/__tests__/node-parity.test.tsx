@@ -508,3 +508,66 @@ test('an ordinary HTTP step is left alone', () => {
   assert.doesNotMatch(container.textContent ?? '', /over MCP/)
   cleanup()
 })
+
+test('a step calling an MCP server reads as an MCP request, in MCP words', () => {
+  // "Connector / Action / Arguments" is our vocabulary for app integrations.
+  // An MCP connection is a SERVER exposing TOOLS — the protocol's words, and
+  // n8n's — and the same call reading as a different kind of thing is what put
+  // someone on an HTTP node hand-writing a JSON-RPC envelope in the first place.
+  const node = {
+    id: 't1',
+    type: 'tool',
+    data: { connectionId: 'people_ai:backstory', toolName: 'top_records', args: '{}' },
+  } as unknown as FlowNode
+
+  const { container } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace',
+      node,
+      flowId: 'f1',
+      agents: [],
+      toolCatalog: [{
+        id: 'people_ai:backstory',
+        name: 'Backstory',
+        tools: [{ name: 'top_records', description: 'Top accounts', inputSchema: { type: 'object', properties: {} } }],
+      }] as never,
+      dataFields: [],
+      labelCtx: {} as never,
+      onChange: () => {},
+      onDelete: () => {},
+      onClose: () => {},
+    }),
+  )
+
+  const text = container.textContent ?? ''
+  assert.match(text, /MCP request/)
+  assert.match(text, /Values to send/)
+  assert.match(text, /Change server/)
+  // And none of the HTTP vocabulary that has no meaning in an MCP call.
+  assert.doesNotMatch(text, /Body content type|Send headers|Import cURL/)
+  cleanup()
+})
+
+test('an app-integration tool step keeps its own vocabulary', () => {
+  const node = {
+    id: 't1',
+    type: 'tool',
+    data: { connectionId: 'nango:slack_post_message', toolName: 'slack_post_message', args: '{}' },
+  } as unknown as FlowNode
+
+  const { container } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node, flowId: 'f1', agents: [],
+      toolCatalog: [{
+        id: 'nango:slack_post_message', name: 'Slack',
+        tools: [{ name: 'slack_post_message', description: 'Post', inputSchema: { type: 'object', properties: {} } }],
+      }] as never,
+      dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  const text = container.textContent ?? ''
+  assert.match(text, /Change app/)
+  assert.doesNotMatch(text, /MCP request/)
+  cleanup()
+})

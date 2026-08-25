@@ -453,3 +453,58 @@ test('a loop no longer shows "at a time" until someone asks for it', () => {
   assert.doesNotMatch(container.textContent ?? '', /How many at a time/)
   cleanup()
 })
+
+test('an HTTP step hand-building an MCP call offers the Tool step instead', () => {
+  // The real case from the field: a POST to an MCP endpoint carrying a JSON-RPC
+  // envelope, tool name buried in the body, arguments written as JSON by hand.
+  let latest: FlowNode | null = null
+  const node = {
+    id: 'h1',
+    type: 'http',
+    data: {
+      method: 'POST',
+      url: 'https://mcp.people.ai/mcp',
+      sendBody: true,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'top_records', arguments: {} } }),
+    },
+  } as unknown as FlowNode
+
+  const { container, getByText } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace',
+      node,
+      flowId: 'f1',
+      agents: [],
+      toolCatalog: [{ id: 'people_ai:backstory', name: 'Backstory', serverUrl: 'https://mcp.people.ai/mcp', tools: [] }] as never,
+      dataFields: [],
+      labelCtx: {} as never,
+      onChange: (next: FlowNode) => { latest = next },
+      onDelete: () => {},
+      onClose: () => {},
+    }),
+  )
+
+  assert.match(container.textContent ?? '', /calls Backstory over MCP/)
+  fireEvent.click(getByText('Use a Tool step instead'))
+
+  const swapped = latest as FlowNode | null
+  assert.equal(swapped?.type, 'tool')
+  assert.equal((swapped?.data as Record<string, unknown>).connectionId, 'people_ai:backstory')
+  // The tool it was already calling is carried over, not re-picked from scratch.
+  assert.equal((swapped?.data as Record<string, unknown>).toolName, 'top_records')
+  cleanup()
+})
+
+test('an ordinary HTTP step is left alone', () => {
+  const node = { id: 'h1', type: 'http', data: { method: 'GET', url: 'https://api.example.com/things' } } as unknown as FlowNode
+  const { container } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node, flowId: 'f1', agents: [],
+      toolCatalog: [{ id: 'people_ai:backstory', name: 'Backstory', serverUrl: 'https://mcp.people.ai/mcp', tools: [] }] as never,
+      dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  assert.doesNotMatch(container.textContent ?? '', /over MCP/)
+  cleanup()
+})

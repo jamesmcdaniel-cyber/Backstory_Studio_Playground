@@ -132,7 +132,20 @@ const HTTP_OPTIONS: NodeOption[] = [
     addValue: false,
   },
   {
+    key: 'followRedirects',
+    label: 'Follow redirects',
+    description: 'Each hop is re-checked against the SSRF guard; credentials are dropped on cross-origin hops.',
+    control: {
+      kind: 'boolean',
+      onLabel: 'Follow them',
+      offLabel: 'Stop at the first redirect',
+    },
+    addValue: true,
+  },
+  {
     key: 'maxRedirects',
+    // Only means anything once redirects are being followed at all.
+    appliesTo: (node) => (node.data as { followRedirects?: boolean }).followRedirects === true,
     label: 'Redirects to follow',
     control: { kind: 'number', min: 0, max: 21, unit: 'count' },
     addValue: 5,

@@ -62,6 +62,10 @@ export async function loadFlowToolCatalog(
     .map((group) => ({
       id: group.id,
       name: group.name,
+      // Carried to the client so the builder can tell that an HTTP step is
+      // really a hand-built call to a server this workspace has connected. Not
+      // sensitive: it is the endpoint the user typed to connect it.
+      ...(group.serverUrl ? { serverUrl: group.serverUrl } : {}),
       ...(group.toolsError ? { toolsError: group.toolsError } : {}),
       tools: group.tools.slice(0, options.takeTools ?? 100).map((tool) => ({
         name: tool.name,

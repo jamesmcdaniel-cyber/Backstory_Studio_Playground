@@ -15,6 +15,7 @@ import { ToolArgsEditor, schemaFields } from '@/components/flows/tool-args-edito
 import { pruneArgLabels } from '@/lib/flows/resource-locator'
 import { fileBindingOptions, type DataField } from '@/lib/flows/datatree'
 import { splitIssuesByField, type FieldIssue } from '@/lib/flows/issue-fields'
+import { mcpStepSuggestion } from '@/lib/flows/mcp-step-suggestion'
 import { operatorsForField } from '@/lib/flows/condition-ops'
 import { NodeOptions } from '@/components/flows/node-options'
 import type { NodeOption } from '@/lib/flows/node-options'
@@ -65,7 +66,7 @@ const NODE_TYPES: { value: EditableType; label: string }[] = [
   { value: 'stop', label: 'Stop' },
 ]
 
-export type ToolCatalog = { id: string; name: string; tools: { name: string; description: string; inputSchema?: unknown; outputSchema?: unknown }[]; toolsError?: string }[]
+export type ToolCatalog = { id: string; name: string; serverUrl?: string; tools: { name: string; description: string; inputSchema?: unknown; outputSchema?: unknown }[]; toolsError?: string }[]
 
 const fieldClass =
   'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-300'
@@ -763,6 +764,11 @@ export function StepDrawer({
   const issueFor = (field: string) => fieldIssues.get(field)
   const issueCount = fieldIssues.size
   const defaultStepName = NODE_TYPES.find((entry) => entry.value === node.type)?.label ?? node.type
+  // Connected MCP servers, for spotting an HTTP step that is really an MCP call.
+  const mcpSuggestion = useMemo(
+    () => mcpStepSuggestion(node as { type: string; data: Record<string, unknown> }, groupToolConnections(toolCatalog).flatMap((group) => group.connections)),
+    [node, toolCatalog],
+  )
   const [httpCredentials, setHttpCredentials] = useState<HttpCredentialSummary[]>([])
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
   const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
@@ -1602,6 +1608,42 @@ export function StepDrawer({
 
         {node.type === 'http' && (
           <div className="space-y-5">
+            {/* This step is really an MCP call, hand-built. Calling an MCP
+                server over HTTP means a POST carrying a JSON-RPC envelope, with
+                the tool name buried in a body field and the arguments written
+                as JSON by hand. The Tool step is the same call as three
+                controls, with the action picked from a list and the arguments
+                rendered from the tool's own schema. */}
+            {mcpSuggestion && (
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                <p className="text-sm font-medium text-indigo-900">
+                  This calls {mcpSuggestion.connectionName} over MCP
+                </p>
+                <p className="mt-0.5 text-xs leading-5 text-indigo-800">
+                  A Tool step makes the same call without the JSON-RPC envelope — pick the action from a
+                  list, and its arguments come from the tool&apos;s own schema.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => onChange({
+                    id: node.id,
+                    type: 'tool',
+                    position: (node as { position?: unknown }).position,
+                    ...(node.disabled ? { disabled: true } : {}),
+                    data: {
+                      ...(node.data.label ? { label: node.data.label } : {}),
+                      connectionId: mcpSuggestion.connectionId,
+                      toolName: mcpSuggestion.toolName ?? '',
+                      args: mcpSuggestion.args ?? '{}',
+                    },
+                  } as unknown as FlowNode)}
+                >
+                  Use a Tool step instead
+                </Button>
+              </div>
+            )}
             <div className="flex justify-end">
               <Button type="button" variant="outline" size="sm" onClick={() => setCurlDialogOpen(true)}>
                 <TerminalSquare className="mr-1.5 h-4 w-4" /> Import cURL
@@ -1964,20 +2006,6 @@ export function StepDrawer({
                   )}
                 </>
               )}
-            </div>
-
-            <div className="space-y-3 border-t pt-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium">Follow redirects</p>
-                  <p className="text-xs text-muted-foreground">Each hop is re-checked against the SSRF guard; credentials are dropped on cross-origin hops.</p>
-                </div>
-                <Switch
-                  checked={node.data.followRedirects ?? false}
-                  onCheckedChange={(followRedirects) => onChange({ ...node, data: { ...node.data, followRedirects } })}
-                  aria-label="Follow redirects"
-                />
-              </div>
             </div>
 
             {/* One Options control, holding everything optional. It replaced

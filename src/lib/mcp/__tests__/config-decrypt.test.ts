@@ -87,3 +87,25 @@ test('a well-formed row still decrypts unchanged', () => {
   assert.equal(config.apiKey, 'sk-live-1')
   assert.equal(config.headerName, 'X-Api-Key')
 })
+
+test('an empty stored secret reads as absent, not as an empty credential', () => {
+  // A PKCE public client has no client_secret; the OAuth callback used to store
+  // encryptSecret('') for it. Decrypting that yields '', which must not be
+  // handed onward as though the connection had a client secret of "".
+  const config = mcpConfigFromConnection({
+    serverUrl: 'https://mcp.people.ai/mcp',
+    authType: 'oauth2',
+    authConfig: {
+      flow: 'authcode',
+      clientId: 'client-1',
+      clientSecret: encryptSecret(''),
+      tokenEndpoint: 'https://mcp.people.ai/token',
+      accessToken: encryptSecret('at-live'),
+      refreshToken: encryptSecret(''),
+    },
+  })
+
+  assert.equal(config.clientSecret, undefined)
+  assert.equal(config.refreshToken, undefined)
+  assert.equal(config.accessToken, 'at-live')
+})

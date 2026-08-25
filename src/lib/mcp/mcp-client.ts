@@ -476,11 +476,19 @@ export class McpCredentialError extends Error {
   }
 }
 
-/** Decrypt one stored field, translating a format failure into an actionable one. */
+/**
+ * Decrypt one stored field, translating a format failure into an actionable one.
+ *
+ * A secret that decrypts to the empty string reads as ABSENT: rows written for
+ * a PKCE public client (no client_secret) or a server that issues no
+ * refresh_token hold an envelope around nothing, and passing "" onward as
+ * though it were a credential produces a doomed token request instead of the
+ * "this connection has no client secret" the caller means to branch on.
+ */
 function readSecret(value: string | undefined, field: string): string | undefined {
   if (!value) return undefined
   try {
-    return decryptSecret(value)
+    return decryptSecret(value) || undefined
   } catch (error) {
     throw new McpCredentialError(field, error)
   }

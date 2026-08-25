@@ -168,3 +168,74 @@ test('redactConfig surfaces the SSO flow marker but never a secret', async () =>
   const clientCreds = redactConfig('oauth2', { clientId: 'c', clientSecret: encryptSecret('s') })
   assert.equal(clientCreds.flow, undefined)
 })
+
+// ── Empty plaintext ────────────────────────────────────────────────────────
+//
+// An OAuth flow legitimately has nothing to store in a secret slot: a PKCE
+// public client has no client_secret, and plenty of servers issue no
+// refresh_token. Callers wrote `encryptSecret(value || '')` for those, which
+// produced a well-formed envelope with an EMPTY ciphertext field — and
+// decryptSecret rejected it as malformed, because its emptiness check could not
+// tell an absent field from an empty one.
+//
+// The row was then unreadable forever: every path that decrypts it threw, which
+// 500'd the connection-test route and failed every flow step bound to it. So
+// empty plaintext must round-trip, while a genuinely truncated payload must
+// still be refused.
+
+test('the empty string round-trips — an empty secret is not a malformed one', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const { encryptSecret, decryptSecret } = await freshSecrets()
+
+  assert.equal(decryptSecret(encryptSecret('')), '')
+})
+
+test('a legacy v1 envelope with an empty ciphertext decrypts to the empty string', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const crypto = await import('node:crypto')
+  const { decryptSecret } = await freshSecrets()
+
+  // v1 carried no key id, so build one the way the pre-rotation code did.
+  const key = crypto.createHash('sha256').update('unit-test-key').digest()
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+  const ciphertext = Buffer.concat([cipher.update('', 'utf8'), cipher.final()])
+  const legacy = ['v1', iv.toString('base64'), cipher.getAuthTag().toString('base64'), ciphertext.toString('base64')].join(':')
+
+  assert.equal(legacy.split(':').length - 1, 3)
+  assert.equal(decryptSecret(legacy), '')
+})
+
+test('a truncated payload is still refused — only the ciphertext may be empty', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const { encryptSecret, decryptSecret } = await freshSecrets()
+
+  const [, keyId, iv, tag] = encryptSecret('x').split(':')
+
+  // Missing the ciphertext FIELD (no trailing colon), not an empty one.
+  assert.throws(() => decryptSecret(`v2:${keyId}:${iv}:${tag}`), /Malformed v2/)
+  assert.throws(() => decryptSecret(`v2:${keyId}:${iv}`), /Malformed v2/)
+  assert.throws(() => decryptSecret('v2:'), /Malformed v2/)
+  // An empty iv or tag is never legitimate — both are fixed-width random bytes.
+  assert.throws(() => decryptSecret(`v2:${keyId}::${tag}:`), /Malformed v2/)
+  assert.throws(() => decryptSecret(`v2:${keyId}:${iv}::`), /Malformed v2/)
+  assert.throws(() => decryptSecret(`v1:${iv}:${tag}`), /Malformed v1/)
+  assert.throws(() => decryptSecret('v1:'), /Malformed v1/)
+})
+
+test('an empty ciphertext still fails the auth tag under the wrong key', async () => {
+  process.env.ENCRYPTION_KEY = 'unit-test-key'
+  setNodeEnv('production')
+  const written = await freshSecrets()
+  const blob = written.encryptSecret('')
+
+  // A different key must not decrypt it to '' — GCM's tag covers the empty
+  // plaintext too, so authentication is not skipped just because there is
+  // nothing to decrypt.
+  process.env.ENCRYPTION_KEY = 'a-different-key'
+  const { decryptSecret } = await freshSecrets()
+  assert.throws(() => decryptSecret(blob), /No configured key matches id/)
+})

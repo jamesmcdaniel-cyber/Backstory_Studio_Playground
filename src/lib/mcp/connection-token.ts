@@ -63,11 +63,16 @@ export async function persistRefreshedAuthcodeTokens(
   tokens: TokenResponse,
   fallbackRefreshToken: string,
 ): Promise<Record<string, unknown>> {
+  // Keep the old refresh_token if the server didn't rotate it — and when there
+  // is neither, drop the key rather than storing an envelope around "" (see the
+  // OAuth callback for why an empty envelope is worse than an absent field).
+  const carriedRefresh = tokens.refresh_token || fallbackRefreshToken
   const newAuthConfig: Record<string, unknown> = {
     ...currentAuthConfig,
     accessToken: encryptSecret(tokens.access_token),
-    // Keep the old refresh_token if the server didn't rotate it.
-    refreshToken: encryptSecret(tokens.refresh_token ?? fallbackRefreshToken),
+    ...(carriedRefresh
+      ? { refreshToken: encryptSecret(carriedRefresh) }
+      : { refreshToken: undefined }),
     expiresAt:
       Date.now() +
       (typeof tokens.expires_in === 'number' && tokens.expires_in > 0 ? tokens.expires_in : 3600) * 1000,
@@ -191,6 +196,15 @@ async function _doRefresh<T extends McpConnectionLike>(
       clientSecret = cfg.clientSecret ? decryptSecret(cfg.clientSecret) : undefined
     } catch {
       apiLogger.warn('ensureFreshConnectionToken: failed to decrypt stored secrets, skipping refresh', {
+        connectionId: conn.id,
+      })
+      return conn
+    }
+
+    // An envelope around the empty string is a refresh token the row does not
+    // have — spending a request to be told so gains nothing.
+    if (!refreshToken) {
+      apiLogger.warn('ensureFreshConnectionToken: stored refreshToken is empty, skipping refresh', {
         connectionId: conn.id,
       })
       return conn

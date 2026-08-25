@@ -221,7 +221,12 @@ export function decryptSecret(payload: string): string {
 
   if (payload.startsWith('v2:')) {
     const [, keyId, ivB64, tagB64, ctB64] = payload.split(':')
-    if (!keyId || !ivB64 || !tagB64 || !ctB64) {
+    // ctB64 is checked for PRESENCE, not truthiness: the empty string is a
+    // legitimate ciphertext (of the empty plaintext) and one an OAuth flow
+    // really does produce — a PKCE client has no client_secret, and many
+    // servers issue no refresh_token. Rejecting it made those rows permanently
+    // unreadable. iv and tag are fixed-width random bytes and are never empty.
+    if (!keyId || !ivB64 || !tagB64 || ctB64 === undefined) {
       throw new Error('Malformed v2 encrypted secret payload')
     }
 
@@ -245,7 +250,8 @@ export function decryptSecret(payload: string): string {
 
   if (payload.startsWith('v1:')) {
     const [, ivB64, tagB64, ctB64] = payload.split(':')
-    if (!ivB64 || !tagB64 || !ctB64) {
+    // Same presence-not-truthiness rule as v2 above.
+    if (!ivB64 || !tagB64 || ctB64 === undefined) {
       throw new Error('Malformed v1 encrypted secret payload')
     }
 

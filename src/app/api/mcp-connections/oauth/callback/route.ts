@@ -119,12 +119,17 @@ export async function GET(request: NextRequest) {
       expiresAt,
     })
 
+    // Absent secrets are OMITTED, not stored as an envelope around the empty
+    // string: a PKCE public client has no client_secret and many servers issue
+    // no refresh_token, and `hasClientSecret`/`if (!cfg.refreshToken)` all read
+    // presence of the KEY. An empty envelope made those checks answer "yes"
+    // and every later read decrypt something meaning nothing.
     const authConfig = {
       flow: 'authcode' as const,
       clientId: payload.clientId,
-      clientSecret: encryptSecret(payload.clientSecret || ''),
+      ...(payload.clientSecret ? { clientSecret: encryptSecret(payload.clientSecret) } : {}),
       tokenEndpoint: payload.tokenEndpoint,
-      refreshToken: encryptSecret(tokens.refresh_token || ''),
+      ...(tokens.refresh_token ? { refreshToken: encryptSecret(tokens.refresh_token) } : {}),
       accessToken: encryptSecret(tokens.access_token),
       expiresAt,
     }

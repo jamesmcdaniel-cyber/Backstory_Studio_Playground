@@ -50,6 +50,13 @@ primary_region = "iad"
 [env]
   NODE_ENV = "production"
   EXECUTION_MODE = "queue"
+  # Not a secret — it ships to browsers as NEXT_PUBLIC_. It lives here rather
+  # than in `fly secrets` so it survives recreating the app from this file, and
+  # because BOTH consumers guard on `if (!url || !key)`: setting only
+  # SUPABASE_SERVICE_ROLE_KEY silences the boot warning while leaving realtime
+  # run updates (src/lib/flows/run-stream.ts) and stored files
+  # (src/lib/files/storage.ts) dead. Must name the same project as that key.
+  NEXT_PUBLIC_SUPABASE_URL = "https://hgxvhgdmipxbcgzendnz.supabase.co"
   WORKER_PORT = "3002"
   # Consume only the queues someone is WAITING on: agent-execution,
   # scheduled-agent-execution, flow-execution. Operator batch work (template

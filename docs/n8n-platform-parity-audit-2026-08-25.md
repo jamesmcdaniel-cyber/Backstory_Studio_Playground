@@ -15,6 +15,37 @@ already compete.
 
 ---
 
+## Status — 2026-08-25, later the same day
+
+Closed since the audit was written:
+
+| # | Gap | Landed as |
+|---|---|---|
+| 1 | Serve MCP | `POST /api/mcp` — published flows as tools, on the public API's admission |
+| 4 | Node/graph versioning | `schemaVersion` + a migration chain applied inside `flowGraphSchema` |
+| 5 | Resource-scoped agent memory | `resourceId` + `contentHash` on `AgentMemory` |
+| 6 | Review before publish | `FlowReview` + `flowReviewRequired`, enforced at the publish boundary |
+| 8 | Credential dependency index | `credentialDependents()`, surfaced in the delete confirmation |
+| — | `notesInFlow` | The note renders on the canvas node |
+
+**§4.2 was built as GRAPH versioning, not per-node.** One number to reason
+about, one ordered chain, no per-node bookkeeping across ~22 node types.
+
+**§6.1 (git sync) is withdrawn from the program.** It was ranked on n8n parity
+rather than against our own model, and that was the wrong test. `FlowVersion`
+already stores every published graph with a computed change summary,
+restore-into-draft works, and export/import moves a flow between workspaces —
+history, rollback, diff and promotion. What git sync uniquely adds is flows
+living in the customer's own repository, reviewed by their CI: a
+change-management procurement ask, not a capability gap. The review gate (§6.2,
+now shipped) serves that need natively, and far better for a non-technical
+audience.
+
+Still open: §4.1 resourceLocator · §2.3 agent draft/publish · log streaming ·
+external secret references per credential · nested-collection arguments.
+
+---
+
 ## 0. Method
 
 Areas were enumerated from the repository's own structure rather than from prior

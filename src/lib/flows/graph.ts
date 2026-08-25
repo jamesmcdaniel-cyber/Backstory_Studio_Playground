@@ -1,3 +1,4 @@
+import { migrateGraphShape } from '@/lib/flows/graph-migrations'
 import { z } from 'zod'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 
@@ -760,14 +761,28 @@ export const flowEdgeSchema = z.object({
 // old 1MB body limit, so this schema is the effective bound on a graph PUT.
 export const MAX_GRAPH_NODES = 1000
 export const MAX_GRAPH_EDGES = 2000
-export const flowGraphSchema = z.object({
+const flowGraphShape = z.object({
   nodes: z.array(flowNodeSchema).max(MAX_GRAPH_NODES, `A flow can have at most ${MAX_GRAPH_NODES} steps.`),
   edges: z.array(flowEdgeSchema).max(MAX_GRAPH_EDGES, `A flow can have at most ${MAX_GRAPH_EDGES} connections.`),
   // Pinned / mock output per node id: when present, the executor uses this
   // value instead of running the node, so downstream steps can be built and
   // tested without live calls. Mirrors n8n's workflow-level pinData.
   pinData: z.record(z.string(), z.unknown()).optional(),
+  /// Which shape this graph was written against. Absent on every flow saved
+  /// before versioning existed, which reads as 0 — see graph-migrations.ts.
+  schemaVersion: z.number().int().min(0).optional(),
 })
+
+/**
+ * The graph, migrated to the current shape on the way in.
+ *
+ * The migration runs HERE rather than at the ten places that parse a graph, so
+ * a reader cannot forget it: the executor, the editor, publish and import all
+ * get an up-to-date graph without knowing versioning exists. Migration only
+ * ever adds or rewrites recognised shapes — a malformed graph still fails
+ * validation below, because this is a version bridge, not a repair pass.
+ */
+export const flowGraphSchema = z.preprocess(migrateGraphShape, flowGraphShape)
 
 export type FlowNode = z.infer<typeof flowNodeSchema>
 export type FlowEdge = z.infer<typeof flowEdgeSchema>

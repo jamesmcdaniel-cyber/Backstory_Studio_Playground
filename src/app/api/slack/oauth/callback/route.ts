@@ -24,8 +24,15 @@ import { systemPrisma } from '@/lib/prisma'
 import { decryptSecret, mergeAuthConfig } from '@/lib/crypto/secrets'
 import { apiLogger } from '@/lib/logger'
 import { recordAudit } from '@/lib/audit'
+import { recordCredentialGrant } from '@/lib/credentials/audit'
 import { findConflictingSlackOrg } from '@/lib/integrations/slack'
-import { SLACK_OAUTH_COOKIE, parseOAuthAccess, stateIsFresh, type SlackOAuthState } from '@/lib/slack/install'
+import {
+  SLACK_BOT_SCOPES,
+  SLACK_OAUTH_COOKIE,
+  parseOAuthAccess,
+  stateIsFresh,
+  type SlackOAuthState,
+} from '@/lib/slack/install'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -128,19 +135,27 @@ export async function GET(request: NextRequest) {
       botUserId: installed.botUserId,
     } as Prisma.InputJsonObject
 
-    await systemPrisma.integrationSecret.upsert({
+    const secret = await systemPrisma.integrationSecret.upsert({
       where: { organizationId_provider: { organizationId: payload.organizationId, provider: 'slack' } },
       update: { authType: 'api_key', authConfig, isActive: true, lastRotatedAt: new Date() },
       create: { organizationId: payload.organizationId, provider: 'slack', authType: 'api_key', authConfig, isActive: true },
+      select: { id: true },
     })
 
-    await recordAudit({
+    // recordCredentialGrant, not a hand-rolled audit row: it records the SCOPES
+    // the install actually asked for, and an over-scoped grant is invisible
+    // otherwise — the connection looks identical whether it asked for read or
+    // read/write. ownerUserId is null because a workspace install is org-shared
+    // by construction; the acting user is who authorized it, not who owns it.
+    await recordCredentialGrant({
       organizationId: payload.organizationId,
-      action: 'credential.granted',
+      kind: 'integration_secret',
+      credentialId: secret.id,
+      provider: 'slack',
+      ownerUserId: null,
       actorUserId: payload.userId,
-      resourceType: 'integration_secret',
-      resourceId: `slack:${installed.teamId}`,
-      detail: { provider: 'slack', teamId: installed.teamId, via: 'install' },
+      scopes: SLACK_BOT_SCOPES,
+      method: 'oauth_authcode',
     })
 
     return bounce(request, payload.returnTo, 'slack=installed')

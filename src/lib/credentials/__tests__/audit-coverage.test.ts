@@ -61,6 +61,10 @@ const GRANT_EXEMPT: Record<string, string> = {
     'browser. No credential exists yet — the grant it leads to is audited in the callback.',
   'app/api/peopleai/connect/route.ts':
     'Same: encrypts its own OAuth state cookie. The grant is audited in connect-service.ts.',
+  'app/api/slack/install/route.ts':
+    'Same as the MCP start route: encrypts the short-lived OAuth state cookie it is about ' +
+    'to hand back to the browser. No credential exists yet — the bot token the install ' +
+    'leads to is minted by Slack and audited in slack/oauth/callback/route.ts.',
 }
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {

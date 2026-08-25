@@ -44,13 +44,24 @@ export async function slackConfigured(organizationId: string): Promise<boolean> 
   return Boolean(await getSlackToken(organizationId))
 }
 
-/** The workspace's own signing secret, or (internal/partner only) the env fallback. */
+/**
+ * The workspace's own signing secret, else the app-level one.
+ *
+ * A BYO workspace that saved its own secret wins. A workspace that installed
+ * Backstory's own Slack app has none of its own and verifies against
+ * SLACK_SIGNING_SECRET — shared across installs by design, because that is what
+ * a distributable Slack app's signing secret IS. See the `sharedAppSecret` doc
+ * on resolveOrgCredential for why this is not the shared-identity risk the
+ * org-kind gate exists to stop; `getSlackToken` above deliberately does NOT
+ * pass it.
+ */
 export async function getSlackSigningSecret(organizationId: string): Promise<ResolvedCredential | null> {
   return resolveOrgCredential({
     organizationId,
     provider: SLACK_PROVIDER,
     field: 'signingSecret',
     envValue: process.env.SLACK_SIGNING_SECRET,
+    sharedAppSecret: true,
     context: { consumer: 'integration.slack.events_receiver' },
   })
 }

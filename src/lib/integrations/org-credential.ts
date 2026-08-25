@@ -119,6 +119,21 @@ export async function resolveOrgCredential(params: {
   field?: string
   envValue: string | undefined
   context?: OrgSecretUseContext
+  /**
+   * Opt in for a secret that is SHARED BY DESIGN across every workspace using
+   * Backstory's own app registration — currently only Slack's signing secret.
+   *
+   * The org-kind gate exists to stop a customer workspace reaching a shared
+   * IDENTITY (a bot token, an API key): holding one lets its agents act as, and
+   * read what belongs to, every other workspace on that account. A signature
+   * verifier is not an identity. It proves a delivery came from our app and
+   * grants access to nothing, and a distributable Slack app issues exactly one
+   * of them for all installs — so gating it by org kind protects nothing and
+   * just breaks verification for every customer install.
+   *
+   * Never set this for a token or key.
+   */
+  sharedAppSecret?: boolean
 }): Promise<ResolvedCredential | null> {
   const orgSecret = await readOrgSecret(params.organizationId, params.provider, params.field, params.context)
   if (orgSecret) return { value: orgSecret, source: 'org' }
@@ -129,7 +144,9 @@ export async function resolveOrgCredential(params: {
     where: { id: params.organizationId },
     select: { kind: true },
   })
-  const resolved = chooseCredential(null, params.envValue, organization?.kind)
+  const resolved = params.sharedAppSecret
+    ? ({ value: params.envValue, source: 'env' } as const)
+    : chooseCredential(null, params.envValue, organization?.kind)
 
   // The env fallback is the one genuinely SHARED credential left in the system —
   // internal and partner orgs acting through Backstory's own account. It has no

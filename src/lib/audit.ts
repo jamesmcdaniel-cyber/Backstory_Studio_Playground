@@ -34,6 +34,25 @@ export function hashPayload(payload: unknown): string | null {
   }
 }
 
+/**
+ * Which audit action a tool call is, decided by whether the tool WRITES.
+ *
+ * Shared by the agent loop and the flow runtime so the two cannot drift. Both
+ * previously decided this with /^(nango|slack|email|backstory)/i against the
+ * PROVIDER name, which was wrong in both directions: every Slack and Gmail read
+ * arrives on the `nango` plane and was recorded as `tool.write`, while a
+ * genuinely writing MCP tool was recorded as a read.
+ *
+ * That matters more than a mislabel usually would — audit_events is
+ * append-only, is deliberately excluded from the retention sweep, and is the
+ * record a compliance question gets answered from. The accurate flag comes from
+ * the tool's binding, which the approval gate (src/lib/agents/approval.ts) was
+ * already using correctly.
+ */
+export function toolAuditAction(isWrite: boolean): 'tool.write' | 'tool.call' {
+  return isWrite ? 'tool.write' : 'tool.call'
+}
+
 export async function recordAudit(input: AuditInput): Promise<void> {
   try {
     await prisma.auditEvent.create({

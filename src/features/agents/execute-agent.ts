@@ -6,7 +6,7 @@ import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { apiLogger } from '@/lib/logger'
-import { recordAudit } from '@/lib/audit'
+import { recordAudit, toolAuditAction } from '@/lib/audit'
 import { createApproval, requiresApproval } from '@/lib/agents/approval'
 import { retrieveContext, renderContext } from '@/lib/rag/retrieve'
 import { retrieveKnowledge, renderKnowledge } from '@/lib/knowledge/retrieve'
@@ -1428,16 +1428,15 @@ async function runAgentExecutionInner(
             data: { status: 'succeeded', output: jsonValue(result), completedAt: new Date() },
           })
           await recordEvent(execution.id, step.id, 'tool.completed', { name: step.node })
-          // Immutable audit trail. Delivery/write planes (nango, slack, email,
-          // salesforce, people.ai) are the consequential ones; the args are
-          // hashed, not stored.
-          const writePlanes = /^(nango|slack|email|backstory)/i
+          // Immutable audit trail; the args are hashed, not stored.
+          // Classified by the tool's own isWrite, not by its plane — see
+          // toolAuditAction for what the plane-name regex got wrong.
           await recordAudit({
             organizationId,
             executionId: execution.id,
             actorUserId: userId,
             actorKind: 'agent',
-            action: writePlanes.test(binding.provider) ? 'tool.write' : 'tool.call',
+            action: toolAuditAction(binding.isWrite),
             tool: call.name,
             resourceType: binding.provider,
             payload: call.input,

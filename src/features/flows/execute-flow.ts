@@ -20,7 +20,7 @@ import { parseApprovalDecision, shouldConsumeApprovalDecision } from '@/lib/flow
 import { REDACTED_AT_REST_WARNING } from '@/lib/flows/run-data-guard'
 import { notify } from '@/lib/notifications/service'
 import { apiLogger } from '@/lib/logger'
-import { recordAudit } from '@/lib/audit'
+import { recordAudit, toolAuditAction } from '@/lib/audit'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { ApiError } from '@/lib/server/api-handler'
 import { chooseWaitingReply } from '@/lib/flows/run-waiting'
@@ -175,9 +175,6 @@ function signalDepthOfTrigger(trigger: FlowExecutionJob['trigger']): number {
   return typeof trigger?.depth === 'number' ? trigger.depth : 0
 }
 
-// Write planes are the consequential audit entries — the same set the agent
-// loop uses for its tool.write / tool.call distinction.
-const WRITE_PLANES = /^(nango|slack|email|backstory)/i
 
 /** What a paused child flow is asking, for the parent's waiting banner. */
 async function subflowChildQuestion(childRunId: string, childName: string): Promise<string> {
@@ -1277,15 +1274,15 @@ async function runFlowExecutionInner(
           result: output,
           flowRunId: run.id,
         })
-        // Immutable audit trail, mirroring the agent loop's tool execution:
-        // every plane is recorded; write/delivery planes are the consequential
-        // ones. Args are hashed by recordAudit, never stored raw.
+        // Immutable audit trail, mirroring the agent loop's tool execution.
+        // Classified by the tool's own isWrite, not by its plane — see
+        // toolAuditAction. Args are hashed by recordAudit, never stored raw.
         await recordAudit({
           organizationId: job.organizationId,
           executionId: run.id,
           actorUserId: job.userId,
           actorKind: 'agent',
-          action: WRITE_PLANES.test(executor.provider) ? 'tool.write' : 'tool.call',
+          action: toolAuditAction(executor.isWrite),
           tool: toolName,
           resourceType: executor.provider,
           payload: args,

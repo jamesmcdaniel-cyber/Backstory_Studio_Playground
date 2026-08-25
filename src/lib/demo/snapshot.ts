@@ -76,6 +76,8 @@ export const EXCLUDED: Record<string, string> = {
   ActivitySourceCursor: 'backfill checkpoint tied to a real connection; meaningless without the connection it advances',
   AdoptionWeek: 'operator adoption aggregates for the REAL workspace, and the rollup job excludes demo orgs by construction — copying them in would be the one place demo activity could masquerade as real adoption',
   AgentCohortWeek: 'survival history for the REAL workspace\'s agents; same reason as AdoptionWeek',
+  SlackIdentity: 'binds a REAL person to a real Slack account; a sandbox must never be able to act as either, and demo transports do not reach Slack at all',
+  SlackChannelBinding: 'points at real Slack channels in the real workspace; meaningless in a sandbox whose Slack transport is canned',
 }
 
 const BOUND = 25

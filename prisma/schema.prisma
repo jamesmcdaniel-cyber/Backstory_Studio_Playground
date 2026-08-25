@@ -107,6 +107,8 @@ model Organization {
   agentTeammates        AgentTeammate[]
   adoptionWeeks         AdoptionWeek[]
   agentCohortWeeks      AgentCohortWeek[]
+  slackIdentities       SlackIdentity[]
+  slackChannelBindings  SlackChannelBinding[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
@@ -214,6 +216,7 @@ model User {
   teamMemberships     TeamMember[]
   featureGrants       FeatureGrant[]
   apiKeys             ApiKey[]
+  slackIdentities     SlackIdentity[]
 
   @@unique([organizationId, scimExternalId])
   @@index([organizationId])
@@ -654,15 +657,16 @@ model AgentTask {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  owner               User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
-  teammate            AgentTeammate?       @relation(fields: [teammateId], references: [id], onDelete: SetNull)
-  executions          AgentExecution[]
-  signalSubscriptions SignalSubscription[]
-  chatMessages        AgentChatMessage[]
-  chatSessions        AgentChatSession[]
-  connectors          AgentConnector[]
-  memories            AgentMemory[]
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner                User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  teammate             AgentTeammate?        @relation(fields: [teammateId], references: [id], onDelete: SetNull)
+  executions           AgentExecution[]
+  signalSubscriptions  SignalSubscription[]
+  chatMessages         AgentChatMessage[]
+  chatSessions         AgentChatSession[]
+  connectors           AgentConnector[]
+  memories             AgentMemory[]
+  slackChannelBindings SlackChannelBinding[]
 
   @@index([organizationId, status])
   @@index([userId])
@@ -775,12 +779,20 @@ model AgentChatSession {
   userId         String
   // Auto-derived from the first user message; null until the first message.
   title          String?
+  /// Slack thread this conversation lives in, when it was started by a mention.
+  /// Unique together so a follow-up in the same thread continues the SAME
+  /// session instead of starting a new one every time. Null for in-app
+  /// sessions, and Postgres treats NULLs as distinct in a unique index, so any
+  /// number of them coexist.
+  slackChannelId String?
+  slackThreadTs  String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   agentTask AgentTask          @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
   messages  AgentChatMessage[]
 
+  @@unique([slackChannelId, slackThreadTs])
   @@index([agentTaskId, userId, updatedAt])
   @@map("agent_chat_sessions")
 }
@@ -2022,4 +2034,54 @@ model AgentCohortWeek {
   @@index([organizationId, cohortWeek])
   @@index([cohortWeek, activeWeek])
   @@map("agent_cohort_weeks")
+}
+
+/// Which Backstory user a Slack user is.
+///
+/// Written when a person connects THEIR OWN Slack (a per-user NangoConnection),
+/// from auth.test against their token — never from the bot token, which knows
+/// only the app.
+///
+/// A dedicated model rather than NangoConnection.metadata because this is read
+/// on every mention. findSlackWorkspaceByTeamId documents that its JSON-blob
+/// table scan was acceptable precisely BECAUSE it is not a hot path; this one
+/// is, and gets a real unique index.
+model SlackIdentity {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  /// Slack's `U…` id, as it arrives on an event's `actorExternalId`.
+  slackUserId    String
+  userId         String
+  verifiedAt     DateTime @default(now()) @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Cascade, NOT SetNull: an identity row with no user would let a mention
+  /// resolve to nobody while still LOOKING linked. Deprovisioning a person must
+  /// take their Slack link with them.
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, slackUserId])
+  @@index([userId])
+  @@map("slack_identities")
+}
+
+/// The teammate a bare @mention reaches in a given channel.
+model SlackChannelBinding {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  channelId      String
+  agentTaskId    String
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Cascade: a binding to a deleted agent would send every bare mention in the
+  /// channel to a teammate that no longer exists.
+  agentTask    AgentTask    @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, channelId])
+  @@index([agentTaskId])
+  @@map("slack_channel_bindings")
 }

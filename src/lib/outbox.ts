@@ -169,9 +169,22 @@ async function deliver(event: { id: string; organizationId: string; topic: strin
     return
   }
   if (event.topic === OUTBOX_TOPIC_ACTIVITY_DISPATCH) {
-    const { dispatchActivityEvent } = await import('@/lib/activity/dispatch')
     const payload = isActivityDispatchPayload(event.payload) ? event.payload : null
     if (!payload) throw new Error('Invalid activity.dispatch outbox payload')
+    // Mentions run AGENTS as the asking human; dispatchActivityEvent fans out to
+    // FLOWS and attributes runs to the flow owner. Different question, different
+    // path — see src/lib/slack/mention-dispatch.ts.
+    const { systemPrisma } = await import('@/lib/prisma')
+    const row = await systemPrisma.activityEvent.findUnique({
+      where: { id: payload.activityEventId },
+      select: { kind: true },
+    })
+    if (row?.kind === 'agent.mentioned') {
+      const { dispatchSlackMention } = await import('@/lib/slack/mention-dispatch')
+      await dispatchSlackMention(payload.activityEventId)
+      return
+    }
+    const { dispatchActivityEvent } = await import('@/lib/activity/dispatch')
     await dispatchActivityEvent(payload.activityEventId)
     return
   }

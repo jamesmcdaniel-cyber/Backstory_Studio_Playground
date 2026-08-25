@@ -400,3 +400,56 @@ test("a step's note is what the canvas shows under it", () => {
   // Free text, so a long one is clamped rather than pushing the node out of lane.
   assert.equal(stepNoteLabel({ id: 'n', type: 'http', data: { note: 'x'.repeat(400) } } as FlowNode).length, 120)
 })
+
+test('every node type with options gets the same Options collection', () => {
+  // The HTTP panel moved first; these are the types that were still rendering
+  // a separate "Advanced parameters" panel, or nothing at all.
+  for (const [type, data] of [
+    ['agent', { agentId: 'a1', input: 'go' }],
+    ['tool', { connectionId: 'c1', toolName: 't', args: '{}' }],
+    ['code', { mode: 'all', language: 'javascript', code: 'return 1' }],
+    ['loop', { over: '{{x}}', body: [] }],
+  ] as const) {
+    const node = { id: 'n1', type, data } as unknown as FlowNode
+    const { container, unmount } = render(
+      React.createElement(StepDrawer, {
+        layout: 'workspace',
+        node,
+        flowId: 'flow1',
+        agents: [],
+        toolCatalog: [],
+        dataFields: [],
+        labelCtx: {} as never,
+        onChange: () => {},
+        onDelete: () => {},
+        onClose: () => {},
+      }),
+    )
+    assert.match(container.textContent ?? '', /Options/, `${type} has no Options collection`)
+    assert.match(container.textContent ?? '', /Add option/, `${type} cannot add one`)
+    unmount()
+  }
+  cleanup()
+})
+
+test('a loop no longer shows "at a time" until someone asks for it', () => {
+  // It ran one at a time until told otherwise, and the control was on the page
+  // whether or not anyone wanted it.
+  const node = { id: 'n1', type: 'loop', data: { over: '{{x}}', body: [] } } as unknown as FlowNode
+  const { container } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace',
+      node,
+      flowId: 'flow1',
+      agents: [],
+      toolCatalog: [],
+      dataFields: [],
+      labelCtx: {} as never,
+      onChange: () => {},
+      onDelete: () => {},
+      onClose: () => {},
+    }),
+  )
+  assert.doesNotMatch(container.textContent ?? '', /How many at a time/)
+  cleanup()
+})

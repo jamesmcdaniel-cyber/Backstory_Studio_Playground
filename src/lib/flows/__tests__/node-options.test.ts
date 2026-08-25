@@ -8,6 +8,7 @@ import {
   nodeOptions,
   optionPatch,
   strandedOptions,
+  PER_ITEM_TYPES,
 } from '@/lib/flows/node-options'
 import type { FlowNode } from '@/lib/flows/graph'
 
@@ -96,4 +97,18 @@ test('applicability is evaluated per node, not per type', () => {
   const without = applicableOptions(http()).map((option) => option.key)
   assert.ok(withBody.includes('bodyMode'))
   assert.ok(!without.includes('bodyMode'))
+})
+
+test('every per-item type is offered the per-item option, and no other type is', () => {
+  // These were two lists of the same nine types in two files. They would have
+  // drifted the first time a tenth was added.
+  for (const type of PER_ITEM_TYPES) {
+    assert.ok(
+      nodeOptions(type).some((option) => option.key === 'perItem'),
+      `${type} supports per-item but is not offered it`,
+    )
+  }
+  for (const type of ['loop', 'condition', 'switch'] as const) {
+    assert.ok(!nodeOptions(type).some((option) => option.key === 'perItem'), `${type} should not offer per-item`)
+  }
 })

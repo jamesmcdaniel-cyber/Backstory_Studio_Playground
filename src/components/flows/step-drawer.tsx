@@ -16,9 +16,8 @@ import { pruneArgLabels } from '@/lib/flows/resource-locator'
 import { fileBindingOptions, type DataField } from '@/lib/flows/datatree'
 import { splitIssuesByField, type FieldIssue } from '@/lib/flows/issue-fields'
 import { operatorsForField } from '@/lib/flows/condition-ops'
-import { AdvancedParamsSection } from '@/components/flows/advanced-params'
 import { NodeOptions } from '@/components/flows/node-options'
-import { nodeOptions, type NodeOption } from '@/lib/flows/node-options'
+import type { NodeOption } from '@/lib/flows/node-options'
 import { CodeEditor } from '@/components/flows/code-editor'
 import { CodeAssist } from '@/components/flows/code-assist'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
@@ -82,9 +81,6 @@ function cleanOptimize(next: { dataPath?: string; fields?: string[]; maxItems?: 
   const cleaned = { ...next, fields: fields.length ? fields : undefined }
   return cleaned.dataPath || cleaned.fields || cleaned.maxItems ? cleaned : undefined
 }
-
-/** Node types that support the per-item fan-out modifier (see perItemSchema). */
-const PER_ITEM_TYPES: ReadonlySet<FlowNode['type']> = new Set(['agent', 'tool', 'http', 'ai', 'code', 'subflow', 'data', 'transform', 'knowledge'])
 
 /** Curated chat models for the agent step's per-step override; a free-typed
  * value saved earlier stays selectable. */
@@ -673,7 +669,7 @@ function ToolConfigurationSection({
           )}
         </>
       )}
-      <AdvancedParamsSection node={node} onChange={onChange} />
+
       <p className="text-xs text-muted-foreground">Runs this exact connected action with the configured inputs.</p>
     </div>
   )
@@ -1242,7 +1238,7 @@ export function StepDrawer({
               Chat model, memory, and extra tools attach <span className="font-medium text-foreground">under this step on the canvas</span> — click an
               attachment there to configure it.
             </p>
-            <AdvancedParamsSection node={node} onChange={onChange} />
+
             <div>
               <label className={labelClass} htmlFor={`${uid}-tool-policy`}>Tools this step may use</label>
               <select
@@ -1426,7 +1422,7 @@ export function StepDrawer({
                 </div>
               </div>
             )}
-            <AdvancedParamsSection node={node} onChange={onChange} />
+
           </>
         )}
 
@@ -1560,20 +1556,9 @@ export function StepDrawer({
               </div>
               <p className="mt-1.5 text-xs text-muted-foreground">Accepts a JSON list, a newline list, or a comma-separated list. Nested steps run once for each item.</p>
             </div>
-            <div>
-              <label className={labelClass} htmlFor={`${uid}-loop-concurrency`}>At a time</label>
-              <input
-                id={`${uid}-loop-concurrency`}
-                type="number"
-                min={1}
-                max={20}
-                className={fieldClass}
-                value={node.data.concurrency ?? 3}
-                onFocus={blockActive}
-                onBlur={unblockActive}
-                onChange={(e) => onChange({ ...node, data: { ...node.data, concurrency: Math.max(1, Math.min(20, Number(e.target.value) || 1)) } })}
-              />
-            </div>
+            {/* "At a time" is an option now — a loop runs one at a time until
+                someone says otherwise, and the control was on the page whether
+                or not anyone wanted it. It reads its stored value unchanged. */}
             <div>
               <label className={labelClass} htmlFor={`${uid}-loop-item-error`}>If an item fails</label>
               <select
@@ -2381,7 +2366,7 @@ export function StepDrawer({
               </p>
               <FieldIssues issues={issueFor('code')} />
             </div>
-            <AdvancedParamsSection node={node} onChange={onChange} />
+
           </>
         )}
 
@@ -2551,18 +2536,32 @@ export function StepDrawer({
             </p>
           </div>
         )}
-            {/* Per-item is an OPTION now, rendered inside the step's Options
-                collection — see node-options.ts. Node types that have not moved
-                to the collection yet keep rendering it here. */}
-            {!isTrigger && PER_ITEM_TYPES.has(node.type) && nodeOptions(node.type).length === 0 && (
-              <PerItemSection
+            {/* ONE Options collection, at the end of every step's parameters,
+                where n8n puts it. Per-item, retries, timeout, on-error and the
+                rest are options now — added when you want them, absent when you
+                do not — replacing an "Advanced parameters" panel per node type
+                and a per-item section that opened above the step's own fields.
+
+                The HTTP step renders its own collection higher up, because it
+                is the only type with nested editors (pagination, response
+                trimming) that the collection has to show and hide. */}
+            {!isTrigger && node.type !== 'http' && (
+              <NodeOptions
                 node={node}
                 onChange={onChange}
-                dataFields={dataFields}
-                labelCtx={labelCtx}
-                registerEditor={registerEditor}
-                focusEditor={focusEditor}
-                insertToken={insertToken}
+                renderCustom={(option: NodeOption) =>
+                  option.key === 'perItem' ? (
+                    <PerItemSection
+                      node={node}
+                      onChange={onChange}
+                      dataFields={dataFields}
+                      labelCtx={labelCtx}
+                      registerEditor={registerEditor}
+                      focusEditor={focusEditor}
+                      insertToken={insertToken}
+                    />
+                  ) : null
+                }
               />
             )}
           </div>
@@ -3577,7 +3576,7 @@ function SubflowDrawerSection({
         <DataTree fields={dataFields} onInsert={insertToken} />
       </div>
       <p className="text-xs text-muted-foreground">Runs the flow&apos;s <strong>published</strong> version and passes its result to later steps.</p>
-      <AdvancedParamsSection node={node} onChange={onChange} />
+
     </>
   )
 }

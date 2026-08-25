@@ -204,6 +204,17 @@ const SUBFLOW_OPTION: NodeOption = {
   addValue: false,
 }
 
+/**
+ * Node types that support the per-item fan-out modifier (see perItemSchema).
+ *
+ * Moved here from the drawer when per-item became an option: the manifest is
+ * now what decides whether the control is offered, and two lists of the same
+ * nine types would drift the first time a tenth was added.
+ */
+export const PER_ITEM_TYPES: ReadonlySet<FlowNode['type']> = new Set([
+  'agent', 'tool', 'http', 'ai', 'code', 'subflow', 'data', 'transform', 'knowledge',
+])
+
 const BY_TYPE: Partial<Record<FlowNode['type'], NodeOption[]>> = {
   http: [...HTTP_OPTIONS, ...RUN_BEHAVIOUR, PER_ITEM_OPTION],
   agent: [...RUN_BEHAVIOUR, PER_ITEM_OPTION],

@@ -571,3 +571,45 @@ test('an app-integration tool step keeps its own vocabulary', () => {
   assert.doesNotMatch(text, /MCP request/)
   cleanup()
 })
+
+test('Ignore Case is reachable on every node that stores it', () => {
+  // n8n exposes it on If, Filter AND Switch. Our schema and evaluator have
+  // honoured it on all three since it was added; only Filter ever offered the
+  // control, so on the other two it was a stored, working setting that no one
+  // could reach from the panel.
+  for (const [type, data] of [
+    ['condition', { match: 'all', clauses: [{ left: 'a', op: 'contains', right: 'b' }] }],
+    ['filter', { match: 'all', clauses: [{ left: 'a', op: 'contains', right: 'b' }] }],
+    ['switch', { cases: [{ id: 'c1', left: 'a', op: 'contains', right: 'b' }] }],
+  ] as const) {
+    const node = { id: 'n1', type, data } as unknown as FlowNode
+    const { container, unmount } = render(
+      React.createElement(StepDrawer, {
+        layout: 'workspace', node, flowId: 'f1', agents: [], toolCatalog: [] as never,
+        dataFields: [], labelCtx: {} as never,
+        onChange: () => {}, onDelete: () => {}, onClose: () => {},
+      }),
+    )
+    assert.match(container.textContent ?? '', /Ignore upper\/lower case/, `${type} cannot reach ignoreCase`)
+    unmount()
+  }
+  cleanup()
+})
+
+test('Ignore Case is not offered where it means nothing', () => {
+  // A unary operator ignores the right-hand side entirely, so there is nothing
+  // to compare case-insensitively.
+  const node = {
+    id: 'n1', type: 'condition',
+    data: { match: 'all', clauses: [{ left: 'a', op: 'isEmpty', right: '' }] },
+  } as unknown as FlowNode
+  const { container } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node, flowId: 'f1', agents: [], toolCatalog: [] as never,
+      dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  assert.doesNotMatch(container.textContent ?? '', /Ignore upper\/lower case/)
+  cleanup()
+})

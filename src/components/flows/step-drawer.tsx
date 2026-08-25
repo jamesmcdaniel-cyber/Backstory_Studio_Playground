@@ -1546,6 +1546,21 @@ export function StepDrawer({
                       </button>
                     )}
                   </div>
+                  {/* n8n exposes Ignore Case on If, Filter AND Switch. Our
+                      schema and evaluator have honoured it on all three since
+                      it was added; only the Filter panel ever offered the
+                      control, so on the other two it was a stored, working
+                      setting nobody could reach. */}
+                  {!UNARY_CONDITION_OPS.has(clause.op) && (
+                    <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={clause.ignoreCase === true}
+                        onChange={(e) => update(clauses.map((c, j) => (j === i ? { ...c, ignoreCase: e.target.checked || undefined } : c)))}
+                      />
+                      Ignore upper/lower case
+                    </label>
+                  )}
                 </div>
               )
             })}
@@ -2233,6 +2248,16 @@ export function StepDrawer({
                   </select>
                   <TokenTextEditor ref={registerEditor(`sw.${i}.right`)} className="min-w-0 flex-1 px-2 py-1.5" value={c.right} labelCtx={labelCtx} placeholder="enterprise" onFocus={focusEditor(`sw.${i}.right`)} onChange={(right) => onChange({ ...node, data: { ...node.data, cases: node.data.cases.map((x, j) => (j === i ? { ...x, right } : x)) } })} ariaLabel={`Case ${i + 1} comparison value`} />
                 </div>
+                {!UNARY_CONDITION_OPS.has(c.op) && (
+                  <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={c.ignoreCase === true}
+                      onChange={(e) => onChange({ ...node, data: { ...node.data, cases: node.data.cases.map((x, j) => (j === i ? { ...x, ignoreCase: e.target.checked || undefined } : x)) } })}
+                    />
+                    Ignore upper/lower case
+                  </label>
+                )}
               </div>
             ))}
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, cases: [...node.data.cases, { id: `case${node.data.cases.length + 1}-${Math.random().toString(36).slice(2, 6)}`, left: '', op: 'contains', right: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">

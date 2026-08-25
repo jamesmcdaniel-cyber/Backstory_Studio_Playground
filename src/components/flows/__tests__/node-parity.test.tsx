@@ -301,16 +301,23 @@ test('a step can be taken out of the run without losing its configuration', () =
   cleanup()
 })
 
-test('the settings in force are readable without expanding the advanced section', () => {
+test('the settings in force are readable without expanding anything', () => {
+  // They used to be summarised as chips under a collapsed "Advanced
+  // parameters" header. In the Options collection a setting that is in force IS
+  // its control — labelled, showing its value, and removable — which answers
+  // the same question without a summary standing in for the thing.
   const node = {
     id: 'http1',
     type: 'http',
     data: { method: 'GET', url: 'https://x.test', onError: 'continue', retries: 3 },
   } as FlowNode
-  const { container } = renderDrawer(node)
+  const { container, getByLabelText } = renderDrawer(node)
 
-  assert.match(container.textContent ?? '', /Continues on error/)
-  assert.match(container.textContent ?? '', /3 retries/)
+  assert.equal((getByLabelText('Retries') as HTMLInputElement).value, '3')
+  assert.equal((getByLabelText('On error') as HTMLSelectElement).value, 'continue')
+  assert.match(container.textContent ?? '', /Options/)
+  // …and nothing else was added on the step's behalf.
+  assert.doesNotMatch(container.textContent ?? '', /Fetch every page/)
   cleanup()
 })
 

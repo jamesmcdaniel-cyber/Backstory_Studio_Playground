@@ -17,6 +17,8 @@ import { fileBindingOptions, type DataField } from '@/lib/flows/datatree'
 import { splitIssuesByField, type FieldIssue } from '@/lib/flows/issue-fields'
 import { operatorsForField } from '@/lib/flows/condition-ops'
 import { AdvancedParamsSection } from '@/components/flows/advanced-params'
+import { NodeOptions } from '@/components/flows/node-options'
+import { nodeOptions, type NodeOption } from '@/lib/flows/node-options'
 import { CodeEditor } from '@/components/flows/code-editor'
 import { CodeAssist } from '@/components/flows/code-assist'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
@@ -1993,8 +1995,19 @@ export function StepDrawer({
               </div>
             </div>
 
-            <details className="rounded-lg border border-border/70 p-2">
-              <summary className="cursor-pointer text-sm font-medium">Pagination — fetch every page</summary>
+            {/* One Options control, holding everything optional. It replaced
+                two differently-named <details> and a separate "Advanced
+                parameters" panel: a step with a quarter of n8n's configuration
+                read as the busier one because its optional settings were behind
+                four lids of three different shapes. The nested editors below are
+                unchanged — the collection only decides whether they exist. */}
+            <NodeOptions
+              node={node}
+              onChange={onChange}
+              renderCustom={(option: NodeOption) => {
+                if (option.key === 'pagination') {
+                  return (
+                    <div className="space-y-3">
               <div className="mt-3 space-y-3">
                 <select
                   className={fieldClass}
@@ -2037,23 +2050,37 @@ export function StepDrawer({
                 )}
                 {node.data.pagination && <p className="text-xs text-muted-foreground">Items from every page are combined into one list in the output.</p>}
               </div>
-            </details>
-
-            <details className="rounded-lg border border-border/70 p-2">
-              <summary className="cursor-pointer text-sm font-medium">Optimize response for AI</summary>
+                    </div>
+                  )
+                }
+                if (option.key === 'optimizeForAi') {
+                  return (
+                    <div className="grid grid-cols-2 gap-2">
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <label className="col-span-2 text-xs">Keep only this part (path)<input className={fieldClass} placeholder="data" value={node.data.optimizeForAi?.dataPath ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, optimizeForAi: cleanOptimize({ ...node.data.optimizeForAi, dataPath: e.target.value || undefined }) } })} /></label>
                 <label className="col-span-2 text-xs">Keep only these fields (comma-separated)<input className={fieldClass} placeholder="id, name, email" value={(node.data.optimizeForAi?.fields ?? []).join(', ')} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, optimizeForAi: cleanOptimize({ ...node.data.optimizeForAi, fields: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) }) } })} /></label>
                 <label className="text-xs">Max items<input type="number" min={1} className={fieldClass} placeholder="No limit" value={node.data.optimizeForAi?.maxItems ?? ''} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, optimizeForAi: cleanOptimize({ ...node.data.optimizeForAi, maxItems: e.target.value === '' ? undefined : Math.max(1, Number(e.target.value)) }) } })} /></label>
               </div>
-            </details>
+                    </div>
+                  )
+                }
+                if (option.key === 'perItem') {
+                  return (
+                    <PerItemSection
+                      node={node}
+                      onChange={onChange}
+                      dataFields={dataFields}
+                      labelCtx={labelCtx}
+                      registerEditor={registerEditor}
+                      focusEditor={focusEditor}
+                      insertToken={insertToken}
+                    />
+                  )
+                }
+                return null
+              }}
+            />
 
-            {/* The HTTP step declares eight advanced parameters and the
-                executor honours every one of them — retries, timeout, on-error,
-                redirects, how the response is parsed. This panel never rendered
-                the section, so the busiest node type was the one whose run
-                behaviour you could only change from the inline card. */}
-            <AdvancedParamsSection node={node} onChange={onChange} />
             <p className="text-xs text-muted-foreground">Calls a public HTTPS endpoint. The raw status, response headers, parsed body, and response text appear in Output.</p>
           </div>
         )}
@@ -2524,9 +2551,10 @@ export function StepDrawer({
             </p>
           </div>
         )}
-            {/* Run behaviour, once, at the end: how often the step runs is a
-                setting about the step, not one of its parameters. */}
-            {!isTrigger && PER_ITEM_TYPES.has(node.type) && (
+            {/* Per-item is an OPTION now, rendered inside the step's Options
+                collection — see node-options.ts. Node types that have not moved
+                to the collection yet keep rendering it here. */}
+            {!isTrigger && PER_ITEM_TYPES.has(node.type) && nodeOptions(node.type).length === 0 && (
               <PerItemSection
                 node={node}
                 onChange={onChange}

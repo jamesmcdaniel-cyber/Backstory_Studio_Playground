@@ -55,6 +55,7 @@ export const KNOWN_SIGNAL_LABELS: Record<KnownSignal, string> = {
  */
 export const ACTIVITY_KINDS_CLIENT = [
   'message.posted',
+  'agent.mentioned',
   'record.created',
   'record.updated',
   'record.deleted',
@@ -71,6 +72,7 @@ export type ActivityKindClient = (typeof ACTIVITY_KINDS_CLIENT)[number]
 
 export const ACTIVITY_KIND_LABELS: Record<ActivityKindClient, string> = {
   'message.posted': 'New message posted',
+  'agent.mentioned': 'Someone mentioned an agent',
   'record.created': 'Record created',
   'record.updated': 'Record updated',
   'record.deleted': 'Record deleted',

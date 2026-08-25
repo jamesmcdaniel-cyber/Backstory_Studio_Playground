@@ -359,6 +359,31 @@ Note that installing connects the WORKSPACE, not its people. Each person still
 links their own Slack account before they can summon an agent — that is the
 fail-closed identity rule, not a bug.
 
+### Summoning agents from Slack
+
+Two things must be true, and they are separate — this is the most common
+support question, because with a platform-owned app people reasonably assume
+installing it covered everyone:
+
+1. **The workspace is connected** — Add to Slack, or a BYO app with
+   `app_mentions:read`, `chat:write` and `chat:write.customize`, and
+   `app_mention` subscribed.
+2. **The person is linked** — each individual connects their own Slack from
+   /integrations. Installing the app connects the WORKSPACE, not its people. An
+   unlinked mention runs nothing, spends no tokens, and replies with a link
+   prompt; that is the fail-closed identity rule, not a bug.
+
+Addressing: `@Backstory Scout what changed on Acme?` names a teammate;
+`@Backstory what changed?` uses the channel's bound teammate (set on the
+teammate's panel, or `PUT /api/slack/channel-bindings`); naming nobody in an
+unbound channel asks which teammate. A name that matches nothing also asks
+rather than falling back to the channel default.
+
+Replies post as the teammate (name + avatar), in-thread, updating a
+placeholder. A run that fails updates the same message rather than going
+silent. Every post stamps `metadata.event_payload.chainDepth`, which is what
+`ACTIVITY_CHAIN_DEPTH_CAP` reads back to stop an agent answering itself.
+
 **Bring your own app (exception).** Everything below still works for a workspace
 that wants its own Slack app, and its own signing secret takes precedence over
 the platform app's. An operator standing up a brand-new Slack app needs, at

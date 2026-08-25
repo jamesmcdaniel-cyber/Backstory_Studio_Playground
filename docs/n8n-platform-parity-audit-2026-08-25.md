@@ -26,6 +26,9 @@ Closed since the audit was written:
 | 5 | Resource-scoped agent memory | `resourceId` + `contentHash` on `AgentMemory` |
 | 6 | Review before publish | `FlowReview` + `flowReviewRequired`, enforced at the publish boundary |
 | 8 | Credential dependency index | `credentialDependents()`, surfaced in the delete confirmation |
+| 2 | resourceLocator | Identifier arguments offer earlier-step / list / typed, with `argLabels` naming the id |
+| 7 | Agent draft/publish | `publishedConfig` pins the words AND the bound tools; unpublished agents unchanged |
+| 10 | Log streaming | `AuditStreamDestination` + signed delivery over the outbox |
 | — | `notesInFlow` | The note renders on the canvas node |
 
 **§4.2 was built as GRAPH versioning, not per-node.** One number to reason
@@ -41,8 +44,11 @@ change-management procurement ask, not a capability gap. The review gate (§6.2,
 now shipped) serves that need natively, and far better for a non-technical
 audience.
 
-Still open: §4.1 resourceLocator · §2.3 agent draft/publish · log streaming ·
-external secret references per credential · nested-collection arguments.
+Still open: external secret references per credential (§5.1) ·
+nested-collection arguments (§4) · list-mode pickers on the MCP and People.ai
+planes, which needs a decision on classifying MCP tools as read or write ·
+and two editor affordances for work whose engine half has shipped — a Publish
+button for agents, and a review request/approve surface for flows.
 
 ---
 

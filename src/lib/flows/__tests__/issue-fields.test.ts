@@ -27,6 +27,13 @@ const GRAPH_LEVEL = new Set([
   'CONTAINER_BRANCHING_UNSUPPORTED',
   'CONTAINER_JOIN_UNSUPPORTED',
   'HUMAN_REVIEW_IN_CONTAINER',
+  // About an EDGE, and raised with no nodeId at all — an AI configuration
+  // attachment carries no items. There is no field on any step to point at.
+  'CONFIGURATION_EDGE',
+  // The node's `typeVersion` is one this deployment cannot run. Not fixable by
+  // editing a parameter: the flow needs migrating, which is what the migration
+  // report is for.
+  'UNSUPPORTED_NODE_VERSION',
   'EMPTY_LOOP_BODY',
   'EMPTY_PARALLEL',
   'EMPTY_PARALLEL_BRANCH',

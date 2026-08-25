@@ -35,7 +35,12 @@ const REDACTED_WRITE_FIELDS: Record<string, readonly string[]> = {
   // Step input carries the resolved node config; output carries whatever the
   // third party returned, under keys we do not control; logs carry whatever the
   // author printed.
-  FlowRunStep: ['input', 'output', 'logs', 'warnings'],
+  // `items` carries the universal item packets — `json` is whatever the third
+  // party returned, under keys we do not control, which is the same class of
+  // content as `output` and arrives by the same route. It was added as a
+  // persisted column without being listed here, which is precisely the case
+  // the guard below exists to catch.
+  FlowRunStep: ['input', 'output', 'logs', 'warnings', 'items'],
   // The run's own trigger payload (an inbound webhook body may carry a token)
   // and its final output, which is usually the last step's.
   FlowRun: ['input', 'output', 'trigger'],

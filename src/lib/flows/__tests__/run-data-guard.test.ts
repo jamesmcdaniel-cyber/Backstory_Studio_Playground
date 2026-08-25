@@ -266,3 +266,34 @@ test('a fresh insert never needs a reader — nothing prior exists to lose', asy
 
   assert.deepEqual(out.data.warnings, [REDACTED_AT_REST_WARNING])
 })
+
+test('item packets are redacted — the `json` in them is third-party output', async () => {
+  // `items` was added as a persisted column carrying {json, binary, pairedItem}
+  // where `json` is whatever a tool returned, under keys we do not control.
+  // Same class of content as `output`, arriving by the same route.
+  const out = (await applyRunDataRedaction('FlowRunStep', 'create', {
+    data: {
+      id: 'step-1',
+      items: [
+        { json: { account: 'Acme', ...TOKEN_BODY }, pairedItem: 0 },
+        { json: { account: 'Beta' }, pairedItem: 1 },
+      ],
+    },
+  })) as { data: { items: Array<{ json: Record<string, unknown> }>; warnings?: unknown[] } }
+
+  assert.equal(out.data.items[0].json.access_token, REDACTED)
+  assert.equal(out.data.items[0].json.account, 'Acme', 'the rest of the item survives')
+  assert.equal(out.data.items[1].json.account, 'Beta', 'clean items are untouched')
+  // Losing content to redaction earns the at-rest marker, exactly as output does.
+  assert.deepEqual(out.data.warnings, [REDACTED_AT_REST_WARNING])
+})
+
+test('a clean item set earns no warning and is left byte-identical', async () => {
+  const items = [{ json: { account: 'Acme' }, pairedItem: 0 }]
+  const out = (await applyRunDataRedaction('FlowRunStep', 'create', {
+    data: { id: 'step-1', items },
+  })) as { data: { items: unknown; warnings?: unknown[] } }
+
+  assert.equal(out.data.warnings, undefined, 'no secret lost, no marker')
+  assert.deepEqual(out.data.items, items)
+})

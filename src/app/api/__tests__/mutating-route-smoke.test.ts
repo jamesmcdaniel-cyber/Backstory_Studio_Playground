@@ -161,6 +161,7 @@ const cases = (): Case[] => [
   { route: 'audit-streams', method: 'PATCH', run: async () => (await import('../audit-streams/route')).PATCH(rq('/api/audit-streams', 'PATCH', { id: 'missing', isActive: false })) },
   { route: 'audit-streams', method: 'DELETE', run: async () => (await import('../audit-streams/route')).DELETE(rq('/api/audit-streams?id=missing', 'DELETE')) },
   { route: 'agents/[id]/publish', method: 'POST', run: async () => (await import('../agents/[id]/publish/route')).POST(rq(`/api/agents/${agentId}/publish`, 'POST', {})) },
+  { route: 'flows/migrations', method: 'POST', run: async () => (await import('../flows/migrations/route')).POST(rq('/api/flows/migrations', 'POST', { apply: true })) },
   { route: 'flows/[id]/review', method: 'POST', run: async () => (await import('../flows/[id]/review/route')).POST(rq(`/api/flows/${flowId}/review`, 'POST', { note: 'Please look at the Slack step.' })) },
   { route: 'flows/[id]/review', method: 'PATCH', run: async () => (await import('../flows/[id]/review/route')).PATCH(rq(`/api/flows/${flowId}/review`, 'PATCH', { decision: 'approved' })) },
   { route: 'flows/[id]/share', method: 'POST', run: async () => (await import('../flows/[id]/share/route')).POST(rq(`/api/flows/${flowId}/share`, 'POST', { enabled: true, role: 'view' })) },

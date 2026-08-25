@@ -5,7 +5,7 @@ import { indentOnTab } from '@/components/ui/textarea'
 import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin, AlertTriangle, ToggleLeft, ToggleRight, Ban } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
+import { AI_OPS, AI_OP_LABELS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, SUMMARIZE_OPS, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
@@ -14,6 +14,7 @@ import { StructuredValueView } from '@/components/flows/structured-value-view'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 import { fileBindingOptions, type DataField } from '@/lib/flows/datatree'
 import { splitIssuesByField, type FieldIssue } from '@/lib/flows/issue-fields'
+import { operatorsForField } from '@/lib/flows/condition-ops'
 import { AdvancedParamsSection } from '@/components/flows/advanced-params'
 import { CodeEditor } from '@/components/flows/code-editor'
 import { CodeAssist } from '@/components/flows/code-assist'
@@ -1499,7 +1500,7 @@ export function StepDrawer({
                   />
                   <div className="flex gap-1.5">
                     <select className={smallField} value={clause.op} onChange={(e) => update(clauses.map((c, j) => (j === i ? { ...c, op: e.target.value as ConditionOp } : c)))}>
-                      {CONDITION_OPS.map((op) => (
+                      {operatorsForField(clause.left, dataFields, clause.op).map((op) => (
                         <option key={op} value={op}>
                           {CONDITION_OP_LABELS[op]}
                         </option>
@@ -2130,7 +2131,7 @@ export function StepDrawer({
                   <TokenTextEditor ref={registerEditor(`filt.${i}.left`)} className="px-2 py-1.5" value={clause.left} labelCtx={labelCtx} placeholder="Choose data from below" onFocus={focusEditor(`filt.${i}.left`)} onChange={(left) => update(clauses.map((c, j) => (j === i ? { ...c, left } : c)))} ariaLabel={`Filter ${i + 1} value`} />
                   <div className="flex gap-1.5">
                     <select className={smallField} value={clause.op} onChange={(e) => update(clauses.map((c, j) => (j === i ? { ...c, op: e.target.value as ConditionOp } : c)))}>
-                      {CONDITION_OPS.map((op) => <option key={op} value={op}>{CONDITION_OP_LABELS[op]}</option>)}
+                      {operatorsForField(clause.left, dataFields, clause.op).map((op) => <option key={op} value={op}>{CONDITION_OP_LABELS[op]}</option>)}
                     </select>
                     {!UNARY_CONDITION_OPS.has(clause.op) && (
                       <TokenTextEditor ref={registerEditor(`filt.${i}.right`)} className="min-w-0 flex-1 px-2 py-1.5" value={clause.right} labelCtx={labelCtx} placeholder="80" onFocus={focusEditor(`filt.${i}.right`)} onChange={(right) => update(clauses.map((c, j) => (j === i ? { ...c, right } : c)))} ariaLabel={`Filter ${i + 1} comparison value`} />
@@ -2168,7 +2169,7 @@ export function StepDrawer({
                 <TokenTextEditor ref={registerEditor(`sw.${i}.left`)} className="px-2 py-1.5" value={c.left} labelCtx={labelCtx} placeholder="Choose data from below" onFocus={focusEditor(`sw.${i}.left`)} onChange={(left) => onChange({ ...node, data: { ...node.data, cases: node.data.cases.map((x, j) => (j === i ? { ...x, left } : x)) } })} ariaLabel={`Case ${i + 1} value`} />
                 <div className="flex gap-1.5">
                   <select className={smallField} value={c.op} onChange={(e) => onChange({ ...node, data: { ...node.data, cases: node.data.cases.map((x, j) => (j === i ? { ...x, op: e.target.value as ConditionOp } : x)) } })}>
-                    {CONDITION_OPS.map((op) => <option key={op} value={op}>{CONDITION_OP_LABELS[op]}</option>)}
+                    {operatorsForField(c.left, dataFields, c.op).map((op) => <option key={op} value={op}>{CONDITION_OP_LABELS[op]}</option>)}
                   </select>
                   <TokenTextEditor ref={registerEditor(`sw.${i}.right`)} className="min-w-0 flex-1 px-2 py-1.5" value={c.right} labelCtx={labelCtx} placeholder="enterprise" onFocus={focusEditor(`sw.${i}.right`)} onChange={(right) => onChange({ ...node, data: { ...node.data, cases: node.data.cases.map((x, j) => (j === i ? { ...x, right } : x)) } })} ariaLabel={`Case ${i + 1} comparison value`} />
                 </div>
@@ -2986,7 +2987,7 @@ function DataEditor({
               />
               <div className="flex gap-1.5">
                 <select className={smallField} value={clause.op} onChange={(e) => setClauses(clauses.map((c, j) => (j === i ? { ...c, op: e.target.value as ConditionOp } : c)))}>
-                  {CONDITION_OPS.map((entry) => (
+                  {operatorsForField(clause.left, dataFields, clause.op).map((entry) => (
                     <option key={entry} value={entry}>
                       {CONDITION_OP_LABELS[entry]}
                     </option>

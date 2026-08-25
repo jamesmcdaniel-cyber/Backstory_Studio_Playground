@@ -30,7 +30,7 @@ import { NODE_ICON, NODE_TONE, STATUS_DOT, type StepStatus } from '@/lib/flows/n
 
 export type { StepStatus }
 import { cn } from '@/lib/utils'
-import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type ConditionClause, type ConditionOp, type DataOp, type FlowNode, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
+import { AI_OPS, AI_OP_LABELS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type ConditionClause, type ConditionOp, type DataOp, type FlowNode, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { humanizeTokens, type TokenLabelContext } from '@/lib/flows/token-text'
@@ -42,6 +42,7 @@ import { AGENT_STEP_MODELS, orgMemberLabel, type OrgMember, type ToolCatalog } f
 import { TriggerEditor, type TriggerData } from './trigger-editor'
 import { AgentInlineCreate } from './agent-inline-create'
 import { AdvancedParamsSection } from './advanced-params'
+import { operatorsForField } from '@/lib/flows/condition-ops'
 import { DataTree } from './data-tree'
 import { TokenTextEditor, type TokenTextEditorHandle } from './token-text-editor'
 import { ToolArgsEditor } from './tool-args-editor'
@@ -181,6 +182,10 @@ const EMPTY_LABEL_CTX: TokenLabelContext = { stepLabels: {} }
 
 type TokenEditorWiring = {
   labelCtx: TokenLabelContext
+  /** The step's upstream data, so a clause can narrow its operators to the
+   *  type of the field on its left. Part of the token bundle because it is the
+   *  same context the editors insert from. */
+  dataFields: DataField[]
   registerEditor: (key: string) => (handle: TokenTextEditorHandle | null) => void
   focusEditor: (key: string) => () => void
   blockActive: () => void
@@ -343,6 +348,7 @@ export function StepCard({
   }
   const tokenWiring: TokenEditorWiring = {
     labelCtx: labelCtx ?? EMPTY_LABEL_CTX,
+    dataFields: dataFields ?? [],
     registerEditor,
     focusEditor,
     blockActive,
@@ -1771,7 +1777,7 @@ function ConditionBody({
   update: (node: FlowNode) => void
   tokenWiring: TokenEditorWiring
 }) {
-  const { labelCtx, registerEditor, focusEditor } = tokenWiring
+  const { labelCtx, dataFields, registerEditor, focusEditor } = tokenWiring
   const matchId = useId()
   const clauses = conditionClauses(node)
   const setClauses = (next: ConditionClause[]) =>
@@ -1829,7 +1835,7 @@ function ConditionBody({
             className={controlClass}
             aria-label={`${node.type === 'condition' ? 'Condition' : 'Filter'} ${index + 1} operator`}
           >
-            {CONDITION_OPS.map((op) => (
+            {operatorsForField(clause.left, dataFields, clause.op).map((op) => (
               <option key={op} value={op}>
                 {CONDITION_OP_LABELS[op]}
               </option>
@@ -1971,7 +1977,7 @@ function SwitchBody({
   update: (node: FlowNode) => void
   tokenWiring: TokenEditorWiring
 }) {
-  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const { labelCtx, dataFields, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
   const cases = node.data.cases.length
     ? node.data.cases
     : [{ id: 'case1', left: '', op: 'contains' as ConditionOp, right: '' }]
@@ -2018,7 +2024,7 @@ function SwitchBody({
               className={controlClass}
               aria-label={`Case ${index + 1} operator`}
             >
-              {CONDITION_OPS.map((op) => (
+              {operatorsForField(entry.left, dataFields, entry.op).map((op) => (
                 <option key={op} value={op}>
                   {CONDITION_OP_LABELS[op]}
                 </option>
@@ -2191,7 +2197,7 @@ function DataBody({
   tokenWiring: TokenEditorWiring
   showErrors?: boolean
 }) {
-  const { labelCtx, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
+  const { labelCtx, dataFields, registerEditor, focusEditor, blockActive, unblockActive } = tokenWiring
   const id = useId()
   const op = node.data.op
   const setOp = (next: DataOp) => {
@@ -2372,7 +2378,7 @@ function DataBody({
                 onChange={(event) => setClauses(list.map((entry, j) => (j === index ? { ...entry, op: event.target.value as ConditionOp } : entry)))}
                 className={controlClass}
               >
-                {CONDITION_OPS.map((entry) => (
+                {operatorsForField(clause.left, dataFields, clause.op).map((entry) => (
                   <option key={entry} value={entry}>
                     {CONDITION_OP_LABELS[entry]}
                   </option>

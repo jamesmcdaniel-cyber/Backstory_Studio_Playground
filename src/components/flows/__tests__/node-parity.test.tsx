@@ -327,3 +327,57 @@ test('a disabled step says so in the panel that configures it', () => {
   assert.ok(getByText('Enable step'))
   cleanup()
 })
+
+test('a condition offers the comparisons its field type supports, and no others', () => {
+  const node = {
+    id: 'condition1',
+    type: 'condition',
+    data: { match: 'all', clauses: [{ left: '{{steps.lookup.employees}}', op: 'gt', right: '100' }] },
+  } as FlowNode
+  const { getByLabelText } = render(
+    React.createElement(StepCard, {
+      node,
+      title: 'Test step',
+      selected: true,
+      agents: [],
+      toolCatalog,
+      dataFields: [{ label: 'Employees', token: '{{steps.lookup.employees}}', type: 'number' }],
+      labelCtx: {} as never,
+      onChange: () => {},
+      onClick: () => {},
+    }),
+  )
+
+  const values = Array.from((getByLabelText('Condition 1 operator') as HTMLSelectElement).options).map((o) => o.value)
+  assert.ok(values.includes('gt') && values.includes('lte'))
+  // The evaluator would not fail on these — it would string-compare and answer
+  // confidently wrong. Not offering them is what prevents that.
+  assert.ok(!values.includes('startsWith'))
+  assert.ok(!values.includes('before'))
+  cleanup()
+})
+
+test('a condition never loses the operator it was saved with', () => {
+  const node = {
+    id: 'condition1',
+    type: 'condition',
+    data: { match: 'all', clauses: [{ left: '{{steps.lookup.employees}}', op: 'startsWith', right: '1' }] },
+  } as FlowNode
+  const { getByLabelText } = render(
+    React.createElement(StepCard, {
+      node,
+      title: 'Test step',
+      selected: true,
+      agents: [],
+      toolCatalog,
+      dataFields: [{ label: 'Employees', token: '{{steps.lookup.employees}}', type: 'number' }],
+      labelCtx: {} as never,
+      onChange: () => {},
+      onClick: () => {},
+    }),
+  )
+
+  const select = getByLabelText('Condition 1 operator') as HTMLSelectElement
+  assert.equal(select.value, 'startsWith', 'a flow saved before the narrowing still shows its choice')
+  cleanup()
+})

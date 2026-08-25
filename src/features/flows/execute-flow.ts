@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { Job } from 'bullmq'
+import { Prisma } from '@prisma/client'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { hashToken } from '@/lib/crypto/secrets'
@@ -67,6 +68,8 @@ import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutio
 import { flowSideEffectKey, withIdempotencyHeader } from '@/lib/flows/idempotency'
 import { runScopeKey, readLedger, writeLedger, LEDGER_REPLAY_WARNING } from '@/lib/flows/side-effect-ledger'
 import { flowSignalOutboxEvent } from '@/lib/outbox'
+import type { FlowItem } from '@/lib/flows/items'
+import { parseFlowSettings, subflowCallerAllowed } from '@/lib/flows/settings'
 
 export type FlowExecutionJob = {
   flowId: string
@@ -88,7 +91,7 @@ export type FlowExecutionJob = {
   // executes the working draft so you can test before publishing.
   usePublished?: boolean
   // How this run was started — persisted on the FlowRun for provenance.
-  trigger?: { type: 'manual' | 'schedule' | 'webhook' | 'signal' | 'subflow' | 'poll' | 'activity' | 'slack'; [key: string]: unknown }
+  trigger?: { type: 'manual' | 'schedule' | 'webhook' | 'signal' | 'subflow' | 'poll' | 'activity' | 'slack' | 'error'; [key: string]: unknown }
   /**
    * The scheduled occurrence this run belongs to (see dueOccurrence). Set ONLY
    * by scheduled dispatch; everything else leaves it undefined and is exempt
@@ -99,6 +102,8 @@ export type FlowExecutionJob = {
   // How many subflow hops deep this run already is (0/omitted = top-level).
   // Each subflow step dispatch passes depth + 1; the guard caps nesting.
   subflowDepth?: number
+  /** Prevents error-workflow chains from recursively dispatching forever. */
+  errorWorkflowDepth?: number
   // Re-run from a step: replay `runId`'s recorded outputs for every step that
   // ran BEFORE `nodeId` (on that run's pinned graph), then execute from
   // `nodeId` onward as a NEW run. Route-failed steps re-take their error edge.
@@ -404,11 +409,29 @@ async function runFlowExecutionInner(
 ): Promise<{ flowRunId: string; status: string; output: unknown }> {
   const flow = await prisma.flow.findFirst({ where: { id: job.flowId, organizationId: job.organizationId } })
   if (!flow) throw new Error('Flow not found')
+  const flowSettings = parseFlowSettings(flow.settings)
   const resuming = Boolean(job.flowRunId && job.reply !== undefined)
   // Patch-and-resume: same run row, re-executed from a chosen step. Carries a
   // flowRunId but no reply, so it never collides with the resume path above.
   const patching = Boolean(job.flowRunId && job.resumeFrom && !resuming)
   const prepared = Boolean(job.preparedRunId) && !resuming && !patching
+  if (!resuming && !patching && flowSettings.concurrencyLimit) {
+    const alreadyRunning = await prisma.flowRun.count({
+      where: {
+        flowId: flow.id,
+        organizationId: job.organizationId,
+        status: 'running',
+        ...(job.preparedRunId ? { id: { not: job.preparedRunId } } : {}),
+      },
+    })
+    if (alreadyRunning >= flowSettings.concurrencyLimit) {
+      throw new ApiError(
+        `This flow already has ${alreadyRunning} running execution${alreadyRunning === 1 ? '' : 's'} (limit ${flowSettings.concurrencyLimit}).`,
+        429,
+        'FLOW_CONCURRENCY_LIMIT',
+      )
+    }
+  }
 
   // Resume: atomically claim the run — only a genuinely `waiting` run may be
   // resumed. A concurrent resume (e.g. the reply route and the approvals
@@ -604,6 +627,7 @@ async function runFlowExecutionInner(
   // mid-loop pause resumes ONLY the paused iteration, never re-running prior
   // iterations' side effects.
   const completed: Record<string, unknown> = {}
+  const completedItems: Record<string, FlowItem[]> = {}
   // Pin/override provenance, keyed exactly like `completed` — read by
   // interpret.ts's resume-replay branch (`opts.completedProvenance`) so an
   // INTERPRETER-NATIVE node type (condition/loop/parallel/stop/variable/…)
@@ -656,6 +680,7 @@ async function runFlowExecutionInner(
       // cleared: the run repeats the path it actually took.
       if (step.status === 'succeeded' || step.status === 'skipped') {
         completed[step.nodeId] = step.output
+        if (Array.isArray(step.items)) completedItems[step.nodeId] = step.items as unknown as FlowItem[]
         if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
       }
       if (step.status === 'failed') {
@@ -663,6 +688,7 @@ async function runFlowExecutionInner(
         const onError = baseNode && 'onError' in baseNode.data ? (baseNode.data as { onError?: string }).onError : undefined
         if ((onError === 'route' || onError === 'continue') && step.output !== null && step.output !== undefined) {
           completed[step.nodeId] = step.output
+          if (Array.isArray(step.items)) completedItems[step.nodeId] = step.items as unknown as FlowItem[]
           if (onError === 'route') completedRoutes.add(step.nodeId)
           if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
         }
@@ -736,6 +762,7 @@ async function runFlowExecutionInner(
       if (step.order >= cutoff) continue
       if (step.status === 'succeeded' || step.status === 'skipped') {
         completed[step.nodeId] = step.output
+        if (Array.isArray(step.items)) completedItems[step.nodeId] = step.items as unknown as FlowItem[]
         if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
       }
       if (step.status === 'failed') {
@@ -743,6 +770,7 @@ async function runFlowExecutionInner(
         const onError = baseNode && 'onError' in baseNode.data ? (baseNode.data as { onError?: string }).onError : undefined
         if ((onError === 'route' || onError === 'continue') && step.output !== null && step.output !== undefined) {
           completed[step.nodeId] = step.output
+          if (Array.isArray(step.items)) completedItems[step.nodeId] = step.items as unknown as FlowItem[]
           if (onError === 'route') completedRoutes.add(step.nodeId)
           if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
         }
@@ -770,6 +798,7 @@ async function runFlowExecutionInner(
       if (step.order >= cutoff) continue
       if (step.status === 'succeeded' || step.status === 'skipped') {
         completed[step.nodeId] = step.output
+        if (Array.isArray(step.items)) completedItems[step.nodeId] = step.items as unknown as FlowItem[]
         if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
       }
       if (step.status === 'failed') {
@@ -777,6 +806,7 @@ async function runFlowExecutionInner(
         const onError = baseNode && 'onError' in baseNode.data ? (baseNode.data as { onError?: string }).onError : undefined
         if ((onError === 'route' || onError === 'continue') && step.output !== null && step.output !== undefined) {
           completed[step.nodeId] = step.output
+          if (Array.isArray(step.items)) completedItems[step.nodeId] = step.items as unknown as FlowItem[]
           if (onError === 'route') completedRoutes.add(step.nodeId)
           if (stepWasRedacted(step)) completedProvenance[step.nodeId] = REPLAYED_REDACTED_NOTE
         }
@@ -879,7 +909,7 @@ async function runFlowExecutionInner(
       recordSkippedSeed(key, overrides[key], 'state override — node not executed', alreadyRecorded)
     }
   }
-  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; error?: string; warnings?: string[]; logs?: string[]; startedAt: Date; finishedAt: Date }) => {
+  const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; items?: FlowItem[]; error?: string; warnings?: string[]; logs?: string[]; startedAt: Date; finishedAt: Date }) => {
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
     trackDetached(broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status }))
@@ -910,7 +940,11 @@ async function runFlowExecutionInner(
             const warningsPatch = outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}
             const updated = await tx.flowRunStep.updateMany({
               where: { flowRunId: run.id, nodeId: rowKey, status: 'succeeded' },
-              data: { output: jsonValue(outcome.output), ...warningsPatch },
+              data: {
+                output: jsonValue(outcome.output),
+                ...(outcome.items ? { items: jsonValue(outcome.items) } : {}),
+                ...warningsPatch,
+              },
             })
             if (updated.count === 0) {
               await tx.flowRunStep.create({
@@ -921,6 +955,7 @@ async function runFlowExecutionInner(
                   status: 'succeeded',
                   input: jsonValue(outcome.input ?? {}),
                   output: jsonValue(outcome.output ?? null),
+                  ...(outcome.items ? { items: jsonValue(outcome.items) } : {}),
                   ...warningsPatch,
                   startedAt: outcome.startedAt,
                   finishedAt: outcome.finishedAt,
@@ -952,10 +987,14 @@ async function runFlowExecutionInner(
             // count exists) still gets its attempt-error trail persisted even
             // when the failure itself carries no output patch.
             const warningsPatch = outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}
-            if (outcome.output !== undefined || Object.keys(warningsPatch).length) {
+            if (outcome.output !== undefined || outcome.items || Object.keys(warningsPatch).length) {
               const updated = await tx.flowRunStep.updateMany({
                 where: { flowRunId: run.id, nodeId: rowKey, status: 'failed' },
-                data: { ...(outcome.output !== undefined ? { output: jsonValue(outcome.output) } : {}), ...warningsPatch },
+                data: {
+                  ...(outcome.output !== undefined ? { output: jsonValue(outcome.output) } : {}),
+                  ...(outcome.items ? { items: jsonValue(outcome.items) } : {}),
+                  ...warningsPatch,
+                },
               })
               if (updated.count > 0) return
             }
@@ -975,6 +1014,7 @@ async function runFlowExecutionInner(
                   status: 'failed',
                   input: jsonValue(outcome.input ?? {}),
                   output: jsonValue(outcome.output ?? null),
+                  ...(outcome.items ? { items: jsonValue(outcome.items) } : {}),
                   error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
                   ...warningsPatch,
                   startedAt: outcome.startedAt,
@@ -1016,6 +1056,7 @@ async function runFlowExecutionInner(
             // `{}` only for outcomes that genuinely carry none (skips, stop).
             input: jsonValue(outcome.input ?? {}),
             output: jsonValue(outcome.output ?? null),
+            ...(outcome.items ? { items: jsonValue(outcome.items) } : {}),
             error: outcome.error ? truncateWithMarker(outcome.error, 300) : null,
             ...(outcome.warnings?.length ? { warnings: jsonValue(outcome.warnings) } : {}),
             // Pin/override provenance for a node the interpreter never
@@ -1439,6 +1480,15 @@ async function runFlowExecutionInner(
         const child = await prisma.flow.findFirst({ where: { id: childFlowId, organizationId: job.organizationId } })
         if (!child) {
           const error = 'The selected flow no longer exists in this workspace.'
+          await finish({ status: 'failed', error })
+          return { error }
+        }
+        if (!subflowCallerAllowed(
+          parseFlowSettings(child.settings),
+          { flowId: flow.id, ownerId: flow.userId },
+          { ownerId: child.userId },
+        )) {
+          const error = `"${child.name}" does not allow calls from this flow.`
           await finish({ status: 'failed', error })
           return { error }
         }
@@ -1929,7 +1979,9 @@ async function runFlowExecutionInner(
   // the DB read so a fast flow doesn't hammer the row; once seen, stay cancelled.
   let lastCancelPoll = 0
   let cancelSeen = false
+  let settingsTimedOut = false
   const isCancelled = async (): Promise<boolean> => {
+    if (settingsTimedOut) return true
     if (cancelSeen) return true
     const nowMs = Date.now()
     if (nowMs - lastCancelPoll < 2000) return false
@@ -1946,22 +1998,46 @@ async function runFlowExecutionInner(
 
   let result
   try {
-    result = await interpretFlow(graph, input, {
+    const interpretation = interpretFlow(graph, input, {
       runAgent,
       runAction,
       onStep,
       now,
       run: runMeta,
       isCancelled,
+      executionOrder: flowSettings.executionOrder,
       // Display labels (agent titles included) so hand-typed friendly-label
       // tokens like {{Previous Agent.output}} resolve to the right step.
       stepLabels: stepLabelsOf(graph, orgAgents),
-      ...(resuming || replaySource || Object.keys(completed).length ? { completed, completedRoutes } : {}),
+      ...(resuming || replaySource || Object.keys(completed).length ? { completed, completedItems, completedRoutes } : {}),
       ...(Object.keys(completedProvenance).length ? { completedProvenance } : {}),
       ...(resuming ? { resumeNodeId, resumeReply: job.reply } : {}),
       ...(job.stopAfterNodeId ? { stopAfterNodeId: job.stopAfterNodeId } : {}),
       ...(job.stopBeforeNodeId ? { stopBeforeNodeId: job.stopBeforeNodeId } : {}),
     })
+    if (flowSettings.timeoutSeconds) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        result = await Promise.race([
+          interpretation,
+          new Promise<Awaited<typeof interpretation>>((resolve) => {
+            timer = setTimeout(() => {
+              settingsTimedOut = true
+              resolve({
+                status: 'failed',
+                steps: [],
+                output: null,
+                error: `Flow exceeded its ${flowSettings.timeoutSeconds}-second execution timeout.`,
+              })
+            }, flowSettings.timeoutSeconds! * 1000)
+          }),
+        ])
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
+    } else {
+      result = await interpretation
+    }
   } catch (error) {
     if (error instanceof FlowCancelledError) {
       // Terminalize as cancelled (not failed) + sweep still-running step rows.
@@ -1996,6 +2072,11 @@ async function runFlowExecutionInner(
   // the cron scan can wake it. Any other waiting state (human reply, approval,
   // open-ended webhook callback) and every terminal state clear resumeAt.
   const resumeAt = status === 'waiting' && result.waiting?.resumeAt ? new Date(result.waiting.resumeAt) : null
+  const manualRun = String(job.trigger?.type ?? 'manual') === 'manual'
+  const retainTerminalData = status === 'waiting' || (
+    (!manualRun || flowSettings.saveManualRuns) &&
+    (status === 'succeeded' ? flowSettings.saveSuccessfulRuns : flowSettings.saveFailedRuns)
+  )
   await tenantTransaction(job.organizationId, async (tx) => {
     // "Degraded" = succeeded but with fine print: a step that carried engine
     // warnings, or one that failed while the run continued (on-error
@@ -2029,6 +2110,18 @@ async function runFlowExecutionInner(
           },
         }),
       })
+    }
+    // Keep the run's status/timing/audit identity even when data retention is
+    // disabled, but remove payloads and step-level progress after dispatching
+    // the outbox event. Waiting runs always retain state because resume needs it.
+    if (!retainTerminalData) {
+      await tx.flowRunStep.deleteMany({ where: { flowRunId: run.id } })
+      await tx.flowRun.update({
+        where: { id: run.id, organizationId: job.organizationId },
+        data: { input: jsonValue({}), output: Prisma.DbNull },
+      })
+    } else if (status !== 'waiting' && !flowSettings.saveExecutionProgress) {
+      await tx.flowRunStep.deleteMany({ where: { flowRunId: run.id } })
     }
   })
   // Final realtime nudge on the terminal/waiting status, so the builder settles
@@ -2076,6 +2169,29 @@ async function runFlowExecutionInner(
         },
       })
       .catch(() => undefined)
+  }
+
+  if (
+    status === 'failed' &&
+    flowSettings.errorWorkflowId &&
+    flowSettings.errorWorkflowId !== flow.id &&
+    (job.errorWorkflowDepth ?? 0) < 1
+  ) {
+    await dispatchDetachedFlowExecution({
+      flowId: flowSettings.errorWorkflowId,
+      organizationId: job.organizationId,
+      userId: job.userId,
+      usePublished: true,
+      errorWorkflowDepth: (job.errorWorkflowDepth ?? 0) + 1,
+      trigger: { type: 'error', sourceFlowId: flow.id, sourceRunId: run.id },
+      input: { flowId: flow.id, flowName: flow.name, runId: run.id, error: runError },
+    }).catch((error) => {
+      apiLogger.error('flow error-workflow dispatch failed', {
+        flowId: flow.id,
+        errorWorkflowId: flowSettings.errorWorkflowId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
   }
 
   return { flowRunId: run.id, status, output: effectiveOutput }

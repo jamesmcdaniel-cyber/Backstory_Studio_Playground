@@ -8,19 +8,15 @@
  * systems. We got away with it because the schema has mostly grown additively.
  * That is a property of our history, not of the design.
  *
- * The graph carries a `schemaVersion`, and a migration chain brings an older
+ * The graph carries a `schemaVersion`, and every node carries a `typeVersion`.
+ * A migration chain brings an older
  * graph up to the current shape at PARSE time — so every reader gets a migrated
- * graph without a single call site knowing this exists. Versioning the graph
- * rather than each node is a deliberate choice: one number to reason about, one
- * ordered chain, and no per-node bookkeeping in a schema that has ~22 node
- * types.
- *
- * `GRAPH_MIGRATIONS` is empty today. That is the point — the machinery is here
- * BEFORE it is needed, so the next semantic change has somewhere to declare
- * itself instead of being applied silently to everyone's saved work.
+ * graph without a single call site knowing this exists. The graph version
+ * defines the envelope while `typeVersion` pins each node's execution contract,
+ * so one node can evolve without silently changing every saved instance.
  */
 
-export const CURRENT_GRAPH_VERSION = 1
+export const CURRENT_GRAPH_VERSION = 2
 
 /**
  * A graph written before versioning existed. Every flow in the database today
@@ -45,7 +41,31 @@ export type GraphMigration = {
  * fails if the chain gains a gap, loses its order, or stops ending at the
  * current version.
  */
-export const GRAPH_MIGRATIONS: readonly GraphMigration[] = []
+export const GRAPH_MIGRATIONS: readonly GraphMigration[] = [
+  {
+    to: 1,
+    describe: 'Stamp legacy flow graphs with the first explicit graph schema version.',
+    migrate: (graph) => ({ ...graph, schemaVersion: 1 }),
+  },
+  {
+    to: 2,
+    describe: 'Pin every node implementation version and make connection type and input/output indexes explicit.',
+    migrate: (graph) => ({
+      ...graph,
+      nodes: Array.isArray(graph.nodes)
+        ? graph.nodes.map((node) => (isRecord(node) ? { typeVersion: 1, ...node } : node))
+        : graph.nodes,
+      edges: Array.isArray(graph.edges)
+        ? graph.edges.map((edge) =>
+            isRecord(edge)
+              ? { connectionType: 'main', sourceOutput: 0, targetInput: 0, ...edge }
+              : edge,
+          )
+        : graph.edges,
+      schemaVersion: 2,
+    }),
+  },
+]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))

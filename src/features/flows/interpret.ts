@@ -12,6 +12,7 @@ import { computeResumeAt } from '@/lib/flows/wait'
 import { foreignReferences, unresolvedAuthHeaders, foreignReferenceMessage, unresolvedAuthMessage } from '@/lib/flows/foreign-reference'
 import { inBandErrorWarning } from './tool-output'
 import { bindFormFiles } from '@/lib/flows/file-ref'
+import { flowItemsFromValue, type FlowItem } from '@/lib/flows/items'
 
 export type StepOutcome = {
   nodeId: string
@@ -30,6 +31,8 @@ export type StepOutcome = {
    */
   input?: unknown
   output?: unknown
+  /** Universal item packets persisted for lineage and binary metadata. */
+  items?: FlowItem[]
   error?: string
   /**
    * Degraded-success notes: the step succeeded, but something the user would
@@ -124,6 +127,8 @@ type Opts = {
   runAction?: RunActionFn
   maxSteps?: number
   maxLoopIterations?: number
+  /** v1 serializes ready nodes; v2 runs independent ready nodes concurrently. */
+  executionOrder?: 'v1' | 'v2'
   onStep?: (outcome: StepOutcome) => void
   // Cooperative cancellation: polled once per scheduler tick (the caller
   // throttles the DB read). Returning true throws FlowCancelledError, which the
@@ -133,6 +138,8 @@ type Opts = {
   // their output (they are skipped, not re-run); `resumeNodeId` is the node that
   // was paused and should re-run with the user's reply injected.
   completed?: Record<string, unknown>
+  /** Persisted item packets for deterministic binary-aware resume/replay. */
+  completedItems?: Record<string, FlowItem[]>
   // Step keys in `completed` that FAILED with onError:'route' on the prior
   // attempt: replay must follow the node's error edge again (the completed
   // map alone can't express which edge the walk took).
@@ -170,7 +177,7 @@ type Opts = {
 
 // Result of executing a single node — an output, or a control signal that
 // propagates up through containers and halts the main chain.
-type NodeResult =
+type NodeResult = (
   | { kind: 'ok'; output: unknown }
   | { kind: 'skip' }
   | { kind: 'stop' }
@@ -186,6 +193,7 @@ type NodeResult =
   // A condition/switch decision — the scheduler activates the matching branch
   // edge and deads the rest. `output` mirrors the recorded outcome value.
   | { kind: 'branch'; branch: string | string[]; output: unknown }
+) & { items?: FlowItem[] }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
@@ -445,7 +453,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
   // Source node ids feeding each node, in edge order — used by a merge-mode join
   // to gather every active incoming branch's output.
   const incomingSources = new Map<string, string[]>()
-  for (const edge of graph.edges) {
+  for (const edge of graph.edges
+    .filter((candidate) => (candidate.connectionType ?? 'main') === 'main')
+    .sort((a, b) => (a.targetInput ?? 0) - (b.targetInput ?? 0))) {
     const list = incomingSources.get(edge.target) ?? []
     list.push(edge.source)
     incomingSources.set(edge.target, list)
@@ -538,7 +548,13 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // `startedAt`, so each iteration's row times only its own iteration.
     const startedAt = new Date()
     const emit = (outcome: Omit<StepOutcome, 'iterationKey' | 'startedAt' | 'finishedAt'>) =>
-      emitOutcome({ ...outcome, iterationKey: stepKey, startedAt, finishedAt: new Date() })
+      emitOutcome({
+        ...outcome,
+        ...(outcome.items ? {} : { items: flowItemsFromValue(outcome.output, ctx.items ?? [], 0, node.id) }),
+        iterationKey: stepKey,
+        startedAt,
+        finishedAt: new Date(),
+      })
 
     // Resolved comparison operands for condition/filter capture — handles both
     // the multi-clause shape and the legacy single left/op/right.
@@ -654,8 +670,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         emit({ nodeId: node.id, status: output ? 'succeeded' : 'skipped', output, ...(provenanceLogs ? { logs: provenanceLogs } : {}) })
         return output ? { kind: 'ok', output: undefined } : { kind: 'drop' }
       }
+      const replayItems = opts.completedItems?.[stepKey]
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'skipped', output, ...(provenanceLogs ? { logs: provenanceLogs } : {}) })
+      emit({ nodeId: node.id, status: 'skipped', output, ...(replayItems ? { items: replayItems } : {}), ...(provenanceLogs ? { logs: provenanceLogs } : {}) })
       // A completed condition/switch must replay as the SAME branch it took, not
       // a plain 'ok' (which the scheduler would read as "fan out to all edges").
       // The recorded output IS the branch (boolean for condition, case id for
@@ -665,7 +682,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // A route-failed step re-takes its error edge on replay — returning ok
       // here would silently divert the resumed run down the normal path.
       if (opts.completedRoutes?.has(stepKey)) return { kind: 'route', output }
-      return { kind: 'ok', output }
+      return { kind: 'ok', output, ...(replayItems ? { items: replayItems } : {}) }
     }
 
     // ── Per-item fan-out ─────────────────────────────────────────────────────
@@ -698,7 +715,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const childResults = await mapLimit(items, perItem.concurrency ?? 1, (item, index) => {
         // Inside a per-item fan-out the incoming data IS the current item —
         // {{input}} and {{item}} agree, matching what an imported $json meant.
-        const itemCtx: FlowContext = { ...ctx, item, incoming: item, step: { ...ctx.step }, loop: { index, count: items.length } }
+        const itemCtx: FlowContext = { ...ctx, item, incoming: item, items: flowItemsFromValue(item, ctx.items ?? [], 0, node.id), step: { ...ctx.step }, loop: { index, count: items.length } }
         return execNode(node, itemCtx, `${indexKey}#${index}`, true)
       })
       const outputs: unknown[] = []
@@ -1463,7 +1480,8 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
   // is skipped and its own out-edges go dead (dead-path elimination / OR-join).
   // Independent ready nodes run concurrently. Containers stay single nodes.
   const { incoming, outgoing: outEdges, dagNodeIds } = buildAdjacency(graph.nodes, graph.edges, contained)
-  const edgeState = new Map<FlowEdge, EdgeState>(graph.edges.map((edge) => [edge, 'unresolved']))
+  const dataEdges = graph.edges.filter((edge) => (edge.connectionType ?? 'main') === 'main')
+  const edgeState = new Map<FlowEdge, EdgeState>(dataEdges.map((edge) => [edge, 'unresolved']))
   const nodeState = new Map<string, NodeRunState>(dagNodeIds.map((id) => [id, 'pending']))
   // The entry point (the trigger, or the first node) is the ONLY seed — a node
   // with no incoming edges that ISN'T the entry is an unreachable orphan and
@@ -1505,12 +1523,38 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
   // path. Tracked per node (unlike the global lastOutput) so parallel branches
   // each read their own upstream. A node that produces no chained data (a
   // branch decision, a passing filter) carries its own incoming value onward.
-  const carriedInto = new Map<string, unknown>()
+  const carriedByEdge = new Map<string, unknown>()
+  const itemsByEdge = new Map<string, FlowItem[]>()
+
+  const socketInputsFor = (nodeId: string): unknown[][] => {
+    const sockets: unknown[][] = []
+    for (const edge of incoming.get(nodeId) ?? []) {
+      if (edgeState.get(edge) !== 'active' || !carriedByEdge.has(edge.id)) continue
+      const index = edge.targetInput ?? 0
+      ;(sockets[index] ??= []).push(carriedByEdge.get(edge.id))
+    }
+    return sockets
+  }
+
+  const socketItemsFor = (nodeId: string): FlowItem[][] => {
+    const sockets: FlowItem[][] = []
+    for (const edge of incoming.get(nodeId) ?? []) {
+      if (edgeState.get(edge) !== 'active') continue
+      const items = itemsByEdge.get(edge.id)
+      if (!items) continue
+      ;(sockets[edge.targetInput ?? 0] ??= []).push(...items)
+    }
+    return sockets
+  }
 
   const runOne = async (node: FlowNode): Promise<void> => {
     nodeState.set(node.id, 'running')
-    const nodeIncoming = carriedInto.has(node.id) ? carriedInto.get(node.id) : input
-    const res = await execNode(node, { ...ctx, incoming: nodeIncoming })
+    const socketInputs = socketInputsFor(node.id)
+    const inputItems = socketItemsFor(node.id)
+    const primary = socketInputs[0] ?? []
+    const nodeIncoming = primary.length === 0 ? input : primary.length === 1 ? primary[0] : primary
+    const nodeItems = inputItems[0]?.length ? inputItems[0] : flowItemsFromValue(nodeIncoming)
+    const res = await execNode(node, { ...ctx, incoming: nodeIncoming, inputs: socketInputs, items: nodeItems, inputItems })
     if (terminal) return // a sibling already ended the run; ignore late results
     if (res.kind === 'fail') { terminal = done({ status: 'failed', steps, output: lastOutput, error: res.error }); return }
     if (res.kind === 'pause') { terminal = done({ status: 'waiting', steps, output: lastOutput, waiting: { nodeId: res.nodeId, question: res.question, ...(res.resumeAt ? { resumeAt: res.resumeAt } : {}), ...(res.waitKind ? { waitKind: res.waitKind } : {}) } }); return }
@@ -1524,7 +1568,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // every downstream target before its edges resolve. Dead-branch targets
     // never run, so a value seeded toward them is inert.
     const carriedOut = res.kind === 'route' || (res.kind === 'ok' && res.output !== undefined) ? res.output : nodeIncoming
-    for (const edge of outEdges.get(node.id) ?? []) carriedInto.set(edge.target, carriedOut)
+    const carriedItems = res.items ?? flowItemsFromValue(carriedOut, nodeItems, 0, node.id)
+    for (const edge of outEdges.get(node.id) ?? []) {
+      carriedByEdge.set(edge.id, carriedOut)
+      itemsByEdge.set(edge.id, carriedItems)
+    }
     nodeState.set(node.id, 'done')
     resolveEdges(node.id, res.kind === 'branch' ? { branch: res.branch } : res.kind === 'route' ? 'route' : res.kind === 'skip' ? 'skip' : 'ok')
     // Partial execution: stop the walk the moment the requested node finishes,
@@ -1535,6 +1583,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
   }
 
   const running = new Set<Promise<void>>()
+  const maxConcurrentNodes = opts.executionOrder === 'v1' ? 1 : MAX_CONCURRENT_NODES
   const readyNodes = () =>
     dagNodeIds.filter((id) =>
       // "Execute previous nodes": never schedule the target itself, so the walk
@@ -1577,7 +1626,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       continue
     }
     for (const id of ready) {
-      if (running.size >= MAX_CONCURRENT_NODES) break
+      if (running.size >= maxConcurrentNodes) break
       const node = byId.get(id)!
       const promise = runOne(node).finally(() => running.delete(promise))
       running.add(promise)

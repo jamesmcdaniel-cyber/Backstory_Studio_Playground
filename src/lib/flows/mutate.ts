@@ -1,4 +1,5 @@
-import { flowNodeSchema, type FlowEdge, type FlowGraph, type FlowNode } from '@/lib/flows/graph'
+import { flowNodeSchema, type FlowConnectionType, type FlowEdge, type FlowGraph, type FlowNode } from '@/lib/flows/graph'
+import { currentNodeVersion } from '@/lib/flows/node-versions'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
 import type { NodePosition } from '@/lib/flows/layout'
 
@@ -15,6 +16,24 @@ function newNodeId(graph: FlowGraph, prefix = 'n'): string {
 
 function edgeId(source: string, target: string, branch?: string): string {
   return `${source}->${target}${branch ? `:${branch}` : ''}`
+}
+
+type EdgeSockets = {
+  connectionType?: FlowConnectionType
+  sourceOutput?: number
+  targetInput?: number
+}
+
+function wiredEdge(source: string, target: string, branch?: string, sockets: EdgeSockets = {}): FlowEdge {
+  return {
+    id: edgeId(source, target, branch),
+    source,
+    target,
+    ...(branch ? { branch } : {}),
+    connectionType: sockets.connectionType ?? 'main',
+    sourceOutput: sockets.sourceOutput ?? 0,
+    targetInput: sockets.targetInput ?? 0,
+  }
 }
 
 /** Default `data` for a freshly created / retyped node. */
@@ -96,14 +115,15 @@ function makeNode(graph: FlowGraph, type: StepType, agentId?: string): { node: F
     const body = {
       id: bodyId,
       type: 'agent',
+      typeVersion: currentNodeVersion('agent'),
       data: {
         agentId: agentId ?? '',
         input: type === 'loop' ? 'Process this item:\n{{item}}' : 'Use this flow input:\n{{trigger.input}}',
       },
     } as FlowNode
-    return { node: { id, type, data: defaultData(type, { bodyId }) } as FlowNode, extraNodes: [body] }
+    return { node: { id, type, typeVersion: currentNodeVersion(type), data: defaultData(type, { bodyId }) } as FlowNode, extraNodes: [body] }
   }
-  return { node: { id, type, data: defaultData(type, { agentId }) } as FlowNode, extraNodes: [] }
+  return { node: { id, type, typeVersion: currentNodeVersion(type), data: defaultData(type, { agentId }) } as FlowNode, extraNodes: [] }
 }
 
 /** Insert a new step of any type immediately after `afterId`, healing the chain. */
@@ -114,10 +134,10 @@ export function insertNodeAfter(graph: FlowGraph, afterId: string, type: StepTyp
   const idx = edges.findIndex((edge) => edge.source === afterId && !edge.branch)
   if (idx >= 0) {
     const old = edges[idx]
-    edges[idx] = { id: edgeId(node.id, old.target), source: node.id, target: old.target }
+    edges[idx] = wiredEdge(node.id, old.target, undefined, { targetInput: old.targetInput })
   }
-  edges.push({ id: edgeId(afterId, node.id), source: afterId, target: node.id })
-  return { graph: { nodes: [...graph.nodes, node, ...extraNodes], edges }, nodeId: node.id }
+  edges.push(wiredEdge(afterId, node.id))
+  return { graph: { ...graph, nodes: [...graph.nodes, node, ...extraNodes], edges }, nodeId: node.id }
 }
 
 /** Back-compat helper used by earlier tests: insert an agent step. */
@@ -136,7 +156,7 @@ export function appendToBranch(graph: FlowGraph, conditionId: string, branch: st
     return {
       graph: {
         nodes: [...graph.nodes, node, ...extraNodes],
-        edges: [...graph.edges, { id: edgeId(conditionId, node.id, branch), source: conditionId, target: node.id, branch }],
+        edges: [...graph.edges, wiredEdge(conditionId, node.id, branch)],
       },
       nodeId: node.id,
     }
@@ -176,15 +196,16 @@ export function changeNodeType(graph: FlowGraph, id: string, type: StepType): Fl
     const bodyNode = {
       id: bodyId,
       type: 'agent',
+      typeVersion: currentNodeVersion('agent'),
       data: {
         agentId: '',
         input: type === 'loop' ? 'Process this item:\n{{item}}' : 'Use this flow input:\n{{trigger.input}}',
       },
     } as FlowNode
-    const nodes = graph.nodes.map((node) => (node.id === id ? ({ id, type, data: defaultData(type, { bodyId }) } as FlowNode) : node))
+    const nodes = graph.nodes.map((node) => (node.id === id ? ({ id, type, typeVersion: currentNodeVersion(type), data: defaultData(type, { bodyId }) } as FlowNode) : node))
     return { ...graph, nodes: [...nodes, bodyNode] }
   }
-  return { ...graph, nodes: graph.nodes.map((node) => (node.id === id ? ({ id, type, data: defaultData(type) } as FlowNode) : node)) }
+  return { ...graph, nodes: graph.nodes.map((node) => (node.id === id ? ({ id, type, typeVersion: currentNodeVersion(type), data: defaultData(type) } as FlowNode) : node)) }
 }
 
 /** Append a new typed step to a loop body or a new parallel branch. */
@@ -252,7 +273,7 @@ export function duplicateNode(graph: FlowGraph, id: string): { graph: FlowGraph;
   const original = graph.nodes.find((node) => node.id === id)
   if (!original || original.type === 'trigger') return { graph, nodeId: id }
   const copyId = newNodeId(graph)
-  const copy = { id: copyId, type: original.type, data: JSON.parse(JSON.stringify(original.data)) } as FlowNode
+  const copy = { id: copyId, type: original.type, typeVersion: original.typeVersion ?? currentNodeVersion(original.type), data: JSON.parse(JSON.stringify(original.data)) } as FlowNode
   // Containers duplicate shallowly (fresh empty body) — bodies keep their ids
   // and must not be shared between two containers.
   if (copy.type === 'loop') copy.data = { ...copy.data, body: [] }
@@ -260,16 +281,16 @@ export function duplicateNode(graph: FlowGraph, id: string): { graph: FlowGraph;
   const position = containerPositionOf(graph, id)
   if (position) {
     const nodes = insertIntoContainer(graph, position, copyId)
-    return { graph: { nodes: [...nodes, copy], edges: graph.edges }, nodeId: copyId }
+    return { graph: { ...graph, nodes: [...nodes, copy], edges: graph.edges }, nodeId: copyId }
   }
   const edges = [...graph.edges]
   const idx = edges.findIndex((edge) => edge.source === id && !edge.branch)
   if (idx >= 0) {
     const old = edges[idx]
-    edges[idx] = { id: edgeId(copyId, old.target), source: copyId, target: old.target }
+    edges[idx] = wiredEdge(copyId, old.target, undefined, { targetInput: old.targetInput })
   }
-  edges.push({ id: edgeId(id, copyId), source: id, target: copyId })
-  return { graph: { nodes: [...graph.nodes, copy], edges }, nodeId: copyId }
+  edges.push(wiredEdge(id, copyId))
+  return { graph: { ...graph, nodes: [...graph.nodes, copy], edges }, nodeId: copyId }
 }
 
 /**
@@ -289,7 +310,11 @@ export function deleteNode(graph: FlowGraph, id: string): FlowGraph {
   if (incomingEdges.length === 1 && outgoingEdges.length === 1) {
     const incoming = incomingEdges[0]
     const outgoing = outgoingEdges[0]
-    edges.push({ id: edgeId(incoming.source, outgoing.target, incoming.branch), source: incoming.source, target: outgoing.target, ...(incoming.branch ? { branch: incoming.branch } : {}) })
+    edges.push(wiredEdge(incoming.source, outgoing.target, incoming.branch, {
+      connectionType: incoming.connectionType,
+      sourceOutput: incoming.sourceOutput,
+      targetInput: outgoing.targetInput,
+    }))
   }
   const nodes = graph.nodes
     .filter((node) => node.id !== id)
@@ -299,7 +324,7 @@ export function deleteNode(graph: FlowGraph, id: string): FlowGraph {
       if (node.type === 'parallel') return { ...node, data: { ...node.data, branches: node.data.branches.map((br) => br.filter((b) => b !== id)) } }
       return node
     })
-  return { nodes, edges }
+  return { ...graph, nodes, edges }
 }
 
 /** Delete several nodes at once (bulk selection), healing the chain per node.
@@ -372,21 +397,20 @@ export function moveNodeAfter(graph: FlowGraph, nodeId: string, afterId: string)
   // edges here — no need to re-collect/re-append them.
   const edges = graph.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId)
   if (incoming && outgoing) {
-    edges.push({
-      id: edgeId(incoming.source, outgoing.target, incoming.branch),
-      source: incoming.source,
-      target: outgoing.target,
-      ...(incoming.branch ? { branch: incoming.branch } : {}),
-    })
+    edges.push(wiredEdge(incoming.source, outgoing.target, incoming.branch, {
+      connectionType: incoming.connectionType,
+      sourceOutput: incoming.sourceOutput,
+      targetInput: outgoing.targetInput,
+    }))
   }
 
   // 2) Splice after the target (insertNodeAfter's edge logic, existing node).
   const idx = edges.findIndex((edge) => edge.source === afterId && !edge.branch)
   if (idx >= 0) {
     const old = edges[idx]
-    edges[idx] = { id: edgeId(nodeId, old.target), source: nodeId, target: old.target }
+    edges[idx] = wiredEdge(nodeId, old.target, undefined, { targetInput: old.targetInput })
   }
-  edges.push({ id: edgeId(afterId, nodeId), source: afterId, target: nodeId })
+  edges.push(wiredEdge(afterId, nodeId))
   return { ...graph, edges }
 }
 
@@ -431,15 +455,28 @@ function containerMemberIds(graph: FlowGraph): Set<string> {
  * the trigger as a target, or any connection that would introduce a CYCLE (the
  * scheduler requires a DAG). `branch` tags a condition/switch/error edge.
  */
-export function addEdge(graph: FlowGraph, source: string, target: string, branch?: string): { graph: FlowGraph; added: boolean } {
+export function addEdge(
+  graph: FlowGraph,
+  source: string,
+  target: string,
+  branch?: string,
+  sockets: EdgeSockets = {},
+): { graph: FlowGraph; added: boolean } {
   if (source === target || target === 'trigger') return { graph, added: false }
   const ids = new Set(graph.nodes.map((n) => n.id))
   if (!ids.has(source) || !ids.has(target)) return { graph, added: false }
   const contained = containerMemberIds(graph)
   if (contained.has(source) || contained.has(target)) return { graph, added: false }
-  const exists = graph.edges.some((e) => e.source === source && e.target === target && (e.branch ?? '') === (branch ?? ''))
+  const exists = graph.edges.some((e) =>
+    e.source === source &&
+    e.target === target &&
+    (e.branch ?? '') === (branch ?? '') &&
+    (e.connectionType ?? 'main') === (sockets.connectionType ?? 'main') &&
+    (e.sourceOutput ?? 0) === (sockets.sourceOutput ?? 0) &&
+    (e.targetInput ?? 0) === (sockets.targetInput ?? 0),
+  )
   if (exists) return { graph, added: false }
-  const edge = { id: edgeId(source, target, branch), source, target, ...(branch ? { branch } : {}) }
+  const edge = wiredEdge(source, target, branch, sockets)
   const next: FlowGraph = { ...graph, edges: [...graph.edges, edge] }
   // Reject any connection that would make the outer graph cyclic.
   const { outgoing, dagNodeIds } = buildAdjacency(next.nodes, next.edges, contained)
@@ -468,8 +505,8 @@ export function setNodePositions(graph: FlowGraph, positions: Map<string, NodePo
  * uses to refuse an illegal drag before it is dropped, rather than drawing an
  * edge that validation later rejects. Same rules, one implementation.
  */
-export function canConnect(graph: FlowGraph, source: string, target: string, branch?: string): boolean {
-  return addEdge(graph, source, target, branch).added
+export function canConnect(graph: FlowGraph, source: string, target: string, branch?: string, sockets: EdgeSockets = {}): boolean {
+  return addEdge(graph, source, target, branch, sockets).added
 }
 
 /** Create a step at an explicit canvas position, wired to nothing. Used when a
@@ -521,12 +558,12 @@ export function insertNodeOnEdge(
   const { graph: withNode, nodeId } = insertNodeAt(graph, type, position, agentId)
   const edges = withNode.edges.filter((candidate) => candidate.id !== edgeIdToSplit)
   edges.push({
-    id: edgeId(edge.source, nodeId, edge.branch),
-    source: edge.source,
-    target: nodeId,
-    ...(edge.branch ? { branch: edge.branch } : {}),
+    ...wiredEdge(edge.source, nodeId, edge.branch, {
+      connectionType: edge.connectionType,
+      sourceOutput: edge.sourceOutput,
+    }),
   })
-  edges.push({ id: edgeId(nodeId, edge.target), source: nodeId, target: edge.target })
+  edges.push(wiredEdge(nodeId, edge.target, undefined, { targetInput: edge.targetInput }))
   return { graph: { ...withNode, edges }, nodeId }
 }
 
@@ -578,6 +615,7 @@ export function pasteSelectionAt(
     pasted.push({
       id: freshId,
       type: node.type,
+      typeVersion: node.typeVersion ?? currentNodeVersion(node.type),
       data,
       position: {
         x: position.x + ((node.position?.x ?? 0) - anchorX),
@@ -593,12 +631,7 @@ export function pasteSelectionAt(
     const source = idMap.get(edge.source)
     const target = idMap.get(edge.target)
     if (!source || !target) continue
-    edges.push({
-      id: edgeId(source, target, edge.branch),
-      source,
-      target,
-      ...(edge.branch ? { branch: edge.branch } : {}),
-    })
+    edges.push(wiredEdge(source, target, edge.branch, edge))
   }
   return { graph: { ...working, edges }, nodeIds: [...idMap.values()] }
 }
@@ -616,18 +649,18 @@ export function sanitizeCopiedNode(raw: unknown): FlowNode | null {
 /** Paste a sanitized copied step immediately after `afterId` with a fresh id. */
 export function pasteNodeAfter(graph: FlowGraph, afterId: string, copied: FlowNode): { graph: FlowGraph; nodeId: string } {
   const copyId = newNodeId(graph)
-  const copy = { id: copyId, type: copied.type, data: JSON.parse(JSON.stringify(copied.data)) } as FlowNode
+  const copy = { id: copyId, type: copied.type, typeVersion: copied.typeVersion ?? currentNodeVersion(copied.type), data: JSON.parse(JSON.stringify(copied.data)) } as FlowNode
   const position = containerPositionOf(graph, afterId)
   if (position) {
     const nodes = insertIntoContainer(graph, position, copyId)
-    return { graph: { nodes: [...nodes, copy], edges: graph.edges }, nodeId: copyId }
+    return { graph: { ...graph, nodes: [...nodes, copy], edges: graph.edges }, nodeId: copyId }
   }
   const edges = [...graph.edges]
   const idx = edges.findIndex((edge) => edge.source === afterId && !edge.branch)
   if (idx >= 0) {
     const old = edges[idx]
-    edges[idx] = { id: edgeId(copyId, old.target), source: copyId, target: old.target }
+    edges[idx] = wiredEdge(copyId, old.target, undefined, { targetInput: old.targetInput })
   }
-  edges.push({ id: edgeId(afterId, copyId), source: afterId, target: copyId })
-  return { graph: { nodes: [...graph.nodes, copy], edges }, nodeId: copyId }
+  edges.push(wiredEdge(afterId, copyId))
+  return { graph: { ...graph, nodes: [...graph.nodes, copy], edges }, nodeId: copyId }
 }

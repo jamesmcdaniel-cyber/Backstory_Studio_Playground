@@ -18,6 +18,7 @@ import { apiLogger } from '@/lib/logger'
 import { removeRetiredFromGraph } from '@/lib/rag/indexer'
 import { deleteStoredFile } from '@/lib/files/storage'
 import { recordTokenRejection } from '@/lib/security/events'
+import { parseFlowSettings } from '@/lib/flows/settings'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -58,10 +59,21 @@ export async function GET(request: Request) {
     // systemPrisma: global retention sweep — terminal flow runs contain the
     // same sensitive inputs/outputs as agent executions and must not outlive
     // the configured retention window.
-    const staleFlowRuns = await systemPrisma.flowRun.findMany({
-      where: { startedAt: { lt: cutoff }, status: { in: ['succeeded', 'failed', 'cancelled'] } },
-      select: { id: true },
+    const terminalFlowRuns = await systemPrisma.flowRun.findMany({
+      // Per-flow retention can be shorter or longer than the workspace
+      // default, so fetch terminal candidates from the minimum supported age
+      // and apply each owning flow's policy below.
+      where: {
+        startedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        status: { in: ['succeeded', 'failed', 'cancelled'] },
+      },
+      select: { id: true, startedAt: true, flow: { select: { settings: true } } },
+      orderBy: { startedAt: 'asc' },
       take: CAP,
+    })
+    const staleFlowRuns = terminalFlowRuns.filter((run) => {
+      const retentionDays = parseFlowSettings(run.flow.settings).retentionDays ?? days
+      return run.startedAt < new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)
     })
     // systemPrisma: global retention sweep — prunes across all orgs by design (CRON_SECRET-gated).
     const staleActivityEvents = await systemPrisma.activityEvent.findMany({

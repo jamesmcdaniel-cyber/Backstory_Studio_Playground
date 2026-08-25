@@ -1385,6 +1385,8 @@ model Flow {
   nextRunAt        DateTime? @db.Timestamptz(6)
   trigger          Json      @default("{}") // { type: 'manual'|'schedule'|'signal', ... }
   graph            Json      @default("{}") // working draft: { nodes, edges }
+  /// Execution, persistence, caller, MCP exposure, timezone, and retention policy.
+  settings         Json      @default("{}")
   publishedGraph   Json? // the live version scheduled/triggered runs execute
   /// Literal credentials the save-time scanner found in the graph. Advisory:
   /// a save is never blocked (that reads as data loss to the author), but a
@@ -1863,6 +1865,9 @@ model FlowRunStep {
   status           String    @default("queued") // queued | running | succeeded | failed | skipped | waiting | resumed | cancelled | stopped
   input            Json      @default("{}")
   output           Json?
+  /// Universal item packets ({json,binary,pairedItem,error,metadata}) used for
+  /// deterministic lineage and binary-aware execution/resume.
+  items            Json?
   error            String?
   // console.log / print() output captured from code steps, for display only —
   // never consumed by downstream nodes. An array of strings.

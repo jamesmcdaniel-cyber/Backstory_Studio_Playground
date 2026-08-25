@@ -1,4 +1,4 @@
-import { migrateGraphShape } from '@/lib/flows/graph-migrations'
+import { CURRENT_GRAPH_VERSION, migrateGraphShape } from '@/lib/flows/graph-migrations'
 import { z } from 'zod'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 
@@ -753,13 +753,40 @@ export const flowNodeSchema = z
   ])
   // Node-level flags shared by every type. `disabled` skips the step at run time
   // (passthrough — the prior value flows on), for muting a step while debugging.
-  .and(z.object({ position: nodePositionSchema, disabled: z.boolean().optional() }))
+  .and(z.object({
+    position: nodePositionSchema,
+    disabled: z.boolean().optional(),
+    /** Persisted implementation contract for this node type. */
+    typeVersion: z.number().int().min(1).optional(),
+  }))
+
+/** Data and AI attachment connection families. Unknown future families fail
+ * validation instead of being silently executed as ordinary data edges. */
+export const FLOW_CONNECTION_TYPES = [
+  'main',
+  'ai_languageModel',
+  'ai_tool',
+  'ai_memory',
+  'ai_outputParser',
+  'ai_embedding',
+  'ai_document',
+  'ai_textSplitter',
+  'ai_vectorStore',
+  'ai_retriever',
+] as const
+export type FlowConnectionType = (typeof FLOW_CONNECTION_TYPES)[number]
+
 export const flowEdgeSchema = z.object({
   id: z.string(),
   source: z.string(),
   target: z.string(),
   // 'true'/'false' for a condition; a switch case id or 'default' for a switch.
   branch: z.string().optional(),
+  /** Semantic channel carried by this edge. `main` is ordinary item data. */
+  connectionType: z.enum(FLOW_CONNECTION_TYPES).optional(),
+  /** Zero-based source output and target input sockets. */
+  sourceOutput: z.number().int().min(0).max(99).optional(),
+  targetInput: z.number().int().min(0).max(99).optional(),
 })
 // Hard caps on graph size. Far above any real flow (hundreds of steps is already
 // extreme), but low enough that a crafted multi-MB payload can't be stored and
@@ -797,7 +824,11 @@ export type ConditionClause = z.infer<typeof conditionClauseSchema>
 
 /** A fresh graph: one manual trigger, no steps yet. */
 export function emptyGraph(): FlowGraph {
-  return { nodes: [{ id: 'trigger', type: 'trigger', data: { trigger: { type: 'manual' } } }], edges: [] }
+  return {
+    nodes: [{ id: 'trigger', type: 'trigger', typeVersion: 1, data: { trigger: { type: 'manual' } } }],
+    edges: [],
+    schemaVersion: CURRENT_GRAPH_VERSION,
+  }
 }
 
 /** Node types that never execute — excluded from any count of a flow's steps. */

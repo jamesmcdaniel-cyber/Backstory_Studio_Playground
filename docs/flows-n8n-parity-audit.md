@@ -1,5 +1,11 @@
 # Flows ↔ n8n Parity Audit
 
+> **Superseded (2026-08-25):** The source-pinned full audit in
+> [`n8n-full-parity-audit-2026-08-25.md`](./n8n-full-parity-audit-2026-08-25.md)
+> replaces this document as the parity baseline. In particular, the claim below
+> that all Tier 1/Tier 2 gaps were closed compared feature names and did not
+> establish n8n item-lineage, node-version, parameter-system, or catalogue parity.
+
 > **Status update (2026-07-27): all Tier 1 (§2) AND all Tier 2 (§3) gaps closed.**
 >
 > **Tier 1 (engine, §2):** §2.1 list-aware per-item step contract · §2.5a per-item error policy

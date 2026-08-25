@@ -15,6 +15,14 @@ test('buildAdjacency indexes incoming/outgoing and excludes contained nodes', ()
   assert.equal(incoming.get('a')!.length, 0)
 })
 
+test('buildAdjacency excludes AI configuration attachments from the data DAG', () => {
+  const attachment = { id: 'cfg', source: 'model', target: 'agent', connectionType: 'ai_languageModel' as const }
+  const data = { id: 'data', source: 'trigger', target: 'agent' }
+  const built = buildAdjacency([{ id: 'trigger' }, { id: 'model' }, { id: 'agent' }], [attachment, data], new Set())
+  assert.deepEqual(built.incoming.get('agent')?.map((edge) => edge.id), ['data'])
+  assert.deepEqual(built.outgoing.get('model'), [])
+})
+
 test('edgeActivationsFor: ok fans out to all non-error edges, deads error', () => {
   const outs = [e('1', 'a', 'b'), e('2', 'a', 'err', 'error')]
   const acts = edgeActivationsFor('ok', outs)

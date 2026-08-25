@@ -113,7 +113,7 @@ test('parsing a legacy graph migrates and stamps it, with no call site involved'
   assert.equal(parsed.nodes.length, 1)
 })
 
-test('parsing preserves a graph’s content exactly — versioning adds, never edits', () => {
+test('parsing preserves graph semantics while making node and connection contracts explicit', () => {
   const parsed = flowGraphSchema.parse({
     nodes: [
       { id: 'trigger', type: 'trigger', data: { trigger: { type: 'manual' } } },
@@ -123,7 +123,16 @@ test('parsing preserves a graph’s content exactly — versioning adds, never e
     pinData: { call: { ok: true } },
   })
   assert.equal(parsed.nodes[1].id, 'call')
-  assert.deepEqual(parsed.edges, [{ id: 'e1', source: 'trigger', target: 'call' }])
+  assert.equal(parsed.nodes[0].typeVersion, 1)
+  assert.equal(parsed.nodes[1].typeVersion, 1)
+  assert.deepEqual(parsed.edges, [{
+    id: 'e1',
+    source: 'trigger',
+    target: 'call',
+    connectionType: 'main',
+    sourceOutput: 0,
+    targetInput: 0,
+  }])
   assert.deepEqual(parsed.pinData, { call: { ok: true } })
 })
 

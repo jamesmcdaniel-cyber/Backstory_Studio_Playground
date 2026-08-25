@@ -4,6 +4,7 @@ import { FLOW_TRIGGER_TYPES } from '@/lib/flows/trigger'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { matchBrandHint, type ToolBrand } from '@/lib/flows/tool-presentation'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
+import { nodeVersionProblem } from '@/lib/flows/node-versions'
 
 export type FlowValidationIssue = {
   level: 'error' | 'warning'
@@ -405,6 +406,8 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
   for (const node of graph.nodes) {
     if (byId.has(node.id)) add(issues, 'error', 'DUPLICATE_NODE_ID', `Multiple steps use the id "${node.id}".`, node.id)
     byId.set(node.id, node)
+    const versionProblem = nodeVersionProblem(node)
+    if (versionProblem) add(issues, 'error', 'UNSUPPORTED_NODE_VERSION', versionProblem, node.id)
   }
 
   if (triggerIds.length !== 1 || triggerIds[0] !== 'trigger') {
@@ -421,6 +424,9 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
   for (const edge of graph.edges) {
     if (!byId.has(edge.source)) add(issues, 'error', 'DANGLING_EDGE', `An edge starts from missing step "${edge.source}".`)
     if (!byId.has(edge.target)) add(issues, 'error', 'DANGLING_EDGE', `An edge points to missing step "${edge.target}".`)
+    if ((edge.connectionType ?? 'main') !== 'main') {
+      add(issues, 'warning', 'CONFIGURATION_EDGE', `Connection "${edge.id}" is an AI configuration attachment and does not carry workflow items.`)
+    }
   }
 
   for (const node of graph.nodes) {

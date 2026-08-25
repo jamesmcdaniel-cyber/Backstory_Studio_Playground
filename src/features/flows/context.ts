@@ -1,5 +1,6 @@
 import type { ConditionOp } from '@/lib/flows/graph'
 import { fenceUntrusted } from '@/lib/security/prompt'
+import type { FlowItem } from '@/lib/flows/items'
 
 /**
  * The evaluation context threaded through a flow run: the trigger input, every
@@ -14,6 +15,11 @@ export type FlowContext = {
   // it is the trigger input; mid-chain the nearest upstream DATA output
   // (branch decisions pass through); inside a per-item step, the current item.
   incoming?: unknown
+  /** Every active data input socket, preserving zero-based target indexes. */
+  inputs?: unknown[][]
+  /** Item packets corresponding to `incoming`, plus every indexed socket. */
+  items?: FlowItem[]
+  inputItems?: FlowItem[][]
   item?: unknown
   // Present inside a loop body: `{{loop.index}}` (0-based) + total count.
   loop?: { index: number; count: number }

@@ -16,6 +16,18 @@ test('validateFlowGraph accepts a runnable agent flow', () => {
   assert.deepEqual(result.errors, [])
 })
 
+test('validateFlowGraph rejects a node implementation newer than this deployment', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'a', type: 'agent', typeVersion: 999, data: { agentId: 'agent-1', input: 'hello' } },
+    ],
+    edges: [{ id: 'e1', source: 'trigger', target: 'a' }],
+  }
+  const result = validateFlowGraph(graph, { agents: [{ id: 'agent-1' }] })
+  assert.equal(result.errors.some((issue) => issue.code === 'UNSUPPORTED_NODE_VERSION'), true)
+})
+
 test('validateFlowGraph reports missing agents and dangling edges', () => {
   const graph: FlowGraph = {
     nodes: [

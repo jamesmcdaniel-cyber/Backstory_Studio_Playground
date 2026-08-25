@@ -7,6 +7,7 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkMonthlyTokenBudget } from '@/lib/usage/budget'
 import { apiLogger } from '@/lib/logger'
+import { parseFlowSettings } from '@/lib/flows/settings'
 import {
   GET_RUN_TOOL,
   describeFlowTools,
@@ -57,11 +58,11 @@ async function publishedFlows(auth: PublicApiContext): Promise<PublishableFlow[]
       publishedGraph: { not: Prisma.JsonNull },
       ...agentVisibilityScope(auth.userId),
     },
-    select: { id: true, name: true, description: true, trigger: true },
+    select: { id: true, name: true, description: true, trigger: true, settings: true },
     orderBy: { name: 'asc' },
     take: 200,
   })
-  return flows
+  return flows.filter((flow) => parseFlowSettings(flow.settings).availableInMcp)
 }
 
 async function callFlowTool(

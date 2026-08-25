@@ -10,6 +10,7 @@ import { assertFlowEditable, resolveFlowRole } from '@/lib/flows/access'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
 import { shouldGuardFlowWrite } from '@/lib/flows/concurrency'
+import { flowSettingsSchema } from '@/lib/flows/settings'
 
 /** Newest per-edit snapshots kept per flow — enough to cover the History panel's
  *  edit timeline (30 rows) with headroom. */
@@ -33,6 +34,7 @@ const flowSchema = z.object({
   trigger: triggerSchema.optional(),
   graph: flowGraphSchema.optional(),
   folder: z.string().max(60).optional(),
+  settings: flowSettingsSchema.optional(),
 })
 
 export const GET = withAuthenticatedApi(async (_request, auth) => {
@@ -82,6 +84,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       folder: data.folder ?? '',
       trigger: jsonValue(trigger),
       graph: jsonValue(graph),
+      settings: jsonValue(data.settings ?? {}),
       organizationId: auth.organizationId,
       userId: auth.dbUser.id,
       ...activityMatchColumns(trigger),
@@ -151,6 +154,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
       : {}),
     ...(body.visibility !== undefined && { visibility: body.visibility }),
     ...(body.folder !== undefined && { folder: body.folder }),
+    ...(body.settings !== undefined && { settings: jsonValue(body.settings) }),
     // Preserve the webhook secret hash across trigger edits — the client
     // never sees it, so a plain PUT would silently wipe it.
     ...(nextTrigger !== undefined && (() => {
@@ -195,6 +199,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     body.folder !== undefined && body.folder !== existing.folder ? 'folder' : null,
     body.trigger !== undefined && JSON.stringify(body.trigger) !== JSON.stringify(existing.trigger) ? 'trigger' : null,
     body.graph !== undefined && JSON.stringify(body.graph) !== JSON.stringify(existing.graph) ? 'graph' : null,
+    body.settings !== undefined && JSON.stringify(body.settings) !== JSON.stringify(existing.settings) ? 'settings' : null,
   ].filter((field): field is string => Boolean(field))
   const settingsChanged = changedFields.some((field) => field !== 'graph')
   if (changedFields.length > 0 && (!body.suppressAudit || settingsChanged)) {

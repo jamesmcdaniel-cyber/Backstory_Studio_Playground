@@ -67,8 +67,10 @@ import { useCanvasPan } from '@/components/flows/use-canvas-pan'
 import { VersionsPanel } from '@/components/flows/versions-panel'
 import type { StepStatus } from '@/lib/flows/node-presentation'
 import { cn } from '@/lib/utils'
+import { DEFAULT_FLOW_SETTINGS, parseFlowSettings, type FlowSettings } from '@/lib/flows/settings'
 
 type Agent = { id: string; title: string; icon?: string }
+type FlowSettingsDraft = FlowSettings & { name: string; description: string; icon: string; folder: string }
 
 /** Ordered main-chain ids from the trigger, for upstream-token help. */
 function spineIds(graph: FlowGraph): string[] {
@@ -239,8 +241,9 @@ function FlowBuilder() {
   // Emoji card icon ('' = generic glyph). Saved through the settings dialog.
   const [icon, setIcon] = useState('')
   const [folder, setFolder] = useState('')
+  const [flowSettings, setFlowSettings] = useState<FlowSettings>(DEFAULT_FLOW_SETTINGS)
   const [showFlowSettings, setShowFlowSettings] = useState(false)
-  const [settingsDraft, setSettingsDraft] = useState({ name: '', description: '', icon: '', folder: '' })
+  const [settingsDraft, setSettingsDraft] = useState<FlowSettingsDraft>({ name: '', description: '', icon: '', folder: '', ...DEFAULT_FLOW_SETTINGS })
   const [graph, setGraph] = useState<FlowGraph>(emptyGraph())
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
@@ -423,6 +426,7 @@ function FlowBuilder() {
           setDescription(flow.description || '')
           setIcon(flow.icon || '')
           setFolder(flow.folder || '')
+          setFlowSettings(parseFlowSettings(flow.settings))
           setGraph(g)
           setStatus(flow.status)
           setVersion(flow.version ?? 1)
@@ -1618,9 +1622,9 @@ function FlowBuilder() {
   }, [id])
 
   const openFlowSettings = useCallback(() => {
-    setSettingsDraft({ name, description, icon, folder })
+    setSettingsDraft({ name, description, icon, folder, ...flowSettings })
     setShowFlowSettings(true)
-  }, [name, description, icon, folder])
+  }, [name, description, icon, folder, flowSettings])
 
   const saveFlowSettings = useCallback(async () => {
     const nextName = settingsDraft.name.trim()
@@ -1639,6 +1643,22 @@ function FlowBuilder() {
           description: settingsDraft.description,
           icon: settingsDraft.icon,
           folder: settingsDraft.folder.trim().slice(0, 60),
+          settings: {
+            timezone: settingsDraft.timezone,
+            executionOrder: settingsDraft.executionOrder,
+            errorWorkflowId: settingsDraft.errorWorkflowId,
+            callerPolicy: settingsDraft.callerPolicy,
+            allowedCallerFlowIds: settingsDraft.allowedCallerFlowIds,
+            saveSuccessfulRuns: settingsDraft.saveSuccessfulRuns,
+            saveFailedRuns: settingsDraft.saveFailedRuns,
+            saveManualRuns: settingsDraft.saveManualRuns,
+            saveExecutionProgress: settingsDraft.saveExecutionProgress,
+            timeoutSeconds: settingsDraft.timeoutSeconds,
+            concurrencyLimit: settingsDraft.concurrencyLimit,
+            binaryDataMode: settingsDraft.binaryDataMode,
+            retentionDays: settingsDraft.retentionDays,
+            availableInMcp: settingsDraft.availableInMcp,
+          },
           ...(baseUpdatedAt.current ? { baseUpdatedAt: baseUpdatedAt.current } : {}),
         }),
       })
@@ -1653,6 +1673,7 @@ function FlowBuilder() {
       setDescription(nextDescription)
       setIcon(settingsDraft.icon)
       setFolder(nextFolder)
+      setFlowSettings(parseFlowSettings(data.flow?.settings))
       if (data.flow?.updatedAt) baseUpdatedAt.current = data.flow.updatedAt
       setSavedSnapshot(JSON.stringify({ name: nextName, description: nextDescription, graph }))
       setShowFlowSettings(false)
@@ -3038,6 +3059,129 @@ function FlowBuilder() {
                 placeholder="Optional"
               />
             </label>
+            <div className="grid grid-cols-2 gap-3 border-t pt-4">
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Timezone</span>
+                <input
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.timezone}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, timezone: event.target.value }))}
+                  placeholder="America/Denver"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Execution order</span>
+                <select
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.executionOrder}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, executionOrder: event.target.value as FlowSettings['executionOrder'] }))}
+                >
+                  <option value="v2">v2 · dependency scheduler</option>
+                  <option value="v1">v1 · legacy order</option>
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Timeout (seconds)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={86400}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.timeoutSeconds ?? ''}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, timeoutSeconds: event.target.value ? Number(event.target.value) : null }))}
+                  placeholder="No limit"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Concurrent runs</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.concurrencyLimit ?? ''}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, concurrencyLimit: event.target.value ? Number(event.target.value) : null }))}
+                  placeholder="No limit"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Called by workflows</span>
+                <select
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.callerPolicy}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, callerPolicy: event.target.value as FlowSettings['callerPolicy'] }))}
+                >
+                  <option value="any">Any workspace flow</option>
+                  <option value="sameOwner">Same owner only</option>
+                  <option value="allowlist">Allowlist only</option>
+                  <option value="none">No flows</option>
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Binary storage</span>
+                <select
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.binaryDataMode}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, binaryDataMode: event.target.value as FlowSettings['binaryDataMode'] }))}
+                >
+                  <option value="database">Database</option>
+                  <option value="filesystem">File store</option>
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Retention (days)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.retentionDays ?? ''}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, retentionDays: event.target.value ? Number(event.target.value) : null }))}
+                  placeholder="Workspace default"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Error workflow ID</span>
+                <input
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.errorWorkflowId ?? ''}
+                  onChange={(event) => setSettingsDraft((current) => ({ ...current, errorWorkflowId: event.target.value.trim() || null }))}
+                  placeholder="Optional published flow"
+                />
+              </label>
+            </div>
+            {settingsDraft.callerPolicy === 'allowlist' && (
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium">Allowed caller flow IDs</span>
+                <input
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={settingsDraft.allowedCallerFlowIds.join(', ')}
+                  onChange={(event) => setSettingsDraft((current) => ({
+                    ...current,
+                    allowedCallerFlowIds: event.target.value.split(',').map((value) => value.trim()).filter(Boolean),
+                  }))}
+                  placeholder="flow-id-1, flow-id-2"
+                />
+              </label>
+            )}
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {([
+                ['availableInMcp', 'Expose through MCP'],
+                ['saveSuccessfulRuns', 'Save successful run data'],
+                ['saveFailedRuns', 'Save failed run data'],
+                ['saveManualRuns', 'Save manual run data'],
+                ['saveExecutionProgress', 'Keep step progress'],
+              ] as const).map(([field, label]) => (
+                <label key={field} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={settingsDraft[field]}
+                    onChange={(event) => setSettingsDraft((current) => ({ ...current, [field]: event.target.checked }))}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowFlowSettings(false)}>Cancel</Button>

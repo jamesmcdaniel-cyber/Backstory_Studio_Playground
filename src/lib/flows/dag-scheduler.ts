@@ -28,6 +28,9 @@ export function buildAdjacency(
     outgoing.set(id, [])
   }
   for (const edge of edges) {
+    // AI attachment edges configure a node; they do not participate in the
+    // executable data DAG or block readiness of the target node.
+    if ((edge.connectionType ?? 'main') !== 'main') continue
     if (contained.has(edge.source) || contained.has(edge.target)) continue
     outgoing.get(edge.source)?.push(edge)
     incoming.get(edge.target)?.push(edge)

@@ -1,5 +1,11 @@
 # n8n ↔ Backstory Studio — Platform-wide Parity Audit
 
+> **Superseded (2026-08-25):** The source-pinned full audit in
+> [`n8n-full-parity-audit-2026-08-25.md`](./n8n-full-parity-audit-2026-08-25.md)
+> replaces this document. This earlier pass used module/file enumeration as if
+> it were semantic parity evidence and inherited “settled” findings from the
+> flow audit that the full audit re-examines.
+
 **Date:** 2026-08-25
 **Benchmark:** n8n master, cloned at audit time (`git clone --depth 1`).
 **Scope:** the whole product surface, not flows. The existing

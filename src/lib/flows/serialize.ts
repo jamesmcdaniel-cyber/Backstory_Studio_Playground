@@ -1,6 +1,7 @@
 import { stepCountOf } from '@/lib/flows/graph'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { canEditFlow } from '@/lib/flows/access'
+import { parseFlowSettings } from '@/lib/flows/settings'
 
 /** How a role-aware caller describes THIS viewer's relationship to the flow.
  *  `includeShare` exposes the share settings (whether a link is live, its role,
@@ -37,6 +38,7 @@ export function serializeFlow(flow: {
   status: string
   trigger: unknown
   graph: unknown
+  settings?: unknown
   publishedGraph?: unknown
   version?: number
   visibility: string
@@ -70,6 +72,7 @@ export function serializeFlow(flow: {
     status: flow.status.toLowerCase(),
     trigger: publicTrigger(flow.trigger),
     graph,
+    settings: parseFlowSettings(flow.settings),
     visibility: flow.visibility,
     // A flow carrying a hardcoded credential says so wherever it is listed.
     // `null` means NOT SCANNED (a flow untouched since scanning shipped), which

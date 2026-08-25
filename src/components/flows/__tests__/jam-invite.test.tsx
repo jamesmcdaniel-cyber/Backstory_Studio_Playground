@@ -146,3 +146,55 @@ test('a teammate on my view gets no follow chip', async () => {
   assert.equal(screen.queryByRole('button', { name: /follow/i }), null)
   cleanup()
 })
+
+// The panel must never put two URLs on screen: the audience chosen decides the
+// single link, and the no-sign-in audience swaps in the public address rather
+// than adding a second box beside the builder one.
+test('one link at a time — the no-sign-in audience swaps the URL, it does not add one', async () => {
+  stubMembers('ADMIN')
+  // The dialog portals to the body, so read the whole document.
+  render(<JamDialog {...baseProps} shareToken="tok" shareEnabled shareRole="view" shareAnonymous />)
+  await flush()
+  const shown = document.body.textContent ?? ''
+  assert.ok(shown.includes('/share/flow/tok'), 'shows the public link')
+  assert.ok(!shown.includes('?share=tok'), 'and not the builder link as well')
+  assert.equal(
+    screen.getByRole('button', { name: /^anyone, no sign-in$/i }).getAttribute('aria-pressed'),
+    'true',
+  )
+  cleanup()
+})
+
+test('the sign-in audiences show the builder link, never the public one', async () => {
+  stubMembers('ADMIN')
+  render(<JamDialog {...baseProps} shareToken="tok" shareEnabled shareRole="edit" />)
+  await flush()
+  const shown = document.body.textContent ?? ''
+  assert.ok(shown.includes('?share=tok'))
+  assert.ok(!shown.includes('/share/flow/tok'))
+  cleanup()
+})
+
+test('choosing the no-sign-in audience is one click that turns anonymity on', async () => {
+  const posts: { url: string; body: Record<string, unknown> }[] = []
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      posts.push({ url: String(url), body: JSON.parse(String(init.body)) })
+      return { ok: true, json: async () => ({ success: true, shareEnabled: true, shareRole: 'view', shareAnonymous: true }) }
+    }
+    return { ok: true, json: async () => ({ success: true, selfId: 'me', members: [] }) }
+  }) as unknown as typeof fetch
+
+  render(<JamDialog {...baseProps} shareToken={null} shareEnabled={false} />)
+  await flush()
+  await act(async () => {
+    screen.getByRole('button', { name: /^anyone, no sign-in$/i }).click()
+    await Promise.resolve()
+  })
+  const share = posts.find((post) => post.url.includes('/share'))
+  assert.ok(share, 'posted to the share endpoint')
+  assert.equal(share!.body.enabled, true)
+  assert.equal(share!.body.anonymous, true)
+  assert.equal(share!.body.role, 'view', 'a link anyone can open without signing in is read-only')
+  cleanup()
+})

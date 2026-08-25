@@ -59,10 +59,20 @@ function stubRoster(posts: { url: string; body: Record<string, unknown> }[]) {
   }) as unknown as typeof fetch
 }
 
-const selectAdaAndSend = async () => {
-  await act(async () => { screen.getByText('Ada').click() })
+/** Ada's row in the one people list (presence chips carry her name too). */
+const adaRow = () => {
+  const row = screen.getAllByText('Ada').map((node) => node.closest('li')).find(Boolean)
+  assert.ok(row, 'Ada has a row in the people list')
+  return row!
+}
+
+/** One click on Ada's own row is the whole interaction — no select-then-send. */
+const pingAda = async (label: RegExp) => {
+  const row = adaRow()
+  const button = Array.from(row.querySelectorAll('button')).find((b) => label.test((b.textContent ?? '').trim()))
+  assert.ok(button, `Ada's row has a ${label} button`)
   await act(async () => {
-    screen.getByRole('button', { name: /^(ring|send invite)/i }).click()
+    button!.click()
     await Promise.resolve()
   })
 }
@@ -72,7 +82,7 @@ test('with no huddle live the dialog still sends a plain jam invite', async () =
   stubRoster(posts)
   render(<JamDialog {...baseProps} />)
   await flush()
-  await selectAdaAndSend()
+  await pingAda(/^ping$/i)
   const invite = posts.find((post) => post.url.includes('/invite'))
   assert.ok(invite, 'posted to the flow invite endpoint')
   assert.equal(invite!.body.kind, 'jam')
@@ -84,10 +94,29 @@ test('while in a huddle the same button rings instead of inviting', async () => 
   stubRoster(posts)
   render(<JamDialog {...baseProps} huddle={joinedHuddle} />)
   await flush()
-  assert.ok(screen.getByRole('button', { name: /select teammates to ring/i }))
-  await selectAdaAndSend()
+  await pingAda(/^ring$/i)
   const invite = posts.find((post) => post.url.includes('/invite'))
   assert.ok(invite)
   assert.equal(invite!.body.kind, 'huddle')
+  cleanup()
+})
+
+test('a teammate already in the jam is shown as here, not offered a ping', async () => {
+  const posts: { url: string; body: Record<string, unknown> }[] = []
+  stubRoster(posts)
+  render(
+    <JamDialog
+      {...baseProps}
+      presence={[{ id: 'c2', userId: 'u2', name: 'Ada', color: '#111' }]}
+    />,
+  )
+  await flush()
+  const row = adaRow()
+  assert.ok(/in the jam/i.test(row.textContent ?? ''), 'the row says they are already here')
+  assert.equal(
+    Array.from(row.querySelectorAll('button')).find((b) => /ping/i.test(b.textContent ?? '')),
+    undefined,
+    'no ping button for someone already in the jam',
+  )
   cleanup()
 })

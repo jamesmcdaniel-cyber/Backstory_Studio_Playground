@@ -5,7 +5,6 @@ import { Check, Copy, Link2, Lock, Mic, RefreshCw, Send, UserPlus, Users } from 
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { HuddlePanel, type HuddleCapture, type HuddleMember } from '@/components/flows/huddle-panel'
 import type { HuddleNoteRecord } from '@/lib/flows/use-huddle-capture'
 import { NotebookPen } from 'lucide-react'
@@ -21,18 +20,28 @@ const OPTIONS: { value: Visibility; label: string; hint: string }[] = [
   { value: 'private', label: 'Only you', hint: 'Just you can see this flow.' },
 ]
 
-/** One state of the share link, selectable as a chip: who the link works for. */
-const AUDIENCES: { key: 'workspace' | 'anyone-view' | 'anyone-edit'; label: string }[] = [
+/** Who the ONE share link works for. Anonymous is a fourth state of the same
+ *  choice rather than a separate toggle+link, so the panel never shows two
+ *  URLs: pick an audience, copy the link that audience needs. */
+type Audience = 'workspace' | 'anyone-view' | 'anyone-edit' | 'anyone-public'
+const AUDIENCES: { key: Audience; label: string }[] = [
   { key: 'workspace', label: 'Workspace only' },
   { key: 'anyone-view', label: 'Anyone can view' },
   { key: 'anyone-edit', label: 'Anyone can edit' },
+  { key: 'anyone-public', label: 'Anyone, no sign-in' },
 ]
 
 /**
  * Jam: the flow's live-session surface — who's here now (with a voice-huddle
- * entry point), the invite link, teammate invites, and access control. The
- * invite link points straight at the flow (/flows/<id>); login return_to
- * lands an invitee here, and their invite notification deep-links here too.
+ * entry point), one list of people to ping in, ONE share link for everyone
+ * outside, and access control.
+ *
+ * Two deliberate simplifications: the roster is a single list (workspace
+ * teammates + anyone who joined by link) where each row's own button is the
+ * whole interaction, and the share link is one URL whose address follows the
+ * chosen audience — never two links on screen at once. The workspace link
+ * points straight at the flow (/flows/<id>); login return_to lands an invitee
+ * here, and their invite notification deep-links here too.
  */
 export function JamDialog({
   open,
@@ -68,6 +77,8 @@ export function JamDialog({
    *  can't be drawn on yours — following switches you to their view. */
   presence?: {
     id: string
+    /** The person behind this connection — matches them to the roster row. */
+    userId?: string
     name: string
     color?: string
     inHuddle?: boolean
@@ -109,40 +120,18 @@ export function JamDialog({
 }) {
   const [copied, setCopied] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [sending, setSending] = useState(false)
+  // One person at a time: a row's own button is the whole interaction, so there
+  // is no select-then-send step to get wrong.
+  const [pinging, setPinging] = useState<string | null>(null)
+  const [pinged, setPinged] = useState<Set<string>>(new Set())
+  const [query, setQuery] = useState('')
   // Only an admin can add a NEW person to the workspace (the invitations API
   // enforces it); everyone else gets pointed at the share link instead.
   const [isAdmin, setIsAdmin] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviting, setInviting] = useState(false)
   const [workspaceLink, setWorkspaceLink] = useState<string | null>(null)
-  const inviteLink = typeof window !== 'undefined'
-    ? `${window.location.origin}/flows/${flowId}${shareToken ? `?share=${shareToken}` : ''}`
-    : `/flows/${flowId}`
-  // The anonymous link is a DIFFERENT address on purpose: it opens the public
-  // read-only page, never the builder, so the two can't be confused.
-  //
-  // Both links can only be spelled out while we still hold the raw token — the
-  // one this session minted. After a reload the link is still live but
-  // unrecoverable (the server keeps only its digest), so the UI says so and
-  // offers a rotate rather than showing a URL it cannot complete.
-  const publicLink = typeof window !== 'undefined' && shareToken
-    ? `${window.location.origin}/share/flow/${shareToken}`
-    : ''
-  /** A live link whose plaintext this session doesn't have. */
-  const linkLiveButUnrecoverable = Boolean(shareEnabled) && !shareToken
-  const [copiedPublic, setCopiedPublic] = useState(false)
-  const copyPublic = async () => {
-    try {
-      await navigator.clipboard.writeText(publicLink)
-      setCopiedPublic(true)
-      toast.success('Public link copied')
-      window.setTimeout(() => setCopiedPublic(false), 1500)
-    } catch {
-      toast.error('Could not copy the link')
-    }
-  }
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const shareable = visibility !== 'private'
   const canInvite = canEdit && shareable
   const here = presence ?? []
@@ -188,36 +177,28 @@ export function JamDialog({
     ? [capture.latestNote, ...notes]
     : notes
 
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
-  const sendInvites = async () => {
-    if (selected.size === 0) return
-    setSending(true)
+  /** Ping one teammate into the jam (or ring them into the live huddle). */
+  const ping = async (userId: string) => {
+    setPinging(userId)
     try {
       const res = await fetch(`/api/flows/${flowId}/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userIds: Array.from(selected), kind: huddle?.joined ? 'huddle' : 'jam' }),
+        body: JSON.stringify({ userIds: [userId], kind: huddle?.joined ? 'huddle' : 'jam' }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        toast.error(data.error || 'Could not send invites.')
+        toast.error(data.error || 'Could not send that invite.')
         return
       }
+      setPinged((prev) => new Set(prev).add(userId))
       toast.success(
         huddle?.joined
-          ? `Rang ${data.invited} ${data.invited === 1 ? 'person' : 'people'} — they’ll get a notification to join the huddle.`
-          : `Invited ${data.invited} ${data.invited === 1 ? 'person' : 'people'} — they’ll get a notification linking to this flow.`,
+          ? 'Ringing them — they’ll get a notification to join the huddle.'
+          : 'Pinged — they’ll get a notification linking straight to this jam.',
       )
-      setSelected(new Set())
     } finally {
-      setSending(false)
+      setPinging(null)
     }
   }
 
@@ -327,28 +308,70 @@ export function JamDialog({
     }
   }
 
+  // The link's current audience, as one value the chip row can render.
+  const audience: Audience = !shareEnabled
+    ? 'workspace'
+    : shareAnonymous
+      ? 'anyone-public'
+      : (shareRole ?? 'view') === 'edit'
+        ? 'anyone-edit'
+        : 'anyone-view'
+  const setAudience = (next: Audience) => {
+    if (next === audience) return
+    if (next === 'workspace') void updateShare(false, shareRole ?? 'view', false, false, false)
+    else if (next === 'anyone-public') void updateShare(true, 'view', false, false, true)
+    else void updateShare(true, next === 'anyone-edit' ? 'edit' : 'view', false, false, false)
+  }
+
+  // ONE link, whichever audience is chosen. An empty string means the link is
+  // live but its plaintext is gone: the server keeps only a digest and hands
+  // back the raw token exactly once, so after a reload the panel says so and
+  // offers a rotate rather than showing a URL it can't complete. The no-sign-in audience needs a
+  // different address (the public read-only page, never the builder), so the
+  // panel swaps the URL rather than showing a second one.
+  const shareLink = audience === 'workspace'
+    ? `${origin}/flows/${flowId}`
+    : !shareToken
+      ? ''
+      : audience === 'anyone-public'
+        ? `${origin}/share/flow/${shareToken}`
+        : `${origin}/flows/${flowId}?share=${shareToken}`
+
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(inviteLink)
+      await navigator.clipboard.writeText(shareLink)
       setCopied(true)
-      toast.success('Invite link copied')
+      toast.success('Link copied')
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
       toast.error('Could not copy the link')
     }
   }
 
-  // The link's current audience, as one value the chip row can render.
-  const audience: (typeof AUDIENCES)[number]['key'] = !shareEnabled
-    ? 'workspace'
-    : (shareRole ?? 'view') === 'edit'
-      ? 'anyone-edit'
-      : 'anyone-view'
-  const setAudience = (next: (typeof AUDIENCES)[number]['key']) => {
-    if (next === audience) return
-    if (next === 'workspace') void updateShare(false, shareRole ?? 'view')
-    else void updateShare(true, next === 'anyone-edit' ? 'edit' : 'view')
-  }
+  /** Everyone this jam can reach, as one list: workspace teammates first, then
+   *  anyone who joined by link. `here` marks the people already in the jam, who
+   *  need no ping. */
+  const hereUserIds = new Set(here.map((p) => p.userId).filter(Boolean) as string[])
+  const roster = [
+    ...members.map((m) => ({
+      id: m.id,
+      label: m.name || m.email || 'Teammate',
+      sub: m.name ? m.email : null,
+      guest: false,
+      here: hereUserIds.has(m.id),
+    })),
+    ...guests.map((g) => ({
+      id: g.userId,
+      label: g.name || g.email || 'Guest',
+      sub: g.role === 'edit' ? 'joined by link · can edit' : 'joined by link · can view',
+      guest: true,
+      here: hereUserIds.has(g.userId),
+    })),
+  ]
+  const needle = query.trim().toLowerCase()
+  const visibleRoster = needle
+    ? roster.filter((person) => `${person.label} ${person.sub ?? ''}`.toLowerCase().includes(needle))
+    : roster
 
   const chipClass = (active: boolean) =>
     cn(
@@ -448,18 +471,125 @@ export function JamDialog({
             </section>
           )}
 
+          {canInvite && (
+            <section className="space-y-2.5 px-6 py-4">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <UserPlus className="h-4 w-4 text-muted-foreground" />
+                {huddle?.joined ? 'Ring people into the huddle' : 'Ping people into this jam'}
+              </p>
+              {roster.length > 6 && (
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search your workspace"
+                  aria-label="Search your workspace"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
+                />
+              )}
+              {roster.length > 0 ? (
+                <ul className="max-h-56 space-y-0.5 overflow-y-auto rounded-lg border border-border/60 p-1">
+                  {visibleRoster.map((person) => (
+                    <li key={person.id} className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold uppercase text-muted-foreground">
+                        {person.label.trim().charAt(0) || '?'}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm">{person.label}</span>
+                        {person.sub && (
+                          <span className="block truncate text-xs text-muted-foreground">{person.sub}</span>
+                        )}
+                      </span>
+                      {person.here ? (
+                        <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                          In the jam
+                        </span>
+                      ) : person.guest ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
+                          loading={removingGuest === person.id}
+                          onClick={() => void removeGuest(person.id)}
+                        >
+                          Remove
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2 text-xs"
+                          loading={pinging === person.id}
+                          onClick={() => void ping(person.id)}
+                        >
+                          {pinged.has(person.id) ? (
+                            <><Check className="mr-1 h-3.5 w-3.5 text-green-600" /> Pinged</>
+                          ) : (
+                            <><Send className="mr-1 h-3.5 w-3.5" /> {huddle?.joined ? 'Ring' : 'Ping'}</>
+                          )}
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                  {visibleRoster.length === 0 && (
+                    <li className="px-2 py-1.5 text-xs text-muted-foreground">Nobody by that name.</li>
+                  )}
+                </ul>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  You’re the only person in this workspace so far — add someone below, or send the link.
+                </p>
+              )}
+              {isAdmin ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    placeholder="teammate@company.com"
+                    aria-label="Add someone new to your workspace"
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
+                  />
+                  <Button size="sm" onClick={() => void inviteByEmail()} loading={inviting} disabled={!inviteEmail.trim()}>
+                    <UserPlus className="mr-1.5 h-4 w-4" /> Invite
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Only an admin can add people to your workspace. To bring in someone outside it, send them
+                  the link below.
+                </p>
+              )}
+              {isAdmin && (
+                <p className="text-xs text-muted-foreground">
+                  Someone new joins your workspace and lands straight on this flow.
+                </p>
+              )}
+              {workspaceLink && (
+                <p className="break-all rounded-lg border border-border/60 bg-muted/40 p-2 font-mono text-[11px]">{workspaceLink}</p>
+              )}
+            </section>
+          )}
+
           {shareable && (
             <section className="space-y-2.5 px-6 py-4">
               <p className="flex items-center gap-2 text-sm font-medium">
                 <Link2 className="h-4 w-4 text-muted-foreground" /> Share link
               </p>
-              <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 py-1 pl-3 pr-1">
-                <span className="min-w-0 flex-1 truncate font-mono text-xs">{inviteLink}</span>
-                <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={copy}>
-                  {copied ? <Check className="mr-1 h-3.5 w-3.5 text-green-600" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
-                  {copied ? 'Copied' : 'Copy'}
-                </Button>
-              </div>
+              {shareLink ? (
+                <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 py-1 pl-3 pr-1">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{shareLink}</span>
+                  <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={copy}>
+                    {copied ? <Check className="mr-1 h-3.5 w-3.5 text-green-600" /> : <Copy className="mr-1 h-3.5 w-3.5" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </Button>
+                </div>
+              ) : (
+                <p className="rounded-lg border border-border/60 bg-muted/40 p-2.5 text-xs text-muted-foreground">
+                  The link is live, but it’s only shown once when it’s created — we don’t keep a copy. Rotate to
+                  get a new one (which stops the old link working).
+                </p>
+              )}
               {canEdit && (
                 <div className="flex flex-wrap items-center gap-1.5">
                   {AUDIENCES.map((option) => (
@@ -482,163 +612,28 @@ export function JamDialog({
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
-                {shareEnabled
-                  ? `Anyone with this link can sign in and ${shareRole === 'edit' ? 'edit' : 'view and run'} this flow. Rotating makes old links stop working; people who already accepted keep access until you remove them.`
-                  : 'Only people in your workspace can open this link.'}
+                {audience === 'workspace'
+                  ? 'Only people in your workspace can open this link.'
+                  : audience === 'anyone-public'
+                    ? `Anyone with this link sees a read-only picture of the steps — no settings, connected accounts, prompts or run history, and they can never edit or run it. ${
+                        anonymousViews
+                          ? `Opened ${anonymousViews} time${anonymousViews === 1 ? '' : 's'}.`
+                          : 'Not opened yet.'
+                      }`
+                    : `Anyone with this link can sign in and ${audience === 'anyone-edit' ? 'edit' : 'view and run'} this flow. Rotating makes old links stop working; people who already accepted keep access until you remove them above.`}
               </p>
-              {linkLiveButUnrecoverable && (
-                <p className="text-xs text-muted-foreground">
-                  The link is live, but it’s only shown once when it’s created — we don’t keep a copy. Rotate to
-                  get a new one (which stops the old link working).
-                </p>
-              )}
-
-              {canEdit && shareEnabled && (
-                <>
-                  <div className="space-y-1.5 rounded-lg border border-border/60 p-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-medium">Open without signing in</p>
-                      <Switch
-                        checked={Boolean(shareAnonymous)}
-                        disabled={shareBusy}
-                        onCheckedChange={(on) => void updateShare(true, shareRole ?? 'view', false, false, on)}
-                        aria-label="Let anyone open this link without an account"
-                      />
-                    </div>
-                    {shareAnonymous ? (
-                      <>
-                        <p className="text-xs text-muted-foreground">
-                          Anyone with the link sees a read-only picture of the steps — no settings, connected
-                          accounts, prompts or run history, and they can never edit or run it.
-                        </p>
-                        {publicLink ? (
-                          <div className="flex items-center gap-1.5 rounded-md bg-muted/50 py-1 pl-2.5 pr-1">
-                            <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{publicLink}</span>
-                            <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs" onClick={copyPublic}>
-                              {copiedPublic ? <Check className="mr-1 h-3 w-3 text-green-600" /> : <Copy className="mr-1 h-3 w-3" />}
-                              {copiedPublic ? 'Copied' : 'Copy'}
-                            </Button>
-                          </div>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">
-                            The public link is live. Rotate above to get a fresh copy of it.
-                          </p>
-                        )}
-                        <p className="text-xs text-muted-foreground">
-                          {anonymousViews
-                            ? `Opened ${anonymousViews} time${anonymousViews === 1 ? '' : 's'} without signing in.`
-                            : 'Not opened yet.'}{' '}
-                          Rotating the link (or going back to workspace only) stops it working and resets the count.
-                        </p>
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        Off — people must sign in to open this flow.
-                      </p>
-                    )}
-                  </div>
-
-                  {guests.length > 0 && (
-                    <div className="space-y-1.5">
-                      <p className="text-xs font-medium text-muted-foreground">Joined by link</p>
-                      <ul className="space-y-0.5 rounded-lg border border-border/60 p-1">
-                        {guests.map((guest) => (
-                          <li key={guest.userId} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 text-sm">
-                            <span className="min-w-0 truncate">
-                              {guest.name || guest.email || 'Guest'}
-                              <span className="ml-1.5 text-xs text-muted-foreground">{guest.role === 'edit' ? 'can edit' : 'can view'}</span>
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
-                              loading={removingGuest === guest.userId}
-                              onClick={() => void removeGuest(guest.userId)}
-                            >
-                              Remove
-                            </Button>
-                          </li>
-                        ))}
-                      </ul>
-                      <button
-                        type="button"
-                        disabled={shareBusy}
-                        onClick={() => void updateShare(true, shareRole ?? 'view', true, true)}
-                        className="text-xs font-medium text-muted-foreground underline-offset-2 transition-colors hover:text-destructive hover:underline"
-                      >
-                        Rotate the link and remove everyone who joined by it
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
-          )}
-
-          {canInvite && (
-            <section className="space-y-2.5 px-6 py-4">
-              <p className="flex items-center gap-2 text-sm font-medium">
-                <UserPlus className="h-4 w-4 text-muted-foreground" />
-                {huddle?.joined ? 'Ring teammates' : 'Invite teammates'}
-              </p>
-              {members.length > 0 && (
-                <div className="space-y-2">
-                  <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-border/60 p-1">
-                    {members.map((m) => {
-                      const label = m.name || m.email || 'Teammate'
-                      const checked = selected.has(m.id)
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => toggle(m.id)}
-                          className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
-                        >
-                          <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border', checked ? 'border-indigo-500 bg-indigo-500' : 'border-muted-foreground/40')}>
-                            {checked && <Check className="h-3 w-3 text-white" />}
-                          </span>
-                          <span className="truncate">{label}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <Button size="sm" className="w-full" onClick={sendInvites} loading={sending} disabled={selected.size === 0}>
-                    <Send className="mr-1.5 h-4 w-4" />
-                    {selected.size === 0
-                      ? (huddle?.joined ? 'Select teammates to ring' : 'Select teammates to invite')
-                      : huddle?.joined
-                        ? `Ring ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'} to the huddle`
-                        : `Send invite to ${selected.size} ${selected.size === 1 ? 'teammate' : 'teammates'}`}
-                  </Button>
-                </div>
-              )}
-              {isAdmin ? (
-                <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-muted-foreground">Someone new</p>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="email"
-                      value={inviteEmail}
-                      onChange={(event) => setInviteEmail(event.target.value)}
-                      placeholder="teammate@company.com"
-                      className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-sm"
-                    />
-                    <Button size="sm" onClick={() => void inviteByEmail()} loading={inviting} disabled={!inviteEmail.trim()}>
-                      <UserPlus className="mr-1.5 h-4 w-4" /> Invite
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    They join your workspace and land straight on this flow.
-                  </p>
-                  {workspaceLink && (
-                    <p className="break-all rounded-lg border border-border/60 bg-muted/40 p-2 font-mono text-[11px]">{workspaceLink}</p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Only an admin can add people to your workspace. To bring in someone outside it,
-                  set the share link above to “anyone” and send them that.
-                </p>
+              {/* Only while a link is live: rotating re-mints one, so offering it
+                  on a workspace-only flow would silently re-open the flow.
+                  Guests can always be removed one at a time in the list above. */}
+              {canEdit && shareEnabled && guests.length > 0 && (
+                <button
+                  type="button"
+                  disabled={shareBusy}
+                  onClick={() => void updateShare(true, shareRole ?? 'view', true, true)}
+                  className="text-xs font-medium text-muted-foreground underline-offset-2 transition-colors hover:text-destructive hover:underline"
+                >
+                  Rotate the link and remove everyone who joined by it
+                </button>
               )}
             </section>
           )}

@@ -2971,6 +2971,7 @@ function FlowBuilder() {
         onChangeVisibility={(next) => void updateSharing(next)}
         presence={others.map((p) => ({
           id: p.clientId,
+          userId: p.userId,
           name: p.name,
           color: p.color,
           inHuddle: p.inHuddle,

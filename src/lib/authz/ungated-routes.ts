@@ -30,6 +30,7 @@ export const UNGATED_ROUTES: readonly string[] = [
   // the users who need this page to tell them they are not yet entitled.
   'peopleai/status',
   'mcp-connections/oauth/callback',       // OAuth redirect, validated by state
+  'slack/oauth/callback',                 // OAuth redirect, validated by the encrypted state cookie
   'flows/[id]/trigger',                   // per-flow trigger token
   'flows/[id]/runs/[runId]/resume',       // per-run resume token
   'signals/people-ai',                    // HMAC-signed webhook

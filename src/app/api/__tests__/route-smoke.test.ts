@@ -76,6 +76,7 @@ const readExempt = new Set([
   'cron/indexer-sweep',             // CRON_SECRET, fail-closed
   'cron/adoption-rollup',           // CRON_SECRET, fail-closed
   'mcp-connections/oauth/callback', // OAuth state/PKCE cookie minted by the authenticated start route
+  'slack/oauth/callback',           // OAuth redirect, validated by the encrypted state cookie
   'peopleai/callback',              // authenticated-encryption state cookie, bound to user + org
   // Session-authenticated, but deliberately NOT through withAuthenticatedApi:
   // both must answer for a user who has not yet cleared the entitlement /
@@ -280,6 +281,10 @@ if (TEST_DB) {
     // real internal org is covered in
     // src/app/api/admin/__tests__/adoption-route.db.test.ts.
     { route: 'admin/adoption', reason: 'operator-only — 403 for the smoke org by design' },
+    // Returns a 307 to Slack's consent screen, not JSON, and only when
+    // SLACK_CLIENT_ID/SECRET are set. Covered against a real database in
+    // src/app/api/slack/__tests__/install-callback.db.test.ts.
+    { route: 'slack/install', reason: 'redirects to Slack OAuth; not a JSON smoke target' },
     // Operator-only, so the smoke org gets a 403 by design. Covered instead by
     // admin/__tests__/users-route.db.test.ts, which seeds a real operator.
     { route: 'admin/users', reason: 'operator-only — 403 for the smoke org by design' },

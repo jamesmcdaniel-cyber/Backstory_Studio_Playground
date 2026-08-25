@@ -40,3 +40,82 @@ export function advancedParamsSetCount(node: FlowNode): number {
   const data = node.data as Record<string, unknown>
   return advancedParamKeys(node.type).filter((key) => data[key] !== undefined).length
 }
+
+/** One set parameter, described the way the panel says it. */
+export type AdvancedParamSummaryEntry = { key: AdvancedParamKey; text: string }
+
+function seconds(ms: unknown): string | null {
+  return typeof ms === 'number' && Number.isFinite(ms) ? `${Math.round(ms / 1000)}s` : null
+}
+
+function describe(key: AdvancedParamKey, value: unknown): string | null {
+  switch (key) {
+    case 'onError':
+      return value === 'continue'
+        ? 'Continues on error'
+        : value === 'route'
+          ? 'Routes failures to an error path'
+          : value === 'stop'
+            ? 'Stops the flow on error'
+            : null
+    case 'retries':
+      if (typeof value !== 'number') return null
+      return value === 0 ? 'No retries' : value === 1 ? '1 retry' : `${value} retries`
+    case 'retryDelayMs': {
+      const s = seconds(value)
+      return s && `Waits ${s} between tries`
+    }
+    case 'timeoutMs': {
+      const s = seconds(value)
+      return s && `Timeout ${s}`
+    }
+    case 'bodyMode':
+      return value === 'json' ? 'JSON body' : value === 'text' ? 'Text body' : value === 'none' ? 'No body' : null
+    case 'responseType':
+      return value === 'file'
+        ? 'Downloads the response as a file'
+        : value === 'json'
+          ? 'Response parsed as JSON'
+          : value === 'text'
+            ? 'Response parsed as text'
+            : value === 'auto'
+              ? 'Response parsed automatically'
+              : null
+    case 'failOnHttpError':
+      return value === false ? 'Returns 4xx/5xx responses' : value === true ? 'Fails on 4xx/5xx' : null
+    case 'concurrency':
+      return typeof value === 'number' ? `${value} at a time` : null
+    case 'alwaysOutputData':
+      return value === true ? 'Always outputs data' : value === false ? 'Skips downstream steps when empty' : null
+    case 'maxRedirects':
+      return typeof value === 'number'
+        ? value === 0 ? 'Does not follow redirects' : `Follows up to ${value} redirects`
+        : null
+    case 'batchSize':
+      return typeof value === 'number' ? `${value} items per round` : null
+    case 'waitForCompletion':
+      return value === false ? 'Does not wait for the other flow' : value === true ? 'Waits for the other flow' : null
+  }
+}
+
+/**
+ * The node's advanced parameters that are actually SET, each in plain English.
+ *
+ * The section header could only count them ("Showing 2 of 8"), which meant the
+ * settings in force — a step that swallows its errors, one that gives up after
+ * 5 seconds — were invisible unless you expanded it. A count tells you that
+ * something was changed; it never tells you what now happens.
+ *
+ * Ordered by the manifest so the summary reads the same way twice, regardless
+ * of the order the keys happen to sit in on the stored node.
+ */
+export function advancedParamSummary(node: FlowNode): AdvancedParamSummaryEntry[] {
+  const data = node.data as Record<string, unknown>
+  const entries: AdvancedParamSummaryEntry[] = []
+  for (const key of advancedParamKeys(node.type)) {
+    if (data[key] === undefined) continue
+    const text = describe(key, data[key])
+    if (text) entries.push({ key, text })
+  }
+  return entries
+}

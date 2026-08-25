@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { FlowNode } from '@/lib/flows/graph'
-import { advancedParamKeys, advancedParamsSetCount, type AdvancedParamKey } from '@/lib/flows/advanced-params'
+import { advancedParamKeys, advancedParamSummary, advancedParamsSetCount, type AdvancedParamKey } from '@/lib/flows/advanced-params'
 import { AGENT_RUN_MAX_DURATION_SECONDS } from '@/lib/agents/timeouts'
 
 const controlClass =
@@ -31,6 +31,7 @@ export function AdvancedParamsSection({
 
   const data = node.data as Record<string, unknown>
   const setCount = advancedParamsSetCount(node)
+  const summary = advancedParamSummary(node)
   const patch = (values: Record<string, unknown>) => onChange({ ...node, data: { ...node.data, ...values } } as FlowNode)
   const clearAll = () => patch(Object.fromEntries(keys.map((key) => [key, undefined])))
   const maxTimeoutSeconds = node.type === 'code'
@@ -230,6 +231,22 @@ export function AdvancedParamsSection({
           </button>
         </div>
       </div>
+      {/* What is actually in force, spelled out. A collapsed section that says
+          only "Showing 2 of 8" hides the two settings that change how the step
+          runs — and those are exactly what someone reading the flow later
+          needs to see without opening anything. */}
+      {!open && summary.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {summary.map((entry) => (
+            <li
+              key={entry.key}
+              className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600"
+            >
+              {entry.text}
+            </li>
+          ))}
+        </ul>
+      )}
       {open && (
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {keys.map((key) => (

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin } from 'lucide-react'
+import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin, AlertTriangle, ToggleLeft, ToggleRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
@@ -10,8 +10,10 @@ import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, SUMMARIZE_OPS, VARIABLE_VALUE_PLACEHOLDER, variableValueOptional } from '@/lib/flows/step-copy'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { DataTree } from '@/components/flows/data-tree'
+import { StructuredValueView } from '@/components/flows/structured-value-view'
 import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 import { fileBindingOptions, type DataField } from '@/lib/flows/datatree'
+import { splitIssuesByField, type FieldIssue } from '@/lib/flows/issue-fields'
 import { AdvancedParamsSection } from '@/components/flows/advanced-params'
 import { CodeEditor } from '@/components/flows/code-editor'
 import { CodeAssist } from '@/components/flows/code-assist'
@@ -483,6 +485,32 @@ function AddNestedStepMenu({
 // names, label/notes, field-name inputs, …) is focused, so datatree inserts
 // must be a no-op — falling back to the step's primary field would silently
 // write to a field the user is not editing.
+/**
+ * The validation findings one control owns, rendered directly beneath it.
+ *
+ * Errors read red and warnings amber, matching the checker, so the same
+ * finding looks the same wherever the user meets it.
+ */
+function FieldIssues({ issues }: { issues: FieldIssue[] | undefined }) {
+  if (!issues?.length) return null
+  return (
+    <ul className="mt-1.5 space-y-1" data-field-issues>
+      {issues.map((issue, index) => (
+        <li
+          key={index}
+          className={cn(
+            'flex items-start gap-1.5 text-xs',
+            issue.level === 'error' ? 'text-red-700' : 'text-amber-700',
+          )}
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0">{issue.message}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 const NON_TOKEN_FOCUSED = 'non-token-focused'
 
 // Where a datatree click lands when no chip editor has been focused yet: the
@@ -517,12 +545,15 @@ function ToolConfigurationSection({
   toolCatalog,
   dataFields,
   labelCtx,
+  issueFor,
   onChange,
 }: {
   node: Extract<FlowNode, { type: 'tool' }>
   toolCatalog: ToolCatalog
   dataFields: DataField[]
   labelCtx: TokenLabelContext
+  /** The step's findings, looked up by the field each control owns. */
+  issueFor: (field: string) => FieldIssue[] | undefined
   onChange: (node: FlowNode) => void
 }) {
   const uid = useId()
@@ -566,6 +597,7 @@ function ToolConfigurationSection({
               </option>
             ))}
           </select>
+          <FieldIssues issues={issueFor('connectionId')} />
         </div>
       ) : (
         <>
@@ -612,6 +644,8 @@ function ToolConfigurationSection({
                 </option>
               ))}
             </select>
+            <FieldIssues issues={issueFor('toolName')} />
+            <FieldIssues issues={issueFor('connectionId')} />
           </div>
           {tool && (
             <>
@@ -625,6 +659,7 @@ function ToolConfigurationSection({
                 connectionId={node.data.connectionId}
                 pickerTools={Array.from(new Set(actions.map((entry) => entry.tool.name)))}
               />
+              <FieldIssues issues={issueFor('toolArgs')} />
             </>
           )}
         </>
@@ -676,7 +711,7 @@ export function StepDrawer({
   labelCtx: TokenLabelContext
   previewCtx?: FlowContext
   variableNames?: string[]
-  issues?: { level: 'error' | 'warning'; message: string }[]
+  issues?: FieldIssue[]
   published?: boolean
   onFlowPersisted?: (updatedAt: string) => void
   rawInput?: unknown
@@ -717,12 +752,19 @@ export function StepDrawer({
 }) {
   const uid = useId()
   const isWorkspace = layout === 'workspace'
+  // Findings split into the ones a control owns and the ones that belong to
+  // the step as a whole. `issueFor` is what each control calls to claim its own.
+  const { byField: fieldIssues, rest: bannerIssues } = useMemo(() => splitIssuesByField(issues), [issues])
+  const issueFor = (field: string) => fieldIssues.get(field)
+  const issueCount = fieldIssues.size
+  const defaultStepName = NODE_TYPES.find((entry) => entry.value === node.type)?.label ?? node.type
   const [httpCredentials, setHttpCredentials] = useState<HttpCredentialSummary[]>([])
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
   const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
   const [curlDialogOpen, setCurlDialogOpen] = useState(false)
   const [reverifyingCredential, setReverifyingCredential] = useState(false)
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<'input' | 'configure' | 'output'>('configure')
+  const [inputView, setInputView] = useState<'schema' | 'json'>('schema')
   // Editable draft of the pinned mock JSON. Reset from the graph's pinData when
   // the selected node changes; in-node edits are owned by the textarea/handlers.
   const [mockDraft, setMockDraft] = useState('')
@@ -825,17 +867,6 @@ export function StepDrawer({
       .catch(() => undefined)
   }, [node.type])
 
-  const rawJson = (value: unknown, empty: string) => {
-    if (value === undefined || value === null) return empty
-    if (typeof value === 'string') return value
-    try {
-      return JSON.stringify(value, null, 2)
-    } catch {
-      return String(value)
-    }
-  }
-
-  const setLabel = (label: string) => onChange({ ...node, data: { ...node.data, label } } as FlowNode)
 
   // Insert a token chip at the caret of the last-focused editor; fall back to
   // the step's primary field when nothing has been focused yet. DataTree emits
@@ -865,12 +896,34 @@ export function StepDrawer({
             </span>
           )}
           <div className="min-w-0">
-            <h2 className={cn('font-semibold', isWorkspace ? 'text-base' : 'text-sm')}>
-              {isTrigger ? 'Configure trigger' : ((node.data as { label?: string }).label?.trim() || 'Configure step')}
-            </h2>
+            {isTrigger ? (
+              <h2 className={cn('font-semibold', isWorkspace ? 'text-base' : 'text-sm')}>Configure trigger</h2>
+            ) : (
+              // Editable in place. The name was settable only from the canvas
+              // card's overflow menu, which meant the panel you configure a
+              // step in was the one place you could not name it — and a flow of
+              // "HTTP request, HTTP request, HTTP request" is unreadable on the
+              // canvas and in every run log downstream of it.
+              <input
+                className={cn(
+                  'w-full truncate rounded-md border border-transparent bg-transparent font-semibold outline-none',
+                  'hover:border-border focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100',
+                  isWorkspace ? '-ml-2 px-2 py-0.5 text-base' : '-ml-1.5 px-1.5 py-0.5 text-sm',
+                )}
+                value={(node.data as { label?: string }).label ?? ''}
+                placeholder={defaultStepName}
+                aria-label="Step name"
+                onFocus={blockActive}
+                onBlur={unblockActive}
+                onChange={(event) => onChange({
+                  ...node,
+                  data: { ...node.data, label: event.target.value || undefined },
+                } as FlowNode)}
+              />
+            )}
             {isWorkspace && (
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {isTrigger ? 'Trigger settings' : `${NODE_TYPES.find((entry) => entry.value === node.type)?.label ?? node.type} · Parameters`}
+                {isTrigger ? 'Trigger settings' : `${defaultStepName} · Parameters`}
               </p>
             )}
           </div>
@@ -940,21 +993,61 @@ export function StepDrawer({
         {isWorkspace && (
           <aside className={cn('min-h-0 flex-col border-r border-border bg-slate-50/70', mobileWorkspaceTab === 'input' ? 'flex' : 'hidden', 'lg:flex')}>
             <div className="border-b border-border px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4 text-indigo-600" />
-                <p className="text-sm font-semibold">Input</p>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-indigo-600" />
+                  <p className="text-sm font-semibold">Input</p>
+                </div>
+                {/* Schema vs JSON. The configure column hides its inline data
+                    picker at this width and hands the job to this pane, so
+                    without a schema view the widest layout was the one with no
+                    way to put upstream data into a field at all. */}
+                <div className="flex rounded-md border border-border bg-white p-0.5" role="tablist" aria-label="Input view">
+                  {(['schema', 'json'] as const).map((view) => (
+                    <button
+                      key={view}
+                      type="button"
+                      role="tab"
+                      aria-selected={inputView === view}
+                      onClick={() => setInputView(view)}
+                      className={cn(
+                        'rounded px-2 py-0.5 text-[11px] font-semibold capitalize transition-colors',
+                        inputView === view ? 'bg-indigo-50 text-indigo-700' : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {view}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">Raw JSON this step received on the selected run — its resolved input, or the upstream data feeding it.</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {inputView === 'schema'
+                  ? 'The data this step can read. Click a value to add it to the field you are editing.'
+                  : 'Raw JSON this step received on the selected run — its resolved input, or the upstream data feeding it.'}
+              </p>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-              {rawInputInferred && rawInput !== undefined && (
+              {rawInputInferred && rawInput !== undefined && inputView === 'json' && (
                 <p className="rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
                   Inferred from upstream outputs — this step did not record an input on the selected run.
                 </p>
               )}
-              <pre className="max-h-[45%] overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
-                {rawJson(rawInput, 'No input data yet.\nExecute the previous nodes to inspect their raw output here.')}
-              </pre>
+              {inputView === 'schema' ? (
+                <DataTree
+                  fields={dataFields}
+                  onInsert={insertToken}
+                  title="Available data"
+                  emptyMessage="No earlier step data is available yet — run the steps before this one to see what they produce."
+                />
+              ) : (
+                rawInput === undefined ? (
+                  <pre className="overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
+                    {'No input data yet.\nExecute the previous nodes to inspect their raw output here.'}
+                  </pre>
+                ) : (
+                  <StructuredValueView value={rawInput} maxHeight="max-h-[28rem]" />
+                )
+              )}
               {!isTrigger && onExecutePrevious && rawInput === undefined && (
                 <Button type="button" variant="outline" size="sm" className="w-full" onClick={onExecutePrevious}>
                   <Play className="mr-1.5 h-4 w-4" /> Execute previous nodes
@@ -973,16 +1066,20 @@ export function StepDrawer({
                 : 'p-4',
             )}
           >
-        {issues && issues.length > 0 && (
+        {/* Only the findings no single control owns. Everything else is
+            rendered at its field by <FieldIssues>, so "which box is wrong" is
+            answered by looking at the box rather than by matching a sentence
+            in a banner to one of a dozen inputs. */}
+        {bannerIssues.length > 0 && (
           <div
             className={cn(
               'rounded-md border p-3 text-sm',
-              issues.some((issue) => issue.level === 'error') ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50',
+              bannerIssues.some((issue) => issue.level === 'error') ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50',
             )}
           >
             <p className="font-semibold text-slate-900">This step needs attention</p>
             <ul className="mt-2 space-y-1.5">
-              {[...issues]
+              {[...bannerIssues]
                 .sort((a, b) => (a.level === b.level ? 0 : a.level === 'error' ? -1 : 1))
                 .map((issue, issueIndex) => (
                   <li key={issueIndex} className="flex items-start gap-2 text-slate-700">
@@ -993,6 +1090,12 @@ export function StepDrawer({
             </ul>
           </div>
         )}
+        {fieldIssues.size > 0 && bannerIssues.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            {issueCount === 1 ? 'One field below needs attention.' : `${issueCount} fields below need attention.`}
+          </p>
+        )}
+        {isTrigger && <FieldIssues issues={issueFor('trigger')} />}
         {isTrigger ? (
           <TriggerEditor
             flowId={flowId}
@@ -1006,18 +1109,17 @@ export function StepDrawer({
               fields={trigger.inputFields ?? []}
               onChange={(inputFields) => onChange({ ...node, data: { trigger: { ...trigger, inputFields: inputFields.length ? inputFields : undefined } } })}
             />
+            <FieldIssues issues={issueFor('inputFields')} />
           </TriggerEditor>
         ) : (
           <>
             {/* Step type selector removed — a node's type is fixed once added. */}
-            {/* Label/Notes are hidden for HTTP so its Parameters view stays lean
-                like n8n; other node types keep them. */}
+            {/* The name lives in the header now — one rename affordance, in the
+                place n8n puts it, and HTTP steps get it too instead of being
+                the one type you could not name from its own panel. Notes stay
+                hidden for HTTP so its Parameters view stays lean. */}
             {node.type !== 'http' && (
               <>
-                <div>
-                  <label className={labelClass} htmlFor={`${uid}-step-label`}>Label (optional)</label>
-                  <input id={`${uid}-step-label`} className={fieldClass} value={(node.data as { label?: string }).label ?? ''} placeholder="A short name for this step" onFocus={blockActive} onBlur={unblockActive} onChange={(e) => setLabel(e.target.value)} />
-                </div>
                 {typeof (node.data as { note?: string }).note === 'string' ? (
                   <div>
                     <label className={labelClass} htmlFor={`${uid}-step-note`}>Notes</label>
@@ -1074,6 +1176,7 @@ export function StepDrawer({
                   </option>
                 ))}
               </select>
+              <FieldIssues issues={issueFor('agentId')} />
             </div>
             {!node.data.agentId && (
               <AgentInlineCreate
@@ -1097,6 +1200,7 @@ export function StepDrawer({
                 onChange={(input) => onChange({ ...node, data: { ...node.data, input } })}
                 ariaLabel="Message to agent"
               />
+              <FieldIssues issues={issueFor('input')} />
               <div className="mt-2">
                 <DataTree fields={dataFields} onInsert={insertToken} />
               </div>
@@ -1225,6 +1329,7 @@ export function StepDrawer({
                 onChange={(input) => onChange({ ...node, data: { ...node.data, input } })}
                 ariaLabel="AI input"
               />
+              <FieldIssues issues={issueFor('aiInput')} />
               <div className="mt-2">
                 <DataTree fields={dataFields} onInsert={insertToken} />
               </div>
@@ -1327,6 +1432,7 @@ export function StepDrawer({
                 onChange={(query) => onChange({ ...node, data: { ...node.data, query } })}
                 ariaLabel="Knowledge search query"
               />
+              <FieldIssues issues={issueFor('query')} />
               <div className="mt-2">
                 <DataTree fields={dataFields} onInsert={insertToken} />
               </div>
@@ -1349,7 +1455,7 @@ export function StepDrawer({
         )}
 
         {node.type === 'subflow' && (
-          <SubflowDrawerSection node={node} onChange={onChange} flowId={flowId} labelCtx={labelCtx} registerEditor={registerEditor} focusEditor={focusEditor} dataFields={dataFields} insertToken={insertToken} />
+          <SubflowDrawerSection node={node} onChange={onChange} flowId={flowId} labelCtx={labelCtx} registerEditor={registerEditor} focusEditor={focusEditor} dataFields={dataFields} insertToken={insertToken} issueFor={issueFor} />
         )}
 
         {node.type === 'condition' && (
@@ -1415,6 +1521,7 @@ export function StepDrawer({
             >
               <Plus className="h-3.5 w-3.5" /> Add condition
             </button>
+            <FieldIssues issues={issueFor('clauses')} />
             <div>
               <DataTree fields={dataFields} onInsert={insertToken} />
             </div>
@@ -1434,6 +1541,7 @@ export function StepDrawer({
                 onChange={(over) => onChange({ ...node, data: { ...node.data, over } })}
                 ariaLabel="Items to process"
               />
+              <FieldIssues issues={issueFor('loopSource')} />
               <div className="mt-2">
                 <DataTree fields={dataFields} onInsert={insertToken} />
               </div>
@@ -1489,6 +1597,7 @@ export function StepDrawer({
             toolCatalog={toolCatalog}
             dataFields={dataFields}
             labelCtx={labelCtx}
+            issueFor={issueFor}
             onChange={onChange}
           />
         )}
@@ -1532,6 +1641,7 @@ export function StepDrawer({
                 onChange={(event) => onChange({ ...node, data: { ...node.data, url: event.target.value } })}
                 aria-label="Request URL"
               />
+              <FieldIssues issues={issueFor('url')} />
             </div>
 
             <div>
@@ -1555,11 +1665,10 @@ export function StepDrawer({
                   ? 'Reuse a connected MCP server’s token for authentication.'
                   : 'Choose an auth method, then set up a reusable credential for this host.'}
               </p>
-              {!node.data.connectionId && !node.data.credentialId && (
-                <p className="mt-1 text-xs text-amber-700">
-                  This request needs authentication before the flow can run — pick a connected integration or set up a credential.
-                </p>
-              )}
+              {/* The checker owns this message now — it knows which brand the
+                  URL points at and whether that integration is connected, so
+                  it says something more useful than a generic warning could. */}
+              <FieldIssues issues={issueFor('httpAuth')} />
             </div>
 
             {httpAuthMode === 'predefined' && (
@@ -1928,6 +2037,12 @@ export function StepDrawer({
               </div>
             </details>
 
+            {/* The HTTP step declares eight advanced parameters and the
+                executor honours every one of them — retries, timeout, on-error,
+                redirects, how the response is parsed. This panel never rendered
+                the section, so the busiest node type was the one whose run
+                behaviour you could only change from the inline card. */}
+            <AdvancedParamsSection node={node} onChange={onChange} />
             <p className="text-xs text-muted-foreground">Calls a public HTTPS endpoint. The raw status, response headers, parsed body, and response text appear in Output.</p>
           </div>
         )}
@@ -1975,6 +2090,7 @@ export function StepDrawer({
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, fields: [...node.data.fields, { name: '', value: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
               <Plus className="h-3.5 w-3.5" /> Add field
             </button>
+            <FieldIssues issues={issueFor('fields')} />
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
@@ -2023,6 +2139,7 @@ export function StepDrawer({
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, clauses: [...clausesOf(node.data), { left: '', op: 'contains', right: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
               <Plus className="h-3.5 w-3.5" /> Add condition
             </button>
+            <FieldIssues issues={issueFor('clauses')} />
             <div><DataTree fields={dataFields} onInsert={insertToken} /></div>
           </div>
         )}
@@ -2050,6 +2167,7 @@ export function StepDrawer({
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, cases: [...node.data.cases, { id: `case${node.data.cases.length + 1}-${Math.random().toString(36).slice(2, 6)}`, left: '', op: 'contains', right: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
               <Plus className="h-3.5 w-3.5" /> Add case
             </button>
+            <FieldIssues issues={issueFor('cases')} />
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
@@ -2074,6 +2192,7 @@ export function StepDrawer({
           <VariableEditor
             node={node}
             variableNames={variableNames ?? []}
+            issueFor={issueFor}
             onChange={onChange}
             dataFields={dataFields}
             labelCtx={labelCtx}
@@ -2088,6 +2207,7 @@ export function StepDrawer({
         {node.type === 'data' && (
           <DataEditor
             node={node}
+            issueFor={issueFor}
             onChange={onChange}
             dataFields={dataFields}
             labelCtx={labelCtx}
@@ -2114,6 +2234,7 @@ export function StepDrawer({
                 onChange={(message) => onChange({ ...node, data: { ...node.data, message } })}
                 ariaLabel="Message"
               />
+              <FieldIssues issues={issueFor('reviewMessage')} />
               <div className="mt-2">
                 <DataTree fields={dataFields} onInsert={insertToken} />
               </div>
@@ -2147,6 +2268,7 @@ export function StepDrawer({
         {node.type === 'output' && (
           <OutputEditor
             node={node}
+            issueFor={issueFor}
             onChange={onChange}
             dataFields={dataFields}
             labelCtx={labelCtx}
@@ -2219,6 +2341,7 @@ export function StepDrawer({
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
                 Return a JSON-compatible value. Use <code>input</code> for this step&apos;s data and <code>context</code> for trigger, steps, variables, time, and run metadata. Imports, files, network calls, and child processes are unavailable.
               </p>
+              <FieldIssues issues={issueFor('code')} />
             </div>
             <AdvancedParamsSection node={node} onChange={onChange} />
           </>
@@ -2310,6 +2433,7 @@ export function StepDrawer({
                   onChange={(until) => onChange({ ...node, data: { ...node.data, until } })}
                   ariaLabel="Wait until"
                 />
+                <FieldIssues issues={issueFor('wait')} />
                 <div className="mt-2">
                   <DataTree fields={dataFields} onInsert={insertToken} />
                 </div>
@@ -2393,6 +2517,19 @@ export function StepDrawer({
 
           {!isTrigger && (
             <div className={cn('flex gap-2 border-t border-border', isWorkspace ? 'justify-end bg-slate-50/70 px-6 py-3' : 'p-4')}>
+              {/* Disabling is how you take a step out of the run without
+                  losing its configuration — it belonged next to Delete, not
+                  only in the canvas card's overflow menu. */}
+              {node.type !== 'condition' && node.type !== 'switch' && (
+                <Button
+                  variant="outline"
+                  className={cn(isWorkspace ? 'mr-auto' : 'flex-1', node.disabled && 'border-amber-300 text-amber-700')}
+                  onClick={() => onChange({ ...node, disabled: node.disabled ? undefined : true } as FlowNode)}
+                >
+                  {node.disabled ? <ToggleRight className="mr-1.5 h-4 w-4" /> : <ToggleLeft className="mr-1.5 h-4 w-4" />}
+                  {node.disabled ? 'Enable step' : 'Disable step'}
+                </Button>
+              )}
               {onDuplicate && (
                 <Button variant="outline" className={isWorkspace ? '' : 'flex-1'} onClick={onDuplicate}>
                   <Copy className="mr-1.5 h-4 w-4" /> Duplicate
@@ -2458,9 +2595,18 @@ export function StepDrawer({
                 </div>
               ) : (
                 <>
-                  <pre className="min-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
-                    {rawJson(rawOutput, 'No output data yet.\nExecute this step to inspect its response here.')}
-                  </pre>
+                  {/* The same viewer the Runs panel uses: table view for a list
+                      of records, search, and a row count. This pane rendered a
+                      raw <pre>, so the one place you inspect a step's output
+                      while configuring it was the one place you could not read
+                      a 200-row response. */}
+                  {rawOutput === undefined ? (
+                    <pre className="min-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-graphite-950 p-3 font-mono text-[11px] leading-5 text-graphite-100">
+                      {'No output data yet.\nExecute this step to inspect its response here.'}
+                    </pre>
+                  ) : (
+                    <StructuredValueView value={rawOutput} maxHeight="max-h-[28rem]" />
+                  )}
                   {!isTrigger && onExecuteStep && rawOutput === undefined && (
                     <Button type="button" variant="outline" size="sm" className="w-full" onClick={onExecuteStep}>
                       <Play className="mr-1.5 h-4 w-4" /> Execute step
@@ -2532,6 +2678,7 @@ type TokenEditorPlumbing = {
 function VariableEditor({
   node,
   variableNames,
+  issueFor,
   onChange,
   dataFields,
   labelCtx,
@@ -2543,6 +2690,7 @@ function VariableEditor({
 }: {
   node: Extract<FlowNode, { type: 'variable' }>
   variableNames: string[]
+  issueFor: (field: string) => FieldIssue[] | undefined
   onChange: (node: FlowNode) => void
 } & TokenEditorPlumbing) {
   const uid = useId()
@@ -2597,6 +2745,7 @@ function VariableEditor({
         {!isInitialize && nameOptions.length === 0 && (
           <p className="mt-1.5 text-xs text-muted-foreground">No variables are initialized earlier in this flow — add an Initialize variable step first, or type the name it will use.</p>
         )}
+        <FieldIssues issues={issueFor('variableName')} />
       </div>
       {isInitialize && (
         <div>
@@ -2626,6 +2775,7 @@ function VariableEditor({
           onChange={(value) => onChange({ ...node, data: { ...node.data, value } })}
           ariaLabel="Variable value"
         />
+        <FieldIssues issues={issueFor('variableValue')} />
         <div className="mt-2">
           <DataTree fields={dataFields} onInsert={insertToken} />
         </div>
@@ -2637,6 +2787,7 @@ function VariableEditor({
 /** Data operation step editor: op, input, and the op-specific extras. */
 function DataEditor({
   node,
+  issueFor,
   onChange,
   dataFields,
   labelCtx,
@@ -2647,6 +2798,7 @@ function DataEditor({
   unblockActive,
 }: {
   node: Extract<FlowNode, { type: 'data' }>
+  issueFor: (field: string) => FieldIssue[] | undefined
   onChange: (node: FlowNode) => void
 } & TokenEditorPlumbing) {
   const uid = useId()
@@ -2685,6 +2837,7 @@ function DataEditor({
           onChange={(input) => onChange({ ...node, data: { ...node.data, input } })}
           ariaLabel="Input"
         />
+        <FieldIssues issues={issueFor('dataInput')} />
       </div>
       {(op === 'join' || op === 'split') && (
         <div>
@@ -2854,6 +3007,7 @@ function DataEditor({
           >
             <Plus className="h-3.5 w-3.5" /> Add condition
           </button>
+          <FieldIssues issues={issueFor('clauses')} />
           <p className="text-[11px] text-muted-foreground">Each condition checks one item of the list at a time.</p>
         </div>
       )}
@@ -3128,6 +3282,7 @@ function DataEditor({
           >
             <Plus className="h-3.5 w-3.5" /> {op === 'renameKeys' ? 'Add rename' : 'Add field'}
           </button>
+          <FieldIssues issues={issueFor('fields')} />
         </div>
       )}
       <div>
@@ -3150,6 +3305,7 @@ type OutputRow = { name: string; value: string; type?: 'text' | 'list' | 'any' }
 /** Output step editor: repeatable named results (name / templated value / type). */
 function OutputEditor({
   node,
+  issueFor,
   onChange,
   dataFields,
   labelCtx,
@@ -3160,6 +3316,7 @@ function OutputEditor({
   unblockActive,
 }: {
   node: Extract<FlowNode, { type: 'output' }>
+  issueFor: (field: string) => FieldIssue[] | undefined
   onChange: (node: FlowNode) => void
 } & TokenEditorPlumbing) {
   const outputs: OutputRow[] = node.data.outputs.length ? node.data.outputs : [{ name: 'output', value: '', type: 'any' }]
@@ -3216,6 +3373,7 @@ function OutputEditor({
       >
         <Plus className="h-3.5 w-3.5" /> Add output
       </button>
+      <FieldIssues issues={issueFor('outputFields')} />
       <div>
         <DataTree fields={dataFields} onInsert={insertToken} />
       </div>
@@ -3281,6 +3439,7 @@ function SubflowDrawerSection({
   focusEditor,
   dataFields,
   insertToken,
+  issueFor,
 }: {
   node: Extract<FlowNode, { type: 'subflow' }>
   onChange: (node: FlowNode) => void
@@ -3290,6 +3449,7 @@ function SubflowDrawerSection({
   focusEditor: (key: string) => () => void
   dataFields: DataField[]
   insertToken: (token: string) => void
+  issueFor: (field: string) => FieldIssue[] | undefined
 }) {
   const uid = useId()
   const { flows, loading } = useWorkspaceFlows()
@@ -3324,6 +3484,7 @@ function SubflowDrawerSection({
         {selected && !selected.published && (
           <p className="mt-1.5 text-xs text-amber-600">This flow has never been published — publish it before running it from here.</p>
         )}
+        <FieldIssues issues={issueFor('flowId')} />
       </div>
       {childFields.length > 0 ? (
         <div className="space-y-2">

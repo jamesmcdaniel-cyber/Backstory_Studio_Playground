@@ -44,6 +44,7 @@ import { normalizeStepAlias, type FlowContext } from '@/features/flows/context'
 import { parseFlowInput } from '@/lib/flows/input'
 import { httpOutputFields, outputFieldsFromJsonSchema } from '@/lib/flows/schema-fields'
 import { validateFlowGraph } from '@/lib/flows/validate'
+import type { FieldIssue } from '@/lib/flows/issue-fields'
 import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
 import { defaultStepLabel, stepLabelsOf } from '@/lib/flows/token-text'
 import { planSubflowExtraction, replaceRangeWithSubflow } from '@/lib/flows/subflow-extract'
@@ -1397,13 +1398,15 @@ function FlowBuilder() {
   )
 
   const issuesByNode = useMemo(() => {
-    const map: Record<string, { errors: number; warnings: number; items: { level: 'error' | 'warning'; message: string }[] }> = {}
+    // `code` rides along so the step panel can put each finding next to the
+    // control it is about instead of in one banner at the top.
+    const map: Record<string, { errors: number; warnings: number; items: FieldIssue[] }> = {}
     for (const issue of validation.issues) {
       if (!issue.nodeId) continue
       const entry = (map[issue.nodeId] ??= { errors: 0, warnings: 0, items: [] })
       if (issue.level === 'error') entry.errors += 1
       else entry.warnings += 1
-      entry.items.push({ level: issue.level, message: issue.message })
+      entry.items.push({ level: issue.level, message: issue.message, code: issue.code })
     }
     return map
   }, [validation])

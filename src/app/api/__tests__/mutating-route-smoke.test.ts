@@ -314,6 +314,7 @@ const SKIPS: Record<string, string> = {
   'v1/flows/[id]:PUT': 'covered by src/app/api/flows/__tests__/private-flow-visibility.db.test.ts',
   'v1/flows/[id]:DELETE': 'covered by src/app/api/flows/__tests__/private-flow-visibility.db.test.ts',
   'v1/flows/[id]/run:POST': 'no coverage: API-key-authenticated live flow execution',
+  'mcp:POST': 'no coverage: API-key-authenticated MCP server — the protocol layer it dispatches through is covered by src/lib/mcp/server/__tests__/',
   'organizations/domains:POST': 'no coverage: starts a DNS TXT challenge — admin/__tests__/domains-route.db.test.ts covers the PLATFORM domain route, not this one',
   'organizations/domains:DELETE': 'no coverage: domain lifecycle — admin/__tests__/domains-route.db.test.ts covers the PLATFORM domain route, not this one',
   'organizations/domains/[id]/verify:POST': 'no coverage: resolves live DNS to check the TXT challenge',

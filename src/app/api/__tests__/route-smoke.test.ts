@@ -62,6 +62,7 @@ const mutatingExempt = new Set([
   'v1/flows',
   'v1/flows/[id]',
   'v1/flows/[id]/run',
+  'mcp',                 // workspace API key — same admission as v1 (authenticatePublicApi, flows:run)
 ])
 
 // GET handlers that are deliberately not wrapped in withAuthenticatedApi. Reads
@@ -91,6 +92,7 @@ const readExempt = new Set([
   'scim/v2/Groups/[id]',
   'v1/flows',
   'v1/flows/[id]',
+  'mcp',                            // workspace API key; GET answers 405 by design
 ])
 
 test('every mutating route is authenticated or an allowlisted signature/secret route', () => {

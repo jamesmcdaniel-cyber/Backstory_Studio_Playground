@@ -118,6 +118,26 @@ export async function dispatchSlackMention(activityEventId: string): Promise<Out
   })
   if (existing) return { outcome: 'skipped', reason: 'already-dispatched' }
 
+  // A Slack thread is a conversation: continue it, so a follow-up knows what it
+  // is following up on.
+  const { threadSession, recordThreadTurn, withThreadContext } = await import('@/lib/slack/thread-session')
+  const session = await threadSession({
+    organizationId: event.organizationId,
+    agentTaskId: resolution.agent.id,
+    userId: identity.userId,
+    channelId,
+    threadTs,
+  })
+  const prompt = withThreadContext(resolution.prompt, session.priorTurns)
+  await recordThreadTurn({
+    organizationId: event.organizationId,
+    agentTaskId: resolution.agent.id,
+    userId: identity.userId,
+    sessionId: session.id,
+    role: 'user',
+    content: resolution.prompt,
+  })
+
   const placeholder = await reply(`_${resolution.agent.name} is on it…_`, resolution.agent.name)
 
   let execution
@@ -127,7 +147,7 @@ export async function dispatchSlackMention(activityEventId: string): Promise<Out
         agentType: 'CUSTOM',
         agentTaskId: resolution.agent.id,
         status: 'pending',
-        input: { prompt: resolution.prompt },
+        input: { prompt },
         idempotencyKey,
         trigger: {
           type: 'slack_mention',
@@ -136,6 +156,8 @@ export async function dispatchSlackMention(activityEventId: string): Promise<Out
           slackUserId: event.actorExternalId,
           activityEventId: event.id,
           chainDepth: event.chainDepth + 1,
+          sessionId: session.id,
+          teammateName: resolution.agent.name,
           ...(placeholder ? { placeholderTs: placeholder.ts } : {}),
         },
         userId: identity.userId,
@@ -161,7 +183,7 @@ export async function dispatchSlackMention(activityEventId: string): Promise<Out
     agentId: resolution.agent.id,
     organizationId: event.organizationId,
     userId: identity.userId,
-    input: resolution.prompt,
+    input: prompt,
   }).catch(async (error) => {
     const detail = error instanceof Error ? error.message : String(error)
     apiLogger.error('slack mention run failed to start', { executionId, error: detail })

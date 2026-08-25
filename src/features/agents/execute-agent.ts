@@ -1707,6 +1707,13 @@ async function runAgentExecutionInner(
       agentTaskId: agent.id,
       executionId: execution.id,
     })
+    // A Slack-initiated run answers in the thread it came from. Fire-and-forget
+    // and self-describing: the Slack context lives on the execution's persisted
+    // trigger, so the queue payload carries nothing extra and a non-Slack run
+    // is a no-op.
+    void import('@/lib/slack/reply')
+      .then(({ finishSlackMentionForExecution }) => finishSlackMentionForExecution(execution.id, summary))
+      .catch(() => undefined)
     // Index this run (output + correlated entities) into the graph-RAG store so
     // future agents/assistant answers can draw on what happened here. Fire and
     // forget — gated on embeddings, never blocks completion.
@@ -1773,6 +1780,13 @@ async function runAgentExecutionInner(
         completedAt: new Date(),
       },
     })
+    // A failed Slack run must say so in the thread rather than leaving its
+    // placeholder reading "is on it…" forever, which looks like a broken app.
+    void import('@/lib/slack/reply')
+      .then(({ finishSlackMentionForExecution }) =>
+        finishSlackMentionForExecution(execution.id, `That run failed. ${message.slice(0, 300)}`),
+      )
+      .catch(() => undefined)
     await notify({
       organizationId,
       userId,

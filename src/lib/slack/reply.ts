@@ -80,3 +80,117 @@ export async function updateTeammateMessage(params: {
   }
   return true
 }
+
+/**
+ * Resolve a mention's placeholder with the run's outcome.
+ *
+ * Called from the run's COMPLETION path rather than the dispatcher: in queue
+ * mode dispatchAgentExecution returns as soon as the job is enqueued, long
+ * before there is anything to say. The Slack context travels on the execution's
+ * `trigger`, which is already persisted, so the queue payload needs nothing
+ * extra.
+ *
+ * Failures update the same placeholder rather than going silent — a mention
+ * that never gets answered is indistinguishable from the app being broken.
+ */
+export async function finishSlackMention(params: {
+  organizationId: string
+  trigger: unknown
+  text: string
+  teammateName?: string
+}): Promise<void> {
+  const trigger = (params.trigger && typeof params.trigger === 'object' ? params.trigger : {}) as Record<string, unknown>
+  if (trigger.type !== 'slack_mention') return
+
+  const channelId = typeof trigger.channelId === 'string' ? trigger.channelId : ''
+  const threadTs = typeof trigger.threadTs === 'string' ? trigger.threadTs : ''
+  const placeholderTs = typeof trigger.placeholderTs === 'string' ? trigger.placeholderTs : ''
+  const chainDepth = typeof trigger.chainDepth === 'number' ? trigger.chainDepth : 1
+  const teammateName =
+    params.teammateName || (typeof trigger.teammateName === 'string' ? trigger.teammateName : 'Backstory')
+  if (!channelId) return
+
+  // Slack hard-caps a message body; a long answer is truncated with a pointer
+  // rather than silently rejected by the API.
+  const text =
+    params.text.length > 3800
+      ? `${params.text.slice(0, 3800)}\n\n_(truncated — open the run in Backstory for the rest)_`
+      : params.text || '_(the run produced no output)_'
+
+  if (placeholderTs) {
+    const updated = await updateTeammateMessage({
+      organizationId: params.organizationId,
+      channelId,
+      ts: placeholderTs,
+      text,
+    })
+    if (updated) return
+    // Fall through: the placeholder may have been deleted. A new message beats
+    // no answer.
+  }
+  if (!threadTs) return
+  await postTeammateMessage({
+    organizationId: params.organizationId,
+    channelId,
+    threadTs,
+    text,
+    teammateName,
+    chainDepth,
+  })
+}
+
+/**
+ * Record the agent's answer as the assistant turn of the thread's conversation,
+ * so the next follow-up in that thread can see it.
+ */
+export async function recordSlackAnswer(params: {
+  organizationId: string
+  trigger: unknown
+  agentTaskId: string
+  userId: string
+  text: string
+}): Promise<void> {
+  const trigger = (params.trigger && typeof params.trigger === 'object' ? params.trigger : {}) as Record<string, unknown>
+  if (trigger.type !== 'slack_mention') return
+  const sessionId = typeof trigger.sessionId === 'string' ? trigger.sessionId : ''
+  if (!sessionId || !params.text) return
+  const { recordThreadTurn } = await import('@/lib/slack/thread-session')
+  await recordThreadTurn({
+    organizationId: params.organizationId,
+    agentTaskId: params.agentTaskId,
+    userId: params.userId,
+    sessionId,
+    role: 'assistant',
+    content: params.text,
+  })
+}
+
+/**
+ * Terminal-path entry point: resolve a run's Slack thread from the execution
+ * row itself.
+ *
+ * Reads the trigger here rather than taking it as an argument so the agent
+ * runtime's call sites stay one-liners and do not depend on which local
+ * variable happens to hold the row at that point.
+ */
+export async function finishSlackMentionForExecution(executionId: string, text: string): Promise<void> {
+  const { systemPrisma } = await import('@/lib/prisma')
+  const execution = await systemPrisma.agentExecution.findUnique({
+    where: { id: executionId },
+    select: { organizationId: true, trigger: true, agentTaskId: true, userId: true },
+  })
+  if (!execution) return
+  const trigger = execution.trigger as Record<string, unknown> | null
+  if (!trigger || trigger.type !== 'slack_mention') return
+
+  await finishSlackMention({ organizationId: execution.organizationId, trigger, text })
+  if (execution.agentTaskId) {
+    await recordSlackAnswer({
+      organizationId: execution.organizationId,
+      trigger,
+      agentTaskId: execution.agentTaskId,
+      userId: execution.userId,
+      text,
+    })
+  }
+}

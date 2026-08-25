@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin, AlertTriangle, ToggleLeft, ToggleRight } from 'lucide-react'
+import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin, AlertTriangle, ToggleLeft, ToggleRight, Ban } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, CONDITION_OPS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
@@ -1066,6 +1066,16 @@ export function StepDrawer({
                 : 'p-4',
             )}
           >
+        {/* A disabled step keeps every setting below and runs none of them.
+            Without saying so, the panel for a skipped step looks exactly like
+            the panel for a live one — and now that the toggle lives here, that
+            silence is right where someone would flip it. */}
+        {node.disabled && (
+          <p className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <Ban className="h-4 w-4 shrink-0" aria-hidden />
+            This step is disabled — the flow skips it and carries on with the value from the step before it.
+          </p>
+        )}
         {/* Only the findings no single control owns. Everything else is
             rendered at its field by <FieldIssues>, so "which box is wrong" is
             answered by looking at the box rather than by matching a sentence

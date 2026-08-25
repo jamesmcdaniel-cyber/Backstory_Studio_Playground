@@ -310,3 +310,18 @@ test('the settings in force are readable without expanding the advanced section'
   assert.match(container.textContent ?? '', /3 retries/)
   cleanup()
 })
+
+test('a disabled step says so in the panel that configures it', () => {
+  const node = {
+    id: 'http1',
+    type: 'http',
+    disabled: true,
+    data: { method: 'GET', url: 'https://x.test' },
+  } as FlowNode
+  const { container, getByText } = renderDrawer(node)
+
+  assert.match(container.textContent ?? '', /This step is disabled/)
+  // …and the toggle offers the way back.
+  assert.ok(getByText('Enable step'))
+  cleanup()
+})

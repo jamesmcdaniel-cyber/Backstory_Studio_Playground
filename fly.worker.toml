@@ -58,16 +58,26 @@ primary_region = "iad"
   # (src/lib/files/storage.ts) dead. Must name the same project as that key.
   NEXT_PUBLIC_SUPABASE_URL = "https://hgxvhgdmipxbcgzendnz.supabase.co"
   WORKER_PORT = "3002"
-  # Consume only the queues someone is WAITING on: agent-execution,
-  # scheduled-agent-execution, flow-execution. Operator batch work (template
-  # generation, model bench, activity backfill) is served by fly.worker-batch.toml.
+  # WORKER_POOL is deliberately UNSET, so this machine consumes every queue.
   #
-  # Before the split, one long backfill over a slow provider API could hold
-  # interactive slots for minutes while people's runs queued behind it — and
-  # scaling this app did not fix that, it just bought more slots for the same
-  # contention. Leaving WORKER_POOL unset consumes everything, which is the
-  # pre-split behaviour and still correct for a single-machine deployment.
-  WORKER_POOL = "interactive"
+  # The split exists for a real problem: one long backfill over a slow provider
+  # API can hold interactive slots for minutes while people's runs queue behind
+  # it, and scaling this app does not fix that — it buys more slots for the same
+  # contention. But the batch half of the split is served by
+  # fly.worker-batch.toml, and that app HAS NEVER BEEN CREATED on Fly. With
+  # WORKER_POOL="interactive" set here and no batch app anywhere, template
+  # generation, model bench and activity backfill were enqueued with NOTHING
+  # consuming them — jobs sat in Redis indefinitely. Unconsumed is strictly
+  # worse than contended.
+  #
+  # Unset is the pre-split behaviour and is correct for a single-machine
+  # deployment, which this is (one app machine + one standby).
+  #
+  # RE-SPLIT WHEN: /api/cron/queue-watch shows interactive queue depth rising
+  # while a backfill or bench run is in flight. At that point create
+  # backstory-worker-batch from fly.worker-batch.toml AND restore
+  # WORKER_POOL="interactive" here — both, or the batch queues are orphaned
+  # again.
   # Per-worker, PER-QUEUE concurrency; the runtime starts four queues, so
   # in-flight jobs per machine ≈ 4x this. Size DATABASE_URL's connection_limit
   # against that product.

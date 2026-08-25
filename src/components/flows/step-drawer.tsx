@@ -1167,17 +1167,11 @@ export function StepDrawer({
                 )}
               </>
             )}
-            {PER_ITEM_TYPES.has(node.type) && (
-              <PerItemSection
-                node={node}
-                onChange={onChange}
-                dataFields={dataFields}
-                labelCtx={labelCtx}
-                registerEditor={registerEditor}
-                focusEditor={focusEditor}
-                insertToken={insertToken}
-              />
-            )}
+            {/* Per-item fan-out used to render HERE, above Method and URL — the
+                first control on every step, and an advanced one. n8n keeps this
+                class of setting out of the parameter list entirely; ours now
+                sits with the other run-behaviour settings at the bottom, so the
+                panel opens on what the step actually does. */}
           </>
         )}
 
@@ -2530,6 +2524,19 @@ export function StepDrawer({
             </p>
           </div>
         )}
+            {/* Run behaviour, once, at the end: how often the step runs is a
+                setting about the step, not one of its parameters. */}
+            {!isTrigger && PER_ITEM_TYPES.has(node.type) && (
+              <PerItemSection
+                node={node}
+                onChange={onChange}
+                dataFields={dataFields}
+                labelCtx={labelCtx}
+                registerEditor={registerEditor}
+                focusEditor={focusEditor}
+                insertToken={insertToken}
+              />
+            )}
           </div>
 
           {!isTrigger && (

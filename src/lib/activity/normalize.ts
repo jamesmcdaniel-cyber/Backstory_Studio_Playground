@@ -39,6 +39,8 @@ import { truncateWithMarker } from '@/lib/flows/truncate'
 /** Small, documented verb vocabulary — never a freeform provider string. */
 export const ACTIVITY_KINDS = [
   'message.posted',
+  /** An @mention of the Backstory app — a person summoning a teammate. */
+  'agent.mentioned',
   'record.created',
   'record.updated',
   'record.deleted',
@@ -182,7 +184,8 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
   const type = firstString([event], ['type'])
   if (!type) return null
 
-  const kind: ActivityKind = type === 'message' ? 'message.posted' : 'generic'
+  const isMention = type === 'app_mention'
+  const kind: ActivityKind = isMention ? 'agent.mentioned' : type === 'message' ? 'message.posted' : 'generic'
 
   const userId = firstString([event], ['user'])
   const botId = firstString([event], ['bot_id'])
@@ -196,8 +199,15 @@ export function normalizeSlackEvent(orgId: string, envelope: unknown, opts: Norm
 
   const channelId = firstString([event], ['channel'])
   const ts = firstString([event], ['ts'])
+  // Slack delivers the SAME message as both `message.channels` and
+  // `app_mention` when both are subscribed. They share `channel` and `ts`, so a
+  // shared namespace collides on @@unique([organizationId, source,
+  // sourceEventId]) and whichever lands second is dropped as a redelivery —
+  // silently swallowing the mention. Two namespaces, because they are two
+  // different facts about one message.
+  const idPrefix = isMention ? 'slack:mention' : 'slack:msg'
   const sourceEventId =
-    channelId && ts ? `slack:msg:${channelId}:${ts}` : (firstString([outer], ['event_id']) ?? sha256Id(type, outer))
+    channelId && ts ? `${idPrefix}:${channelId}:${ts}` : (firstString([outer], ['event_id']) ?? sha256Id(type, outer))
 
   return {
     source: 'slack',

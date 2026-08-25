@@ -55,7 +55,7 @@ export function toolAuditAction(isWrite: boolean): 'tool.write' | 'tool.call' {
 
 export async function recordAudit(input: AuditInput): Promise<void> {
   try {
-    await prisma.auditEvent.create({
+    const row = await prisma.auditEvent.create({
       data: {
         organizationId: input.organizationId,
         action: input.action,
@@ -69,6 +69,24 @@ export async function recordAudit(input: AuditInput): Promise<void> {
         detail: (input.detail ?? undefined) as never,
         ip: input.ip ?? null,
       },
+    })
+
+    // Forward to any destination this workspace configured. AFTER the write, so
+    // our own trail is the record of last resort and is already durable; and
+    // never throwing, so a customer's misconfigured endpoint cannot turn an
+    // audit write into a failure.
+    const { enqueueAuditStream } = await import('@/lib/audit/stream-delivery')
+    await enqueueAuditStream({
+      id: row.id,
+      action: row.action,
+      organizationId: row.organizationId,
+      actorUserId: row.actorUserId,
+      actorKind: row.actorKind,
+      resourceType: row.resourceType,
+      resourceId: row.resourceId,
+      executionId: row.executionId,
+      ip: row.ip,
+      createdAt: row.createdAt,
     })
   } catch (error) {
     apiLogger.error('audit write failed', {

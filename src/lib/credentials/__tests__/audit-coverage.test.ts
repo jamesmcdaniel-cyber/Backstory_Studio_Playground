@@ -26,6 +26,12 @@ const SRC = path.join(process.cwd(), 'src')
  */
 const READ_EXEMPT: Record<string, string> = {
   'lib/crypto/secrets.ts': 'The decryption primitive itself. Auditing here would recurse.',
+  'lib/audit/stream-delivery.ts':
+    'Decrypts the signing secret for ONE outbound audit delivery. Recording that read ' +
+    'would recurse: recordCredentialUse writes an audit event, which enqueues a delivery, ' +
+    'which reads the secret again — an audit-event storm where every forwarded event ' +
+    'forwards another. Same reason as lib/crypto/secrets.ts. The grant IS audited, where ' +
+    'the destination is configured.',
   'lib/mcp/mcp-client.ts':
     'mcpConfigFromConnection is synchronous and takes a three-field row with no id or ' +
     'organizationId, so it cannot name the credential it read. Audited one level up, at ' +

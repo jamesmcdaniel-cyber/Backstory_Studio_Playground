@@ -59,6 +59,7 @@ export const EXCLUDED: Record<string, string> = {
   ApprovalRequest: 'pending approvals reference live executions; a demo must not look decidable',
   CatalogueSubmission: 'catalogue state is platform-global, not workspace scenery',
   TemplateProposal: 'generation pipeline state, regenerated on demand',
+  AuditStreamDestination: 'a customer\'s real SIEM endpoint and its signing secret — a demo org copying it would forward invented events to a real security system',
   IntegrationSecret: 'credential material — never enters a demo org',
   HttpCredential: 'credential material — never enters a demo org',
   ApiKey: 'credential material — never enters a demo org',

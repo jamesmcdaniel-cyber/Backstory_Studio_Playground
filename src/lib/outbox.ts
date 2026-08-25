@@ -13,6 +13,12 @@ export const OUTBOX_TOPIC_CREDENTIAL_REVOKE = 'credential.revoke'
  * to below in `deliver()`.
  */
 export const OUTBOX_TOPIC_ACTIVITY_DISPATCH = 'activity.dispatch'
+/**
+ * One audit event, forwarded to one customer-configured destination. Rides the
+ * outbox rather than a fire-and-forget fetch because an audit event dropped
+ * while a receiver was down for an hour is the one kind of gap that matters.
+ */
+export const OUTBOX_TOPIC_AUDIT_STREAM = 'audit.stream'
 const MAX_ATTEMPTS = 8
 const CLAIM_TIMEOUT_MS = 10 * 60_000
 
@@ -123,6 +129,23 @@ export function providerSignalOutboxEvent(input: {
  * `[organizationId, dedupeKey]` unique constraint and is acked, not
  * duplicated.
  */
+export function auditStreamOutboxEvent(input: {
+  organizationId: string
+  destinationId: string
+  auditEventId: string
+  body: Record<string, unknown>
+}) {
+  return {
+    organizationId: input.organizationId,
+    topic: OUTBOX_TOPIC_AUDIT_STREAM,
+    aggregateId: input.auditEventId,
+    // Per destination: a receiver that keeps failing must not hold up delivery
+    // to one that is healthy.
+    dedupeKey: `audit-stream:${input.destinationId}:${input.auditEventId}`,
+    payload: { destinationId: input.destinationId, body: input.body } as Prisma.InputJsonValue,
+  }
+}
+
 export function activityDispatchOutboxEvent(input: {
   organizationId: string
   activityEventId: string
@@ -166,6 +189,12 @@ async function deliver(event: { id: string; organizationId: string; topic: strin
   if (event.topic === OUTBOX_TOPIC_CREDENTIAL_REVOKE) {
     const { handleCredentialRevoke } = await import('@/lib/nango/revoke-connection')
     await handleCredentialRevoke(event.organizationId, event.payload)
+    return
+  }
+  if (event.topic === OUTBOX_TOPIC_AUDIT_STREAM) {
+    const { deliverAuditStream, isAuditStreamPayload } = await import('@/lib/audit/stream-delivery')
+    if (!isAuditStreamPayload(event.payload)) throw new Error('Invalid audit.stream outbox payload')
+    await deliverAuditStream(event.organizationId, event.payload)
     return
   }
   if (event.topic === OUTBOX_TOPIC_ACTIVITY_DISPATCH) {

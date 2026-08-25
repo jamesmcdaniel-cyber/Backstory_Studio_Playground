@@ -28,6 +28,8 @@ export type CredentialKind =
   | 'http_credential'
   | 'integration_secret'
   | 'api_key'
+  /** The shared secret an audit-stream destination signs its deliveries with. */
+  | 'audit_stream'
 
 export const CREDENTIAL_GRANTED = 'credential.granted'
 export const CREDENTIAL_ROTATED = 'credential.rotated'

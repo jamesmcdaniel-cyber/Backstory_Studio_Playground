@@ -41,6 +41,10 @@ const CLASSIFIED: Record<string, Classification> = {
   'Organization.peopleAiWebhookSecret': 'encrypted',
   'PeopleAiConnection.accessToken': 'encrypted',
   'PeopleAiConnection.refreshToken': 'encrypted',
+  // Signs each forwarded audit delivery, so a receiver can tell our POST from
+  // anyone else who learns the URL. Never returned by the API — the settings
+  // route reports `hasSecret` only.
+  'AuditStreamDestination.secret': 'encrypted',
 
   // ── One-way hashes; plaintext shown once at creation/rotation ────────────
   'ApiKey.keyHash': 'hash',

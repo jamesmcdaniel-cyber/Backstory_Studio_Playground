@@ -68,6 +68,7 @@ model Organization {
 
   users                 User[]
   flowReviews           FlowReview[]
+  auditStreams          AuditStreamDestination[]
   agents                AgentTask[]
   executions            AgentExecution[]
   templates             AgentTemplate[]
@@ -1798,6 +1799,38 @@ model ActivityTriggerClaim {
 /// Durable handoff for side effects that must survive a process crash after the
 /// owning transaction commits. Workers claim rows with a compare-and-set status
 /// transition; failures are retried with exponential backoff.
+/// Where a workspace's audit trail is forwarded, for customers who keep their
+/// own record of what happened in the systems they buy.
+///
+/// The trail itself has always been complete; it lived only here, so answering
+/// "show us your logs in OUR SIEM" meant an export by hand. Delivery rides the
+/// outbox — it already has claiming, backoff and a retry ceiling, and an audit
+/// event that is dropped because a customer's endpoint was down for an hour is
+/// the one kind of gap that matters.
+model AuditStreamDestination {
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
+  name           String
+  /// HTTPS only, and SSRF-guarded on save AND on every delivery — this is a
+  /// caller-supplied URL our server posts to.
+  url            String
+  /// Encrypted shared secret. Every delivery is signed with it, so the receiver
+  /// can tell our POST from anyone else who learns the URL.
+  secret         String?
+  /// Action prefixes to forward ('flow.', 'credential.'). Empty = everything.
+  actionPrefixes String[]  @default([])
+  isActive       Boolean   @default(true)
+  lastDeliveredAt DateTime? @db.Timestamptz(6)
+  lastError      String?   @db.Text
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isActive])
+  @@map("audit_stream_destinations")
+}
+
 model OutboxEvent {
   id             String    @id @default(cuid())
   organizationId String    @db.Uuid

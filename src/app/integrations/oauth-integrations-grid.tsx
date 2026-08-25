@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CheckCircle2, RefreshCw, Search, ShieldCheck, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -36,7 +36,68 @@ type Connection = {
   verifiedAt?: string
 }
 
-export function OAuthIntegrationsGrid() {
+/**
+ * Whether the SIGNED-IN person is linked to a Slack account, and a retry.
+ *
+ * "Connected" and "linked" can disagree: captureSlackIdentity runs
+ * fire-and-forget from the Nango webhook, so a Slack outage at connect time
+ * leaves a working connection with no identity — this grid would say connected
+ * while every Slack mention answers "connect your Slack account". This is the
+ * only place that reconciles them.
+ */
+function SlackLinkStatus() {
+  const [state, setState] = useState<{ linked: boolean; connected: boolean } | null>(null)
+  const [retrying, setRetrying] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch('/api/slack/my-identity', { cache: 'no-store' })
+      if (response.ok) setState(await response.json())
+    } catch {
+      // Leave the row absent rather than claiming a state we could not read.
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const retry = async () => {
+    setRetrying(true)
+    try {
+      await fetch('/api/slack/my-identity', { method: 'POST' })
+      await load()
+    } finally {
+      setRetrying(false)
+    }
+  }
+
+  // Nothing to say to someone who has not connected Slack at all — the card
+  // below already offers that.
+  if (!state?.connected) return null
+
+  return (
+    <div className="mb-4 rounded-md border px-3 py-2 text-sm">
+      {state.linked ? (
+        <span>
+          Your Slack account is linked — you can summon agents by mentioning them in Slack.
+        </span>
+      ) : (
+        <span className="flex flex-wrap items-center gap-2">
+          <span>
+            Slack is connected, but we could not confirm which Slack account is yours, so mentions
+            will not run for you yet.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => void retry()} disabled={retrying}>
+            {retrying ? 'Checking…' : 'Retry'}
+          </Button>
+        </span>
+      )}
+    </div>
+  )
+}
+
+export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | null } = {}) {
   // Cached (stale-while-revalidate): the integration catalog is static (also
   // server-cached), connections revalidate in the background. A revisit paints
   // the last-seen grid instantly instead of the loading skeleton.
@@ -55,6 +116,23 @@ export function OAuthIntegrationsGrid() {
   // The connect/verify/disconnect round-trip is shared with the in-context
   // connect dialog templates open (see use-nango-connect).
   const { busy, verifying, connect, verify, disconnect } = useNangoConnect(refreshAll)
+
+  // Deep link: /integrations?connect=slack opens that provider's flow straight
+  // away, so the "link your Slack" prompt in a Slack thread lands somewhere
+  // actionable instead of on a page of cards to hunt through. Fires once —
+  // a ref, not state, so a re-render mid-flow cannot reopen the UI.
+  const autoConnectFired = useRef(false)
+  useEffect(() => {
+    if (!autoConnect || autoConnectFired.current || integrations.length === 0) return
+    const match = integrations.find(
+      (integration) =>
+        integration.provider?.toLowerCase() === autoConnect.toLowerCase() ||
+        integration.id?.toLowerCase() === autoConnect.toLowerCase(),
+    )
+    if (!match) return
+    autoConnectFired.current = true
+    void connect({ id: match.id, name: match.name })
+  }, [autoConnect, integrations, connect])
 
   // Plain substring search over the catalog — name and provider slug, filtered
   // as you type.
@@ -78,6 +156,7 @@ export function OAuthIntegrationsGrid() {
 
   return (
     <div className="space-y-4">
+      <SlackLinkStatus />
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

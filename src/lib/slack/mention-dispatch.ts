@@ -72,8 +72,15 @@ export async function dispatchSlackMention(activityEventId: string): Promise<Out
       })
     : null
   if (!identity) {
+    // A link, not just an instruction. This is the first thing most people will
+    // ever see from a teammate — telling them to go somewhere without saying
+    // where is how a fail-closed rule reads as a broken app.
+    const base = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+    const where = base ? `${base}/integrations?connect=slack` : 'Backstory → Integrations'
     await reply(
-      'Connect your Slack account in Backstory first — I run as you, with your access, so I need to know who you are before I can help here.',
+      `Connect your Slack account first and I can help here: ${where}\n\n` +
+        'I run as you, with your access — so I need to know who you are before I act on your behalf. ' +
+        'Installing the app connected this workspace; this links you personally.',
     )
     return { outcome: 'unlinked' }
   }

@@ -113,6 +113,9 @@ if (TEST_DB) {
     // Assert on PRESENCE, not position: the run-start handler is
     // fire-and-forget, so another test's async failure update can interleave.
     const link = posted.find((p) => /connect your slack/i.test(String(p.body.text)))
+    // Actionable, not just instructive: a fail-closed rule with nowhere to go
+    // reads as a broken app.
+    assert.match(String(link?.body.text ?? ''), /integrations\?connect=slack|Integrations/)
     assert.ok(link, 'it still replies, so the person knows why nothing happened')
     // A top-level mention threads against its own ts.
     assert.ok(link.body.thread_ts, 'the reply must be threaded, not dropped in the channel')

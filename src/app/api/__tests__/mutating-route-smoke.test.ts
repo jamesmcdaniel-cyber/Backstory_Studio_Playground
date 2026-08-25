@@ -123,6 +123,7 @@ const cases = (): Case[] => [
   { route: 'agents/[id]/knowledge', method: 'DELETE', run: async () => (await import('../agents/[id]/knowledge/route')).DELETE(rq(`/api/agents/${agentId}/knowledge`, 'DELETE', { documentId: 'missing' })) },
   { route: 'agents/[id]/chat', method: 'PATCH', run: async () => (await import('../agents/[id]/chat/route')).PATCH(rq(`/api/agents/${agentId}/chat`, 'PATCH', { sessionId: 'missing', title: 'x' })) },
   { route: 'agents/[id]/runs/[runId]', method: 'DELETE', run: async () => (await import('../agents/[id]/runs/[runId]/route')).DELETE(rq(`/api/agents/${agentId}/runs/${executionId}`, 'DELETE', {})) },
+  { route: 'slack/my-identity', method: 'POST', run: async () => (await import('../slack/my-identity/route')).POST(rq('/api/slack/my-identity', 'POST', {})) },
   { route: 'slack/channel-bindings', method: 'PUT', run: async () => (await import('../slack/channel-bindings/route')).PUT(rq('/api/slack/channel-bindings', 'PUT', { channelId: 'C_SMOKE', agentTaskId: agentId })) },
   { route: 'slack/channel-bindings', method: 'DELETE', run: async () => (await import('../slack/channel-bindings/route')).DELETE(rq('/api/slack/channel-bindings', 'DELETE', { channelId: 'C_SMOKE' })) },
   { route: 'teammates', method: 'POST', run: async () => (await import('../teammates/route')).POST(rq('/api/teammates', 'POST', { name: 'Smoke avatar' })) },

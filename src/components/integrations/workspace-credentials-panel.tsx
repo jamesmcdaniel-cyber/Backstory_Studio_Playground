@@ -264,7 +264,7 @@ const SLACK_INSTALL_ERRORS: Record<string, string> = {
 }
 
 function SlackInstallOutcome() {
-  const [outcome, setOutcome] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null)
+  const [outcome, setOutcome] = useState<{ kind: 'ok' | 'error'; message: string; href?: string } | null>(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -282,6 +282,7 @@ function SlackInstallOutcome() {
         // otherwise look like a bug the first time someone tries a mention.
         message:
           'Slack is connected. Each person still links their own Slack account before they can use agents there — installing the app connects the workspace, not individuals.',
+        href: '/integrations?connect=slack',
       })
     }
   }, [])
@@ -290,6 +291,13 @@ function SlackInstallOutcome() {
   return (
     <div className="mb-3 rounded-md border px-3 py-2 text-sm" role="status">
       {outcome.message}
+      {/* The instruction with somewhere to go. Telling people to link without
+          saying where is how a fail-closed rule reads as a broken app. */}
+      {outcome.href && (
+        <a href={outcome.href} className="ml-2 font-medium underline underline-offset-4">
+          Link your Slack account →
+        </a>
+      )}
     </div>
   )
 }

@@ -21,6 +21,8 @@ function IntegrationsTabs() {
   const activeTab = tabFromParam(searchParams.get('tab'))
   const oauthError = searchParams.get('error')
   const oauthConnected = searchParams.get('connected') === '1'
+  // Deep link from the "link your Slack" prompt a teammate posts in a thread.
+  const autoConnect = searchParams.get('connect')
   const oauthErrorMessage =
     oauthError === 'oauth_start'
       ? 'OAuth could not start. Verify the MCP URL and that the server supports dynamic client registration.'
@@ -47,7 +49,7 @@ function IntegrationsTabs() {
             in Settings — keeping password-type inputs off this page also keeps
             Chrome's password manager from autofilling the search bar. */}
         <Suspense fallback={<p className="text-sm text-gray-500">Loading integrations...</p>}>
-          <OAuthIntegrationsGrid />
+          <OAuthIntegrationsGrid autoConnect={autoConnect} />
         </Suspense>
       </TabsContent>
       <TabsContent value="servers" className="mt-6">

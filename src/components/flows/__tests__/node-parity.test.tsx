@@ -5,6 +5,7 @@ import React from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StepCard } from '@/components/flows/step-card'
 import { StepDrawer } from '@/components/flows/step-drawer'
+import { stepNoteLabel } from '@/components/flows/canvas/step-node'
 import type { FlowNode } from '@/lib/flows/graph'
 import { AGENT_RUN_MAX_DURATION_SECONDS } from '@/lib/agents/timeouts'
 
@@ -380,4 +381,15 @@ test('a condition never loses the operator it was saved with', () => {
   const select = getByLabelText('Condition 1 operator') as HTMLSelectElement
   assert.equal(select.value, 'startsWith', 'a flow saved before the narrowing still shows its choice')
   cleanup()
+})
+
+test("a step's note is what the canvas shows under it", () => {
+  // The note explains why the step exists — what a reader six months later most
+  // needs — and it reached nobody who did not already open that step.
+  const note = 'Rate limited — 30 requests a minute'
+  assert.equal(stepNoteLabel({ id: 'n', type: 'http', data: { note } } as FlowNode), note)
+  assert.equal(stepNoteLabel({ id: 'n', type: 'http', data: { note: '   ' } } as FlowNode), '')
+  assert.equal(stepNoteLabel({ id: 'n', type: 'http', data: {} } as FlowNode), '')
+  // Free text, so a long one is clamped rather than pushing the node out of lane.
+  assert.equal(stepNoteLabel({ id: 'n', type: 'http', data: { note: 'x'.repeat(400) } } as FlowNode).length, 120)
 })

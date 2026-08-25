@@ -63,6 +63,22 @@ export const CanvasActionsContext = createContext<CanvasActions>({
 })
 
 /** Vertical offsets for N handles spread down a node's right edge. */
+/**
+ * The note shown under a node on the canvas, or '' when there is none.
+ *
+ * A step's note explains why it exists — the thing someone reading the flow six
+ * months later most needs — and it was editable in the config panel and
+ * rendered nowhere, so it only ever reached a reader who already knew to open
+ * that step. n8n calls this notesInFlow.
+ *
+ * Trimmed and clamped: the field is free text, and a long note would push the
+ * node out of the lane every other node sits in.
+ */
+export function stepNoteLabel(node: FlowNode): string {
+  const raw = (node.data as { note?: unknown }).note
+  return typeof raw === 'string' && raw.trim() ? raw.trim().slice(0, 120) : ''
+}
+
 function handleOffsets(count: number): string[] {
   if (count <= 1) return ['50%']
   const span = 70
@@ -73,6 +89,7 @@ function handleOffsets(count: number): string[] {
 function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
   const { onAddFrom, readOnly } = useContext(CanvasActionsContext)
   const { node, title, subtitle, status, issues, handles, hasTarget, connected, bodyCount, editors, brand, emoji, highlighted } = data
+  const note = stepNoteLabel(node)
   const Icon = NODE_ICON[node.type]
   const offsets = handleOffsets(handles.length)
   const connectedSet = new Set(connected)
@@ -162,6 +179,15 @@ function StepNodeComponent({ id, data, selected }: NodeProps<StepFlowNode>) {
           {bodyCount !== undefined && (
             <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-fg-muted">
               {bodyCount} step{bodyCount === 1 ? '' : 's'}
+            </span>
+          )}
+          {/* A step's note explains why it exists — the thing someone reading
+              the flow six months later most needs. It was editable in the panel
+              and rendered nowhere, so it only ever reached a reader who already
+              knew to open that step. n8n calls this notesInFlow. */}
+          {note && (
+            <span className="mt-1 block max-w-full truncate text-[10px] italic leading-4 text-fg-muted" title={note}>
+              {note}
             </span>
           )}
         </span>

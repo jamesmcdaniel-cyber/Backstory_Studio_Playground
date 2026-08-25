@@ -238,6 +238,12 @@ export async function POST(request: NextRequest) {
         if (Object.keys(connections).length >= MIN_INTEGRATIONS_FOR_TEMPLATES) {
           void maybeGenerateOnGateClear(organizationId).catch(() => undefined)
         }
+        // Learn who each person is in Slack, now that their connection exists.
+        // Fire-and-forget: a Slack outage must not fail the mirror sync, and
+        // the next reconnect retries. Idempotent, so a re-sync costs nothing.
+        void import('@/lib/slack/identity')
+          .then(({ captureSlackIdentitiesForOrg }) => captureSlackIdentitiesForOrg(organizationId))
+          .catch(() => undefined)
       } catch (error) {
         apiLogger.error('nango webhook mirror sync failed', {
           organizationId,

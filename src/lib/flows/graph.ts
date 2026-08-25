@@ -221,6 +221,12 @@ const toolNode = z.object({
     connectionId: z.string(),
     toolName: z.string(),
     args: z.string().optional(),
+    /**
+     * Display names for arguments whose value is an opaque id, keyed by the
+     * argument's wire name. Purely a reading aid: the tool still receives the
+     * id, and a missing label renders as the raw value. See resource-locator.ts.
+     */
+    argLabels: z.record(z.string(), z.string().max(120)).optional(),
     retries: z.number().int().min(0).max(5).optional(),
     /** Pause between retry attempts (n8n's "Wait Between Tries"). */
     retryDelayMs: z.number().int().min(0).max(60_000).optional(),

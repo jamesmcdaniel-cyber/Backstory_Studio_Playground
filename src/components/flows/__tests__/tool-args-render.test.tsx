@@ -105,3 +105,90 @@ test('pick-from-a-list is not offered where the endpoint refuses to serve it', (
   assert.match(nango.container.textContent ?? '', /Pick from a list/)
   cleanup()
 })
+
+// ── Resource locator ───────────────────────────────────────────────────────
+
+const ID_SCHEMA = {
+  type: 'object',
+  required: ['peopleai_object_id'],
+  properties: {
+    peopleai_object_id: {
+      type: 'integer',
+      description: 'The internal People.ai ID of the record. Use find_account to obtain this.',
+    },
+  },
+}
+
+test('an id argument offers ways to fill it, not just a text box', () => {
+  const { getByRole } = render(
+    React.createElement(ToolArgsEditor, {
+      inputSchema: ID_SCHEMA,
+      args: '{}',
+      onChange: () => {},
+      onChangeLabels: () => {},
+      dataFields: [{ label: 'Account id', token: '{{steps.find.id}}', type: 'number' }],
+      labelCtx: {} as never,
+      connectionId: 'nango:find_account',
+      pickerTools: ['find_account'],
+    }),
+  )
+
+  // Binding to an earlier step leads: in a flow the id nearly always comes from
+  // a previous step, and that is correct for every run rather than for this one.
+  const tabs = getByRole('tablist', { name: /how to set/i })
+  const labels = Array.from(tabs.querySelectorAll('button')).map((button) => button.textContent)
+  assert.deepEqual(labels, ['From an earlier step', 'Pick from a list', 'Enter a value'])
+  cleanup()
+})
+
+test('a chosen record reads as its name, with the id still shown', () => {
+  const { container } = render(
+    React.createElement(ToolArgsEditor, {
+      inputSchema: ID_SCHEMA,
+      args: '{"peopleai_object_id":18234}',
+      argLabels: { peopleai_object_id: 'Acme Corp' },
+      onChange: () => {},
+      onChangeLabels: () => {},
+      dataFields: [],
+      labelCtx: {} as never,
+    }),
+  )
+  assert.match(container.textContent ?? '', /Acme Corp/)
+  // The id is what the tool receives and what an error will quote.
+  assert.match(container.textContent ?? '', /18234/)
+  cleanup()
+})
+
+test('typing an id by hand clears a name left by an earlier choice', () => {
+  // A stale label is worse than none: it reads as fact.
+  let labels: Record<string, string> | undefined = { peopleai_object_id: 'Acme Corp' }
+  const { getByLabelText } = render(
+    React.createElement(ToolArgsEditor, {
+      inputSchema: ID_SCHEMA,
+      args: '{"peopleai_object_id":18234}',
+      argLabels: labels,
+      onChange: () => {},
+      onChangeLabels: (next: Record<string, string> | undefined) => { labels = next },
+      dataFields: [],
+      labelCtx: {} as never,
+    }),
+  )
+
+  fireEvent.change(getByLabelText('Argument Peopleai object id'), { target: { value: '99' } })
+  assert.equal(labels, undefined, 'the name went with the value it described')
+  cleanup()
+})
+
+test('an ordinary argument is untouched by any of this', () => {
+  const { container } = render(
+    React.createElement(ToolArgsEditor, {
+      inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      args: '{}',
+      onChange: () => {},
+      dataFields: [{ label: 'Run input', token: '{{trigger.input}}', type: 'string' }],
+      labelCtx: {} as never,
+    }),
+  )
+  assert.equal(container.querySelector('[role="tablist"]'), null)
+  cleanup()
+})

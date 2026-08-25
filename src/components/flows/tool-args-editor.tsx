@@ -8,13 +8,37 @@ import type { DataField } from '@/lib/flows/datatree'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 import { toolFields, type ToolField, type ToolFieldOption } from '@/lib/flows/tool-schema'
+import {
+  LOCATOR_MODE_LABELS,
+  isIdentifierField,
+  locatorDisplay,
+  locatorModes,
+  modeForValue,
+  pickableRow,
+  setArgLabel,
+  type ArgLabels,
+  type LocatorMode,
+} from '@/lib/flows/resource-locator'
+import { cn } from '@/lib/utils'
 import { humanizeToolName } from '@/lib/flows/humanize-tool-name'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 
 /** "Pick from a list" (loadOptions parity): run a READ action on the connection
  *  and click a value to drop it into the active argument. No per-field wiring —
  *  any read tool's results are browsable; the API refuses write tools. */
-function ResourcePicker({ connectionId, tools, onPick }: { connectionId: string; tools: string[]; onPick: (value: string) => void }) {
+function ResourcePicker({
+  connectionId,
+  tools,
+  onPick,
+  alwaysOpen = false,
+}: {
+  connectionId: string
+  tools: string[]
+  /** The chosen row's id, and its display name when the row carries one. */
+  onPick: (value: string, label?: string) => void
+  /** Inline inside a field's locator, rather than a collapsed section. */
+  alwaysOpen?: boolean
+}) {
   const [tool, setTool] = useState('')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
@@ -53,10 +77,8 @@ function ResourcePicker({ connectionId, tools, onPick }: { connectionId: string;
   }
   const headers = rows && rows.length ? Array.from(new Set(rows.flatMap((r) => Object.keys(r)))).slice(0, 6) : []
   const cell = (v: unknown) => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
-  return (
-    <details className="rounded-lg border border-border/70 p-2">
-      <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted-foreground"><List className="h-3.5 w-3.5" /> Pick from a list</summary>
-      <div className="mt-2 space-y-2">
+  const body = (
+    <div className="mt-2 space-y-2">
         <div className="flex gap-2">
           <select className={`${fieldClass} text-xs`} value={tool} onChange={(e) => setTool(e.target.value)} aria-label="Read action">
             <option value="">Choose a read action…</option>
@@ -80,20 +102,41 @@ function ResourcePicker({ connectionId, tools, onPick }: { connectionId: string;
             <table className="w-full text-[11px]">
               <thead className="sticky top-0 bg-muted/80"><tr>{headers.map((h) => <th key={h} className="px-2 py-1 text-left font-semibold">{h}</th>)}</tr></thead>
               <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i} className="odd:bg-muted/30">
-                    {headers.map((h) => (
-                      <td key={h} className="cursor-pointer px-2 py-1 hover:bg-indigo-50 dark:hover:bg-indigo-500/10" title="Click to use this value" onClick={() => onPick(cell(r[h]))}>{cell(r[h])}</td>
-                    ))}
-                  </tr>
-                ))}
+                {rows.map((r, i) => {
+                  // Clicking a ROW takes the record's id and its name together.
+                  // Taking whichever cell was clicked meant picking the right
+                  // column was the user's problem, and picking the name column
+                  // sent a name where the tool wanted an id.
+                  const picked = pickableRow(r)
+                  return (
+                    <tr
+                      key={i}
+                      className={cn('odd:bg-muted/30', picked && 'cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-500/10')}
+                      title={picked ? `Use ${picked.label ?? picked.value}` : 'This row has no usable value'}
+                      onClick={() => picked && onPick(picked.value, picked.label)}
+                    >
+                      {headers.map((h) => (
+                        <td key={h} className="px-2 py-1">{cell(r[h])}</td>
+                      ))}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         )}
         {rows && rows.length === 0 && !error && <p className="text-xs text-muted-foreground">No items returned.</p>}
-        <p className="text-[11px] text-muted-foreground">Click a value to drop it into the highlighted argument.</p>
-      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {alwaysOpen ? 'Click a row to use that record.' : 'Click a row to drop its value into the highlighted argument.'}
+      </p>
+    </div>
+  )
+
+  if (alwaysOpen) return <div className="rounded-lg border border-border/70 p-2">{body}</div>
+  return (
+    <details className="rounded-lg border border-border/70 p-2">
+      <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted-foreground"><List className="h-3.5 w-3.5" /> Pick from a list</summary>
+      {body}
     </details>
   )
 }
@@ -214,6 +257,8 @@ const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide t
 function ArgField({
   field,
   value,
+  argLabel,
+  locator,
   labelCtx,
   registerEditor,
   onFocusField,
@@ -221,6 +266,16 @@ function ArgField({
 }: {
   field: SchemaField
   value: string
+  /** The display name for an id value, when one has been chosen. */
+  argLabel?: string
+  /** Present only for identifier fields — see resource-locator.ts. */
+  locator?: {
+    canList: boolean
+    hasUpstreamData: boolean
+    connectionId?: string
+    pickerTools?: string[]
+    onPick: (value: string, label?: string) => void
+  }
   labelCtx: TokenLabelContext
   registerEditor: (name: string) => (handle: TokenTextEditorHandle | null) => void
   onFocusField: () => void
@@ -229,6 +284,9 @@ function ArgField({
   const bound = value.includes('{{')
   const [freeform, setFreeform] = useState(bound)
   const closedSet = field.type === 'enum' || field.type === 'boolean'
+  const modes = locator ? locatorModes(locator) : []
+  const [mode, setMode] = useState<LocatorMode>(() => (locator ? modeForValue(value, modes) : 'value'))
+  const display = locatorDisplay(value, argLabel)
   const options: ToolFieldOption[] = field.type === 'boolean'
     ? [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }]
     : field.options ?? []
@@ -273,7 +331,59 @@ function ArgField({
         )}
       </label>
 
-      {closedSet && !freeform ? (
+      {locator && !closedSet ? (
+        <div className="space-y-1.5">
+          {modes.length > 1 && (
+            <div className="flex rounded-md border border-border bg-background p-0.5" role="tablist" aria-label={`How to set ${field.label}`}>
+              {modes.map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === entry}
+                  onClick={() => setMode(entry)}
+                  className={cn(
+                    'flex-1 rounded px-2 py-1 text-[11px] font-medium transition-colors',
+                    mode === entry ? 'bg-indigo-50 text-indigo-700' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {LOCATOR_MODE_LABELS[entry]}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {mode === 'list' && locator.connectionId && locator.pickerTools?.length ? (
+            <ResourcePicker
+              connectionId={locator.connectionId}
+              tools={locator.pickerTools}
+              onPick={(picked, pickedLabel) => locator.onPick(picked, pickedLabel)}
+              alwaysOpen
+            />
+          ) : mode === 'upstream' ? (
+            editor(false)
+          ) : (
+            <input
+              className={fieldClass}
+              value={value}
+              placeholder={placeholderFor(field)}
+              onFocus={onFocusField}
+              onChange={(event) => locator.onPick(event.target.value)}
+              aria-label={`Argument ${field.label}`}
+            />
+          )}
+
+          {/* What was chosen, in words. The id stays beside it: it is what the
+              tool receives and what an error will quote, so hiding it entirely
+              would trade one kind of confusion for another. */}
+          {display.secondary && (
+            <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground">{display.primary}</span>
+              <span className="font-mono">{display.secondary}</span>
+            </p>
+          )}
+        </div>
+      ) : closedSet && !freeform ? (
         <select className={fieldClass} value={value} onChange={(event) => onChange(event.target.value)} aria-label={`Argument ${field.label}`}>
           <option value="">{field.default !== undefined ? `Default — ${String(field.default)}` : '—'}</option>
           {options.map((option) => (
@@ -317,7 +427,9 @@ function ArgField({
 export function ToolArgsEditor({
   inputSchema,
   args,
+  argLabels,
   onChange,
+  onChangeLabels,
   dataFields,
   labelCtx,
   connectionId,
@@ -325,7 +437,10 @@ export function ToolArgsEditor({
 }: {
   inputSchema: unknown
   args: string | undefined
+  /** Display names for id arguments — a reading aid, never the stored value. */
+  argLabels?: ArgLabels
   onChange: (nextArgs: string) => void
+  onChangeLabels?: (next: ArgLabels | undefined) => void
   dataFields: DataField[]
   labelCtx: TokenLabelContext
   /** For the "pick from a list" resource picker: the connection + its read tools. */
@@ -354,6 +469,16 @@ export function ToolArgsEditor({
 
   const values = parseArgs(args)
   const setValue = (name: string, value: string) => onChange(serializeArgs({ ...values, [name]: value }, fields))
+  const canList = Boolean(connectionId && canPickFromList(connectionId) && pickerTools?.length)
+  const hasUpstreamData = dataFields.length > 0
+  // Setting an id and naming it are one action: a value chosen from a list
+  // carries its name, and a value typed by hand clears whatever name a previous
+  // choice left behind — a stale label is worse than none, because it reads as
+  // fact.
+  const setLocatorValue = (name: string, next: string, label?: string) => {
+    setValue(name, next)
+    onChangeLabels?.(setArgLabel(argLabels, name, label ?? null))
+  }
   const requiredFields = fields.filter((field) => field.required)
   const optionalFields = fields.filter((field) => !field.required)
   const setOptionalCount = optionalFields.filter((field) => (values[field.name] ?? '') !== '').length
@@ -430,6 +555,18 @@ export function ToolArgsEditor({
               key={field.name}
               field={field}
               value={values[field.name] ?? ''}
+              argLabel={argLabels?.[field.name]}
+              locator={
+                isIdentifierField(field)
+                  ? {
+                      canList,
+                      hasUpstreamData,
+                      connectionId,
+                      pickerTools,
+                      onPick: (picked, label) => setLocatorValue(field.name, picked, label),
+                    }
+                  : undefined
+              }
               labelCtx={labelCtx}
               registerEditor={registerEditor}
               onFocusField={() => {

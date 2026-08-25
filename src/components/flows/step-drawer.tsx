@@ -11,7 +11,8 @@ import { DATA_OP_HELPER, DATA_OP_INPUT_PLACEHOLDER, SUMMARIZE_OP_LABELS, SUMMARI
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { DataTree } from '@/components/flows/data-tree'
 import { StructuredValueView } from '@/components/flows/structured-value-view'
-import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
+import { ToolArgsEditor, schemaFields } from '@/components/flows/tool-args-editor'
+import { pruneArgLabels } from '@/lib/flows/resource-locator'
 import { fileBindingOptions, type DataField } from '@/lib/flows/datatree'
 import { splitIssuesByField, type FieldIssue } from '@/lib/flows/issue-fields'
 import { operatorsForField } from '@/lib/flows/condition-ops'
@@ -654,7 +655,12 @@ function ToolConfigurationSection({
               <ToolArgsEditor
                 inputSchema={tool.inputSchema}
                 args={node.data.args}
+                // Pruned on the way in: switching this step to a different tool
+                // leaves labels for fields the new tool does not have, and a
+                // kept one would resurface naming a record from another system.
+                argLabels={pruneArgLabels(node.data.argLabels, schemaFields(tool.inputSchema))}
                 onChange={(args) => onChange({ ...node, data: { ...node.data, args } })}
+                onChangeLabels={(argLabels) => onChange({ ...node, data: { ...node.data, argLabels } })}
                 dataFields={dataFields}
                 labelCtx={labelCtx}
                 connectionId={node.data.connectionId}

@@ -1,4 +1,4 @@
-import { sameServerUrl } from '@/lib/mcp/backstory-connection'
+import { sameServerUrl } from '@/lib/mcp/server-url'
 
 /**
  * An HTTP step that is really an MCP call, and the Tool step it should be.

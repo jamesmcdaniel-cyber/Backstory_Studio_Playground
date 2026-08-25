@@ -1,3 +1,4 @@
+import { sameServerUrl } from '@/lib/mcp/server-url'
 import { prisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 
@@ -32,11 +33,9 @@ export function evaluateBackstoryReady(row: { isActive: boolean; authConfig: unk
   return config.flow === 'authcode' && typeof config.accessToken === 'string' && config.accessToken.length > 0
 }
 
-/** Loose server-URL equality: case-insensitive, ignores trailing slashes. */
-export function sameServerUrl(a: string, b: string): boolean {
-  const norm = (value: string) => value.trim().replace(/\/+$/, '').toLowerCase()
-  return norm(a) === norm(b) && norm(a).length > 0
-}
+// Re-exported from a leaf module so the builder can compare server URLs without
+// webpack following this file's prisma import into ioredis and node built-ins.
+export { sameServerUrl } from '@/lib/mcp/server-url'
 
 /** A pre-existing, user-managed connection to the Backstory server counts as configured. */
 export function evaluateExistingBackstoryConnection(

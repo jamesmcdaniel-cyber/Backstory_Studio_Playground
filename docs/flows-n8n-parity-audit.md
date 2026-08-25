@@ -20,6 +20,11 @@
 > sub-node wiring, SQL/cartesian merge — deliberately off-mission. Raw per-token LLM streaming (vs the
 > shipped event-level agent streaming) is the one remaining deeper follow-on.
 
+> **See also (2026-08-25):** [`n8n-platform-parity-audit-2026-08-25.md`](./n8n-platform-parity-audit-2026-08-25.md)
+> audits the surface OUTSIDE flows — agents, MCP, credentials, governance, node
+> versioning — after enumerating n8n's repo by module size. This document remains the
+> authority on the flow engine, node configuration and import fidelity.
+
 **Date:** 2026-07-27
 **Benchmark:** n8n master (`~/Downloads/n8n-master`) — engine (`packages/core`, `packages/workflow`), editor (`packages/frontend/editor-ui`), node ecosystem (`packages/nodes-base`, `@n8n/nodes-langchain`).
 **Subject:** Backstory Studio flows — engine (`src/features/flows/`), graph/schema (`src/lib/flows/`), editor (`src/components/flows/`, `src/app/flows/`), integrations (`src/lib/nango/`, `src/lib/connectors/`, `src/features/agents/tool-planes.ts`).

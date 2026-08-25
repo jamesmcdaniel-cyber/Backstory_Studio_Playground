@@ -157,6 +157,8 @@ const cases = (): Case[] => [
   { route: 'flows/[id]/cancel', method: 'POST', run: async () => (await import('../flows/[id]/cancel/route')).POST(rq(`/api/flows/${flowId}/cancel`, 'POST', { flowRunId: runId })) },
   { route: 'flows/[id]/invite', method: 'POST', run: async () => (await import('../flows/[id]/invite/route')).POST(rq(`/api/flows/${flowId}/invite`, 'POST', {})) },
   { route: 'flows/[id]/publish', method: 'POST', run: async () => (await import('../flows/[id]/publish/route')).POST(rq(`/api/flows/${flowId}/publish`, 'POST', {})) },
+  { route: 'flows/[id]/review', method: 'POST', run: async () => (await import('../flows/[id]/review/route')).POST(rq(`/api/flows/${flowId}/review`, 'POST', { note: 'Please look at the Slack step.' })) },
+  { route: 'flows/[id]/review', method: 'PATCH', run: async () => (await import('../flows/[id]/review/route')).PATCH(rq(`/api/flows/${flowId}/review`, 'PATCH', { decision: 'approved' })) },
   { route: 'flows/[id]/share', method: 'POST', run: async () => (await import('../flows/[id]/share/route')).POST(rq(`/api/flows/${flowId}/share`, 'POST', { enabled: true, role: 'view' })) },
   { route: 'flows/[id]/versions', method: 'POST', run: async () => (await import('../flows/[id]/versions/route')).POST(rq(`/api/flows/${flowId}/versions`, 'POST', { version: 1, action: 'restore' })) },
   { route: 'flows/[id]/trigger-secret', method: 'POST', run: async () => (await import('../flows/[id]/trigger-secret/route')).POST(rq(`/api/flows/${flowId}/trigger-secret`, 'POST', {})) },

@@ -28,7 +28,7 @@ import { anonymizeJson, anonymizeText, harvestAliases } from './anonymize'
 /** Copied completely. */
 export const COPY_FULL = [
   'User', 'Team', 'AgentTeammate', 'AgentTask', 'AgentConnector', 'AgentTemplate',
-  'Flow', 'FlowVersion', 'FlowTemplate', 'FlowTemplateVersion', 'SharedSkill',
+  'Flow', 'FlowVersion', 'FlowReview', 'FlowTemplate', 'FlowTemplateVersion', 'SharedSkill',
   'KnowledgeDocument', 'KnowledgeChunk', 'SignalSubscription', 'CustomSignal',
   'WorkspaceFolder',
 ] as const
@@ -311,6 +311,20 @@ export async function ensureDemoWorkspace(
         ...anonRow({ ...version, id: randomUUID(), organizationId: demoOrgId }, book),
         flowId,
         publishedBy: remap(userIds, version.publishedBy) ?? null,
+      }),
+    })
+  }
+  // Reviews carry a graph snapshot and a note, both of which can name real
+  // people and real accounts — anonymised like every other copied row.
+  for (const review of await systemPrisma.flowReview.findMany({ where: { organizationId: realOrgId } })) {
+    const flowId = remap(flowIds, review.flowId)
+    if (!flowId) continue
+    await systemPrisma.flowReview.create({
+      data: compact({
+        ...anonRow({ ...review, id: randomUUID(), organizationId: demoOrgId }, book),
+        flowId,
+        requestedBy: remap(userIds, review.requestedBy) ?? review.requestedBy,
+        decidedBy: remap(userIds, review.decidedBy) ?? null,
       }),
     })
   }

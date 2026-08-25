@@ -58,8 +58,16 @@ model Organization {
   /// When true, members whose email belongs to a verified workspace domain
   /// must authenticate through an enterprise SSO provider.
   ssoEnforced           Boolean   @default(false)
+  /// When true, a flow cannot be published until someone other than its author
+  /// approves the change. Our approvals are RUNTIME gates — a running agent
+  /// pauses before a write — and nothing reviewed a flow DEFINITION before it
+  /// went live on a schedule against real customer systems. Off by default:
+  /// a two-person workspace does not want a second pair of eyes it does not
+  /// have.
+  flowReviewRequired    Boolean   @default(false)
 
   users                 User[]
+  flowReviews           FlowReview[]
   agents                AgentTask[]
   executions            AgentExecution[]
   templates             AgentTemplate[]
@@ -1426,6 +1434,7 @@ model Flow {
   organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   runs            FlowRun[]
   versions        FlowVersion[]
+  reviews         FlowReview[]
   editSnapshots   FlowEditSnapshot[]
   collaborators   FlowCollaborator[]
   huddleSegments  HuddleSegment[]
@@ -1543,6 +1552,38 @@ model StoredFile {
 
   @@index([organizationId, createdAt])
   @@map("stored_files")
+}
+
+/// A request to publish a flow, and its decision.
+///
+/// One OPEN row per flow at a time: a second request while one is pending is
+/// the same question asked twice. Decided rows are kept — who approved a change
+/// that later broke something is exactly the question an incident asks, and it
+/// is unanswerable from the flow row alone.
+model FlowReview {
+  id             String    @id @default(cuid())
+  flowId         String
+  organizationId String    @db.Uuid
+  /// Snapshot of the draft as submitted, so a reviewer approves what they read
+  /// rather than whatever the author edited after asking.
+  graph          Json
+  /// What changed vs the published version, from the same summarizer the
+  /// History panel uses.
+  summary        Json?
+  note           String?   @db.Text
+  status         String    @default("open") // open | approved | rejected | withdrawn
+  requestedBy    String
+  requestedAt    DateTime  @default(now())
+  decidedBy      String?
+  decidedAt      DateTime?
+  decisionNote   String?   @db.Text
+
+  flow         Flow         @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, requestedAt])
+  @@index([flowId, status])
+  @@map("flow_reviews")
 }
 
 model FlowVersion {

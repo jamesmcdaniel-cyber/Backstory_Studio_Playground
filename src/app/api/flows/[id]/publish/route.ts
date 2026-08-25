@@ -11,6 +11,8 @@ import { activityMatchColumns, anchorTriggerSchedule, preserveWebhookSecretHash,
 import { loadRunValidationContext } from '@/lib/flows/run-validation'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
+import { canPublish } from '@/lib/flows/review-gate'
+import { graphFingerprint } from '@/lib/flows/graph-fingerprint'
 import { slackConfigured } from '@/lib/integrations/slack'
 import { canArmEventTriggers } from '@/lib/usage/free-tier-limits'
 
@@ -59,6 +61,36 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   const graph = flowGraphSchema.parse(existing.graph)
+
+  // Review gate. Checked BEFORE validation work and before anything is armed:
+  // a publish that is not allowed should leave no trace and cost nothing.
+  const reviewPolicy = await prisma.organization.findFirst({
+    where: { id: auth.organizationId },
+    select: { flowReviewRequired: true },
+  })
+  if (reviewPolicy?.flowReviewRequired) {
+    const review = await prisma.flowReview.findFirst({
+      where: { flowId: id, organizationId: auth.organizationId, status: { in: ['open', 'approved', 'rejected'] } },
+      orderBy: { requestedAt: 'desc' },
+      select: { status: true, requestedBy: true, decidedBy: true, graph: true },
+    })
+    const decision = canPublish({
+      policy: { required: true },
+      actorUserId: auth.dbUser.id,
+      review: review
+        ? {
+            status: review.status as 'open' | 'approved' | 'rejected' | 'withdrawn',
+            requestedBy: review.requestedBy,
+            decidedBy: review.decidedBy,
+            graphFingerprint: graphFingerprint(review.graph),
+          }
+        : null,
+      // The draft as it stands right now — an approval is of a specific draft,
+      // not of the flow forever.
+      currentFingerprint: graphFingerprint(existing.graph),
+    })
+    if (!decision.allowed) throw new ApiError(decision.message, 409, decision.reason.toUpperCase())
+  }
   // Which of the two event-trigger types (if either) this flow's trigger is,
   // so the slack/entitlement lookups below only run when they're actually
   // needed.

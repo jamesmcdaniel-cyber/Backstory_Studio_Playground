@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { mcpConfigFromConnection, type McpClientConfig } from '@/lib/mcp/mcp-client'
+import { McpCredentialError, mcpConfigFromConnection, type McpClientConfig } from '@/lib/mcp/mcp-client'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
+import { apiLogger } from '@/lib/logger'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { prisma } from '@/lib/prisma'
 import { mergeAuthConfig } from '@/lib/crypto/secrets'
@@ -62,37 +63,42 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw error
   }
 
-  let config: McpClientConfig
-  if (existing) {
-    const stored =
-      existing.authConfig && typeof existing.authConfig === 'object' && !Array.isArray(existing.authConfig)
-        ? (existing.authConfig as Record<string, unknown>)
-        : {}
-    const merged = mergeAuthConfig(stored, {
-      authType: authType as 'none' | 'api_key' | 'oauth2',
-      apiKey: data.apiKey,
-      headerName: data.headerName,
-      clientId: data.clientId,
-      clientSecret: data.clientSecret,
-      tokenUrl: data.tokenUrl,
-      scopes: data.scopes,
-      flow: data.flow,
-    })
-    config = mcpConfigFromConnection({ serverUrl, authType, authConfig: merged })
-  } else {
-    config = {
-      serverUrl,
-      authType: authType as 'none' | 'api_key' | 'oauth2',
-      apiKey: data.apiKey,
-      headerName: data.headerName,
-      clientId: data.clientId,
-      clientSecret: data.clientSecret,
-      tokenUrl: data.tokenUrl,
-      scopes: data.scopes,
-    }
-  }
-
+  // Everything from here on is INSIDE the try, credential decryption included.
+  // Building the config outside it meant the one failure this endpoint exists
+  // to explain — a stored secret that cannot be read — was the one failure it
+  // could not report: mcpConfigFromConnection threw past the handler and the
+  // caller got a bare 500 instead of "reconnect it".
   try {
+    let config: McpClientConfig
+    if (existing) {
+      const stored =
+        existing.authConfig && typeof existing.authConfig === 'object' && !Array.isArray(existing.authConfig)
+          ? (existing.authConfig as Record<string, unknown>)
+          : {}
+      const merged = mergeAuthConfig(stored, {
+        authType: authType as 'none' | 'api_key' | 'oauth2',
+        apiKey: data.apiKey,
+        headerName: data.headerName,
+        clientId: data.clientId,
+        clientSecret: data.clientSecret,
+        tokenUrl: data.tokenUrl,
+        scopes: data.scopes,
+        flow: data.flow,
+      })
+      config = mcpConfigFromConnection({ serverUrl, authType, authConfig: merged })
+    } else {
+      config = {
+        serverUrl,
+        authType: authType as 'none' | 'api_key' | 'oauth2',
+        apiKey: data.apiKey,
+        headerName: data.headerName,
+        clientId: data.clientId,
+        clientSecret: data.clientSecret,
+        tokenUrl: data.tokenUrl,
+        scopes: data.scopes,
+      }
+    }
+
     const verification = await verifyMcpConfig(config)
     if (existing) {
       await prisma.mcpConnection.update({
@@ -107,6 +113,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       toolNames: verification.toolNames,
     }
   } catch (error) {
+    // The user-facing message names the fix; the storage-format detail behind
+    // it is only useful to whoever holds the key ring, so it goes to the log.
+    if (error instanceof McpCredentialError) {
+      apiLogger.warn('MCP connection test: stored credential could not be decrypted', {
+        connectionId: existing?.id,
+        organizationId: auth.organizationId,
+        field: error.field,
+        cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
+      })
+    }
     if (existing) {
       await prisma.mcpConnection.update({
         where: { id: existing.id, organizationId: auth.organizationId },

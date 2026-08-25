@@ -450,6 +450,42 @@ export interface McpConnectionRow {
   authConfig: unknown
 }
 
+/**
+ * A stored credential that cannot be decrypted.
+ *
+ * `decryptSecret` throws about the STORAGE FORMAT — "Malformed v1 encrypted
+ * secret payload", "No configured key matches id …". Those sentences are for
+ * whoever is holding the key ring, and they used to escape straight to the
+ * surfaces a user reads: a 500 from the connection-test route (the one endpoint
+ * whose entire job is explaining why a connection does not work) and the failed
+ * step of a flow run. Whatever the format detail is, the action is always the
+ * same — reconnect the connection — so that is what callers get, with the real
+ * reason kept on `cause` for the log.
+ */
+export const MCP_CREDENTIAL_UNREADABLE =
+  "This connection's stored credentials could not be read — reconnect it under Connections."
+
+export class McpCredentialError extends Error {
+  constructor(
+    /** Which authConfig field failed, so a log line says WHICH secret is unreadable. */
+    readonly field: string,
+    cause: unknown,
+  ) {
+    super(MCP_CREDENTIAL_UNREADABLE, { cause })
+    this.name = 'McpCredentialError'
+  }
+}
+
+/** Decrypt one stored field, translating a format failure into an actionable one. */
+function readSecret(value: string | undefined, field: string): string | undefined {
+  if (!value) return undefined
+  try {
+    return decryptSecret(value)
+  } catch (error) {
+    throw new McpCredentialError(field, error)
+  }
+}
+
 export function mcpConfigFromConnection(conn: McpConnectionRow): McpClientConfig {
   const authType = conn.authType as 'none' | 'api_key' | 'oauth2'
 
@@ -466,7 +502,7 @@ export function mcpConfigFromConnection(conn: McpConnectionRow): McpClientConfig
     return {
       serverUrl: conn.serverUrl,
       authType: 'api_key',
-      apiKey: stored.apiKey ? decryptSecret(stored.apiKey) : undefined,
+      apiKey: readSecret(stored.apiKey, 'apiKey'),
       headerName: stored.headerName,
     }
   }
@@ -480,10 +516,10 @@ export function mcpConfigFromConnection(conn: McpConnectionRow): McpClientConfig
         authType: 'oauth2',
         flow: 'authcode',
         clientId: stored.clientId,
-        clientSecret: stored.clientSecret ? decryptSecret(stored.clientSecret) : undefined,
+        clientSecret: readSecret(stored.clientSecret, 'clientSecret'),
         tokenEndpoint: stored.tokenEndpoint,
-        accessToken: stored.accessToken ? decryptSecret(stored.accessToken) : undefined,
-        refreshToken: stored.refreshToken ? decryptSecret(stored.refreshToken) : undefined,
+        accessToken: readSecret(stored.accessToken, 'accessToken'),
+        refreshToken: readSecret(stored.refreshToken, 'refreshToken'),
         expiresAt: stored.expiresAt,
       }
     }
@@ -492,7 +528,7 @@ export function mcpConfigFromConnection(conn: McpConnectionRow): McpClientConfig
       serverUrl: conn.serverUrl,
       authType: 'oauth2',
       clientId: stored.clientId,
-      clientSecret: stored.clientSecret ? decryptSecret(stored.clientSecret) : undefined,
+      clientSecret: readSecret(stored.clientSecret, 'clientSecret'),
       tokenUrl: stored.tokenUrl,
       scopes: stored.scopes,
     }

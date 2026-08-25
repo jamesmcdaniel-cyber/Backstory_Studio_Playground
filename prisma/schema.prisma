@@ -654,6 +654,18 @@ model AgentTask {
   /// are deliberately left null rather than guessed.
   deletedAt      DateTime? @db.Timestamptz(6)
   metadata       Json?
+  /// The definition runs use, when the agent has been published.
+  ///
+  /// Editing an agent edited the LIVE agent: a tweak to an objective changed
+  /// what the next scheduled run did, immediately, with no staging and no
+  /// review. Flows have had a draft/published split since the beginning; agents
+  /// act through the user's own accounts and write to real systems, so the
+  /// asymmetry was the harder one to defend.
+  ///
+  /// Null means unpublished, which is every agent that exists today and stays
+  /// exactly as it behaves now — the live fields are used directly.
+  publishedConfig Json?
+  publishedAt     DateTime? @db.Timestamptz(6)
   lastExecutedAt DateTime?
   /// When the scheduler should next LOOK at this row — a pre-filter, never the
   /// authority (the tick still calls isDue on everything it reads).

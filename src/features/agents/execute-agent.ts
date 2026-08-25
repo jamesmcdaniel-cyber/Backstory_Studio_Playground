@@ -25,6 +25,7 @@ import {
   type ToolPlaneGroup,
 } from './tool-planes'
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
+import { applyPublishedDefinition, pinnedConnectorKeys } from '@/lib/agents/publish'
 import { mcpAllowedToolNames, parseAgentToolSettings, scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
 import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { agentVisibilityScope } from '@/lib/server/visibility'
@@ -552,10 +553,16 @@ async function runAgentExecutionInner(
   },
 ) {
   const { agentId, organizationId, userId } = data
-  const agent = await prisma.agentTask.findFirst({
+  const agentRow = await prisma.agentTask.findFirst({
     where: { id: agentId, organizationId, status: 'ACTIVE' },
   })
-  if (!agent) throw new Error('Agent not found or inactive')
+  if (!agentRow) throw new Error('Agent not found or inactive')
+  // A published agent runs its PUBLISHED definition, so editing it does not
+  // change what the next scheduled run does. Overlaid at the one point the row
+  // is loaded: everything downstream reads the same fields it always did.
+  // Unpublished agents — which is every agent that has not opted in — are
+  // returned unchanged.
+  const agent = applyPublishedDefinition(agentRow)
 
   const agentMetadata = metadataOf(agent.metadata)
   // A flow step may pin the chat model for its runs; the agent's own model is
@@ -821,7 +828,10 @@ async function runAgentExecutionInner(
     // A flow step may grant EXTRA tool connections for this run: native/nango
     // catalog ids contribute their provider key (mcp/people_ai connections
     // already load for every run).
-    const providers = await resolveAgentConnectorKeys(agent.id, agentMetadata)
+    // Publishing pins the tools too: adding a write-capable integration to a
+    // published agent must not change what it can do to the world with nothing
+    // republished.
+    const providers = pinnedConnectorKeys(agentRow) ?? (await resolveAgentConnectorKeys(agent.id, agentMetadata))
     for (const connectionId of data.stepOverrides?.toolConnectionIds ?? []) {
       const sep = connectionId.indexOf(':')
       if (sep <= 0) continue

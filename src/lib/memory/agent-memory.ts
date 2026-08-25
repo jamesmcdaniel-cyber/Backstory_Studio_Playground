@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { prisma, systemPrisma, tenantTransaction } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { embedQuery, embeddingsConfigured, cosineSimilarity, toSqlVector } from '@/lib/rag/embeddings'
@@ -35,9 +36,40 @@ async function tryEmbed(text: string): Promise<number[] | null> {
  * the same thing. Enforces the per-agent cap by superseding the oldest
  * learnings. Never throws.
  */
+/**
+ * A stable fingerprint for "this is the same learning".
+ *
+ * Normalized so trivial differences — casing, run-on whitespace, a trailing
+ * period — do not read as a new memory. Deliberately NOT semantic: near-duplicate
+ * detection is the embedding path's job, and this one has to work in a
+ * deployment with no embeddings configured at all, which is exactly where
+ * duplicates used to accumulate forever.
+ */
+export function memoryFingerprint(title: string, content: string): string {
+  const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim()
+  return createHash('sha256').update(`${normalize(title)}\u0000${normalize(content)}`).digest('hex')
+}
+
+/**
+ * Which memories a recall may read.
+ *
+ * A resource-scoped recall reads that resource's memories AND the agent's
+ * general ones — narrowing must not hide what the agent knows in general, or a
+ * question about one account would forget everything learned about the job.
+ * An unscoped recall reads everything, exactly as it did before.
+ */
+export function memoryScopeFilter(
+  resourceId?: string | null,
+): { OR?: Array<{ resourceId: string | null }> } {
+  const scoped = resourceId?.trim()
+  return scoped ? { OR: [{ resourceId: scoped }, { resourceId: null }] } : {}
+}
+
 export async function saveAgentMemory(params: {
   organizationId: string
   agentId: string
+  /** What this memory is about — an account, a record. Omit for general knowledge. */
+  resourceId?: string | null
   kind: MemoryKind
   title: string
   content: string
@@ -71,6 +103,7 @@ export async function saveAgentMemory(params: {
           FROM "agent_memories"
           WHERE "organizationId" = ${params.organizationId}::uuid
             AND "agentId" = ${params.agentId}
+            AND "resourceId" IS NOT DISTINCT FROM ${params.resourceId?.trim() || null}
             AND "kind" = 'suggestion'
             AND "status" IN ('open', 'dismissed')
             AND "embeddingVec" IS NOT NULL
@@ -89,10 +122,31 @@ export async function saveAgentMemory(params: {
       }
     }
 
+    const resourceId = params.resourceId?.trim() || null
+    const contentHash = memoryFingerprint(params.title, params.content)
+
+    // An exact repeat is the SAME memory learned again, not a new one. Recorded
+    // as a use of the row that already holds it, which is also what makes
+    // `timesUsed` mean something in a deployment with no embeddings — the path
+    // where duplicates used to accumulate without limit.
+    const existing = await prisma.agentMemory.findFirst({
+      where: { organizationId: params.organizationId, agentId: params.agentId, resourceId, contentHash },
+      select: { id: true },
+    })
+    if (existing) {
+      await prisma.agentMemory.update({
+        where: { id: existing.id, organizationId: params.organizationId },
+        data: { timesUsed: { increment: 1 }, lastUsedAt: new Date() },
+      })
+      return { id: existing.id, deduped: true }
+    }
+
     const created = await prisma.agentMemory.create({
       data: {
         organizationId: params.organizationId,
         agentId: params.agentId,
+        resourceId,
+        contentHash,
         kind: params.kind,
         title: params.title.slice(0, 200),
         content: params.content,
@@ -167,11 +221,18 @@ export async function saveAgentMemory(params: {
 export async function retrieveAgentMemory(params: {
   organizationId: string
   agentId: string
+  /**
+   * Narrow to what the agent knows about ONE thing — an account, a record.
+   * The resource's memories AND the agent's general ones come back: narrowing
+   * must not make the agent forget everything it has learned about the job.
+   */
+  resourceId?: string | null
   query: string
   k?: number
   minScore?: number
 }): Promise<MemoryHit[]> {
   const k = params.k ?? MEMORY_INJECTION_LIMIT
+  const resourceId = params.resourceId?.trim() || null
   try {
     let queryVec: number[] | null = null
     if (embeddingsConfigured()) {
@@ -195,6 +256,7 @@ export async function retrieveAgentMemory(params: {
           FROM "agent_memories"
           WHERE "organizationId" = ${params.organizationId}::uuid
             AND "agentId" = ${params.agentId}
+            AND (${resourceId}::text IS NULL OR "resourceId" IS NULL OR "resourceId" = ${resourceId})
             AND "status" = 'open'
             AND "embeddingVec" IS NOT NULL
           ORDER BY distance ASC
@@ -208,7 +270,12 @@ export async function retrieveAgentMemory(params: {
     // Keyword fallback: no embeddings configured (or the query embed call
     // failed) — score a bounded scan of the agent's open memories.
     const rows = await prisma.agentMemory.findMany({
-      where: { organizationId: params.organizationId, agentId: params.agentId, status: 'open' },
+      where: {
+        organizationId: params.organizationId,
+        agentId: params.agentId,
+        status: 'open',
+        ...memoryScopeFilter(resourceId),
+      },
       select: { id: true, kind: true, title: true, content: true, question: true },
       orderBy: { createdAt: 'desc' },
       take: AGENT_MEMORY_CAP,

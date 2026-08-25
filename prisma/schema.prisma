@@ -717,10 +717,22 @@ model AgentMemory {
   id             String  @id @default(cuid())
   organizationId String  @db.Uuid
   agentId        String
+  /// What this memory is ABOUT, when it is about one thing — an account id, a
+  /// CRM record id, an opportunity. Null means the agent knows it generally.
+  ///
+  /// Memory was filed under the agent alone, which made "what have we learned
+  /// about Acme" unanswerable: every learning sat under whichever agent
+  /// happened to acquire it. Recall reads the resource's memories AND the
+  /// agent's general ones, so scoping narrows without hiding.
+  resourceId     String?
   kind           String // 'user_answer' | 'learning' | 'suggestion'
   title          String
   content        String  @db.Text
   question       String? @db.Text
+  /// SHA-256 of the normalized title+content, so the same learning recorded
+  /// twice for the same agent and resource collapses to one row. Embedding
+  /// dedup only covers suggestions, and only when embeddings are configured.
+  contentHash    String?
   embedding      Json?
 
   /// pgvector copy of `embedding` (WS-R5). Reads/writes go through raw SQL —
@@ -738,7 +750,9 @@ model AgentMemory {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   agent        AgentTask    @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
+  @@unique([organizationId, agentId, resourceId, contentHash], map: "agent_memories_content_dedup")
   @@index([organizationId, agentId, kind, status])
+  @@index([organizationId, agentId, resourceId, status])
   // HNSW index created by hand-edited migration SQL (Prisma's schema DSL has
   // no `hnsw`/`vector_cosine_ops` vocabulary); declaring it here keeps
   // `prisma migrate diff` from proposing to drop it as drift.

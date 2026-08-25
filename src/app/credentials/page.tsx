@@ -15,6 +15,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { PageHeader } from '@/components/ui/page-header'
+import type { CredentialDependent } from '@/lib/credentials/dependents'
+import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { ScopeBadge, type ScopeReviewView } from '@/components/integrations/scope-badge'
@@ -112,6 +114,29 @@ export default function CredentialsPage() {
   const [rotateHttpTarget, setRotateHttpTarget] = useState<HttpCredentialSummary | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<HttpCredentialSummary | null>(null)
+  // What would break, fetched when the confirm opens. Null = still looking.
+  const [dependents, setDependents] = useState<{ summary: string; items: CredentialDependent[] } | null>(null)
+  useEffect(() => {
+    if (!deleteTarget) { setDependents(null); return }
+    let cancelled = false
+    setDependents(null)
+    void fetch(`/api/credentials/dependents?kind=http_credential&ref=${encodeURIComponent(deleteTarget.id)}`)
+      .then((response) => response.json())
+      .then((data) => {
+        if (cancelled) return
+        setDependents(
+          data?.success
+            ? { summary: data.summary as string, items: (data.dependents ?? []) as CredentialDependent[] }
+            // A failed check must not read as "nothing uses this" — that is the
+            // reassuring answer, and it is the one we do not have.
+            : { summary: 'Could not check what uses this credential. Delete only if you are sure.', items: [] },
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setDependents({ summary: 'Could not check what uses this credential. Delete only if you are sure.', items: [] })
+      })
+    return () => { cancelled = true }
+  }, [deleteTarget])
   const [oauthConfirm, setOauthConfirm] = useState<OauthConfirm | null>(null)
   const [oauthConfirmBusy, setOauthConfirmBusy] = useState(false)
   const [mcpDialogOpen, setMcpDialogOpen] = useState(false)
@@ -659,9 +684,33 @@ export default function CredentialsPage() {
           <DialogHeader>
             <DialogTitle>Delete “{deleteTarget?.name}”?</DialogTitle>
             <DialogDescription>
-              Any flow step using this credential will stop authenticating until another credential is selected.
+              {/* Named, not generalised: "any flow step using this" is true of
+                  every credential and tells the reader nothing about THIS one.
+                  The list is what makes the decision. */}
+              {dependents === null
+                ? 'Checking what uses this credential…'
+                : dependents.summary}
             </DialogDescription>
           </DialogHeader>
+          {dependents && dependents.items.length > 0 && (
+            <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-border bg-muted/40 p-2 text-sm">
+              {dependents.items.map((item) => (
+                <li key={`${item.type}-${item.id}`} className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                      item.type === 'flow' && item.published
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-200 text-slate-700',
+                    )}
+                  >
+                    {item.type === 'flow' ? (item.published ? 'Live' : 'Draft') : 'Agent'}
+                  </span>
+                  <span className="truncate">{item.name}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
             <Button

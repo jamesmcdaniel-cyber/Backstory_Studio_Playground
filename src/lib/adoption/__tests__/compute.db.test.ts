@@ -83,6 +83,7 @@ if (TEST_DB) {
       { trigger: { type: 'manual' }, status: 'completed' },
       { trigger: { type: 'manual' }, status: 'failed' },
       { trigger: { type: 'schedule' }, status: 'completed' },
+      { trigger: { type: 'slack_mention' }, status: 'completed' },
     ]
     for (const { trigger, status } of seeded) {
       await prisma.agentExecution.create({
@@ -140,13 +141,27 @@ if (TEST_DB) {
     })
     assert.ok(row, 'expected a rollup row for the seeded org')
     assert.equal(row.agentsCreated, 2)
-    assert.equal(row.execTotal, 3)
-    assert.equal(row.execManual, 2)
-    assert.deepEqual(row.execByTrigger, { manual: 2, schedule: 1 })
+    assert.equal(row.execTotal, 4)
+    assert.equal(row.execManual, 3)
+    assert.deepEqual(row.execByTrigger, { manual: 2, schedule: 1, slack_mention: 1 })
     assert.equal(row.engagedUsers, 1)
     assert.equal(row.approvalsApproved, 1)
     assert.equal(row.approvalsRejected, 0)
     assert.ok(row.approvalLatencyMedianMs !== null && row.approvalLatencyMedianMs >= 59_000)
+  })
+
+  test('a Slack mention counts as human-initiated, not automation', async () => {
+    // A human @mentioning an agent is the most human-initiated act in the
+    // product. Counted as automated it would inflate the automation ratio and
+    // make the AI-dust detector wrong in the flattering direction — the one
+    // direction a health metric must never be wrong in.
+    await rollupWeek(WEEK)
+    const row = await prisma.adoptionWeek.findUnique({
+      where: { organizationId_weekStart: { organizationId: realOrgId, weekStart: WEEK } },
+    })
+    assert.equal(row.execTotal, 4)
+    // 2 manual + 1 slack_mention are human-initiated; only 'schedule' is not.
+    assert.equal(row.execManual, 3)
   })
 
   test('excludes demo organizations entirely', async () => {

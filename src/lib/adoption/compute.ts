@@ -14,6 +14,20 @@
 import { systemPrisma } from '@/lib/prisma'
 import { addWeeks, completeWeeksBack, weekKey } from '@/lib/adoption/rollup'
 
+/**
+ * Trigger types a HUMAN started directly.
+ *
+ * `automationRatio` asks whether agents run without being poked, so what
+ * matters is who started the run, not which surface it came from. A Slack
+ * mention is a person typing at an agent; counting it as automation would
+ * inflate the ratio and make the AI-dust detector wrong in the flattering
+ * direction — the one direction a health metric must never be wrong in.
+ */
+const HUMAN_TRIGGERS = new Set(['manual', 'slack_mention'])
+
+/** SQL list form of HUMAN_TRIGGERS, kept beside it so the two cannot drift. */
+const HUMAN_TRIGGER_LIST = [...HUMAN_TRIGGERS]
+
 /** Prisma returns bigint from count(*) in raw SQL. */
 const toInt = (value: unknown): number => Number(value ?? 0)
 
@@ -96,7 +110,7 @@ export async function rollupWeek(weekStart: Date): Promise<{ organizations: numb
     const n = toInt(row.n)
     entry.execByTrigger[type] = (entry.execByTrigger[type] ?? 0) + n
     entry.execTotal += n
-    if (type === 'manual') entry.execManual += n
+    if (HUMAN_TRIGGERS.has(type)) entry.execManual += n
   }
 
   // Engaged humans: manual runs OR a chat message they wrote. Deliberately not
@@ -109,7 +123,7 @@ export async function rollupWeek(weekStart: Date): Promise<{ organizations: numb
       SELECT e."organizationId", e."userId"
       FROM agent_executions e
       WHERE e."startedAt" >= ${weekStart} AND e."startedAt" < ${weekEnd}
-        AND e.trigger->>'type' = 'manual'
+        AND e.trigger->>'type' = ANY(${HUMAN_TRIGGER_LIST})
       UNION
       SELECT m."organizationId", m."userId"
       FROM agent_chat_messages m

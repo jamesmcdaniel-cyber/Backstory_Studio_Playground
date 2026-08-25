@@ -227,9 +227,10 @@ export default function AdoptionPage() {
         <div>
           <h2 className="text-lg font-medium">Automation ratio</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Share of runs that were not started by hand. An agent that only ever runs when a human
-            pokes it is a chat window with an avatar, not a teammate. Weeks with no runs at all are
-            a gap in the line, not a zero.
+            Share of runs that were not started by hand — a Slack mention counts as by hand, since
+            a person typed it. An agent that only ever runs when a human pokes it is a chat window
+            with an avatar, not a teammate. Weeks with no runs at all are a gap in the line, not a
+            zero.
           </p>
         </div>
         <RateLine points={automationPoints} ariaLabel="Automation ratio by week" />

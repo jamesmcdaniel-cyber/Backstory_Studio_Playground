@@ -75,8 +75,10 @@ test('configured Slack node shows Slack branding, Slack actions, and only the se
 
   assert.ok(container.querySelector('img[src="/logos/slack.png"]'), 'Slack logo renders')
   assert.match(container.textContent ?? '', /Slack/)
-  assert.match(container.textContent ?? '', /channel/)
-  assert.match(container.textContent ?? '', /text/)
+  // The selected tool's own arguments, under readable labels rather than the
+  // raw schema keys (`channel`, `text`) the form used to print verbatim.
+  assert.match(container.textContent ?? '', /Channel/)
+  assert.match(container.textContent ?? '', /Text/)
   assert.doesNotMatch(container.textContent ?? '', /Backstory MCP/)
   assert.doesNotMatch(container.textContent ?? '', /backstoryQuery/)
 

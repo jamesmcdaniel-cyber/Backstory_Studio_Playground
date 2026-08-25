@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseArgs, schemaFields, serializeArgs, type SchemaField } from '../tool-args-editor'
 
-test('schemaFields flattens top-level tool input schemas', () => {
+test('schemaFields reads a tool input schema into typed, labelled fields', () => {
   const fields = schemaFields({
     type: 'object',
     required: ['query'],
@@ -13,17 +13,20 @@ test('schemaFields flattens top-level tool input schemas', () => {
     },
   })
   assert.deepEqual(fields, [
-    { name: 'query', type: 'string', required: true, description: 'Search query.', enumValues: undefined },
-    { name: 'limit', type: 'integer', required: false, description: undefined, enumValues: undefined },
-    { name: 'mode', type: 'string', required: false, description: undefined, enumValues: ['fast', 'deep'] },
+    { name: 'query', label: 'Query', type: 'string', required: true, description: 'Search query.' },
+    { name: 'limit', label: 'Limit', type: 'number', required: false },
+    { name: 'mode', label: 'Mode', type: 'enum', required: false, options: [
+      { value: 'fast', label: 'fast' },
+      { value: 'deep', label: 'deep' },
+    ] },
   ])
 })
 
 test('serializeArgs preserves object, array, and any fields as JSON values', () => {
   const fields: SchemaField[] = [
-    { name: 'payload', type: 'object', required: true },
-    { name: 'items', type: 'array', required: false },
-    { name: 'metadata', type: 'any', required: false },
+    { name: 'payload', label: 'Payload', type: 'object', required: true },
+    { name: 'items', label: 'Items', type: 'array', required: false },
+    { name: 'metadata', label: 'Metadata', type: 'any', required: false },
   ]
   const json = serializeArgs(
     {
@@ -41,7 +44,7 @@ test('serializeArgs preserves object, array, and any fields as JSON values', () 
 })
 
 test('serializeArgs leaves exact data tokens intact for runtime object substitution', () => {
-  const fields: SchemaField[] = [{ name: 'payload', type: 'object', required: true }]
+  const fields: SchemaField[] = [{ name: 'payload', label: 'Payload', type: 'object', required: true }]
   assert.deepEqual(JSON.parse(serializeArgs({ payload: '{{trigger.input.record}}' }, fields)), {
     payload: '{{trigger.input.record}}',
   })
@@ -49,9 +52,9 @@ test('serializeArgs leaves exact data tokens intact for runtime object substitut
 
 test('serializeArgs still coerces scalar fields', () => {
   const fields: SchemaField[] = [
-    { name: 'limit', type: 'integer', required: false },
-    { name: 'dryRun', type: 'boolean', required: false },
-    { name: 'query', type: 'string', required: false },
+    { name: 'limit', label: 'Limit', type: 'number', required: false },
+    { name: 'dryRun', label: 'Dry run', type: 'boolean', required: false },
+    { name: 'query', label: 'Query', type: 'string', required: false },
   ]
   assert.deepEqual(JSON.parse(serializeArgs({ limit: '5', dryRun: 'true', query: 'Acme' }, fields)), {
     limit: 5,

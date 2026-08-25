@@ -144,7 +144,27 @@ function CredentialRow({ provider }: { provider: Provider }) {
 
       <p className="mt-1 text-sm text-gray-500">{state.hint}</p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      {/* Install leads; the manual fields become a disclosure below, so BYO is
+          visibly the exception. This exists because BYO failed operationally:
+          the person who made a workspace's Slack app leaves, nobody can reach
+          its settings, and the workspace has a bot it can neither administer
+          nor replace. */}
+      {provider === 'slack' && (
+        <div className="mt-3 rounded-md border p-3">
+          <a
+            href="/api/slack/install?returnTo=/settings"
+            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+          >
+            Add to Slack
+          </a>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Installs Backstory&rsquo;s Slack app in your workspace. Nobody needs to create a Slack app,
+            and no token is handled by hand — so nothing breaks when the person who set it up leaves.
+          </p>
+        </div>
+      )}
+
+      <div className={`mt-3 flex flex-wrap items-center gap-2 ${provider === 'slack' ? 'hidden' : ''}`}>
         <Input
           type="password"
           // "new-password", not "off": Chrome's password manager ignores "off"
@@ -182,11 +202,94 @@ function CredentialRow({ provider }: { provider: Provider }) {
         )}
       </div>
       {provider === 'slack' && (
-        <p className="mt-2 text-xs text-gray-400">
-          From your Slack app&rsquo;s Basic Information page — the signing secret lets Backstory verify events your workspace
-          sends it. Set your app&rsquo;s Event Subscriptions request URL to this workspace&rsquo;s events endpoint after saving.
-        </p>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-sm text-muted-foreground">Use your own Slack app instead</summary>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              placeholder={state.hasOwnKey ? `Replace ${state.fieldLabel.toLowerCase()}` : state.fieldLabel}
+              className="min-w-[16rem] flex-1"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void save()
+              }}
+            />
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={signingSecret}
+              onChange={(event) => setSigningSecret(event.target.value)}
+              placeholder={state.hasSigningSecret ? 'Replace signing secret (optional)' : 'Signing secret'}
+              className="min-w-[16rem] flex-1"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void save()
+              }}
+            />
+            <Button onClick={() => void save()} disabled={!value.trim() || (needsSigningSecret && !signingSecret.trim()) || busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : state.hasOwnKey ? 'Replace' : 'Connect'}
+            </Button>
+            {state.hasOwnKey && (
+              <Button variant="ghost" onClick={() => void remove()} disabled={busy}>
+                Remove
+              </Button>
+            )}
+          </div>
+          {/* was text-gray-400 — graphite-400 is 2.29:1 and fails body text. */}
+          <p className="mt-2 text-xs text-muted-foreground">
+            From your Slack app&rsquo;s Basic Information page — the signing secret lets Backstory verify events your workspace
+            sends it. Set your app&rsquo;s Event Subscriptions request URL to this workspace&rsquo;s events endpoint after saving.
+            A signing secret you save here takes precedence over the platform app&rsquo;s.
+          </p>
+        </details>
       )}
+    </div>
+  )
+}
+
+/**
+ * Outcomes the Slack install callback bounces back with.
+ *
+ * Read from window.location rather than useSearchParams: this panel renders
+ * inside an already-client tree and useSearchParams would drag a Suspense
+ * boundary requirement into the page for one query string.
+ */
+const SLACK_INSTALL_ERRORS: Record<string, string> = {
+  slack_oauth_state: 'That install link expired or did not match. Start again from Add to Slack.',
+  slack_oauth_exchange: 'Slack rejected the install. Start again from Add to Slack.',
+  slack_team_taken: 'That Slack workspace is already connected to a different Backstory workspace.',
+  slack_not_configured: 'Slack install is not configured on this deployment yet.',
+  slack_oauth_failed: 'Could not reach Slack to finish the install. Please try again.',
+}
+
+function SlackInstallOutcome() {
+  const [outcome, setOutcome] = useState<{ kind: 'ok' | 'error'; message: string } | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const error = params.get('error')
+    if (error && SLACK_INSTALL_ERRORS[error]) {
+      setOutcome({ kind: 'error', message: SLACK_INSTALL_ERRORS[error] })
+      return
+    }
+    if (params.get('slack') === 'installed') {
+      setOutcome({
+        kind: 'ok',
+        // Says what the install did NOT do. With a platform-owned app people
+        // reasonably assume installing it covered everyone; it connects the
+        // workspace, not individuals, and the fail-closed identity rule will
+        // otherwise look like a bug the first time someone tries a mention.
+        message:
+          'Slack is connected. Each person still links their own Slack account before they can use agents there — installing the app connects the workspace, not individuals.',
+      })
+    }
+  }, [])
+
+  if (!outcome) return null
+  return (
+    <div className="mb-3 rounded-md border px-3 py-2 text-sm" role="status">
+      {outcome.message}
     </div>
   )
 }
@@ -202,6 +305,7 @@ export function WorkspaceCredentialsPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        <SlackInstallOutcome />
         {PROVIDERS.map((provider) => (
           <CredentialRow key={provider} provider={provider} />
         ))}

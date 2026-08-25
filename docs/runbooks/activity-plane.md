@@ -338,16 +338,40 @@ that id — but only after confirming the stranded claim truly never started a
 run, since a second dispatch attempt for the SAME event+flow pair will hit
 the same unique index and no-op (`duplicate`) rather than retry.
 
-## 5. Slack app manifest — configuring a fresh workspace from scratch
+## 5. Connecting Slack
 
-Everything below is one workspace's own Slack app (BYO-app; there is no
-Backstory-owned Slack app every customer installs into — see the file-level
-comment on `src/app/api/slack/events/route.ts`). An operator standing up a
-brand-new Slack app needs, at minimum:
+There are two paths, and the first is the default.
+
+**Install Backstory's app (default).** The workspace admin clicks "Add to Slack"
+on /settings. Slack mints a bot token for that workspace and
+`/api/slack/oauth/callback` stores it; nobody creates an app and nobody handles a
+token. This exists because BYO failed operationally — the person who created a
+workspace's app leaves, nobody can reach its settings, and the workspace has a
+bot it can neither administer nor replace.
+
+The platform side needs `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and
+`SLACK_SIGNING_SECRET` set once (see `.env.example`), plus
+`https://<host>/api/slack/oauth/callback` in the app's Redirect URLs. Per-workspace
+bot tokens are minted by Slack at install; there is no single embeddable bot
+token, because `oauth.v2.access` issues a distinct one per install.
+
+Note that installing connects the WORKSPACE, not its people. Each person still
+links their own Slack account before they can summon an agent — that is the
+fail-closed identity rule, not a bug.
+
+**Bring your own app (exception).** Everything below still works for a workspace
+that wants its own Slack app, and its own signing secret takes precedence over
+the platform app's. An operator standing up a brand-new Slack app needs, at
+minimum:
 
 1. **Bot token scopes** (OAuth & Permissions → Bot Token Scopes):
    - `chat:write` — required to post as the bot (`slack_post_message`).
      The bot must also be invited to any channel it's expected to post in.
+   - `app_mentions:read` — required to receive `@mentions` at all. Without it
+     agents are not summonable from Slack.
+   - `chat:write.customize` — required to post a reply under the TEAMMATE's own
+     name and avatar. Without it every teammate posts as one undifferentiated
+     bot.
    - `channels:history` — required for `conversations.history` (backfill's
      Nango-plane reads and the native-plane `nativeSlackGet` reads use the
      same endpoint).

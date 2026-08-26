@@ -62,7 +62,7 @@ function httpSendsBody(node: FlowNode): boolean {
 const RUN_BEHAVIOUR: NodeOption[] = [
   {
     key: 'onError',
-    label: 'On error',
+    label: 'On Error',
     description: 'What happens to the rest of the flow when this step fails.',
     control: {
       kind: 'select',
@@ -76,14 +76,14 @@ const RUN_BEHAVIOUR: NodeOption[] = [
   },
   {
     key: 'retries',
-    label: 'Retries',
+    label: 'Max Tries',
     description: 'How many times to try again before the step is treated as failed.',
     control: { kind: 'number', min: 0, max: 5, unit: 'count' },
     addValue: 2,
   },
   {
     key: 'retryDelayMs',
-    label: 'Wait between tries',
+    label: 'Wait Between Tries',
     control: { kind: 'number', min: 0, max: 60, unit: 'seconds' },
     addValue: SECONDS(5),
   },
@@ -96,7 +96,7 @@ const RUN_BEHAVIOUR: NodeOption[] = [
   },
   {
     key: 'alwaysOutputData',
-    label: 'When there is no result',
+    label: 'Always Output Data',
     control: {
       kind: 'boolean',
       onLabel: 'Output an empty result so later steps still run',
@@ -109,7 +109,7 @@ const RUN_BEHAVIOUR: NodeOption[] = [
 const HTTP_OPTIONS: NodeOption[] = [
   {
     key: 'responseType',
-    label: 'Read the response as',
+    label: 'Response Format',
     control: {
       kind: 'select',
       choices: [
@@ -123,7 +123,7 @@ const HTTP_OPTIONS: NodeOption[] = [
   },
   {
     key: 'failOnHttpError',
-    label: 'On a 4xx or 5xx response',
+    label: 'Never Error',
     control: {
       kind: 'boolean',
       onLabel: 'Treat it as a failure',
@@ -133,7 +133,7 @@ const HTTP_OPTIONS: NodeOption[] = [
   },
   {
     key: 'followRedirects',
-    label: 'Follow redirects',
+    label: 'Redirect - Follow Redirects',
     description: 'Each hop is re-checked against the SSRF guard; credentials are dropped on cross-origin hops.',
     control: {
       kind: 'boolean',
@@ -146,13 +146,13 @@ const HTTP_OPTIONS: NodeOption[] = [
     key: 'maxRedirects',
     // Only means anything once redirects are being followed at all.
     appliesTo: (node) => (node.data as { followRedirects?: boolean }).followRedirects === true,
-    label: 'Redirects to follow',
+    label: 'Max Redirects',
     control: { kind: 'number', min: 0, max: 21, unit: 'count' },
     addValue: 5,
   },
   {
     key: 'bodyMode',
-    label: 'Body format',
+    label: 'Body Content Type',
     // Only meaningful once the request actually sends one — n8n gates this the
     // same way, and offering it on a GET is offering a setting that does nothing.
     appliesTo: httpSendsBody,
@@ -169,14 +169,14 @@ const HTTP_OPTIONS: NodeOption[] = [
   },
   {
     key: 'pagination',
-    label: 'Fetch every page',
+    label: 'Pagination',
     description: 'Follow the API’s paging until there is nothing left, and combine the results.',
     control: { kind: 'custom' },
     addValue: { mode: 'page', completeWhen: 'emptyPage' },
   },
   {
     key: 'optimizeForAi',
-    label: 'Trim the response for AI',
+    label: 'Optimize Response For AI',
     description: 'Keep only the part of a large response a later AI step needs.',
     control: { kind: 'custom' },
     addValue: {},
@@ -186,13 +186,13 @@ const HTTP_OPTIONS: NodeOption[] = [
 const LOOP_OPTIONS: NodeOption[] = [
   {
     key: 'concurrency',
-    label: 'How many at a time',
+    label: 'Batch Size',
     control: { kind: 'number', min: 1, max: 20, unit: 'count' },
     addValue: 3,
   },
   {
     key: 'batchSize',
-    label: 'Items per round',
+    label: 'Batch Size',
     control: { kind: 'number', min: 1, max: 100, unit: 'count' },
     addValue: 10,
   },
@@ -200,7 +200,7 @@ const LOOP_OPTIONS: NodeOption[] = [
 
 const PER_ITEM_OPTION: NodeOption = {
   key: 'perItem',
-  label: 'Run once per item',
+  label: 'Execute Once Per Item',
   description: 'Repeat this step for every item in a list, instead of once for the whole list.',
   control: { kind: 'custom' },
   addValue: { source: '' },
@@ -208,7 +208,7 @@ const PER_ITEM_OPTION: NodeOption = {
 
 const SUBFLOW_OPTION: NodeOption = {
   key: 'waitForCompletion',
-  label: 'Wait for the other flow',
+  label: 'Wait For Sub-Workflow Completion',
   control: {
     kind: 'boolean',
     onLabel: 'Wait, and use its result',

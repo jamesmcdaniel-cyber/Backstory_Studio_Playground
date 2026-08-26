@@ -47,23 +47,23 @@ type EditableType = Extract<FlowNode['type'], 'agent' | 'ai' | 'subflow' | 'know
 const NODE_TYPES: { value: EditableType; label: string }[] = [
   { value: 'agent', label: 'Run agent' },
   { value: 'ai', label: 'AI operation' },
-  { value: 'subflow', label: 'Run a flow' },
+  { value: 'subflow', label: 'Execute Sub-workflow' },
   { value: 'knowledge', label: 'Search knowledge' },
   { value: 'code', label: 'Code' },
   { value: 'tool', label: 'Tool call' },
-  { value: 'http', label: 'HTTP request' },
-  { value: 'transform', label: 'Set fields' },
+  { value: 'http', label: 'HTTP Request' },
+  { value: 'transform', label: 'Edit Fields (Set)' },
   { value: 'data', label: 'Data operation' },
   { value: 'variable', label: 'Variable' },
   { value: 'humanReview', label: 'Request information' },
-  { value: 'condition', label: 'If / else' },
+  { value: 'condition', label: 'If' },
   { value: 'switch', label: 'Switch' },
   { value: 'filter', label: 'Filter' },
-  { value: 'loop', label: 'For each' },
+  { value: 'loop', label: 'Loop Over Items (Split in Batches)' },
   { value: 'parallel', label: 'Parallel' },
   { value: 'output', label: 'Output' },
-  { value: 'join', label: 'Join paths' },
-  { value: 'stop', label: 'Stop' },
+  { value: 'join', label: 'Merge' },
+  { value: 'stop', label: 'Stop and Error' },
 ]
 
 export type ToolCatalog = { id: string; name: string; serverUrl?: string; tools: { name: string; description: string; inputSchema?: unknown; outputSchema?: unknown }[]; toolsError?: string }[]
@@ -1496,7 +1496,7 @@ export function StepDrawer({
         {node.type === 'condition' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass} htmlFor={`${uid}-cond-match`}>Match</label>
+              <label className={labelClass} htmlFor={`${uid}-cond-match`}>Conditions</label>
               <select
                 id={`${uid}-cond-match`}
                 className={fieldClass}
@@ -1541,7 +1541,7 @@ export function StepDrawer({
                       ariaLabel={`Condition ${i + 1} comparison value`}
                     />
                     {clauses.length > 1 && (
-                      <button type="button" onClick={() => update(clauses.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove condition">
+                      <button type="button" onClick={() => update(clauses.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove Condition">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     )}
@@ -1569,7 +1569,7 @@ export function StepDrawer({
               onClick={() => onChange({ ...node, data: { ...node.data, clauses: [...clausesOf(node.data), { left: '', op: 'contains', right: '' }], left: undefined, op: undefined, right: undefined } })}
               className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
             >
-              <Plus className="h-3.5 w-3.5" /> Add condition
+              <Plus className="h-3.5 w-3.5" /> Add Condition
             </button>
             <FieldIssues issues={issueFor('clauses')} />
             <div>
@@ -1882,13 +1882,13 @@ export function StepDrawer({
             <div className="space-y-3 border-t pt-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium">Send query parameters</p>
+                  <p className="text-sm font-medium">Send Query Parameters</p>
                   <p className="text-xs text-muted-foreground">Add JSON key/value parameters to the URL.</p>
                 </div>
                 <Switch
                   checked={node.data.sendQuery ?? Boolean(node.data.query?.trim())}
                   onCheckedChange={(sendQuery) => onChange({ ...node, data: { ...node.data, sendQuery } })}
-                  aria-label="Send query parameters"
+                  aria-label="Send Query Parameters"
                 />
               </div>
               {(node.data.sendQuery ?? Boolean(node.data.query?.trim())) && (
@@ -1912,13 +1912,13 @@ export function StepDrawer({
             <div className="space-y-3 border-t pt-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium">Send headers</p>
+                  <p className="text-sm font-medium">Send Headers</p>
                   <p className="text-xs text-muted-foreground">Add non-secret request headers as JSON.</p>
                 </div>
                 <Switch
                   checked={node.data.sendHeaders ?? Boolean(node.data.headers?.trim())}
                   onCheckedChange={(sendHeaders) => onChange({ ...node, data: { ...node.data, sendHeaders } })}
-                  aria-label="Send headers"
+                  aria-label="Send Headers"
                 />
               </div>
               {(node.data.sendHeaders ?? Boolean(node.data.headers?.trim())) && (
@@ -1942,14 +1942,14 @@ export function StepDrawer({
             <div className="space-y-3 border-t pt-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium">Send body</p>
+                  <p className="text-sm font-medium">Send Body</p>
                   <p className="text-xs text-muted-foreground">Configure the request payload.</p>
                 </div>
                 <Switch
                   checked={node.data.sendBody ?? Boolean(node.data.body?.trim())}
                   disabled={node.data.method === 'GET' || node.data.method === 'HEAD'}
                   onCheckedChange={(sendBody) => onChange({ ...node, data: { ...node.data, sendBody } })}
-                  aria-label="Send body"
+                  aria-label="Send Body"
                 />
               </div>
               {(node.data.method === 'GET' || node.data.method === 'HEAD') && (
@@ -1958,7 +1958,7 @@ export function StepDrawer({
               {(node.data.sendBody ?? Boolean(node.data.body?.trim())) && node.data.method !== 'GET' && node.data.method !== 'HEAD' && (
                 <>
                   <div>
-                    <label className={labelClass} htmlFor={`${uid}-http-body-mode`}>Body content type</label>
+                    <label className={labelClass} htmlFor={`${uid}-http-body-mode`}>Body Content Type</label>
                     <select
                       id={`${uid}-http-body-mode`}
                       className={fieldClass}
@@ -2174,7 +2174,7 @@ export function StepDrawer({
               </div>
             ))}
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, fields: [...node.data.fields, { name: '', value: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-              <Plus className="h-3.5 w-3.5" /> Add field
+              <Plus className="h-3.5 w-3.5" /> Add Field
             </button>
             <FieldIssues issues={issueFor('fields')} />
             <label className="flex items-center gap-2 text-xs">
@@ -2183,7 +2183,7 @@ export function StepDrawer({
                 checked={node.data.includeOtherFields === true}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, includeOtherFields: e.target.checked || undefined } })}
               />
-              Also keep the fields that came in
+              Include Other Input Fields
             </label>
             <div>
               <DataTree fields={dataFields} onInsert={insertToken} />
@@ -2212,7 +2212,7 @@ export function StepDrawer({
                       <TokenTextEditor ref={registerEditor(`filt.${i}.right`)} className="min-w-0 flex-1 px-2 py-1.5" value={clause.right} labelCtx={labelCtx} placeholder="80" onFocus={focusEditor(`filt.${i}.right`)} onChange={(right) => update(clauses.map((c, j) => (j === i ? { ...c, right } : c)))} ariaLabel={`Filter ${i + 1} comparison value`} />
                     )}
                     {clauses.length > 1 && (
-                      <button type="button" onClick={() => update(clauses.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove condition"><Trash2 className="h-4 w-4" /></button>
+                      <button type="button" onClick={() => update(clauses.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove Condition"><Trash2 className="h-4 w-4" /></button>
                     )}
                   </div>
                   <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
@@ -2223,7 +2223,7 @@ export function StepDrawer({
               )
             })}
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, clauses: [...clausesOf(node.data), { left: '', op: 'contains', right: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-              <Plus className="h-3.5 w-3.5" /> Add condition
+              <Plus className="h-3.5 w-3.5" /> Add Condition
             </button>
             <FieldIssues issues={issueFor('clauses')} />
             <div><DataTree fields={dataFields} onInsert={insertToken} /></div>
@@ -2238,7 +2238,7 @@ export function StepDrawer({
                 <div className="flex gap-1.5">
                   <input className={`${smallField} flex-1`} value={c.label ?? ''} placeholder={`Case ${i + 1} label`} onFocus={blockActive} onBlur={unblockActive} onChange={(e) => onChange({ ...node, data: { ...node.data, cases: node.data.cases.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) } })} />
                   {node.data.cases.length > 1 && (
-                    <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, cases: node.data.cases.filter((_, j) => j !== i) } })} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove case"><Trash2 className="h-4 w-4" /></button>
+                    <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, cases: node.data.cases.filter((_, j) => j !== i) } })} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove Routing Rule"><Trash2 className="h-4 w-4" /></button>
                   )}
                 </div>
                 <TokenTextEditor ref={registerEditor(`sw.${i}.left`)} className="px-2 py-1.5" value={c.left} labelCtx={labelCtx} placeholder="Choose data from below" onFocus={focusEditor(`sw.${i}.left`)} onChange={(left) => onChange({ ...node, data: { ...node.data, cases: node.data.cases.map((x, j) => (j === i ? { ...x, left } : x)) } })} ariaLabel={`Case ${i + 1} value`} />
@@ -2261,7 +2261,7 @@ export function StepDrawer({
               </div>
             ))}
             <button type="button" onClick={() => onChange({ ...node, data: { ...node.data, cases: [...node.data.cases, { id: `case${node.data.cases.length + 1}-${Math.random().toString(36).slice(2, 6)}`, left: '', op: 'contains', right: '' }] } })} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-              <Plus className="h-3.5 w-3.5" /> Add case
+              <Plus className="h-3.5 w-3.5" /> Add Routing Rule
             </button>
             <FieldIssues issues={issueFor('cases')} />
             <label className="flex items-center gap-2 text-xs">
@@ -2270,7 +2270,7 @@ export function StepDrawer({
                 checked={node.data.allMatches === true}
                 onChange={(e) => onChange({ ...node, data: { ...node.data, allMatches: e.target.checked || undefined } })}
               />
-              Follow every case that matches, not just the first
+              Send data to all matching outputs
             </label>
             <div><DataTree fields={dataFields} onInsert={insertToken} /></div>
           </div>
@@ -2278,8 +2278,8 @@ export function StepDrawer({
 
         {node.type === 'stop' && (
           <div>
-            <label className={labelClass} htmlFor={`${uid}-stop-reason`}>Reason (optional)</label>
-            <input id={`${uid}-stop-reason`} className={fieldClass} value={node.data.reason ?? ''} placeholder="Why the flow stops here" onChange={(e) => onChange({ ...node, data: { ...node.data, reason: e.target.value } })} />
+            <label className={labelClass} htmlFor={`${uid}-stop-reason`}>Error Message</label>
+            <input id={`${uid}-stop-reason`} className={fieldClass} value={node.data.reason ?? ''} placeholder="An error message to raise" onChange={(e) => onChange({ ...node, data: { ...node.data, reason: e.target.value } })} />
             <p className="mt-1.5 text-xs text-muted-foreground">Ends the flow early; later steps are skipped.</p>
           </div>
         )}
@@ -2565,7 +2565,7 @@ export function StepDrawer({
         {node.type === 'join' && (
           <div className="space-y-3">
             <div>
-              <label className={labelClass} htmlFor={`${uid}-join-mode`}>How to merge branches</label>
+              <label className={labelClass} htmlFor={`${uid}-join-mode`}>Mode</label>
               <select
                 id={`${uid}-join-mode`}
                 className={fieldClass}
@@ -2586,7 +2586,7 @@ export function StepDrawer({
                   checked={node.data.mode === 'combineByPosition' ? node.data.includeUnpaired === true : node.data.includeUnpaired !== false}
                   onChange={(e) => onChange({ ...node, data: { ...node.data, includeUnpaired: e.target.checked } })}
                 />
-                Keep items that found no match
+                Include Any Unpaired Items
               </label>
             )}
             {node.data.mode === 'combineByKey' && (
@@ -3117,7 +3117,7 @@ function DataEditor({
                   ariaLabel={`Condition ${i + 1} comparison value`}
                 />
                 {clauses.length > 1 && (
-                  <button type="button" onClick={() => setClauses(clauses.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove condition">
+                  <button type="button" onClick={() => setClauses(clauses.filter((_, j) => j !== i))} className="px-1 text-red-500 hover:text-red-700" aria-label="Remove Condition">
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}
@@ -3129,7 +3129,7 @@ function DataEditor({
             onClick={() => setClauses([...clauses, { left: '', op: 'contains', right: '' }])}
             className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
           >
-            <Plus className="h-3.5 w-3.5" /> Add condition
+            <Plus className="h-3.5 w-3.5" /> Add Condition
           </button>
           <FieldIssues issues={issueFor('clauses')} />
           <p className="text-[11px] text-muted-foreground">Each condition checks one item of the list at a time.</p>
@@ -3546,7 +3546,7 @@ function OutputFieldsEditor({
         ))}
       </div>
       <button type="button" onClick={() => onChange([...fields, { name: '', type: 'any' }])} className="mt-1.5 flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700">
-        <Plus className="h-3.5 w-3.5" /> Add field
+        <Plus className="h-3.5 w-3.5" /> Add Field
       </button>
     </div>
   )

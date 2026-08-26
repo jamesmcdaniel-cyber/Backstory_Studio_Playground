@@ -217,9 +217,9 @@ test('workspace node configuration uses the three-pane input, parameters, and ou
   assert.match(container.textContent ?? '', /"customerId": "cus_123"/)
   assert.match(container.textContent ?? '', /"status": 200/)
   assert.match(container.textContent ?? '', /Authentication/)
-  assert.ok(container.querySelector('[aria-label="Send query parameters"]'))
-  assert.ok(container.querySelector('[aria-label="Send headers"]'))
-  assert.ok(container.querySelector('[aria-label="Send body"]'))
+  assert.ok(container.querySelector('[aria-label="Send Query Parameters"]'))
+  assert.ok(container.querySelector('[aria-label="Send Headers"]'))
+  assert.ok(container.querySelector('[aria-label="Send Body"]'))
   assert.ok(container.querySelector('[aria-label="Query parameters input mode"]'))
   assert.ok(container.querySelector('[aria-label="Headers input mode"]'))
   assert.ok(container.querySelector('[aria-label="Request body"]'))
@@ -313,8 +313,8 @@ test('the settings in force are readable without expanding anything', () => {
   } as FlowNode
   const { container, getByLabelText } = renderDrawer(node)
 
-  assert.equal((getByLabelText('Retries') as HTMLInputElement).value, '3')
-  assert.equal((getByLabelText('On error') as HTMLSelectElement).value, 'continue')
+  assert.equal((getByLabelText('Max Tries') as HTMLInputElement).value, '3')
+  assert.equal((getByLabelText('On Error') as HTMLSelectElement).value, 'continue')
   assert.match(container.textContent ?? '', /Options/)
   // …and nothing else was added on the step's behalf.
   assert.doesNotMatch(container.textContent ?? '', /Fetch every page/)

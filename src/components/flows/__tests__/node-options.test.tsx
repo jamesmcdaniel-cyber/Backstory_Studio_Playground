@@ -47,8 +47,8 @@ test('an added option renders, and can be removed again', () => {
   let latest: FlowNode | null = null
   const { getByLabelText } = renderOptions(http({ retries: 3 }), (next) => { latest = next })
 
-  assert.equal((getByLabelText('Retries') as HTMLInputElement).value, '3')
-  fireEvent.click(getByLabelText('Remove Retries'))
+  assert.equal((getByLabelText('Max Tries') as HTMLInputElement).value, '3')
+  fireEvent.click(getByLabelText('Remove Max Tries'))
   assert.equal(dataOf(latest).retries, undefined)
   cleanup()
 })

@@ -208,7 +208,21 @@ const conditionNode = z.object({
 const stopNode = z.object({
   id: z.string(),
   type: z.literal('stop'),
-  data: z.object({ label: z.string().optional(), reason: z.string().optional(), note: z.string().optional() }),
+  data: z.object({
+    label: z.string().optional(),
+    reason: z.string().optional(),
+    note: z.string().optional(),
+    /**
+     * How the run ends here. Absent (the default, and every flow saved before
+     * this) ends it QUIETLY: later steps are skipped and the run is not a
+     * failure. n8n's Stop and Error always raises — an explicit choice here
+     * gets that behaviour without changing what existing flows do.
+     */
+    errorType: z.enum(['errorMessage', 'errorObject']).optional(),
+    errorMessage: z.string().optional(),
+    /** A JSON object literal, for a caller that wants structured detail. */
+    errorObject: z.string().optional(),
+  }),
 })
 // Deterministic single MCP tool call against an org connection — no LLM in the
 // loop. `args` is a JSON object literal whose string values may use {{tokens}}.

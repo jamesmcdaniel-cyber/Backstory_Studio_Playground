@@ -613,3 +613,36 @@ test('Ignore Case is not offered where it means nothing', () => {
   assert.doesNotMatch(container.textContent ?? '', /Ignore upper\/lower case/)
   cleanup()
 })
+
+test('Stop and Error offers all three endings, showing only the one in use', () => {
+  const stop = (data: Record<string, unknown>) =>
+    ({ id: 'n1', type: 'stop', data }) as unknown as FlowNode
+
+  const quiet = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node: stop({ reason: 'Nothing to do' }), flowId: 'f1', agents: [],
+      toolCatalog: [] as never, dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  // The default is our third state, which n8n does not have: end the run
+  // without failing it. Every flow saved before this does exactly that.
+  assert.equal((quiet.getByLabelText('Error Type') as HTMLSelectElement).value, 'none')
+  assert.match(quiet.container.textContent ?? '', /is not a failure/)
+  assert.equal(quiet.queryByLabelText('Error Object'), null)
+  cleanup()
+
+  const withObject = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node: stop({ errorType: 'errorObject', errorObject: '{"code":429}' }), flowId: 'f1',
+      agents: [], toolCatalog: [] as never, dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  assert.ok(withObject.getByLabelText('Error Object'))
+  // n8n gates these on each other; showing both at once would offer two
+  // answers to one question.
+  assert.equal(withObject.queryByLabelText('Error Message'), null)
+  assert.equal(withObject.queryByLabelText('Reason'), null)
+  cleanup()
+})

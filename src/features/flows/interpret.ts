@@ -1,3 +1,4 @@
+import { stopOutcome } from '@/lib/flows/stop-error'
 import type { FlowGraph, FlowNode, FlowEdge, VariableType, PerItemConfig } from '@/lib/flows/graph'
 import { resolveTemplate, resolveTemplateValue, readPath, asStructured, evalCondition, evalClause, normalizeStepAlias, buildUpstreamContextBlock, type FlowContext } from './context'
 import type { ToolPolicy } from '@/lib/agents/tool-policy'
@@ -745,7 +746,21 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     }
 
     if (node.type === 'stop') {
-      emit({ nodeId: node.id, status: 'stopped', output: node.data.reason ?? 'Flow stopped.' })
+      // Two different endings. Without an error type the run ends QUIETLY —
+      // later steps skipped, not a failure — which is what every flow saved
+      // before this does. With one, the run FAILS, which is what a flow that
+      // has detected a bad state needs and could not previously say.
+      const outcome = stopOutcome(node.data)
+      if (outcome.kind === 'error') {
+        emit({
+          nodeId: node.id,
+          status: 'failed',
+          error: outcome.message,
+          ...(outcome.detail !== undefined ? { output: outcome.detail } : {}),
+        })
+        return { kind: 'fail', error: outcome.message }
+      }
+      emit({ nodeId: node.id, status: 'stopped', output: outcome.message })
       return { kind: 'stop' }
     }
 

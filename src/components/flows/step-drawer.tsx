@@ -2277,10 +2277,79 @@ export function StepDrawer({
         )}
 
         {node.type === 'stop' && (
-          <div>
-            <label className={labelClass} htmlFor={`${uid}-stop-reason`}>Error Message</label>
-            <input id={`${uid}-stop-reason`} className={fieldClass} value={node.data.reason ?? ''} placeholder="An error message to raise" onChange={(e) => onChange({ ...node, data: { ...node.data, reason: e.target.value } })} />
-            <p className="mt-1.5 text-xs text-muted-foreground">Ends the flow early; later steps are skipped.</p>
+          <div className="space-y-3">
+            <div>
+              <label className={labelClass} htmlFor={`${uid}-stop-error-type`}>Error Type</label>
+              <select
+                id={`${uid}-stop-error-type`}
+                className={fieldClass}
+                value={node.data.errorType ?? 'none'}
+                onChange={(e) => {
+                  const value = e.target.value
+                  onChange({
+                    ...node,
+                    data: {
+                      ...node.data,
+                      errorType: value === 'none' ? undefined : (value as 'errorMessage' | 'errorObject'),
+                    },
+                  })
+                }}
+              >
+                {/* Ours has a third state n8n does not: end the run without
+                    failing it. It is what every flow saved before this does, so
+                    it stays the default — "we are done here" and "this is
+                    wrong" are different endings and both are worth having. */}
+                <option value="none">Stop without an error</option>
+                <option value="errorMessage">Error Message</option>
+                <option value="errorObject">Error Object</option>
+              </select>
+            </div>
+
+            {node.data.errorType === undefined && (
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-stop-reason`}>Reason</label>
+                <input
+                  id={`${uid}-stop-reason`}
+                  className={fieldClass}
+                  value={node.data.reason ?? ''}
+                  placeholder="Why the flow stops here"
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, reason: e.target.value } })}
+                />
+                <p className="mt-1.5 text-xs text-muted-foreground">Ends the flow early; later steps are skipped and the run is not a failure.</p>
+              </div>
+            )}
+
+            {node.data.errorType === 'errorMessage' && (
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-stop-error-message`}>Error Message</label>
+                <input
+                  id={`${uid}-stop-error-message`}
+                  className={fieldClass}
+                  value={node.data.errorMessage ?? ''}
+                  placeholder="An error occurred!"
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, errorMessage: e.target.value } })}
+                />
+                <p className="mt-1.5 text-xs text-muted-foreground">The run fails here, and this is what it reports.</p>
+              </div>
+            )}
+
+            {node.data.errorType === 'errorObject' && (
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-stop-error-object`}>Error Object</label>
+                <textarea
+                  id={`${uid}-stop-error-object`}
+                  rows={4}
+                  className={areaClass}
+                  onKeyDown={indentOnTab}
+                  value={node.data.errorObject ?? ''}
+                  placeholder={'{ "message": "Quota exceeded", "code": 429 }'}
+                  onFocus={blockActive}
+                  onBlur={unblockActive}
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, errorObject: e.target.value } })}
+                />
+                <p className="mt-1.5 text-xs text-muted-foreground">The run fails here. A <code>message</code> inside the object is what it reports; the whole object travels with it.</p>
+              </div>
+            )}
           </div>
         )}
 

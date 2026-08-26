@@ -646,3 +646,22 @@ test('Stop and Error offers all three endings, showing only the one in use', () 
   assert.equal(withObject.queryByLabelText('Reason'), null)
   cleanup()
 })
+
+test('guidance in a panel uses one treatment, not three', () => {
+  // These were five ad-hoc callouts in three visual treatments — amber body
+  // text under one field, a bordered indigo card elsewhere, a bare paragraph in
+  // a third. n8n's `notice` is one declared parameter type so every notice
+  // looks the same; this is the same idea as a primitive.
+  const disabled = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace',
+      node: { id: 'n1', type: 'http', disabled: true, data: { method: 'GET', url: 'https://x.test' } } as unknown as FlowNode,
+      flowId: 'f1', agents: [], toolCatalog: [] as never, dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  const notice = disabled.container.querySelector('[data-panel-notice]')
+  assert.ok(notice, 'the disabled banner is a notice')
+  assert.equal(notice.getAttribute('data-panel-notice'), 'warning')
+  cleanup()
+})

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin, AlertTriangle, ToggleLeft, ToggleRight, Ban } from 'lucide-react'
+import { X, Trash2, Plus, Copy, Database, Settings2, Braces, ChevronLeft, ChevronRight, KeyRound, TerminalSquare, Play, Pin, AlertTriangle, ToggleLeft, ToggleRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { AI_OPS, AI_OP_LABELS, UNARY_CONDITION_OPS, CONDITION_OP_LABELS, DATA_OPS, FIELD_TYPES, VARIABLE_OPS, VARIABLE_OP_LABELS, VARIABLE_TYPES, VARIABLE_TYPE_LABELS, type AiOp, type FlowNode, type ConditionOp, type ConditionClause, type DataOp, type FieldType, type OutputField, type TriggerInputField, type VariableOp, type VariableType } from '@/lib/flows/graph'
@@ -18,6 +18,7 @@ import { splitIssuesByField, type FieldIssue } from '@/lib/flows/issue-fields'
 import { mcpStepSuggestion } from '@/lib/flows/mcp-step-suggestion'
 import { operatorsForField } from '@/lib/flows/condition-ops'
 import { NodeOptions } from '@/components/flows/node-options'
+import { PanelNotice } from '@/components/flows/panel-notice'
 import type { NodeOption } from '@/lib/flows/node-options'
 import { CodeEditor } from '@/components/flows/code-editor'
 import { CodeAssist } from '@/components/flows/code-assist'
@@ -1102,10 +1103,9 @@ export function StepDrawer({
             the panel for a live one — and now that the toggle lives here, that
             silence is right where someone would flip it. */}
         {node.disabled && (
-          <p className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            <Ban className="h-4 w-4 shrink-0" aria-hidden />
+          <PanelNotice tone="warning">
             This step is disabled — the flow skips it and carries on with the value from the step before it.
-          </p>
+          </PanelNotice>
         )}
         {/* Only the findings no single control owns. Everything else is
             rendered at its field by <FieldIssues>, so "which box is wrong" is
@@ -1312,7 +1312,7 @@ export function StepDrawer({
                 <option value="structured">Structured (JSON matching output fields)</option>
               </select>
               {node.data.responseFormat === 'structured' && !(node.data.outputFields ?? []).some((f) => f.name.trim()) && (
-                <p className="mt-1.5 text-xs text-amber-600">Add at least one output field below to define the JSON shape.</p>
+                <PanelNotice tone="warning" className="mt-1.5">Add at least one output field below to define the JSON shape.</PanelNotice>
               )}
             </div>
             <OutputFieldsEditor
@@ -1650,18 +1650,11 @@ export function StepDrawer({
                 controls, with the action picked from a list and the arguments
                 rendered from the tool's own schema. */}
             {mcpSuggestion && (
-              <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
-                <p className="text-sm font-medium text-indigo-900">
-                  This calls {mcpSuggestion.connectionName} over MCP
-                </p>
-                <p className="mt-0.5 text-xs leading-5 text-indigo-800">
-                  A Tool step makes the same call without the JSON-RPC envelope — pick the action from a
-                  list, and its arguments come from the tool&apos;s own schema.
-                </p>
-                <Button
+              <PanelNotice
+                action={
+                  <Button
                   type="button"
                   size="sm"
-                  className="mt-2"
                   onClick={() => onChange({
                     id: node.id,
                     type: 'tool',
@@ -1676,8 +1669,13 @@ export function StepDrawer({
                   } as unknown as FlowNode)}
                 >
                   Use a Tool step instead
-                </Button>
-              </div>
+                  </Button>
+                }
+              >
+                <span className="font-medium">This calls {mcpSuggestion.connectionName} over MCP.</span>{' '}
+                A Tool step makes the same call without the JSON-RPC envelope — pick the action from a
+                list, and its arguments come from the tool&apos;s own schema.
+              </PanelNotice>
             )}
             <div className="flex justify-end">
               <Button type="button" variant="outline" size="sm" onClick={() => setCurlDialogOpen(true)}>
@@ -3675,7 +3673,7 @@ function SubflowDrawerSection({
           ))}
         </select>
         {selected && !selected.published && (
-          <p className="mt-1.5 text-xs text-amber-600">This flow has never been published — publish it before running it from here.</p>
+          <PanelNotice tone="warning" className="mt-1.5">This flow has never been published — publish it before running it from here.</PanelNotice>
         )}
         <FieldIssues issues={issueFor('flowId')} />
       </div>

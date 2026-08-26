@@ -1,3 +1,4 @@
+import { carriedFields } from '@/lib/flows/set-include'
 import { stopOutcome } from '@/lib/flows/stop-error'
 import type { FlowGraph, FlowNode, FlowEdge, VariableType, PerItemConfig } from '@/lib/flows/graph'
 import { resolveTemplate, resolveTemplateValue, readPath, asStructured, evalCondition, evalClause, normalizeStepAlias, buildUpstreamContextBlock, type FlowContext } from './context'
@@ -903,7 +904,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
             ? mergeByPosition(branchOutputs, node.data.includeUnpaired === true)
             : mode === 'allCombinations'
               ? mergeAllCombinations(branchOutputs)
-              : mergeByKey(branchOutputs, node.data.key, node.data.includeUnpaired !== false)
+              : mergeByKey(branchOutputs, node.data.key, node.data.includeUnpaired !== false, {
+                  keyRight: node.data.keyRight,
+                  joinMode: node.data.joinMode,
+                  clash: node.data.clash,
+                })
       ctx.step[node.id] = { output }
       emit({ nodeId: node.id, status: 'succeeded', input: { branches: branchOutputs }, output })
       return { kind: 'ok', output }
@@ -916,10 +921,13 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // "Include Other Input Fields": start from the incoming record so the
       // mapped fields ADD to it rather than replace it. Only a record can be
       // spread; anything else is ignored so the step still yields an object.
-      const carried = node.data.includeOtherFields === true && lastOutput && typeof lastOutput === 'object' && !Array.isArray(lastOutput)
-        ? { ...(lastOutput as Record<string, unknown>) }
-        : {}
-      const output: Record<string, unknown> = carried
+      // WHICH other fields come through, not just whether — see set-include.ts.
+      const conversionMisses: string[] = []
+      const output: Record<string, unknown> = carriedFields(lastOutput, {
+        includeOtherFields: node.data.includeOtherFields,
+        includeMode: node.data.includeMode,
+        includeFields: node.data.includeFields,
+      })
       for (const field of node.data.fields) {
         if (!field.name) continue
         const resolved = resolveTemplate(field.value, ctx)
@@ -932,10 +940,33 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         // A declared type is a request, not a guess: coerce to it when the
         // value can be, and leave the value untouched when it cannot, so a
         // mistyped field is visible in the output rather than silently null.
-        output[field.name] = field.type ? coerceFieldType(value, field.type) : value
+        if (field.type) {
+          const coerced = coerceFieldType(value, field.type)
+          // A value that would not coerce comes back untouched. Off, that is a
+          // mistyped field visible in the output; on, it is explicitly fine —
+          // n8n's "Ignore Type Conversion Errors", and the difference between
+          // a flow that stops on one bad row and one that carries it.
+          if (!node.data.ignoreConversionErrors && coerced === value && typeof value !== field.type && value !== null && value !== undefined) {
+            conversionMisses.push(field.name)
+          }
+          output[field.name] = coerced
+        } else {
+          output[field.name] = value
+        }
       }
       ctx.step[node.id] = { output }
-      emit({ nodeId: node.id, status: 'succeeded', input: lastOutput, output })
+      emit({
+        nodeId: node.id,
+        status: 'succeeded',
+        input: lastOutput,
+        output,
+        // Named rather than silent: a field that did not become the type it
+        // declares is the kind of thing that surfaces three steps later as
+        // something else entirely.
+        ...(conversionMisses.length
+          ? { warnings: [`These fields did not convert to their declared type: ${conversionMisses.join(', ')}.`] }
+          : {}),
+      })
       return { kind: 'ok', output }
     }
 

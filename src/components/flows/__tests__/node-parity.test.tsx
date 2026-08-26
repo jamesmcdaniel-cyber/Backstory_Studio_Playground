@@ -665,3 +665,60 @@ test('guidance in a panel uses one treatment, not three', () => {
   assert.equal(notice.getAttribute('data-panel-notice'), 'warning')
   cleanup()
 })
+
+test('Merge exposes join semantics the boolean could not say', () => {
+  const node = { id: 'n1', type: 'join', data: { mode: 'combineByKey', key: 'id' } } as unknown as FlowNode
+  const { getByLabelText, container } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node, flowId: 'f1', agents: [], toolCatalog: [] as never,
+      dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  const output = getByLabelText('Output Type') as HTMLSelectElement
+  assert.deepEqual(
+    Array.from(output.options).map((o) => o.value),
+    ['keepMatches', 'keepNonMatches', 'keepEverything', 'enrichInput1', 'enrichInput2'],
+  )
+  // The old boolean maps onto the mode it could express, so a saved flow opens
+  // showing what it already does.
+  assert.equal(output.value, 'keepEverything')
+  assert.ok(getByLabelText('Clash Handling'))
+  assert.match(container.textContent ?? '', /Fields To Match Have Different Names/)
+  cleanup()
+})
+
+test('Set says WHICH other fields come through, not just whether', () => {
+  const node = {
+    id: 'n1', type: 'transform',
+    data: { fields: [{ name: 'a', value: 'b' }], includeOtherFields: true, includeMode: 'except', includeFields: ['secretish'] },
+  } as unknown as FlowNode
+  const { getByLabelText } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node, flowId: 'f1', agents: [], toolCatalog: [] as never,
+      dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  assert.equal((getByLabelText('Include in Output') as HTMLSelectElement).value, 'except')
+  assert.equal((getByLabelText('Fields to Exclude') as HTMLInputElement).value, 'secretish')
+  cleanup()
+})
+
+test('the field list is hidden until a mode needs one', () => {
+  const node = {
+    id: 'n1', type: 'transform',
+    data: { fields: [{ name: 'a', value: 'b' }], includeOtherFields: true },
+  } as unknown as FlowNode
+  const { queryByLabelText, getByLabelText } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node, flowId: 'f1', agents: [], toolCatalog: [] as never,
+      dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+  assert.equal((getByLabelText('Include in Output') as HTMLSelectElement).value, 'all')
+  assert.equal(queryByLabelText('Fields to Include'), null)
+  assert.equal(queryByLabelText('Fields to Exclude'), null)
+  cleanup()
+})

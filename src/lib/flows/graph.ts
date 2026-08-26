@@ -412,6 +412,20 @@ const transformNode = z.object({
      * quietly passed everything through would hide what it actually produced.
      */
     includeOtherFields: z.boolean().optional(),
+    /**
+     * WHICH other fields come through (n8n's "Include in Output"). Only
+     * meaningful when includeOtherFields is on. Absent means all of them, which
+     * is what the boolean alone has always meant.
+     */
+    includeMode: z.enum(['all', 'selected', 'except']).optional(),
+    /** Field names for `selected` / `except`. */
+    includeFields: z.array(z.string()).optional(),
+    /**
+     * A value that will not coerce to the field's declared type fails the step.
+     * With this on it is passed through as-is instead (n8n's "Ignore Type
+     * Conversion Errors").
+     */
+    ignoreConversionErrors: z.boolean().optional(),
     outputFields: z.array(outputFieldSchema).optional(),
     perItem: perItemSchema.optional(),
   }),
@@ -619,6 +633,19 @@ const joinNode = z.object({
     note: z.string().optional(),
     mode: z.enum(['passthrough', 'append', 'combineByKey', 'combineByPosition', 'allCombinations']).optional(),
     key: z.string().optional(),
+    /**
+     * The matching field on the OTHER side when it is named differently —
+     * `email` here, `emailAddress` there. Absent means both sides use `key`.
+     */
+    keyRight: z.string().optional(),
+    /**
+     * Which records survive the join (n8n's "Output Type"). Absent falls back
+     * to `includeUnpaired`, which is what every flow saved before this carries
+     * and maps onto exactly the two modes a boolean could express.
+     */
+    joinMode: z.enum(['keepMatches', 'keepNonMatches', 'keepEverything', 'enrichInput1', 'enrichInput2']).optional(),
+    /** Which side wins a shared field. Absent is preferLast, the old behaviour. */
+    clash: z.enum(['preferLast', 'preferFirst', 'deepMerge']).optional(),
     /**
      * combineByKey / combineByPosition: keep items that found no partner
      * (n8n's "Include Any Unpaired Items"). Off by default — a join that

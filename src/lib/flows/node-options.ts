@@ -183,6 +183,20 @@ const HTTP_OPTIONS: NodeOption[] = [
   },
 ]
 
+const SET_OPTIONS: NodeOption[] = [
+  {
+    key: 'ignoreConversionErrors',
+    label: 'Ignore Type Conversion Errors',
+    description: 'A value that will not become the type its field declares is passed through as-is instead of being reported.',
+    control: {
+      kind: 'boolean',
+      onLabel: 'Pass the value through',
+      offLabel: 'Report it on the step',
+    },
+    addValue: true,
+  },
+]
+
 const LOOP_OPTIONS: NodeOption[] = [
   {
     key: 'concurrency',
@@ -236,7 +250,7 @@ const BY_TYPE: Partial<Record<FlowNode['type'], NodeOption[]>> = {
   subflow: [...RUN_BEHAVIOUR, SUBFLOW_OPTION, PER_ITEM_OPTION],
   knowledge: [...RUN_BEHAVIOUR, PER_ITEM_OPTION],
   data: [PER_ITEM_OPTION],
-  transform: [PER_ITEM_OPTION],
+  transform: [...SET_OPTIONS, PER_ITEM_OPTION],
   // The code node stores neither alwaysOutputData nor retries, and the
   // interpreter never reads them — offering either would be a dead control.
   code: [RUN_BEHAVIOUR[0], RUN_BEHAVIOUR[3], PER_ITEM_OPTION],

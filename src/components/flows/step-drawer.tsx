@@ -2183,6 +2183,41 @@ export function StepDrawer({
               />
               Include Other Input Fields
             </label>
+            {/* WHICH ones, not just whether. All-or-nothing forces a choice
+                between dragging an entire upstream record downstream or
+                re-mapping every field you wanted to keep. */}
+            {node.data.includeOtherFields === true && (
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-set-include-mode`}>Include in Output</label>
+                <select
+                  id={`${uid}-set-include-mode`}
+                  className={fieldClass}
+                  value={node.data.includeMode ?? 'all'}
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, includeMode: e.target.value === 'all' ? undefined : (e.target.value as 'selected' | 'except') } })}
+                >
+                  <option value="all">All Input Fields</option>
+                  <option value="selected">Selected Input Fields</option>
+                  <option value="except">All Input Fields Except</option>
+                </select>
+                {node.data.includeMode !== undefined && node.data.includeMode !== 'all' && (
+                  <input
+                    className={`${fieldClass} mt-1.5`}
+                    value={(node.data.includeFields ?? []).join(', ')}
+                    placeholder="id, name, owner"
+                    aria-label={node.data.includeMode === 'selected' ? 'Fields to Include' : 'Fields to Exclude'}
+                    onFocus={blockActive}
+                    onBlur={unblockActive}
+                    onChange={(e) => onChange({
+                      ...node,
+                      data: {
+                        ...node.data,
+                        includeFields: e.target.value.split(',').map((field) => field.trim()).filter(Boolean),
+                      },
+                    })}
+                  />
+                )}
+              </div>
+            )}
             <div>
               <DataTree fields={dataFields} onInsert={insertToken} />
             </div>
@@ -2669,6 +2704,62 @@ export function StepDrawer({
                   onChange={(e) => onChange({ ...node, data: { ...node.data, key: e.target.value || undefined } })}
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">Records from each branch that share this field are merged into one.</p>
+                <label className="mt-2 flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={node.data.keyRight !== undefined}
+                    onChange={(e) => onChange({ ...node, data: { ...node.data, keyRight: e.target.checked ? (node.data.key ?? '') : undefined } })}
+                  />
+                  Fields To Match Have Different Names
+                </label>
+                {node.data.keyRight !== undefined && (
+                  <input
+                    className={`${fieldClass} mt-1.5`}
+                    value={node.data.keyRight}
+                    placeholder="The field name on the other branch, e.g. emailAddress"
+                    aria-label="Input 2 Field"
+                    onFocus={blockActive}
+                    onBlur={unblockActive}
+                    onChange={(e) => onChange({ ...node, data: { ...node.data, keyRight: e.target.value } })}
+                  />
+                )}
+              </div>
+            )}
+            {node.data.mode === 'combineByKey' && (
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-join-output-type`}>Output Type</label>
+                <select
+                  id={`${uid}-join-output-type`}
+                  className={fieldClass}
+                  value={node.data.joinMode ?? (node.data.includeUnpaired === false ? 'keepMatches' : 'keepEverything')}
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, joinMode: e.target.value as 'keepMatches' | 'keepNonMatches' | 'keepEverything' | 'enrichInput1' | 'enrichInput2' } })}
+                >
+                  <option value="keepMatches">Keep Matches</option>
+                  <option value="keepNonMatches">Keep Non-Matches</option>
+                  <option value="keepEverything">Keep Everything</option>
+                  <option value="enrichInput1">Enrich Input 1</option>
+                  <option value="enrichInput2">Enrich Input 2</option>
+                </select>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Enrich Input 1 keeps every record of the first branch and adds the second&apos;s where they match.
+                  Keep Non-Matches answers the opposite question — what found no partner.
+                </p>
+              </div>
+            )}
+            {node.data.mode === 'combineByKey' && (
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-join-clash`}>Clash Handling</label>
+                <select
+                  id={`${uid}-join-clash`}
+                  className={fieldClass}
+                  value={node.data.clash ?? 'preferLast'}
+                  onChange={(e) => onChange({ ...node, data: { ...node.data, clash: e.target.value as 'preferLast' | 'preferFirst' | 'deepMerge' } })}
+                >
+                  <option value="preferLast">Prefer the later branch</option>
+                  <option value="preferFirst">Prefer the first branch</option>
+                  <option value="deepMerge">Merge nested objects together</option>
+                </select>
+                <p className="mt-1.5 text-xs text-muted-foreground">Which value wins when both branches carry the same field.</p>
               </div>
             )}
             <p className="text-xs text-muted-foreground">

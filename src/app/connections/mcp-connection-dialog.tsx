@@ -18,9 +18,12 @@ type AuthType = 'none' | 'api_key' | 'oauth2'
  * grants, split apart because they ask the user for completely different
  * things: a client ID + secret pair versus a sign-in redirect.
  *
- * 'api_key' is legacy — a static bearer/custom header. It is only offered when
- * editing a connection that already uses it, so existing servers stay editable
- * without inviting new ones.
+ * 'api_key' is a static token the server checks on every request — a bearer by
+ * default, or any header the server names. It was once offered only while
+ * editing a connection that already used it, on the theory that OAuth is what
+ * new servers should use. That was wrong about the world: a great many MCP
+ * servers issue nothing but a token, and hiding the option meant the only way
+ * to connect one was to already have connected it.
  */
 export type McpAuthMode = 'none' | 'client_credentials' | 'sso' | 'api_key'
 
@@ -234,19 +237,24 @@ export function McpConnectionDialog({
     Boolean(draft.clientId.trim()) &&
     Boolean(draft.clientSecret.trim() || editingConnection?.auth.hasClientSecret)
 
+  // Same rule for the single-token modes: a blank field on edit means "keep
+  // the one you have", not "there isn't one".
+  const hasAccessToken = Boolean(draft.apiKey.trim() || editingConnection?.auth.hasApiKey)
+
   // SSO (authorization-code) flow only needs a name + server URL — the rest
   // (client registration, tokens) is handled server-side after Okta login.
   const canConnectSso = Boolean(draft.name.trim() && draft.serverUrl.trim())
   // A brand-new SSO connection is created by the redirect, not by this form.
   const ssoNeedsRedirect = draft.authMode === 'sso' && !editingConnection
 
+  /** Does the selected mode have the credentials it needs to authenticate? */
+  const credentialsReady =
+    (draft.authMode !== 'client_credentials' || hasClientCredentials) &&
+    (draft.authMode !== 'api_key' || hasAccessToken)
+
   const canCreate =
-    Boolean(draft.name.trim() && draft.serverUrl.trim()) &&
-    !ssoNeedsRedirect &&
-    (draft.authMode !== 'client_credentials' || hasClientCredentials)
-  const canTest =
-    Boolean(draft.serverUrl.trim()) &&
-    (draft.authMode !== 'client_credentials' || hasClientCredentials)
+    Boolean(draft.name.trim() && draft.serverUrl.trim()) && !ssoNeedsRedirect && credentialsReady
+  const canTest = Boolean(draft.serverUrl.trim()) && credentialsReady
 
   // Full-page navigation so the browser follows the OAuth redirect chain
   // (our /start route → Okta → /callback → back to the MCP servers tab).
@@ -298,16 +306,11 @@ export function McpConnectionDialog({
     }
   }
 
-  // 'api_key' is grandfathered in: offered only while editing a server that
-  // already uses it, never as a choice for a new one.
-  const authModes: McpAuthMode[] =
-    editingConnection?.auth.authType === 'api_key'
-      ? ['none', 'api_key', 'client_credentials', 'sso']
-      : ['none', 'client_credentials', 'sso']
+  const authModes: McpAuthMode[] = ['none', 'api_key', 'client_credentials', 'sso']
 
   const modeLabels: Record<McpAuthMode, string> = {
     none: 'None',
-    api_key: 'API key (legacy)',
+    api_key: 'Access token',
     client_credentials: 'Client credentials',
     sso: 'OAuth 2.0 (SSO)',
   }
@@ -396,8 +399,8 @@ export function McpConnectionDialog({
             {oauthDetected && draft.authMode === 'sso' && (
               <p className="mt-1.5 text-xs text-horizon-700">
                 Detected automatically — this server requires OAuth 2.0. Sign in
-                below, or switch to client credentials if you were issued a
-                client ID and secret.
+                below, or switch to another mode if you were issued credentials
+                directly: an access token, or a client ID and secret.
               </p>
             )}
           </div>
@@ -477,7 +480,7 @@ export function McpConnectionDialog({
             </div>
           )}
 
-          {/* Conditional: SSO (authorization-code) */}
+          {/* Conditional: OAuth 2.0 (authorization-code) */}
           {draft.authMode === 'sso' && (
             <div className="space-y-3 rounded-lg border bg-gray-50 p-3">
               <Button
@@ -486,46 +489,65 @@ export function McpConnectionDialog({
                 disabled={!canConnectSso}
                 onClick={connectWithSso}
               >
-                Connect with SSO
+                {editingConnection ? 'Re-connect' : 'Connect'}
               </Button>
               <p className="text-xs text-muted-foreground">
-                Connect with SSO redirects you to sign in (Okta), then returns
-                here and saves the server for you. Fill in the server name and
-                URL above first.
+                {editingConnection
+                  ? 'Signs you in again and replaces this server’s expired access. The server URL and name above are kept.'
+                  : 'Takes you to the server’s sign-in page, then returns here and saves the server for you. Fill in the server name and URL above first.'}
               </p>
             </div>
           )}
 
-          {/* Conditional: legacy API key */}
+          {/* Conditional: access token */}
           {draft.authMode === 'api_key' && (
             <div className="space-y-3 rounded-lg border bg-gray-50 p-3">
               <div>
-                <Label>API key</Label>
+                <Label>
+                  Access token <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   type="password"
                   value={draft.apiKey}
                   onChange={(e) => set({ apiKey: e.target.value })}
                   placeholder={
                     editingConnection?.auth.hasApiKey
-                      ? 'Leave blank to keep current key'
-                      : 'Paste your API key'
+                      ? 'Leave blank to keep current token'
+                      : 'Paste your access token'
                   }
                   autoComplete="new-password"
                 />
                 {editingConnection?.auth.hasApiKey && !draft.apiKey && (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Leave blank to keep the current key.
+                    Leave blank to keep the current token.
                   </p>
                 )}
               </div>
-              <div>
-                <Label>Header name (optional)</Label>
-                <Input
-                  value={draft.headerName}
-                  onChange={(e) => set({ headerName: e.target.value })}
-                  placeholder="Authorization (Bearer) — or e.g. X-API-Key"
-                />
-              </div>
+              <p className="text-xs text-muted-foreground">
+                Sent as <span className="font-medium">Authorization: Bearer …</span> on every
+                request. It is stored encrypted and never shown again.
+              </p>
+
+              <details className="rounded-md border bg-white p-2">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Advanced: header name
+                </summary>
+                <div className="mt-3">
+                  <Label>Header name (optional)</Label>
+                  <Input
+                    value={draft.headerName}
+                    onChange={(e) => set({ headerName: e.target.value })}
+                    placeholder="X-API-Key"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Only for a server that wants the token in its own header instead of a
+                    bearer.
+                  </p>
+                </div>
+              </details>
             </div>
           )}
 
@@ -552,36 +574,51 @@ export function McpConnectionDialog({
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              disabled={!canTest || testResult.status === 'testing'}
-              onClick={testConnection}
-              className="shrink-0"
-            >
-              {testResult.status === 'testing' ? (
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-              ) : null}
-              Test connection
-            </Button>
-            <Button
-              className="flex-1"
-              disabled={saving || !canCreate}
-              onClick={submit}
-            >
-              {saving ? 'Verifying…' : editingConnection ? 'Verify & save' : 'Verify & create'}
-            </Button>
-          </div>
-          {ssoNeedsRedirect && (
-            <p className="text-xs text-muted-foreground">
-              Use <span className="font-medium">Connect with SSO</span> above to
-              add this server — signing in is what creates it.
-            </p>
+          {/*
+            Actions.
+
+            OAuth has none of its own. Signing in is what creates the server and
+            what verifies it — the callback stores the tokens and stamps
+            lastVerifiedAt in the same request — so a Test connection and a
+            Verify & create sitting underneath Connect offered two buttons that
+            could not do anything Connect had not already done, and one of them
+            was the one people reached for first.
+
+            Editing keeps a Save, because the name and description are still
+            ordinary fields and there has to be a way to write them.
+          */}
+          {draft.authMode === 'sso' ? (
+            editingConnection && (
+              <Button className="w-full" disabled={saving || !canCreate} onClick={submit}>
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            )
+          ) : (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={!canTest || testResult.status === 'testing'}
+                onClick={testConnection}
+                className="shrink-0"
+              >
+                {testResult.status === 'testing' ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : null}
+                Test connection
+              </Button>
+              <Button className="flex-1" disabled={saving || !canCreate} onClick={submit}>
+                {saving ? 'Verifying…' : editingConnection ? 'Verify & save' : 'Verify & create'}
+              </Button>
+            </div>
           )}
           {draft.authMode === 'client_credentials' && !hasClientCredentials && (
             <p className="text-xs text-muted-foreground">
               Enter a client ID and secret to test or save this server.
+            </p>
+          )}
+          {draft.authMode === 'api_key' && !hasAccessToken && (
+            <p className="text-xs text-muted-foreground">
+              Enter an access token to test or save this server.
             </p>
           )}
         </div>

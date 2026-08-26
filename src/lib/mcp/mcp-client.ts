@@ -12,7 +12,7 @@
  */
 
 import { decryptSecret } from '@/lib/crypto/secrets'
-import { refreshAccessToken } from '@/lib/mcp/oauth-authcode'
+import { TokenRefreshError, refreshAccessToken } from '@/lib/mcp/oauth-authcode'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
 
@@ -223,10 +223,14 @@ export class McpClient {
     // Otherwise refresh. Coalesce concurrent refreshes into one request.
     if (this.inFlightToken) return this.inFlightToken
 
+    // Nothing left to refresh WITH. Plenty of servers issue no refresh_token at
+    // all, so this is the ordinary end of an authcode connection's life, not a
+    // misconfiguration — and the only thing that revives it is signing in
+    // again. Said in those words, because the internals this used to name
+    // ("missing refreshToken/clientId/tokenEndpoint") sent people looking for a
+    // field to fill in on a form that has no such field.
     if (!refreshToken || !clientId || !tokenEndpoint) {
-      throw new Error(
-        'MCP connection authcode: missing refreshToken/clientId/tokenEndpoint to refresh access token',
-      )
+      throw new McpReauthRequiredError('no_refresh_token')
     }
 
     this.inFlightToken = (async () => {
@@ -234,6 +238,15 @@ export class McpClient {
         clientId,
         clientSecret,
         refreshToken,
+      }).catch((error: unknown) => {
+        // A token endpoint answering 400/401 has rejected the grant itself —
+        // same dead end as having no refresh token. A 5xx has not: that is the
+        // authorization server being briefly unwell, and telling someone to
+        // re-authorize would send them through a sign-in that fixes nothing.
+        if (error instanceof TokenRefreshError && error.grantRejected) {
+          throw new McpReauthRequiredError('grant_rejected', error)
+        }
+        throw error
       })
       this.tokenCache = {
         value: tokens.access_token,
@@ -464,6 +477,33 @@ export interface McpConnectionRow {
  */
 export const MCP_CREDENTIAL_UNREADABLE =
   "This connection's stored credentials could not be read — reconnect it under Connections."
+
+/**
+ * The message an expired SSO connection shows a person, naming the one action
+ * that fixes it. `Re-connect` is the button on the MCP servers card, so the
+ * sentence and the control agree.
+ */
+export const MCP_REAUTH_REQUIRED =
+  'This server’s sign-in has expired. Use Re-connect to sign in again.'
+
+/**
+ * An authorization-code connection whose access can no longer be renewed.
+ *
+ * Distinct from McpCredentialError, which means a stored secret would not
+ * DECRYPT — an infrastructure problem nobody using the app can act on. This one
+ * means the credential was read perfectly and the provider will not honour it
+ * any more, which the person who connected the server can fix in one click.
+ */
+export class McpReauthRequiredError extends Error {
+  constructor(
+    /** Why it cannot be renewed, for the log line — never shown to the user. */
+    readonly reason: 'no_refresh_token' | 'grant_rejected',
+    cause?: unknown,
+  ) {
+    super(MCP_REAUTH_REQUIRED, { cause })
+    this.name = 'McpReauthRequiredError'
+  }
+}
 
 export class McpCredentialError extends Error {
   constructor(

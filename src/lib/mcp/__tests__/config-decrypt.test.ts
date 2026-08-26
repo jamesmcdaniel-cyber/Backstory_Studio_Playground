@@ -1,6 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+
 import { encryptSecret } from '@/lib/crypto/secrets'
+
+// This file ENCRYPTS its fixtures, and encryptSecret refuses to run without a
+// key outside NODE_ENV=test. `npm test` does not set NODE_ENV, so whether the
+// file passed depended on whose shell it ran in. The key is read lazily, at
+// encrypt time, so setting it in the module body is enough — and it is the
+// convention every other secret-storing test here already follows.
+process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test-key'
 import {
   MCP_CREDENTIAL_UNREADABLE,
   McpCredentialError,

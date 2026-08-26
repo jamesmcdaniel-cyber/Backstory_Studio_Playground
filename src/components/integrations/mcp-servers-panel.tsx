@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { needsSignIn, reconnectHref } from '@/lib/mcp/reconnect'
 
 const authLabels: Record<string, string> = {
   none: 'None',
@@ -24,6 +25,10 @@ function authLabel(auth: SerializedConnection['auth']): string {
   }
   return authLabels[auth.authType] ?? auth.authType
 }
+
+/** Chip-sized link styled like a ghost Button, for the anchor-only OAuth action. */
+const linkButtonClass =
+  'inline-flex h-7 items-center justify-center rounded-md border border-input bg-background px-2 text-xs font-medium shadow-1 transition-all duration-fast ease-out-quart hover:border-graphite-300 hover:bg-accent hover:text-accent-foreground'
 
 /**
  * Manage custom MCP server connections. Extracted from the former standalone
@@ -282,11 +287,8 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                           {verifyingId === conn.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                           Verify
                         </Button>
-                        <a
-                          href={`/api/mcp-connections/oauth/start?connectionId=${conn.id}&returnTo=${encodeURIComponent(returnTo)}`}
-                          className="inline-flex h-7 items-center justify-center rounded-md border border-input bg-background px-2 text-xs font-medium shadow-1 transition-all duration-fast ease-out-quart hover:border-graphite-300 hover:bg-accent hover:text-accent-foreground"
-                        >
-                          Reauthorize
+                        <a href={reconnectHref(conn, returnTo)} className={linkButtonClass}>
+                          Re-connect
                         </a>
                       </div>
                     </>
@@ -305,16 +307,31 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                         )}
                       </div>
                       <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 px-2 text-xs"
-                          disabled={verifyingId === conn.id || !conn.isActive}
-                          onClick={() => verifyConnection(conn)}
-                        >
-                          {verifyingId === conn.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                          Verify
-                        </Button>
+                        {/*
+                          One control, named for what it does to THIS server.
+                          Signing in again re-verifies as a side effect — the
+                          OAuth callback lists the tools and stamps
+                          lastVerifiedAt before it redirects — so an OAuth
+                          server needs Re-connect and nothing else, while a
+                          server holding a token or a client-credentials pair
+                          has nothing to sign in to and needs Verify.
+                        */}
+                        {needsSignIn(conn) ? (
+                          <a href={reconnectHref(conn, returnTo)} className={linkButtonClass}>
+                            Re-connect
+                          </a>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            disabled={verifyingId === conn.id || !conn.isActive}
+                            onClick={() => verifyConnection(conn)}
+                          >
+                            {verifyingId === conn.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                            Verify
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="ghost"

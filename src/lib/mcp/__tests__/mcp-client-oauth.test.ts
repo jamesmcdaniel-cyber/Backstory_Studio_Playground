@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { McpClient } from '@/lib/mcp/mcp-client'
+import { McpClient, McpReauthRequiredError, MCP_REAUTH_REQUIRED } from '@/lib/mcp/mcp-client'
 
 /**
  * The two OAuth paths of the MCP client: client-credentials (with endpoint
@@ -275,7 +275,13 @@ test('an expired authcode connection with nothing to refresh with fails with an 
     for (const missing of [{ refreshToken: undefined }, { clientId: undefined }, { tokenEndpoint: undefined }]) {
       await assert.rejects(
         () => authcodeClient({ expiresAt: 0, ...missing }).getServerTools(SERVER),
-        /missing refreshToken\/clientId\/tokenEndpoint/,
+        (error: unknown) =>
+          error instanceof McpReauthRequiredError &&
+          error.reason === 'no_refresh_token' &&
+          // The words a person sees name the control they press. Naming the
+          // three config fields instead sent people hunting for a form field
+          // that does not exist.
+          error.message === MCP_REAUTH_REQUIRED,
         JSON.stringify(missing),
       )
     }
@@ -284,10 +290,32 @@ test('an expired authcode connection with nothing to refresh with fails with an 
   }
 })
 
-test('a refresh that the identity provider rejects surfaces the status', async () => {
+test('a refresh the identity provider REJECTS asks the user to sign in again', async () => {
   const { restore } = mcpAnd((call) => (call.url === TOKEN_URL ? new Response('bad', { status: 400 }) : undefined))
   try {
-    await assert.rejects(() => authcodeClient({ expiresAt: 0 }).getServerTools(SERVER), /Token refresh failed \(status 400\)/)
+    await assert.rejects(
+      () => authcodeClient({ expiresAt: 0 }).getServerTools(SERVER),
+      (error: unknown) =>
+        error instanceof McpReauthRequiredError && error.reason === 'grant_rejected',
+    )
+  } finally {
+    restore()
+  }
+})
+
+test('a token endpoint having a bad MINUTE does not send the user through a pointless sign-in', async () => {
+  // 503 is the authorization server being unwell, not the grant being dead.
+  // Re-connecting fixes nothing here, so the error must not claim it would —
+  // the same refresh token works again once the server recovers.
+  const { restore } = mcpAnd((call) => (call.url === TOKEN_URL ? new Response('nope', { status: 503 }) : undefined))
+  try {
+    await assert.rejects(
+      () => authcodeClient({ expiresAt: 0 }).getServerTools(SERVER),
+      (error: unknown) =>
+        error instanceof Error &&
+        !(error instanceof McpReauthRequiredError) &&
+        /status 503/.test(error.message),
+    )
   } finally {
     restore()
   }

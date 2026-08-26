@@ -317,6 +317,28 @@ export interface RefreshTokenParams {
 }
 
 /**
+ * A token endpoint refused a refresh.
+ *
+ * Carries the HTTP status because 400/401 and 503 mean opposite things to the
+ * caller: the first two say the grant itself is dead and only a fresh sign-in
+ * revives it, while a 5xx says the authorization server is having a bad minute
+ * and the same refresh token will work again shortly. Collapsing both into one
+ * bare Error is why an expired connection reported a transport failure instead
+ * of "sign in again".
+ */
+export class TokenRefreshError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message)
+    this.name = 'TokenRefreshError'
+  }
+
+  /** The grant is dead: re-authorizing is the only fix. */
+  get grantRejected(): boolean {
+    return this.status === 400 || this.status === 401
+  }
+}
+
+/**
  * Exchange a refresh_token for a new access_token. If the server rotates the
  * refresh_token it is returned in `refresh_token`; otherwise the caller should
  * keep reusing the old one.
@@ -347,12 +369,12 @@ export async function refreshAccessToken(
   })
 
   if (!response.ok) {
-    throw new Error(`Token refresh failed (status ${response.status})`)
+    throw new TokenRefreshError(`Token refresh failed (status ${response.status})`, response.status)
   }
 
   const data = (await response.json()) as RawTokenResponse
   if (!data.access_token) {
-    throw new Error('Token refresh response did not include access_token')
+    throw new TokenRefreshError('Token refresh response did not include access_token')
   }
   return {
     access_token: data.access_token,

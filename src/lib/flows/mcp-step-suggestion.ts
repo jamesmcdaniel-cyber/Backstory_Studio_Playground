@@ -89,8 +89,21 @@ export function mcpStepSuggestion(
 ): McpStepSuggestion | null {
   if (node.type !== 'http') return null
   const url = typeof node.data.url === 'string' ? node.data.url : ''
-  if (!isMcpEndpointUrl(url)) return null
 
+  // The step's OWN binding first. A request whose Authentication is "Connected
+  // server (MCP)" has already been told which server it talks to — that is a
+  // far stronger signal than a URL comparison, and it holds when the two
+  // disagree, which they routinely do: a connection named "Backstory MCP" can
+  // point at one host while the hand-written URL names another. Matching only
+  // on the URL meant the clearest case of all — bound to a server, posting
+  // JSON-RPC at it — was the one that went unrecognised.
+  const boundId = typeof node.data.connectionId === 'string' ? node.data.connectionId.trim() : ''
+  const bound = boundId ? connections.find((connection) => connection.id === boundId) : undefined
+  if (bound) {
+    return { connectionId: bound.id, connectionName: bound.name, ...readJsonRpcCall(node.data.body) }
+  }
+
+  if (!isMcpEndpointUrl(url)) return null
   const match = connections.find((connection) => connection.serverUrl && sameServerUrl(connection.serverUrl, url))
   if (!match) return null
 

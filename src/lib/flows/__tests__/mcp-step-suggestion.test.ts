@@ -81,3 +81,39 @@ test('nothing is suggested for an ordinary HTTP step, or a non-HTTP step', () =>
   assert.equal(mcpStepSuggestion(httpStep({ url: 'https://api.example.com/v1/things' }), connections), null)
   assert.equal(mcpStepSuggestion({ type: 'tool', data: { url: 'https://mcp.people.ai/mcp' } }, connections), null)
 })
+
+test('a step bound to a connected server is recognised even when the URL disagrees', () => {
+  // The real case, from production: Authentication is "Connected server (MCP)",
+  // Connected Server is "Backstory MCP", and the hand-written URL names
+  // mcp.people.ai. The connection's own serverUrl is a different host, so URL
+  // matching found nothing — and the clearest case of all, bound to a server
+  // and posting JSON-RPC at it, was the one that went unrecognised.
+  const suggestion = mcpStepSuggestion(
+    httpStep({
+      connectionId: 'conn_backstory',
+      url: 'https://mcp.people.ai/mcp',
+      body: JSON.stringify({ method: 'tools/call', params: { name: 'top_records', arguments: {} } }),
+    }),
+    [{ id: 'conn_backstory', name: 'Backstory MCP', serverUrl: 'https://mcp.backstory.ai/mcp' }],
+  )
+  assert.equal(suggestion?.connectionId, 'conn_backstory')
+  assert.equal(suggestion?.connectionName, 'Backstory MCP')
+  assert.equal(suggestion?.toolName, 'top_records')
+})
+
+test('a binding to a connection this workspace no longer has falls back to the URL', () => {
+  // A stale connectionId must not stop the URL path from finding a real match.
+  const suggestion = mcpStepSuggestion(
+    httpStep({ connectionId: 'deleted_conn', url: 'https://mcp.people.ai/mcp' }),
+    connections,
+  )
+  assert.equal(suggestion?.connectionId, 'people_ai:backstory')
+})
+
+test('a plain HTTP step with a credential is still left alone', () => {
+  // `credentialId` is the generic-credential path, not an MCP binding.
+  assert.equal(
+    mcpStepSuggestion(httpStep({ credentialId: 'cred_1', url: 'https://api.example.com/v1/things' }), connections),
+    null,
+  )
+})

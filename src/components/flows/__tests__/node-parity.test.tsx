@@ -722,3 +722,39 @@ test('the field list is hidden until a mode needs one', () => {
   assert.equal(queryByLabelText('Fields to Exclude'), null)
   cleanup()
 })
+
+test('the MCP panel is n8n’s, row for row, and carries no HTTP concepts', () => {
+  const node = {
+    id: 't1', type: 'tool',
+    data: { connectionId: 'people_ai:backstory', toolName: 'find_record_by_crm_id', args: '{}' },
+  } as unknown as FlowNode
+
+  const { container, getByLabelText } = render(
+    React.createElement(StepDrawer, {
+      layout: 'workspace', node, flowId: 'f1', agents: [],
+      toolCatalog: [{
+        id: 'people_ai:backstory', name: 'Backstory', serverUrl: 'https://mcp.people.ai/mcp',
+        tools: [{ name: 'find_record_by_crm_id', description: 'Find a record', inputSchema: { type: 'object', properties: { crm_id: { type: 'string' } }, required: ['crm_id'] } }],
+      }] as never,
+      dataFields: [], labelCtx: {} as never,
+      onChange: () => {}, onDelete: () => {}, onClose: () => {},
+    }),
+  )
+
+  // The rows n8n shows, in the order it shows them.
+  assert.ok(getByLabelText('Server Transport'))
+  assert.equal((getByLabelText('MCP Endpoint URL') as HTMLInputElement).value, 'https://mcp.people.ai/mcp')
+  assert.ok(getByLabelText('Authentication'))
+  assert.ok(getByLabelText('Credential for MCP API'))
+  assert.ok(getByLabelText('Tool'))
+  assert.ok(getByLabelText('Input Mode'))
+  assert.match(container.textContent ?? '', /Values to send/)
+  assert.match(container.textContent ?? '', /Add option/)
+
+  // And none of the HTTP ones. There is no call method in MCP.
+  const text = container.textContent ?? ''
+  for (const absent of ['Method', 'Send Query Parameters', 'Send Headers', 'Send Body', 'Body Content Type', 'Import cURL']) {
+    assert.doesNotMatch(text, new RegExp(absent), `${absent} has no meaning in an MCP call`)
+  }
+  cleanup()
+})

@@ -574,6 +574,13 @@ function ToolConfigurationSection({
     ? { picker: 'Server', action: 'Tool', args: 'Values to send', change: 'Change server' }
     : { picker: 'Connector', action: 'Action', args: 'Arguments', change: 'Change app' }
   const providerGroups = groupToolConnections(toolCatalog)
+  // Every MCP-plane connection, for the Credential picker; and how this one
+  // authenticates, read off the connection rather than asked for again.
+  const mcpConnections = toolCatalog.filter((entry) => {
+    const entryPlane = parseFlowToolConnectionId(entry.id).plane
+    return entryPlane === 'mcp' || entryPlane === 'people_ai'
+  })
+  const mcpAuthLabel = plane === 'people_ai' ? 'MCP OAuth2' : 'Connected server credential'
   const actions = connection ? toolActionChoices(toolCatalog, connection) : []
   const selectedAction = actions.find(
     (choice) => choice.connectionId === node.data.connectionId && choice.tool.name === node.data.toolName,
@@ -612,22 +619,76 @@ function ToolConfigurationSection({
         </div>
       ) : (
         <>
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/50 p-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <IntegrationLogo slug={brand?.slug} name={brand?.label ?? connection.name} className="h-9 w-9 rounded-lg bg-white p-1 shadow-sm" />
-              <div className="min-w-0">
-                <p className="text-sm font-semibold">{brand?.label ?? connection.name}</p>
-                <p className="truncate text-xs text-muted-foreground">{actionLabel || 'Choose an action'}</p>
+          {isMcp ? (
+            /* n8n's MCP panel, row for row: Server Transport, MCP Endpoint URL,
+               Authentication, Credential, then Tool / Input Mode / Values to
+               Send below. The first three are properties of the connection
+               rather than of this step, so they are shown and not edited — you
+               change them where the connection is configured, and seeing them
+               here beats leaving the panel to find out which endpoint a step
+               talks to. */
+            <>
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-mcp-transport`}>Server Transport</label>
+                <select id={`${uid}-mcp-transport`} className={fieldClass} value="httpStreamable" disabled>
+                  <option value="httpStreamable">HTTP Streamable</option>
+                </select>
               </div>
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-mcp-endpoint`}>MCP Endpoint URL</label>
+                <input
+                  id={`${uid}-mcp-endpoint`}
+                  className={`${fieldClass} bg-muted/40`}
+                  value={connection.serverUrl ?? ''}
+                  readOnly
+                  placeholder="Set on the connection"
+                />
+              </div>
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-mcp-auth`}>Authentication</label>
+                <input id={`${uid}-mcp-auth`} className={`${fieldClass} bg-muted/40`} value={mcpAuthLabel} readOnly />
+              </div>
+              <div>
+                <label className={labelClass} htmlFor={`${uid}-mcp-credential`}>Credential for MCP API</label>
+                <div className="flex gap-2">
+                  <select
+                    id={`${uid}-mcp-credential`}
+                    className={`${fieldClass} min-w-0 flex-1`}
+                    value={node.data.connectionId}
+                    onChange={(event) => onChange({ ...node, data: { ...node.data, connectionId: event.target.value, toolName: '', args: '{}' } })}
+                  >
+                    {mcpConnections.map((entry) => (
+                      <option key={entry.id} value={entry.id}>{entry.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => onChange({ ...node, data: { ...node.data, connectionId: '', toolName: '', args: '{}' } })}
+                    className="shrink-0 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                  >
+                    {vocab.change}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/50 p-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <IntegrationLogo slug={brand?.slug} name={brand?.label ?? connection.name} className="h-9 w-9 rounded-lg bg-white p-1 shadow-sm" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{brand?.label ?? connection.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{actionLabel || 'Choose an action'}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onChange({ ...node, data: { ...node.data, connectionId: '', toolName: '', args: '{}' } })}
+                className="shrink-0 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+              >
+                {vocab.change}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => onChange({ ...node, data: { ...node.data, connectionId: '', toolName: '', args: '{}' } })}
-              className="shrink-0 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
-            >
-              {vocab.change}
-            </button>
-          </div>
+          )}
           <div>
             <label className={labelClass} htmlFor={`${uid}-action`}>{vocab.action}</label>
             <select
@@ -661,6 +722,17 @@ function ToolConfigurationSection({
           {tool && (
             <>
               {tool.description && <p className="text-xs text-muted-foreground">{tool.description}</p>}
+              {isMcp && (
+                <div>
+                  <label className={labelClass} htmlFor={`${uid}-mcp-input-mode`}>Input Mode</label>
+                  <select id={`${uid}-mcp-input-mode`} className={fieldClass} value="manual" disabled>
+                    <option value="manual">Manual</option>
+                  </select>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Values are filled in below. Letting the step&apos;s agent choose them is what an Agent step is for.
+                  </p>
+                </div>
+              )}
               <ToolArgsEditor
                 inputSchema={tool.inputSchema}
                 args={node.data.args}

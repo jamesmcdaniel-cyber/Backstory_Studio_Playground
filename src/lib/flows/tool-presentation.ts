@@ -11,6 +11,8 @@ export type PresentableTool = {
 export type PresentableConnection = {
   id: string
   name: string
+  /** The MCP endpoint this connection talks to, when it is an MCP-plane one. */
+  serverUrl?: string
   tools: PresentableTool[]
   toolsError?: string
 }

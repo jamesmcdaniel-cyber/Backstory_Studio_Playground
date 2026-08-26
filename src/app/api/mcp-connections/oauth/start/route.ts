@@ -25,6 +25,7 @@ import {
   generateState,
   registerClient,
   safeReturnToPath,
+  withOfflineAccess,
 } from '@/lib/mcp/oauth-authcode'
 
 const COOKIE_MAX_AGE_S = 600 // 10 minutes to complete the login
@@ -41,7 +42,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     const separator = path.includes('?') ? '&' : '?'
     return NextResponse.redirect(new URL(`${path}${separator}error=${code}`, request.nextUrl.origin))
   }
-  const scope = request.nextUrl.searchParams.get('scope')?.trim() || 'claudeai'
+  const requestedScope = request.nextUrl.searchParams.get('scope')?.trim() || 'claudeai'
 
   let effectiveServerUrl = serverUrl
   let effectiveName = name
@@ -77,9 +78,15 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       throw new Error('OAuth server does not advertise a registration_endpoint')
     }
 
+    // Ask for a refresh token where the server says it can issue one, so this
+    // connection can renew itself instead of needing a person every time its
+    // access token expires.
+    const scope = withOfflineAccess(requestedScope, meta.scopes_supported)
+
     const { client_id, client_secret } = await registerClient(
       meta.registration_endpoint,
       redirectUri,
+      scope,
     )
 
     const { verifier, challenge } = generatePkce()

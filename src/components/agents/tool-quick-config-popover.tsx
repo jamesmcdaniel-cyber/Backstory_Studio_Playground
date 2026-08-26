@@ -55,23 +55,48 @@ export function QuickConfigChip({
           {!connected && !selected && <span className="text-[10px] opacity-60">not configured</span>}
           {connected && !selected && <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />}
         </button>
-        {selected && (
+        {/*
+          Openable while the chip is UNATTACHED too.
+          Deciding whether to attach a server is a question about what it can
+          do, and gating the tool list behind attaching meant the only way to
+          find out was to commit first — an MCP connection sat there as a name
+          and a green dot, identical whether it exposed thirty tools or none.
+          The list is fetched when the popover opens, so an unattached chip
+          costs nothing until someone asks.
+        */}
+        {(selected || connected) && (
           <button
             type="button"
             onClick={() => setOpen((current) => !current)}
-            title={`Choose ${config.nounPlural}`}
+            title={selected ? `Choose ${config.nounPlural}` : `See this connection’s ${config.nounPlural}`}
             className={cn(
               'flex items-center gap-1 rounded-r-full border-l py-1 pl-2 pr-2.5 transition-colors',
-              'border-primary-foreground/25 hover:bg-primary-foreground/10',
+              selected
+                ? 'border-primary-foreground/25 hover:bg-primary-foreground/10'
+                : 'border-border hover:bg-muted',
             )}
           >
             <SlidersHorizontal className="h-3 w-3" />
-            <span className="text-[10px]">{scopeSummary(config, value)}</span>
+            <span className="text-[10px] capitalize">
+              {/* An unattached chip must not read "All tools" — that is a
+                  statement about a scope the agent does not have. */}
+              {selected ? scopeSummary(config, value) : config.nounPlural}
+            </span>
           </button>
         )}
       </div>
       {open && (
-        <QuickConfigPanel config={config} value={value} onValueChange={onValueChange} />
+        <QuickConfigPanel
+          config={config}
+          value={value}
+          onValueChange={(next) => {
+            // Choosing tools on a chip that is not attached says plainly that
+            // you want this connection — restricting an agent to a subset of a
+            // server it cannot use is not a state worth being able to reach.
+            if (!selected && next.length > 0) onToggle()
+            onValueChange(next)
+          }}
+        />
       )}
     </div>
   )

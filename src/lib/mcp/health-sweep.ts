@@ -1,5 +1,5 @@
 import { systemPrisma } from '@/lib/prisma'
-import { safeMcpVerificationError, verifyStoredMcpConnection } from '@/lib/mcp/verify-connection'
+import { safeMcpVerificationError, verifyLiveMcpConnection } from '@/lib/mcp/verify-connection'
 
 const MAX_PER_SWEEP = 20
 const STALE_MS = 6 * 60 * 60_000
@@ -8,10 +8,10 @@ const STALE_MS = 6 * 60 * 60_000
  * Seam for tests only. Verification talks to a third-party server over HTTPS
  * and the SSRF guard refuses every address a test could stand one up on, so the
  * healthy and schema-drift outcomes are otherwise unreachable. Production
- * callers pass nothing and get {@link verifyStoredMcpConnection}.
+ * callers pass nothing and get {@link verifyLiveMcpConnection}.
  */
 export interface McpHealthSweepDeps {
-  verify?: typeof verifyStoredMcpConnection
+  verify?: typeof verifyLiveMcpConnection
 }
 
 /** Bounded background verification with persisted schema-drift state. */
@@ -19,7 +19,12 @@ export async function sweepMcpConnectionHealth(
   now = new Date(),
   deps: McpHealthSweepDeps = {},
 ): Promise<{ checked: number; unhealthy: number; changed: number }> {
-  const verify = deps.verify ?? verifyStoredMcpConnection
+  // verifyLiveMcpConnection, not the config-level one: this sweep runs
+  // unattended against connections nobody is watching, and an OAuth refresh it
+  // triggers must be SAVED. Refreshing with a rotating provider and discarding
+  // the replacement spends the stored credential — which turned this
+  // health check into the thing that made connections unhealthy.
+  const verify = deps.verify ?? verifyLiveMcpConnection
   // systemPrisma: bounded cross-tenant health sweep from authenticated cron.
   const connections = await systemPrisma.mcpConnection.findMany({
     where: { isActive: true, OR: [{ lastVerifiedAt: null }, { lastVerifiedAt: { lt: new Date(now.getTime() - STALE_MS) } }] },

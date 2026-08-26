@@ -6,6 +6,7 @@ import { apiLogger } from '@/lib/logger'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { prisma } from '@/lib/prisma'
 import { mergeAuthConfig } from '@/lib/crypto/secrets'
+import { attachTokenPersistence, ensureFreshConnectionToken } from '@/lib/mcp/connection-token'
 import { safeMcpVerificationError, verifyMcpConfig } from '@/lib/mcp/verify-connection'
 
 // A draft may provide plaintext credentials. An existing connection may instead
@@ -71,9 +72,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   try {
     let config: McpClientConfig
     if (existing) {
+      // Renew an expiring OAuth token BEFORE testing, and save the result. This
+      // is what makes the button self-healing: an expired connection whose
+      // refresh token still works comes back verified rather than reporting a
+      // failure the person is then asked to fix by hand.
+      const live = await ensureFreshConnectionToken(existing)
       const stored =
-        existing.authConfig && typeof existing.authConfig === 'object' && !Array.isArray(existing.authConfig)
-          ? (existing.authConfig as Record<string, unknown>)
+        live.authConfig && typeof live.authConfig === 'object' && !Array.isArray(live.authConfig)
+          ? (live.authConfig as Record<string, unknown>)
           : {}
       const merged = mergeAuthConfig(stored, {
         authType: authType as 'none' | 'api_key' | 'oauth2',
@@ -85,7 +91,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         scopes: data.scopes,
         flow: data.flow,
       })
-      config = mcpConfigFromConnection({ serverUrl, authType, authConfig: merged })
+      // And if the token expires between that refresh and the call itself, the
+      // client's own refresh has somewhere to write to as well.
+      config = attachTokenPersistence(
+        mcpConfigFromConnection({ serverUrl, authType, authConfig: merged }),
+        existing,
+      )
     } else {
       config = {
         serverUrl,

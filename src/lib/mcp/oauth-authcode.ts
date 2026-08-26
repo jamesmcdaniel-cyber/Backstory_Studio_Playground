@@ -142,6 +142,7 @@ export interface RegisteredClient {
 export async function registerClient(
   registrationEndpoint: string,
   redirectUri: string,
+  scope = 'claudeai',
 ): Promise<RegisteredClient> {
   const response = await fetch(registrationEndpoint, {
     method: 'POST',
@@ -155,7 +156,10 @@ export async function registerClient(
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
-      scope: 'claudeai',
+      // Registered with the SAME scope the authorize request will ask for.
+      // Registering narrower than you ask is how a provider that honours DCR
+      // scope limits answers a later authorize with invalid_scope.
+      scope,
     }),
     redirect: 'error', // don't follow a 3xx to an internal host (SSRF guard)
     signal: AbortSignal.timeout(15_000),
@@ -175,6 +179,40 @@ export async function registerClient(
     )
   }
   return { client_id: data.client_id, client_secret: data.client_secret }
+}
+
+// ---------------------------------------------------------------------------
+// Scope negotiation
+// ---------------------------------------------------------------------------
+
+/** The scope that asks an authorization server for a refresh token. */
+export const OFFLINE_ACCESS = 'offline_access'
+
+/**
+ * Ask for a refresh token, where the server says it can issue one.
+ *
+ * ── Why a connection could not renew itself ───────────────────────────────
+ * We registered for the `refresh_token` grant and then never requested
+ * `offline_access`. At most identity providers — Okta, Auth0, Entra, Keycloak —
+ * that scope is precisely what decides whether the token response carries a
+ * refresh_token at all. Without it the grant type is academic: the connection
+ * gets an access token, no way to renew it, and dies at expiry with nothing
+ * stored that could revive it. That is not a connection that EXPIRED, it is one
+ * that was never renewable.
+ *
+ * Gated on `scopes_supported` rather than always appended, because a server
+ * that publishes its scopes and receives one outside them answers
+ * `invalid_scope` and refuses the whole authorization. Trading "renews itself"
+ * for "cannot be connected at all" would be the worse bug, and a server that
+ * publishes nothing keeps today's behaviour rather than being gambled with.
+ * The `scope` query parameter on the start route remains the override for a
+ * server that wants something specific.
+ */
+export function withOfflineAccess(scope: string, supported?: string[]): string {
+  const requested = scope.split(/\s+/).filter(Boolean)
+  if (requested.includes(OFFLINE_ACCESS)) return requested.join(' ')
+  if (!supported?.includes(OFFLINE_ACCESS)) return requested.join(' ')
+  return [...requested, OFFLINE_ACCESS].join(' ')
 }
 
 // ---------------------------------------------------------------------------

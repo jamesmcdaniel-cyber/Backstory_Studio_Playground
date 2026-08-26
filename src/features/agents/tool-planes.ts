@@ -25,7 +25,11 @@ import { getPeopleAiClientForUser, getPeopleAiServiceClient } from '@/lib/people
 import { DELIVERY_TOOLS, nangoConfigured, resolveDeliveryConnection, resolveNangoConnection, type DeliveryCapability, type DeliveryConnection } from '@/lib/nango/delivery'
 import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
-import { ensureFreshConnectionToken, persistRefreshedAuthcodeTokens } from '@/lib/mcp/connection-token'
+import {
+  attachTokenPersistence,
+  ensureFreshConnectionToken,
+  mcpClientForStoredConnection,
+} from '@/lib/mcp/connection-token'
 import { GranolaToolClient, getGranolaApiKey, granolaTools } from '@/lib/integrations/granola'
 import { SlackToolClient, slackTools, getSlackToken } from '@/lib/integrations/slack'
 import { HttpToolClient, httpTools } from '@/lib/integrations/http'
@@ -298,16 +302,9 @@ export async function loadMcpConnectionPlaneGroups(
           consumer: 'agent.mcp_tool_plane',
         })
       }
-      // For authcode connections, let a mid-run token refresh persist the
-      // rotated tokens back to this row so the next run reuses them.
-      if (config.flow === 'authcode') {
-        const connectionId = fresh.id
-        const baseAuthConfig = fresh.authConfig as Record<string, unknown>
-        const fallbackRefresh = config.refreshToken ?? ''
-        config.persistTokens = async (tokens) => {
-          await persistRefreshedAuthcodeTokens(connectionId, baseAuthConfig, tokens, fallbackRefresh)
-        }
-      }
+      // A mid-run refresh must be written back, or a rotating provider hands us
+      // a replacement token we then throw away. Shared with every other caller.
+      attachTokenPersistence(config, fresh)
       const client = new McpClient(config)
       const available = await cachedToolDiscovery(organizationId, fresh.serverUrl, () => client.getServerTools(fresh.serverUrl))
       group.name = fresh.name
@@ -597,8 +594,7 @@ export async function resolveFlowToolExecutor(params: {
       where: { id: ref, ...mcpConnectionScope(organizationId, userId) },
     })
     if (!conn) throw new Error('The selected connection no longer exists — pick another in the step config.')
-    const fresh = await ensureFreshConnectionToken(conn)
-    const client = new McpClient(mcpConfigFromConnection(fresh))
+    const { client, connection: fresh } = await mcpClientForStoredConnection(conn)
     return {
       provider: mcpConnectionSlug(fresh.name),
       isWrite: false,

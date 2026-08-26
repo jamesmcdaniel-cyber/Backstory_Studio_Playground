@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ensureFreshConnectionToken } from '@/lib/mcp/connection-token'
+import { attachTokenPersistence, ensureFreshConnectionToken } from '@/lib/mcp/connection-token'
+import type { McpClientConfig } from '@/lib/mcp/mcp-client'
 import { encryptSecret } from '@/lib/crypto/secrets'
 
 /**
@@ -209,3 +210,40 @@ test('two different connections refresh independently', async () => {
 })
 
 test.skip('DB-backed: a successful refresh encrypts and persists the rotated tokens and records a rotation — needs a live database', () => {})
+
+// ── attachTokenPersistence ────────────────────────────────────────────────────
+
+test('an authcode config is given somewhere to write rotated tokens', () => {
+  // The whole hazard: a provider that rotates hands back a new refresh token
+  // in the same response that invalidates the old one. A config without this
+  // spends the stored credential and drops the replacement.
+  const conn = authcodeConn()
+  const config: McpClientConfig = attachTokenPersistence(
+    { serverUrl: conn.serverUrl, authType: 'oauth2', flow: 'authcode', refreshToken: 'rt-stored' },
+    conn,
+  )
+  assert.equal(typeof config.persistTokens, 'function')
+})
+
+test('nothing else is touched — there is nothing there to rotate', () => {
+  const configs: McpClientConfig[] = [
+    { serverUrl: 'https://x/mcp', authType: 'none' },
+    { serverUrl: 'https://x/mcp', authType: 'api_key', apiKey: 'tok' },
+    // client credentials: mints a fresh access token from stored credentials
+    // on every run, so expiry is a non-event and no token is ever consumed.
+    { serverUrl: 'https://x/mcp', authType: 'oauth2', clientId: 'cid', clientSecret: 'sec' },
+  ]
+  for (const config of configs) {
+    assert.equal(attachTokenPersistence(config, authcodeConn()).persistTokens, undefined, config.authType)
+  }
+})
+
+test('a row whose authConfig is not an object still gets a persister', () => {
+  // Defensive: the JSON column can hold anything, and refusing to attach here
+  // would silently restore the destructive behaviour for that row.
+  const config: McpClientConfig = attachTokenPersistence(
+    { serverUrl: 'https://x/mcp', authType: 'oauth2', flow: 'authcode' },
+    { id: 'conn-1', authConfig: 'not-an-object' },
+  )
+  assert.equal(typeof config.persistTokens, 'function')
+})

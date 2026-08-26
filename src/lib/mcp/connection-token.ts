@@ -14,11 +14,17 @@
  */
 
 import { Prisma } from '@prisma/client'
-import { prisma, systemPrisma } from '@/lib/prisma'
+import { systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secrets'
 import { refreshAccessToken, type TokenResponse } from '@/lib/mcp/oauth-authcode'
 import { recordCredentialRotation } from '@/lib/credentials/audit'
+import {
+  McpClient,
+  mcpConfigFromConnection,
+  type McpClientConfig,
+  type McpConnectionRow,
+} from '@/lib/mcp/mcp-client'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -235,4 +241,67 @@ async function _doRefresh<T extends McpConnectionLike>(
     })
     return conn
   }
+}
+
+// ---------------------------------------------------------------------------
+// Building a client from a STORED connection
+// ---------------------------------------------------------------------------
+
+/** A real McpConnection row: enough to refresh it AND to talk to it. */
+export type StoredMcpConnection = McpConnectionLike & McpConnectionRow
+
+/**
+ * Give a config somewhere to write tokens the provider rotates out from under
+ * it.
+ *
+ * ── Why every stored authcode connection needs this ───────────────────────
+ * Refresh-token ROTATION is the default for public clients at most identity
+ * providers: spending a refresh token returns a new one and invalidates the old
+ * one in the same response. A client that refreshes and drops the result has
+ * not merely failed to save an optimisation — it has consumed the credential
+ * the database still holds. The next refresh presents a spent token, gets
+ * `invalid_grant`, and the connection is dead.
+ *
+ * So an McpClient built from a stored authcode row without this is destructive,
+ * and destructive on a delay: the run that burns the token succeeds, and the
+ * failure lands on whatever touches the connection next. That is exactly how a
+ * connection nobody had edited turned up expired — the six-hourly health sweep
+ * refreshed it unattended and threw the replacement away.
+ *
+ * A no-op for every other auth type: there is nothing to rotate in a static
+ * token, and a client-credentials pair mints a fresh access token from
+ * credentials we already store.
+ */
+export function attachTokenPersistence<T extends McpClientConfig>(
+  config: T,
+  conn: { id: string; authConfig: unknown },
+): T {
+  if (config.flow !== 'authcode') return config
+  const baseAuthConfig =
+    conn.authConfig && typeof conn.authConfig === 'object' && !Array.isArray(conn.authConfig)
+      ? (conn.authConfig as Record<string, unknown>)
+      : {}
+  // The token we came in with, so a provider that does NOT rotate keeps working
+  // instead of having its still-valid refresh token overwritten with nothing.
+  const fallbackRefresh = config.refreshToken ?? ''
+  config.persistTokens = async (tokens) => {
+    await persistRefreshedAuthcodeTokens(conn.id, baseAuthConfig, tokens, fallbackRefresh)
+  }
+  return config
+}
+
+/**
+ * The one way to talk to a connection we have stored.
+ *
+ * Refreshes an expiring token and persists it, builds the config, and wires the
+ * mid-flight persistence above — the three steps that were previously each
+ * call site's job to remember, and that three of them did not. Returns the
+ * refreshed row too, since the caller usually wants its serverUrl and name.
+ */
+export async function mcpClientForStoredConnection<T extends StoredMcpConnection>(
+  conn: T,
+): Promise<{ client: McpClient; connection: T; config: McpClientConfig }> {
+  const connection = await ensureFreshConnectionToken(conn)
+  const config = attachTokenPersistence(mcpConfigFromConnection(connection), connection)
+  return { client: new McpClient(config), connection, config }
 }

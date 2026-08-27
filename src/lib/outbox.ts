@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client'
 import { systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { recordAudit } from '@/lib/audit'
+import { decryptSecret, encryptSecret } from '@/lib/crypto/secrets'
 
 export const OUTBOX_TOPIC_FLOW_SIGNAL = 'flow.signal'
 export const OUTBOX_TOPIC_CREDENTIAL_REVOKE = 'credential.revoke'
@@ -13,6 +14,14 @@ export const OUTBOX_TOPIC_CREDENTIAL_REVOKE = 'credential.revoke'
  * to below in `deliver()`.
  */
 export const OUTBOX_TOPIC_ACTIVITY_DISPATCH = 'activity.dispatch'
+/**
+ * A one-time public wait callback accepted by the web plane. The route consumes
+ * the capability token and writes this row in the SAME database transaction,
+ * so a Redis/worker outage can delay a resume but can never lose it. The reply
+ * is encrypted because callback bodies routinely contain customer data and the
+ * generic outbox table is infrastructure storage, not a user-facing run log.
+ */
+export const OUTBOX_TOPIC_FLOW_RESUME = 'flow.resume'
 /**
  * One audit event, forwarded to one customer-configured destination. Rides the
  * outbox rather than a fire-and-forget fetch because an audit event dropped
@@ -27,6 +36,38 @@ export type FlowSignalPayload = {
   payload: unknown
   sourceFlowId?: string
   depth?: number
+}
+
+type FlowResumePayload = {
+  flowId: string
+  flowRunId: string
+  userId: string
+  encryptedReply: string
+}
+
+export function flowResumeOutboxEvent(input: {
+  organizationId: string
+  flowId: string
+  flowRunId: string
+  userId: string
+  resumeTokenHash: string
+  reply: string
+}) {
+  return {
+    organizationId: input.organizationId,
+    topic: OUTBOX_TOPIC_FLOW_RESUME,
+    aggregateId: input.flowRunId,
+    // A run may wait on more than one webhook over its lifetime. The one-way
+    // token hash identifies this particular pause without persisting the
+    // capability itself, while still deduplicating concurrent delivery.
+    dedupeKey: `flow-resume:${input.flowRunId}:${input.resumeTokenHash}`,
+    payload: {
+      flowId: input.flowId,
+      flowRunId: input.flowRunId,
+      userId: input.userId,
+      encryptedReply: encryptSecret(input.reply),
+    } as Prisma.InputJsonValue,
+  }
 }
 
 /**
@@ -185,7 +226,33 @@ function isActivityDispatchPayload(value: Prisma.JsonValue): value is { activity
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).activityEventId === 'string'
 }
 
+function isFlowResumePayload(value: Prisma.JsonValue): value is FlowResumePayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const payload = value as Record<string, unknown>
+  return (
+    typeof payload.flowId === 'string' &&
+    typeof payload.flowRunId === 'string' &&
+    typeof payload.userId === 'string' &&
+    typeof payload.encryptedReply === 'string'
+  )
+}
+
 async function deliver(event: { id: string; organizationId: string; topic: string; payload: Prisma.JsonValue }) {
+  if (event.topic === OUTBOX_TOPIC_FLOW_RESUME) {
+    if (!isFlowResumePayload(event.payload)) throw new Error('Invalid flow.resume outbox payload')
+    const { dispatchFlowExecution } = await import('@/features/flows/execute-flow')
+    await dispatchFlowExecution({
+      flowId: event.payload.flowId,
+      flowRunId: event.payload.flowRunId,
+      organizationId: event.organizationId,
+      userId: event.payload.userId,
+      input: {},
+      reply: decryptSecret(event.payload.encryptedReply),
+      // Stable across an ambiguous queue handoff and every outbox retry.
+      deliveryId: event.id,
+    })
+    return
+  }
   if (event.topic === OUTBOX_TOPIC_CREDENTIAL_REVOKE) {
     const { handleCredentialRevoke } = await import('@/lib/nango/revoke-connection')
     await handleCredentialRevoke(event.organizationId, event.payload)

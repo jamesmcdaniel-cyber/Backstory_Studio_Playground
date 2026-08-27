@@ -1,8 +1,9 @@
 import { Queue } from 'bullmq'
 import { QUEUE_NAMES, workersEnabled, getRedisConnection } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
-import { workerHeartbeatAgeMs, WORKER_HEARTBEAT_STALE_MS } from '@/lib/queue/heartbeat'
+import { workerHeartbeatAgeMs, workerQueueHeartbeatAges, WORKER_HEARTBEAT_STALE_MS } from '@/lib/queue/heartbeat'
 import { readTickLiveness, tickAge, isTickFresh } from '@/lib/queue/tick-liveness'
+import { isCustomerEdition } from '@/lib/edition'
 
 /**
  * Health probe for the queue plane's CONSUMER side.
@@ -18,11 +19,19 @@ import { readTickLiveness, tickAge, isTickFresh } from '@/lib/queue/tick-livenes
  */
 
 /** The queues a dead consumer strands user-visible work on. */
-const CRITICAL_QUEUES = [
+const INTERACTIVE_QUEUES = [
   QUEUE_NAMES.AGENT_EXECUTION,
   QUEUE_NAMES.SCHEDULED_AGENT_EXECUTION,
   QUEUE_NAMES.FLOW_EXECUTION,
 ] as const
+
+const BATCH_QUEUES = [
+  QUEUE_NAMES.TEMPLATE_GENERATION,
+  QUEUE_NAMES.MODEL_BENCH,
+  QUEUE_NAMES.ACTIVITY_BACKFILL,
+] as const
+
+const monitoredQueues = () => isCustomerEdition() ? [...INTERACTIVE_QUEUES] : [...INTERACTIVE_QUEUES, ...BATCH_QUEUES]
 
 /** Dead-letter queues: jobs land here after a terminal failure and sit
  * `waiting` forever (no consumer, by design) until an operator inspects them.
@@ -41,6 +50,11 @@ export interface QueueConsumerReport {
   active: number
   /** Jobs that exhausted their attempts on this queue (retained last 100). */
   failed?: number
+  /** Age of the oldest queued job; null when the queue has no waiting job. */
+  oldestWaitingAgeMs?: number | null
+  /** Queue-specific heartbeat age. Unlike the global heartbeat, proves that a
+   * pool consuming this exact queue is alive. */
+  heartbeatAgeMs?: number | null
 }
 
 export interface QueueConsumerCheck {
@@ -53,7 +67,7 @@ export interface QueueConsumerCheck {
   /** Total jobs parked across all dead-letter queues + which DLQs are non-empty. */
   deadLetters?: { total: number; queues: string[] }
   /** Worker liveness heartbeat (see heartbeat.ts): age of the newest write. */
-  heartbeat?: { ageMs: number | null; fresh: boolean }
+  heartbeat?: { ageMs: number | null; fresh: boolean; queues?: Record<string, { ageMs: number | null; fresh: boolean }> }
   /**
    * Dispatch-tick liveness (see tick-liveness.ts): age of the last completed
    * scheduling tick. Separate from `heartbeat` because the two fail
@@ -78,13 +92,30 @@ export interface QueueConsumerCheck {
  */
 export function consumerVerdict(
   reports: QueueConsumerReport[],
-  heartbeatFresh = false,
+  heartbeatFresh: boolean | Record<string, boolean> = false,
 ): { ok: boolean; stranded: string[] } {
   if (reports.length === 0) return { ok: false, stranded: [] }
-  if (heartbeatFresh) return { ok: true, stranded: [] }
+  const queueFresh = (queue: string) => typeof heartbeatFresh === 'boolean' ? heartbeatFresh : Boolean(heartbeatFresh[queue])
   return {
-    ok: reports.every((r) => r.workers > 0),
-    stranded: reports.filter((r) => r.workers === 0 && r.waiting > 0).map((r) => r.queue),
+    ok: reports.every((r) => r.workers > 0 || queueFresh(r.queue)),
+    stranded: reports.filter((r) => r.workers === 0 && !queueFresh(r.queue) && r.waiting > 0).map((r) => r.queue),
+  }
+}
+
+export const QUEUE_BACKLOG_COUNT_ALERT = Math.max(1, Number(process.env.QUEUE_BACKLOG_COUNT_ALERT) || 100)
+export const QUEUE_BACKLOG_AGE_ALERT_MS = Math.max(60_000, Number(process.env.QUEUE_BACKLOG_AGE_ALERT_MS) || 5 * 60_000)
+
+export function queuePressureVerdict(reports: QueueConsumerReport[]): { queues: string[]; reason: string | null } {
+  const pressured = reports.filter(
+    (report) => report.waiting >= QUEUE_BACKLOG_COUNT_ALERT || (report.oldestWaitingAgeMs ?? 0) >= QUEUE_BACKLOG_AGE_ALERT_MS,
+  )
+  return {
+    queues: pressured.map((report) => report.queue),
+    reason: pressured.length
+      ? pressured.map((report) =>
+          `${report.queue}: ${report.waiting} waiting, oldest ${Math.round((report.oldestWaitingAgeMs ?? 0) / 1000)}s`,
+        ).join('; ')
+      : null,
   }
 }
 
@@ -131,18 +162,25 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
     return { configured: false, ok: true, stranded: [] }
   }
   try {
-    const [reports, deadLetterCounts, heartbeatAge, tickRaw] = await withTimeout(
+    const queues = monitoredQueues()
+    const [reports, deadLetterCounts, heartbeatAge, queueHeartbeatAges, tickRaw] = await withTimeout(
       Promise.all([
         Promise.all(
-          CRITICAL_QUEUES.map(async (name): Promise<QueueConsumerReport> => {
+          queues.map(async (name): Promise<QueueConsumerReport> => {
             const q = queueHandle(name)
-            const [workers, counts] = await Promise.all([q.getWorkers(), q.getJobCounts('waiting', 'active', 'failed')])
+            const [workers, counts, oldest] = await Promise.all([
+              q.getWorkers(),
+              q.getJobCounts('waiting', 'prioritized', 'active', 'failed'),
+              q.getJobs(['waiting', 'prioritized'], 0, 0, true),
+            ])
+            const waiting = (counts.waiting ?? 0) + (counts.prioritized ?? 0)
             return {
               queue: name,
               workers: workers.length,
-              waiting: counts.waiting ?? 0,
+              waiting,
               active: counts.active ?? 0,
               failed: counts.failed ?? 0,
+              oldestWaitingAgeMs: oldest[0]?.timestamp ? Math.max(0, Date.now() - oldest[0].timestamp) : null,
             }
           }),
         ),
@@ -153,22 +191,32 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
           }),
         ),
         workerHeartbeatAgeMs(),
+        workerQueueHeartbeatAges(queues),
         readTickLiveness(),
       ]),
     )
     const heartbeatFresh = heartbeatAge !== null && heartbeatAge <= WORKER_HEARTBEAT_STALE_MS
+    const queueFresh = Object.fromEntries(queues.map((queue) => [
+      queue,
+      queueHeartbeatAges[queue] !== null && queueHeartbeatAges[queue] <= WORKER_HEARTBEAT_STALE_MS,
+    ]))
+    for (const report of reports) report.heartbeatAgeMs = queueHeartbeatAges[report.queue]
     const now = Date.now()
     return {
       configured: true,
       // Tick liveness is REPORTED, not folded into `ok`: a stale tick with a
       // healthy fleet is a real alert, but failing this check would make Fly
       // recycle machines that are consuming jobs perfectly well.
-      ...consumerVerdict(reports, heartbeatFresh),
+      ...consumerVerdict(reports, queueFresh),
       reports,
       deadLetters: deadLetterVerdict(deadLetterCounts),
       heartbeat: {
         ageMs: heartbeatAge,
         fresh: heartbeatFresh,
+        queues: Object.fromEntries(queues.map((queue) => [queue, {
+          ageMs: queueHeartbeatAges[queue],
+          fresh: queueFresh[queue],
+        }])),
       },
       tick: {
         ageMs: tickAge(tickRaw, now),

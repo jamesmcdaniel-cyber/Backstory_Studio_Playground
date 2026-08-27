@@ -40,11 +40,11 @@ services:
         sync: false
       # NOT the same string as Vercel's. Vercel is serverless and wants
       # ?pgbouncer=true&connection_limit=1 (one connection per lambda). This is a
-      # long-lived process running FOUR BullMQ workers at AGENT_WORKER_CONCURRENCY
-      # each — with connection_limit=1 every one of those ~20 concurrent jobs
-      # queues behind a single connection and Prisma starts throwing P2024 pool
-      # timeouts under load. Set this to the transaction pooler with
-      # ?pgbouncer=true&connection_limit=20 (keep it comfortably under the
+      # long-lived process running three interactive queues at
+      # AGENT_WORKER_CONCURRENCY plus three batch queues at
+      # BATCH_WORKER_CONCURRENCY. Defaults are 21 job slots plus a two-connection
+      # infrastructure reserve. Set the transaction pooler URL with
+      # ?pgbouncer=true&connection_limit=25 (and keep the fleet total under the
       # pooler's own client ceiling once multiplied by numInstances).
       - key: DATABASE_URL
         sync: false
@@ -120,12 +120,12 @@ services:
       # falls back to slow polling for live step status.
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      # Per-worker, PER-QUEUE concurrency. The runtime starts four workers
-      # (agent, scheduled-agent, flow, template-generation), so total in-flight
-      # jobs per instance is ~4x this — size DATABASE_URL's connection_limit
-      # against that number, not against this one.
+      # Per-worker, PER-QUEUE interactive concurrency. Runtime pool validation
+      # sums these three queues with the three batch overrides below.
       - key: AGENT_WORKER_CONCURRENCY
         value: "5"
+      - key: BATCH_WORKER_CONCURRENCY
+        value: "2"
       # Max concurrent runs (agents + flows) one workspace may hold at a time,
       # enforced at scheduled dispatch. Stops a single org's burst filling every
       # worker slot while other tenants' runs sit pending. See

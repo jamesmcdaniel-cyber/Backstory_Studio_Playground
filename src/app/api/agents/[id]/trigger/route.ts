@@ -9,9 +9,11 @@ import { inlineExecution } from '@/lib/queue/execution-mode'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { rateLimit } from '@/lib/ratelimit'
 import { recordTokenRejection } from '@/lib/security/events'
+import { readRequestJsonLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
+const AGENT_TRIGGER_MAX_BODY_BYTES = 1_000_000
 
 function legacyPlaintextMatch(provided: string, expected: string) {
   const a = Buffer.from(provided)
@@ -59,7 +61,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid trigger secret' }, { status: 401 })
     }
 
-    const body = await request.json().catch(() => ({})) as { input?: unknown }
+    let body: { input?: unknown }
+    try {
+      body = await readRequestJsonLimited<{ input?: unknown }>(request, AGENT_TRIGGER_MAX_BODY_BYTES)
+    } catch (error) {
+      if (error instanceof RequestBodyError) return requestBodyErrorResponse(error)
+      throw error
+    }
     // Skills are composed into the system prompt inside runAgentExecution — pass
     // the raw objective so attached skills aren't applied twice.
     const input = typeof body.input === 'string' && body.input.trim() ? body.input.trim() : agent.objective

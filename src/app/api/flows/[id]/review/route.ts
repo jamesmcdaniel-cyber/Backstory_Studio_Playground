@@ -6,6 +6,7 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 import { assertFlowEditable } from '@/lib/flows/access'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
 import { canDecideReview } from '@/lib/flows/review-gate'
+import { graphFingerprint } from '@/lib/flows/graph-fingerprint'
 import { recordAudit } from '@/lib/audit'
 
 export const runtime = 'nodejs'
@@ -26,7 +27,7 @@ async function loadFlow(id: string, organizationId: string, userId: string) {
 export const GET = withAuthenticatedApi(async (request, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-2)
   if (!id) throw new ApiError('Flow id is required')
-  await loadFlow(id, auth.organizationId, auth.dbUser.id)
+  const flow = await loadFlow(id, auth.organizationId, auth.dbUser.id)
 
   const [org, review] = await Promise.all([
     prisma.organization.findFirst({ where: { id: auth.organizationId }, select: { flowReviewRequired: true } }),
@@ -35,12 +36,28 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       orderBy: { requestedAt: 'desc' },
       select: {
         id: true, status: true, note: true, summary: true,
-        requestedBy: true, requestedAt: true,
+        requestedBy: true, requestedAt: true, graph: true,
         decidedBy: true, decidedAt: true, decisionNote: true,
       },
     }),
   ])
-  return { success: true, required: Boolean(org?.flowReviewRequired), review }
+  const decision = review
+    ? canDecideReview(
+        { requestedBy: review.requestedBy, status: review.status as 'open' | 'approved' | 'rejected' | 'withdrawn' },
+        auth.dbUser.id,
+      )
+    : { allowed: false }
+  const publicReview = review
+    ? Object.fromEntries(Object.entries(review).filter(([key]) => key !== 'graph'))
+    : null
+  return {
+    success: true,
+    required: Boolean(org?.flowReviewRequired),
+    review: publicReview,
+    matchesDraft: Boolean(review && graphFingerprint(review.graph) === graphFingerprint(flow.graph)),
+    canDecide: decision.allowed,
+    canWithdraw: review?.status === 'open' && review.requestedBy === auth.dbUser.id,
+  }
 }, { permission: 'flow.read' })
 
 /**

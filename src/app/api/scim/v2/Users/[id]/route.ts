@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { systemPrisma } from '@/lib/prisma'
 import { authenticateScim, roleOf, scimError, scimJson, scimUser, supabaseAdmin } from '@/lib/scim/server'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
+import { readRequestJsonLimited, RequestBodyError } from '@/lib/server/request-body'
+
+const SCIM_MAX_BODY_BYTES = 256_000
 
 function idOf(request: Request) { return new URL(request.url).pathname.split('/').at(-1) ?? '' }
 
@@ -24,7 +27,14 @@ export async function PATCH(request: Request) {
   // The platform owner account is not managed by identity-provider sync: no
   // rename, role change, deactivation, or attribute write, ever.
   if (isPlatformOwnerEmail(existing.email)) return scimError('This account is the platform owner and cannot be managed via SCIM.', 403)
-  const body = z.object({ Operations: z.array(z.object({ op: z.string(), path: z.string().optional(), value: z.unknown().optional() })).min(1) }).safeParse(await request.json().catch(() => null))
+  let raw: unknown
+  try {
+    raw = await readRequestJsonLimited(request, SCIM_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return scimError(error.message, error.status)
+    throw error
+  }
+  const body = z.object({ Operations: z.array(z.object({ op: z.string(), path: z.string().optional(), value: z.unknown().optional() })).min(1) }).safeParse(raw)
   if (!body.success) return scimError('Invalid PatchOp payload.', 400)
   const data: { email?: string; name?: string; isActive?: boolean; role?: ReturnType<typeof roleOf> } = {}
   for (const operation of body.data.Operations) {

@@ -1,5 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { BASELINE_WINDOW_MS, RECENT_WINDOW_MS } from '../anomaly'
 
@@ -33,8 +35,8 @@ test('the module documents which signal it deliberately does NOT implement', () 
   // would report a class of event that cannot occur and imply, by association,
   // that the others are equally covered. The reasoning has to survive in the
   // file or the next person will "fix" the omission.
-  const source = require('node:fs').readFileSync(
-    require('node:path').join(process.cwd(), 'src/lib/credentials/anomaly.ts'),
+  const source = readFileSync(
+    join(process.cwd(), 'src/lib/credentials/anomaly.ts'),
     'utf8',
   ) as string
 
@@ -46,8 +48,8 @@ test('the sweep never throws — a detector must not break the scheduler', () =>
   // It runs inside the dispatch tick, which also dispatches every scheduled
   // agent and flow in the platform. An exception escaping this would trade a
   // missed anomaly for a stopped scheduler.
-  const source = require('node:fs').readFileSync(
-    require('node:path').join(process.cwd(), 'src/lib/credentials/anomaly.ts'),
+  const source = readFileSync(
+    join(process.cwd(), 'src/lib/credentials/anomaly.ts'),
     'utf8',
   ) as string
 
@@ -57,8 +59,8 @@ test('the sweep never throws — a detector must not break the scheduler', () =>
 })
 
 test('the tick calls the sweep defensively as well', () => {
-  const tick = require('node:fs').readFileSync(
-    require('node:path').join(process.cwd(), 'src/lib/scheduling/dispatch-tick.ts'),
+  const tick = readFileSync(
+    join(process.cwd(), 'src/lib/scheduling/dispatch-tick.ts'),
     'utf8',
   ) as string
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createRateLimiter } from '../ratelimit'
 
 test('allows up to the limit inside the window', async () => {
-  let now = 1_000_000
+  const now = 1_000_000
   const limiter = createRateLimiter({ now: () => now })
   for (let i = 0; i < 3; i++) {
     const result = await limiter.check('key-a', { limit: 3, windowMs: 60_000 })
@@ -12,7 +12,7 @@ test('allows up to the limit inside the window', async () => {
 })
 
 test('rejects the call after the limit with a retry hint', async () => {
-  let now = 1_000_000
+  const now = 1_000_000
   const limiter = createRateLimiter({ now: () => now })
   for (let i = 0; i < 3; i++) await limiter.check('key-b', { limit: 3, windowMs: 60_000 })
   const rejected = await limiter.check('key-b', { limit: 3, windowMs: 60_000 })
@@ -30,7 +30,7 @@ test('window slides: old calls expire and requests pass again', async () => {
 })
 
 test('keys are independent', async () => {
-  let now = 1_000_000
+  const now = 1_000_000
   const limiter = createRateLimiter({ now: () => now })
   for (let i = 0; i < 3; i++) await limiter.check('key-d', { limit: 3, windowMs: 60_000 })
   const other = await limiter.check('key-e', { limit: 3, windowMs: 60_000 })

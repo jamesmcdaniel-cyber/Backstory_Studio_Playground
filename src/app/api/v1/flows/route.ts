@@ -5,6 +5,9 @@ import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
 import { prisma } from '@/lib/prisma'
 import { authenticatePublicApi, publicApiJson } from '@/lib/public-api/auth'
 import { agentVisibilityScope } from '@/lib/server/visibility'
+import { readRequestJsonLimited, RequestBodyError } from '@/lib/server/request-body'
+
+const PUBLIC_FLOW_PACKAGE_MAX_BODY_BYTES = 4_000_000
 
 export async function GET(request: Request) {
   const auth = await authenticatePublicApi(request, 'flows:read')
@@ -23,7 +26,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await authenticatePublicApi(request, 'flows:write')
   if (auth instanceof Response) return auth
-  const raw = await request.json().catch(() => null)
+  let raw: unknown
+  try {
+    raw = await readRequestJsonLimited(request, PUBLIC_FLOW_PACKAGE_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return publicApiJson({ error: { code: error.code, message: error.message } }, error.status)
+    throw error
+  }
   const parsed = nativeFlowPackageSchema.safeParse(raw)
   if (!parsed.success) return publicApiJson({ error: { code: 'INVALID_PACKAGE', message: 'Expected a backstory.flow.v1 package.', issues: parsed.error.issues } }, 400)
   const graph = parsed.data.flow.graph ?? emptyGraph()

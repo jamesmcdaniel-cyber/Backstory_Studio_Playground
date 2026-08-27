@@ -60,6 +60,7 @@ import { ImportNotesPanel, parseImportReport, type FlowImportReport } from '@/co
 import { CheckerPanel } from '@/components/flows/checker-panel'
 import { SaveAsTemplateDialog } from '@/components/flows/save-as-template-dialog'
 import { FlowIconInput } from '@/components/flows/flow-icon-input'
+import { FlowReviewControl } from '@/components/flows/flow-review-control'
 import { deferDialogFromDropdown } from '@/lib/client/defer-dialog'
 import { ResizablePanel } from '@/components/flows/resizable-panel'
 import { ConfirmDialog } from '@/components/settings/dialogs'
@@ -2529,6 +2530,7 @@ function FlowBuilder() {
             )}
           </div>
         )}
+        {!external && <FlowReviewControl flowId={id} prepareRequest={save} disabled={saving || publishing} />}
         {!external && (
           <div className="hidden shrink-0 items-center gap-2 lg:flex">
             <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />

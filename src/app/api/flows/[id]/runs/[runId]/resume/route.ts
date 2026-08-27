@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { systemPrisma, prisma } from '@/lib/prisma'
+import { systemPrisma, prisma, tenantTransaction } from '@/lib/prisma'
 import { rateLimit } from '@/lib/ratelimit'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
-import { dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
+import { flowResumeOutboxEvent } from '@/lib/outbox'
+import { readRequestJsonLimited, readRequestTextLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
+import { FLOW_WEBHOOK_MAX_BODY_BYTES } from '@/lib/flows/webhook-security'
 
 export const runtime = 'nodejs'
 
@@ -51,6 +53,7 @@ export async function POST(request: NextRequest) {
   if (!run?.resumeTokenHash || !timingSafeEqualHex(hashToken(presented), run.resumeTokenHash)) {
     return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 })
   }
+  const resumeTokenHash = run.resumeTokenHash
   if (run.status !== 'waiting') {
     return NextResponse.json({ success: false, error: 'This run is not waiting for a callback.' }, { status: 409 })
   }
@@ -69,9 +72,15 @@ export async function POST(request: NextRequest) {
   }
 
   const contentType = request.headers.get('content-type') || ''
-  const body = contentType.toLowerCase().includes('application/json')
-    ? await request.json().catch(() => ({}))
-    : await request.text().catch(() => '')
+  let body: unknown
+  try {
+    body = contentType.toLowerCase().includes('application/json')
+      ? await readRequestJsonLimited(request, FLOW_WEBHOOK_MAX_BODY_BYTES)
+      : await readRequestTextLimited(request, FLOW_WEBHOOK_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return requestBodyErrorResponse(error)
+    throw error
+  }
   const payload = flowInputFromWebhookBody(body)
 
   const userId =
@@ -79,29 +88,31 @@ export async function POST(request: NextRequest) {
     (await prisma.user.findFirst({ where: { organizationId: run.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } }))?.id
   if (!userId) return NextResponse.json({ success: false, error: 'No active user to resume the run.' }, { status: 409 })
 
-  // Consume the token ATOMICALLY before dispatching: the compare above is a
-  // read, so two callbacks arriving together would both pass it and resume the
-  // run twice, re-firing its remaining side effects. Clearing the hash under a
-  // conditional update makes exactly one caller win; the resumed attempt mints
-  // a fresh token if the flow waits again.
-  const consumed = await systemPrisma.flowRun.updateMany({
-    where: { id: run.id, status: 'waiting', resumeTokenHash: run.resumeTokenHash },
-    data: { resumeTokenHash: null },
+  const reply = typeof payload === 'string' && payload ? payload : JSON.stringify(payload ?? {})
+  // Consume the capability and persist its encrypted delivery in one commit.
+  // The outbox retries independently of this request, so a worker/Redis outage
+  // can delay the resume but cannot burn the caller's only token and lose it.
+  const accepted = await tenantTransaction(run.organizationId, async (tx) => {
+    const consumed = await tx.flowRun.updateMany({
+      where: { id: run.id, organizationId: run.organizationId, status: 'waiting', resumeTokenHash },
+      data: { resumeTokenHash: null },
+    })
+    if (consumed.count !== 1) return false
+    await tx.outboxEvent.create({
+      data: flowResumeOutboxEvent({
+        organizationId: run.organizationId,
+        flowId,
+        flowRunId: run.id,
+        userId,
+        resumeTokenHash,
+        reply,
+      }),
+    })
+    return true
   })
-  if (consumed.count !== 1) {
+  if (!accepted) {
     return NextResponse.json({ success: false, error: 'This callback was already delivered.' }, { status: 409 })
   }
 
-  // reply is a non-empty string so runFlowExecution treats this as a resume and
-  // the wait step exposes the callback body as {{step.<id>.output}}.
-  await dispatchDetachedFlowExecution({
-    flowId,
-    organizationId: run.organizationId,
-    userId,
-    input: {},
-    flowRunId: run.id,
-    reply: typeof payload === 'string' && payload ? payload : JSON.stringify(payload ?? {}),
-  })
-
-  return NextResponse.json({ success: true, runId: run.id, status: 'running' })
+  return NextResponse.json({ success: true, accepted: true, runId: run.id, status: 'waiting' }, { status: 202 })
 }

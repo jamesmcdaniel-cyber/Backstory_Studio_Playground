@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Camera, ChevronDown, Globe2, Loader2, Play, Plus, Trash2, X } from 'lucide-react'
+import { Camera, ChevronDown, Globe2, Loader2, Play, Plus, ShieldCheck, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -536,6 +536,12 @@ export function AgentConfigForm({
   const avatarBaseSeed = editingAgent?.id || draft.title || 'new-agent'
   const [saving, setSaving] = useState(false)
   const [publishingTemplate, setPublishingTemplate] = useState(false)
+  const [publishingAgent, setPublishingAgent] = useState(false)
+  const [publishState, setPublishState] = useState<{
+    published: boolean
+    hasUnpublishedChanges: boolean
+    publishedAt: string | null
+  } | null>(null)
   // Snapshot of the draft as last populated/saved, so Run can tell whether
   // there are unsaved edits that must be persisted before executing.
   const baselineRef = useRef<string>(JSON.stringify(emptyDraft))
@@ -592,6 +598,31 @@ export function AgentConfigForm({
       .catch(() => setRuns([]))
       .finally(() => setRunsLoading(false))
   }, [active, editingAgent])
+
+  // Publishing pins the definition and tool set used by runs. Keep this
+  // server-derived: connector changes can make a draft differ even when the
+  // visible form fields have not changed locally.
+  useEffect(() => {
+    if (!active || !editingAgent?.id) {
+      setPublishState(null)
+      return
+    }
+    let cancelled = false
+    fetch(`/api/agents/${editingAgent.id}/publish`, { cache: 'no-store' })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(data.error || 'Could not load publish status.')
+        if (!cancelled) {
+          setPublishState({
+            published: Boolean(data.published),
+            hasUnpublishedChanges: Boolean(data.hasUnpublishedChanges),
+            publishedAt: typeof data.publishedAt === 'string' ? data.publishedAt : null,
+          })
+        }
+      })
+      .catch(() => { if (!cancelled) setPublishState(null) })
+    return () => { cancelled = true }
+  }, [active, editingAgent?.id])
 
   // Load this agent's memory when editing. Skipped in create mode — there's no agent id yet.
   useEffect(() => {
@@ -759,8 +790,45 @@ export function AgentConfigForm({
     try {
       await onSave(draft)
       baselineRef.current = JSON.stringify(draft)
+      setPublishState((current) => current?.published
+        ? { ...current, hasUnpublishedChanges: true }
+        : current)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const publishAgentDefinition = async (unpublish = false) => {
+    if (!editingAgent?.id) return
+    if (!unpublish && (!draft.title.trim() || !draft.instructions.trim())) {
+      toast.error('Name and instructions are required before publishing.')
+      return
+    }
+    setPublishingAgent(true)
+    try {
+      if (!unpublish && dirty) {
+        await onSave(draft)
+        baselineRef.current = JSON.stringify(draft)
+      }
+      const response = await fetch(`/api/agents/${editingAgent.id}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unpublish }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not update publish status.')
+      setPublishState({
+        published: Boolean(data.published),
+        hasUnpublishedChanges: false,
+        publishedAt: typeof data.publishedAt === 'string' ? data.publishedAt : null,
+      })
+      toast.success(unpublish
+        ? 'Published snapshot removed — runs now use the live draft.'
+        : 'Agent definition and tools published.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update publish status.')
+    } finally {
+      setPublishingAgent(false)
     }
   }
 
@@ -1555,7 +1623,7 @@ export function AgentConfigForm({
         {editingAgent && (
           <Button
             variant="outline"
-            disabled={saving || publishingTemplate || !draft.title || !draft.instructions}
+            disabled={saving || publishingAgent || publishingTemplate || !draft.title || !draft.instructions}
             loading={publishingTemplate}
             onClick={publishTemplate}
             className="shrink-0"
@@ -1563,7 +1631,28 @@ export function AgentConfigForm({
             Add to templates
           </Button>
         )}
-        <Button className="flex-1" disabled={saving || !draft.title || !draft.instructions} onClick={submit}>
+        {editingAgent && publishState && (
+          <Button
+            variant="outline"
+            disabled={saving || publishingAgent || !draft.title || !draft.instructions}
+            loading={publishingAgent}
+            onClick={() => void publishAgentDefinition(
+              publishState.published && !dirty && !publishState.hasUnpublishedChanges,
+            )}
+            className="shrink-0"
+            title={publishState.published
+              ? publishState.hasUnpublishedChanges || dirty
+                ? 'Replace the pinned runtime definition with this draft'
+                : 'Remove the snapshot so runs use live edits again'
+              : 'Pin this definition and its current tool set for future runs'}
+          >
+            {!publishingAgent && <ShieldCheck className="mr-1.5 h-4 w-4" />}
+            {publishState.published
+              ? publishState.hasUnpublishedChanges || dirty ? 'Publish changes' : 'Use live draft'
+              : 'Publish agent'}
+          </Button>
+        )}
+        <Button className="flex-1" disabled={saving || publishingAgent || !draft.title || !draft.instructions} onClick={submit}>
           {saving ? 'Saving...' : saveLabel || (editingAgent ? 'Save agent' : 'Create agent')}
         </Button>
       </div>

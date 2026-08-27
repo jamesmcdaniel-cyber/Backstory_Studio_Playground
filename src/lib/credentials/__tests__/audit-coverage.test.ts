@@ -32,6 +32,10 @@ const READ_EXEMPT: Record<string, string> = {
     'which reads the secret again — an audit-event storm where every forwarded event ' +
     'forwards another. Same reason as lib/crypto/secrets.ts. The grant IS audited, where ' +
     'the destination is configured.',
+  'lib/outbox.ts':
+    'Decrypts an encrypted one-time flow resume answer after durable handoff, not a credential. ' +
+    'The payload authorizes nothing: the callback token was separately verified and consumed ' +
+    'before the outbox row was created.',
   'lib/mcp/mcp-client.ts':
     'mcpConfigFromConnection is synchronous and takes a three-field row with no id or ' +
     'organizationId, so it cannot name the credential it read. Audited one level up, at ' +

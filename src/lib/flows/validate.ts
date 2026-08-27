@@ -791,7 +791,9 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     // identical calls — the hardcoded-ID bug (a Slack read wired per-account
     // but pinned to one channel). `over` itself is excluded: it names the
     // list, not the item. {{input}} counts — inside a fan-out it IS the item.
-    const { perItem: _overOnly, ...restData } = node.data as Record<string, unknown>
+    const restData = Object.fromEntries(
+      Object.entries(node.data as Record<string, unknown>).filter(([key]) => key !== 'perItem'),
+    )
     const rendered = JSON.stringify(restData)
     if (!/\{\{\s*(item|input|loop)\s*[.}]/.test(rendered)) {
       add(issues, 'warning', 'PER_ITEM_STATIC_ARGS', `${nodeLabel(node)} runs once per item but never uses the current item — every run will be identical. Pick a value from "Current item" in the data menu.`, node.id)

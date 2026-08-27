@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { FlowGraph } from '../graph'
-import { validateFlowGraph, validationErrorMessage } from '../validate'
+import { validateFlowGraph } from '../validate'
 import { flowGraphSchema } from '../graph'
 
 // Value-level checker rules (WS2 flow-gap-closure). Kept in their own file:

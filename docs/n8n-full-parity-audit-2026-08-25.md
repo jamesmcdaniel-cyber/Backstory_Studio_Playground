@@ -78,9 +78,9 @@ Credential assessments are similarly conservative: 36 overlap with a curated pro
 The current source disproves several earlier conclusions:
 
 - **The editor is no longer chain-only.** `src/components/flows/canvas/graph-canvas.tsx` provides a free-positioned React Flow graph with manual edges, multi-select, copy/paste, minimap, zoom, fit, tidy layout, disconnected nodes, and live collaboration state.
-- **Execution is not generally inline.** `src/features/flows/execute-flow.ts`, `src/lib/queue`, and `src/lib/workers/runtime.ts` use BullMQ and a worker in normal deployment. The remaining inline durability gap is specifically the synchronous last-node webhook response path.
+- **Execution is not generally inline.** `src/features/flows/execute-flow.ts`, `src/lib/queue`, and `src/lib/workers/runtime.ts` use BullMQ and a worker in normal deployment. As of 2026-08-27, last-node webhooks also enqueue durably, wait only for a bounded fast-path result, and return a protected polling URL when still running.
 - **A real definition review gate exists.** `FlowReview`, review routes, graph fingerprints, second-person approval, and the publish gate are implemented.
-- **Backstory now serves MCP.** `src/app/api/mcp/route.ts` exposes published flows and run polling as MCP tools. Its protocol and management breadth remain partial.
+- **Backstory now serves MCP.** `src/app/api/mcp/route.ts` exposes published flows and run polling as MCP tools. As of 2026-08-27 it is dual-era: stateless `2026-07-28` discovery/header validation plus legacy initialization-based Streamable HTTP revisions. Its management-tool breadth remains partial.
 - **The agent system is not one file pretending to match a module.** It has durable transcripts, resume, model fallbacks, memory, tools, approvals, subagents, budgets, egress policy, replay protection, chat sessions, schedules, and Slack bindings. It still does not match the full n8n agent platform.
 - **Breaking changes are not “95 rules.”** The audited n8n module contains 96 files but 36 rule files and one automatic migration (`ai-transform-to-code`). File count was previously confused with rule count.
 - **n8n engine-v2 is not the stable parity target.** At this commit it is experimental, does not support queue mode, and still has credential/admission TODOs. Stable n8n execution behavior remains the benchmark.
@@ -119,7 +119,7 @@ n8n's data proxy supplies a much broader execution environment with JavaScript e
 
 Backstory's queued execution, graph snapshots, step persistence, wait/resume, immutable dependency manifest, side-effect ledger, idempotent scheduling claims, and cancellation state are strong. The dependency manifest and cross-tool side-effect replay ledger are areas where Backstory is ahead of the comparable n8n surface inspected.
 
-The public webhook's default last-node response path still waits on `runFlowExecution` inline so it can return the output on the same request. A request timeout or serverless lifetime can therefore strand the synchronous caller even though other execution paths are queued. n8n separates webhook and worker responsibilities and has response routing infrastructure for this case.
+Closed 2026-08-27: the public webhook's default last-node response path creates and queues the run before waiting. A fast completion is returned on the same request; otherwise the caller receives `202` and a trigger-secret-protected result URL. Request termination can no longer strand execution in the web process.
 
 ### 5. Version compatibility is only scaffolded
 
@@ -247,7 +247,7 @@ Backstory's copilot grounds the current graph, validation, roster, and tool cata
 
 n8n's Instance AI spans backend, shared package, and editor modules. It has domain tools for workflows, executions, credentials, Data Tables, workspace research, documentation, nodes, files, testing, and building; task/checkpoint orchestration; credential binding; workflow SDK generation; and verification/simulation loops.
 
-Therefore the correct result is partial flow editing, not Instance AI parity. A separate internal Backstory issue also exists: the copilot's operation/type allowlists do not expose every native graph type consistently, including `wait`, `note`, and parts of the `code` contract.
+Therefore the correct result is partial flow editing, not Instance AI parity. The internal native-type allowlist mismatch was closed on 2026-08-27: `wait` and `note` are now grounded and accepted by copilot operations alongside the existing code contract. The broader Instance AI orchestration/verification gap remains.
 
 Computer Use is also a real, separate gap rather than an off-mission filename. n8n includes `@n8n/computer-use`, an Electron local gateway, a browser extension, WebSocket/CDP relays, capability negotiation, and Instance AI prompts/guards for filesystem, shell, browser, screenshot, and mouse/keyboard tools. Backstory has no user-device gateway or browser-automation runtime. Airtop remains a separate declared browser-automation integration node and is classified as generic fallback only in the node inventory.
 
@@ -259,14 +259,11 @@ Backstory has agent chat sessions and messages. n8n Chat Hub additionally provid
 
 Backstory is a capable MCP client. It supports server discovery, Streamable HTTP consumption, tool schemas, verification/health, API keys, OAuth client credentials, OAuth authorization code with PKCE, token refresh, encrypted secrets, and SSRF protection.
 
-Its MCP server is much narrower:
+Its MCP server's management surface is much narrower. The core transport gap was closed on 2026-08-27 with a dual-era endpoint that validates modern per-request metadata and routing headers, implements `server/discover`, advertises private cache lifetimes, and preserves legacy initialization clients. Remaining differences are:
 
-- fixed protocol `2024-11-05` rather than n8n's audited `2026-07-28` server revision with compatibility handling;
-- plain JSON-RPC POST rather than the fuller Streamable HTTP/session behavior;
-- no protocol routing headers used by n8n for gateways and policy;
 - only published-flow tools plus `get_flow_run`;
 - no folders, projects, workflow CRUD, versions/diffs/restore, credential listing/assignment, node exploration, validation, testing, Data Tables, agent references, skills, or instance settings tools;
-- no per-workflow `availableInMCP`, instance redirect settings, or comparable MCP scopes/settings product.
+- per-workflow `availableInMcp` exists, but instance redirect settings and a broader MCP-specific scope/settings product do not.
 
 ## Platform module findings
 

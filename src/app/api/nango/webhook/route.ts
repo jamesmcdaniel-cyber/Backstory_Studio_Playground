@@ -10,6 +10,7 @@ import { providerSignalOutboxEvent } from '@/lib/outbox'
 import { normalizeNangoForward } from '@/lib/activity/normalize'
 import { clientIp, recordTokenRejection } from '@/lib/security/events'
 import { rateLimit } from '@/lib/ratelimit'
+import { readRequestTextLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 
 export const runtime = 'nodejs'
 
@@ -33,6 +34,7 @@ export const runtime = 'nodejs'
  */
 const ADMISSION_LIMIT = { limit: 600, windowMs: 60_000, failureMode: 'closed' } as const
 const REJECTED_LIMIT = { limit: 30, windowMs: 60_000, failureMode: 'closed' } as const
+const NANGO_WEBHOOK_MAX_BODY_BYTES = 2_000_000
 
 function tooMany(retryAfterMs?: number) {
   return NextResponse.json(
@@ -69,7 +71,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, skipped: 'nango-unconfigured' })
   }
 
-  const raw = await request.text()
+  let raw: string
+  try {
+    raw = await readRequestTextLimited(request, NANGO_WEBHOOK_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return requestBodyErrorResponse(error)
+    throw error
+  }
   const headers: Record<string, string> = {}
   request.headers.forEach((value, key) => {
     headers[key] = value

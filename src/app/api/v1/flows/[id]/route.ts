@@ -5,6 +5,9 @@ import { prisma } from '@/lib/prisma'
 import { authenticatePublicApi, publicApiJson } from '@/lib/public-api/auth'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { recordAudit } from '@/lib/audit'
+import { readRequestJsonLimited, RequestBodyError } from '@/lib/server/request-body'
+
+const PUBLIC_FLOW_PACKAGE_MAX_BODY_BYTES = 4_000_000
 
 function idOf(request: Request) {
   return new URL(request.url).pathname.split('/').at(-1) ?? ''
@@ -27,7 +30,14 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   const auth = await authenticatePublicApi(request, 'flows:write')
   if (auth instanceof Response) return auth
-  const parsed = nativeFlowPackageSchema.safeParse(await request.json().catch(() => null))
+  let raw: unknown
+  try {
+    raw = await readRequestJsonLimited(request, PUBLIC_FLOW_PACKAGE_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return publicApiJson({ error: { code: error.code, message: error.message } }, error.status)
+    throw error
+  }
+  const parsed = nativeFlowPackageSchema.safeParse(raw)
   if (!parsed.success) return publicApiJson({ error: { code: 'INVALID_PACKAGE', message: 'Expected a backstory.flow.v1 package.', issues: parsed.error.issues } }, 400)
   const id = idOf(request)
   const trigger = triggerFromGraph(parsed.data.flow.graph)

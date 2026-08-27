@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { consumerVerdict, deadLetterVerdict } from '../consumer-probe'
+import { consumerVerdict, deadLetterVerdict, queuePressureVerdict, QUEUE_BACKLOG_AGE_ALERT_MS, QUEUE_BACKLOG_COUNT_ALERT } from '../consumer-probe'
 
 const report = (queue: string, workers: number, waiting: number, active = 0) => ({ queue, workers, waiting, active })
 
@@ -47,6 +47,24 @@ test('fresh heartbeat overrides a zero worker count — CLIENT LIST on managed R
 
 test('fresh heartbeat does not rescue an unreadable probe (no reports)', () => {
   assert.equal(consumerVerdict([], true).ok, false)
+})
+
+test('queue-specific heartbeat cannot hide an unserved batch queue', () => {
+  const verdict = consumerVerdict(
+    [report('flow-execution', 0, 1), report('model-bench', 0, 1)],
+    { 'flow-execution': true, 'model-bench': false },
+  )
+  assert.equal(verdict.ok, false)
+  assert.deepEqual(verdict.stranded, ['model-bench'])
+})
+
+test('queue pressure reports either excessive depth or an old waiting job', () => {
+  const pressure = queuePressureVerdict([
+    { ...report('flow-execution', 2, QUEUE_BACKLOG_COUNT_ALERT), oldestWaitingAgeMs: 1_000 },
+    { ...report('agent-execution', 2, 1), oldestWaitingAgeMs: QUEUE_BACKLOG_AGE_ALERT_MS },
+  ])
+  assert.deepEqual(pressure.queues, ['flow-execution', 'agent-execution'])
+  assert.match(pressure.reason ?? '', /oldest/)
 })
 
 test('stale heartbeat falls back to the registered-consumer verdict', () => {

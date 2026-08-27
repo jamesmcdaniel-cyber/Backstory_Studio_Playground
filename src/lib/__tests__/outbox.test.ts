@@ -1,11 +1,33 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { flowSignalOutboxEvent, providerSignalOutboxEvent, activityDispatchOutboxEvent, outboxRetryDelayMs } from '../outbox'
+import { flowSignalOutboxEvent, providerSignalOutboxEvent, activityDispatchOutboxEvent, flowResumeOutboxEvent, outboxRetryDelayMs } from '../outbox'
 
 test('outbox retry delay backs off exponentially and caps at one hour', () => {
   assert.equal(outboxRetryDelayMs(1), 1_000)
   assert.equal(outboxRetryDelayMs(4), 8_000)
   assert.equal(outboxRetryDelayMs(99), 3_600_000)
+})
+
+test('flow resume callbacks become encrypted, deduplicated outbox deliveries', () => {
+  const previous = process.env.ENCRYPTION_KEY
+  process.env.ENCRYPTION_KEY = 'outbox-test-key-not-a-production-secret'
+  try {
+    const event = flowResumeOutboxEvent({
+      organizationId: 'org-1',
+      flowId: 'flow-1',
+      flowRunId: 'run-1',
+      userId: 'user-1',
+      resumeTokenHash: 'hash-1',
+      reply: '{"approved":true}',
+    })
+    assert.equal(event.topic, 'flow.resume')
+    assert.equal(event.aggregateId, 'run-1')
+    assert.equal(event.dedupeKey, 'flow-resume:run-1:hash-1')
+    assert.notEqual((event.payload as { encryptedReply: string }).encryptedReply, '{"approved":true}')
+  } finally {
+    if (previous === undefined) delete process.env.ENCRYPTION_KEY
+    else process.env.ENCRYPTION_KEY = previous
+  }
 })
 
 test('flow signal outbox rows are tenant scoped and deduplicated', () => {

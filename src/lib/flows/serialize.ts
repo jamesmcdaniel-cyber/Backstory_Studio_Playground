@@ -24,8 +24,9 @@ export type FlowViewerAccess = { role: 'edit' | 'view'; external: boolean; inclu
  */
 function publicTrigger(trigger: unknown): unknown {
   if (!trigger || typeof trigger !== 'object' || Array.isArray(trigger)) return { type: 'manual' }
-  const { webhookSecretHash: _hash, ...rest } = trigger as Record<string, unknown>
-  return rest
+  return Object.fromEntries(
+    Object.entries(trigger as Record<string, unknown>).filter(([key]) => key !== 'webhookSecretHash'),
+  )
 }
 
 /** Wire shape for a flow, shared by the list page and the builder. */

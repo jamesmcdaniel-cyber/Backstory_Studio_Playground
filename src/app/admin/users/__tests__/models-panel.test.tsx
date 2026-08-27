@@ -2,7 +2,7 @@ import '@/test-support/jsdom-env'
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import React from 'react'
-import { render, cleanup, screen, waitFor } from '@testing-library/react'
+import { act, render, cleanup, screen, waitFor } from '@testing-library/react'
 import { ModelsPanel } from '@/app/admin/users/models-panel'
 
 /**
@@ -59,9 +59,13 @@ test('benchRunning: null keeps the quiet poll alive', async (t) => {
   stubModelsApi(null, () => { calls += 1 })
 
   render(<ModelsPanel days={30} />)
-  await waitFor(() => assert.equal(calls, 1))
+  // The first fetch resolving is earlier than React committing the report and
+  // installing the report-dependent interval. Wait for that committed UI, not
+  // merely the fetch counter, before advancing the mocked clock.
+  await screen.findByText(/status unknown/i)
+  assert.equal(calls, 1)
 
-  t.mock.timers.tick(15_000)
+  await act(async () => { t.mock.timers.tick(15_000) })
   // Generous real-time bound: this only waits on a promise microtask chain
   // (fetch stub -> setState -> rerender), but the full suite runs ~110 test
   // files concurrently across 10 cores, and CPU contention at that scale can

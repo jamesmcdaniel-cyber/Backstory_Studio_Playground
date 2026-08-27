@@ -10,6 +10,7 @@ import { clientIp, recordSecurityEvent } from '@/lib/security/events'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { recordPresence } from '@/lib/server/presence'
 import { CircuitOpenError } from '@/lib/resilience/circuit-breaker'
+import { boundedNextRequest, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 
 /**
  * Default write budget, per user per minute, applied to every mutating request.
@@ -115,6 +116,7 @@ export function withAuthenticatedApi(
     // Held outside the try so the catch can attribute a 403 to the account that
     // earned it. A 401 never reaches this — there is no identity to record.
     let authContext: AuthContext | null = null
+    let handlerRequest = request
     const where = { path: request.nextUrl.pathname, method: request.method, ip: clientIp(request) }
 
     try {
@@ -122,22 +124,23 @@ export function withAuthenticatedApi(
         return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
       }
 
-      // Before auth: an oversized body is refused without doing session work
-      // for it, and the check reads a header rather than the stream, so it
-      // cannot consume the body the handler is about to parse.
+      // Before auth: read through an actual byte ceiling, then rebuild the
+      // request for the handler. Content-Length alone is only a hint: chunked,
+      // omitted, and falsified lengths must meet the same application limit.
       const bodyLimit = options?.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
       if (bodyLimit !== false && !READ_METHODS.has(request.method)) {
-        const declared = Number(request.headers.get('content-length'))
-        if (Number.isFinite(declared) && declared > bodyLimit) {
-          await recordSecurityEvent({
-            ...where,
-            kind: 'abuse.body_too_large',
-            detail: { declaredBytes: declared, limitBytes: bodyLimit },
-          })
-          return NextResponse.json(
-            { success: false, error: 'Request body is too large.', code: 'BODY_TOO_LARGE' },
-            { status: 413 },
-          )
+        try {
+          handlerRequest = await boundedNextRequest(request, bodyLimit)
+        } catch (error) {
+          if (!(error instanceof RequestBodyError)) throw error
+          if (error.code === 'BODY_TOO_LARGE') {
+            await recordSecurityEvent({
+              ...where,
+              kind: 'abuse.body_too_large',
+              detail: { code: error.code, limitBytes: bodyLimit },
+            })
+          }
+          return requestBodyErrorResponse(error)
         }
       }
 
@@ -186,7 +189,7 @@ export function withAuthenticatedApi(
       // above already decided the caller may be here, and PostgreSQL's policy
       // is still what enforces.
       const result = await ambientOrganization.run(auth.organizationId, () =>
-        handler(request, auth, context),
+        handler(handlerRequest, auth, context),
       )
 
       return result instanceof Response ? result : NextResponse.json(result)

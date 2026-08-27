@@ -14,10 +14,10 @@ Backstory Studio is a focused AI-agent workspace: create agents, connect tools, 
 - Next.js App Router owns the UI and authenticated API routes.
 - Supabase owns user authentication.
 - Prisma/PostgreSQL stores tenants, agents, executions, tool events, templates, and connection state.
-- One Fastify/BullMQ worker runtime executes manual and scheduled agents.
+- Fastify/BullMQ workers execute agent and flow runs across interactive and batch queue pools.
 - Nango provides connected accounts and the provider APIs called by agents.
 - Custom MCP servers can be added separately for specialized tools.
-- OpenAI (default) or Anthropic plans tool calls and answers follow-up questions about completed runs.
+- Claude and/or a Qwen Anthropic-compatible endpoint plan tool calls and answer follow-up questions.
 
 ## Editions
 

@@ -26,3 +26,10 @@ test('flowJobOptions: an outbox delivery gets a stable queue id', () => {
     attempts: 1,
   })
 })
+
+test('flowJobOptions: outbox identity wins for a durably handed-off resume', () => {
+  assert.deepEqual(flowJobOptions('run-1', undefined, 'resume-event-1', 1000), {
+    jobId: 'delivery-resume-event-1',
+    attempts: 1,
+  })
+})

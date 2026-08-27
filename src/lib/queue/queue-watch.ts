@@ -55,7 +55,7 @@
  * something happens to redeliver the same event again; this sweep finds a
  * stranded claim on its own cron cadence even if nothing ever does.
  */
-import { probeQueueConsumers, type QueueConsumerCheck } from './consumer-probe'
+import { probeQueueConsumers, queuePressureVerdict, type QueueConsumerCheck } from './consumer-probe'
 import { STALE_CLAIM_MS } from '@/lib/activity/dispatch'
 import { cacheGet, cacheGetNumber, cacheSet, cacheDelete } from '@/lib/cache'
 import { systemPrisma } from '@/lib/prisma'
@@ -72,6 +72,7 @@ export const QUEUE_WATCH_COOLDOWN_MS = Number(process.env.QUEUE_WATCH_COOLDOWN_M
 const COOLDOWN_KEYS = {
   consumerLoss: 'queue-watch:alert-cooldown:consumer-loss',
   deadLetters: 'queue-watch:alert-cooldown:dead-letters',
+  queuePressure: 'queue-watch:alert-cooldown:queue-pressure',
   strandedActivityClaims: 'queue-watch:alert-cooldown:stranded-activity-claims',
 } as const
 
@@ -158,6 +159,14 @@ export function deadLettersReason(check: QueueConsumerCheck): string | null {
   return `${check.deadLetters.total} job(s) in dead-letter queue(s): ${check.deadLetters.queues.join(', ')}`
 }
 
+/** Backlog growth with live consumers: queue depth and oldest-job age catch
+ * capacity exhaustion before it becomes consumer loss or dead-lettering. */
+export function queuePressureReason(check: QueueConsumerCheck): string | null {
+  if (!check.configured || !check.reports) return null
+  const pressure = queuePressureVerdict(check.reports)
+  return pressure.reason ? `queue backlog pressure — ${pressure.reason}` : null
+}
+
 /**
  * Pure verdict: has the dead-letter backlog GROWN since the last tick, and by
  * how much — the alertable edge for a condition whose level never recovers on
@@ -199,7 +208,7 @@ export function strandedActivityClaimsReason(count: number): string | null {
  * about."
  */
 export function queueWatchReason(check: QueueConsumerCheck): string | null {
-  const reasons = [consumerLossReason(check), deadLettersReason(check)].filter((r): r is string => Boolean(r))
+  const reasons = [consumerLossReason(check), queuePressureReason(check), deadLettersReason(check)].filter((r): r is string => Boolean(r))
   return reasons.length > 0 ? reasons.join('; ') : null
 }
 
@@ -291,6 +300,7 @@ export async function runQueueWatch(overrides: Partial<QueueWatchDeps> = {}): Pr
   const strandedClaimCount = await deps.countStrandedActivityClaims().catch(() => 0)
 
   const consumerReason = consumerLossReason(check)
+  const pressureReason = queuePressureReason(check)
   // Level (does a backlog exist?) and edge (did it grow?) are different
   // questions for this condition — the first is what we REPORT, the second is
   // the only thing worth NOTIFYING about. See the file header.
@@ -301,6 +311,12 @@ export async function runQueueWatch(overrides: Partial<QueueWatchDeps> = {}): Pr
 
   const queueDetail = { stranded: check.stranded, deadLetters: check.deadLetters, heartbeat: check.heartbeat }
   const consumerAlerted = await watchCondition(consumerReason, COOLDOWN_KEYS.consumerLoss, queueDetail, deps)
+  const pressureAlerted = await watchCondition(
+    pressureReason,
+    COOLDOWN_KEYS.queuePressure,
+    { ...queueDetail, reports: check.reports },
+    deps,
+  )
   const dlqAlerted = await watchCondition(
     dlqGrowthReason,
     COOLDOWN_KEYS.deadLetters,
@@ -322,10 +338,10 @@ export async function runQueueWatch(overrides: Partial<QueueWatchDeps> = {}): Pr
     deps,
   )
 
-  const reasons = [consumerReason, dlqReason, strandedClaimsReason].filter((r): r is string => Boolean(r))
+  const reasons = [consumerReason, pressureReason, dlqReason, strandedClaimsReason].filter((r): r is string => Boolean(r))
   return {
     unhealthy: reasons.length > 0,
-    alerted: consumerAlerted || dlqAlerted || strandedClaimsAlerted,
+    alerted: consumerAlerted || pressureAlerted || dlqAlerted || strandedClaimsAlerted,
     reason: reasons.length > 0 ? reasons.join('; ') : undefined,
     check,
   }

@@ -30,8 +30,12 @@
 export type FlowQueueDecision = { jobId?: string; attempts?: number }
 
 export function flowJobOptions(flowRunId: string | undefined, preparedRunId?: string, deliveryId?: string, now: number = Date.now()): FlowQueueDecision {
+  // An outbox delivery must win over the resume's time-based id: if Queue.add
+  // succeeds but its acknowledgement is lost, the outbox retry presents the
+  // same id and BullMQ returns the existing job instead of enqueueing a second
+  // resume attempt.
+  if (deliveryId) return { jobId: `delivery-${deliveryId}`, attempts: 1 }
   if (flowRunId) return { jobId: `${flowRunId}-resume-${now}` }
   if (preparedRunId) return { jobId: `${preparedRunId}-start`, attempts: 1 }
-  if (deliveryId) return { jobId: `delivery-${deliveryId}`, attempts: 1 }
   return { attempts: 1 }
 }

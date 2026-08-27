@@ -107,12 +107,20 @@ if (TEST_DB) {
     const run = await makeWaitingRun(token)
 
     const first = await post(run.id, `?token=${token}`)
-    assert.equal(first.status, 200, await first.text())
+    assert.equal(first.status, 202, await first.text())
 
     const consumed = await prisma.flowRun.findFirst({
       where: { id: run.id, organizationId: seeded.organizationId },
     })
     assert.equal(consumed.resumeTokenHash, null, 'the token must be consumed on delivery')
+    const handoff = await prisma.outboxEvent.findFirst({
+      where: { organizationId: seeded.organizationId, topic: 'flow.resume', aggregateId: run.id },
+    })
+    assert.equal(handoff?.status, 'pending', 'the callback survives independently of queue availability')
+    assert.ok(
+      typeof handoff?.payload === 'object' && handoff?.payload && !JSON.stringify(handoff.payload).includes('approved'),
+      'the callback body is encrypted at rest in the outbox',
+    )
 
     // Replaying the exact same callback must not drive the flow a second time.
     const replay = await post(run.id, `?token=${token}`)
@@ -129,6 +137,6 @@ if (TEST_DB) {
         body: JSON.stringify({ approved: true }),
       }),
     )
-    assert.equal(response.status, 200, await response.text())
+    assert.equal(response.status, 202, await response.text())
   })
 }

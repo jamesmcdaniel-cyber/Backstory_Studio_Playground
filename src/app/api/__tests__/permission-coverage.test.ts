@@ -47,3 +47,21 @@ test('every wrapped route declares the permission it needs', () => {
 
   assert.deepEqual(missing, [], `these routes are authenticated but declare no permission: ${missing.join(', ')}`)
 })
+
+test('raw ingress routes never use unbounded Request body parsers', () => {
+  const unsafe = files
+    .filter((file) => {
+      const source = readFileSync(file, 'utf8')
+      return (
+        !source.includes('withAuthenticatedApi(') &&
+        /request\.(?:json|text|arrayBuffer|formData)\(/.test(source)
+      )
+    })
+    .map(relative)
+
+  assert.deepEqual(
+    unsafe,
+    [],
+    `raw routes must use request-body.ts's streamed byte ceiling: ${unsafe.join(', ')}`,
+  )
+})

@@ -2,8 +2,10 @@ import { z } from 'zod'
 import type { UserRole } from '@prisma/client'
 import { authenticateScim, scimError, scimJson } from '@/lib/scim/server'
 import { systemPrisma } from '@/lib/prisma'
+import { readRequestJsonLimited, RequestBodyError } from '@/lib/server/request-body'
 
 const GROUP_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:Group'
+const SCIM_MAX_BODY_BYTES = 256_000
 const roleFor = (request: Request): UserRole | null => {
   const value = new URL(request.url).pathname.split('/').at(-1)?.toUpperCase()
   return value === 'ADMIN' || value === 'USER' || value === 'VIEWER' ? value : null
@@ -26,7 +28,14 @@ export async function PATCH(request: Request) {
   if (auth instanceof Response) return auth
   const role = roleFor(request)
   if (!role) return scimError('Group not found.', 404)
-  const parsed = z.object({ Operations: z.array(z.object({ op: z.string(), value: z.unknown().optional() })) }).safeParse(await request.json().catch(() => null))
+  let raw: unknown
+  try {
+    raw = await readRequestJsonLimited(request, SCIM_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return scimError(error.message, error.status)
+    throw error
+  }
+  const parsed = z.object({ Operations: z.array(z.object({ op: z.string(), value: z.unknown().optional() })) }).safeParse(raw)
   if (!parsed.success) return scimError('Invalid group patch.', 400)
   for (const operation of parsed.data.Operations) {
     const values = Array.isArray(operation.value) ? operation.value : []

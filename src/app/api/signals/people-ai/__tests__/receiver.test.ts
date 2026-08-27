@@ -1,6 +1,5 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import crypto from 'node:crypto'
 
 const TEST_DB = process.env.TEST_DATABASE_URL
 const ENABLED = Boolean(TEST_DB)

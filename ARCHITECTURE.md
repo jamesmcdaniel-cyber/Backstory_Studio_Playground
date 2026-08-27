@@ -2,14 +2,14 @@
 
 ## Runtime Boundary
 
-There are two runtimes:
+There are two runtime roles:
 
 1. **Next.js**: pages, authentication, CRUD APIs, integration management, execution inspection, and external trigger endpoints.
-2. **Worker**: one Fastify process with BullMQ consumers for manual, scheduled, webhook-triggered, and resumed agent runs.
+2. **Worker**: Fastify processes with BullMQ consumers. The internal edition has three interactive queues (manual agents, scheduled agents, flows) and three batch queues (template generation, model bench, activity backfill). `WORKER_POOL=interactive|batch|all` permits separate scaling; the customer edition has only the interactive queues.
 
 Both runtimes report errors through `src/lib/observability/sentry.ts`; the worker initializes it at boot (tagged `process: worker`) and flushes on shutdown.
 
-Nango owns connected accounts and proxies provider API calls for agent-facing tools; organizations can also add custom MCP servers. Model access goes through `src/lib/llm/model-runner.ts`, which routes `claude-*` models to the Anthropic SDK and everything else to OpenAI, and falls back to whichever provider's key is configured so a run never hard-fails on a missing vendor. Defaults are OpenAI: the agent model is `AGENT_MODEL` (default `gpt-4o`) and cheap surfaces (run Q&A, activity headlines, the natural-language agent builder) use `SUMMARY_MODEL` (default `gpt-4o-mini`). Set a `claude-*` model plus `ANTHROPIC_API_KEY` to use Anthropic.
+Nango owns connected accounts and proxies provider API calls for agent-facing tools; organizations can also add custom MCP servers. Model access goes through `src/lib/llm/model-runner.ts`, which uses the Anthropic Messages API directly for Claude and through DashScope's compatible endpoint for Qwen. `AGENT_MODEL` defaults to `claude-sonnet-5`, `SUMMARY_MODEL` to `claude-haiku-4-5`, and a deployment may configure Anthropic, Qwen, or both for cross-endpoint fallback. Worker boot refuses to consume jobs when neither provider is complete.
 
 ## Agent Execution
 
@@ -23,16 +23,19 @@ Nango owns connected accounts and proxies provider API calls for agent-facing to
 
 ## Flow Execution
 
-Flows execute inline in the calling process today (`runFlowExecution` in `src/features/flows/execute-flow.ts`) via the same routes agents use for triggering (manual execute, webhook trigger, cron dispatch, reply, approval decision). A resume (a reply or approval decision reaching a paused run) atomically claims the run — only a `waiting` run may be resumed — and pins execution to the exact graph the run started with (`FlowRun.graphSnapshot`), never the flow's current definition. Loop/parallel bodies persist each iteration's step outputs under per-iteration keys (`nodeId#index`), so a pause mid-loop resumes from its cursor instead of re-running prior iterations' side effects; the main-chain path keeps bare `nodeId` keys. A `flow-execution` BullMQ queue and worker exist (`dispatchFlowExecution`/`executeFlowJob`) but are not yet wired into any caller — flows still run inline everywhere in practice.
+Flows normally execute through the `flow-execution` BullMQ queue. Every run pins the graph it started with in `FlowRun.graphSnapshot`; loop/parallel bodies persist iteration outputs under `nodeId#index`, so a pause resumes from its cursor without repeating earlier side effects. Reply/approval resume callbacks consume their one-time token and write an encrypted outbox command in the same database transaction. The outbox then dispatches a stable, delivery-idempotent queue job, so a Redis outage cannot consume the callback without preserving the work.
+
+Webhook `lastNode` response mode also uses the durable queue. It waits for a bounded fast-path result and otherwise returns `202` with a trigger-secret-protected result URL. No flow execution remains attached to an unbounded serverless request.
 
 ## Shared Server Utilities
 
 - `src/lib/prisma.ts`: process-wide Prisma client
 - `src/lib/server/auth.ts`: required Supabase user and tenant context
 - `src/lib/server/api-handler.ts`: authenticated API wrapper and consistent errors
+- `src/lib/server/request-body.ts`: streamed byte ceilings, UTF-8/JSON parsing, and read deadlines
 - `src/lib/supabase/middleware.ts`: session refresh and page protection
 
-All tenant data queries must include `organizationId` — enforced at runtime by a tenant guard on the shared Prisma client (`src/lib/tenant-guard.ts`): org-carrying models refuse reads/updates/deletes whose `where` lacks `organizationId`. Enumerated system-wide paths (cron sweeps, reapers, tenant resolution, worker-internal id-keyed writes) use the unguarded `systemPrisma` export, each with a justification comment. The only session-less API route is the agent trigger endpoint, which authenticates with a per-agent secret.
+All tenant data queries must include `organizationId` — enforced at runtime by a tenant guard on the shared Prisma client (`src/lib/tenant-guard.ts`): org-carrying models refuse reads/updates/deletes whose `where` lacks `organizationId`. Enumerated system-wide paths (cron sweeps, reapers, tenant resolution, worker-internal id-keyed writes) use the unguarded `systemPrisma` export, each with a justification comment. Routes without a Supabase session (webhooks, SCIM, public API, and MCP) each use their own bearer/signature/trigger-secret admission path and tenant resolution.
 
 People.ai webhook deliveries are verified per-tenant: each organization has its own signing secret (`Organization.peopleAiWebhookSecret`, encrypted at rest), minted at connect time and rotatable by an org admin (`/api/peopleai/webhook-secret`); an org with a secret never accepts the global fallback secret.
 
@@ -46,7 +49,7 @@ Knowledge and agent-memory retrieval rank in-database with pgvector: each carrie
 
 ## Testing
 
-Most logic is unit-tested with `node:test` (`npm test`). API routes are additionally smoke-tested end to end: `src/app/api/__tests__/route-smoke.test.ts` invokes each `withAuthenticatedApi`-wrapped GET handler (all but three that require an external service, which are explicitly skipped) against a seeded test DB — via a production-inert auth seam in `src/lib/server/auth.ts` (`setTestAuthContext`, gated on `NODE_ENV !== 'production' && TEST_DATABASE_URL`) — and fails on any 5xx. A completeness self-check enumerates the route tree and fails if a `withAuthenticatedApi` GET route is added without a case or a documented skip, so the net can't silently rot. This is the regression net for unscoped-query / tenant-guard failures (the class that caused a production incident on 2026-07-10). It runs in CI, where `TEST_DATABASE_URL` is set against the pgvector Postgres image. (Session-auth GET routes that read `getAuthWithUser()` directly — `peopleai/*` — are outside the seam's reach and not covered; see the WS-R6 plan.)
+Most logic is unit-tested with `node:test` (`npm test`). API routes are additionally smoke-tested against a seeded pgvector Postgres database. Coverage tests enumerate the route tree and require each route to declare its auth/permission treatment; another static guard prevents raw routes from reintroducing direct, unbounded body parsers. CI also boots the real worker against Redis/Postgres, audits dependencies, applies migrations from zero, checks schema drift, runs CodeQL and gitleaks, and builds the production bundle.
 
 ## Known follow-ups (tracked tech debt)
 

@@ -33,6 +33,7 @@ export const UNGATED_ROUTES: readonly string[] = [
   'slack/oauth/callback',                 // OAuth redirect, validated by the encrypted state cookie
   'flows/[id]/trigger',                   // per-flow trigger token
   'flows/[id]/runs/[runId]/resume',       // per-run resume token
+  'flows/[id]/runs/[runId]/webhook-result', // per-flow trigger token; bounded result polling
   'signals/people-ai',                    // HMAC-signed webhook
   'nango/webhook',                        // HMAC-signed webhook
   'slack/events',                         // HMAC-signed webhook (per-workspace Slack signing secret)

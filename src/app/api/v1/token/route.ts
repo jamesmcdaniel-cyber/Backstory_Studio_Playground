@@ -15,8 +15,10 @@
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp, recordTokenRejection, requestPath, recordSecurityEvent } from '@/lib/security/events'
 import { exchangeClientCredentials, type ExchangeFailure } from '@/lib/public-api/client-credentials'
+import { readRequestTextLimited, RequestBodyError } from '@/lib/server/request-body'
 
 export const runtime = 'nodejs'
+const TOKEN_REQUEST_MAX_BODY_BYTES = 32_000
 
 function tokenError(error: string, description: string, status: number): Response {
   return Response.json(
@@ -62,7 +64,14 @@ export async function POST(request: Request): Promise<Response> {
     return tokenError('invalid_request', 'Too many token requests.', 429)
   }
 
-  const { clientId, clientSecret, grantType, scope } = await readCredentials(request)
+  let credentials: Awaited<ReturnType<typeof readCredentials>>
+  try {
+    credentials = await readCredentials(request)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return tokenError('invalid_request', error.message, error.status)
+    throw error
+  }
+  const { clientId, clientSecret, grantType, scope } = credentials
 
   if (grantType !== 'client_credentials') {
     return tokenError('unsupported_grant_type', 'Only client_credentials is supported.', 400)
@@ -109,10 +118,12 @@ async function readCredentials(request: Request): Promise<{
   let body: URLSearchParams
   try {
     const contentType = request.headers.get('content-type') ?? ''
+    const raw = await readRequestTextLimited(request, TOKEN_REQUEST_MAX_BODY_BYTES)
     body = contentType.includes('application/json')
-      ? new URLSearchParams(Object.entries((await request.json()) as Record<string, string>))
-      : new URLSearchParams(await request.text())
-  } catch {
+      ? new URLSearchParams(Object.entries(JSON.parse(raw) as Record<string, string>))
+      : new URLSearchParams(raw)
+  } catch (error) {
+    if (error instanceof RequestBodyError) throw error
     body = new URLSearchParams()
   }
 

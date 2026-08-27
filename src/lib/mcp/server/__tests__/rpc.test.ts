@@ -2,13 +2,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   MCP_PROTOCOL_VERSION,
+  MCP_LEGACY_PROTOCOL_VERSION,
   RPC_INVALID_REQUEST,
   initializeResult,
+  discoveryResult,
   isNotification,
   parseRpcRequest,
   rpcError,
   rpcResult,
   toolResult,
+  validateMcpTransport,
 } from '@/lib/mcp/server/rpc'
 
 /**
@@ -58,9 +61,55 @@ test('responses carry the id they answer, including a null one', () => {
 
 test('the handshake advertises tools and a protocol version', () => {
   const result = initializeResult('backstory', '1.0.0')
-  assert.equal(result.protocolVersion, MCP_PROTOCOL_VERSION)
+  assert.equal(result.protocolVersion, MCP_LEGACY_PROTOCOL_VERSION)
   assert.deepEqual(result.capabilities.tools, { listChanged: false })
   assert.equal(result.serverInfo.name, 'backstory')
+})
+
+test('legacy initialization echoes a supported requested revision', () => {
+  assert.equal(initializeResult('backstory', '1', '2025-06-18').protocolVersion, '2025-06-18')
+  assert.equal(initializeResult('backstory', '1', 'unknown').protocolVersion, MCP_LEGACY_PROTOCOL_VERSION)
+})
+
+test('modern discovery advertises both stateless and legacy compatibility', () => {
+  const result = discoveryResult('backstory', '1')
+  assert.equal(result.supportedVersions[0], MCP_PROTOCOL_VERSION)
+  assert.equal(result.cacheScope, 'private')
+})
+
+test('modern transport metadata is required to agree across headers and body', () => {
+  const request = parseRpcRequest({
+    jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: {
+      name: 'my_flow',
+      _meta: { 'io.modelcontextprotocol/protocolVersion': MCP_PROTOCOL_VERSION },
+    },
+  })
+  assert.notEqual(typeof request, 'string')
+  const valid = validateMcpTransport(request as never, new Headers({
+    accept: 'application/json, text/event-stream',
+    'mcp-protocol-version': MCP_PROTOCOL_VERSION,
+    'mcp-method': 'tools/call',
+    'mcp-name': 'my_flow',
+  }))
+  assert.deepEqual(valid, { ok: true, era: 'modern', protocolVersion: MCP_PROTOCOL_VERSION })
+
+  const mismatch = validateMcpTransport(request as never, new Headers({
+    accept: 'application/json, text/event-stream',
+    'mcp-protocol-version': MCP_PROTOCOL_VERSION,
+    'mcp-method': 'tools/list',
+    'mcp-name': 'my_flow',
+  }))
+  assert.equal(mismatch.ok, false)
+})
+
+test('headerless calls remain compatible with legacy clients', () => {
+  const request = parseRpcRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+  assert.deepEqual(validateMcpTransport(request as never, new Headers()), {
+    ok: true,
+    era: 'legacy',
+    protocolVersion: MCP_LEGACY_PROTOCOL_VERSION,
+  })
 })
 
 test('a failed tool call is a RESULT, not a transport error', () => {

@@ -14,6 +14,7 @@ interface StubWorker extends WorkerHandle {
   queue: string
   options: Record<string, unknown>
   failedListeners: ((job: any, error: Error) => void)[]
+  stalledListeners: ((jobId: string) => void)[]
   closed: boolean
   running: boolean
 }
@@ -42,10 +43,14 @@ function harness(overrides: Partial<WorkerRuntimeDeps> = {}) {
         queue,
         options: options as unknown as Record<string, unknown>,
         failedListeners: [],
+        stalledListeners: [],
         closed: false,
         running: true,
         isRunning: () => worker.running,
-        on: (_event, listener) => worker.failedListeners.push(listener),
+        on: (event, listener) => {
+          if (event === 'failed') worker.failedListeners.push(listener as (job: any, error: Error) => void)
+          else worker.stalledListeners.push(listener as (jobId: string) => void)
+        },
         close: async () => { worker.closed = true },
       }
       workers.push(worker)
@@ -163,6 +168,11 @@ describe('worker construction', () => {
     workers.forEach((worker, index) => {
       assert.deepEqual(worker.failedListeners, [specs[index].onFailed])
     })
+  })
+
+  test('every worker reports stalled jobs instead of leaving them as silent latency', () => {
+    const { workers } = harness()
+    for (const worker of workers) assert.equal(worker.stalledListeners.length, 1, `${worker.queue} has no stalled listener`)
   })
 
   test('the health route is registered', () => {

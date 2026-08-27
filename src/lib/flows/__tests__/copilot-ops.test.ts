@@ -141,3 +141,16 @@ test('copilot can add a subflow step', () => {
   const node = result.graph.nodes.find((n) => n.type === 'subflow')!
   assert.equal((node.data as { flowId: string }).flowId, 'child-1')
 })
+
+test('copilot can add wait and note steps from the complete node catalogue', () => {
+  const result = applyCopilotOps(emptyGraph(), [
+    { op: 'add', type: 'wait', afterId: 'trigger', data: { mode: 'duration', amount: '5', unit: 'minutes' } },
+  ] as CopilotOp[])
+  assert.equal(result.applied, 1)
+  const wait = result.graph.nodes.find((node) => node.type === 'wait')!
+  const withNote = applyCopilotOps(result.graph, [
+    { op: 'add', type: 'note', afterId: wait.id, data: { text: 'Why this pause exists', color: 'blue' } },
+  ] as CopilotOp[])
+  assert.equal(withNote.applied, 1)
+  assert.equal(withNote.graph.nodes.some((node) => node.type === 'note'), true)
+})

@@ -11,6 +11,7 @@ import { getRedisConnection, QUEUE_NAMES } from '@/lib/queue/config'
  */
 
 export const WORKER_HEARTBEAT_KEY = 'worker:heartbeat'
+export const workerQueueHeartbeatKey = (queue: string) => `${WORKER_HEARTBEAT_KEY}:queue:${queue}`
 /** How often the worker runtime rewrites the heartbeat. 60s (not lower):
  * Upstash bills per command, and this write runs 24/7. */
 export const WORKER_HEARTBEAT_INTERVAL_MS = 60_000
@@ -44,19 +45,48 @@ export function isHeartbeatFresh(
  * last heartbeat ages out of Redis entirely rather than lingering as a stale
  * key forever.
  */
-export async function writeWorkerHeartbeat(now: number = Date.now()): Promise<void> {
-  await getRedisConnection().set(WORKER_HEARTBEAT_KEY, String(now), 'PX', WORKER_HEARTBEAT_STALE_MS * 10)
+export async function writeWorkerHeartbeat(now: number = Date.now(), queues: readonly string[] = []): Promise<void> {
+  const redis = getRedisConnection()
+  const value = String(now)
+  const ttl = WORKER_HEARTBEAT_STALE_MS * 10
+  await Promise.all([
+    redis.set(WORKER_HEARTBEAT_KEY, value, 'PX', ttl),
+    ...queues.map((queue) => redis.set(workerQueueHeartbeatKey(queue), value, 'PX', ttl)),
+  ])
 }
 
 /** Read the raw heartbeat value, bounded so a hung Redis cannot hang dispatch. */
-async function readHeartbeat(timeoutMs = 3_000): Promise<string | null> {
+async function readHeartbeat(timeoutMs = 3_000, key = WORKER_HEARTBEAT_KEY): Promise<string | null> {
   return Promise.race([
-    getRedisConnection().get(WORKER_HEARTBEAT_KEY),
+    getRedisConnection().get(key),
     new Promise<never>((_resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('heartbeat read timed out')), timeoutMs)
       if (typeof timer === 'object') timer.unref?.()
     }),
   ])
+}
+
+/** Per-queue ages prove WHICH queues a live process consumes. A single global
+ * heartbeat cannot detect a missing batch pool while interactive workers live. */
+export async function workerQueueHeartbeatAges(
+  queues: readonly string[],
+  now: number = Date.now(),
+): Promise<Record<string, number | null>> {
+  try {
+    const values = await Promise.race([
+      getRedisConnection().mget(...queues.map(workerQueueHeartbeatKey)),
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('queue heartbeat read timed out')), 3_000)
+        if (typeof timer === 'object') timer.unref?.()
+      }),
+    ])
+    return Object.fromEntries(queues.map((queue, index) => {
+      const writtenAt = Number(values[index])
+      return [queue, Number.isFinite(writtenAt) && values[index] ? Math.max(0, now - writtenAt) : null]
+    }))
+  } catch {
+    return Object.fromEntries(queues.map((queue) => [queue, null]))
+  }
 }
 
 /** Age of the current heartbeat in ms, or null when absent/unreadable. */
@@ -136,7 +166,13 @@ export async function resolveConsumerAlive(
  */
 export async function assertQueueConsumerAlive(now: number = Date.now()): Promise<void> {
   const alive = await resolveConsumerAlive(
-    { readHeartbeat: () => readHeartbeat(), registeredWorkers: () => registeredFlowWorkers() },
+    {
+      // Per-queue proof first. The global fallback preserves availability
+      // during rolling deploys from worker images predating queue heartbeats.
+      readHeartbeat: async () =>
+        (await readHeartbeat(3_000, workerQueueHeartbeatKey(QUEUE_NAMES.FLOW_EXECUTION))) ?? readHeartbeat(),
+      registeredWorkers: () => registeredFlowWorkers(),
+    },
     now,
   )
   if (!alive) throw new Error(EXECUTION_BACKEND_OFFLINE_MESSAGE)

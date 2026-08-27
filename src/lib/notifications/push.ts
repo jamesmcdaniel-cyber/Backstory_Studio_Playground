@@ -1,5 +1,5 @@
 import webpush from 'web-push'
-import { prisma, systemPrisma } from '@/lib/prisma'
+import { systemPrisma } from '@/lib/prisma'
 
 let configured = false
 

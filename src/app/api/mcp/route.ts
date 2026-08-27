@@ -8,6 +8,7 @@ import { rateLimit } from '@/lib/ratelimit'
 import { checkMonthlyTokenBudget } from '@/lib/usage/budget'
 import { apiLogger } from '@/lib/logger'
 import { parseFlowSettings } from '@/lib/flows/settings'
+import { readRequestJsonLimited, RequestBodyError } from '@/lib/server/request-body'
 import {
   GET_RUN_TOOL,
   describeFlowTools,
@@ -20,12 +21,14 @@ import {
   RPC_INVALID_REQUEST,
   RPC_METHOD_NOT_FOUND,
   RPC_PARSE_ERROR,
+  discoveryResult,
   initializeResult,
   isNotification,
   parseRpcRequest,
   rpcError,
   rpcResult,
   toolResult,
+  validateMcpTransport,
   type RpcId,
 } from '@/lib/mcp/server/rpc'
 
@@ -48,6 +51,18 @@ export const runtime = 'nodejs'
 
 const SERVER_NAME = 'backstory-studio'
 const SERVER_VERSION = '1.0.0'
+const MCP_MAX_BODY_BYTES = 1_000_000
+const METHODS = new Set(['initialize', 'ping', 'server/discover', 'tools/list', 'tools/call', 'resources/list', 'prompts/list'])
+
+function mcpJson(body: unknown, status = 200, protocolVersion?: string): Response {
+  return Response.json(body, {
+    status,
+    headers: {
+      'cache-control': 'no-store',
+      ...(protocolVersion ? { 'MCP-Protocol-Version': protocolVersion } : {}),
+    },
+  })
+}
 
 /** Only published flows are exposed: a draft is not a promise to anyone. */
 async function publishedFlows(auth: PublicApiContext): Promise<PublishableFlow[]> {
@@ -136,17 +151,29 @@ async function callGetRun(auth: PublicApiContext, args: Record<string, unknown>)
   })
 }
 
-async function dispatch(auth: PublicApiContext, method: string, params: Record<string, unknown>, id: RpcId) {
+async function dispatch(
+  auth: PublicApiContext,
+  method: string,
+  params: Record<string, unknown>,
+  id: RpcId,
+  modern: boolean,
+) {
   switch (method) {
     case 'initialize':
-      return rpcResult(id, initializeResult(SERVER_NAME, SERVER_VERSION))
+      return rpcResult(id, initializeResult(SERVER_NAME, SERVER_VERSION, params.protocolVersion))
+
+    case 'server/discover':
+      return rpcResult(id, discoveryResult(SERVER_NAME, SERVER_VERSION))
 
     case 'ping':
       return rpcResult(id, {})
 
     case 'tools/list': {
       const flows = await publishedFlows(auth)
-      return rpcResult(id, { tools: [...describeFlowTools(flows), GET_RUN_TOOL] })
+      return rpcResult(id, {
+        tools: [...describeFlowTools(flows), GET_RUN_TOOL],
+        ...(modern ? { ttlMs: 60_000, cacheScope: 'private' } : {}),
+      })
     }
 
     case 'tools/call': {
@@ -173,6 +200,11 @@ async function dispatch(auth: PublicApiContext, method: string, params: Record<s
 }
 
 export async function POST(request: Request) {
+  const origin = request.headers.get('origin')
+  if (origin && origin !== new URL(request.url).origin) {
+    return mcpJson(rpcError(null, RPC_INVALID_REQUEST, 'Origin is not allowed.'), 403)
+  }
+
   // flows:run, because every tool this server exposes starts a run. A read-only
   // key listing tools it could never call would be a misleading catalogue.
   const auth = await authenticatePublicApi(request, 'flows:run')
@@ -180,8 +212,11 @@ export async function POST(request: Request) {
 
   let body: unknown
   try {
-    body = await request.json()
-  } catch {
+    body = await readRequestJsonLimited(request, MCP_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError && error.status === 413) {
+      return publicApiJson({ error: { code: error.code, message: error.message } }, 413)
+    }
     return publicApiJson(rpcError(null, RPC_PARSE_ERROR, 'Request body must be JSON.'), 200)
   }
 
@@ -190,13 +225,23 @@ export async function POST(request: Request) {
     return publicApiJson(rpcError(null, RPC_INVALID_REQUEST, parsed), 200)
   }
 
+  const transport = validateMcpTransport(parsed, request.headers)
+  if (!transport.ok) return mcpJson(transport.error, transport.status)
+
   // A notification takes no response at all — answering one is a protocol
   // violation that some clients treat as fatal.
   if (isNotification(parsed)) return new Response(null, { status: 202 })
 
   const id = parsed.id ?? null
+  if (transport.era === 'modern' && !METHODS.has(parsed.method)) {
+    return mcpJson(rpcError(id, RPC_METHOD_NOT_FOUND, `Unknown method "${parsed.method}".`), 404, transport.protocolVersion)
+  }
   try {
-    return publicApiJson(await dispatch(auth, parsed.method, parsed.params ?? {}, id), 200)
+    return mcpJson(
+      await dispatch(auth, parsed.method, parsed.params ?? {}, id, transport.era === 'modern'),
+      200,
+      transport.protocolVersion,
+    )
   } catch (error) {
     apiLogger.error('MCP server call failed', {
       method: parsed.method,
@@ -205,7 +250,7 @@ export async function POST(request: Request) {
     })
     // The reason stays in the log: this response leaves our infrastructure for
     // someone else's client, and an internal message is not theirs to read.
-    return publicApiJson(rpcError(id, RPC_INTERNAL_ERROR, 'The server could not complete that call.'), 200)
+    return mcpJson(rpcError(id, RPC_INTERNAL_ERROR, 'The server could not complete that call.'), 200, transport.protocolVersion)
   }
 }
 

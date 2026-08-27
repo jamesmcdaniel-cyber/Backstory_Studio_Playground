@@ -12,6 +12,7 @@ import {
   type SlackWorkspaceCredential,
 } from '@/lib/integrations/slack'
 import { clientIp, recordTokenRejection } from '@/lib/security/events'
+import { readRequestTextLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 import { rateLimit } from '@/lib/ratelimit'
 
 export const runtime = 'nodejs'
@@ -75,6 +76,7 @@ export const runtime = 'nodejs'
 
 const ADMISSION_LIMIT = { limit: 600, windowMs: 60_000, failureMode: 'closed' } as const
 const REJECTED_LIMIT = { limit: 30, windowMs: 60_000, failureMode: 'closed' } as const
+const SLACK_EVENT_MAX_BODY_BYTES = 1_000_000
 /**
  * `url_verification` carries no `team_id`, so verifying it means trying every
  * configured workspace's own secret (see `resolveVerification` below) — an
@@ -194,7 +196,13 @@ export async function POST(request: NextRequest) {
 
   // Raw bytes FIRST — signature verification covers the exact bytes Slack
   // signed, so nothing may parse/re-serialize the body before this read.
-  const rawBody = await request.text()
+  let rawBody: string
+  try {
+    rawBody = await readRequestTextLimited(request, SLACK_EVENT_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return requestBodyErrorResponse(error)
+    throw error
+  }
 
   let body: Record<string, unknown>
   try {

@@ -13,7 +13,7 @@ import { runBench } from '@/lib/eval/bench'
 import { runActivityBackfill } from '@/lib/activity/backfill'
 import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
 import { runDispatchTick } from '@/lib/scheduling/dispatch-tick'
-import { assertWorkerEnv } from '@/lib/workers/assert-env'
+import { assertWorkerEnv, workerCapacity } from '@/lib/workers/assert-env'
 import { initSentry, captureError, flushErrorReporting } from '@/lib/observability/sentry'
 import { processOutboxBatch } from '@/lib/outbox'
 import { isCustomerEdition } from '@/lib/edition'
@@ -192,7 +192,7 @@ export function buildWorkerSpecs(
 /** The subset of a BullMQ Worker this runtime drives. */
 export interface WorkerHandle {
   isRunning: () => boolean
-  on: (event: 'failed', listener: (job: any, error: Error) => void) => unknown
+  on: (event: 'failed' | 'stalled', listener: (...args: any[]) => void) => unknown
   close: () => Promise<unknown>
 }
 
@@ -265,12 +265,21 @@ class WorkerRuntime {
         status: healthy ? 'healthy' : 'unhealthy',
         workers: Object.fromEntries(this.workerSpecs.map((spec, index) => [spec.queue, this.workers[index].isRunning()])),
         redis,
+        capacity: workerCapacity(this.workerSpecs, workerConfig.concurrency),
         uptime: process.uptime(),
       }
     })
     // Failed jobs are dead-lettered (durable, inspectable) — see buildWorkerSpecs
     // above for the per-queue handler (agent vs. flow target different tables).
-    this.workers.forEach((worker, index) => worker.on('failed', this.workerSpecs[index].onFailed))
+    this.workers.forEach((worker, index) => {
+      const spec = this.workerSpecs[index]
+      worker.on('failed', spec.onFailed)
+      worker.on('stalled', (jobId: string) => {
+        const error = new Error(`BullMQ job stalled on ${spec.queue}: ${jobId}`)
+        this.server.log.error({ queue: spec.queue, jobId }, 'Worker job stalled')
+        captureError(error, { source: 'worker.stalled', queue: spec.queue, jobId })
+      })
+    })
     this.setupShutdown()
   }
 
@@ -304,7 +313,7 @@ class WorkerRuntime {
     // Fail loud at boot, not at a user's run: fatal env gaps throw here (the
     // process exits via the start() catch below); degraded-capability gaps
     // are warned once where fly logs surfaces them.
-    assertWorkerEnv(workerConfig.concurrency, {
+    assertWorkerEnv(workerConfig.concurrency, this.workerSpecs, {
       warn: (msg) => this.server.log.warn(msg),
       error: (msg) => this.server.log.error(msg),
     })
@@ -324,9 +333,9 @@ class WorkerRuntime {
     // enqueueing. Written FIRST so a freshly-booted worker unblocks dispatch
     // immediately; failures are logged, not fatal — the health check (which
     // pings the same Redis) is what recycles a truly disconnected worker.
-    await writeWorkerHeartbeat().catch((error) => this.server.log.error(error, 'Heartbeat write failed'))
+    await writeWorkerHeartbeat(Date.now(), this.queues).catch((error) => this.server.log.error(error, 'Heartbeat write failed'))
     this.heartbeatTimer = setInterval(() => {
-      writeWorkerHeartbeat().catch((error) => this.server.log.error(error, 'Heartbeat write failed'))
+      writeWorkerHeartbeat(Date.now(), this.queues).catch((error) => this.server.log.error(error, 'Heartbeat write failed'))
     }, WORKER_HEARTBEAT_INTERVAL_MS)
     await registerAgentSchedules()
     await processOutboxBatch().catch((error) => this.server.log.error(error, 'Initial outbox delivery failed'))

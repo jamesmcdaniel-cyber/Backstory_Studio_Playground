@@ -92,6 +92,7 @@ const readExempt = new Set([
   'scim/v2/Groups/[id]',
   'v1/flows',
   'v1/flows/[id]',
+  'flows/[id]/runs/[runId]/webhook-result', // same constant-time per-flow secret as webhook trigger
   'mcp',                            // workspace API key; GET answers 405 by design
 ])
 

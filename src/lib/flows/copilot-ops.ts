@@ -9,7 +9,7 @@ import { deleteNode, insertNodeAfter, moveNodeAfter, updateNode, type StepType }
  */
 
 /** Step types the copilot may add (everything but the trigger). */
-const STEP_TYPES = ['agent', 'condition', 'loop', 'parallel', 'stop', 'tool', 'http', 'transform', 'filter', 'switch', 'variable', 'data', 'code', 'humanReview', 'output', 'join', 'ai', 'subflow', 'knowledge'] as const satisfies readonly StepType[]
+const STEP_TYPES = ['agent', 'condition', 'loop', 'parallel', 'stop', 'tool', 'http', 'transform', 'filter', 'switch', 'variable', 'data', 'code', 'humanReview', 'wait', 'note', 'output', 'join', 'ai', 'subflow', 'knowledge'] as const satisfies readonly StepType[]
 
 // Model-emitted payloads: arbitrary objects, extra keys tolerated INSIDE the
 // payload (z.record keeps every key). Merging is a shallow spread over the

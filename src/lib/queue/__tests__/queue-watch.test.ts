@@ -6,6 +6,7 @@ import {
   runQueueWatch,
   queueWatchReason,
   newDeadLettersReason,
+  queuePressureReason,
   strandedActivityClaimsReason,
   type QueueWatchDeps,
 } from '../queue-watch'
@@ -107,6 +108,15 @@ describe('queueWatchReason', () => {
   })
   test('dead letters alone are alertable even when consumers are ok', () => {
     assert.match(queueWatchReason(withDeadLetters) ?? '', /3 job/)
+  })
+
+  test('a deep or old backlog is unhealthy even while consumers are alive', () => {
+    const pressured: QueueConsumerCheck = {
+      ...healthy,
+      reports: [{ queue: 'flow-execution', workers: 2, waiting: 100, active: 2, oldestWaitingAgeMs: 10_000 }],
+    }
+    assert.match(queuePressureReason(pressured) ?? '', /flow-execution/)
+    assert.match(queueWatchReason(pressured) ?? '', /backlog pressure/)
   })
 })
 

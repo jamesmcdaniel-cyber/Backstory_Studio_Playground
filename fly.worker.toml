@@ -8,15 +8,18 @@
 # uses to enqueue, or the worker consumes a queue nothing writes to.
 #
 # DATABASE_URL is NOT Vercel's string: this is a long-lived process running
-# four BullMQ workers at AGENT_WORKER_CONCURRENCY each — use the transaction
-# pooler with ?pgbouncer=true&connection_limit=20 (Vercel's connection_limit=1
-# would queue ~20 concurrent jobs behind one connection → Prisma P2024).
+# six BullMQ workers: three interactive queues at AGENT_WORKER_CONCURRENCY and
+# three batch queues at BATCH_WORKER_CONCURRENCY. With defaults below that is
+# 21 job slots plus two infrastructure connections; use the transaction pooler
+# with ?pgbouncer=true&connection_limit=25 (Vercel's connection_limit=1 would
+# queue all jobs behind one connection → Prisma P2024).
 #
 # SECRETS (set via `fly secrets set NAME=value`) — the boot audit
 # (src/lib/workers/assert-env.ts) enforces these, so a gap fails at deploy
 # time instead of at a user's run:
 #   fatal (worker refuses to boot):
-#     REDIS_URL DATABASE_URL ENCRYPTION_KEY ANTHROPIC_API_KEY
+#     REDIS_URL DATABASE_URL ENCRYPTION_KEY and at least one model provider
+#     (ANTHROPIC_API_KEY or QWEN_API_KEY + QWEN_BASE_URL)
 #   warned (capability silently degrades without them):
 #     SENTRY_DSN            — crashes/dead-letters console-only otherwise
 #     NANGO_SECRET_KEY      — integration tools in flows fail
@@ -78,10 +81,12 @@ primary_region = "iad"
   # backstory-worker-batch from fly.worker-batch.toml AND restore
   # WORKER_POOL="interactive" here — both, or the batch queues are orphaned
   # again.
-  # Per-worker, PER-QUEUE concurrency; the runtime starts four queues, so
-  # in-flight jobs per machine ≈ 4x this. Size DATABASE_URL's connection_limit
-  # against that product.
+  # Per-worker, PER-QUEUE interactive concurrency. This all-pool app starts
+  # three interactive queues at this value and three batch queues at
+  # BATCH_WORKER_CONCURRENCY (default 2). Boot derives pool demand from those
+  # exact specs; it is not a fixed queue multiplier.
   AGENT_WORKER_CONCURRENCY = "5"
+  BATCH_WORKER_CONCURRENCY = "2"
   # Per-workspace in-flight ceiling, enforced at dispatch (org-capacity.ts).
   ORG_MAX_INFLIGHT_RUNS = "10"
   AGENT_MODEL = "claude-opus-4-8"
@@ -106,18 +111,19 @@ primary_region = "iad"
   #
   # CAPACITY MATH, because the two ceilings here are easy to breach silently:
   #
-  #   slots      = AGENT_WORKER_CONCURRENCY x (queues this pool consumes)
-  #              = 5 x 3 = 15 in-flight jobs per machine
+#   slots      = (3 interactive x 5) + (3 batch x 2)
+#              = 21 in-flight jobs per machine
   #   fleet      = slots x machine count
   #   ORG_MAX_INFLIGHT_RUNS = 10 caps any ONE workspace's share of that fleet.
   #
-  # At 3 machines the fleet is 45 slots, so FIVE busy workspaces saturate the
+# At 3 machines the fleet is 63 slots, so SEVEN busy workspaces saturate the
   # whole platform. That is the number to size against — not the user count.
   #
   # And every slot is a database connection: DATABASE_URL's connection_limit
-  # must be >= slots, while (connection_limit x machine count) must stay under
-  # the Supabase pooler's own client ceiling. connection_limit=20 x 3 machines
-  # = 60 client connections from this app ALONE, before Vercel's lambdas take
+# must cover slots plus the runtime's two-connection infrastructure reserve,
+# while (connection_limit x machine count) stays under the Supabase pooler's
+# client ceiling. connection_limit=25 x 3 machines = 75 client connections
+# from this app ALONE, before Vercel's lambdas take
   # theirs. Raise the machine count and the pooler plan together, or Prisma
   # starts throwing P2024 pool timeouts under exactly the load you scaled for.
   #

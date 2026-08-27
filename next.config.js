@@ -5,7 +5,11 @@ const nextConfig = {
   // Pyodide resolves its stdlib and core WASM beside the external package at
   // runtime. Keep it external and explicitly trace those dynamically-loaded
   // artifacts into every Vercel server function that can execute a flow.
-  serverExternalPackages: ['@prisma/client', 'pyodide'],
+  // BullMQ's package exports reference the optional Valkey transport and
+  // Supabase Realtime resolves a runtime transport dynamically. They are
+  // server dependencies, not bundle targets; externalizing them keeps Next
+  // from warning about code paths Node will resolve only when actually used.
+  serverExternalPackages: ['@prisma/client', '@supabase/realtime-js', 'bullmq', 'pyodide'],
   outputFileTracingIncludes: {
     '/*': ['./node_modules/pyodide/**/*'],
   },

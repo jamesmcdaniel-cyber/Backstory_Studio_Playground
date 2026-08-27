@@ -11,9 +11,11 @@ import { flowSignalOutboxEvent } from '@/lib/outbox'
 import { captureError } from '@/lib/observability/sentry'
 import { decryptSecret } from '@/lib/crypto/secrets'
 import { recordTokenRejection } from '@/lib/security/events'
+import { readRequestTextLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
+const PEOPLE_AI_WEBHOOK_MAX_BODY_BYTES = 1_000_000
 
 /**
  * People.ai SalesAI webhook receiver (registered via POST /v1/salesai/webhooks).
@@ -31,7 +33,13 @@ export async function POST(request: NextRequest) {
   }
 
   const globalSecret = process.env.PEOPLE_AI_WEBHOOK_SECRET || null
-  const rawBody = await request.text()
+  let rawBody: string
+  try {
+    rawBody = await readRequestTextLimited(request, PEOPLE_AI_WEBHOOK_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return requestBodyErrorResponse(error)
+    throw error
+  }
   // SEAM: header name per SalesAI webhook registration docs; both common
   // conventions accepted.
   const header =

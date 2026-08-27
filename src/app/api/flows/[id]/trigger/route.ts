@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
-import { runFlowExecution, startFlowExecution } from '@/features/flows/execute-flow'
+import { startFlowExecution } from '@/features/flows/execute-flow'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { rateLimit } from '@/lib/ratelimit'
 import { recordTokenRejection } from '@/lib/security/events'
@@ -16,9 +16,15 @@ import {
   parseWebhookReplayHeaders,
   webhookPayloadHash,
 } from '@/lib/flows/webhook-security'
+import { readRequestBytesLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
+import { isTerminalFlowRunStatus, waitForFlowRunResult } from '@/lib/flows/webhook-result'
 
 export const runtime = 'nodejs'
-export const maxDuration = 1800
+export const maxDuration = 60
+const WEBHOOK_RESPONSE_WAIT_MS = Math.max(
+  0,
+  Math.min(25_000, Number(process.env.FLOW_WEBHOOK_RESPONSE_WAIT_MS) || 10_000),
+)
 
 // External webhook trigger for flows. Authenticated by the per-flow secret
 // (hash stored in flow.trigger.webhookSecretHash) instead of a session — mirrors
@@ -74,13 +80,12 @@ export async function POST(request: NextRequest) {
       : await prisma.user.findFirst({ where: { organizationId: flow.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } })
     if (!owner) return NextResponse.json({ success: false, error: 'No active user to attribute the run to' }, { status: 409 })
 
-    const declaredLength = Number(request.headers.get('content-length') || 0)
-    if (declaredLength > FLOW_WEBHOOK_MAX_BODY_BYTES) {
-      return NextResponse.json({ success: false, error: 'Webhook body is too large.' }, { status: 413 })
-    }
-    const bytes = Buffer.from(await request.arrayBuffer())
-    if (bytes.length > FLOW_WEBHOOK_MAX_BODY_BYTES) {
-      return NextResponse.json({ success: false, error: 'Webhook body is too large.' }, { status: 413 })
+    let bytes: Buffer
+    try {
+      bytes = Buffer.from(await readRequestBytesLimited(request, FLOW_WEBHOOK_MAX_BODY_BYTES))
+    } catch (error) {
+      if (error instanceof RequestBodyError) return requestBodyErrorResponse(error)
+      throw error
     }
     const replay = parseWebhookReplayHeaders(request.headers)
     if (replay.error) return NextResponse.json({ success: false, error: replay.error }, { status: 400 })
@@ -176,9 +181,9 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({ success: true, accepted: true, run: started }, { status: 202 })
     }
-    let run
+    let started
     try {
-      run = await runFlowExecution(job)
+      started = await startFlowExecution(job)
     } catch (error) {
       if (receiptId) await prisma.flowWebhookReceipt.updateMany({
         where: { id: receiptId, organizationId: flow.organizationId },
@@ -187,9 +192,32 @@ export async function POST(request: NextRequest) {
       throw error
     }
     if (receiptId) {
-      await prisma.flowWebhookReceipt.update({ where: { id: receiptId, organizationId: flow.organizationId }, data: { flowRunId: run.flowRunId, status: 'accepted', lastError: null } })
+      await prisma.flowWebhookReceipt.update({ where: { id: receiptId, organizationId: flow.organizationId }, data: { flowRunId: started.flowRunId, status: 'accepted', lastError: null } })
     }
-    return NextResponse.json({ success: true, run })
+    const result = await waitForFlowRunResult({
+      load: () => prisma.flowRun.findFirst({
+        where: { id: started.flowRunId, organizationId: flow.organizationId },
+        select: { status: true, output: true, error: true, finishedAt: true },
+      }),
+      timeoutMs: WEBHOOK_RESPONSE_WAIT_MS,
+      signal: request.signal,
+    })
+    const statusUrl = `/api/flows/${flow.id}/runs/${started.flowRunId}/webhook-result`
+    if (result && isTerminalFlowRunStatus(result.status)) {
+      return NextResponse.json({
+        success: result.status === 'succeeded',
+        run: { flowRunId: started.flowRunId, ...result },
+      })
+    }
+    return NextResponse.json(
+      {
+        success: true,
+        accepted: true,
+        run: { flowRunId: started.flowRunId, status: result?.status ?? started.status, output: null },
+        statusUrl,
+      },
+      { status: 202, headers: { location: statusUrl, 'retry-after': '1' } },
+    )
   } catch (error) {
     if (error instanceof ApiError) {
       return NextResponse.json({ success: false, error: error.message, code: error.code }, { status: error.status })

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 
-import { flowGraphSchema } from '@/lib/flows/graph'
 import { portableFlowGraph } from '@/lib/flows/native-package'
 import { REDACTED } from '@/lib/logging/redact'
 

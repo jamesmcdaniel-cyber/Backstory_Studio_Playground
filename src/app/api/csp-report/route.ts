@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { apiLogger } from '@/lib/logger'
 import { rateLimit } from '@/lib/ratelimit'
+import { readRequestTextLimited } from '@/lib/server/request-body'
 
 /**
  * Collector for Content-Security-Policy violation reports.
@@ -69,12 +70,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   })
   if (!limited.ok) return new NextResponse(null, { status: 204 })
 
-  const declared = Number(request.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > MAX_REPORT_BYTES) {
-    return new NextResponse(null, { status: 204 })
-  }
-
-  const payload = await request.json().catch(() => null)
+  // Browsers send legacy reports as `application/csp-report`, which is JSON in
+  // practice but intentionally is not an `application/json` media type. Read
+  // bounded text here and parse it explicitly so the size guard does not break
+  // the report-uri format while modern report-to JSON remains supported.
+  const payload = await readRequestTextLimited(request, MAX_REPORT_BYTES)
+    .then((body) => JSON.parse(body) as unknown)
+    .catch(() => null)
   if (!payload) return new NextResponse(null, { status: 204 })
 
   // report-to sends an array of reports; report-uri sends a single object.

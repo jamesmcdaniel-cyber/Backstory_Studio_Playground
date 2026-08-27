@@ -60,7 +60,9 @@ if (TEST_DB) {
       // Re-query mint path (hasSecret && !rotate) must not write the row:
       // wipe type, call POST non-rotate, type stays absent (save/publish own it).
       const row = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: s.organizationId } })
-      const { type: _drop, ...rest } = row.trigger as Record<string, unknown>
+      const rest = Object.fromEntries(
+        Object.entries(row.trigger as Record<string, unknown>).filter(([key]) => key !== 'type'),
+      )
       await prisma.flow.update({ where: { id: flow.id, organizationId: s.organizationId }, data: { trigger: rest } })
       await mint(flow.id)
       const after = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: s.organizationId } })

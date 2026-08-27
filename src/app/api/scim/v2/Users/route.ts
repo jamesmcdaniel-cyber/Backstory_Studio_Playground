@@ -2,6 +2,9 @@ import { z } from 'zod'
 import { systemPrisma } from '@/lib/prisma'
 import { authenticateScim, roleOf, SCIM_LIST_SCHEMA, scimError, scimJson, scimUser, supabaseAdmin } from '@/lib/scim/server'
 import { isPlatformOwnerEmail } from '@/lib/authz/platform-owner'
+import { readRequestJsonLimited, RequestBodyError } from '@/lib/server/request-body'
+
+const SCIM_MAX_BODY_BYTES = 256_000
 
 const createSchema = z.object({
   externalId: z.string().max(255).optional(),
@@ -32,7 +35,14 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await authenticateScim(request)
   if (auth instanceof Response) return auth
-  const parsed = createSchema.safeParse(await request.json().catch(() => null))
+  let raw: unknown
+  try {
+    raw = await readRequestJsonLimited(request, SCIM_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyError) return scimError(error.message, error.status)
+    throw error
+  }
+  const parsed = createSchema.safeParse(raw)
   if (!parsed.success) return scimError('Invalid SCIM user payload.', 400)
   const input = parsed.data
   // SCIM provisioning can never create the platform owner identity or an

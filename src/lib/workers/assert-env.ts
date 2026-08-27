@@ -11,14 +11,39 @@ export interface WorkerEnvAudit {
   warnings: string[]
 }
 
-/** Queues one worker process consumes concurrently (see runtime.ts workerSpecs). */
-const WORKER_QUEUE_COUNT = 4
+export type WorkerCapacitySpec = { queue: string; concurrency?: number }
+export type WorkerCapacity = {
+  queueCount: number
+  jobSlots: number
+  infrastructureReserve: number
+  recommendedConnectionLimit: number
+}
+
+/** Outbox, schedule reconciliation, liveness, and terminal writes continue
+ * while job slots are occupied. Keep two pool connections outside job demand. */
+const INFRASTRUCTURE_CONNECTION_RESERVE = 2
+
+export function workerCapacity(
+  specs: readonly WorkerCapacitySpec[],
+  defaultConcurrency: number,
+): WorkerCapacity {
+  const normalizedDefault = Math.max(1, Math.floor(defaultConcurrency))
+  const jobSlots = specs.reduce(
+    (sum, spec) => sum + Math.max(1, Math.floor(spec.concurrency ?? normalizedDefault)),
+    0,
+  )
+  return {
+    queueCount: specs.length,
+    jobSlots,
+    infrastructureReserve: INFRASTRUCTURE_CONNECTION_RESERVE,
+    recommendedConnectionLimit: jobSlots + INFRASTRUCTURE_CONNECTION_RESERVE,
+  }
+}
 
 const FATAL_VARS = [
   ['REDIS_URL', 'the queue plane — the worker cannot consume anything'],
   ['DATABASE_URL', 'Postgres — runs cannot be read or written'],
   ['ENCRYPTION_KEY', 'secret decryption — every stored credential is unreadable'],
-  ['ANTHROPIC_API_KEY', 'model calls — every agent/flow step fails'],
 ] as const
 
 const WARN_VARS = [
@@ -31,23 +56,40 @@ const WARN_VARS = [
   ['SUPABASE_SERVICE_ROLE_KEY', 'realtime run updates are silent — the builder falls back to slow polling'],
 ] as const
 
-/** Pure audit over an env map — `concurrency` is per-queue (workerConfig). */
-export function auditWorkerEnv(env: Record<string, string | undefined>, concurrency: number): WorkerEnvAudit {
+/** Pure audit over the exact queue specs this process is about to consume. */
+export function auditWorkerEnv(
+  env: Record<string, string | undefined>,
+  concurrency: number,
+  specs: readonly WorkerCapacitySpec[],
+): WorkerEnvAudit {
   const fatal = FATAL_VARS.filter(([name]) => !env[name]).map(
     ([name, consequence]) => `${name} is missing — ${consequence}.`,
   )
   const warnings = WARN_VARS.filter(([name]) => !env[name]).map(
     ([name, consequence]) => `${name} is missing — ${consequence}.`,
   )
+  const hasAnthropic = Boolean(env.ANTHROPIC_API_KEY)
+  const hasQwenKey = Boolean(env.QWEN_API_KEY)
+  const hasQwenUrl = Boolean(env.QWEN_BASE_URL)
+  if (!hasAnthropic && !(hasQwenKey && hasQwenUrl)) {
+    fatal.push('No model provider is configured — set ANTHROPIC_API_KEY or both QWEN_API_KEY and QWEN_BASE_URL.')
+  } else if (hasQwenKey !== hasQwenUrl) {
+    warnings.push('Qwen configuration is incomplete — QWEN_API_KEY and QWEN_BASE_URL are both required, so Qwen fallback is disabled.')
+  }
+  if (specs.length === 0) {
+    fatal.push(`WORKER_POOL=${env.WORKER_POOL || 'all'} consumes no queues in this edition.`)
+  }
 
   const limitMatch = env.DATABASE_URL?.match(/[?&]connection_limit=(\d+)/)
   if (limitMatch) {
     const limit = Number(limitMatch[1])
-    const needed = WORKER_QUEUE_COUNT * concurrency
+    const capacity = workerCapacity(specs, concurrency)
+    const needed = capacity.recommendedConnectionLimit
     if (limit < needed) {
       warnings.push(
-        `DATABASE_URL has connection_limit=${limit} but this worker runs up to ${needed} concurrent jobs ` +
-          `(${WORKER_QUEUE_COUNT} queues × concurrency ${concurrency}) on one Prisma pool — expect P2024 pool timeouts. ` +
+        `DATABASE_URL has connection_limit=${limit} but this worker needs approximately ${needed} pool connections ` +
+          `(${capacity.jobSlots} job slots across ${capacity.queueCount} queues + ${capacity.infrastructureReserve} infrastructure reserve) ` +
+          `on one Prisma pool — expect P2024 pool timeouts. ` +
           `Use the worker's own URL with connection_limit=${needed} (NOT the serverless connection_limit=1 string).`,
       )
     }
@@ -62,9 +104,10 @@ export function auditWorkerEnv(env: Record<string, string | undefined>, concurre
  */
 export function assertWorkerEnv(
   concurrency: number,
+  specs: readonly WorkerCapacitySpec[],
   log: { warn: (msg: string) => void; error: (msg: string) => void },
 ): void {
-  const audit = auditWorkerEnv(process.env, concurrency)
+  const audit = auditWorkerEnv(process.env, concurrency, specs)
   for (const warning of audit.warnings) log.warn(`worker env: ${warning}`)
   for (const finding of audit.fatal) log.error(`worker env: ${finding}`)
   if (audit.fatal.length > 0) {

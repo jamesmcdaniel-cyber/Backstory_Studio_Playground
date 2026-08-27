@@ -15,6 +15,7 @@ if (TEST_DB) {
   let hashToken: any
   let flushDetachedFlowExecutions: any
   let route: any
+  let resultRoute: any
   const ids: Record<string, string> = {}
   const SECRET = 'test-webhook-secret-value'
 
@@ -31,6 +32,7 @@ if (TEST_DB) {
     ;({ hashToken } = await import('@/lib/crypto/secrets'))
     ;({ flushDetachedFlowExecutions } = await import('@/features/flows/execute-flow'))
     route = await import('../[id]/trigger/route')
+    resultRoute = await import('../[id]/runs/[runId]/webhook-result/route')
     const org = await prisma.organization.create({ data: { name: 'TriggerRoute', slug: `trigger-route-${Date.now()}` } })
     ids.org = org.id
     const user = await prisma.user.create({ data: { supabaseId: crypto.randomUUID(), organizationId: org.id } })
@@ -79,6 +81,30 @@ if (TEST_DB) {
     await flushDetachedFlowExecutions()
     const run = await prisma.flowRun.findUnique({ where: { id: body.run.flowRunId, organizationId: ids.org } })
     assert.equal(run.status, 'succeeded')
+  })
+
+  test('last-node response mode starts durably and returns a fast result', async () => {
+    const flow = await mkFlow({
+      trigger: { type: 'webhook', webhookSecretHash: hashToken(SECRET) },
+    })
+    const res = await post(flow.id)
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.run.status, 'succeeded')
+    assert.ok(body.run.flowRunId)
+
+    const status = await resultRoute.GET(new NextRequest(
+      `http://test/api/flows/${flow.id}/runs/${body.run.flowRunId}/webhook-result`,
+      { headers: { 'x-trigger-secret': SECRET } },
+    ))
+    assert.equal(status.status, 200)
+    assert.equal((await status.json()).run.status, 'succeeded')
+
+    const denied = await resultRoute.GET(new NextRequest(
+      `http://test/api/flows/${flow.id}/runs/${body.run.flowRunId}/webhook-result`,
+      { headers: { 'x-trigger-secret': 'wrong' } },
+    ))
+    assert.equal(denied.status, 404, 'result polling does not reveal flow/run existence to a wrong secret')
   })
 
   test('a wrong secret → 401', async () => {

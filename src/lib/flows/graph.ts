@@ -271,6 +271,8 @@ const httpNode = z.object({
     // "Predefined Credential Type" (an existing MCP-plane integration whose
     // bearer token is injected server-side).
     credentialId: z.string().optional(),
+    /** Resolve to the executing user's explicitly bound credential at run time. */
+    credentialResolverId: z.string().optional(),
     connectionId: z.string().optional(),
     method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']).default('POST'),
     url: z.string(),
@@ -509,9 +511,8 @@ export const DATA_OPS = [
   // Date & Time (n8n's dedicated node), field renames, and format conversions.
   'formatDate', 'dateShift', 'dateDiff', 'datePart', 'renameKeys',
   'markdownToHtml', 'htmlToMarkdown', 'xmlParse', 'xmlBuild',
-  // Columnar API responses (Snowflake SQL API's resultSetMetaData+data,
-  // generic columns+rows) → a list of records field access can use.
-  'columnarToRecords',
+  'columnarToRecords', 'compareDatasets',
+  'hash', 'hmac', 'jwtSign', 'jwtVerify', 'totpGenerate', 'totpVerify',
 ] as const
 export type DataOp = (typeof DATA_OPS)[number]
 // Deterministic data-shaping step between other steps: no LLM, no I/O. `input`
@@ -555,12 +556,20 @@ const dataNode = z.object({
     amount: z.string().optional(),
     /** datePart: which part of the date to pick. */
     part: z.string().optional(),
-    /** dateDiff: the end date (input is the start). Templated. */
+    /** dateDiff end date, or compareDatasets second dataset. Templated. */
     to: z.string().optional(),
     /** summarize: what to compute per group. */
     aggregations: z
       .array(z.object({ field: z.string(), op: z.enum(['sum', 'avg', 'count', 'min', 'max', 'countUnique', 'concat', 'append']), name: z.string().optional() }))
       .optional(),
+    /** Cryptographic utility settings. Secret may be a runtime token. */
+    secret: z.string().optional(),
+    algorithm: z.string().optional(),
+    expiresInSeconds: z.number().int().min(1).max(31_536_000).optional(),
+    issuer: z.string().max(500).optional(),
+    audience: z.string().max(500).optional(),
+    digits: z.union([z.literal(6), z.literal(8)]).optional(),
+    period: z.number().int().min(15).max(120).optional(),
     perItem: perItemSchema.optional(),
   }),
 })

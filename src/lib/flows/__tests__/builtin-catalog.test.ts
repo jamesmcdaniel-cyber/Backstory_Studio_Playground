@@ -69,7 +69,7 @@ test('AI capabilities offer the five ai ops plus the roster-agent leaf', () => {
 })
 
 test('trigger leaves cover all trigger types', () => {
-  assert.deepEqual(TRIGGER_LEAVES.map((l) => l.triggerType), ['manual', 'schedule', 'poll', 'webhook', 'signal', 'slack', 'activity'])
+  assert.deepEqual(TRIGGER_LEAVES.map((l) => l.triggerType), ['manual', 'schedule', 'poll', 'webhook', 'form', 'signal', 'slack', 'activity'])
 })
 
 test('searchCorpus is lowercase label+description', () => {

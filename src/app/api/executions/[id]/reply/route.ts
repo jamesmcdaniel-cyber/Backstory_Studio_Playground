@@ -8,6 +8,7 @@ import { inlineExecution } from '@/lib/queue/execution-mode'
 import { executionVisibilityScope, agentVisibilityScope } from '@/lib/server/visibility'
 import { deriveRunWaitingAll } from '@/lib/flows/run-waiting'
 import { resolveReplyTarget, type ReplyTarget } from '@/lib/flows/reply-target'
+import { injectTraceContext } from '@/lib/observability/otel'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
@@ -128,14 +129,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (!workersEnabled) throw new ApiError('Agent worker is disabled', 503, 'WORKER_DISABLED')
     try {
       const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
-      await queue.add('resume-agent', {
+      await queue.add('resume-agent', injectTraceContext({
         executionId: execution.id,
         agentId: execution.agentTaskId,
         organizationId: auth.organizationId,
         userId: auth.dbUser.id,
         resume: true,
         reply: message,
-      }, { jobId: `${execution.id}-resume-${Date.now()}` })
+      }), { jobId: `${execution.id}-resume-${Date.now()}` })
     } catch {
       throw new ApiError('Unable to queue agent resume', 503, 'QUEUE_UNAVAILABLE')
     }

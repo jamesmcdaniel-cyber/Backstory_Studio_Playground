@@ -66,65 +66,71 @@ model Organization {
   /// have.
   flowReviewRequired    Boolean   @default(false)
 
-  users                 User[]
-  flowReviews           FlowReview[]
-  auditStreams          AuditStreamDestination[]
-  agents                AgentTask[]
-  executions            AgentExecution[]
-  templates             AgentTemplate[]
-  flowTemplates         FlowTemplate[]
-  integrations          Integration[]
-  notifications         Notification[]
-  mcpConnections        McpConnection[]
-  nangoConnections      NangoConnection[]
-  integrationSecrets    IntegrationSecret[]
-  httpCredentials       HttpCredential[]
-  peopleAiConnections   PeopleAiConnection[]
-  signals               Signal[]
-  signalSubscriptions   SignalSubscription[]
-  auditEvents           AuditEvent[]
-  approvalRequests      ApprovalRequest[]
-  agentMemories         AgentMemory[]
-  flowVersions          FlowVersion[]
-  flowEditSnapshots     FlowEditSnapshot[]
-  flowTemplateVersions  FlowTemplateVersion[]
-  flows                 Flow[]
-  storedFiles           StoredFile[]
-  customSignals         CustomSignal[]
-  pushSubscriptions     PushSubscription[]
-  knowledgeDocuments    KnowledgeDocument[]
-  sharedSkills          SharedSkill[]
-  templateProposals     TemplateProposal[]
-  invitations           Invitation[]
-  catalogueSubmissions  CatalogueSubmission[]
-  huddleSegments        HuddleSegment[]
-  huddleNotes           HuddleNote[]
-  flowWebhookReceipts   FlowWebhookReceipt[]
-  outboxEvents          OutboxEvent[]
-  activityEvents        ActivityEvent[]
-  activityTriggerClaims ActivityTriggerClaim[]
-  activitySourceCursors ActivitySourceCursor[]
-  domains               OrganizationDomain[]
-  allowedDomains        PlatformAllowedDomain[]
-  scimTokens            ScimToken[]
-  apiKeys               ApiKey[]
-  apiAccessTokens       ApiAccessToken[]
-  identityProviders     IdentityProvider[]
-  teams                 Team[]
-  featureGrants         FeatureGrant[]
-  workspaceFolders      WorkspaceFolder[]
-  agentTeammates        AgentTeammate[]
-  adoptionWeeks         AdoptionWeek[]
-  agentCohortWeeks      AgentCohortWeek[]
-  slackIdentities       SlackIdentity[]
-  slackChannelBindings  SlackChannelBinding[]
+  users                          User[]
+  flowReviews                    FlowReview[]
+  auditStreams                   AuditStreamDestination[]
+  agents                         AgentTask[]
+  executions                     AgentExecution[]
+  templates                      AgentTemplate[]
+  flowTemplates                  FlowTemplate[]
+  integrations                   Integration[]
+  notifications                  Notification[]
+  mcpConnections                 McpConnection[]
+  nangoConnections               NangoConnection[]
+  integrationSecrets             IntegrationSecret[]
+  httpCredentials                HttpCredential[]
+  peopleAiConnections            PeopleAiConnection[]
+  signals                        Signal[]
+  signalSubscriptions            SignalSubscription[]
+  auditEvents                    AuditEvent[]
+  approvalRequests               ApprovalRequest[]
+  agentMemories                  AgentMemory[]
+  flowVersions                   FlowVersion[]
+  flowEditSnapshots              FlowEditSnapshot[]
+  flowTemplateVersions           FlowTemplateVersion[]
+  flows                          Flow[]
+  storedFiles                    StoredFile[]
+  customSignals                  CustomSignal[]
+  pushSubscriptions              PushSubscription[]
+  knowledgeDocuments             KnowledgeDocument[]
+  sharedSkills                   SharedSkill[]
+  templateProposals              TemplateProposal[]
+  invitations                    Invitation[]
+  catalogueSubmissions           CatalogueSubmission[]
+  huddleSegments                 HuddleSegment[]
+  huddleNotes                    HuddleNote[]
+  flowWebhookReceipts            FlowWebhookReceipt[]
+  outboxEvents                   OutboxEvent[]
+  activityEvents                 ActivityEvent[]
+  activityTriggerClaims          ActivityTriggerClaim[]
+  activitySourceCursors          ActivitySourceCursor[]
+  domains                        OrganizationDomain[]
+  allowedDomains                 PlatformAllowedDomain[]
+  scimTokens                     ScimToken[]
+  apiKeys                        ApiKey[]
+  apiAccessTokens                ApiAccessToken[]
+  identityProviders              IdentityProvider[]
+  teams                          Team[]
+  featureGrants                  FeatureGrant[]
+  workspaceFolders               WorkspaceFolder[]
+  agentTeammates                 AgentTeammate[]
+  adoptionWeeks                  AdoptionWeek[]
+  agentCohortWeeks               AgentCohortWeek[]
+  slackIdentities                SlackIdentity[]
+  slackChannelBindings           SlackChannelBinding[]
+  dataTables                     DataTable[]
+  dataTableRows                  DataTableRow[]
+  externalSecretProviders        ExternalSecretProvider[]
+  httpCredentialSecretReferences HttpCredentialSecretReference[]
+  credentialResolvers            CredentialResolver[]
+  credentialResolverBindings     CredentialResolverBinding[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
   ///     social sign-in are refused for this workspace's verified domains.
   /// Defaulted to `optional` so enabling it is always a deliberate act: a
   /// default of `required` would lock every existing workspace out on deploy.
-  ssoEnforcement        String                  @default("optional")
+  ssoEnforcement                 String                          @default("optional")
 
   @@map("organizations")
 }
@@ -212,20 +218,23 @@ model User {
   createdAt              DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt              DateTime  @updatedAt @db.Timestamptz(6)
 
-  organization        Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  executions          AgentExecution[]
-  templates           AgentTemplate[]
-  flowTemplates       FlowTemplate[]
-  integrations        Integration[]
-  ownedAgents         AgentTask[]
-  peopleAiConnections PeopleAiConnection[]
-  mcpConnections      McpConnection[]
-  nangoConnections    NangoConnection[]
-  httpCredentials     HttpCredential[]
-  teamMemberships     TeamMember[]
-  featureGrants       FeatureGrant[]
-  apiKeys             ApiKey[]
-  slackIdentities     SlackIdentity[]
+  organization               Organization?               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  executions                 AgentExecution[]
+  templates                  AgentTemplate[]
+  flowTemplates              FlowTemplate[]
+  integrations               Integration[]
+  ownedAgents                AgentTask[]
+  peopleAiConnections        PeopleAiConnection[]
+  mcpConnections             McpConnection[]
+  nangoConnections           NangoConnection[]
+  httpCredentials            HttpCredential[]
+  createdCredentialResolvers CredentialResolver[]        @relation("CredentialResolverCreator")
+  credentialResolverBindings CredentialResolverBinding[] @relation("CredentialResolverBindingUser")
+  annotatedFlowRuns          FlowRun[]                   @relation("FlowRunAnnotator")
+  teamMemberships            TeamMember[]
+  featureGrants              FeatureGrant[]
+  apiKeys                    ApiKey[]
+  slackIdentities            SlackIdentity[]
 
   @@unique([organizationId, scimExternalId])
   @@index([organizationId])
@@ -629,32 +638,32 @@ model AgentTeammate {
 }
 
 model AgentTask {
-  id             String    @id @default(cuid())
-  type           String    @default("agent")
-  priority       String    @default("MEDIUM")
-  agentType      String    @default("CUSTOM")
-  description    String    @db.Text
-  objective      String    @db.Text
-  goal           String?   @db.Text
-  context        Json      @default("{}")
-  schedule       Json      @default("{}")
-  status         String    @default("ACTIVE")
-  folder         String?
-  visibility     String    @default("shared")
-  organizationId String    @db.Uuid
-  userId         String?
+  id              String    @id @default(cuid())
+  type            String    @default("agent")
+  priority        String    @default("MEDIUM")
+  agentType       String    @default("CUSTOM")
+  description     String    @db.Text
+  objective       String    @db.Text
+  goal            String?   @db.Text
+  context         Json      @default("{}")
+  schedule        Json      @default("{}")
+  status          String    @default("ACTIVE")
+  folder          String?
+  visibility      String    @default("shared")
+  organizationId  String    @db.Uuid
+  userId          String?
   /// The avatar this agent works under. Null = a solo agent with its own card.
   /// SetNull on delete: removing a teammate ungroups its agents, never deletes
   /// the work they do.
-  teammateId     String?
+  teammateId      String?
   /// See Flow.quarantinedAt — set when the owner was deprovisioned.
-  quarantinedAt  DateTime? @db.Timestamptz(6)
+  quarantinedAt   DateTime? @db.Timestamptz(6)
   /// Set when the agent is soft-deleted (status -> 'DELETED'). Null for a live
   /// agent AND for anything deleted before this column existed — `updatedAt`
   /// moves on every edit, so historical deletion dates are unrecoverable and
   /// are deliberately left null rather than guessed.
-  deletedAt      DateTime? @db.Timestamptz(6)
-  metadata       Json?
+  deletedAt       DateTime? @db.Timestamptz(6)
+  metadata        Json?
   /// The definition runs use, when the agent has been published.
   ///
   /// Editing an agent edited the LIVE agent: a tweak to an objective changed
@@ -667,16 +676,16 @@ model AgentTask {
   /// exactly as it behaves now — the live fields are used directly.
   publishedConfig Json?
   publishedAt     DateTime? @db.Timestamptz(6)
-  lastExecutedAt DateTime?
+  lastExecutedAt  DateTime?
   /// When the scheduler should next LOOK at this row — a pre-filter, never the
   /// authority (the tick still calls isDue on everything it reads).
   /// NULL means "recompute me": always read, which is what an un-backfilled row
   /// or a just-edited schedule looks like. See src/lib/scheduling/next-run.ts.
-  nextRunAt      DateTime? @db.Timestamptz(6)
-  executionCount Int       @default(0)
-  lastResult     Json?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  nextRunAt       DateTime? @db.Timestamptz(6)
+  executionCount  Int       @default(0)
+  lastResult      Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   owner                User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -1358,16 +1367,116 @@ model HttpCredential {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization                    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   // Cascade, NOT SetNull — same reasoning as NangoConnection: `userId: null`
   // MEANS org-shared here, so nulling a departed person's row would silently
   // promote their personal credential into one the whole workspace can use,
   // the exact opposite of revoking it.
-  user         User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User?                           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secretReferences HttpCredentialSecretReference[]
+  resolverBindings CredentialResolverBinding[]
 
   @@index([organizationId, authType, allowedHost])
   @@index([userId])
   @@map("http_credentials")
+}
+
+/// A workspace connection to an external secret manager. Provider bootstrap
+/// credentials are encrypted; application-secret values remain external.
+model ExternalSecretProvider {
+  id                String    @id @default(cuid())
+  organizationId    String    @db.Uuid
+  name              String
+  provider          String // aws | gcp | azure | vault
+  config            Json      @default("{}")
+  authConfig        String?   @db.Text
+  allowedPathPrefix String    @default("")
+  cacheTtlSeconds   Int       @default(60)
+  status            String    @default("unverified") // unverified | verified | error | disabled
+  lastVerifiedAt    DateTime?
+  lastError         String?   @db.Text
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization                    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  references   HttpCredentialSecretReference[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, provider, status])
+  @@map("external_secret_providers")
+}
+
+/// One HTTP credential field whose value lives in an external secret manager.
+/// The field/path/property are metadata, never the fetched value. A generic
+/// consumer discriminator was deliberately avoided: the foreign key makes a
+/// deleted credential cascade its references instead of leaving live orphans.
+model HttpCredentialSecretReference {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  credentialId   String
+  providerId     String
+  field          String
+  path           String
+  property       String?
+  version        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  credential   HttpCredential         @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  provider     ExternalSecretProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, credentialId, field])
+  @@index([organizationId, providerId])
+  @@map("http_credential_secret_references")
+}
+
+/// A graph-safe credential placeholder. Flows store this id instead of one
+/// person's credential id; at run time the binding for the executing user is
+/// selected. The resolver fixes auth type and host so a binding cannot redirect
+/// a published workflow's authority to a different service.
+model CredentialResolver {
+  id              String   @id @default(cuid())
+  organizationId  String   @db.Uuid
+  createdByUserId String?
+  name            String
+  authType        String
+  allowedHost     String
+  status          String   @default("active") // active | disabled
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization                @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?                       @relation("CredentialResolverCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  bindings     CredentialResolverBinding[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, authType, allowedHost, status])
+  @@index([createdByUserId])
+  @@map("credential_resolvers")
+}
+
+/// The executing person's explicit selection for a shared resolver. The API
+/// requires the credential to be owned by this same active user and to match
+/// the resolver's host/auth contract before this row can be written.
+model CredentialResolverBinding {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  resolverId     String
+  userId         String
+  credentialId   String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  resolver     CredentialResolver @relation(fields: [resolverId], references: [id], onDelete: Cascade)
+  user         User               @relation("CredentialResolverBindingUser", fields: [userId], references: [id], onDelete: Cascade)
+  credential   HttpCredential     @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, resolverId, userId])
+  @@index([organizationId, credentialId])
+  @@index([userId])
+  @@map("credential_resolver_bindings")
 }
 
 /// A visual agent pipeline: a graph of steps, each running a workspace agent
@@ -1466,6 +1575,45 @@ model Flow {
   // The activity dispatcher's match query — see activitySource's doc comment.
   @@index([organizationId, activitySource])
   @@map("flows")
+}
+
+/// A durable workspace table for workflow state and human-managed reference
+/// data. Columns are an ordered typed schema; rows stay JSON so additive column
+/// changes do not require a database migration per customer table.
+model DataTable {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  name           String
+  description    String   @default("")
+  columns        Json     @default("[]")
+  version        Int      @default(1)
+  createdById    String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rows         DataTableRow[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, updatedAt])
+  @@map("data_tables")
+}
+
+model DataTableRow {
+  id             String   @id @default(cuid())
+  tableId        String
+  organizationId String   @db.Uuid
+  data           Json     @default("{}")
+  createdById    String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  table        DataTable    @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, tableId, createdAt])
+  @@index([tableId, updatedAt])
+  @@map("data_table_rows")
 }
 
 /// A reusable, WIRED flow: a validated graph plus the notes that explain it.
@@ -1699,6 +1847,14 @@ model FlowRun {
   input             Json      @default("{}")
   output            Json?
   error             String?
+  /// Human review data on an execution. Kept on the run so list filters never
+  /// need a join; customMetadata is bounded to primitive values by the API.
+  annotation        String?   @db.Text
+  rating            Int?
+  tags              String[]  @default([])
+  customMetadata    Json      @default("{}")
+  annotatedByUserId String?
+  annotatedAt       DateTime?
   /// Denormalized sum of this run's LlmCall rows, so list views never
   /// aggregate. Internal ops estimate — see src/lib/usage/pricing.ts.
   costUsd           Decimal   @default(0) @db.Decimal(12, 6)
@@ -1734,6 +1890,7 @@ model FlowRun {
   flow        Flow             @relation(fields: [flowId], references: [id], onDelete: Cascade)
   steps       FlowRunStep[]
   sideEffects FlowSideEffect[]
+  annotatedBy User?            @relation("FlowRunAnnotator", fields: [annotatedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([flowId, scheduledFor])
   @@index([flowId, startedAt])
@@ -1742,6 +1899,12 @@ model FlowRun {
   @@index([organizationId, status])
   // Workspace-wide execution log: newest runs for one tenant without a table scan.
   @@index([organizationId, startedAt])
+  @@index([organizationId, rating, startedAt])
+  // These GIN indexes make array containment and JSON metadata filters usable
+  // at execution-history scale. Naming them keeps raw migration SQL and the
+  // Prisma data model drift-free.
+  @@index([tags], type: Gin, map: "flow_runs_tags_gin_idx")
+  @@index([customMetadata], type: Gin, map: "flow_runs_customMetadata_gin_idx")
   @@map("flow_runs")
 }
 
@@ -1810,22 +1973,22 @@ model ActivityTriggerClaim {
 /// event that is dropped because a customer's endpoint was down for an hour is
 /// the one kind of gap that matters.
 model AuditStreamDestination {
-  id             String    @id @default(cuid())
-  organizationId String    @db.Uuid
-  name           String
+  id              String    @id @default(cuid())
+  organizationId  String    @db.Uuid
+  name            String
   /// HTTPS only, and SSRF-guarded on save AND on every delivery — this is a
   /// caller-supplied URL our server posts to.
-  url            String
+  url             String
   /// Encrypted shared secret. Every delivery is signed with it, so the receiver
   /// can tell our POST from anyone else who learns the URL.
-  secret         String?
+  secret          String?
   /// Action prefixes to forward ('flow.', 'credential.'). Empty = everything.
-  actionPrefixes String[]  @default([])
-  isActive       Boolean   @default(true)
+  actionPrefixes  String[]  @default([])
+  isActive        Boolean   @default(true)
   lastDeliveredAt DateTime? @db.Timestamptz(6)
-  lastError      String?   @db.Text
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  lastError       String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -2086,7 +2249,7 @@ enum UserRole {
 /// which is precisely why it may outlive the retention window that exists to
 /// bound inputs and outputs.
 model AdoptionWeek {
-  id                      String   @id @default(cuid())
+  id                      String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   organizationId          String   @db.Uuid
   /// ISO week Monday, UTC.
   weekStart               DateTime @db.Date
@@ -2125,7 +2288,7 @@ model AdoptionWeek {
 /// abandonment being the signal. `cohortWeek` is denormalized onto every row
 /// so the survival query never joins back to AgentTask.
 model AgentCohortWeek {
-  id             String   @id @default(cuid())
+  id             String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   organizationId String   @db.Uuid
   agentTaskId    String
   /// ISO week of AgentTask.createdAt.
@@ -2152,7 +2315,7 @@ model AgentCohortWeek {
 /// table scan was acceptable precisely BECAUSE it is not a hot path; this one
 /// is, and gets a real unique index.
 model SlackIdentity {
-  id             String   @id @default(cuid())
+  id             String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   organizationId String   @db.Uuid
   /// Slack's `U…` id, as it arrives on an event's `actorExternalId`.
   slackUserId    String
@@ -2174,7 +2337,7 @@ model SlackIdentity {
 
 /// The teammate a bare @mention reaches in a given channel.
 model SlackChannelBinding {
-  id             String   @id @default(cuid())
+  id             String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   organizationId String   @db.Uuid
   channelId      String
   agentTaskId    String

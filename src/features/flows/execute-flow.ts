@@ -46,6 +46,7 @@ import {
   resolveHttpCredential,
   type ResolvedHttpCredential,
 } from './http-auth'
+import { resolveCredentialResolver } from '@/lib/credentials/resolver'
 import { shouldPersistInterpreterStep, persistedCodeStepInput } from './run-step-persistence'
 import { truncateWithMarker } from '@/lib/flows/truncate'
 import { prepareToolArgs, applySlackThreadDefault, applySlackChainDepthMetadata } from './tool-args'
@@ -70,11 +71,19 @@ import { runScopeKey, readLedger, writeLedger, LEDGER_REPLAY_WARNING } from '@/l
 import { flowSignalOutboxEvent } from '@/lib/outbox'
 import type { FlowItem } from '@/lib/flows/items'
 import { parseFlowSettings, subflowCallerAllowed } from '@/lib/flows/settings'
+import {
+  injectTraceContext,
+  recordCompletedSpan,
+  withExtractedTraceContext,
+  withSpan,
+} from '@/lib/observability/otel'
 
 export type FlowExecutionJob = {
   flowId: string
   organizationId: string
   userId: string
+  /** W3C context injected at enqueue; never user-controlled request headers. */
+  traceContext?: Record<string, string>
   input?: unknown
   flowRunId?: string
   // Resume a paused run: the user's reply to the ask-user step that paused it.
@@ -91,7 +100,7 @@ export type FlowExecutionJob = {
   // executes the working draft so you can test before publishing.
   usePublished?: boolean
   // How this run was started — persisted on the FlowRun for provenance.
-  trigger?: { type: 'manual' | 'schedule' | 'webhook' | 'signal' | 'subflow' | 'poll' | 'activity' | 'slack' | 'error'; [key: string]: unknown }
+  trigger?: { type: 'manual' | 'schedule' | 'webhook' | 'form' | 'signal' | 'subflow' | 'poll' | 'activity' | 'slack' | 'error'; [key: string]: unknown }
   /**
    * The scheduled occurrence this run belongs to (see dueOccurrence). Set ONLY
    * by scheduled dispatch; everything else leaves it undefined and is exempt
@@ -401,7 +410,16 @@ export async function runFlowExecution(
   // parent run rather than a column of their own. Establishing the job's tenant
   // here lets the Prisma guard scope those writes under RLS without threading a
   // transaction through ~20 call sites in this file.
-  return ambientOrganization.run(job.organizationId, () => runFlowExecutionInner(job))
+  return withSpan(
+    'flow.run',
+    {
+      'backstory.flow.id': job.flowId,
+      'backstory.organization.id': job.organizationId,
+      'backstory.flow.trigger': job.trigger?.type ?? 'manual',
+      'backstory.flow.run_id': job.preparedRunId ?? job.flowRunId,
+    },
+    () => ambientOrganization.run(job.organizationId, () => runFlowExecutionInner(job)),
+  )
 }
 
 async function runFlowExecutionInner(
@@ -910,6 +928,19 @@ async function runFlowExecutionInner(
     }
   }
   const onStep = (outcome: { nodeId: string; iterationKey?: string; status: string; input?: unknown; output?: unknown; items?: FlowItem[]; error?: string; warnings?: string[]; logs?: string[]; startedAt: Date; finishedAt: Date }) => {
+    recordCompletedSpan('flow.step', {
+      startTime: outcome.startedAt,
+      endTime: outcome.finishedAt,
+      failed: outcome.status === 'failed',
+      attributes: {
+        'backstory.flow.id': flow.id,
+        'backstory.flow.run_id': run.id,
+        'backstory.flow.node_id': outcome.nodeId,
+        'backstory.flow.node_type': nodeTypeById.get(outcome.nodeId),
+        'backstory.flow.step_status': outcome.status,
+        'backstory.flow.iteration': outcome.iterationKey,
+      },
+    })
     // Realtime nudge: tell the builder a step changed so it refreshes at once
     // (no output on the wire — see run-stream.ts). Fire-and-forget; no-op locally.
     trackDetached(broadcastFlowRunTick(run.id, { nodeId: outcome.nodeId, status: outcome.status }))
@@ -1662,12 +1693,26 @@ async function runFlowExecutionInner(
         const replayWarnings: string[] = []
         let httpCredential: ResolvedHttpCredential | null = null
         const credentialId = typeof node.config.credentialId === 'string' ? node.config.credentialId.trim() : ''
+        const credentialResolverId = typeof node.config.credentialResolverId === 'string'
+          ? node.config.credentialResolverId.trim()
+          : ''
         if (credentialId) {
           httpCredential = await resolveHttpCredential(credentialId, job.organizationId, {
             actorUserId: job.userId,
             executionId: run.id,
             consumer: 'flow.http_step',
           })
+        } else if (credentialResolverId) {
+          httpCredential = await resolveCredentialResolver(
+            credentialResolverId,
+            job.organizationId,
+            job.userId,
+            {
+              actorUserId: job.userId,
+              executionId: run.id,
+              consumer: 'flow.http_step.dynamic',
+            },
+          )
         }
         // Optional connection auth: resolve a fresh token server-side and inject
         // it as the Authorization header — unless the user set their own, which
@@ -2214,7 +2259,7 @@ export async function dispatchFlowExecution(
   // a different Redis) an enqueued job would strand forever in `waiting`.
   await assertQueueConsumerAlive()
   const queue = createQueue(QUEUE_NAMES.FLOW_EXECUTION)
-  await queue.add('execute-flow', job, flowJobOptions(job.flowRunId, undefined, job.deliveryId))
+  await queue.add('execute-flow', injectTraceContext(job), flowJobOptions(job.flowRunId, undefined, job.deliveryId))
   return { queued: true }
 }
 
@@ -2244,7 +2289,7 @@ export async function dispatchDetachedFlowExecution(job: FlowExecutionJob): Prom
     // offline" in seconds instead of "Thinking…" forever.
     await assertQueueConsumerAlive()
     const queue = createQueue(QUEUE_NAMES.FLOW_EXECUTION)
-    await queue.add('execute-flow', job, flowJobOptions(job.flowRunId, job.preparedRunId, job.deliveryId))
+    await queue.add('execute-flow', injectTraceContext(job), flowJobOptions(job.flowRunId, job.preparedRunId, job.deliveryId))
     return
   }
   const detached = runFlowExecution(job)
@@ -2297,5 +2342,5 @@ export async function startFlowExecution(
 
 /** BullMQ job handler — the worker calls this for each dequeued flow job. */
 export async function executeFlowJob(job: Job<FlowExecutionJob>): Promise<{ flowRunId: string; status: string; output: unknown }> {
-  return runFlowExecution(job.data)
+  return withExtractedTraceContext(job.data.traceContext, () => runFlowExecution(job.data))
 }

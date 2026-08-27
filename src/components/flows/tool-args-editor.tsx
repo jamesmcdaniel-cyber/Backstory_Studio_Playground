@@ -2,12 +2,12 @@
 
 import { useId, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import { Code2, ListTree, List, ChevronDown } from 'lucide-react'
+import { Code2, ListTree, List, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import { DataTree } from '@/components/flows/data-tree'
 import type { DataField } from '@/lib/flows/datatree'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
-import { toolFields, type ToolField, type ToolFieldOption } from '@/lib/flows/tool-schema'
+import { toolFieldDefaults, toolFields, type ToolField, type ToolFieldOption } from '@/lib/flows/tool-schema'
 import {
   LOCATOR_MODE_LABELS,
   isIdentifierField,
@@ -256,6 +256,7 @@ const labelClass = 'mb-1.5 block text-xs font-semibold uppercase tracking-wide t
  */
 function ArgField({
   field,
+  fieldKey = field.name,
   value,
   argLabel,
   locator,
@@ -265,6 +266,8 @@ function ArgField({
   onChange,
 }: {
   field: SchemaField
+  /** Stable dotted identity for nested editor refs and accessible labels. */
+  fieldKey?: string
   value: string
   /** The display name for an id value, when one has been chosen. */
   argLabel?: string
@@ -278,12 +281,13 @@ function ArgField({
   }
   labelCtx: TokenLabelContext
   registerEditor: (name: string) => (handle: TokenTextEditorHandle | null) => void
-  onFocusField: () => void
+  onFocusField: (fieldKey?: string) => void
   onChange: (value: string) => void
 }) {
   const bound = value.includes('{{')
   const [freeform, setFreeform] = useState(bound)
   const closedSet = field.type === 'enum' || field.type === 'boolean'
+  const structuredForm = Boolean(field.children?.length || field.itemFields?.length)
   const modes = locator ? locatorModes(locator) : []
   const [mode, setMode] = useState<LocatorMode>(() => (locator ? modeForValue(value, modes) : 'value'))
   const display = locatorDisplay(value, argLabel)
@@ -297,18 +301,109 @@ function ArgField({
 
   const editor = (multiline: boolean) => (
     <TokenTextEditor
-      ref={registerEditor(field.name)}
+      ref={registerEditor(fieldKey)}
       multiline={multiline}
       rows={multiline ? 4 : undefined}
       className={multiline ? 'font-mono text-xs' : undefined}
       value={value}
       labelCtx={labelCtx}
       placeholder={placeholderFor(field)}
-      onFocus={onFocusField}
+      onFocus={() => onFocusField(fieldKey)}
       onChange={onChange}
       ariaLabel={`Argument ${field.label}`}
     />
   )
+
+  const nestedObject = () => {
+    const values = parseArgs(value || '{}')
+    const fields = field.children ?? []
+    const setChild = (name: string, next: string) =>
+      onChange(serializeArgs({ ...values, [name]: next }, fields))
+    return (
+      <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+        {fields.map((child) => (
+          <ArgField
+            key={child.name}
+            field={child}
+            fieldKey={`${fieldKey}.${child.name}`}
+            value={values[child.name] ?? ''}
+            labelCtx={labelCtx}
+            registerEditor={registerEditor}
+            onFocusField={onFocusField}
+            onChange={(next) => setChild(child.name, next)}
+          />
+        ))}
+      </div>
+    )
+  }
+
+  const nestedArray = () => {
+    let records: Record<string, unknown>[] = []
+    try {
+      const parsed = JSON.parse(value || '[]')
+      if (Array.isArray(parsed)) {
+        records = parsed.map((entry) =>
+          entry && typeof entry === 'object' && !Array.isArray(entry)
+            ? (entry as Record<string, unknown>)
+            : {},
+        )
+      }
+    } catch {
+      // Invalid work-in-progress remains reachable by switching to raw mode.
+    }
+    const itemFields = field.itemFields ?? []
+    const textValues = (record: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(record).map(([name, item]) => [name, typeof item === 'string' ? item : JSON.stringify(item)]),
+      )
+    const commit = (next: Record<string, unknown>[]) => onChange(JSON.stringify(next, null, 2))
+    return (
+      <div className="space-y-2">
+        {records.map((record, index) => {
+          const values = textValues(record)
+          return (
+            <div key={index} className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Item {index + 1}</span>
+                <button
+                  type="button"
+                  className="rounded p-1 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                  aria-label={`Remove ${field.label} item ${index + 1}`}
+                  onClick={() => commit(records.filter((_, itemIndex) => itemIndex !== index))}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {itemFields.map((child) => (
+                <ArgField
+                  key={child.name}
+                  field={child}
+                  fieldKey={`${fieldKey}.${index}.${child.name}`}
+                  value={values[child.name] ?? ''}
+                  labelCtx={labelCtx}
+                  registerEditor={registerEditor}
+                  onFocusField={onFocusField}
+                  onChange={(next) => {
+                    const serialized = JSON.parse(
+                      serializeArgs({ ...values, [child.name]: next }, itemFields),
+                    ) as Record<string, unknown>
+                    commit(records.map((item, itemIndex) => (itemIndex === index ? serialized : item)))
+                  }}
+                />
+              ))}
+            </div>
+          )
+        })}
+        <button
+          type="button"
+          className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
+          onClick={() => commit([...records, toolFieldDefaults(itemFields)])}
+        >
+          <Plus className="h-3.5 w-3.5" /> Add item
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -320,13 +415,15 @@ function ArgField({
         {field.label.toLowerCase() !== field.name.toLowerCase() && (
           <span className="font-mono text-[10px] text-muted-foreground">{field.name}</span>
         )}
-        {closedSet && (
+        {(closedSet || structuredForm) && (
           <button
             type="button"
             onClick={() => setFreeform((current) => !current)}
             className="ml-auto text-[10px] font-medium text-muted-foreground hover:text-indigo-600"
           >
-            {freeform ? 'Choose a value' : 'Use flow data'}
+            {freeform
+              ? structuredForm ? 'Edit fields' : 'Choose a value'
+              : structuredForm ? 'Use JSON or flow data' : 'Use flow data'}
           </button>
         )}
       </label>
@@ -367,7 +464,7 @@ function ArgField({
               className={fieldClass}
               value={value}
               placeholder={placeholderFor(field)}
-              onFocus={onFocusField}
+              onFocus={() => onFocusField(fieldKey)}
               onChange={(event) => locator.onPick(event.target.value)}
               aria-label={`Argument ${field.label}`}
             />
@@ -395,10 +492,14 @@ function ArgField({
           type="datetime-local"
           className={fieldClass}
           value={value}
-          onFocus={onFocusField}
+          onFocus={() => onFocusField(fieldKey)}
           onChange={(event) => onChange(event.target.value)}
           aria-label={`Argument ${field.label}`}
         />
+      ) : structuredForm && !freeform && field.children?.length ? (
+        nestedObject()
+      ) : structuredForm && !freeform && field.itemFields?.length ? (
+        nestedArray()
       ) : isJsonValueField(field) ? (
         editor(true)
       ) : (
@@ -572,8 +673,8 @@ export function ToolArgsEditor({
               }
               labelCtx={labelCtx}
               registerEditor={registerEditor}
-              onFocusField={() => {
-                activeArgRef.current = field.name
+              onFocusField={(focusedKey) => {
+                activeArgRef.current = focusedKey ?? field.name
               }}
               onChange={(value) => setValue(field.name, value)}
             />

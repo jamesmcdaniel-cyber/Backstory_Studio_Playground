@@ -57,8 +57,8 @@ export type DataOpConfig = {
   amount?: string
   /** datePart: which part to pick. */
   part?: string
-  /** dateDiff: the end date (input is the start). Already resolved. */
-  to?: string
+  /** dateDiff end date, or compareDatasets second dataset. Already resolved. */
+  to?: unknown
 }
 
 export type DataOpResult = { output: unknown } | { error: string }
@@ -93,6 +93,13 @@ export const DATA_OP_LABELS: Record<DataOp, string> = {
   xmlParse: 'Parse XML',
   xmlBuild: 'Create XML',
   columnarToRecords: 'Columns to records',
+  compareDatasets: 'Compare datasets',
+  hash: 'Hash data',
+  hmac: 'Create HMAC',
+  jwtSign: 'Sign JWT',
+  jwtVerify: 'Verify JWT',
+  totpGenerate: 'Generate TOTP',
+  totpVerify: 'Verify TOTP',
 }
 
 /** RFC 4180 CSV: quoted fields may hold commas, newlines, and doubled quotes. */
@@ -238,6 +245,9 @@ const cellText = (row: Record<string, unknown>, header: string): string => itemT
 /** Run one pure data operation over an already-resolved config. */
 export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
   const label = DATA_OP_LABELS[op]
+  if (['hash', 'hmac', 'jwtSign', 'jwtVerify', 'totpGenerate', 'totpVerify'].includes(op)) {
+    return { error: `${label} is available only in the server-side workflow runtime.` }
+  }
   // A file reference fed to a text-reading op unwraps to its extracted content,
   // so a downloaded/uploaded file parses without a separate "read file" step.
   if (TEXT_INPUT_OPS.has(op) && isFileReference(config.input) && typeof config.input.content === 'string') {
@@ -293,6 +303,51 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
       }
     }
     return { error: `${label} needs a response with column names and rows — like a Snowflake SQL API result.` }
+  }
+
+  if (op === 'compareDatasets') {
+    const first = asList(config.input)
+    const second = asList(config.to)
+    if (!first || !second) return { error: `${label} needs two lists to compare.` }
+    const keys = (config.by ?? '').split(',').map((entry) => entry.trim()).filter(Boolean)
+    if (!keys.length) return { error: `${label} needs at least one matching field.` }
+    const identity = (item: unknown) => JSON.stringify(keys.map((field) => readPath(itemContext(item, config.ctx), `item.${field}`) ?? null))
+    const canonical = (value: unknown): string => {
+      if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+      if (value && typeof value === 'object') {
+        return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+      }
+      return JSON.stringify(value ?? null)
+    }
+    const secondByKey = new Map<string, unknown[]>()
+    for (const item of second) {
+      const key = identity(item)
+      const bucket = secondByKey.get(key)
+      if (bucket) bucket.push(item)
+      else secondByKey.set(key, [item])
+    }
+    const same: unknown[] = []
+    const different: { first: unknown; second: unknown; changedFields: string[] }[] = []
+    const onlyInFirst: unknown[] = []
+    for (const item of first) {
+      const bucket = secondByKey.get(identity(item))
+      const counterpart = bucket?.shift()
+      if (counterpart === undefined) {
+        onlyInFirst.push(item)
+        continue
+      }
+      if (canonical(item) === canonical(counterpart)) {
+        same.push(item)
+        continue
+      }
+      const a = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : { value: item }
+      const b = counterpart && typeof counterpart === 'object' && !Array.isArray(counterpart) ? counterpart as Record<string, unknown> : { value: counterpart }
+      const changedFields = [...new Set([...Object.keys(a), ...Object.keys(b)])]
+        .filter((field) => canonical(a[field]) !== canonical(b[field]))
+      different.push({ first: item, second: counterpart, changedFields })
+    }
+    const onlyInSecond = [...secondByKey.values()].flat()
+    return { output: { same, different, onlyInFirst, onlyInSecond } }
   }
 
   if (op === 'parseJson') {

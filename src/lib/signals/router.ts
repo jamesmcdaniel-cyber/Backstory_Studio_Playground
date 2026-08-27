@@ -18,6 +18,7 @@ import { inlineExecution } from '@/lib/queue/execution-mode'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { indexSignal } from '@/lib/rag/indexer'
 import { runAgentExecution } from '@/features/agents/execute-agent'
+import { injectTraceContext } from '@/lib/observability/otel'
 
 interface SignalShape {
   id: string
@@ -81,7 +82,7 @@ const defaultDispatcher: SignalDispatcher = async (job) => {
   }
   if (!workersEnabled) throw new Error('Agent worker is disabled')
   const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
-  await queue.add('execute-agent', job, { jobId: job.executionId })
+  await queue.add('execute-agent', injectTraceContext(job), { jobId: job.executionId })
 }
 
 export interface RouteResult {

@@ -20,8 +20,27 @@ This records the implementation pass following the QA, parity, and architecture 
 - The vulnerable Prisma CLI transitive merge package is overridden to the patched major; `npm audit` is clean and Prisma client generation succeeds.
 - The lint baseline is zero warnings.
 
-## Strategic parity still open
+## Parity closure status
 
-The n8n inventory remains the source of truth in `docs/n8n-full-parity-audit-2026-08-25.md`. Universal n8n item/paired-item/binary semantics, arbitrary metadata-rendered nodes, hundreds of provider-specific nodes and credential schemas, the full Instance AI/Chat Hub/Computer Use product families, MCP workflow-management tools, source control, and external secret-manager breadth are product programs rather than hardening defects. They require explicit product scope and staged migrations; they were not relabeled as closed in this pass.
+The later parity pass closed the repository-owned runtime and architecture work
+that was still actionable: universal item packets and lineage, binary metadata,
+typed ports, node versions and graph migrations, settings enforcement, Data
+Tables, hosted Forms, execution annotations, Compare Datasets, crypto/JWT/TOTP,
+dynamic credentials, four external secret-manager adapters, management MCP,
+native node discovery, public workflow/agent/eval SDK primitives, and OTLP
+workflow tracing. The authoritative disposition is
+`docs/audits/n8n-parity-closure-2026-08-27.md`.
 
-External deployment controls also remain operator-owned: production secret rotation, hosted database/Redis sizing, alert destinations, authenticated E2E credentials, and restore-drill credentials cannot be changed safely from this repository. Repository checks and runbooks detect or document those conditions.
+This does **not** relabel Backstory as an n8n clone. Provider/node catalogue
+breadth, arbitrary community-package loading, outer-graph cycles, unrestricted
+expressions/shell/computer control, a hosted OAuth authorization server, LDAP,
+Git environment synchronization, and multi-instance registry features are
+explicit product or safety boundaries. Generic HTTP, MCP, connected-app, and
+SDK extension surfaces are the supported abstraction; they are not described
+as node-for-node parity.
+
+External deployment controls remain operator-owned: production secret rotation,
+hosted database/Redis sizing, collector and alert destinations, authenticated
+E2E credentials, provider identities, staging load tests, and restore drills
+cannot be safely completed from a repository session. The current checklist is
+`docs/runbooks/qa-gap-ops-checklist.md`.

@@ -132,11 +132,19 @@ const cases = (): Case[] => [
   { route: 'workspace-folders', method: 'POST', run: async () => (await import('../workspace-folders/route')).POST(rq('/api/workspace-folders', 'POST', { name: 'Smoke public folder' })) },
   { route: 'workspace-folders', method: 'PATCH', run: async () => (await import('../workspace-folders/route')).PATCH(rq('/api/workspace-folders', 'PATCH', { id: 'missing', name: 'Renamed' })) },
   { route: 'workspace-folders', method: 'DELETE', run: async () => (await import('../workspace-folders/route')).DELETE(rq('/api/workspace-folders', 'DELETE', { id: 'missing' })) },
+  { route: 'data-tables', method: 'POST', run: async () => (await import('../data-tables/route')).POST(rq('/api/data-tables', 'POST', { name: `Smoke table ${Date.now()}`, columns: [] })) },
+  { route: 'data-tables', method: 'PATCH', run: async () => (await import('../data-tables/route')).PATCH(rq('/api/data-tables', 'PATCH', { id: 'missing', description: 'updated' })) },
+  { route: 'data-tables', method: 'DELETE', run: async () => (await import('../data-tables/route')).DELETE(rq('/api/data-tables', 'DELETE', { id: 'missing', confirmation: 'missing' })) },
+  { route: 'data-tables/[id]/rows', method: 'POST', run: async () => (await import('../data-tables/[id]/rows/route')).POST(rq('/api/data-tables/missing/rows', 'POST', { data: {} })) },
+  { route: 'data-tables/[id]/rows', method: 'PATCH', run: async () => (await import('../data-tables/[id]/rows/route')).PATCH(rq('/api/data-tables/missing/rows', 'PATCH', { rowId: 'missing', data: {} })) },
+  { route: 'data-tables/[id]/rows', method: 'DELETE', run: async () => (await import('../data-tables/[id]/rows/route')).DELETE(rq('/api/data-tables/missing/rows', 'DELETE', { rowId: 'missing' })) },
+  { route: 'data-tables/[id]/csv', method: 'POST', run: async () => (await import('../data-tables/[id]/csv/route')).POST(rq('/api/data-tables/missing/csv', 'POST', 'name\nvalue')) },
 
   // Unauthenticated by design — a browser posts violation reports with no
   // credentials. Must answer 204 to anything, including junk: a collector that
   // errors gets retried by the browser.
   { route: 'csp-report', method: 'POST', run: async () => (await import('../csp-report/route')).POST(rq('/api/csp-report', 'POST', { 'csp-report': { 'effective-directive': 'script-src', 'blocked-uri': 'inline' } })) },
+  { route: 'forms/[id]/submit', method: 'POST', run: async () => (await import('../forms/[id]/submit/route')).POST(rq('/api/forms/missing/submit', 'POST', { values: {} })) },
 
   { route: 'agent-templates', method: 'POST', run: async () => (await import('../agent-templates/route')).POST(rq('/api/agent-templates', 'POST', { name: 'Smoke', instructions: 'do it' })) },
   { route: 'agent-templates', method: 'PUT', run: async () => (await import('../agent-templates/route')).PUT(rq('/api/agent-templates', 'PUT', { id: 'missing' })) },
@@ -166,6 +174,7 @@ const cases = (): Case[] => [
   { route: 'flows/[id]/review', method: 'PATCH', run: async () => (await import('../flows/[id]/review/route')).PATCH(rq(`/api/flows/${flowId}/review`, 'PATCH', { decision: 'approved' })) },
   { route: 'flows/[id]/share', method: 'POST', run: async () => (await import('../flows/[id]/share/route')).POST(rq(`/api/flows/${flowId}/share`, 'POST', { enabled: true, role: 'view' })) },
   { route: 'flows/[id]/versions', method: 'POST', run: async () => (await import('../flows/[id]/versions/route')).POST(rq(`/api/flows/${flowId}/versions`, 'POST', { version: 1, action: 'restore' })) },
+  { route: 'flows/runs/[runId]/annotation', method: 'PATCH', run: async () => (await import('../flows/runs/[runId]/annotation/route')).PATCH(rq(`/api/flows/runs/${runId}/annotation`, 'PATCH', { rating: 4 })) },
   { route: 'flows/[id]/trigger-secret', method: 'POST', run: async () => (await import('../flows/[id]/trigger-secret/route')).POST(rq(`/api/flows/${flowId}/trigger-secret`, 'POST', {})) },
   { route: 'flows/[id]/collaborators', method: 'DELETE', run: async () => (await import('../flows/[id]/collaborators/route')).DELETE(rq(`/api/flows/${flowId}/collaborators`, 'DELETE', { userId: 'missing' })) },
   { route: 'flows/[id]/huddle/summary', method: 'POST', run: async () => (await import('../flows/[id]/huddle/summary/route')).POST(rq(`/api/flows/${flowId}/huddle/summary`, 'POST', {})) },
@@ -183,6 +192,12 @@ const cases = (): Case[] => [
   { route: 'http-credentials', method: 'POST', run: async () => (await import('../http-credentials/route')).POST(rq('/api/http-credentials', 'POST', {})) },
   { route: 'http-credentials', method: 'PATCH', run: async () => (await import('../http-credentials/route')).PATCH(rq('/api/http-credentials', 'PATCH', { id: 'missing' })) },
   { route: 'http-credentials', method: 'DELETE', run: async () => (await import('../http-credentials/route')).DELETE(rq('/api/http-credentials', 'DELETE', { id: 'missing' })) },
+  { route: 'external-secret-providers', method: 'POST', run: async () => (await import('../external-secret-providers/route')).POST(rq('/api/external-secret-providers', 'POST', {})) },
+  { route: 'external-secret-providers', method: 'PATCH', run: async () => (await import('../external-secret-providers/route')).PATCH(rq('/api/external-secret-providers', 'PATCH', {})) },
+  { route: 'external-secret-providers', method: 'DELETE', run: async () => (await import('../external-secret-providers/route')).DELETE(rq('/api/external-secret-providers?id=missing', 'DELETE')) },
+  { route: 'credential-resolvers', method: 'POST', run: async () => (await import('../credential-resolvers/route')).POST(rq('/api/credential-resolvers', 'POST', {})) },
+  { route: 'credential-resolvers', method: 'PATCH', run: async () => (await import('../credential-resolvers/route')).PATCH(rq('/api/credential-resolvers', 'PATCH', {})) },
+  { route: 'credential-resolvers', method: 'DELETE', run: async () => (await import('../credential-resolvers/route')).DELETE(rq('/api/credential-resolvers?id=missing', 'DELETE')) },
   { route: 'integrations/credentials/[provider]', method: 'POST', run: async () => (await import('../integrations/credentials/[provider]/route')).POST(rq('/api/integrations/credentials/slack', 'POST', {})) },
   { route: 'integrations/credentials/[provider]', method: 'DELETE', run: async () => (await import('../integrations/credentials/[provider]/route')).DELETE(rq('/api/integrations/credentials/slack', 'DELETE', {})) },
   { route: 'integrations/granola', method: 'POST', run: async () => (await import('../integrations/granola/route')).POST(rq('/api/integrations/granola', 'POST', {})) },

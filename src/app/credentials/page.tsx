@@ -39,6 +39,7 @@ import {
 } from '@/components/flows/http-credential-dialog'
 import { useAuth } from '@/hooks/use-auth'
 import { useNangoConnect } from '@/lib/client/use-nango-connect'
+import { ExternalSecretProviders } from '@/components/credentials/external-secret-providers'
 
 /**
  * The workspace's credential surface — everything a flow or agent can
@@ -475,6 +476,7 @@ export default function CredentialsPage() {
                   badge={
                     <span className="flex items-center gap-1.5">
                       {row.status === 'verified' ? <Badge variant="good">Verified</Badge> : <Badge variant="warn">Needs attention</Badge>}
+                      {row.externalFields?.length ? <Badge variant="secondary">External secrets</Badge> : null}
                       {/* An unowned credential is one that no offboarding can
                           revoke and no audit entry can attribute to a person.
                           Flagged rather than auto-assigned: guessing an owner
@@ -528,6 +530,8 @@ export default function CredentialsPage() {
               ))
             )}
           </CredentialSection>
+
+          <ExternalSecretProviders canManage={canManage} />
 
           <CredentialSection
             title="MCP servers"

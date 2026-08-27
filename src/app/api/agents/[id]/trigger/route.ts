@@ -10,6 +10,7 @@ import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { rateLimit } from '@/lib/ratelimit'
 import { recordTokenRejection } from '@/lib/security/events'
 import { readRequestJsonLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
+import { injectTraceContext } from '@/lib/observability/otel'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
@@ -150,13 +151,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Agent worker is disabled' }, { status: 503 })
       }
       const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
-      await queue.add('execute-agent', {
+      await queue.add('execute-agent', injectTraceContext({
         executionId: execution.id,
         agentId: agent.id,
         organizationId: agent.organizationId,
         userId: user.id,
         input,
-      }, { jobId: execution.id })
+      }), { jobId: execution.id })
 
       return NextResponse.json({ success: true, executionId: execution.id, status: 'pending' })
     }

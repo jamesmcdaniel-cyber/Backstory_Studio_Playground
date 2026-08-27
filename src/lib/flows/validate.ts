@@ -18,6 +18,8 @@ export type FlowValidationContext = {
   toolCatalog?: { id: string; name?: string; tools?: { name: string; inputSchema?: unknown }[]; toolsError?: string }[]
   /** Reusable HTTP credentials visible to the executing workspace. */
   httpCredentials?: { id: string }[]
+  /** Per-user runtime credential placeholders visible to the workspace. */
+  credentialResolvers?: { id: string }[]
   /** Set by publish validation; omitted for draft/manual-run validation. */
   webhookSecretConfigured?: boolean
   /**
@@ -396,6 +398,7 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
   ]))
   const toolErrorsByConnection = new Map((context.toolCatalog ?? []).map((connection) => [connection.id, connection.toolsError]))
   const httpCredentialIds = new Set((context.httpCredentials ?? []).map((credential) => credential.id))
+  const credentialResolverIds = new Set((context.credentialResolvers ?? []).map((resolver) => resolver.id))
   const toolsByConnection = new Map((context.toolCatalog ?? []).map((connection) => [
     connection.id,
     new Map((connection.tools ?? []).map((tool) => [tool.name, tool])),
@@ -512,7 +515,7 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       // reusing a connected integration or with a stored credential. When the
       // URL points at a provider we recognize, the message says whether that
       // integration is already connected on the platform or still needs to be.
-      if (!node.data.connectionId && !node.data.credentialId) {
+      if (!node.data.connectionId && !node.data.credentialId && !node.data.credentialResolverId) {
         const brand = httpUrlBrand(node.data.url)
         const connected =
           brand && (context.toolCatalog ?? []).some((connection) => matchBrandHint(connection.name ?? '')?.key === brand.key)
@@ -523,8 +526,9 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
           : `${nodeLabel(node)} sends its request without authentication — reuse a connected integration or set up a credential for this host.`
         add(issues, 'error', 'HTTP_NO_AUTH', message, node.id)
       }
-      if (node.data.connectionId && node.data.credentialId) {
-        add(issues, 'error', 'AMBIGUOUS_HTTP_AUTH', `${nodeLabel(node)} has two authentication methods selected — keep either a predefined connection or a generic credential.`, node.id)
+      const authBindings = [node.data.connectionId, node.data.credentialId, node.data.credentialResolverId].filter(Boolean)
+      if (authBindings.length > 1) {
+        add(issues, 'error', 'AMBIGUOUS_HTTP_AUTH', `${nodeLabel(node)} has multiple authentication methods selected — keep one connection, credential, or per-user resolver.`, node.id)
       }
       if (node.data.connectionId && parseFlowToolConnectionId(node.data.connectionId).plane !== 'mcp') {
         add(issues, 'error', 'INVALID_HTTP_AUTH_CONNECTION', `${nodeLabel(node)} can only use an MCP connection for predefined authentication — choose one from the HTTP authentication settings.`, node.id)
@@ -534,6 +538,9 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       }
       if (node.data.credentialId && context.httpCredentials && !httpCredentialIds.has(node.data.credentialId)) {
         add(issues, 'error', 'UNKNOWN_HTTP_CREDENTIAL', `${nodeLabel(node)} uses an HTTP credential that is not available — choose or create another credential.`, node.id)
+      }
+      if (node.data.credentialResolverId && context.credentialResolvers && !credentialResolverIds.has(node.data.credentialResolverId)) {
+        add(issues, 'error', 'UNKNOWN_CREDENTIAL_RESOLVER', `${nodeLabel(node)} uses a per-user credential resolver that is not available — choose another resolver.`, node.id)
       }
       if (node.data.sendHeaders !== false) {
         validateJsonObjectField(issues, node.data.headers, `${nodeLabel(node)} headers must be a JSON object.`, node.id)
@@ -708,8 +715,15 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     }
 
     if (node.type === 'data') {
-      if (!node.data.input?.trim()) {
+      if (node.data.op !== 'totpGenerate' && !node.data.input?.trim()) {
         add(issues, 'error', 'MISSING_DATA_INPUT', `${nodeLabel(node)} needs data to work with.`, node.id)
+      }
+      if (['hmac', 'jwtSign', 'jwtVerify', 'totpGenerate', 'totpVerify'].includes(node.data.op) && !node.data.secret?.trim()) {
+        add(issues, 'error', 'MISSING_SECURITY_SECRET', `${nodeLabel(node)} needs a runtime secret.`, node.id)
+      }
+      if (node.data.op === 'compareDatasets') {
+        if (!node.data.to?.trim()) add(issues, 'error', 'MISSING_COMPARE_DATASET', `${nodeLabel(node)} needs the second dataset.`, node.id)
+        if (!node.data.by?.trim()) add(issues, 'error', 'MISSING_COMPARE_KEY', `${nodeLabel(node)} needs at least one matching field.`, node.id)
       }
       // separator (join) is optional — it defaults to ',' at run time.
       if (node.data.op === 'filterArray') {

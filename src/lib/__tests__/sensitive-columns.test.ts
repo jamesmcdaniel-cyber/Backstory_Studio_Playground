@@ -36,6 +36,7 @@ type Classification = 'encrypted' | 'hash' | 'capability' | 'not-secret'
 const CLASSIFIED: Record<string, Classification> = {
   // ── Encrypted at rest ────────────────────────────────────────────────────
   'HttpCredential.secretConfig': 'encrypted',
+  'ExternalSecretProvider.authConfig': 'encrypted',
   'IntegrationSecret.authConfig': 'encrypted',
   'McpConnection.authConfig': 'encrypted',
   'Organization.peopleAiWebhookSecret': 'encrypted',
@@ -77,6 +78,17 @@ const CLASSIFIED: Record<string, Classification> = {
   'Organization.scimTokens': 'not-secret',
   'User.apiKeys': 'not-secret',
   'User.httpCredentials': 'not-secret',
+  'Organization.httpCredentialSecretReferences': 'not-secret',
+  'Organization.externalSecretProviders': 'not-secret',
+  'Organization.credentialResolvers': 'not-secret',
+  'Organization.credentialResolverBindings': 'not-secret',
+  'User.createdCredentialResolvers': 'not-secret',
+  'User.credentialResolverBindings': 'not-secret',
+  'HttpCredential.secretReferences': 'not-secret',
+  'HttpCredentialSecretReference.credentialId': 'not-secret',
+  'HttpCredentialSecretReference.credential': 'not-secret',
+  'CredentialResolverBinding.credentialId': 'not-secret',
+  'CredentialResolverBinding.credential': 'not-secret',
   // Findings ABOUT secrets, not secrets: findSecretCandidates stores a masked
   // preview (maskValue), never the literal it matched on.
   'Flow.secretFindings': 'not-secret',

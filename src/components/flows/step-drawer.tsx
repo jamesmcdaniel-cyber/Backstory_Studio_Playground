@@ -863,6 +863,16 @@ export function StepDrawer({
     [node, toolCatalog],
   )
   const [httpCredentials, setHttpCredentials] = useState<HttpCredentialSummary[]>([])
+  type CredentialResolverSummary = {
+    id: string
+    name: string
+    authType: HttpAuthOption
+    allowedHost: string
+    status: 'active' | 'disabled'
+    boundCredentialId: string | null
+    ready: boolean
+  }
+  const [credentialResolvers, setCredentialResolvers] = useState<CredentialResolverSummary[]>([])
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
   const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
   const [curlDialogOpen, setCurlDialogOpen] = useState(false)
@@ -883,7 +893,7 @@ export function StepDrawer({
   // what the node already binds, with a local override so a user can pick
   // "Generic" and see the auth-type sub-select before a credential exists.
   // Reset when the selected node changes.
-  const [httpAuthMode, setHttpAuthMode] = useState<'predefined' | 'generic'>('generic')
+  const [httpAuthMode, setHttpAuthMode] = useState<'predefined' | 'generic' | 'perUser'>('generic')
   // Predefined credentials reuse connected integrations. Only MCP-plane
   // connections carry a token the HTTP executor can inject, so filter to those.
   const predefinedConnections = useMemo(
@@ -903,6 +913,7 @@ export function StepDrawer({
     // credential for the host.
     setHttpAuthMode(
       node.data.connectionId ? 'predefined'
+        : node.data.credentialResolverId ? 'perUser'
         : node.data.credentialId ? 'generic'
           : predefinedConnections.length ? 'predefined' : 'generic',
     )
@@ -963,10 +974,13 @@ export function StepDrawer({
   }, [isWorkspace, onClose, onNavigate, navigation])
   useEffect(() => {
     if (node.type !== 'http') return
-    fetch('/api/http-credentials?scope=bindable', { cache: 'no-store' })
-      .then((response) => response.json())
-      .then((data) => {
-        if (data?.success && Array.isArray(data.credentials)) setHttpCredentials(data.credentials)
+    Promise.all([
+      fetch('/api/http-credentials?scope=bindable', { cache: 'no-store' }).then((response) => response.json()),
+      fetch('/api/credential-resolvers', { cache: 'no-store' }).then((response) => response.json()),
+    ])
+      .then(([credentialData, resolverData]) => {
+        if (credentialData?.success && Array.isArray(credentialData.credentials)) setHttpCredentials(credentialData.credentials)
+        if (resolverData?.success && Array.isArray(resolverData.resolvers)) setCredentialResolvers(resolverData.resolvers)
       })
       .catch(() => undefined)
   }, [node.type])
@@ -1796,19 +1810,29 @@ export function StepDrawer({
                 className={fieldClass}
                 value={httpAuthMode}
                 onChange={(event) => {
-                  const mode = event.target.value as 'predefined' | 'generic'
+                  const mode = event.target.value as 'predefined' | 'generic' | 'perUser'
                   setHttpAuthMode(mode)
-                  if (mode !== 'predefined' && node.data.connectionId) onChange({ ...node, data: { ...node.data, connectionId: undefined } })
-                  if (mode !== 'generic' && node.data.credentialId) onChange({ ...node, data: { ...node.data, credentialId: undefined } })
+                  onChange({
+                    ...node,
+                    data: {
+                      ...node.data,
+                      connectionId: mode === 'predefined' ? node.data.connectionId : undefined,
+                      credentialId: mode === 'generic' ? node.data.credentialId : undefined,
+                      credentialResolverId: mode === 'perUser' ? node.data.credentialResolverId : undefined,
+                    },
+                  })
                 }}
               >
                 <option value="predefined">Connected server (MCP)</option>
-                <option value="generic">Manual credential</option>
+                <option value="generic">My credential</option>
+                <option value="perUser">Each runner’s credential</option>
               </select>
               <p className="mt-1 text-xs text-muted-foreground">
                 {httpAuthMode === 'predefined'
                   ? 'Reuse a connected MCP server’s token for authentication.'
-                  : 'Choose an auth method, then set up a reusable credential for this host.'}
+                  : httpAuthMode === 'perUser'
+                    ? 'Resolve the executing person’s explicit credential binding at run time.'
+                    : 'Choose an auth method, then set up your reusable credential for this host.'}
               </p>
               {/* The checker owns this message now — it knows which brand the
                   URL points at and whether that integration is connected, so
@@ -1830,7 +1854,7 @@ export function StepDrawer({
                     id={`${uid}-http-connection`}
                     className={fieldClass}
                     value={node.data.connectionId ?? ''}
-                    onChange={(event) => onChange({ ...node, data: { ...node.data, connectionId: event.target.value || undefined, credentialId: undefined } })}
+                    onChange={(event) => onChange({ ...node, data: { ...node.data, connectionId: event.target.value || undefined, credentialId: undefined, credentialResolverId: undefined } })}
                   >
                     <option value="">Choose a connection…</option>
                     {predefinedConnections.map((connection) => (
@@ -1872,7 +1896,7 @@ export function StepDrawer({
                     value={node.data.credentialId ?? ''}
                     onChange={(event) => onChange({
                       ...node,
-                      data: { ...node.data, credentialId: event.target.value || undefined, connectionId: undefined },
+                      data: { ...node.data, credentialId: event.target.value || undefined, connectionId: undefined, credentialResolverId: undefined },
                     })}
                   >
                     <option value="">Choose a verified credential…</option>
@@ -1943,9 +1967,134 @@ export function StepDrawer({
                       {flagged && selected?.lastError && (
                         <p className="text-xs text-amber-700/80">{selected.lastError}</p>
                       )}
+                      {selected && !selected.isSharedLegacy && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={async () => {
+                            try {
+                              const response = await fetch('/api/credential-resolvers', {
+                                method: 'POST',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({
+                                  action: 'create',
+                                  name: `${selected.name} · per-user`,
+                                  credentialId: selected.id,
+                                }),
+                              })
+                              const data = await response.json().catch(() => ({}))
+                              if (!response.ok) throw new Error(data.error || 'Could not create the per-user resolver.')
+                              const resolver = data.resolver as CredentialResolverSummary
+                              setCredentialResolvers((current) => [resolver, ...current.filter((entry) => entry.id !== resolver.id)])
+                              setHttpAuthMode('perUser')
+                              onChange({
+                                ...node,
+                                data: {
+                                  ...node.data,
+                                  credentialResolverId: resolver.id,
+                                  credentialId: undefined,
+                                  connectionId: undefined,
+                                },
+                              })
+                              toast.success('Per-user credential resolution is enabled.')
+                            } catch (error) {
+                              toast.error(error instanceof Error ? error.message : 'Could not create the per-user resolver.')
+                            }
+                          }}
+                        >
+                          Make per-user
+                        </Button>
+                      )}
                     </div>
                   )
                 })()}
+              </div>
+            )}
+
+            {httpAuthMode === 'perUser' && (
+              <div className="space-y-3">
+                <div>
+                  <label className={labelClass} htmlFor={`${uid}-credential-resolver`}>Credential resolver</label>
+                  <select
+                    id={`${uid}-credential-resolver`}
+                    className={fieldClass}
+                    value={node.data.credentialResolverId ?? ''}
+                    onChange={(event) => onChange({
+                      ...node,
+                      data: {
+                        ...node.data,
+                        credentialResolverId: event.target.value || undefined,
+                        credentialId: undefined,
+                        connectionId: undefined,
+                      },
+                    })}
+                  >
+                    <option value="">Choose a per-user resolver…</option>
+                    {credentialResolvers.filter((resolver) => resolver.status === 'active').map((resolver) => (
+                      <option key={resolver.id} value={resolver.id}>
+                        {resolver.name} · {resolver.authType} · {resolver.allowedHost}{resolver.ready ? '' : ' · connect yours'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {node.data.credentialResolverId && (() => {
+                  const resolver = credentialResolvers.find((entry) => entry.id === node.data.credentialResolverId)
+                  if (!resolver) return null
+                  const matches = httpCredentials.filter((credential) =>
+                    credential.userId && credential.authType === resolver.authType && credential.allowedHost === resolver.allowedHost)
+                  return (
+                    <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                      <p className="text-xs font-medium">My binding</p>
+                      <div className="mt-2 flex gap-2">
+                        <select
+                          className={`${fieldClass} min-w-0 flex-1`}
+                          value={resolver.boundCredentialId ?? ''}
+                          onChange={async (event) => {
+                            const credentialId = event.target.value
+                            if (!credentialId) return
+                            try {
+                              const response = await fetch('/api/credential-resolvers', {
+                                method: 'POST',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({ action: 'bind', resolverId: resolver.id, credentialId }),
+                              })
+                              const data = await response.json().catch(() => ({}))
+                              if (!response.ok) throw new Error(data.error || 'Could not bind the credential.')
+                              setCredentialResolvers((current) => current.map((entry) =>
+                                entry.id === resolver.id ? { ...entry, boundCredentialId: credentialId, ready: true } : entry))
+                              toast.success('Your credential is connected to this workflow resolver.')
+                            } catch (error) {
+                              toast.error(error instanceof Error ? error.message : 'Could not bind the credential.')
+                            }
+                          }}
+                        >
+                          <option value="">Connect my credential…</option>
+                          {matches.map((credential) => <option key={credential.id} value={credential.id}>{credential.name}</option>)}
+                        </select>
+                        <Button type="button" variant="outline" onClick={() => {
+                          setNewCredentialType(resolver.authType)
+                          setCredentialDialogOpen(true)
+                        }}>
+                          <KeyRound className="mr-1.5 h-4 w-4" /> New
+                        </Button>
+                      </div>
+                      <p className="mt-1.5 text-xs text-muted-foreground">
+                        {resolver.ready
+                          ? 'Ready for you. Other runners must connect their own matching credential.'
+                          : matches.length
+                            ? 'Choose which of your matching credentials this workflow may use.'
+                            : `Create a ${resolver.authType} credential for ${resolver.allowedHost}.`}
+                      </p>
+                    </div>
+                  )
+                })()}
+                {credentialResolvers.length === 0 && (
+                  <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                    No shared resolver exists yet. Select one of your credentials and choose “Make per-user” below.
+                  </p>
+                )}
               </div>
             )}
 
@@ -2987,12 +3136,31 @@ export function StepDrawer({
           requestUrl={node.data.url}
           requestMethod={node.data.method}
           initialAuthType={newCredentialType}
-          onSaved={(credential) => {
+          onSaved={async (credential) => {
             setHttpCredentials((current) => [
               credential,
               ...current.filter((entry) => entry.id !== credential.id),
             ])
-            onChange({ ...node, data: { ...node.data, credentialId: credential.id, connectionId: undefined } })
+            if (httpAuthMode === 'perUser' && node.data.credentialResolverId) {
+              try {
+                const response = await fetch('/api/credential-resolvers', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ action: 'bind', resolverId: node.data.credentialResolverId, credentialId: credential.id }),
+                })
+                const data = await response.json().catch(() => ({}))
+                if (!response.ok) throw new Error(data.error || 'The new credential does not match this resolver.')
+                setCredentialResolvers((current) => current.map((entry) =>
+                  entry.id === node.data.credentialResolverId
+                    ? { ...entry, boundCredentialId: credential.id, ready: true }
+                    : entry))
+                toast.success('Your new credential is connected to this workflow resolver.')
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : 'Could not connect the new credential.')
+              }
+              return
+            }
+            onChange({ ...node, data: { ...node.data, credentialId: credential.id, connectionId: undefined, credentialResolverId: undefined } })
           }}
         />
       )}
@@ -3180,7 +3348,7 @@ function DataEditor({
           ))}
         </select>
       </div>
-      <div>
+      {op !== 'totpGenerate' && <div>
         <span className={labelClass}>Input</span>
         <TokenTextEditor
           ref={registerEditor('data.input')}
@@ -3192,7 +3360,7 @@ function DataEditor({
           ariaLabel="Input"
         />
         <FieldIssues issues={issueFor('dataInput')} />
-      </div>
+      </div>}
       {(op === 'join' || op === 'split') && (
         <div>
           <label className={labelClass}>{op === 'join' ? 'Join with (optional)' : 'Split at (optional)'}</label>
@@ -3365,17 +3533,84 @@ function DataEditor({
           <p className="text-[11px] text-muted-foreground">Each condition checks one item of the list at a time.</p>
         </div>
       )}
-      {(op === 'sort' || op === 'removeDuplicates' || op === 'summarize') && (
+      {(op === 'sort' || op === 'removeDuplicates' || op === 'summarize' || op === 'compareDatasets') && (
         <div>
-          <label className={labelClass}>{op === 'summarize' ? 'Group by field(s)' : 'Field(s)'}</label>
+          <label className={labelClass}>{op === 'summarize' ? 'Group by field(s)' : op === 'compareDatasets' ? 'Match records by field(s)' : 'Field(s)'}</label>
           <input
             className={fieldClass}
             value={node.data.by ?? ''}
-            placeholder={op === 'summarize' ? 'Leave empty to summarize the whole list — several fields separate with commas' : 'Leave empty to use the whole item — several fields separate with commas'}
+            placeholder={op === 'summarize' ? 'Leave empty to summarize the whole list — several fields separate with commas' : op === 'compareDatasets' ? 'id — several fields separate with commas' : 'Leave empty to use the whole item — several fields separate with commas'}
             onFocus={blockActive}
             onBlur={unblockActive}
             onChange={(e) => onChange({ ...node, data: { ...node.data, by: e.target.value } })}
           />
+          {op === 'compareDatasets' && <FieldIssues issues={issueFor('compareKey')} />}
+        </div>
+      )}
+      {op === 'compareDatasets' && (
+        <div>
+          <span className={labelClass}>Second dataset</span>
+          <TokenTextEditor
+            ref={registerEditor('data.to')}
+            value={node.data.to ?? ''}
+            labelCtx={labelCtx}
+            placeholder="The other list to compare"
+            onFocus={focusEditor('data.to')}
+            onChange={(to) => onChange({ ...node, data: { ...node.data, to: to || undefined } })}
+            ariaLabel="Second dataset"
+          />
+          <FieldIssues issues={issueFor('compareDataset')} />
+        </div>
+      )}
+      {(['hash', 'hmac', 'jwtSign', 'jwtVerify', 'totpGenerate', 'totpVerify'] as DataOp[]).includes(op) && (
+        <div className="space-y-3 rounded-md border border-border/70 p-3">
+          <div>
+            <label className={labelClass} htmlFor={`${uid}-security-algorithm`}>Algorithm</label>
+            <select
+              id={`${uid}-security-algorithm`}
+              className={fieldClass}
+              value={node.data.algorithm ?? (op.startsWith('jwt') ? 'HS256' : op.startsWith('totp') ? 'sha1' : 'sha256')}
+              onChange={(event) => onChange({ ...node, data: { ...node.data, algorithm: event.target.value } })}
+            >
+              {(op.startsWith('jwt')
+                ? [['HS256', 'HS256'], ['HS384', 'HS384'], ['HS512', 'HS512']]
+                : op.startsWith('totp')
+                  ? [['sha1', 'SHA-1 (TOTP standard)'], ['sha256', 'SHA-256'], ['sha512', 'SHA-512']]
+                  : [['sha256', 'SHA-256'], ['sha384', 'SHA-384'], ['sha512', 'SHA-512']]
+              ).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </div>
+          {op !== 'hash' && (
+            <div>
+              <span className={labelClass}>Runtime secret</span>
+              <TokenTextEditor
+                ref={registerEditor('data.secret')}
+                value={node.data.secret ?? ''}
+                labelCtx={labelCtx}
+                placeholder="Reference a secret-bearing runtime value"
+                onFocus={focusEditor('data.secret')}
+                onChange={(secret) => onChange({ ...node, data: { ...node.data, secret: secret || undefined } })}
+                ariaLabel="Runtime secret"
+              />
+              <FieldIssues issues={issueFor('dataSecret')} />
+              <p className="mt-1 text-[11px] text-muted-foreground">Use a runtime reference. Literal secrets are detected before publish.</p>
+            </div>
+          )}
+          {(op === 'jwtSign' || op === 'jwtVerify') && (
+            <div className="grid grid-cols-2 gap-2">
+              <input className={fieldClass} value={node.data.issuer ?? ''} placeholder="Issuer (optional)" onChange={(event) => onChange({ ...node, data: { ...node.data, issuer: event.target.value || undefined } })} />
+              <input className={fieldClass} value={node.data.audience ?? ''} placeholder="Audience (optional)" onChange={(event) => onChange({ ...node, data: { ...node.data, audience: event.target.value || undefined } })} />
+              {op === 'jwtSign' && <input type="number" min={1} max={31536000} className={`${fieldClass} col-span-2`} value={node.data.expiresInSeconds ?? ''} placeholder="Expires in seconds (optional)" onChange={(event) => onChange({ ...node, data: { ...node.data, expiresInSeconds: event.target.value ? Number(event.target.value) : undefined } })} />}
+            </div>
+          )}
+          {(op === 'totpGenerate' || op === 'totpVerify') && (
+            <div className="grid grid-cols-2 gap-2">
+              <select className={fieldClass} value={node.data.digits ?? 6} onChange={(event) => onChange({ ...node, data: { ...node.data, digits: Number(event.target.value) as 6 | 8 } })}>
+                <option value={6}>6 digits</option><option value={8}>8 digits</option>
+              </select>
+              <input type="number" min={15} max={120} className={fieldClass} value={node.data.period ?? 30} onChange={(event) => onChange({ ...node, data: { ...node.data, period: Number(event.target.value) } })} aria-label="TOTP period seconds" />
+            </div>
+          )}
         </div>
       )}
       {op === 'flatten' && (

@@ -236,6 +236,7 @@ export function subtitleFor(node: FlowNode, ctx: PresentationContext): string | 
           : 'Any channel in the connected Slack workspace'
       }
       if (type === 'webhook') return ctx.published === false ? `${inputLine} · publish to arm` : inputLine
+      if (type === 'form') return ctx.published === false ? `Hosted form · ${inputLine} · publish to open` : `Hosted form · ${inputLine}`
       // manual keeps the original input-count line.
       return inputLine
     }

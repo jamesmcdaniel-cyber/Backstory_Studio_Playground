@@ -53,12 +53,15 @@ import { applyToolPolicy, describeToolPolicy, type ToolPolicy } from '@/lib/agen
 import { isGuardrailRefusal } from '@/lib/security/guardrails'
 import { aiEgressRefusal, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent, scanToolResultForInjection } from '@/lib/security/tool-call-guard'
+import { injectTraceContext, withExtractedTraceContext, withSpan } from '@/lib/observability/otel'
 
 export type AgentExecutionJob = {
   executionId?: string
   agentId: string
   organizationId: string
   userId: string
+  /** W3C context injected at enqueue; never arbitrary request headers. */
+  traceContext?: Record<string, string>
   input?: string
   resume?: boolean
   reply?: string
@@ -523,7 +526,7 @@ export async function resumeAgentExecution(params: {
   }
   if (!workersEnabled) throw new Error('Agent worker is disabled')
   const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
-  await queue.add('resume-agent', { ...params, resume: true }, { jobId: `${params.executionId}-resume-${Date.now()}` })
+  await queue.add('resume-agent', injectTraceContext({ ...params, resume: true }), { jobId: `${params.executionId}-resume-${Date.now()}` })
 }
 
 export async function runAgentExecution(
@@ -543,7 +546,17 @@ export async function runAgentExecution(
   // parent execution rather than a column of their own. Establishing the job's
   // tenant here lets the Prisma guard scope those writes under RLS without
   // threading a transaction through every call site. See src/lib/prisma.ts.
-  return ambientOrganization.run(data.organizationId, () => runAgentExecutionInner(data))
+  return withSpan(
+    'agent.run',
+    {
+      'backstory.agent.id': data.agentId,
+      'backstory.organization.id': data.organizationId,
+      'backstory.agent.execution_id': data.executionId,
+      'backstory.agent.resume': Boolean(data.resume),
+      'backstory.agent.depth': data.depth ?? 0,
+    },
+    () => ambientOrganization.run(data.organizationId, () => runAgentExecutionInner(data)),
+  )
 }
 
 async function runAgentExecutionInner(
@@ -1811,5 +1824,5 @@ async function runAgentExecutionInner(
 }
 
 export async function executeAgentJob(job: Job<AgentExecutionJob>) {
-  return runAgentExecution(job.data)
+  return withExtractedTraceContext(job.data.traceContext, () => runAgentExecution(job.data))
 }

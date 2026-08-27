@@ -176,6 +176,32 @@ async function main() {
   ])
 
   results.push([
+    'external_secret_providers.authConfig',
+    await rotateStringColumns(
+      'external_secret_providers',
+      await systemPrisma.externalSecretProvider.findMany({
+        where: { authConfig: { not: null } },
+        select: { id: true, authConfig: true },
+      }),
+      ['authConfig'],
+      (id, data) => systemPrisma.externalSecretProvider.update({ where: { id }, data }),
+    ),
+  ])
+
+  results.push([
+    'audit_stream_destinations.secret',
+    await rotateStringColumns(
+      'audit_stream_destinations',
+      await systemPrisma.auditStreamDestination.findMany({
+        where: { secret: { not: null } },
+        select: { id: true, secret: true },
+      }),
+      ['secret'],
+      (id, data) => systemPrisma.auditStreamDestination.update({ where: { id }, data }),
+    ),
+  ])
+
+  results.push([
     'organizations.peopleAiWebhookSecret',
     await rotateStringColumns(
       'organizations',

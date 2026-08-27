@@ -9,6 +9,7 @@ import { assertPublicUrl, fetchPublicUrl } from '@/lib/net/ssrf'
 import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentials/audit'
 import { assessStaleness } from '@/lib/credentials/lifetime'
 import { cannedFetchResponse, demoAmbientActive } from '@/lib/demo/transport'
+import { resolveHttpCredentialSecretReferences } from '@/lib/external-secrets/service'
 
 export const HTTP_AUTH_TYPES = [
   'basic',
@@ -32,6 +33,8 @@ export type ResolvedHttpCredential = {
   authType: HttpAuthType
   allowedHost: string
   config: HttpCredentialConfig
+  /** Fields fetched at run time and forbidden from being written back locally. */
+  externalFields?: string[]
 }
 
 const oauthTokenCache = new Map<string, { token: string; expiresAt: number }>()
@@ -112,11 +115,14 @@ async function requestOauth2Token(
   if (payload.refresh_token && payload.refresh_token !== credential.config.refreshToken && credential.id && credential.organizationId) {
     credential.config.refreshToken = payload.refresh_token
     try {
+      const persistedConfig = Object.fromEntries(
+        Object.entries(credential.config).filter(([field]) => !credential.externalFields?.includes(field)),
+      )
       // Org-scoped: the tenant guard rejects an id-only write, and this one is
       // swallowed below — unscoped, rotation would never persist at all.
       await prisma.httpCredential.updateMany({
         where: { id: credential.id, organizationId: credential.organizationId },
-        data: { secretConfig: encryptSecret(JSON.stringify(credential.config)) },
+        data: { secretConfig: encryptSecret(JSON.stringify(persistedConfig)) },
       })
     } catch {
       /* keep serving; the in-memory config already carries the new token */
@@ -375,8 +381,10 @@ export async function resolveHttpCredential(
   })
   if (!row) throw new Error('The selected HTTP credential is unavailable. Choose or verify it again.')
   let config: HttpCredentialConfig
+  let externalFields: string[] = []
+  let localConfig: HttpCredentialConfig
   try {
-    config = JSON.parse(decryptSecret(row.secretConfig)) as HttpCredentialConfig
+    localConfig = JSON.parse(decryptSecret(row.secretConfig)) as HttpCredentialConfig
   } catch {
     // Recorded before throwing: an undecryptable credential is indistinguishable
     // from a revoked one at the call site, and the audit trail is where the
@@ -392,6 +400,23 @@ export async function resolveHttpCredential(
       reason: 'decrypt_failed',
     })
     throw new Error('The selected HTTP credential could not be decrypted. Recreate it.')
+  }
+  try {
+    const resolved = await resolveHttpCredentialSecretReferences(organizationId, row.id, localConfig, context)
+    config = resolved.config
+    externalFields = resolved.externalFields
+  } catch {
+    await recordCredentialUseFailure({
+      organizationId,
+      kind: 'http_credential',
+      credentialId: row.id,
+      provider: row.allowedHost,
+      actorUserId: context?.actorUserId ?? null,
+      executionId: context?.executionId ?? null,
+      consumer: context?.consumer ?? 'flow.http_step',
+      reason: 'external_secret_failed',
+    })
+    throw new Error('An external secret for this HTTP credential could not be resolved.')
   }
 
   await recordCredentialUse({
@@ -411,6 +436,7 @@ export async function resolveHttpCredential(
     authType: row.authType as HttpAuthType,
     allowedHost: row.allowedHost,
     config,
+    externalFields,
   }
 }
 

@@ -69,6 +69,13 @@ export async function initSentry(processTag = 'web'): Promise<void> {
       dsn,
       environment: process.env.VERCEL_ENV || process.env.NODE_ENV || 'development',
       tracesSampleRate: 0,
+      // A configured OTLP provider owns the process-wide OpenTelemetry API.
+      // Sentry remains the error plane and must not install a competing global
+      // provider/context manager.
+      skipOpenTelemetrySetup: Boolean(
+        !/^(1|true|yes)$/i.test(process.env.OTEL_SDK_DISABLED ?? '') &&
+        (process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT),
+      ),
     })
     Sentry.setTag('process', processTag)
     setErrorReporter((error, context) => {

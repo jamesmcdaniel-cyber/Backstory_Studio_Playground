@@ -12,7 +12,7 @@ import { anchorSchedule } from '@/lib/scheduling/due'
 // time) only for workspaces above free tier or internal/partner — see
 // validateTriggerConfig in validate.ts and canArmEventTriggers in
 // free-tier-limits.ts.
-export const FLOW_TRIGGER_TYPES = ['manual', 'schedule', 'webhook', 'signal', 'poll', 'activity', 'slack'] as const
+export const FLOW_TRIGGER_TYPES = ['manual', 'schedule', 'webhook', 'form', 'signal', 'poll', 'activity', 'slack'] as const
 export type FlowTriggerType = (typeof FLOW_TRIGGER_TYPES)[number]
 export type FlowTrigger = { type: FlowTriggerType; [key: string]: unknown }
 

@@ -25,7 +25,7 @@ import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 
 export type TriggerData = {
-  type?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack'
+  type?: 'manual' | 'schedule' | 'webhook' | 'form' | 'signal' | 'poll' | 'activity' | 'slack'
   schedule?: { type?: string; time?: string; cron?: string; timezone?: string; runAt?: string; isActive?: boolean }
   input?: string
   inputFields?: TriggerInputField[]
@@ -36,6 +36,10 @@ export type TriggerData = {
    * acknowledges and runs in the background. Read by the trigger route.
    */
   responseMode?: 'whenFinished' | 'immediately'
+  formTitle?: string
+  formDescription?: string
+  submitLabel?: string
+  successMessage?: string
   condition?: { match?: 'all' | 'any'; clauses?: ConditionClause[] }
   // Poll trigger: which read-tool to call and how to detect new items.
   connectionId?: string
@@ -341,7 +345,7 @@ export function TriggerEditor({
           className={field}
           value={type}
           onChange={(e) => {
-            const next = e.target.value as 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack'
+            const next = e.target.value as NonNullable<TriggerData['type']>
             onChange(next === 'schedule' || next === 'poll' ? { ...trigger, type: next, schedule: { ...schedule, isActive: true } } : { ...trigger, type: next })
           }}
         >
@@ -349,6 +353,7 @@ export function TriggerEditor({
           <option value="schedule">Schedule</option>
           <option value="poll">When new items appear in an app (check on a schedule)</option>
           <option value="webhook">When an HTTP request is received</option>
+          <option value="form">When a hosted form is submitted</option>
           <option value="signal">Signal (in-platform event)</option>
           <option value="slack">When someone posts in Slack</option>
           <option value="activity">When something happens in a connected app</option>
@@ -711,6 +716,49 @@ export function TriggerEditor({
                 : 'The call stays open until the run finishes and answers with its output. Senders that give up early should use the other mode.'}
             </p>
           </div>
+        </div>
+      )}
+
+      {type === 'form' && (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-border bg-muted/40 p-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Public form URL</p>
+              {flowId && (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:text-indigo-700"
+                  onClick={() => copyText(`${window.location.origin}/forms/${flowId}`, 'Form URL')}
+                >
+                  <Copy className="h-3 w-3" /> Copy
+                </button>
+              )}
+            </div>
+            <p className="break-all rounded bg-background px-2 py-1.5 font-mono text-[11px]">
+              {flowId ? `/forms/${flowId}` : 'Save the flow to get its form URL.'}
+            </p>
+          </div>
+          <div>
+            <label className={label} htmlFor={`${uid}-form-title`}>Form title</label>
+            <input id={`${uid}-form-title`} className={field} value={trigger.formTitle ?? ''} placeholder="Request information" onChange={(e) => onChange({ ...trigger, formTitle: e.target.value || undefined })} />
+          </div>
+          <div>
+            <label className={label} htmlFor={`${uid}-form-description`}>Introduction (optional)</label>
+            <textarea id={`${uid}-form-description`} className={field} rows={3} value={trigger.formDescription ?? ''} placeholder="Explain what this form starts and how the submission is used." onChange={(e) => onChange({ ...trigger, formDescription: e.target.value || undefined })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className={label} htmlFor={`${uid}-submit-label`}>Submit button</label>
+              <input id={`${uid}-submit-label`} className={field} value={trigger.submitLabel ?? ''} placeholder="Submit" onChange={(e) => onChange({ ...trigger, submitLabel: e.target.value || undefined })} />
+            </div>
+            <div>
+              <label className={label} htmlFor={`${uid}-success-message`}>Success message</label>
+              <input id={`${uid}-success-message`} className={field} value={trigger.successMessage ?? ''} placeholder="Thanks — your response was received." onChange={(e) => onChange({ ...trigger, successMessage: e.target.value || undefined })} />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Expected input fields above become the public form controls. The form runs the <strong>published</strong> version and stays unavailable until this flow is published.
+          </p>
         </div>
       )}
 

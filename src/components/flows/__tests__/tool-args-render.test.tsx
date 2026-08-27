@@ -192,3 +192,61 @@ test('an ordinary argument is untouched by any of this', () => {
   assert.equal(container.querySelector('[role="tablist"]'), null)
   cleanup()
 })
+
+test('nested object schemas render as fields instead of a raw JSON box', () => {
+  const { container, getByText } = render(
+    React.createElement(ToolArgsEditor, {
+      inputSchema: {
+        type: 'object',
+        properties: {
+          filter: {
+            type: 'object',
+            properties: {
+              field: { type: 'string' },
+              operator: { type: 'string', enum: ['equals', 'contains'] },
+            },
+            required: ['field'],
+          },
+        },
+        required: ['filter'],
+      },
+      args: '{"filter":{"field":"status","operator":"equals"}}',
+      onChange: () => {},
+      dataFields: [],
+      labelCtx: {} as never,
+    }),
+  )
+  assert.match(container.textContent ?? '', /Field/)
+  assert.match(container.textContent ?? '', /Operator/)
+  assert.ok(getByText('Use JSON or flow data'))
+  cleanup()
+})
+
+test('arrays of objects expose repeatable fixed-collection items', () => {
+  let next = ''
+  const { getByText } = render(
+    React.createElement(ToolArgsEditor, {
+      inputSchema: {
+        type: 'object',
+        properties: {
+          rows: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { name: { type: 'string' }, active: { type: 'boolean', default: true } },
+              required: ['name'],
+            },
+          },
+        },
+        required: ['rows'],
+      },
+      args: '{"rows":[]}',
+      onChange: (value: string) => { next = value },
+      dataFields: [],
+      labelCtx: {} as never,
+    }),
+  )
+  fireEvent.click(getByText('Add item'))
+  assert.deepEqual(JSON.parse(next), { rows: [{ active: true }] })
+  cleanup()
+})

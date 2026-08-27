@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertCircle, Bot, Brain, CheckCircle2, CircleDashed, FileText, HelpCircle, KeyRound, Loader2, Plug, Search, Settings, Workflow } from 'lucide-react'
+import { AlertCircle, Bot, Brain, CheckCircle2, CircleDashed, Database, FileText, HelpCircle, KeyRound, Loader2, Plug, Search, Settings, Workflow } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
@@ -23,6 +23,7 @@ const NAV_ITEMS: NavResult[] = [
   { label: 'Home', href: '/dashboard', icon: Brain },
   { label: 'Agents', href: '/agents', icon: Bot },
   { label: 'Flows', href: '/flows', icon: Workflow },
+  { label: 'Data Tables', href: '/data-tables', icon: Database },
   { label: 'Library', href: '/templates', icon: FileText },
   { label: 'Integrations', href: '/integrations', icon: Plug },
   { label: 'Credentials', href: '/credentials', icon: KeyRound },

@@ -29,6 +29,7 @@ export interface RunValidationContext {
   agentRefs: { id: string; title: string }[]
   toolCatalog: FlowToolCatalogConnection[]
   httpCredentials: { id: string }[]
+  credentialResolvers: { id: string }[]
 }
 
 export interface RunValidationScope {
@@ -42,6 +43,7 @@ export interface RunValidationScope {
 function referencedIds(graph: FlowGraph) {
   const connectionIds = new Set<string>()
   const credentialIds = new Set<string>()
+  const credentialResolverIds = new Set<string>()
   for (const node of graph.nodes) {
     if (node.type === 'tool' || node.type === 'http') {
       if (node.data.connectionId) connectionIds.add(node.data.connectionId)
@@ -50,16 +52,17 @@ function referencedIds(graph: FlowGraph) {
       for (const id of node.data.toolConnectionIds ?? []) if (id) connectionIds.add(id)
     }
     if (node.type === 'http' && node.data.credentialId) credentialIds.add(node.data.credentialId)
+    if (node.type === 'http' && node.data.credentialResolverId) credentialResolverIds.add(node.data.credentialResolverId)
   }
-  return { connectionIds: [...connectionIds], credentialIds: [...credentialIds] }
+  return { connectionIds: [...connectionIds], credentialIds: [...credentialIds], credentialResolverIds: [...credentialResolverIds] }
 }
 
 export async function loadRunValidationContext(
   graph: FlowGraph,
   scope: RunValidationScope,
 ): Promise<RunValidationContext> {
-  const { connectionIds, credentialIds } = referencedIds(graph)
-  const [agents, toolCatalog, httpCredentials] = await Promise.all([
+  const { connectionIds, credentialIds, credentialResolverIds } = referencedIds(graph)
+  const [agents, toolCatalog, httpCredentials, credentialResolvers] = await Promise.all([
     prisma.agentTask.findMany({
       where: { organizationId: scope.organizationId, status: 'ACTIVE', ...agentVisibilityScope(scope.userId) },
       select: { id: true, description: true, updatedAt: true },
@@ -79,12 +82,19 @@ export async function loadRunValidationContext(
           select: { id: true },
         })
       : Promise.resolve([]),
+    credentialResolverIds.length
+      ? prisma.credentialResolver.findMany({
+          where: { organizationId: scope.organizationId, id: { in: credentialResolverIds }, status: 'active' },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
   ])
   return {
     agents,
     agentRefs: agents.map((agent) => ({ id: agent.id, title: agent.description })),
     toolCatalog,
     httpCredentials,
+    credentialResolvers,
   }
 }
 
@@ -102,6 +112,7 @@ export async function validateGraphForRun(
     agents: context.agentRefs,
     toolCatalog: context.toolCatalog,
     httpCredentials: context.httpCredentials,
+    credentialResolvers: context.credentialResolvers,
     ...(scope.flowId ? { flowId: scope.flowId } : {}),
   })
   return { validation, context }

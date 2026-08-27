@@ -38,6 +38,7 @@ export const FIELD_BY_CODE: Record<string, string> = {
   INVALID_HTTP_AUTH_CONNECTION: 'httpAuth',
   UNKNOWN_HTTP_CONNECTION: 'httpAuth',
   UNKNOWN_HTTP_CREDENTIAL: 'httpAuth',
+  UNKNOWN_CREDENTIAL_RESOLVER: 'httpAuth',
   HTTP_BODY_IGNORED: 'httpBody',
   FILE_FIELD_BODY_OFF: 'httpBody',
   FILE_FIELD_NEEDS_FORM_DATA: 'httpBody',
@@ -93,6 +94,9 @@ export const FIELD_BY_CODE: Record<string, string> = {
   MISSING_DATA_CLAUSE_LEFT: 'clauses',
   MISSING_DATA_INPUT: 'dataInput',
   MERGE_NO_KEY: 'dataInput',
+  MISSING_COMPARE_KEY: 'compareKey',
+  MISSING_COMPARE_DATASET: 'compareDataset',
+  MISSING_SECURITY_SECRET: 'dataSecret',
 
   // Variable
   MISSING_VARIABLE_NAME: 'variableName',

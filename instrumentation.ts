@@ -13,6 +13,8 @@ export async function register() {
     // and refusing to start is the honest signal.
     const { initializeKeyMaterial } = await import('./src/lib/crypto/key-source')
     await initializeKeyMaterial()
+    const { initializeOpenTelemetry } = await import('./src/lib/observability/otel')
+    initializeOpenTelemetry('web')
     const { initSentry } = await import('./src/lib/observability/sentry')
     await initSentry()
   }

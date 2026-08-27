@@ -1,6 +1,7 @@
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import type { AgentExecutionJob } from './execute-agent'
+import { injectTraceContext } from '@/lib/observability/otel'
 
 /**
  * Hand an agent run to the worker (or run it here in inline mode).
@@ -37,6 +38,6 @@ export async function dispatchAgentExecution(
   const queue = createQueue(options.queue ?? QUEUE_NAMES.AGENT_EXECUTION)
   // jobId = executionId makes the enqueue idempotent: a retried cron tick that
   // re-dispatches the same execution row is a no-op rather than a double run.
-  await queue.add('execute-agent', job, { jobId: job.executionId })
+  await queue.add('execute-agent', injectTraceContext(job), { jobId: job.executionId })
   return { queued: true }
 }

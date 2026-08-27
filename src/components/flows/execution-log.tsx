@@ -33,6 +33,10 @@ type FlowExecution = {
    *  pre-migration rows / older cached payloads — only then does
    *  executionIsDegraded fall back to inferring over `steps`. */
   degraded?: boolean
+  annotation?: string | null
+  rating?: number | null
+  tags?: string[]
+  customMetadata?: Record<string, string | number | boolean | null>
 }
 
 type StatusFilter = 'all' | 'running' | 'succeeded' | 'failed' | 'waiting' | 'cancelled'
@@ -65,6 +69,14 @@ export function FlowExecutionLog() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [triggerFilter, setTriggerFilter] = useState('')
+  const [ratingFilter, setRatingFilter] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
+  const [flowFilter, setFlowFilter] = useState('')
+  const [metadataKey, setMetadataKey] = useState('')
+  const [metadataValue, setMetadataValue] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -73,6 +85,16 @@ export function FlowExecutionLog() {
     const load = async () => {
       const query = new URLSearchParams({ page: String(page), take: '20' })
       if (filter !== 'all') query.set('status', filter)
+      if (triggerFilter) query.set('trigger', triggerFilter)
+      if (ratingFilter) query.set('rating', ratingFilter)
+      if (tagFilter.trim()) query.set('tag', tagFilter.trim())
+      if (flowFilter.trim()) query.set('flow', flowFilter.trim())
+      if (metadataKey.trim()) {
+        query.set('metadataKey', metadataKey.trim())
+        query.set('metadataValue', metadataValue)
+      }
+      if (fromDate) query.set('from', fromDate)
+      if (toDate) query.set('to', toDate)
       const response = await fetch(`/api/flows/runs?${query.toString()}`, { cache: 'no-store' }).catch(() => null)
       const data = response?.ok ? await response.json().catch(() => null) : null
       if (cancelled) return
@@ -102,7 +124,20 @@ export function FlowExecutionLog() {
       cancelled = true
       if (timer) clearInterval(timer)
     }
-  }, [filter, page, refreshKey])
+  }, [filter, page, refreshKey, triggerFilter, ratingFilter, tagFilter, flowFilter, metadataKey, metadataValue, fromDate, toDate])
+
+  const advancedFilterCount = [triggerFilter, ratingFilter, tagFilter.trim(), flowFilter.trim(), metadataKey.trim(), fromDate, toDate].filter(Boolean).length
+  const clearAdvancedFilters = () => {
+    setTriggerFilter('')
+    setRatingFilter('')
+    setTagFilter('')
+    setFlowFilter('')
+    setMetadataKey('')
+    setMetadataValue('')
+    setFromDate('')
+    setToDate('')
+    setPage(1)
+  }
 
   return (
     <section className="space-y-4" aria-labelledby="flow-execution-log-title">
@@ -145,6 +180,29 @@ export function FlowExecutionLog() {
         )}
       </div>
 
+      <details className="rounded-lg border border-border/70 bg-card px-3 py-2" open={advancedFilterCount > 0 || undefined}>
+        <summary className="cursor-pointer text-sm font-medium">
+          More filters{advancedFilterCount ? ` (${advancedFilterCount})` : ''}
+        </summary>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <input className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={flowFilter} onChange={(event) => { setFlowFilter(event.target.value); setPage(1) }} placeholder="Flow name or id" aria-label="Filter by flow" />
+          <select className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={triggerFilter} onChange={(event) => { setTriggerFilter(event.target.value); setPage(1) }} aria-label="Filter by trigger">
+            <option value="">All triggers</option>
+            {['manual', 'schedule', 'webhook', 'form', 'poll', 'signal', 'activity', 'slack', 'subflow', 'error'].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}
+          </select>
+          <select className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={ratingFilter} onChange={(event) => { setRatingFilter(event.target.value); setPage(1) }} aria-label="Filter by rating">
+            <option value="">All ratings</option>
+            {[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} star{value === 1 ? '' : 's'}</option>)}
+          </select>
+          <input className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={tagFilter} onChange={(event) => { setTagFilter(event.target.value); setPage(1) }} placeholder="Annotation tag" aria-label="Filter by annotation tag" />
+          <input type="date" className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={fromDate} onChange={(event) => { setFromDate(event.target.value); setPage(1) }} aria-label="Runs from date" />
+          <input type="date" className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={toDate} onChange={(event) => { setToDate(event.target.value); setPage(1) }} aria-label="Runs to date" />
+          <input className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={metadataKey} onChange={(event) => { setMetadataKey(event.target.value); setPage(1) }} placeholder="Metadata key" aria-label="Filter by metadata key" />
+          <input className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={metadataValue} onChange={(event) => { setMetadataValue(event.target.value); setPage(1) }} placeholder="Metadata value" aria-label="Filter by metadata value" disabled={!metadataKey.trim()} />
+        </div>
+        {advancedFilterCount > 0 && <Button variant="ghost" size="sm" className="mt-2" onClick={clearAdvancedFilters}>Clear filters</Button>}
+      </details>
+
       {loading && runs.length === 0 ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-12 rounded-lg" />)}
@@ -172,6 +230,7 @@ export function FlowExecutionLog() {
                 <TableHead>Duration</TableHead>
                 <TableHead>Trigger</TableHead>
                 <TableHead>Diagnostic</TableHead>
+                <TableHead>Review</TableHead>
                 <TableHead><span className="sr-only">Run details</span></TableHead>
               </TableRow>
             </TableHeader>
@@ -205,6 +264,12 @@ export function FlowExecutionLog() {
                       <TableCell className={cn('max-w-xs truncate', summary && (run.status === 'failed' ? 'text-red-600' : 'text-amber-700 dark:text-amber-400'))} title={summary}>
                         {summary || '—'}
                       </TableCell>
+                      <TableCell>
+                        <div className="max-w-44 space-y-1 text-xs">
+                          <span className="text-amber-500">{run.rating ? '★'.repeat(run.rating) : '—'}</span>
+                          {run.tags?.length ? <p className="truncate text-muted-foreground" title={run.tags.join(', ')}>{run.tags.join(', ')}</p> : null}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right">
                         <Link
                           href={`/flows/${run.flow.id}?run=${run.id}`}
@@ -217,10 +282,18 @@ export function FlowExecutionLog() {
                     </TableRow>
                     {expanded && (
                       <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={7} className="bg-muted/30 p-0">
+                        <TableCell colSpan={8} className="bg-muted/30 p-0">
                           {run.error && (
                             <div className="m-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
                               <span className="font-semibold">Run error:</span> {run.error}
+                            </div>
+                          )}
+                          {(run.annotation || Object.keys(run.customMetadata ?? {}).length > 0) && (
+                            <div className="m-3 rounded-md border border-border bg-background px-3 py-2 text-sm">
+                              {run.annotation && <p className="whitespace-pre-wrap">{run.annotation}</p>}
+                              {Object.keys(run.customMetadata ?? {}).length > 0 && (
+                                <p className="mt-1 font-mono text-xs text-muted-foreground">{JSON.stringify(run.customMetadata)}</p>
+                              )}
                             </div>
                           )}
                           {run.steps.length === 0 ? (

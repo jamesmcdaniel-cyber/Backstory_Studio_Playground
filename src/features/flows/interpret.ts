@@ -15,6 +15,7 @@ import { foreignReferences, unresolvedAuthHeaders, foreignReferenceMessage, unre
 import { inBandErrorWarning } from './tool-output'
 import { bindFormFiles } from '@/lib/flows/file-ref'
 import { flowItemsFromValue, type FlowItem } from '@/lib/flows/items'
+import { runSecurityOp, SECURITY_DATA_OPS, type SecurityDataOp } from '@/lib/flows/security-ops'
 
 export type StepOutcome = {
   nodeId: string
@@ -998,7 +999,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // where the step that owns the bad reference is the one that fails.
       const unresolved = unresolvedReferenceFailure({ input })
       if (unresolved) return unresolved
-      const res = runDataOp(node.data.op, {
+      const opConfig = {
         input,
         separator: node.data.separator === undefined ? undefined : resolveTemplate(node.data.separator, ctx),
         schema: node.data.schema,
@@ -1020,8 +1021,25 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         unit: node.data.unit,
         amount: node.data.amount === undefined ? undefined : resolveTemplate(node.data.amount, ctx),
         part: node.data.part,
-        to: node.data.to === undefined ? undefined : resolveTemplate(node.data.to, ctx),
-      })
+        to: node.data.to === undefined
+          ? undefined
+          : node.data.op === 'compareDatasets'
+            ? resolveTemplateValue(node.data.to, ctx)
+            : resolveTemplate(node.data.to, ctx),
+      }
+      const res = (SECURITY_DATA_OPS as readonly string[]).includes(node.data.op)
+        ? runSecurityOp(node.data.op as SecurityDataOp, {
+            input,
+            secret: node.data.secret === undefined ? undefined : resolveTemplate(node.data.secret, ctx),
+            algorithm: node.data.algorithm,
+            nowUnix: ctx.now?.unix,
+            expiresInSeconds: node.data.expiresInSeconds,
+            issuer: node.data.issuer === undefined ? undefined : resolveTemplate(node.data.issuer, ctx),
+            audience: node.data.audience === undefined ? undefined : resolveTemplate(node.data.audience, ctx),
+            digits: node.data.digits,
+            period: node.data.period,
+          })
+        : runDataOp(node.data.op, opConfig)
       if ('error' in res) {
         emit({ nodeId: node.id, status: 'failed', input: { op: node.data.op, input }, error: res.error })
         return { kind: 'fail', error: res.error }
@@ -1097,6 +1115,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
             }
           : {
               ...(node.data.credentialId ? { credentialId: node.data.credentialId } : {}),
+              ...(node.data.credentialResolverId ? { credentialResolverId: node.data.credentialResolverId } : {}),
               ...(node.data.connectionId ? { connectionId: node.data.connectionId } : {}),
               method: node.data.method,
               url: resolveTemplate(node.data.url, ctx, onMissingToken),

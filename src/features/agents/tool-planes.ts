@@ -38,6 +38,7 @@ import { EmailToolClient, emailTools, getEmailCredential } from '@/lib/integrati
 import { BUILTIN_CONNECTORS, isSelected, nangoConnector, type ConnectorDescriptor } from '@/lib/connectors/registry'
 import { formatFlowToolConnectionId, type FlowToolPlane } from '@/lib/flows/tool-connection-id'
 import { recordCredentialUse } from '@/lib/credentials/audit'
+import { DATA_TABLE_TOOLS, DataTableToolClient, dataTableToolIsWrite } from '@/lib/data-tables/tools'
 
 // Minimal interface every plane's execution client satisfies (McpClient,
 // BackstoryMcpClient, the built-in ToolClients, and adapters).
@@ -424,6 +425,19 @@ export async function loadNativePlaneGroups(
     groups.push(group(httpConn, '', new HttpToolClient(organizationId, endpoints, options.httpUserId), httpTools(endpoints)))
   }
 
+  // Durable workspace Data Tables — always available and tenant-scoped. Unlike
+  // external connectors this plane needs no credential; each tool is still
+  // classified read/write at execution time.
+  const dataTablesConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'data_tables')!
+  if (selected(dataTablesConn)) {
+    groups.push(group(
+      dataTablesConn,
+      'backstory://data-tables',
+      new DataTableToolClient(organizationId, options.httpUserId),
+      DATA_TABLE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    ))
+  }
+
   // Email via Resend REST API — gated on a per-org key, so an agent can only
   // send as its own workspace, never as the shared platform identity.
   const emailConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'email')!
@@ -623,6 +637,14 @@ export async function resolveFlowToolExecutor(params: {
       if (!granolaKey) throw new Error('Granola is not configured for this workspace.')
       const client = new GranolaToolClient(granolaKey.apiKey)
       return { provider: 'granola', isWrite: false, execute: (name, args) => client.executeTool('', name, args) }
+    }
+    if (ref === 'data_tables') {
+      const client = new DataTableToolClient(organizationId, userId)
+      return {
+        provider: ref,
+        isWrite: dataTableToolIsWrite(params.toolName),
+        execute: (name, args) => client.executeTool('', name, args),
+      }
     }
     if (ref === 'slack' || ref === 'email' || ref === 'http') {
       const descriptor = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === ref)!

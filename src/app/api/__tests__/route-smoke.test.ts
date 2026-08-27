@@ -47,6 +47,7 @@ const mutatingExempt = new Set([
   'nango/webhook',       // Nango webhook signature (verifyIncomingWebhookRequest)
   'slack/events',        // Slack Events API signature (per-workspace signing secret, HMAC-SHA256 v0)
   'flows/[id]/trigger',  // per-flow webhook secret (constant-time)
+  'forms/[id]/submit',   // public hosted form: published-form gate, per-flow/IP rate limit, bounded typed fields
   'agents/[id]/trigger', // per-agent trigger secret (constant-time)
   'cron/dispatch',       // CRON_SECRET, fail-closed
   'cron/retention',      // CRON_SECRET, fail-closed
@@ -171,7 +172,9 @@ if (TEST_DB) {
     { name: 'GET /api/template-proposals', run: async () => (await import('../template-proposals/route')).GET(req('/api/template-proposals')) },
     { name: 'GET /api/flows', run: async () => (await import('../flows/route')).GET(req('/api/flows')) },
     { name: 'GET /api/flows/runs', run: async () => (await import('../flows/runs/route')).GET(req('/api/flows/runs')) },
+    { name: 'GET /api/flows/migrations', run: async () => (await import('../flows/migrations/route')).GET(req('/api/flows/migrations')) },
     { name: 'GET /api/flows/[id]/collaborators', run: async () => (await import('../flows/[id]/collaborators/route')).GET(req(`/api/flows/${flowId}/collaborators`)) },
+    { name: 'GET /api/flows/[id]/review', run: async () => (await import('../flows/[id]/review/route')).GET(req(`/api/flows/${flowId}/review`)) },
     { name: 'GET /api/flow-templates', run: async () => (await import('../flow-templates/route')).GET(req('/api/flow-templates')) },
     { name: 'GET /api/catalogue/submissions', run: async () => (await import('../catalogue/submissions/route')).GET(req('/api/catalogue/submissions')) },
     // A built-in id: resolvable in any org with no seeded row behind it.
@@ -179,15 +182,23 @@ if (TEST_DB) {
     // 404s for a built-in id (no stored row) — smoke only asserts < 500.
     { name: 'GET /api/flow-templates/[id]/versions', run: async () => (await import('../flow-templates/[id]/versions/route')).GET(req('/api/flow-templates/summarize-extract/versions')) },
     { name: 'GET /api/agents', run: async () => (await import('../agents/route')).GET(req('/api/agents')) },
+    { name: 'GET /api/agents/[id]/publish', run: async () => (await import('../agents/[id]/publish/route')).GET(req(`/api/agents/${agentId}/publish`)) },
     { name: 'GET /api/agents/activity', run: async () => (await import('../agents/activity/route')).GET(req('/api/agents/activity')) },
     { name: 'GET /api/agents/kpis', run: async () => (await import('../agents/kpis/route')).GET(req('/api/agents/kpis')) },
     { name: 'GET /api/teammates', run: async () => (await import('../teammates/route')).GET(req('/api/teammates')) },
     { name: 'GET /api/workspace-folders', run: async () => (await import('../workspace-folders/route')).GET(req('/api/workspace-folders')) },
     { name: 'GET /api/approvals', run: async () => (await import('../approvals/route')).GET(req('/api/approvals')) },
     { name: 'GET /api/audit/export', run: async () => (await import('../audit/export/route')).GET(req('/api/audit/export')) },
+    { name: 'GET /api/audit-streams', run: async () => (await import('../audit-streams/route')).GET(req('/api/audit-streams')) },
     { name: 'GET /api/auth/context', run: async () => (await import('../auth/context/route')).GET(req('/api/auth/context')) },
     { name: 'GET /api/flows/tool-catalog', run: async () => (await import('../flows/tool-catalog/route')).GET(req('/api/flows/tool-catalog')) },
     { name: 'GET /api/http-credentials', run: async () => (await import('../http-credentials/route')).GET(req('/api/http-credentials')) },
+    { name: 'GET /api/credentials/dependents', run: async () => (await import('../credentials/dependents/route')).GET(req('/api/credentials/dependents?kind=http_credential&ref=nonexistent')) },
+    { name: 'GET /api/external-secret-providers', run: async () => (await import('../external-secret-providers/route')).GET(req('/api/external-secret-providers')) },
+    { name: 'GET /api/credential-resolvers', run: async () => (await import('../credential-resolvers/route')).GET(req('/api/credential-resolvers')) },
+    { name: 'GET /api/data-tables', run: async () => (await import('../data-tables/route')).GET(req('/api/data-tables')) },
+    { name: 'GET /api/data-tables/[id]/rows', run: async () => (await import('../data-tables/[id]/rows/route')).GET(req('/api/data-tables/nonexistent/rows')) },
+    { name: 'GET /api/data-tables/[id]/csv', run: async () => (await import('../data-tables/[id]/csv/route')).GET(req('/api/data-tables/nonexistent/csv')) },
     { name: 'GET /api/flows/huddle-ice', run: async () => (await import('../flows/huddle-ice/route')).GET(req('/api/flows/huddle-ice')) },
     { name: 'GET /api/flows/[id]/huddle/notes', run: async () => (await import('../flows/[id]/huddle/notes/route')).GET(req(`/api/flows/${flowId}/huddle/notes`)) },
     { name: 'GET /api/granola/notes', run: async () => (await import('../granola/notes/route')).GET(req('/api/granola/notes')) },

@@ -15,6 +15,7 @@ import { registerAgentSchedules } from '@/lib/workers/agent-schedule-registrar'
 import { runDispatchTick } from '@/lib/scheduling/dispatch-tick'
 import { assertWorkerEnv, workerCapacity } from '@/lib/workers/assert-env'
 import { initSentry, captureError, flushErrorReporting } from '@/lib/observability/sentry'
+import { initializeOpenTelemetry, shutdownOpenTelemetry } from '@/lib/observability/otel'
 import { processOutboxBatch } from '@/lib/outbox'
 import { isCustomerEdition } from '@/lib/edition'
 
@@ -300,6 +301,7 @@ class WorkerRuntime {
     await this.server.close()
     await Promise.all(this.workers.map((worker) => worker.close()))
     await flushErrorReporting()
+    await shutdownOpenTelemetry()
     this.deps.exit(0)
   }
 
@@ -317,6 +319,7 @@ class WorkerRuntime {
       warn: (msg) => this.server.log.warn(msg),
       error: (msg) => this.server.log.error(msg),
     })
+    initializeOpenTelemetry('worker')
     await initSentry('worker')
     // Reports and keeps running — does NOT exit, unlike uncaughtException
     // below. A single unhandled rejection in one BullMQ job must not take
@@ -327,7 +330,7 @@ class WorkerRuntime {
     })
     process.on('uncaughtException', (error) => {
       captureError(error, { source: 'worker.uncaughtException' })
-      void flushErrorReporting().finally(() => process.exit(1))
+      void Promise.all([flushErrorReporting(), shutdownOpenTelemetry()]).finally(() => process.exit(1))
     })
     // Liveness heartbeat: the producer's dispatch gate reads this key before
     // enqueueing. Written FIRST so a freshly-booted worker unblocks dispatch
@@ -368,7 +371,7 @@ if (require.main === module) {
   new WorkerRuntime().start(Number(process.env.WORKER_PORT) || 3002).catch(async (error) => {
     console.error(error)
     captureError(error, { source: 'worker.start' })
-    await flushErrorReporting()
+    await Promise.all([flushErrorReporting(), shutdownOpenTelemetry()])
     process.exit(1)
   })
 }

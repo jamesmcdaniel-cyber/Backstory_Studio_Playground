@@ -1,11 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  MCP_MANAGEMENT_TOOLS,
   describeFlowTools,
   flowInputSchema,
   flowToolDescription,
   flowToolName,
   uniqueToolNames,
+  managementToolsForScopes,
 } from '@/lib/mcp/server/tools'
 
 /**
@@ -97,4 +99,36 @@ test('the descriptor list is name-unique and protocol-legal throughout', () => {
     assert.ok(tool.description.length > 0)
     assert.equal(tool.inputSchema.type, 'object')
   }
+})
+
+test('management tools are filtered by the API key scope', () => {
+  const read = managementToolsForScopes(new Set(['flows:read']))
+  assert.ok(read.some((tool) => tool.name === 'list_flows'))
+  assert.ok(read.some((tool) => tool.name === 'list_flow_versions'))
+  assert.ok(!read.some((tool) => tool.name === 'create_flow'))
+
+  const write = managementToolsForScopes(new Set(['flows:write']))
+  assert.ok(write.some((tool) => tool.name === 'create_flow'))
+  assert.ok(write.some((tool) => tool.name === 'delete_flow'))
+  assert.ok(write.some((tool) => tool.name === 'publish_flow'))
+  assert.ok(write.some((tool) => tool.name === 'update_data_table'))
+  assert.ok(write.some((tool) => tool.name === 'delete_data_table'))
+  assert.ok(!write.some((tool) => tool.name === 'get_flow'))
+  assert.ok(write.every((tool) => !('requiredScope' in tool)), 'private authorization metadata must not cross MCP')
+})
+
+test('folder descriptors match the canonical workspace API name limit', () => {
+  for (const name of ['create_folder', 'rename_folder']) {
+    const tool = MCP_MANAGEMENT_TOOLS.find((entry) => entry.name === name)
+    assert.ok(tool)
+    assert.equal((tool.inputSchema.properties.name as { maxLength?: number }).maxLength, 60)
+  }
+})
+
+test('published-flow names cannot collide with reserved management tools', () => {
+  const reserved = MCP_MANAGEMENT_TOOLS.map((tool) => tool.name)
+  const names = uniqueToolNames([{ id: 'abcdef123456', name: 'List flows' }], reserved)
+  assert.equal(names.get('abcdef123456'), 'list_flows_abcdef')
+  const descriptors = describeFlowTools([{ id: 'abcdef123456', name: 'List flows' }], reserved)
+  assert.equal(descriptors[0].name, 'list_flows_abcdef')
 })

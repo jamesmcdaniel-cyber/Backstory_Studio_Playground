@@ -12,6 +12,26 @@ export function publicApiJson(body: unknown, status = 200): Response {
 }
 
 export async function authenticatePublicApi(request: Request, required: ApiScope): Promise<PublicApiContext | Response> {
+  return authenticatePublicApiAny(request, [required])
+}
+
+/**
+ * Authenticate a public client that may enter through one of several scoped
+ * capabilities. MCP is the motivating case: one endpoint serves read, write,
+ * and run tools, and requiring `flows:run` merely to list a write tool made a
+ * correctly least-privileged management key unusable.
+ *
+ * The returned context still carries the complete granted scope set. Each
+ * individual tool must check its own scope before it acts; this function only
+ * establishes that the caller may use this multi-capability surface at all.
+ */
+export async function authenticatePublicApiAny(
+  request: Request,
+  requiredAny: readonly ApiScope[],
+): Promise<PublicApiContext | Response> {
+  if (requiredAny.length === 0) {
+    throw new Error('authenticatePublicApiAny requires at least one scope.')
+  }
   const match = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')
   if (!match || match[1].length > 256) {
     await recordTokenRejection(request, { surface: 'public-api', reason: 'malformed_authorization' })
@@ -45,7 +65,7 @@ export async function authenticatePublicApi(request: Request, required: ApiScope
     return publicApiJson({ error: { code: 'UNAUTHORIZED', message: 'API key owner is no longer active.' } }, 401)
   }
   const scopes = new Set(Array.isArray(row.scopes) ? row.scopes.filter((scope): scope is string => typeof scope === 'string') : [])
-  if (!scopes.has(required)) {
+  if (!requiredAny.some((scope) => scopes.has(scope))) {
     // A valid key reaching for a scope it was not granted is the shape of a
     // stolen or over-reaching integration, so it is recorded as a denial rather
     // than a bad token.
@@ -57,9 +77,20 @@ export async function authenticatePublicApi(request: Request, required: ApiScope
       userId: row.userId,
       organizationId: row.organizationId,
       subject: `api-key:${row.id}`,
-      detail: { surface: 'public-api', required },
+      detail: { surface: 'public-api', requiredAny },
     })
-    return publicApiJson({ error: { code: 'FORBIDDEN', message: `API key requires ${required}.` } }, 403)
+    return publicApiJson(
+      {
+        error: {
+          code: 'FORBIDDEN',
+          message:
+            requiredAny.length === 1
+              ? `API key requires ${requiredAny[0]}.`
+              : `API key requires one of: ${requiredAny.join(', ')}.`,
+        },
+      },
+      403,
+    )
   }
   const limited = await rateLimit(`public-api:${row.id}`, { limit: 600, windowMs: 60_000, failureMode: 'closed' })
   if (!limited.ok) {

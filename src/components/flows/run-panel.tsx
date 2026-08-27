@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import { ChevronRight, Download, Pencil, Play, RotateCcw, X } from 'lucide-react'
+import { ChevronRight, Download, Pencil, Play, RotateCcw, Save, Star, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -59,6 +59,11 @@ export type FlowRunDetail = {
    *  pre-migration rows / older cached payloads — only then does
    *  runIsDegraded fall back to inferring over `steps`. */
   degraded?: boolean
+  annotation?: string | null
+  rating?: number | null
+  tags?: string[]
+  customMetadata?: unknown
+  annotatedAt?: string | null
 }
 export type RunWaitingEntry = {
   nodeId: string
@@ -516,6 +521,108 @@ function RunInputSection({
   )
 }
 
+function RunAnnotation({ run }: { run: FlowRunDetail }) {
+  const [open, setOpen] = useState(Boolean(run.annotation || run.rating || run.tags?.length))
+  const [annotation, setAnnotation] = useState(run.annotation ?? '')
+  const [rating, setRating] = useState<number | null>(run.rating ?? null)
+  const [tags, setTags] = useState((run.tags ?? []).join(', '))
+  const [metadata, setMetadata] = useState(() => JSON.stringify(run.customMetadata ?? {}, null, 2))
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    setOpen(Boolean(run.annotation || run.rating || run.tags?.length))
+    setAnnotation(run.annotation ?? '')
+    setRating(run.rating ?? null)
+    setTags((run.tags ?? []).join(', '))
+    setMetadata(JSON.stringify(run.customMetadata ?? {}, null, 2))
+    setMessage('')
+    // Reset only when the selected run changes; polling must not erase an edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.id])
+
+  const save = async () => {
+    setSaving(true)
+    setMessage('')
+    try {
+      let customMetadata: unknown
+      try {
+        customMetadata = JSON.parse(metadata || '{}')
+      } catch {
+        throw new Error('Custom metadata must be valid JSON.')
+      }
+      if (!customMetadata || typeof customMetadata !== 'object' || Array.isArray(customMetadata)) {
+        throw new Error('Custom metadata must be a JSON object.')
+      }
+      const response = await fetch(`/api/flows/runs/${encodeURIComponent(run.id)}/annotation`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          annotation: annotation.trim() || null,
+          rating,
+          tags: tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+          customMetadata,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not save the annotation.')
+      setMessage('Saved')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not save the annotation.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="border-b border-border px-3 py-2">
+      <button type="button" className="flex w-full items-center justify-between text-xs font-medium" onClick={() => setOpen((value) => !value)}>
+        Review this run
+        <span className="text-muted-foreground">{open ? 'Hide' : 'Annotate'}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center gap-1" aria-label="Run rating">
+            {[1, 2, 3, 4, 5].map((value) => (
+              <button key={value} type="button" aria-label={`${value} star${value === 1 ? '' : 's'}`} onClick={() => setRating(rating === value ? null : value)}>
+                <Star className={cn('h-4 w-4', rating && value <= rating ? 'fill-amber-400 text-amber-500' : 'text-muted-foreground')} />
+              </button>
+            ))}
+          </div>
+          <textarea
+            rows={3}
+            value={annotation}
+            onChange={(event) => setAnnotation(event.target.value)}
+            placeholder="What happened in this run?"
+            className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-xs outline-none focus:border-indigo-400"
+          />
+          <input
+            value={tags}
+            onChange={(event) => setTags(event.target.value)}
+            placeholder="Tags, comma-separated"
+            className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-indigo-400"
+          />
+          <details>
+            <summary className="cursor-pointer text-[11px] text-muted-foreground">Custom searchable metadata</summary>
+            <textarea
+              rows={3}
+              value={metadata}
+              onChange={(event) => setMetadata(event.target.value)}
+              className="mt-1 w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 font-mono text-[11px] outline-none focus:border-indigo-400"
+            />
+          </details>
+          <div className="flex items-center justify-between gap-2">
+            <span className={cn('text-[11px]', message === 'Saved' ? 'text-emerald-600' : 'text-red-600')}>{message}</span>
+            <Button type="button" size="sm" variant="outline" disabled={saving} onClick={save}>
+              <Save className="mr-1.5 h-3.5 w-3.5" /> {saving ? 'Saving…' : 'Save review'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function RunPanel({
   runs,
   selected,
@@ -605,6 +712,7 @@ export function RunPanel({
               )}
               {selected.error && <p className="mt-1 text-xs text-red-600">{selected.error}</p>}
             </div>
+            <RunAnnotation run={selected} />
             {selected.status === 'waiting' &&
               // One box per live pause: a loop that ran its iterations
               // concurrently can be waiting on several reviews, and each

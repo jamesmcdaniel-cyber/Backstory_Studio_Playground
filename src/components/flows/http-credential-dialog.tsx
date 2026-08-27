@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Globe2, Loader2, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, Globe2, KeyRound, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,6 +16,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import type { ExternalSecretProviderSummary } from '@/components/credentials/external-secret-providers'
+
+export type HttpSecretReference = {
+  providerId: string
+  path: string
+  property?: string
+  version?: string
+}
 
 export const HTTP_AUTH_OPTIONS = [
   { value: 'basic', label: 'Basic Auth', description: 'Username and password' },
@@ -51,6 +59,8 @@ export type HttpCredentialSummary = {
   userId?: string | null
   /** No owner — a legacy workspace-shared credential, flagged for migration. */
   isSharedLegacy?: boolean
+  externalFields?: string[]
+  secretRefs?: Record<string, HttpSecretReference>
 }
 
 const inputClass = 'h-10'
@@ -82,6 +92,64 @@ function SecretField({
         placeholder={placeholder}
         className={inputClass}
       />
+    </div>
+  )
+}
+
+function SecretOrReferenceField({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  providers,
+  reference,
+  onReferenceChange,
+}: {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  providers: ExternalSecretProviderSummary[]
+  reference?: HttpSecretReference
+  onReferenceChange: (value: HttpSecretReference | undefined) => void
+}) {
+  if (!reference) {
+    return (
+      <div className="space-y-1.5">
+        <SecretField id={id} label={label} value={value} onChange={onChange} placeholder={placeholder} secret />
+        {providers.length > 0 && (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              onChange('')
+              onReferenceChange({ providerId: providers[0].id, path: '' })
+            }}
+          >
+            <KeyRound className="h-3 w-3" /> Use external secret
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2 rounded-md border border-border/70 bg-muted/30 p-3 sm:col-span-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label>{label} · external</Label>
+        <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={() => onReferenceChange(undefined)}>Use stored value</button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Select value={reference.providerId} onValueChange={(providerId) => onReferenceChange({ ...reference, providerId })}>
+          <SelectTrigger aria-label={`${label} secret provider`}><SelectValue /></SelectTrigger>
+          <SelectContent>{providers.map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}</SelectContent>
+        </Select>
+        <Input value={reference.path} onChange={(event) => onReferenceChange({ ...reference, path: event.target.value })} placeholder="Secret name or path" aria-label={`${label} secret path`} />
+        <Input value={reference.property ?? ''} onChange={(event) => onReferenceChange({ ...reference, property: event.target.value || undefined })} placeholder="JSON property (optional)" aria-label={`${label} secret property`} />
+        <Input value={reference.version ?? ''} onChange={(event) => onReferenceChange({ ...reference, version: event.target.value || undefined })} placeholder="Version/stage (optional)" aria-label={`${label} secret version`} />
+      </div>
     </div>
   )
 }
@@ -121,6 +189,8 @@ export function HttpCredentialDialog({
   const [name, setName] = useState('')
   const [authType, setAuthType] = useState<HttpAuthOption>(initialAuthType)
   const [config, setConfig] = useState<Record<string, string>>({})
+  const [secretRefs, setSecretRefs] = useState<Record<string, HttpSecretReference>>({})
+  const [secretProviders, setSecretProviders] = useState<ExternalSecretProviderSummary[]>([])
   const [saving, setSaving] = useState(false)
   // Editable mode owns the URL locally; otherwise the caller's prop is the URL.
   const [urlDraft, setUrlDraft] = useState(requestUrl)
@@ -137,8 +207,21 @@ export function HttpCredentialDialog({
     if (!open) return
     setAuthType(rotateCredential?.authType ?? initialAuthType)
     setConfig({})
+    setSecretRefs(rotateCredential?.secretRefs ?? {})
     setUrlDraft(rotateCredential ? `https://${rotateCredential.allowedHost}/` : requestUrl)
   }, [initialAuthType, open, requestUrl, rotateCredential])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void fetch('/api/external-secret-providers', { cache: 'no-store' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (!cancelled) setSecretProviders(Array.isArray(data?.providers) ? data.providers : [])
+      })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [open])
 
   // Name defaults to "<host> <method>" and follows the host until the user
   // types their own — in editable mode the host isn't known when the dialog
@@ -157,6 +240,16 @@ export function HttpCredentialDialog({
   }, [open])
 
   const set = (key: string) => (value: string) => setConfig((current) => ({ ...current, [key]: value }))
+  const setReference = (field: string) => (value: HttpSecretReference | undefined) => {
+    setSecretRefs((current) => {
+      if (!value) {
+        const next = { ...current }
+        delete next[field]
+        return next
+      }
+      return { ...current, [field]: value }
+    })
+  }
 
   const verifyAndSave = async () => {
     if (!host) {
@@ -175,6 +268,7 @@ export function HttpCredentialDialog({
           url,
           method: requestMethod,
           config,
+          secretRefs,
         }),
       })
       const data = await response.json().catch(() => ({}))
@@ -242,7 +336,7 @@ export function HttpCredentialDialog({
 
           <div className="space-y-2">
             <Label>Authentication method</Label>
-            <Select value={authType} onValueChange={(value) => { setAuthType(value as HttpAuthOption); setConfig({}) }}>
+            <Select value={authType} onValueChange={(value) => { setAuthType(value as HttpAuthOption); setConfig({}); setSecretRefs({}) }}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {HTTP_AUTH_OPTIONS.map((option) => (
@@ -259,12 +353,12 @@ export function HttpCredentialDialog({
             {(authType === 'basic' || authType === 'digest') && (
               <>
                 <SecretField id="credential-username" label="Username" value={config.username || ''} onChange={set('username')} />
-                <SecretField id="credential-password" label="Password" value={config.password || ''} onChange={set('password')} secret />
+                <SecretOrReferenceField id="credential-password" label="Password" value={config.password || ''} onChange={set('password')} providers={secretProviders} reference={secretRefs.password} onReferenceChange={setReference('password')} />
               </>
             )}
             {authType === 'bearer' && (
               <div className="sm:col-span-2">
-                <SecretField id="credential-token" label="Bearer token" value={config.token || ''} onChange={set('token')} secret />
+                <SecretOrReferenceField id="credential-token" label="Bearer token" value={config.token || ''} onChange={set('token')} providers={secretProviders} reference={secretRefs.token} onReferenceChange={setReference('token')} />
               </div>
             )}
             {(authType === 'header' || authType === 'query') && (
@@ -276,27 +370,29 @@ export function HttpCredentialDialog({
                   onChange={set('name')}
                   placeholder={authType === 'header' ? 'X-API-Key' : 'api_key'}
                 />
-                <SecretField id="credential-key-value" label="Value" value={config.value || ''} onChange={set('value')} secret />
+                <SecretOrReferenceField id="credential-key-value" label="Value" value={config.value || ''} onChange={set('value')} providers={secretProviders} reference={secretRefs.value} onReferenceChange={setReference('value')} />
               </>
             )}
             {authType === 'oauth1' && (
               <>
                 <SecretField id="oauth1-consumer-key" label="Consumer key" value={config.consumerKey || ''} onChange={set('consumerKey')} />
-                <SecretField id="oauth1-consumer-secret" label="Consumer secret" value={config.consumerSecret || ''} onChange={set('consumerSecret')} secret />
+                <SecretOrReferenceField id="oauth1-consumer-secret" label="Consumer secret" value={config.consumerSecret || ''} onChange={set('consumerSecret')} providers={secretProviders} reference={secretRefs.consumerSecret} onReferenceChange={setReference('consumerSecret')} />
                 <SecretField id="oauth1-token" label="Access token" value={config.token || ''} onChange={set('token')} />
-                <SecretField id="oauth1-token-secret" label="Token secret" value={config.tokenSecret || ''} onChange={set('tokenSecret')} secret />
+                <SecretOrReferenceField id="oauth1-token-secret" label="Token secret" value={config.tokenSecret || ''} onChange={set('tokenSecret')} providers={secretProviders} reference={secretRefs.tokenSecret} onReferenceChange={setReference('tokenSecret')} />
               </>
             )}
             {authType === 'oauth2' && (
               <>
                 <div className="sm:col-span-2">
-                  <SecretField
+                  <SecretOrReferenceField
                     id="oauth2-access-token"
                     label="Existing access token"
                     value={config.accessToken || ''}
                     onChange={set('accessToken')}
                     placeholder="Use this, or configure client credentials below"
-                    secret
+                    providers={secretProviders}
+                    reference={secretRefs.accessToken}
+                    onReferenceChange={setReference('accessToken')}
                   />
                 </div>
                 <div className="sm:col-span-2 flex items-center gap-3 text-xs uppercase tracking-wider text-muted-foreground">
@@ -316,7 +412,7 @@ export function HttpCredentialDialog({
                   />
                 </div>
                 <SecretField id="oauth2-client-id" label="Client ID" value={config.clientId || ''} onChange={set('clientId')} />
-                <SecretField id="oauth2-client-secret" label="Client secret" value={config.clientSecret || ''} onChange={set('clientSecret')} secret />
+                <SecretOrReferenceField id="oauth2-client-secret" label="Client secret" value={config.clientSecret || ''} onChange={set('clientSecret')} providers={secretProviders} reference={secretRefs.clientSecret} onReferenceChange={setReference('clientSecret')} />
                 <SecretField id="oauth2-scope" label="Scopes" value={config.scope || ''} onChange={set('scope')} placeholder="read write" />
                 <SecretField id="oauth2-audience" label="Audience (optional)" value={config.audience || ''} onChange={set('audience')} />
               </>

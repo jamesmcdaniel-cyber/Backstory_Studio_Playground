@@ -221,7 +221,7 @@ export function FlowPicker({
   agents: Agent[]
   toolCatalog: ToolCatalog
   onPick: (type: StepType, seed?: FlowInsertSeed) => void
-  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack') => void
+  onPickTrigger?: (triggerType: 'manual' | 'schedule' | 'webhook' | 'form' | 'signal' | 'poll' | 'activity' | 'slack') => void
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')

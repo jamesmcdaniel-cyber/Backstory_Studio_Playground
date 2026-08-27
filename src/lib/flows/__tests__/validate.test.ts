@@ -966,3 +966,32 @@ test('a nango tool fans out per item without an approval gate', () => {
   assert.equal(result.errors.some((issue) => issue.code === 'APPROVAL_IN_PERITEM'), false)
   assert.equal(result.ok, true, JSON.stringify(result.issues))
 })
+
+test('an HTTP step accepts one available per-user credential resolver', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'http', type: 'http', data: { method: 'GET', url: 'https://api.example.com', credentialResolverId: 'resolver-1' } },
+    ],
+    edges: [{ id: 'e', source: 'trigger', target: 'http' }],
+  }
+  const valid = validateFlowGraph(graph, { credentialResolvers: [{ id: 'resolver-1' }] })
+  assert.equal(valid.ok, true, JSON.stringify(valid.issues))
+  const missing = validateFlowGraph(graph, { credentialResolvers: [] })
+  assert.ok(missing.errors.some((issue) => issue.code === 'UNKNOWN_CREDENTIAL_RESOLVER'))
+})
+
+test('an HTTP step rejects concrete and per-user credentials together', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'http', type: 'http', data: { method: 'GET', url: 'https://api.example.com', credentialId: 'credential-1', credentialResolverId: 'resolver-1' } },
+    ],
+    edges: [{ id: 'e', source: 'trigger', target: 'http' }],
+  }
+  const result = validateFlowGraph(graph, {
+    httpCredentials: [{ id: 'credential-1' }],
+    credentialResolvers: [{ id: 'resolver-1' }],
+  })
+  assert.ok(result.errors.some((issue) => issue.code === 'AMBIGUOUS_HTTP_AUTH'))
+})

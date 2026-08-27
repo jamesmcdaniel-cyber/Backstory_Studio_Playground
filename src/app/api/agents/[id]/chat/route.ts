@@ -13,6 +13,7 @@ import { rateLimit } from '@/lib/ratelimit'
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
+import { injectTraceContext } from '@/lib/observability/otel'
 import {
   agentIdFromRequest,
   requireAgent,
@@ -319,7 +320,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
           await queue.add(
             'execute-agent',
-            { executionId: execution.id, agentId: agent.id, organizationId: auth.organizationId, userId: auth.dbUser.id, input: runIntent.task },
+            injectTraceContext({ executionId: execution.id, agentId: agent.id, organizationId: auth.organizationId, userId: auth.dbUser.id, input: runIntent.task }),
             { jobId: execution.id },
           )
           reply = `${reply}\n\nThe run has started — its output will appear in the activity feed when it finishes.`

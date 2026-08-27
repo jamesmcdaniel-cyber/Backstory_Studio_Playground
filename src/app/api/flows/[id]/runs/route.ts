@@ -58,6 +58,11 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     // readers below prefer this over their own inference, which only ever saw
     // this possibly-truncated (summary=1) step list.
     degraded: run.degraded,
+    annotation: run.annotation,
+    rating: run.rating,
+    tags: run.tags,
+    customMetadata: run.customMetadata,
+    annotatedAt: run.annotatedAt,
     // What the run is blocked on (agent question / approval), non-null only
     // when the run is waiting — reply UIs key off this.
     waiting: deriveRunWaiting(run.status, run.steps),

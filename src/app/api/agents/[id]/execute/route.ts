@@ -7,6 +7,7 @@ import { inlineExecution } from '@/lib/queue/execution-mode'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
+import { injectTraceContext } from '@/lib/observability/otel'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
@@ -83,13 +84,13 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (!workersEnabled) throw new ApiError('Agent worker is disabled', 503, 'WORKER_DISABLED')
     try {
       const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
-      await queue.add('execute-agent', {
+      await queue.add('execute-agent', injectTraceContext({
         executionId: execution.id,
         agentId: agent.id,
         organizationId: auth.organizationId,
         userId: auth.dbUser.id,
         input: runInput,
-      }, { jobId: execution.id })
+      }), { jobId: execution.id })
     } catch (error) {
       await prisma.agentExecution.update({
         where: { id: execution.id, organizationId: auth.organizationId },

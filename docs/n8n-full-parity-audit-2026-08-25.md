@@ -1,5 +1,13 @@
 # Full n8n parity audit — 2026-08-25
 
+> **Historical baseline, superseded 2026-08-27.** The n8n source inventory and
+> 157-row comparison below remain reproducible evidence for the audited n8n
+> commit, but the Backstory findings and verdict describe the repository before
+> the closure work. Use
+> [`docs/audits/n8n-parity-closure-2026-08-27.md`](audits/n8n-parity-closure-2026-08-27.md)
+> for current disposition and QA evidence. Exact node-for-node n8n parity is
+> still intentionally not claimed.
+
 ## Verdict
 
 Backstory Studio is **not at full n8n parity**. It has a credible workflow product, a strong free-form editor, durable execution, unusually good safety controls, and substantial AI-agent functionality. Those strengths do not close the largest compatibility gaps:

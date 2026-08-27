@@ -36,6 +36,13 @@ export const DATA_OP_INPUT_PLACEHOLDER: Record<DataOp, string> = {
   xmlParse: 'The XML text to parse',
   xmlBuild: 'The record to turn into XML',
   columnarToRecords: 'The columns-and-rows response to convert',
+  compareDatasets: 'The first list to compare',
+  hash: 'The value to hash',
+  hmac: 'The value to authenticate',
+  jwtSign: 'The object of claims to sign',
+  jwtVerify: 'The JWT to verify',
+  totpGenerate: 'No input required',
+  totpVerify: 'The one-time code to verify',
 }
 
 /** One-line helper under each data operation's fields. */
@@ -68,6 +75,13 @@ export const DATA_OP_HELPER: Record<DataOp, string> = {
   xmlParse: 'Turns XML text into structured data so later steps can map its fields.',
   xmlBuild: 'Builds an XML document from a record — field names become the tags.',
   columnarToRecords: 'Turns a columns-and-rows API response (like a Snowflake SQL result) into a list of records so later steps can map its fields.',
+  compareDatasets: 'Matches both lists by the field(s) you choose and returns same, changed, first-only, and second-only groups.',
+  hash: 'Produces a hexadecimal SHA-2 digest without storing the input outside normal run-retention policy.',
+  hmac: 'Produces a hexadecimal keyed digest. Reference the secret at run time; literal secrets are blocked by the graph scanner.',
+  jwtSign: 'Signs JSON claims with HS256/384/512 and the run’s frozen clock for deterministic issued/expiry timestamps.',
+  jwtVerify: 'Checks the signature, expiry, not-before, and optional issuer/audience before returning claims.',
+  totpGenerate: 'Generates a standards-based one-time code from a base32 secret and the run’s frozen clock.',
+  totpVerify: 'Checks the supplied one-time code with a one-period clock-skew window.',
 }
 
 /** Placeholder for a variable step's value field, per operation. */

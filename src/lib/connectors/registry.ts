@@ -94,6 +94,18 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     matches: has('http'),
     available: () => true, // no credentials required; SSRF-guarded at call time
   },
+  {
+    key: 'Data Tables',
+    label: 'Data Tables',
+    slug: 'postgresql',
+    kind: 'builtin',
+    // The plane contains reads and writes; conservative at attachment time,
+    // while execution classifies each selected tool precisely.
+    isWrite: true,
+    providerId: 'data_tables',
+    matches: has('data table'),
+    available: () => true,
+  },
   // Nango delivery planes (outbound as the acting user). One per capability.
   {
     key: 'slack',

@@ -30,7 +30,7 @@ export const COPY_FULL = [
   'User', 'Team', 'AgentTeammate', 'AgentTask', 'AgentConnector', 'AgentTemplate',
   'Flow', 'FlowVersion', 'FlowReview', 'FlowTemplate', 'FlowTemplateVersion', 'SharedSkill',
   'KnowledgeDocument', 'KnowledgeChunk', 'SignalSubscription', 'CustomSignal',
-  'WorkspaceFolder',
+  'WorkspaceFolder', 'DataTable', 'DataTableRow',
 ] as const
 
 /** Copied with a recency bound — history is for looking populated. */
@@ -62,6 +62,10 @@ export const EXCLUDED: Record<string, string> = {
   AuditStreamDestination: 'a customer\'s real SIEM endpoint and its signing secret — a demo org copying it would forward invented events to a real security system',
   IntegrationSecret: 'credential material — never enters a demo org',
   HttpCredential: 'credential material — never enters a demo org',
+  ExternalSecretProvider: 'external secret-manager endpoint and encrypted bootstrap identity — never enters a demo org',
+  HttpCredentialSecretReference: 'credential-to-secret-manager wiring is live authentication configuration and is never copied',
+  CredentialResolver: 'shared runtime credential policy belongs to the real workspace and would be unusable without its bindings',
+  CredentialResolverBinding: 'binds a real person to live credential material and must never enter a demo org',
   ApiKey: 'credential material — never enters a demo org',
   ApiAccessToken: 'credential material — never enters a demo org',
   ScimToken: 'credential material — never enters a demo org',
@@ -435,6 +439,29 @@ export async function ensureDemoWorkspace(
   }
 
   // ── Bounded history ──────────────────────────────────────────────────────
+  const dataTableIds: Ids = new Map()
+  for (const table of await systemPrisma.dataTable.findMany({ where: { organizationId: realOrgId } })) {
+    const id = randomUUID()
+    dataTableIds.set(table.id, id)
+    await systemPrisma.dataTable.create({
+      data: compact({
+        ...anonRow({ ...table, id, organizationId: demoOrgId }, book),
+        createdById: remap(userIds, table.createdById),
+      }),
+    })
+  }
+  for (const row of await systemPrisma.dataTableRow.findMany({ where: { organizationId: realOrgId } })) {
+    const tableId = remap(dataTableIds, row.tableId)
+    if (!tableId) continue
+    await systemPrisma.dataTableRow.create({
+      data: compact({
+        ...anonRow({ ...row, id: randomUUID(), organizationId: demoOrgId }, book),
+        tableId,
+        createdById: remap(userIds, row.createdById),
+      }),
+    })
+  }
+
   const executionIds: Ids = new Map()
   for (const agent of agents) {
     const executions = await systemPrisma.agentExecution.findMany({

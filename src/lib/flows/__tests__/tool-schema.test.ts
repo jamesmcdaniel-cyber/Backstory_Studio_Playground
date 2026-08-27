@@ -178,3 +178,31 @@ test('allOf members fold into one set of properties', () => {
   assert.deepEqual(fields.map((field) => field.name), ['a', 'b'])
   assert.equal(fields[0].required, true)
 })
+
+test('nested objects and arrays of objects retain their field contracts', () => {
+  const [filter, rows] = toolFields({
+    type: 'object',
+    properties: {
+      filter: {
+        type: 'object',
+        properties: {
+          field: { type: 'string' },
+          operator: { type: 'string', enum: ['equals', 'contains'], default: 'equals' },
+        },
+        required: ['field'],
+      },
+      rows: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { name: { type: 'string' }, active: { type: 'boolean', default: true } },
+          required: ['name'],
+        },
+      },
+    },
+  })
+  assert.deepEqual(filter.children?.map((field) => field.name), ['field', 'operator'])
+  assert.equal(filter.children?.[0].required, true)
+  assert.deepEqual(rows.itemFields?.map((field) => field.name), ['name', 'active'])
+  assert.deepEqual(toolFieldDefaults(rows.itemFields ?? []), { active: true })
+})

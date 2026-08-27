@@ -20,7 +20,7 @@ import { ErrorBoundary } from '@/components/ui/error-boundary'
 
 // Route prefixes that get the app chrome. Everything else (/, /auth/*, /connect,
 // /privacy, /terms, /auth-code-error) renders bare.
-const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/approvals', '/settings', '/admin']
+const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/data-tables', '/approvals', '/settings', '/admin']
 
 // Only the agent HQ (/agents) + the flow builder want an edge-to-edge
 // (fullscreen) content area; the rest — incl. the Librarian assistant home

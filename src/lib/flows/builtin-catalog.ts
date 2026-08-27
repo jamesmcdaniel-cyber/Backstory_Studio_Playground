@@ -10,7 +10,7 @@ export type PickerLeaf = {
   mode: 'action' | 'trigger' | 'both'
   stepType?: StepType
   seed?: { agentId?: string; connectionId?: string; toolName?: string; label?: string; variableOp?: VariableOp; dataOp?: DataOp; aiOp?: AiOp; codeLanguage?: 'javascript' | 'python' }
-  triggerType?: 'manual' | 'schedule' | 'webhook' | 'signal' | 'poll' | 'activity' | 'slack'
+  triggerType?: 'manual' | 'schedule' | 'webhook' | 'form' | 'signal' | 'poll' | 'activity' | 'slack'
 }
 
 export type PickerGroup = {
@@ -93,6 +93,13 @@ export const BUILTIN_GROUPS: PickerGroup[] = [
       { id: 'data-xml-parse', label: 'Parse XML', description: 'Turn XML text into structured data for later steps.', mode: 'action', stepType: 'data', seed: { dataOp: 'xmlParse' } },
       { id: 'data-xml-build', label: 'Create XML', description: 'Build an XML document from a record.', mode: 'action', stepType: 'data', seed: { dataOp: 'xmlBuild' } },
       { id: 'data-columnar-to-records', label: 'Columns to records', description: 'Turn a columns-and-rows API response (like a Snowflake SQL result) into a list of records.', mode: 'action', stepType: 'data', seed: { dataOp: 'columnarToRecords' } },
+      { id: 'data-compare-datasets', label: 'Compare datasets', description: 'Match two lists and separate unchanged, changed, and missing records.', mode: 'action', stepType: 'data', seed: { dataOp: 'compareDatasets' } },
+      { id: 'data-hash', label: 'Hash data', description: 'Create a SHA-2 digest of a value.', mode: 'action', stepType: 'data', seed: { dataOp: 'hash' } },
+      { id: 'data-hmac', label: 'Create HMAC', description: 'Create a keyed SHA-2 digest.', mode: 'action', stepType: 'data', seed: { dataOp: 'hmac' } },
+      { id: 'data-jwt-sign', label: 'Sign JWT', description: 'Sign JSON claims with an HMAC JWT algorithm.', mode: 'action', stepType: 'data', seed: { dataOp: 'jwtSign' } },
+      { id: 'data-jwt-verify', label: 'Verify JWT', description: 'Verify a signed JWT and its time claims.', mode: 'action', stepType: 'data', seed: { dataOp: 'jwtVerify' } },
+      { id: 'data-totp-generate', label: 'Generate TOTP', description: 'Generate a time-based one-time code.', mode: 'action', stepType: 'data', seed: { dataOp: 'totpGenerate' } },
+      { id: 'data-totp-verify', label: 'Verify TOTP', description: 'Verify a time-based one-time code.', mode: 'action', stepType: 'data', seed: { dataOp: 'totpVerify' } },
     ],
   },
   {
@@ -149,6 +156,7 @@ export const TRIGGER_LEAVES: PickerLeaf[] = [
   { id: 'trigger-schedule', label: 'Schedule', description: 'Run on a recurrence you define.', mode: 'trigger', triggerType: 'schedule' },
   { id: 'trigger-poll', label: 'When new items appear in an app', description: 'Check a connected app on a schedule and start for each new item.', mode: 'trigger', triggerType: 'poll' },
   { id: 'trigger-webhook', label: 'When an HTTP request is received', description: 'Start when an external system posts to a secret URL.', mode: 'trigger', triggerType: 'webhook' },
+  { id: 'trigger-form', label: 'When a hosted form is submitted', description: 'Publish a typed form and start the flow with each submission.', mode: 'trigger', triggerType: 'form' },
   { id: 'trigger-signal', label: 'When a signal fires', description: 'Start from an in-platform event, like another flow completing.', mode: 'trigger', triggerType: 'signal' },
   { id: 'trigger-slack', label: EVENT_TRIGGER_LABELS.slack, description: 'Start instantly when a message lands in your connected Slack workspace.', mode: 'trigger', triggerType: 'slack' },
   { id: 'trigger-activity', label: EVENT_TRIGGER_LABELS.activity, description: 'Start instantly when a connected app reports an event — a new record, a pull request, and more.', mode: 'trigger', triggerType: 'activity' },

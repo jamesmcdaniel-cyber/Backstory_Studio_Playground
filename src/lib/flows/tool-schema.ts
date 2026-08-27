@@ -45,6 +45,10 @@ export type ToolField = {
   max?: number
   /** True when the schema explicitly permits null (an `anyOf` with a null arm). */
   nullable?: boolean
+  /** Nested object properties rendered as a fixed collection. */
+  children?: ToolField[]
+  /** Object properties for each member of an array. */
+  itemFields?: ToolField[]
 }
 
 type SchemaNode = {
@@ -192,41 +196,56 @@ export function toolFields(inputSchema: unknown): ToolField[] {
   if (!isRecord(inputSchema)) return []
   const root = inputSchema as SchemaNode
   const { node: schema } = effective(root, root, new Set())
-  if (!schema.properties || !isRecord(schema.properties)) return []
+  const build = (container: SchemaNode, depth: number): ToolField[] => {
+    if (depth > 6 || !container.properties || !isRecord(container.properties)) return []
+    const requiredNames = new Set(container.required ?? [])
+    const fields: ToolField[] = []
+    for (const [name, rawProp] of Object.entries(container.properties)) {
+      if (!isRecord(rawProp)) continue
+      const { node, nullable } = effective(rawProp as SchemaNode, root, new Set())
+      const type = classify(node)
+      const enumValues = type === 'multiEnum' ? node.items?.enum : node.enum
+      const min = node.minimum ?? (node.exclusiveMinimum !== undefined ? node.exclusiveMinimum + 1 : undefined)
+      const max = node.maximum ?? (node.exclusiveMaximum !== undefined ? node.exclusiveMaximum - 1 : undefined)
+      const children = type === 'object' ? build(node, depth + 1) : []
+      const itemNode = type === 'array' && node.items ? effective(node.items, root, new Set()).node : undefined
+      const itemFields = itemNode ? build(itemNode, depth + 1) : []
 
-  const requiredNames = new Set(schema.required ?? [])
-  const fields: ToolField[] = []
-
-  for (const [name, rawProp] of Object.entries(schema.properties)) {
-    if (!isRecord(rawProp)) continue
-    const { node, nullable } = effective(rawProp as SchemaNode, root, new Set())
-    const type = classify(node)
-    const enumValues = type === 'multiEnum' ? node.items?.enum : node.enum
-    const min = node.minimum ?? (node.exclusiveMinimum !== undefined ? node.exclusiveMinimum + 1 : undefined)
-    const max = node.maximum ?? (node.exclusiveMaximum !== undefined ? node.exclusiveMaximum - 1 : undefined)
-
-    fields.push({
-      name,
-      label: labelFor(name, node),
-      type,
-      required: requiredNames.has(name),
-      ...(node.description ? { description: node.description } : {}),
-      ...(enumValues?.length ? { options: optionsOf(enumValues) } : {}),
-      ...(node.default !== undefined ? { default: node.default } : {}),
-      ...(type === 'number' && min !== undefined ? { min } : {}),
-      ...(type === 'number' && max !== undefined ? { max } : {}),
-      ...(nullable ? { nullable: true } : {}),
-    })
+      fields.push({
+        name,
+        label: labelFor(name, node),
+        type,
+        required: requiredNames.has(name),
+        ...(node.description ? { description: node.description } : {}),
+        ...(enumValues?.length ? { options: optionsOf(enumValues) } : {}),
+        ...(node.default !== undefined ? { default: node.default } : {}),
+        ...(type === 'number' && min !== undefined ? { min } : {}),
+        ...(type === 'number' && max !== undefined ? { max } : {}),
+        ...(nullable ? { nullable: true } : {}),
+        ...(children.length ? { children } : {}),
+        ...(itemFields.length ? { itemFields } : {}),
+      })
+    }
+    // Required first, each group keeping its declared order. A stable
+    // partition, not a sort, so two required fields never swap.
+    return [...fields.filter((field) => field.required), ...fields.filter((field) => !field.required)]
   }
 
-  // Required first, each group keeping its declared order. A stable partition,
-  // not a sort, so two required fields never swap between renders.
-  return [...fields.filter((field) => field.required), ...fields.filter((field) => !field.required)]
+  return build(schema, 0)
 }
 
 /** The defaults a schema declares, for prefilling an argument set. */
 export function toolFieldDefaults(fields: ToolField[]): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const field of fields) if (field.default !== undefined) out[field.name] = field.default
+  for (const field of fields) {
+    if (field.default !== undefined) {
+      out[field.name] = field.default
+      continue
+    }
+    if (field.children?.length) {
+      const nested = toolFieldDefaults(field.children)
+      if (Object.keys(nested).length) out[field.name] = nested
+    }
+  }
   return out
 }

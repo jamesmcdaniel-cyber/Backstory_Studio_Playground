@@ -393,3 +393,30 @@ describe('nested field names (n8n Set parity)', () => {
     })), [{ meta: { label: 'Acme' } }])
   })
 })
+
+describe('compare datasets', () => {
+  it('separates same, changed, and one-sided records by stable keys', () => {
+    const result = out(runDataOp('compareDatasets', {
+      input: [
+        { id: 1, name: 'Acme', score: 8 },
+        { id: 2, name: 'Beta', score: 4 },
+        { id: 3, name: 'First only' },
+      ],
+      to: [
+        { score: 8, name: 'Acme', id: 1 },
+        { id: 2, name: 'Beta', score: 9 },
+        { id: 4, name: 'Second only' },
+      ],
+      by: 'id',
+    })) as Record<string, unknown[]>
+    assert.deepEqual(result.same, [{ id: 1, name: 'Acme', score: 8 }])
+    assert.deepEqual((result.different[0] as { changedFields: string[] }).changedFields, ['score'])
+    assert.deepEqual(result.onlyInFirst, [{ id: 3, name: 'First only' }])
+    assert.deepEqual(result.onlyInSecond, [{ id: 4, name: 'Second only' }])
+  })
+
+  it('requires matching fields and two datasets', () => {
+    assert.match((runDataOp('compareDatasets', { input: [], to: [] }) as { error: string }).error, /matching field/)
+    assert.match((runDataOp('compareDatasets', { input: [], to: 'not a list', by: 'id' }) as { error: string }).error, /two lists/)
+  })
+})

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import React from 'react'
 import { render, cleanup, screen, waitFor } from '@testing-library/react'
 import { RecentFlows } from '@/components/dashboard/recent-flows'
+import type { FlowOperationalStatus } from '@/lib/flows/operational-status'
 
 const realFetch = globalThis.fetch
 
@@ -12,7 +13,7 @@ afterEach(() => {
   globalThis.fetch = realFetch
 })
 
-type StubFlow = { id: string; name: string; icon?: string; updatedAt: string }
+type StubFlow = { id: string; name: string; icon?: string; updatedAt: string; operationalStatus?: FlowOperationalStatus | null }
 
 /** Stand in for GET /api/flows, which already returns newest-edited first. */
 function stubFlows(flows: StubFlow[]) {
@@ -53,6 +54,34 @@ test('the flow’s emoji stands in for the generic glyph when it has one', async
 
   await screen.findByText('Flow a')
   assert.ok(screen.getByText('🔮'))
+})
+
+test('shows each flow’s current operational status', async () => {
+  stubFlows([
+    flow('a', { operationalStatus: 'running' }),
+    flow('b', { operationalStatus: 'queued' }),
+    flow('c', { operationalStatus: 'blocked' }),
+  ])
+  render(<RecentFlows />)
+
+  await screen.findByLabelText('Flow status: Running')
+  assert.ok(screen.getByLabelText('Flow status: Queued'))
+  assert.ok(screen.getByLabelText('Flow status: Blocked'))
+})
+
+test('shows idle for a local flow with no active execution', async () => {
+  stubFlows([flow('a', { operationalStatus: 'idle' })])
+  render(<RecentFlows />)
+
+  assert.ok(await screen.findByLabelText('Flow status: Idle'))
+})
+
+test('does not expose run activity for a cross-workspace flow', async () => {
+  stubFlows([flow('a', { operationalStatus: null })])
+  render(<RecentFlows />)
+
+  await screen.findByText('Flow a')
+  assert.equal(screen.queryByLabelText(/Flow status:/), null)
 })
 
 test('a workspace with no flows renders nothing at all', async () => {

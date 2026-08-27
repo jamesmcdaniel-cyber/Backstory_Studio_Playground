@@ -11,6 +11,7 @@ import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
 import { shouldGuardFlowWrite } from '@/lib/flows/concurrency'
 import { flowSettingsSchema } from '@/lib/flows/settings'
+import { loadFlowOperationalStatuses } from '@/lib/flows/operational-status.server'
 
 /** Newest per-edit snapshots kept per flow — enough to cover the History panel's
  *  edit timeline (30 rows) with headroom. */
@@ -59,13 +60,28 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     orderBy: { updatedAt: 'desc' },
     take: 200,
   })
+  // Runtime state is intentionally fetched only for flows owned by the
+  // caller's workspace. Cross-workspace collaborators can read the shared
+  // graph, but the existing access contract does not expose its run activity.
+  const localFlowIds = flows
+    .filter((flow) => flow.organizationId === auth.organizationId)
+    .map((flow) => flow.id)
+  const operationalStatuses = await loadFlowOperationalStatuses(auth.organizationId, localFlowIds)
   const viewer = { userId: auth.dbUser.id, organizationId: auth.organizationId }
   return {
     success: true,
     flows: flows.map((flow) => {
       const role = resolveFlowRole({ ...flow, collaboratorRole: flow.collaborators[0]?.role ?? null }, viewer)
       const external = flow.organizationId !== auth.organizationId
-      return serializeFlow(flow, auth.dbUser.id, role ? { role, external, includeShare: !external && role === 'edit' } : undefined)
+      return {
+        ...serializeFlow(flow, auth.dbUser.id, role ? { role, external, includeShare: !external && role === 'edit' } : undefined),
+        // null is deliberate for a cross-workspace card: it means the viewer
+        // has no run-activity grant, whereas idle means the local flow has no
+        // active executions.
+        operationalStatus: external
+          ? null
+          : operationalStatuses.get(flow.id) ?? 'idle',
+      }
     }),
   }
 }, { permission: 'flow.read' })

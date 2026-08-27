@@ -171,6 +171,7 @@ if (TEST_DB) {
     { name: 'GET /api/snapshot', run: async () => (await import('../snapshot/route')).GET(req('/api/snapshot')) },
     { name: 'GET /api/template-proposals', run: async () => (await import('../template-proposals/route')).GET(req('/api/template-proposals')) },
     { name: 'GET /api/flows', run: async () => (await import('../flows/route')).GET(req('/api/flows')) },
+    { name: 'GET /api/flows/statuses', run: async () => (await import('../flows/statuses/route')).GET(req('/api/flows/statuses')) },
     { name: 'GET /api/flows/runs', run: async () => (await import('../flows/runs/route')).GET(req('/api/flows/runs')) },
     { name: 'GET /api/flows/migrations', run: async () => (await import('../flows/migrations/route')).GET(req('/api/flows/migrations')) },
     { name: 'GET /api/flows/[id]/collaborators', run: async () => (await import('../flows/[id]/collaborators/route')).GET(req(`/api/flows/${flowId}/collaborators`)) },

@@ -3,7 +3,7 @@ import { apiLogger } from '@/lib/logger'
 import { recordLlmCall, type LlmSurface } from '@/lib/usage/ledger'
 import { trackDetached } from '@/lib/flows/keep-alive'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
-import { ambientOrganization } from '@/lib/tenant-database-context'
+import { currentAmbientOrganization } from '@/lib/tenant-database-context'
 import { qwenClient, qwenConfigured, qwenModel } from './qwen'
 import { modelTier, UNLIMITED_MODEL_ALLOWANCE, type ModelAllowance } from '@/lib/usage/model-tiers'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
@@ -786,7 +786,7 @@ async function anthropicWireStructured(
  * and scanning it would report the platform's own words as customer PII.
  */
 function recordStructuredEgress(opts: StructuredOpts): void {
-  const organizationId = opts.ledger?.organizationId ?? ambientOrganization.getStore()
+  const organizationId = opts.ledger?.organizationId ?? currentAmbientOrganization()
   if (!organizationId) return
   trackDetached(
     recordPiiEgress({

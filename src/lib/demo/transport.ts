@@ -15,7 +15,7 @@
  */
 
 import { systemPrisma } from '@/lib/prisma'
-import { ambientOrganization } from '@/lib/tenant-database-context'
+import { currentAmbientOrganization } from '@/lib/tenant-database-context'
 
 const CACHE_TTL_MS = 60_000
 const kindCache = new Map<string, { demo: boolean; at: number }>()
@@ -40,7 +40,7 @@ export async function isDemoOrganization(organizationId: string): Promise<boolea
 
 /** Whether the current execution context belongs to a demo org. */
 export async function demoAmbientActive(): Promise<boolean> {
-  const organizationId = ambientOrganization.getStore()
+  const organizationId = currentAmbientOrganization()
   if (!organizationId) return false
   return isDemoOrganization(organizationId)
 }

@@ -83,10 +83,26 @@ if (TEST_DB) {
     await owner.flowRun.create({
       data: { flowId: flow.id, organizationId: org.id, status: 'completed' },
     })
+
+    // A SECOND tenant with a flow of its own. The isolation assertion needs a
+    // foreign row that exists: asking for an organization id nothing was ever
+    // written under returns zero whether PostgreSQL is enforcing or not, which
+    // is how the original check passed without proving anything.
+    const foreign = await owner.organization.create({
+      data: { name: 'rls staged foreign', slug: `rls-staged-foreign-${crypto.randomUUID()}` },
+    })
+    ids.foreign = foreign.id
+    const foreignUser = await owner.user.create({
+      data: { supabaseId: crypto.randomUUID(), organizationId: foreign.id, isActive: true },
+    })
+    await owner.flow.create({
+      data: { name: 'foreign probe', organizationId: foreign.id, userId: foreignUser.id },
+    })
   })
 
   after(async () => {
     if (ids.org) await owner.organization.delete({ where: { id: ids.org } }).catch(() => undefined)
+    if (ids.foreign) await owner.organization.delete({ where: { id: ids.foreign } }).catch(() => undefined)
   })
 
   /** Run the probe in a fresh process under the given staging configuration. */
@@ -97,6 +113,7 @@ if (TEST_DB) {
       env: {
         ...process.env,
         RLS_PROBE_ORG: ids.org,
+        RLS_PROBE_FOREIGN_ORG: ids.foreign,
         DATABASE_RLS_ENABLED: staged,
         DATABASE_URL: asAppRole(TEST_DB!),
         SYSTEM_DATABASE_URL: TEST_DB!,
@@ -123,7 +140,52 @@ if (TEST_DB) {
 
   test('a staged model still enforces tenant isolation at the database', (t) => {
     if (skipReason) return t.skip(skipReason)
-    assert.equal(probe('Flow').stagedForeignTenant, 0, 'a foreign tenant must see nothing')
+    const result = probe('Flow')
+    assert.equal(result.stagedForeignTenant, 0, 'a tenant with nothing of its own must see nothing')
+
+    // The boundary RLS genuinely adds, and the one it does not — recorded
+    // together so the second is never mistaken for the first.
+    assert.equal(
+      result.crossTenantInsideTransaction,
+      'threw',
+      'inside an established tenant, naming another workspace must be refused: one transaction ' +
+        'carries one app.organization_id, so there is no configuration serving both',
+    )
+    assert.equal(
+      result.foreignTenantNamedDirectly,
+      1,
+      'documenting the limit, not endorsing it: OUTSIDE a tenant transaction the guard takes the ' +
+        'tenant from the query\'s own where clause, so RLS confirms the answer rather than ' +
+        'refusing it. What keeps this safe is that withAuthenticatedApi sources organizationId ' +
+        'from the session, never from the request — if that ever changes, RLS is not the backstop',
+    )
+  })
+
+  test('POSTGRESQL is the boundary, not just the application guard', (t) => {
+    if (skipReason) return t.skip(skipReason)
+
+    // Every other assertion in this file routes through the tenant guard, which
+    // rejects an unscoped query before the database sees it — so all of them
+    // pass identically with RLS switched off, and none of them can tell whether
+    // PostgreSQL is enforcing anything. This one runs an unfiltered
+    // `SELECT DISTINCT "organizationId" FROM flows` INSIDE a tenant
+    // transaction: the policy is the only thing that can exclude the other
+    // tenant's row. It fails if the policies are missing, RLS is not FORCEd, or
+    // DATABASE_URL is a role that bypasses it.
+    const seen = probe('Flow').unscopedInsideTenant as { sawOwn: boolean; sawForeign: boolean }
+
+    assert.equal(
+      seen.sawOwn,
+      true,
+      'the tenant could not see its OWN row through its own policy — enforcement that ' +
+        'denies everything is not isolation, it is an outage',
+    )
+    assert.equal(
+      seen.sawForeign,
+      false,
+      'an unfiltered read inside tenant A returned tenant B rows: PostgreSQL is NOT the ' +
+        'boundary here, the application guard is the only thing standing between tenants',
+    )
   })
 
   test('parent-scoped models throw without tenant context instead of returning empty', (t) => {

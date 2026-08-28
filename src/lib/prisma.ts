@@ -2,7 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client'
 import type { ITXClientDenyList } from '@prisma/client/runtime/library'
 import { assertOrgScoped, ORG_SCOPED_MODELS } from '@/lib/tenant-guard'
 import { applyOwnerLiveness } from '@/lib/authz/credential-owner-guard'
-import { ambientOrganization, exactOrganizationId, tenantDatabaseContext } from '@/lib/tenant-database-context'
+import { exactOrganizationId, tenantDatabaseContext, currentAmbientOrganization } from '@/lib/tenant-database-context'
 import { assertRlsContext, RLS_PARENT_SCOPED_MODELS, rlsActive, rlsAppliesTo } from '@/lib/authz/rls-rollout'
 import { applyFlowSecretScan, applyRunDataRedaction } from '@/lib/flows/run-data-guard'
 import { bumpSnapshotVersion, isSnapshotMutation, organizationIdForSnapshotBump } from '@/lib/server/snapshot-version'
@@ -68,7 +68,7 @@ function withSnapshotVersioning<T extends PrismaClient>(base: T) {
           // already moved past it.
           if (isSnapshotMutation(model, operation)) {
             bumpSnapshotVersion(
-              organizationIdForSnapshotBump(model, scheduled, ambientOrganization.getStore()) ?? '',
+              organizationIdForSnapshotBump(model, scheduled, currentAmbientOrganization()) ?? '',
             )
           }
           // AWAITED, unlike the snapshot bump, and the asymmetry is deliberate.
@@ -139,7 +139,7 @@ function createGuardedClient(base: PrismaClient) {
             if (model && rlsActive() && RLS_PARENT_SCOPED_MODELS.has(model)) {
               const active = tenantDatabaseContext.getStore()
               if (!active) {
-                const organizationId = ambientOrganization.getStore()
+                const organizationId = currentAmbientOrganization()
                 assertRlsContext(model, operation, Boolean(organizationId))
                 return appPrismaBase.$transaction(async (tx) => {
                   await tx.$queryRaw`SELECT set_config('app.organization_id', ${organizationId!}, true)`
@@ -243,7 +243,21 @@ export function tenantTransaction<T>(organizationId: string, callback: (tx: Pris
     if (rlsActive()) {
       await tx.$queryRaw`SELECT set_config('app.organization_id', ${organizationId}, true)`
     }
-    return tenantDatabaseContext.run({ organizationId, transaction: tx }, () => callback(tx))
+    // `async () => await callback(tx)`, not `() => callback(tx)`.
+    //
+    // Prisma's client methods return a LAZY PrismaPromise: nothing is sent to
+    // the database until something calls `.then` on it. A callback written as
+    // `() => prisma.flow.findMany(...)` therefore hands `run` an unstarted
+    // promise, `run` returns it, the AsyncLocalStorage scope closes, and the
+    // query finally executes OUTSIDE the tenant context it was supposed to be
+    // in — so the guard sees no active tenant, takes the organization from the
+    // query's own where clause, and a cross-workspace read that must be
+    // rejected is quietly served instead. Awaiting inside the scope makes the
+    // query start where it is supposed to.
+    //
+    // Found by the staged-rollout probe: the same cross-tenant read threw when
+    // the callback was `async`, and was ALLOWED when it was not.
+    return tenantDatabaseContext.run({ organizationId, transaction: tx }, async () => await callback(tx))
   })
 }
 

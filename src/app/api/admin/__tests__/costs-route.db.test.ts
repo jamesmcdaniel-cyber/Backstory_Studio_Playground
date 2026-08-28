@@ -84,8 +84,21 @@ if (TEST_DB) {
   })
 
   after(async () => {
-    await prisma.llmCall.deleteMany({ where: { organizationId: { in: orgIds } } })
-    await prisma.organization.deleteMany({ where: { id: { in: orgIds } } })
+    // Under the SAME advisory lock models-route-demo.db.test.ts takes (see the
+    // comment there): both suites aggregate the shared, cross-org LlmCall
+    // table, and that one asserts a total is unchanged across two reads. This
+    // teardown deletes one org per statement rather than one `{ in: orgIds }`
+    // — a tenant transaction carries a single app.organization_id, so a delete
+    // spanning several orgs has no tenant it could run as — which means the
+    // rows disappear over several statements instead of one, and without the
+    // lock that widened window lands inside the sibling's assertion.
+    await prisma.$transaction(async (tx: any) => {
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(918273645)')
+      for (const organizationId of orgIds) {
+        await tx.llmCall.deleteMany({ where: { organizationId } })
+      }
+      await tx.organization.deleteMany({ where: { id: { in: orgIds } } })
+    }, { timeout: 20000, maxWait: 20000 })
     await operator?.cleanup()
   })
 

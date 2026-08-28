@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
+import { enterTestTenant } from '@/lib/server/__tests__/test-tenant'
 
 /**
  * The AI opt-out has to STOP work, not just describe it.
@@ -52,6 +53,9 @@ if (TEST_DB) {
       data: { name: `Egress ${policy}`, slug: `egress-${policy}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, aiEgressPolicy: policy },
     })
     const user = await prisma.user.create({ data: { supabaseId: crypto.randomUUID(), organizationId: org.id } })
+    // Operate as the org just made: the assertions read flow_run_steps, which
+    // are tenanted through their run rather than a column of their own.
+    enterTestTenant(org.id)
     return { orgId: org.id, userId: user.id }
   }
 

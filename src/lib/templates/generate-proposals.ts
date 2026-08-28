@@ -23,6 +23,7 @@ import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
+import { ambientOrganization } from '@/lib/tenant-database-context'
 import { DEFAULT_AGENT_MODEL, generateStructured } from '@/lib/llm/model-runner'
 import {
   countConnectedIntegrations,
@@ -484,6 +485,31 @@ const GENERATION_SYSTEM = [
 export async function generateTemplateProposals(
   organizationId: string,
   deps: GenerateDeps = {},
+): Promise<{ written: number; skipped: string | null }> {
+  // Establish the tenant for the whole generation, exactly as the flow and
+  // agent engines do around a run and as withAuthenticatedApi does around a
+  // handler. This is the third such entry point and it was missing.
+  //
+  // buildUsageProfile reads WorkflowStep — a PARENT-SCOPED model, tenanted
+  // through its execution rather than a column of its own. Under RLS a
+  // parent-scoped read with no `app.organization_id` matches nothing and
+  // PostgreSQL returns zero rows WITHOUT an error, so template generation
+  // would have quietly decided every workspace had no tool activity and
+  // proposed from an empty profile. The route callers happened to be covered
+  // by the API wrapper; the BullMQ worker (executeTemplateGenerationJob) and
+  // the cron sweep enter here with no ambient tenant at all.
+  //
+  // Wrapped at this function rather than at each caller because organizationId
+  // is its first argument — the same reason runFlowExecution wraps rather than
+  // its dispatchers.
+  return ambientOrganization.run(organizationId, () =>
+    generateTemplateProposalsInner(organizationId, deps),
+  )
+}
+
+async function generateTemplateProposalsInner(
+  organizationId: string,
+  deps: GenerateDeps,
 ): Promise<{ written: number; skipped: string | null }> {
   const countConnected = deps.countConnected ?? countConnectedIntegrations
   const buildProfile = deps.buildProfile ?? buildUsageProfile

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { setTestAuthContext } from '../auth'
+import { enterTestTenant, exitTestTenant } from './test-tenant'
 import type { AuthContext } from '../auth'
 import { resolvePermissions } from '@/lib/authz/permissions'
 import type { UserRole } from '@prisma/client'
@@ -63,6 +64,14 @@ export async function seedTestOrg(
     features: DEFAULT_FEATURES,
     hasFeature: (feature) => DEFAULT_FEATURES.has(feature),
   }
+  // Operating as the org just seeded, the same way production operates as the
+  // caller's org from the first line of a handler. Under RLS this is what lets
+  // the test read back parent-scoped rows (flow run steps, workflow steps,
+  // execution messages) it has no organizationId to route on. A test that
+  // seeds several orgs re-enters whichever it is currently acting as, via
+  // installTestAuth.
+  enterTestTenant(org.id)
+
   const cleanup = async () => {
     setTestAuthContext(null)
     // Owner rows can never be deleted (trigger), and the org delete cascades to
@@ -75,7 +84,11 @@ export async function seedTestOrg(
 
 export function installTestAuth(auth: AuthContext): void {
   setTestAuthContext(auth)
+  enterTestTenant(auth.organizationId)
 }
 export function clearTestAuth(): void {
   setTestAuthContext(null)
+  exitTestTenant()
 }
+
+export { enterTestTenant, exitTestTenant }

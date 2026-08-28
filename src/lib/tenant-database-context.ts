@@ -32,6 +32,45 @@ export const tenantDatabaseContext = new AsyncLocalStorage<TenantDatabaseContext
  */
 export const ambientOrganization = new AsyncLocalStorage<string>()
 
+/**
+ * Process-global test seam for the ambient tenant, mirroring
+ * `setTestAuthContext` in src/lib/server/auth.ts (same `Symbol.for` slot
+ * technique, same activation gate, and for the same reason).
+ *
+ * `AsyncLocalStorage.enterWith` does not cross node:test's hook boundary — a
+ * value entered in `before()` is invisible inside the `test()` bodies that
+ * follow, because the runner spawns each as its own async resource from the
+ * root context. (Verified: `getStore()` returns undefined in the test body.)
+ * DB-backed tests seed their org in `before()` and assert in the test bodies,
+ * so without a slot that outlives the hook every parent-scoped read in those
+ * tests runs with no tenant — a configuration production never produces, since
+ * production always enters through the API wrapper or an execution engine.
+ *
+ * Node's test runner isolates each FILE in its own process, so this slot is
+ * file-scoped in practice and one suite cannot inherit another's tenant.
+ */
+const TEST_TENANT_SLOT = Symbol.for('backstory.testAmbientOrganization')
+
+export function setTestAmbientOrganization(organizationId: string | null): void {
+  ;(globalThis as unknown as Record<symbol, unknown>)[TEST_TENANT_SLOT] = organizationId
+}
+
+/**
+ * The tenant the current work belongs to: the AsyncLocalStorage value when one
+ * is established (always, in production), falling back to the test slot only
+ * outside production and only while TEST_DATABASE_URL is set — the same two
+ * conditions that gate the auth seam.
+ *
+ * Every reader of the ambient tenant goes through this rather than
+ * `ambientOrganization.getStore()` directly, so the seam cannot be half-applied.
+ */
+export function currentAmbientOrganization(): string | undefined {
+  const active = ambientOrganization.getStore()
+  if (active) return active
+  if (process.env.NODE_ENV === 'production' || !process.env.TEST_DATABASE_URL) return undefined
+  return ((globalThis as unknown as Record<symbol, unknown>)[TEST_TENANT_SLOT] as string | null) ?? undefined
+}
+
 export function exactOrganizationId(value: unknown): string | null {
   const found = new Set<string>()
   const visit = (node: unknown) => {

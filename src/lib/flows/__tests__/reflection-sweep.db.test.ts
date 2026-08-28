@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { enterTestTenant } from '@/lib/server/__tests__/test-tenant'
 
 /**
  * Flows never reflected: reflectAndRemember had exactly one caller
@@ -66,6 +67,11 @@ if (TEST_DB) {
     const stamp = Date.now()
     const org = await prisma.organization.create({ data: { name: 'Reflect', slug: `reflect-${stamp}` } })
     ids.org = org.id
+    // Operate as this tenant for the rest of the file, exactly as the flow
+    // engine and the API wrapper do in production. Parent-scoped rows
+    // (flow_run_steps) are tenanted through their run, so under RLS a read
+    // with no tenant matches nothing and returns [] without an error.
+    enterTestTenant(org.id)
     const user = await prisma.user.create({
       data: {
         supabaseId: crypto.randomUUID(),

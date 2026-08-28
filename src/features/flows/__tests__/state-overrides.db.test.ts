@@ -1,5 +1,6 @@
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
+import { enterTestTenant } from '@/lib/server/__tests__/test-tenant'
 
 // DB-gated: runs only under TEST_DATABASE_URL (CI-mode), like sibling DB tests.
 const TEST_DB = process.env.TEST_DATABASE_URL
@@ -43,6 +44,11 @@ if (TEST_DB) {
     const stamp = Date.now()
     const org = await prisma.organization.create({ data: { name: 'Fork', slug: `fork-${stamp}` } })
     ids.org = org.id
+    // Operate as this tenant for the rest of the file, exactly as the flow
+    // engine and the API wrapper do in production. Parent-scoped rows
+    // (flow_run_steps) are tenanted through their run, so under RLS a read
+    // with no tenant matches nothing and returns [] without an error.
+    enterTestTenant(org.id)
     const user = await prisma.user.create({
       data: { supabaseId: crypto.randomUUID(), email: `fork-${stamp}@example.com`, name: 'F', organizationId: org.id },
     })

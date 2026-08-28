@@ -177,12 +177,65 @@ TEST_DATABASE_URL=postgresql://$USER@localhost:5432/rls_probe npm test
 The DB-backed suites create their own `NOBYPASSRLS` role and skip cleanly if the
 database forbids `CREATE ROLE`.
 
+### CI runs the whole DB-backed suite with RLS enforced
+
+The `rls` job in `.github/workflows/ci.yml` applies the migrations as the owner,
+provisions a **distinct `NOBYPASSRLS`, non-superuser role**, asserts that role
+really is unprivileged (a role that bypasses RLS would make every downstream
+assertion pass while enforcing nothing), and then runs every `*.db.test.ts`
+against it with `DATABASE_RLS_ENABLED=true`.
+
+This is the difference between "the flag is implemented" and "the flag is known
+to work". The main `check` job runs the same suite as the **owner** with the
+flag unset — the production configuration, in which every policy in the schema
+is inert — so before this job existed the mechanism was exercised only by three
+narrow probe cases.
+
+Turning it on found real defects that no TypeScript-level check could see:
+
+- `generateTemplateProposals` established no tenant. It reads `WorkflowStep`, a
+  parent-scoped model, so under RLS every workspace's usage profile would have
+  come back empty — no error, just a model prompted with "this workspace has no
+  tool activity". Its route callers were incidentally covered by the API
+  wrapper; the BullMQ worker and the cron sweep were not. It now wraps in
+  `ambientOrganization.run`, the fourth such entry point.
+- `tenantTransaction` ran its callback without awaiting inside the tenant scope.
+  Prisma methods return a **lazy** promise, so a callback of the shape
+  `() => prisma.flow.findMany(…)` handed back an unstarted query that executed
+  after the scope had closed — and a cross-workspace read that must be rejected
+  was served instead. Verified both ways against the real database before and
+  after the fix.
+
+`scripts/rls-staging-probe.ts` also now proves enforcement rather than assuming
+it. Its original isolation check queried an organization id nothing had ever
+been written under, which returns zero rows whether or not PostgreSQL is
+enforcing anything. It now seeds a **second tenant that actually has rows** and,
+inside a tenant transaction for the first, runs an unfiltered
+`SELECT DISTINCT "organizationId" FROM flows` — a question with no tenant
+predicate at all, where the policy is the only thing that can exclude the other
+tenant's row. That assertion fails if the policies are missing, if RLS is not
+`FORCE`d, or if `DATABASE_URL` is a role that bypasses it.
+
+It also pins the limit, so nobody mistakes it for cover: **outside** a tenant
+transaction the guard takes the organization from the query's own `where` clause
+and sets `app.organization_id` to match, so RLS confirms that answer rather than
+refusing it. What keeps that safe is upstream — `withAuthenticatedApi` sources
+`organizationId` from the session, never from the request. If that ever changes,
+RLS is not the backstop.
+
 ### Next steps for the staging redo
 
 The production rollout described above was rolled back to a pre-hardening
-commit after three outages; it has not been re-attempted. This is the
-concrete checklist for redoing it in **staging** (never production first —
-see "What testing against a real database found" above for why a
+commit after three outages; it has not been re-attempted. The application-side
+work is now done and continuously verified by the `rls` CI job, so what remains
+is **connection sizing**, which is what actually caused the outages and is the
+one thing CI cannot measure: every staged model's query takes a transaction, and
+against a pgbouncer transaction pooler at `connection_limit=1` that is a
+different concurrency profile than the app was load-tested under. Step 3 below
+is therefore the load-bearing step, not a formality.
+
+This is the concrete checklist for redoing it in **staging** (never production
+first — see "What testing against a real database found" above for why a
 TypeScript-only check missed all three defects):
 
 1. **Env vars to set on the staging environment** (see `.env.example` for the

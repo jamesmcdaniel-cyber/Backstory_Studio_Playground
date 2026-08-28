@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { enterTestTenant } from '@/lib/server/__tests__/test-tenant'
 
 // DB-gated: runs only under TEST_DATABASE_URL (CI-mode), like sibling DB tests.
 const TEST_DB = process.env.TEST_DATABASE_URL
@@ -24,6 +25,10 @@ if (TEST_DB) {
     const orgB = await prisma.organization.create({ data: { name: 'usage B', slug: `usage-b-${Date.now()}` } })
     ids.orgA = orgA.id
     ids.orgB = orgB.id
+    // orgA is the subject: its WorkflowStep rows are parent-scoped (tenanted
+    // through their execution), so seeding and reading them needs a tenant.
+    // orgB is the cross-org control and carries only org-columned rows.
+    enterTestTenant(orgA.id)
     const userA = await prisma.user.create({
       data: { supabaseId: crypto.randomUUID(), email: `usageA-${Date.now()}@example.com`, name: 'A', organizationId: orgA.id },
     })
@@ -77,6 +82,7 @@ if (TEST_DB) {
 
   test('buildUsageProfile counts executed tool actions incl. approved deliveries, not lifecycle/undecided approvals', async () => {
     const org = await prisma.organization.create({ data: { name: 'usage filter', slug: `usage-filter-${Date.now()}` } })
+    enterTestTenant(org.id)
     try {
       const ev = (action: string, resourceType: string | null, tool: string | null, runId: string | null) =>
         prisma.auditEvent.create({ data: { organizationId: org.id, action, resourceType, tool, executionId: runId } })
@@ -121,6 +127,7 @@ if (TEST_DB) {
 
   test('buildUsageProfile includes capabilities for a connected provider with ZERO calls', async () => {
     const org = await prisma.organization.create({ data: { name: 'usage caps', slug: `usage-caps-${Date.now()}` } })
+    enterTestTenant(org.id)
     try {
       // A connected Nango Slack plane, but no audit/workflow activity at all.
       await prisma.nangoConnection.create({
@@ -138,6 +145,7 @@ if (TEST_DB) {
 
   test('buildUsageProfile surfaces People.ai themes (distinct signal types) only when connected', async () => {
     const org = await prisma.organization.create({ data: { name: 'usage themes', slug: `usage-themes-${Date.now()}` } })
+    enterTestTenant(org.id)
     const user = await prisma.user.create({
       data: { supabaseId: crypto.randomUUID(), email: `themes-${Date.now()}@example.com`, name: 'T', organizationId: org.id },
     })
@@ -168,6 +176,7 @@ if (TEST_DB) {
   test('buildUsageProfile marks the profile sampled exactly when the audit read hits the 500-row cap', async () => {
     const { MAX_AUDIT_ROWS } = await import('@/lib/templates/usage-profile')
     const org = await prisma.organization.create({ data: { name: 'usage cap', slug: `usage-cap-${Date.now()}` } })
+    enterTestTenant(org.id)
     try {
       // One row short of the cap: the full window is read, nothing is hidden.
       const under = Array.from({ length: MAX_AUDIT_ROWS - 1 }, (_, i) =>
@@ -193,6 +202,7 @@ if (TEST_DB) {
 
   test('buildUsageProfile is empty for an org with no activity', async () => {
     const org = await prisma.organization.create({ data: { name: 'usage empty', slug: `usage-empty-${Date.now()}` } })
+    enterTestTenant(org.id)
     try {
       const profile = await buildUsageProfile(org.id)
       assert.deepEqual(profile.providers, [])

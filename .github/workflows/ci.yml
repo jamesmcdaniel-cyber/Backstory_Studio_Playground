@@ -129,3 +129,102 @@ jobs:
           --from-url "$DATABASE_URL"
           --to-schema-datamodel prisma/schema.prisma
           --exit-code
+
+  # The tenant boundary, enforced by PostgreSQL rather than only by the
+  # application guard.
+  #
+  # `check` above runs the whole suite as the OWNER role with
+  # DATABASE_RLS_ENABLED unset — the production configuration, and the one in
+  # which every RLS policy in the schema is inert. So the mechanism that is
+  # supposed to be the second layer of tenant isolation was never actually
+  # executed by anything except three narrow probe cases, and the rollout it
+  # exists for has been blocked since the three 2026-08-09 outages.
+  #
+  # This job runs the DB-backed suite a second time with RLS switched fully on
+  # (`DATABASE_RLS_ENABLED=true`) against a distinct NOBYPASSRLS role, which is
+  # the configuration the staged rollout is walking toward. It is what turns
+  # "the flag is implemented" into "the flag is known to work", and it fails on
+  # the specific defect class a TypeScript-only check cannot see: a code path
+  # that reads a parent-scoped model (flow run steps, workflow steps, execution
+  # messages) without tenant context, where PostgreSQL returns zero rows and no
+  # error and the data merely looks deleted.
+  #
+  # Only the *.db.test.ts files: the pure-logic tests never open a connection,
+  # so running them again under a second role would cost minutes and prove
+  # nothing.
+  rls:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: rls
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+      ENCRYPTION_KEY: ci-encryption-key
+      TEST_DATABASE_URL: postgresql://postgres:ci@localhost:5432/rls
+      # The privileged connection. src/lib/prisma.ts REFUSES TO BOOT when RLS is
+      # enabled without this, because systemPrisma would otherwise fall back to
+      # DATABASE_URL — the non-owner role — and every system path, including the
+      # deny-all platform tables, would run as a role its policies reject. That
+      # was the third outage.
+      SYSTEM_DATABASE_URL: postgresql://postgres:ci@localhost:5432/rls
+      # The application connection: a DIFFERENT, non-owner role. This is the
+      # whole point — a role that owns the tables or holds BYPASSRLS would sail
+      # through every policy and the job would prove nothing.
+      DATABASE_URL: postgresql://backstory_ci_app:ci_app@localhost:5432/rls
+      DIRECT_URL: postgresql://postgres:ci@localhost:5432/rls
+      TSX_TSCONFIG_PATH: tsconfig.test.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # Migrations run as the OWNER: DATABASE_URL is the unprivileged role here,
+      # and it cannot create tables, extensions, or policies.
+      - name: Apply migrations as the owner
+        env:
+          DATABASE_URL: ${{ env.SYSTEM_DATABASE_URL }}
+        run: npx prisma migrate deploy
+      # `backstory_app` is created NOLOGIN by 20260809000000 so fresh databases
+      # and CI have the role the policies name. The rollout's real DATABASE_URL
+      # role is provisioned by the operator, so CI provisions its own equivalent
+      # and asserts the two properties that make the run meaningful.
+      - name: Provision the non-owner application role
+        env:
+          PGPASSWORD: ci
+        run: |
+          psql -h localhost -U postgres -d rls -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backstory_ci_app') THEN
+              CREATE ROLE backstory_ci_app LOGIN PASSWORD 'ci_app';
+            END IF;
+          END $$;
+          ALTER ROLE backstory_ci_app LOGIN PASSWORD 'ci_app' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+          GRANT USAGE ON SCHEMA public TO backstory_ci_app;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO backstory_ci_app;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO backstory_ci_app;
+          -- The two properties this whole job rests on. A role that is
+          -- superuser or BYPASSRLS reads every tenant's rows and every
+          -- assertion below would pass while enforcing nothing, so assert
+          -- rather than assume.
+          DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backstory_ci_app' AND (rolsuper OR rolbypassrls)) THEN
+              RAISE EXCEPTION 'backstory_ci_app must be NOSUPERUSER and NOBYPASSRLS or this job proves nothing';
+            END IF;
+          END $$;
+          SQL
+      - name: DB-backed suite with PostgreSQL RLS enforced
+        env:
+          DATABASE_RLS_ENABLED: 'true'
+        run: npx tsx --test $(find src -type f -name '*.db.test.ts')

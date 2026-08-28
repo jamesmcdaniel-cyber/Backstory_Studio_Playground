@@ -51,6 +51,8 @@ Knowledge and agent-memory retrieval rank in-database with pgvector: each carrie
 
 Most logic is unit-tested with `node:test` (`npm test`). API routes are additionally smoke-tested against a seeded pgvector Postgres database. Coverage tests enumerate the route tree and require each route to declare its auth/permission treatment; another static guard prevents raw routes from reintroducing direct, unbounded body parsers. CI also boots the real worker against Redis/Postgres, audits dependencies, applies migrations from zero, checks schema drift, runs CodeQL and gitleaks, and builds the production bundle.
 
+CI runs the DB-backed suite **twice**: once as the owner with RLS off (the current production configuration), and once in the `rls` job as a distinct `NOBYPASSRLS` role with `DATABASE_RLS_ENABLED=true`. The second run is what keeps the tenant policies from being decoration — with the flag off every policy in the schema is inert, so nothing else executes them. It catches the defect class that is invisible from TypeScript: a path reading a parent-scoped model (flow run steps, workflow steps, execution messages) without tenant context, where PostgreSQL returns zero rows and no error and the data merely looks deleted.
+
 ## Known follow-ups (tracked tech debt)
 
 - **Drop legacy embedding Json columns.** WS-R5 moved knowledge/memory retrieval to pgvector (`embeddingVec`); the `KnowledgeChunk.embedding` / `AgentMemory.embedding` Json columns are now write-only legacy, kept so the previous deployment's instances keep working during a rollout. Drop both in the next schema migration once no code reads them.

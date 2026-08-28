@@ -8,6 +8,8 @@ import { toast } from 'sonner'
 import { ArrowLeft, Play, Save, Sparkles, Loader2, ListChecks, ShieldCheck, Undo2, Redo2, MoreHorizontal, Copy, Download, Upload, Trash2, History, ScrollText, FileText, FileWarning, BookmarkPlus, Workflow, SlidersHorizontal } from 'lucide-react'
 import { JamDialog } from '@/components/flows/jam-dialog'
 import { HuddleJamPill } from '@/components/flows/huddle-jam-pill'
+import { useGraphHistory } from '@/components/flows/use-graph-history'
+import { useFlowSharing } from '@/components/flows/use-flow-sharing'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
 import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
@@ -245,7 +247,22 @@ function FlowBuilder() {
   const [flowSettings, setFlowSettings] = useState<FlowSettings>(DEFAULT_FLOW_SETTINGS)
   const [showFlowSettings, setShowFlowSettings] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<FlowSettingsDraft>({ name: '', description: '', icon: '', folder: '', ...DEFAULT_FLOW_SETTINGS })
-  const [graph, setGraph] = useState<FlowGraph>(emptyGraph())
+  // Graph + undo/redo. The rules (what checkpoints, what invalidates redo, how
+  // a keystroke burst collapses to one step, what the cap drops) live in the
+  // pure reducer at src/lib/flows/graph-history.ts and are tested there; this
+  // was two useRefs and four callbacks in this file, which no test could reach.
+  const {
+    graph,
+    commitGraph,
+    commitFieldEdit,
+    replaceGraph,
+    applyToGraph,
+    resetGraph,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useGraphHistory(emptyGraph())
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [deletingFlow, setDeletingFlow] = useState(false)
@@ -265,14 +282,13 @@ function FlowBuilder() {
   const [ownerId, setOwnerId] = useState<string | null>(null)
   // Cross-workspace guest? (UI hides run/publish/settings; server enforces.)
   const [external, setExternal] = useState(false)
-  // The RAW share token exists only in the session that minted it — the server
-  // stores a digest and returns the plaintext once. `shareEnabled` is the
-  // durable fact (a link is live) that survives a reload.
-  const [shareToken, setShareToken] = useState<string | null>(null)
-  const [shareEnabled, setShareEnabled] = useState(false)
-  const [shareAnonymous, setShareAnonymous] = useState(false)
-  const [anonymousViews, setAnonymousViews] = useState(0)
-  const [shareRole, setShareRole] = useState<'view' | 'edit'>('view')
+  // Share-link state, including the rule that a role change must not wipe the
+  // plaintext token already on screen. See ./use-flow-sharing.
+  const sharing = useFlowSharing()
+  // Destructured because the load effect must depend on the STABLE seeder, not
+  // on the sharing object — that changes whenever a link is minted or its role
+  // edited, and depending on it would re-run the whole flow load each time.
+  const { hydrate: hydrateSharing } = sharing
   const [publishing, setPublishing] = useState(false)
   const [agents, setAgents] = useState<Agent[]>([])
   // Workspace roster for the humanReview "Assign to" select — fetched once per
@@ -428,7 +444,7 @@ function FlowBuilder() {
           setIcon(flow.icon || '')
           setFolder(flow.folder || '')
           setFlowSettings(parseFlowSettings(flow.settings))
-          setGraph(g)
+          resetGraph(g)
           setStatus(flow.status)
           setVersion(flow.version ?? 1)
           setPublished(Boolean(flow.published))
@@ -437,10 +453,7 @@ function FlowBuilder() {
           setVisibility(flow.visibility ?? 'shared')
           setOwnerId(flow.ownerId ?? null)
           setExternal(Boolean(flow.external))
-          setShareEnabled(Boolean(flow.shareEnabled))
-          setShareRole(flow.shareRole === 'edit' ? 'edit' : 'view')
-          setShareAnonymous(Boolean(flow.shareAnonymous))
-          setAnonymousViews(Number(flow.anonymousViews ?? 0))
+          hydrateSharing(flow)
           setImportReport(parseImportReport(flow.importNotes))
           setSavedSnapshot(JSON.stringify({ name: flow.name, description: flow.description || '', graph: g }))
           // Only now is it safe to persist — every save path checks this flag.
@@ -486,7 +499,7 @@ function FlowBuilder() {
     return () => {
       cancelled = true
     }
-  }, [id, searchParams])
+  }, [id, searchParams, resetGraph, hydrateSharing])
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
@@ -544,36 +557,6 @@ function FlowBuilder() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [dirty])
 
-  // Undo/redo history over structural graph edits (not per-keystroke field edits).
-  const undoStack = useRef<FlowGraph[]>([])
-  const redoStack = useRef<FlowGraph[]>([])
-  const commitGraph = useCallback(
-    (next: FlowGraph) => {
-      if (next === graph) return
-      undoStack.current.push(graph)
-      if (undoStack.current.length > 50) undoStack.current.shift()
-      redoStack.current = []
-      setGraph(next)
-    },
-    [graph],
-  )
-  // Field-level undo: a burst of per-keystroke field edits (drawer/canvas node
-  // changes) is checkpointed ONCE at the start of the burst, so ⌘Z rolls back
-  // the whole edit rather than nothing. The timer marks the burst; the pre-burst
-  // graph (graphRef, updated each render) is what's pushed.
-  const fieldEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const commitFieldEdit = useCallback((node: FlowNode) => {
-    if (!fieldEditTimer.current) {
-      undoStack.current.push(graph)
-      if (undoStack.current.length > 50) undoStack.current.shift()
-      redoStack.current = []
-    }
-    if (fieldEditTimer.current) clearTimeout(fieldEditTimer.current)
-    fieldEditTimer.current = setTimeout(() => {
-      fieldEditTimer.current = null
-    }, 600)
-    setGraph((g) => updateNode(g, node))
-  }, [graph])
 
   // ── Live collaboration (Jam) ────────────────────────────────────────────────
   // Presence (who's here) + live graph broadcast/receive via Supabase Realtime.
@@ -615,9 +598,9 @@ function FlowBuilder() {
     if (viewingVersion || !incoming || typeof incoming !== 'object' || !(incoming as FlowGraph).nodes) return
     const next = incoming as FlowGraph
     remoteGraphRef.current = next
-    setGraph(next)
+    replaceGraph(next)
     setSelectedId((current) => (current && !next.nodes.some((n) => n.id === current) ? null : current))
-  }, [viewingVersion])
+  }, [viewingVersion, replaceGraph])
   const { participants, roster, cursors, status: jamStatus, broadcastGraph, sendCursor, setSelection, setInHuddle, setCapture, setView: publishView, bus, selfClientId } =
     // Return null until our own load succeeded — otherwise a failed-load client
     // (graph = emptyGraph) would answer a newcomer's realtime bootstrap with an
@@ -1048,20 +1031,11 @@ function FlowBuilder() {
     toast.success(`Pasted ${nodeIds.length} step${nodeIds.length === 1 ? '' : 's'}.`)
   }, [graph, commitGraph])
 
-  const undo = useCallback(() => {
-    const prev = undoStack.current.pop()
-    if (!prev) return
-    redoStack.current.push(graph)
-    setGraph(prev)
-    setSelectedId(null)
-  }, [graph])
-  const redo = useCallback(() => {
-    const next = redoStack.current.pop()
-    if (!next) return
-    undoStack.current.push(graph)
-    setGraph(next)
-    setSelectedId(null)
-  }, [graph])
+  // Undo/redo clear the selection: the node that was selected may not exist in
+  // the graph being restored, and a selection pointing at a removed node reads
+  // as a bug rather than as an undo.
+  const undoWithSelection = useCallback(() => { undo(); setSelectedId(null) }, [undo])
+  const redoWithSelection = useCallback(() => { redo(); setSelectedId(null) }, [redo])
   const agentsById = useMemo(() => new Map(agents.map((a) => [a.id, a.title])), [agents])
   // Stable identity: the canvas memoizes its whole node array on this, so an
   // inline arrow here would rebuild every chip on every unrelated re-render
@@ -1168,8 +1142,8 @@ function FlowBuilder() {
       if (el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable)) return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
-        if (e.shiftKey) redo()
-        else undo()
+        if (e.shiftKey) redoWithSelection()
+        else undoWithSelection()
         return
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -1220,7 +1194,7 @@ function FlowBuilder() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, redo, selectedId, selectedNode, selectedIds, bulkDelete, graph, commitGraph, viewingVersion, view])
+  }, [undoWithSelection, redoWithSelection, selectedId, selectedNode, selectedIds, bulkDelete, graph, commitGraph, viewingVersion, view])
 
   const loopContext = useMemo(() => parentLoop(graph, selectedId), [graph, selectedId])
   const parallelContext = useMemo(() => parentParallelBranch(graph, selectedId), [graph, selectedId])
@@ -1486,7 +1460,7 @@ function FlowBuilder() {
           toast.error(data.error || (action === 'unpublish' ? 'Could not unpublish.' : 'Could not publish.'))
           return
         }
-        if (action === 'revert' && data.flow?.graph) setGraph(data.flow.graph)
+        if (action === 'revert' && data.flow?.graph) replaceGraph(data.flow.graph)
         setVersion(data.flow?.version ?? version)
         setPublished(Boolean(data.flow?.published))
         if (data.flow?.status) setStatus(data.flow.status)
@@ -1502,7 +1476,7 @@ function FlowBuilder() {
         setPublishing(false)
       }
     },
-    [id, save, validation, version],
+    [id, save, validation, version, replaceGraph],
   )
 
   const pollRuns = useCallback(() => {
@@ -1822,13 +1796,13 @@ function FlowBuilder() {
   // "Set mock data": pin a node's output on the graph so it isn't executed and
   // downstream steps consume the pinned value. Clearing removes the pin.
   const setNodeMockData = useCallback((nodeId: string, value: unknown | undefined) => {
-    setGraph((g) => {
+    applyToGraph((g) => {
       const pinData = { ...(g.pinData ?? {}) }
       if (value === undefined) delete pinData[nodeId]
       else pinData[nodeId] = value
       return { ...g, pinData: Object.keys(pinData).length ? pinData : undefined }
     })
-  }, [])
+  }, [applyToGraph])
 
   // Answer a paused run's agent question — the execute route resumes it.
   const replyToRun = useCallback(
@@ -2296,10 +2270,14 @@ function FlowBuilder() {
             {saving ? 'Saving…' : dirty ? 'Unsaved details' : published ? `Published v${version}` : 'Draft saved'}
           </p>
         </div>
-        <Button variant="ghost" size="icon" onClick={undo} aria-label="Undo" title="Undo (⌘Z)" className="hidden sm:inline-flex">
+        {/* The same handlers the ⌘Z shortcut uses — the button and the keystroke
+            must not differ in whether they clear the selection. Disabled when
+            there is nothing to go back to: the reducer knows, and a button that
+            looks available but does nothing reads as a broken editor. */}
+        <Button variant="ghost" size="icon" onClick={undoWithSelection} disabled={!canUndo} aria-label="Undo" title="Undo (⌘Z)" className="hidden sm:inline-flex">
           <Undo2 className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={redo} aria-label="Redo" title="Redo (⌘⇧Z)" className="hidden sm:inline-flex">
+        <Button variant="ghost" size="icon" onClick={redoWithSelection} disabled={!canRedo} aria-label="Redo" title="Redo (⌘⇧Z)" className="hidden sm:inline-flex">
           <Redo2 className="h-4 w-4" />
         </Button>
         <DropdownMenu>
@@ -2986,20 +2964,12 @@ function FlowBuilder() {
         huddleStartBlocked={huddleStartBlocked}
         selfClientId={selfClientId}
         capture={huddleCapture}
-        shareToken={shareToken}
-        shareEnabled={shareEnabled}
-        shareRole={shareRole}
-        shareAnonymous={shareAnonymous}
-        anonymousViews={anonymousViews}
-        onShareChanged={(token, enabled, role, anonymous, views) => {
-          // A mint/rotate hands back a fresh plaintext; a role or anonymity
-          // change hands back null and must NOT wipe the copy on screen.
-          if (token || !enabled) setShareToken(token)
-          setShareEnabled(enabled)
-          setShareRole(role)
-          setShareAnonymous(anonymous)
-          setAnonymousViews(views)
-        }}
+        shareToken={sharing.token}
+        shareEnabled={sharing.enabled}
+        shareRole={sharing.role}
+        shareAnonymous={sharing.anonymous}
+        anonymousViews={sharing.views}
+        onShareChanged={sharing.applyChange}
       />
 
       <SaveAsTemplateDialog

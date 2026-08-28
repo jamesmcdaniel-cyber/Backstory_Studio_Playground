@@ -38,6 +38,25 @@ const hasId = (model: string) =>
 const stable = (value: unknown) =>
   JSON.stringify(value, (_key, raw) => (typeof raw === 'bigint' ? raw.toString() : raw))
 
+/**
+ * Columns a BACKGROUND SWEEP owns, excluded from the bystander comparison.
+ *
+ * The outbox dispatcher polls for `pending` rows across every organization —
+ * that is what it is for — so a suite running concurrently against the shared
+ * CI database can pick up this fixture's row and stamp its delivery-attempt
+ * fields mid-test. That is the dispatcher doing its job, not teardown reaching
+ * into another workspace, and the assertion here is specifically about the
+ * latter.
+ *
+ * Deliberately narrow: only the four fields a delivery attempt writes. The
+ * row's identity, topic, payload, and organization are all still compared
+ * byte-for-byte, so a teardown that deleted or rewrote a bystander's outbox row
+ * still fails exactly as before.
+ */
+const SWEEP_OWNED: Record<string, string[]> = {
+  OutboxEvent: ['attempts', 'availableAt', 'lastError', 'lockedAt'],
+}
+
 async function snapshotOrg(organizationId: string): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const model of ORG_MODELS) {
@@ -45,7 +64,16 @@ async function snapshotOrg(organizationId: string): Promise<Record<string, strin
       where: { organizationId },
       ...(hasId(model.name) ? { orderBy: { id: 'asc' } } : {}),
     })
-    out[model.name] = stable(rows)
+    const volatile = SWEEP_OWNED[model.name]
+    out[model.name] = stable(
+      volatile
+        ? (rows as Record<string, unknown>[]).map((row) => {
+            const copy = { ...row }
+            for (const field of volatile) delete copy[field]
+            return copy
+          })
+        : rows,
+    )
   }
   out['Organization'] = stable(await systemPrisma.organization.findUnique({ where: { id: organizationId } }))
   return out

@@ -23,6 +23,8 @@ Nango owns connected accounts and proxies provider API calls for agent-facing to
 
 ## Flow Execution
 
+The engine is five modules, not one function. `execute-flow.ts` orchestrates and owns admission (claiming a run, concurrency limits, graph/manifest resolution); `seed-run-state.ts` decides the position a run starts FROM (what already counts as done on a resume, patch, replay, pin, or override); `run-step-recorder.ts` and `run-action-step.ts` are the run's only two writers of step rows — the first for steps the interpreter decides, the second for steps the engine executes; `finalize-flow-run.ts` records what happened once the walk returns. They share one step counter, so the run panel orders rows as they actually happened.
+
 Flows normally execute through the `flow-execution` BullMQ queue. Every run pins the graph it started with in `FlowRun.graphSnapshot`; loop/parallel bodies persist iteration outputs under `nodeId#index`, so a pause resumes from its cursor without repeating earlier side effects. Reply/approval resume callbacks consume their one-time token and write an encrypted outbox command in the same database transaction. The outbox then dispatches a stable, delivery-idempotent queue job, so a Redis outage cannot consume the callback without preserving the work.
 
 Webhook `lastNode` response mode also uses the durable queue. It waits for a bounded fast-path result and otherwise returns `202` with a trigger-secret-protected result URL. No flow execution remains attached to an unbounded serverless request.

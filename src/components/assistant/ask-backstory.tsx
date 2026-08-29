@@ -195,6 +195,9 @@ export function AskBackstory({ raised = false }: {
             { role: 'assistant' as const, content: turn.answer },
           ]),
           path: currentPath,
+          // The narrower tier: this is the in-product helper, so it stays on
+          // Backstory, this workspace, and why a run failed.
+          mode: 'helper',
         }),
       })
       const data = await response.json().catch(() => ({}))

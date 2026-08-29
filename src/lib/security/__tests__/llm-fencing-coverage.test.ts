@@ -21,8 +21,32 @@ import path from 'node:path'
 
 const SRC = path.join(process.cwd(), 'src')
 
-/** How a file betrays that it sends text to a model. */
-const LLM_CALL = /\b(generateStructured|generateText|runModel|streamText|callModel|createModelRunner|anthropic\.messages)\b/
+/**
+ * How a file betrays that it sends text to a model.
+ *
+ * `messages\.create` was added 2026-08-29, after the `anthropic\.messages`
+ * alternative was measured against the tree and found to match ZERO files.
+ * Nothing here writes `anthropic.messages`: the routes that speak the Messages
+ * API without going through lib/llm build a client first
+ * (`const client = useClaude ? new Anthropic(…) : qwenClient()`) and then call
+ * `client.messages.create`. So for as long as this guard has existed it has
+ * been blind to api/chat and api/librarian — the two direct-SDK surfaces, and
+ * the ones a fencing guard has most reason to watch, since both fold retrieved
+ * workspace text into an interactive prompt.
+ *
+ * That is the exact failure mode the self-check below exists to catch and did
+ * not: "several call sites" was satisfied by the other detectors while these
+ * two sat outside the population entirely. Hence the second self-check, which
+ * pins the direct-SDK routes by name.
+ *
+ * The dead `anthropic\.messages` alternative is kept rather than deleted: it
+ * still covers a plausible future spelling (`anthropic.messages.stream`), it
+ * costs a few characters, and keeping this regex character-identical to the
+ * one in guardrail-coverage.test.ts is what lets the two guards be diffed and
+ * reasoned about as one population.
+ */
+const LLM_CALL =
+  /\b(generateStructured|generateText|runModel|streamText|callModel|createModelRunner|anthropic\.messages|messages\.create)\b/
 
 /** Importing either of these counts as fenced. */
 const FENCING = /@\/lib\/security\/prompt/
@@ -58,6 +82,21 @@ const EXEMPT: Record<string, string> = {
   // exemption follows the code that actually prompts a model, and if this file
   // is ever split again the guard fires until someone re-states the reason.
   'features/flows/run-action-step.ts': 'AI-step fencing lives in lib/flows/ai-prompts.ts SYSTEM.',
+  // The librarian route builds no prompt text of its own: SYSTEM_PROMPT and
+  // buildPrompt both come from lib/librarian/prompt.ts, which imports the
+  // helpers and wraps all three attacker-influenceable blocks — the workspace
+  // candidates, the retrieved documentation passages, and the replayed
+  // conversation history — leaving only the user's own latest question outside
+  // the fence.
+  //
+  // Exempt because that is the RIGHT place for it, not a concession. The fence
+  // has to sit where the string is assembled or it fences nothing; a route that
+  // imported fenceUntrusted and then handed raw candidates to a builder would
+  // satisfy this guard while fencing none of them. Same shape as the
+  // run-action-step exemption above, and it carries the same obligation: if the
+  // route ever starts composing its own context inline, that text is unfenced
+  // and this entry has quietly stopped being true.
+  'app/api/librarian/route.ts': 'Fencing lives with the prompt builder in lib/librarian/prompt.ts.',
 }
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
@@ -89,6 +128,28 @@ test('the detector still finds the LLM call sites it is meant to guard', () => {
   // vacuously. Fail loudly instead.
   const callers = llmCallers()
   assert.ok(callers.length >= 5, `expected several LLM call sites, found ${callers.length}`)
+})
+
+test('the detector sees the routes that reach the model through an SDK client, because a count alone hid them for months', () => {
+  // A population count cannot notice an absence: 21 call sites matched happily
+  // while these two were outside the set entirely, so the guard reported green
+  // over the one surface — an interactive assistant over retrieved text — that
+  // most needed it. Naming them is what makes that regression fail out loud
+  // rather than shrink a number nobody reads.
+  const callers = llmCallers()
+  const directSdk = [
+    path.join('app', 'api', 'librarian', 'route.ts'),
+    path.join('app', 'api', 'chat', 'route.ts'),
+  ]
+  const missed = directSdk.filter((relative) => !callers.includes(relative))
+
+  assert.deepEqual(
+    missed,
+    [],
+    `LLM_CALL no longer matches these direct-SDK routes: ${missed.join(', ')}. ` +
+      'They call client.messages.create rather than a lib/llm helper — widen the detector rather than ' +
+      'losing the coverage, and only delete an entry here once the route genuinely stops prompting a model.',
+  )
 })
 
 test('every surface that prompts a model states that untrusted content is data', () => {

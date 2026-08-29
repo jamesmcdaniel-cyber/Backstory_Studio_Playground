@@ -5,6 +5,8 @@ import { DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
 import { qwenClient, qwenModel } from '@/lib/llm/qwen'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
+import { scopeRule } from '@/lib/security/scope'
 import { assertAiCallAllowed, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { citedItems, citedSources, dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
@@ -70,10 +72,16 @@ const requestSchema = z.object({
     .max(8)
     .optional(),
   path: z.string().max(300).optional(),
+  // Which surface is asking, and so which scope clause the model is held to.
+  // The default is the TIGHTER tier on purpose: a caller that predates this
+  // field, or one whose value zod does not recognise, fails toward the narrower
+  // boundary rather than being silently promoted to the wider one. Widening is
+  // something a caller has to ask for in as many words.
+  mode: z.enum(['helper', 'assistant']).default('helper'),
 })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { question, history, path } = requestSchema.parse(await request.json())
+  const { question, history, path, mode } = requestSchema.parse(await request.json())
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `librarian:${auth.dbUser.id}`, limit: 30 })
 
   const words = terms(question)
@@ -173,7 +181,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     // Headroom for a fully-worked capability answer plus the RELEVANT line; a
     // 700-token ceiling truncated them mid-list.
     max_tokens: 1_400,
-    system: SYSTEM_PROMPT,
+    // Composed here rather than baked into SYSTEM_PROMPT, matching the other
+    // three model surfaces: `mode` is a per-request value, and the guardrails
+    // are a platform-wide clause that must read identically wherever it appears.
+    // `mode` reaches ONLY this string — retrieval, candidate assembly, the
+    // shared numbering and citation resolution above are byte-identical across
+    // tiers, which is what makes "one brain, two scopes" a claim you can test
+    // rather than a claim you have to trust.
+    system: `${SYSTEM_PROMPT}\n\n${scopeRule(mode)}\n\n${GUARDRAIL_RULE}`,
     messages: [{ role: 'user', content: prompt }],
   })
   void recordTokenUsage(org, (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)).catch(() => undefined)

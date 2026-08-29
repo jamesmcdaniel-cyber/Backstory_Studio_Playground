@@ -85,6 +85,9 @@ export default function AssistantHome() {
             { role: 'assistant' as const, content: turn.answer },
           ]),
           path: '/dashboard',
+          // The wider tier: this surface also answers the go-to-market work
+          // Backstory automates, not just questions about the product.
+          mode: 'assistant',
         }),
       })
       const data = await res.json().catch(() => ({}))

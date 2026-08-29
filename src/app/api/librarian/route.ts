@@ -9,6 +9,7 @@ import { assertAiCallAllowed, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { citedItems, citedSources, dedupeResults, parseRelevance, type LibrarianResult } from '@/lib/librarian/relevance'
 import { searchBuiltinCatalogue } from '@/lib/librarian/catalogue'
+import { appSurfaces, surfaceForPath } from '@/lib/librarian/surfaces'
 import { retrieveKnowledge, SOURCE_LABEL, type KnowledgeDoc } from '@/lib/help-center/retrieve'
 import { buildPrompt, SYSTEM_PROMPT } from '@/lib/librarian/prompt'
 
@@ -52,8 +53,27 @@ function orContains(words: string[], fields: string[]) {
   return clauses
 }
 
+/**
+ * `history` and `path` are optional so the /dashboard home keeps working
+ * unchanged: they are what the Ask Backstory widget adds — a follow-up needs the
+ * turns before it, and "how do I fix this?" needs to know which page "this" is.
+ * Both are bounded here, and `path` is resolved against the surface registry
+ * rather than quoted, so neither becomes a channel for arbitrary prompt text.
+ */
+const requestSchema = z.object({
+  question: z.string().min(1).max(2000),
+  history: z
+    .array(z.object({
+      role: z.enum(['user', 'assistant']),
+      content: z.string().transform((content) => content.slice(0, 2000)),
+    }))
+    .max(8)
+    .optional(),
+  path: z.string().max(300).optional(),
+})
+
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { question } = z.object({ question: z.string().min(1).max(2000) }).parse(await request.json())
+  const { question, history, path } = requestSchema.parse(await request.json())
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `librarian:${auth.dbUser.id}`, limit: 30 })
 
   const words = terms(question)
@@ -116,6 +136,12 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
 
   const workspaceItems = dedupeResults([
+    // The product's own pages, so "where do I connect Slack?" is answered with
+    // a link rather than a description of a link. Permission-filtered, and
+    // unconditional (not keyword-matched): they are also the map the model
+    // reads to describe the app, and a map with pages missing is how an
+    // assistant starts inventing a screen that does not exist.
+    ...appSurfaces(auth.can),
     // The catalogue the platform ships (code, not rows) — without this the
     // Assistant cannot see its own gallery and denies that a template exists.
     ...searchBuiltinCatalogue(words),
@@ -129,7 +155,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // the model cites a source the way it cites an item and one RELEVANT line
   // covers both. `citedItems`/`citedSources` split that numbering back apart.
   const candidateCount = workspaceItems.length + docs.length
-  const prompt = buildPrompt(question, workspaceItems, docs)
+  const prompt = buildPrompt(question, workspaceItems, docs, { history, surface: surfaceForPath(path) })
 
   // Recorded here rather than at the shared structured-call seam in
   // lib/llm/model-runner.ts, which records for every other interactive endpoint:

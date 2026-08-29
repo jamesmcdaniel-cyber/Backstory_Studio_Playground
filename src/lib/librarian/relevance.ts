@@ -9,8 +9,12 @@
  */
 
 export type LibrarianResult = {
-  /** `doc` is a help-centre article (an external link); the rest are workspace items. */
-  type: 'agent' | 'flow' | 'template' | 'run' | 'doc'
+  /**
+   * `doc` is a help-centre article (an external link) and `page` is a surface of
+   * the product itself (see lib/librarian/surfaces.ts); the rest are the
+   * workspace's own items.
+   */
+  type: 'agent' | 'flow' | 'template' | 'run' | 'doc' | 'page'
   id: string
   title: string
   subtitle: string

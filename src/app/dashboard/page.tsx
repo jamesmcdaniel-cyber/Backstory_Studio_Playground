@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { indentOnTab } from '@/components/ui/textarea'
 import Link from 'next/link'
-import { ArrowUp, BookOpen, Bot, ExternalLink, FileText, History, Loader2, PenSquare, RotateCcw, Sparkles, Workflow } from 'lucide-react'
+import { ArrowUp, BookOpen, Bot, ChevronRight, ExternalLink, FileText, History, Loader2, PenSquare, RotateCcw, Sparkles, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -12,8 +12,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { RecentFlows } from '@/components/dashboard/recent-flows'
 
 type LibrarianResult = {
-  /** `doc` is a help-centre article (an external link); the rest are workspace items. */
-  type: 'agent' | 'flow' | 'template' | 'run' | 'doc'
+  /**
+   * `doc` is a help-centre article (an external link) and `page` is a surface of
+   * the product itself; the rest are workspace items.
+   */
+  type: 'agent' | 'flow' | 'template' | 'run' | 'doc' | 'page'
   id: string
   title: string
   subtitle: string
@@ -32,7 +35,7 @@ const SUGGESTIONS = [
   'Find the best skill for an account plan',
 ]
 
-const RESULT_ICON = { flow: Workflow, agent: Bot, template: FileText, run: History, doc: BookOpen }
+const RESULT_ICON = { flow: Workflow, agent: Bot, template: FileText, run: History, doc: BookOpen, page: ChevronRight }
 
 function greeting(): string {
   const h = new Date().getHours()
@@ -73,7 +76,16 @@ export default function AssistantHome() {
       const res = await fetch('/api/librarian', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({
+          question: q,
+          // The thread on screen, so a follow-up here resolves against what was
+          // already said instead of being read as a fresh question.
+          history: thread.slice(-3).flatMap((turn) => [
+            { role: 'user' as const, content: turn.question },
+            { role: 'assistant' as const, content: turn.answer },
+          ]),
+          path: '/dashboard',
+        }),
       })
       const data = await res.json().catch(() => ({}))
       if (seq !== threadSeq.current) return // the user started a new chat meanwhile

@@ -1,11 +1,12 @@
 'use client'
 
-import { ReactNode, useLayoutEffect, useRef } from 'react'
+import { ReactNode, Suspense, useLayoutEffect, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import { motion, useReducedMotion } from 'motion/react'
 import { Sidebar } from './sidebar'
 import { SetupGate } from './setup-gate'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
+import { AskBackstory } from '@/components/assistant/ask-backstory'
 
 /**
  * The single app chrome, mounted once in the root layout so the sidebar
@@ -132,6 +133,24 @@ export function AppShell({ children }: { children: ReactNode }) {
             </motion.div>
           )}
         </main>
+        {/*
+          Ask Backstory sits OUTSIDE <main> and inside the shell, so it is
+          mounted once for the whole authenticated app: it stays put across
+          client navigation (thread intact) and it is never inside the
+          per-route motion wrapper, whose transform would make it the
+          containing block for a position:fixed child and pin the widget to
+          the page instead of the viewport.
+
+          Suspense because it reads useSearchParams() to tell the assistant
+          which page the question came from.
+
+          `raised` is the flow builder specifically, not every fullscreen route:
+          the builder's minimap occupies the same bottom-right corner, while
+          /agents has nothing there.
+        */}
+        <Suspense fallback={null}>
+          <AskBackstory raised={flowSegments.length === 1} />
+        </Suspense>
       </div>
     </ErrorBoundary>
   )

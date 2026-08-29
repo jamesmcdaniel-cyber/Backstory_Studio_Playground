@@ -38,7 +38,11 @@ async function slackPost(url: string, token: string, body: Record<string, unknow
 export async function postTeammateMessage(params: {
   organizationId: string
   channelId: string
-  threadTs: string
+  /**
+   * Omitted for a top-level post. A slash command has no thread to reply into,
+   * and sending an empty thread_ts is rejected by Slack rather than ignored.
+   */
+  threadTs?: string
   text: string
   teammateName: string
   avatarUrl?: string | null
@@ -48,7 +52,7 @@ export async function postTeammateMessage(params: {
   if (!token) return null
   const body = await slackPost(POST_URL, token.value, {
     channel: params.channelId,
-    thread_ts: params.threadTs,
+    ...(params.threadTs ? { thread_ts: params.threadTs } : {}),
     text: params.text,
     username: params.teammateName,
     ...(params.avatarUrl ? { icon_url: params.avatarUrl } : {}),
@@ -140,6 +144,88 @@ export async function finishSlackMention(params: {
 }
 
 /**
+ * Reply to a slash command through its own `response_url`.
+ *
+ * Not a channel post. A command can be invoked in a channel the bot was never
+ * invited to, where chat.postMessage fails with not_in_channel — and a
+ * `/dealcheck` that silently answers nowhere is worse than one that refuses.
+ * `response_url` needs no membership and no token: possession of the URL,
+ * which only Slack ever sends us, IS the authorization.
+ *
+ * The trade is its lifetime: a URL is good for 30 minutes and 5 uses. That is
+ * the same order as AGENT_RUN_MAX_DURATION_SECONDS, so a run that uses its full
+ * budget can outlive its own reply channel. `finishSlackCommand` handles that
+ * case rather than pretending it cannot happen.
+ */
+export async function postCommandResponse(params: {
+  responseUrl: string
+  text: string
+  /** `in_channel` shows the answer to everyone; `ephemeral` only to the caller. */
+  visibility: 'in_channel' | 'ephemeral'
+}): Promise<boolean> {
+  try {
+    const response = await fetch(params.responseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ response_type: params.visibility, text: params.text }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    // Unlike the Web API, a response_url reports failure through the HTTP
+    // status — an expired URL is a 4xx, not a 200 with ok:false.
+    if (!response.ok) {
+      apiLogger.warn('slack command response rejected', { status: response.status })
+      return false
+    }
+    return true
+  } catch (error) {
+    apiLogger.warn('slack command response failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return false
+  }
+}
+
+/**
+ * Deliver a slash-command run's answer.
+ *
+ * Falls back to a channel post when the response_url is spent or expired — the
+ * run took longer than Slack's 30-minute window, or Slack rejected the write.
+ * The fallback needs the bot to be in the channel and may itself fail; that is
+ * still strictly better than dropping a finished answer on the floor.
+ */
+export async function finishSlackCommand(params: {
+  organizationId: string
+  trigger: unknown
+  text: string
+}): Promise<void> {
+  const trigger = (params.trigger && typeof params.trigger === 'object' ? params.trigger : {}) as Record<string, unknown>
+  if (trigger.type !== 'slack_command') return
+
+  const responseUrl = typeof trigger.responseUrl === 'string' ? trigger.responseUrl : ''
+  const channelId = typeof trigger.channelId === 'string' ? trigger.channelId : ''
+  const teammateName = typeof trigger.teammateName === 'string' ? trigger.teammateName : 'Backstory'
+
+  const text =
+    params.text.length > 3800
+      ? `${params.text.slice(0, 3800)}\n\n_(truncated — open the run in Backstory for the rest)_`
+      : params.text || '_(the run produced no output)_'
+
+  // in_channel: a slash command's answer is normally useful to the channel it
+  // was asked in — that is the difference between a shared deal inspection and
+  // a private one. The ACK is ephemeral; the ANSWER is not.
+  if (responseUrl && (await postCommandResponse({ responseUrl, text, visibility: 'in_channel' }))) return
+
+  if (!channelId) return
+  await postTeammateMessage({
+    organizationId: params.organizationId,
+    channelId,
+    text,
+    teammateName,
+    chainDepth: 1,
+  }).catch(() => undefined)
+}
+
+/**
  * Record the agent's answer as the assistant turn of the thread's conversation,
  * so the next follow-up in that thread can see it.
  */
@@ -181,7 +267,16 @@ export async function finishSlackMentionForExecution(executionId: string, text: 
   })
   if (!execution) return
   const trigger = execution.trigger as Record<string, unknown> | null
-  if (!trigger || trigger.type !== 'slack_mention') return
+  if (!trigger) return
+
+  // A slash command answers through its own response_url and keeps no thread
+  // conversation, so it returns here rather than falling through to the
+  // mention path's thread bookkeeping.
+  if (trigger.type === 'slack_command') {
+    await finishSlackCommand({ organizationId: execution.organizationId, trigger, text })
+    return
+  }
+  if (trigger.type !== 'slack_mention') return
 
   await finishSlackMention({ organizationId: execution.organizationId, trigger, text })
   if (execution.agentTaskId) {

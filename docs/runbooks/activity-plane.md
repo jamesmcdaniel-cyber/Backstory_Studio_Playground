@@ -384,6 +384,46 @@ placeholder. A run that fails updates the same message rather than going
 silent. Every post stamps `metadata.event_payload.chainDepth`, which is what
 `ACTIVITY_CHAIN_DEPTH_CAP` reads back to stop an agent answering itself.
 
+### Slash commands
+
+A slash command is a separate Slack surface from mentions, not a variant of it,
+and needs its own setup:
+
+1. **Register the command** in the Slack app (Slash Commands → Create New
+   Command). Request URL is `https://<host>/api/slack/commands` — one shared
+   route for every workspace, routed by `team_id` exactly like the events
+   endpoint. No extra scope is required; a slash command is delivered on the
+   strength of its signature, and the answer goes back through the invocation's
+   own `response_url` rather than a channel post, so the bot does not need to be
+   in the channel.
+2. **Bind the command to a teammate**: `PUT /api/slack/command-bindings` with
+   `{ command, agentTaskId }`. The command is stored without its leading slash
+   and lowercased, so `/DealCheck`, `dealcheck` and `/dealcheck` all bind the
+   same thing.
+3. **The person must still be linked**, same fail-closed rule as mentions. An
+   unlinked user gets the link prompt and starts no run.
+
+What the caller sees: an ephemeral acknowledgement immediately (Slack's budget
+is 3 seconds, and an agent run is not), then the answer posted **in channel**
+when the run finishes. The acknowledgement deliberately does not claim success —
+it says the request was received, because whether the run works is not knowable
+within 3 seconds.
+
+Two failure modes worth knowing:
+
+- **An unbound command** answers with a note naming the command, not silence.
+  Same for a command bound to an agent that was since soft-deleted.
+- **A `response_url` is good for 30 minutes**, which is the same order as
+  `AGENT_RUN_MAX_DURATION_SECONDS`. A run that uses its full budget can outlive
+  its own reply channel, so `finishSlackCommand` falls back to a channel post —
+  which needs the bot to be in that channel and may itself fail. A very long
+  slash-command run can therefore finish with its answer only in Backstory.
+  Bind long-running agents to mentions instead.
+
+Redelivery: Slack resends a command whose acknowledgement it did not see.
+`trigger_id` is the replay guard, carried into `AgentExecution.idempotencyKey`,
+so a retry is a no-op rather than a second billed run.
+
 **Bring your own app (exception).** Everything below still works for a workspace
 that wants its own Slack app, and its own signing secret takes precedence over
 the platform app's. An operator standing up a brand-new Slack app needs, at

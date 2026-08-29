@@ -118,6 +118,7 @@ model Organization {
   agentCohortWeeks               AgentCohortWeek[]
   slackIdentities                SlackIdentity[]
   slackChannelBindings           SlackChannelBinding[]
+  slackCommandBindings           SlackCommandBinding[]
   dataTables                     DataTable[]
   dataTableRows                  DataTableRow[]
   externalSecretProviders        ExternalSecretProvider[]
@@ -697,6 +698,7 @@ model AgentTask {
   connectors           AgentConnector[]
   memories             AgentMemory[]
   slackChannelBindings SlackChannelBinding[]
+  slackCommandBindings SlackCommandBinding[]
 
   @@index([organizationId, status])
   @@index([userId])
@@ -2356,6 +2358,31 @@ model SlackIdentity {
 }
 
 /// The teammate a bare @mention reaches in a given channel.
+/// Which teammate a Slack slash command reaches.
+///
+/// Keyed on the command WORD, stored without its leading slash and lowercased,
+/// because Slack sends `/DealCheck` exactly as the app registered it and a
+/// workspace can register variants. Storing the raw string would make the
+/// binding depend on how the command happened to be typed in the app config.
+model SlackCommandBinding {
+  id             String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  organizationId String   @db.Uuid
+  /// The command without its leading slash, lowercased — e.g. "dealcheck".
+  command        String
+  agentTaskId    String
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Cascade, matching SlackChannelBinding: a binding to a deleted agent would
+  /// route every invocation of the command to a teammate that no longer exists.
+  agentTask    AgentTask    @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, command])
+  @@index([agentTaskId])
+  @@map("slack_command_bindings")
+}
+
 model SlackChannelBinding {
   id             String   @id @default(dbgenerated("(gen_random_uuid())::text"))
   organizationId String   @db.Uuid

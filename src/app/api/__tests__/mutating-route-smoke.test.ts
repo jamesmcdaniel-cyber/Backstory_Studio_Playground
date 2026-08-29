@@ -126,6 +126,8 @@ const cases = (): Case[] => [
   { route: 'slack/my-identity', method: 'POST', run: async () => (await import('../slack/my-identity/route')).POST(rq('/api/slack/my-identity', 'POST', {})) },
   { route: 'slack/channel-bindings', method: 'PUT', run: async () => (await import('../slack/channel-bindings/route')).PUT(rq('/api/slack/channel-bindings', 'PUT', { channelId: 'C_SMOKE', agentTaskId: agentId })) },
   { route: 'slack/channel-bindings', method: 'DELETE', run: async () => (await import('../slack/channel-bindings/route')).DELETE(rq('/api/slack/channel-bindings', 'DELETE', { channelId: 'C_SMOKE' })) },
+  { route: 'slack/command-bindings', method: 'PUT', run: async () => (await import('../slack/command-bindings/route')).PUT(rq('/api/slack/command-bindings', 'PUT', { command: '/DealCheck', agentTaskId: agentId })) },
+  { route: 'slack/command-bindings', method: 'DELETE', run: async () => (await import('../slack/command-bindings/route')).DELETE(rq('/api/slack/command-bindings', 'DELETE', { command: 'dealcheck' })) },
   { route: 'teammates', method: 'POST', run: async () => (await import('../teammates/route')).POST(rq('/api/teammates', 'POST', { name: 'Smoke avatar' })) },
   { route: 'teammates', method: 'PATCH', run: async () => (await import('../teammates/route')).PATCH(rq('/api/teammates', 'PATCH', { id: teammateId, name: 'Smoke avatar renamed' })) },
   { route: 'teammates', method: 'DELETE', run: async () => (await import('../teammates/route')).DELETE(rq('/api/teammates', 'DELETE', { id: 'missing' })) },
@@ -296,6 +298,7 @@ test('cron/dispatch and cron/retention refuse a wrong secret', { skip: !TEST_DB 
  * a src/lib/privacy/delete.ts that no test imported at all.
  */
 const SKIPS: Record<string, string> = {
+  'slack/commands:POST': 'covered by src/app/api/slack/commands/__tests__/route.db.test.ts — the handler needs a real HMAC over the exact raw body, which the shared JSON smoke fixture cannot produce',
   'demo/enter:POST': 'covered by src/lib/demo/__tests__/session.db.test.ts — enter clones a whole workspace, which the smoke fixture is not shaped for',
   'demo/exit:POST': 'covered by src/lib/demo/__tests__/session.db.test.ts — exit tears down the demo org created there',
   'v1/token:POST': 'no coverage: the client-credentials grant is exercised as a service (client-credentials.db.test.ts), but this route wrapper is never invoked',

@@ -46,6 +46,7 @@ const mutatingExempt = new Set([
   'csp-report',
   'nango/webhook',       // Nango webhook signature (verifyIncomingWebhookRequest)
   'slack/events',        // Slack Events API signature (per-workspace signing secret, HMAC-SHA256 v0)
+  'slack/commands',      // Slack slash-command signature (same per-workspace signing secret, HMAC-SHA256 v0)
   'flows/[id]/trigger',  // per-flow webhook secret (constant-time)
   'forms/[id]/submit',   // public hosted form: published-form gate, per-flow/IP rate limit, bounded typed fields
   'agents/[id]/trigger', // per-agent trigger secret (constant-time)
@@ -166,6 +167,7 @@ if (TEST_DB) {
   const cases: Array<{ name: string; run: () => Promise<Response> }> = [
     { name: 'GET /api/agent-templates', run: async () => (await import('../agent-templates/route')).GET(req('/api/agent-templates')) },
     { name: 'GET /api/slack/channel-bindings', run: async () => (await import('../slack/channel-bindings/route')).GET(req('/api/slack/channel-bindings')) },
+    { name: 'GET /api/slack/command-bindings', run: async () => (await import('../slack/command-bindings/route')).GET(req('/api/slack/command-bindings')) },
     { name: 'GET /api/slack/my-identity', run: async () => (await import('../slack/my-identity/route')).GET(req('/api/slack/my-identity')) },
     { name: 'GET /api/notifications', run: async () => (await import('../notifications/route')).GET(req('/api/notifications')) },
     { name: 'GET /api/snapshot', run: async () => (await import('../snapshot/route')).GET(req('/api/snapshot')) },

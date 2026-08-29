@@ -296,3 +296,64 @@ test('google drive: upload defaults mime by extension and requires content', asy
   assert.equal(spec.isWrite, true)
   await assert.rejects(() => spec.run(conn, { filename: 'x.txt' }, async () => ({ data: {} })), /needs text content/)
 })
+
+// ── Google Calendar ───────────────────────────────────────────────────────────
+
+test('calendar: list defaults to a forward window, expands recurrences, and orders by start', async () => {
+  const call = await run('google_calendar_list_events', {})
+  assert.equal(call.method, 'GET')
+  assert.equal(call.endpoint, '/calendar/v3/calendars/primary/events')
+  // 'true' as a STRING: the proxy's params are Record<string, string | number>,
+  // so a boolean would be dropped on the wire and every recurring meeting would
+  // come back as one unexpanded rule.
+  assert.equal(call.params?.singleEvents, 'true')
+  assert.equal(call.params?.orderBy, 'startTime')
+  const min = Date.parse(String(call.params?.timeMin))
+  const max = Date.parse(String(call.params?.timeMax))
+  assert.ok(Number.isFinite(min) && Number.isFinite(max), 'both bounds are real timestamps')
+  assert.ok(max > min, 'the default window looks forward, not back')
+  assert.ok(max - min > 6 * 86_400_000, 'default window spans about a week')
+})
+
+test('calendar: a calendar id that is an email address is encoded as one path segment', async () => {
+  const call = await run('google_calendar_list_events', { calendarId: 'team@acme.com', q: 'QBR' })
+  assert.equal(call.endpoint, '/calendar/v3/calendars/team%40acme.com/events')
+  assert.equal(call.params?.q, 'QBR')
+})
+
+test('calendar: create sends dateTime for an instant and date for an all-day entry', async () => {
+  const timed = await run('google_calendar_create_event', {
+    summary: 'QBR prep',
+    start: '2026-09-01T15:00:00Z',
+    timeZone: 'America/New_York',
+    attendees: ['a@acme.com'],
+  })
+  assert.equal(timed.method, 'POST')
+  const timedBody = timed.data as { start: Record<string, string>; end: Record<string, string>; attendees: unknown }
+  assert.deepEqual(timedBody.start, { dateTime: '2026-09-01T15:00:00Z', timeZone: 'America/New_York' })
+  // No end given: defaulted rather than rejected by the API.
+  assert.equal(timedBody.end.dateTime, '2026-09-01T15:30:00.000Z')
+  assert.deepEqual(timedBody.attendees, [{ email: 'a@acme.com' }])
+
+  const allDay = await run('google_calendar_create_event', { summary: 'Renewal task', start: '2026-09-01' })
+  const allDayBody = allDay.data as { start: Record<string, string>; end: Record<string, string> }
+  assert.deepEqual(allDayBody.start, { date: '2026-09-01' })
+  assert.deepEqual(allDayBody.end, { date: '2026-09-01' })
+  assert.ok(!('timeZone' in allDayBody.start), 'an all-day entry carries no zone')
+})
+
+test('calendar: update PATCHes only the given fields', async () => {
+  const call = await run('google_calendar_update_event', { eventId: 'ev1', summary: 'Renamed' })
+  assert.equal(call.method, 'PATCH', 'PUT would replace the resource and drop attendees')
+  assert.equal(call.endpoint, '/calendar/v3/calendars/primary/events/ev1')
+  assert.deepEqual(call.data, { summary: 'Renamed' })
+})
+
+test('calendar: reads skip the approval gate, writes do not', () => {
+  const isWrite = (name: string) => NANGO_PROVIDER_TOOLS.find((t) => t.name === name)!.isWrite
+  assert.equal(isWrite('google_calendar_list_events'), false)
+  assert.equal(isWrite('google_calendar_get_event'), false)
+  assert.equal(isWrite('google_calendar_list_calendars'), false)
+  assert.equal(isWrite('google_calendar_create_event'), true)
+  assert.equal(isWrite('google_calendar_update_event'), true)
+})

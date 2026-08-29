@@ -43,6 +43,7 @@ export const PROVIDER_CONFIG_KEYS: Record<string, readonly string[]> = {
   monday: ['monday'],
   google_drive: ['google-drive', 'google_drive'],
   google_sheets: ['google-sheet', 'google-sheets', 'google_sheets'],
+  google_calendar: ['google-calendar', 'google_calendar'],
   slack: ['slack'],
   gmail: ['google-mail', 'gmail'],
   salesforce: ['salesforce', 'salesforce-sandbox'],
@@ -655,6 +656,195 @@ const GMAIL_READ_TOOLS: NangoToolSpec[] = [
   },
 ]
 
+// ── Google Calendar (Calendar API v3) ─────────────────────────────────────────
+// Read tools default to a forward-looking window because every caller in the
+// template catalogue asks the same question — "what is coming up?" — and the
+// API's own default (all events, unordered) answers a different one. A model
+// that forgets to pass timeMin would otherwise brief someone on last quarter.
+
+/** ISO-8601 for `n` days from now — the default window bounds. */
+const calendarWindow = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString()
+
+/**
+ * Google Calendar takes a start/end as an OBJECT, and which key it carries
+ * decides the event's kind: `date` is all-day, `dateTime` is a point in time.
+ * Passing an ISO instant under `date` is rejected outright, and passing a bare
+ * `YYYY-MM-DD` under `dateTime` is accepted but lands at midnight UTC — an
+ * all-day task quietly becoming a timed one, in the wrong zone. So the shape is
+ * chosen from the value rather than asked of the model, which cannot be relied
+ * on to volunteer the distinction.
+ */
+export function calendarTime(value: string, timeZone?: string): Record<string, string> {
+  const allDay = /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+  if (allDay) return { date: value.trim() }
+  return { dateTime: value, ...(timeZone ? { timeZone } : {}) }
+}
+
+/**
+ * The end of an event whose end was not given: same day for an all-day entry,
+ * otherwise 30 minutes on. Calendar REQUIRES an end, so the alternative to a
+ * default is a rejected create every time the model omits one.
+ */
+export function defaultEnd(start: string): string {
+  const trimmed = start.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+  const parsed = Date.parse(trimmed)
+  if (!Number.isFinite(parsed)) return trimmed
+  return new Date(parsed + 30 * 60_000).toISOString()
+}
+
+/** A calendar id is a path segment but is often an email address, so it must be encoded. */
+const CALENDAR_ID = {
+  type: 'string',
+  description: 'Calendar id. Defaults to the connected account\u2019s own calendar.',
+} as const
+
+const GCAL_TOOLS: NangoToolSpec[] = [
+  {
+    provider: 'google_calendar',
+    name: 'google_calendar_list_events',
+    isWrite: false,
+    description:
+      'List calendar events in a time window, soonest first. Use this to find upcoming meetings to prepare for. Defaults to the next 7 days on the connected account\u2019s primary calendar.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        calendarId: CALENDAR_ID,
+        timeMin: { type: 'string', description: 'ISO-8601 start of the window. Defaults to now.' },
+        timeMax: { type: 'string', description: 'ISO-8601 end of the window. Defaults to 7 days from now.' },
+        q: { type: 'string', description: 'Free-text match over title, description, attendees and location \u2014 e.g. QBR.' },
+        maxResults: { type: 'number', description: 'Max events to return (default 50).' },
+      },
+    },
+    run: (c, a, proxy = defaultProxy()) =>
+      proxy({
+        method: 'GET',
+        endpoint: `/calendar/v3/calendars/${seg(str(a.calendarId) || 'primary')}/events`,
+        connectionId: c.connectionId,
+        providerConfigKey: c.providerConfigKey,
+        params: {
+          timeMin: str(a.timeMin) || new Date().toISOString(),
+          timeMax: str(a.timeMax) || calendarWindow(7),
+          ...(str(a.q) ? { q: str(a.q) } : {}),
+          maxResults: num(a.maxResults, 50),
+          // Recurring events expand to their instances; without this a weekly
+          // stand-up is one row with a recurrence rule the model must evaluate
+          // itself, and it will get the next occurrence wrong.
+          singleEvents: 'true',
+          orderBy: 'startTime',
+        },
+      }).then((r) => r.data),
+  },
+  {
+    provider: 'google_calendar',
+    name: 'google_calendar_get_event',
+    isWrite: false,
+    description: 'Read one calendar event in full, including its attendees, description and conferencing details.',
+    inputSchema: {
+      type: 'object',
+      properties: { calendarId: CALENDAR_ID, eventId: { type: 'string' } },
+      required: ['eventId'],
+    },
+    run: (c, a, proxy = defaultProxy()) =>
+      proxy({
+        method: 'GET',
+        endpoint: `/calendar/v3/calendars/${seg(str(a.calendarId) || 'primary')}/events/${seg(a.eventId)}`,
+        connectionId: c.connectionId,
+        providerConfigKey: c.providerConfigKey,
+      }).then((r) => r.data),
+  },
+  {
+    provider: 'google_calendar',
+    name: 'google_calendar_list_calendars',
+    isWrite: false,
+    description: 'List the calendars the connected account can see, with their ids.',
+    inputSchema: { type: 'object', properties: {} },
+    run: (c, _a, proxy = defaultProxy()) =>
+      proxy({
+        method: 'GET',
+        endpoint: '/calendar/v3/users/me/calendarList',
+        connectionId: c.connectionId,
+        providerConfigKey: c.providerConfigKey,
+        params: { maxResults: 100 },
+      }).then((r) => r.data),
+  },
+  {
+    provider: 'google_calendar',
+    name: 'google_calendar_create_event',
+    isWrite: true,
+    description:
+      'Create a calendar event \u2014 a meeting, a block of focus time, or a dated task with a reminder. Times are ISO-8601; pass a date alone (YYYY-MM-DD) for an all-day entry.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        calendarId: CALENDAR_ID,
+        summary: { type: 'string', description: 'Event title.' },
+        description: { type: 'string' },
+        start: { type: 'string', description: 'ISO-8601 start, or YYYY-MM-DD for an all-day event.' },
+        end: { type: 'string', description: 'ISO-8601 end, or YYYY-MM-DD for an all-day event. Defaults to 30 minutes after start.' },
+        timeZone: { type: 'string', description: 'IANA zone, e.g. America/New_York. Defaults to the calendar\u2019s own zone.' },
+        attendees: { type: 'array', items: { type: 'string' }, description: 'Attendee email addresses.' },
+        location: { type: 'string' },
+      },
+      required: ['summary', 'start'],
+    },
+    run: (c, a, proxy = defaultProxy()) =>
+      proxy({
+        method: 'POST',
+        endpoint: `/calendar/v3/calendars/${seg(str(a.calendarId) || 'primary')}/events`,
+        connectionId: c.connectionId,
+        providerConfigKey: c.providerConfigKey,
+        data: {
+          summary: str(a.summary),
+          ...(str(a.description) ? { description: str(a.description) } : {}),
+          ...(str(a.location) ? { location: str(a.location) } : {}),
+          start: calendarTime(str(a.start), str(a.timeZone)),
+          end: calendarTime(str(a.end) || defaultEnd(str(a.start)), str(a.timeZone)),
+          ...(Array.isArray(a.attendees) && a.attendees.length > 0
+            ? { attendees: a.attendees.map((email) => ({ email: str(email) })) }
+            : {}),
+        },
+      }).then((r) => r.data),
+  },
+  {
+    provider: 'google_calendar',
+    name: 'google_calendar_update_event',
+    isWrite: true,
+    description: 'Change fields on an existing calendar event. Unspecified fields are left as they are.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        calendarId: CALENDAR_ID,
+        eventId: { type: 'string' },
+        summary: { type: 'string' },
+        description: { type: 'string' },
+        start: { type: 'string', description: 'ISO-8601, or YYYY-MM-DD for all-day.' },
+        end: { type: 'string', description: 'ISO-8601, or YYYY-MM-DD for all-day.' },
+        timeZone: { type: 'string', description: 'IANA zone, e.g. America/New_York.' },
+        location: { type: 'string' },
+      },
+      required: ['eventId'],
+    },
+    // PATCH, not PUT: Calendar's update endpoint replaces the whole resource,
+    // so a PUT carrying only the changed fields would silently drop the
+    // event's attendees, conferencing link and reminders.
+    run: (c, a, proxy = defaultProxy()) =>
+      proxy({
+        method: 'PATCH',
+        endpoint: `/calendar/v3/calendars/${seg(str(a.calendarId) || 'primary')}/events/${seg(a.eventId)}`,
+        connectionId: c.connectionId,
+        providerConfigKey: c.providerConfigKey,
+        data: {
+          ...(str(a.summary) ? { summary: str(a.summary) } : {}),
+          ...(str(a.description) ? { description: str(a.description) } : {}),
+          ...(str(a.location) ? { location: str(a.location) } : {}),
+          ...(str(a.start) ? { start: calendarTime(str(a.start), str(a.timeZone)) } : {}),
+          ...(str(a.end) ? { end: calendarTime(str(a.end), str(a.timeZone)) } : {}),
+        },
+      }).then((r) => r.data),
+  },
+]
+
 // ── Airtable (REST API v0) ────────────────────────────────────────────────────
 // Path segments are URL-encoded: a table can be referenced by its human name
 // (spaces/punctuation), unlike the id-like keys the other providers use.
@@ -893,6 +1083,7 @@ export const NANGO_PROVIDER_TOOLS: NangoToolSpec[] = [
   ...SLACK_TOOLS,
   ...SALESFORCE_TOOLS,
   ...GMAIL_READ_TOOLS,
+  ...GCAL_TOOLS,
   ...AIRTABLE_TOOLS,
   ...FIGMA_TOOLS,
   ...GRANOLA_TOOLS,

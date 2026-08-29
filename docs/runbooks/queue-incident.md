@@ -245,6 +245,30 @@ minutes on Vercel Cron (`vercel.json`) and calls the same
   re-arms the alert for the next failure. The condition still REPORTS
   unhealthy the whole time — only the notification is growth-gated.
 
+### Reading a "Queue plane needs attention" alert
+
+The notification body is the reason string from `consumerLossReason`
+(`src/lib/queue/queue-watch.ts`), and it now names what failed rather than
+saying only that something did. Four shapes, each a different triage path:
+
+| Body | Means | Do |
+|---|---|---|
+| `no consumer for queue(s) with waiting jobs: …` | Acute. Jobs are queued with nobody to take them. | §2 — worker fleet down or on the wrong Redis. Users are affected now. |
+| `no consumer signal for queue(s): model-bench (0 workers, no heartbeat)` | An idle queue nobody consumes. No user impact yet; the next job there would hang. | Check the named queue's pool is deployed — §4, and the `WORKER_POOL` note in `fly.worker.toml`. |
+| `queue plane could not read its consumer state: …` | The probe itself failed (Redis timeout). Nothing is known about the fleet. | Transient if it clears on the next tick. Sustained means Redis, not the workers. |
+| `queue consumer heartbeat read failed, and the global worker heartbeat is …` | The per-queue read failed and the global heartbeat did not rescue it. | Same as above — an unreadable check, **not** a proven outage. |
+
+The distinction in the last two is deliberate and was the fix for a recurring
+false alarm. `getWorkers()` reports 0 on Upstash while the fleet drains
+normally (see `consumerVerdict`), so the per-queue heartbeat is the only signal
+holding `ok` up — and `readWorkerQueueHeartbeats` used to answer a failed read
+with the same map of nulls it returns when no worker has ever written one. One
+slow `MGET` therefore condemned a healthy fleet, hourly, in a message that
+named nothing. A failed read now falls back to the global heartbeat, exactly as
+`resolveConsumerAlive` already did at dispatch; a *successful* read still
+treats an absent per-queue key as real evidence, so a dead batch pool alongside
+live interactive workers is still caught (`resolveQueueFreshness`).
+
 **Where alerts land**: the platform owner (`PLATFORM_OWNER_EMAILS`,
 `src/lib/authz/platform-owner.ts`) — the only operator identity guaranteed to
 exist in every environment. For each owner account found:

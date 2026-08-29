@@ -66,12 +66,21 @@ async function readHeartbeat(timeoutMs = 3_000, key = WORKER_HEARTBEAT_KEY): Pro
   ])
 }
 
-/** Per-queue ages prove WHICH queues a live process consumes. A single global
- * heartbeat cannot detect a missing batch pool while interactive workers live. */
-export async function workerQueueHeartbeatAges(
+/**
+ * Per-queue ages prove WHICH queues a live process consumes. A single global
+ * heartbeat cannot detect a missing batch pool while interactive workers live.
+ *
+ * `readOk` is the part callers must not throw away. A failed read and a worker
+ * that never wrote both produce a map of nulls, and those two states warrant
+ * OPPOSITE conclusions: the first means we learned nothing, the second means
+ * nobody is consuming. Collapsing them is what let one slow MGET convict a
+ * healthy fleet — see resolveQueueFreshness in consumer-probe.ts, and the same
+ * distinction spelled out in resolveConsumerAlive below.
+ */
+export async function readWorkerQueueHeartbeats(
   queues: readonly string[],
   now: number = Date.now(),
-): Promise<Record<string, number | null>> {
+): Promise<{ readOk: boolean; ages: Record<string, number | null> }> {
   try {
     const values = await Promise.race([
       getRedisConnection().mget(...queues.map(workerQueueHeartbeatKey)),
@@ -80,13 +89,25 @@ export async function workerQueueHeartbeatAges(
         if (typeof timer === 'object') timer.unref?.()
       }),
     ])
-    return Object.fromEntries(queues.map((queue, index) => {
-      const writtenAt = Number(values[index])
-      return [queue, Number.isFinite(writtenAt) && values[index] ? Math.max(0, now - writtenAt) : null]
-    }))
+    return {
+      readOk: true,
+      ages: Object.fromEntries(queues.map((queue, index) => {
+        const writtenAt = Number(values[index])
+        return [queue, Number.isFinite(writtenAt) && values[index] ? Math.max(0, now - writtenAt) : null]
+      })),
+    }
   } catch {
-    return Object.fromEntries(queues.map((queue) => [queue, null]))
+    return { readOk: false, ages: Object.fromEntries(queues.map((queue) => [queue, null])) }
   }
+}
+
+/** Ages only, for callers that genuinely cannot act on a failed read. Prefer
+ * readWorkerQueueHeartbeats: anything deciding liveness needs `readOk`. */
+export async function workerQueueHeartbeatAges(
+  queues: readonly string[],
+  now: number = Date.now(),
+): Promise<Record<string, number | null>> {
+  return (await readWorkerQueueHeartbeats(queues, now)).ages
 }
 
 /** Age of the current heartbeat in ms, or null when absent/unreadable. */

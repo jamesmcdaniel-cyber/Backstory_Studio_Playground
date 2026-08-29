@@ -8,6 +8,7 @@ import {
   newDeadLettersReason,
   queuePressureReason,
   strandedActivityClaimsReason,
+  consumerLossReason,
   type QueueWatchDeps,
 } from '../queue-watch'
 import type { QueueConsumerCheck } from '../consumer-probe'
@@ -365,5 +366,67 @@ describe('runQueueWatch: dead-letter backlog', () => {
     const third = await runQueueWatch(deps)
     assert.equal(third.alerted, true, 'a fresh backlog after a drain is news again')
     assert.equal(notified.length, 2)
+  })
+})
+
+// ── The alert has to carry its own evidence ────────────────────────────────
+//
+// Every non-stranded failure used to collapse into the single string "queue
+// consumer check failed", and the consumer-loss condition passed a detail
+// object that omitted both `reports` and `error`. So the notification, the
+// audit row and the log line all said the same contentless thing, once an
+// hour, for whatever the underlying cause happened to be. An operator could
+// not tell a timed-out probe from a genuinely dead batch pool without shell
+// access to production — which is the opposite of what a phone notification
+// linking to /admin/queue is for.
+
+describe('consumerLossReason names what actually failed', () => {
+  const base: QueueConsumerCheck = { configured: true, ok: false, stranded: [] }
+
+  test('a probe that could not read the queue plane says so, and quotes the error', () => {
+    const reason = consumerLossReason({ ...base, error: 'queue probe timed out' })
+    assert.match(reason ?? '', /could not read/i)
+    assert.match(reason ?? '', /queue probe timed out/)
+  })
+
+  test('stranded queues still lead with the acute message — that wording is what the runbook indexes', () => {
+    const reason = consumerLossReason({ ...base, stranded: ['flow-execution'] })
+    assert.equal(reason, 'no consumer for queue(s) with waiting jobs: flow-execution')
+  })
+
+  test('an idle queue with no consumer names the queue and its heartbeat age', () => {
+    const reason = consumerLossReason({
+      ...base,
+      reports: [
+        { queue: 'flow-execution', workers: 2, waiting: 0, active: 0, heartbeatAgeMs: 1_000 },
+        { queue: 'model-bench', workers: 0, waiting: 0, active: 0, heartbeatAgeMs: null },
+      ],
+    })
+    assert.match(reason ?? '', /model-bench/)
+    assert.match(reason ?? '', /no heartbeat/i)
+    assert.ok(!/flow-execution/.test(reason ?? ''), 'a healthy queue must not be named in the alert')
+  })
+
+  test('a stale (not absent) heartbeat reports its age, so "how long" needs no shell access', () => {
+    const reason = consumerLossReason({
+      ...base,
+      reports: [{ queue: 'model-bench', workers: 0, waiting: 0, active: 0, heartbeatAgeMs: 7 * 60_000 }],
+    })
+    assert.match(reason ?? '', /model-bench/)
+    assert.match(reason ?? '', /7m/)
+  })
+
+  test('a failed per-queue heartbeat read is called out as unreadable, not as absent', () => {
+    const reason = consumerLossReason({
+      ...base,
+      heartbeat: { ageMs: null, fresh: false, perQueueReadOk: false },
+      reports: [{ queue: 'flow-execution', workers: 0, waiting: 0, active: 0, heartbeatAgeMs: null }],
+    })
+    assert.match(reason ?? '', /heartbeat read failed/i)
+  })
+
+  test('a healthy check is still no reason at all', () => {
+    assert.equal(consumerLossReason({ configured: true, ok: true, stranded: [] }), null)
+    assert.equal(consumerLossReason({ configured: false, ok: false, stranded: [] }), null)
   })
 })

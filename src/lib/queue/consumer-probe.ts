@@ -1,7 +1,7 @@
 import { Queue } from 'bullmq'
 import { QUEUE_NAMES, workersEnabled, getRedisConnection } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
-import { workerHeartbeatAgeMs, workerQueueHeartbeatAges, WORKER_HEARTBEAT_STALE_MS } from '@/lib/queue/heartbeat'
+import { workerHeartbeatAgeMs, readWorkerQueueHeartbeats, WORKER_HEARTBEAT_STALE_MS } from '@/lib/queue/heartbeat'
 import { readTickLiveness, tickAge, isTickFresh } from '@/lib/queue/tick-liveness'
 import { isCustomerEdition } from '@/lib/edition'
 
@@ -66,8 +66,20 @@ export interface QueueConsumerCheck {
   reports?: QueueConsumerReport[]
   /** Total jobs parked across all dead-letter queues + which DLQs are non-empty. */
   deadLetters?: { total: number; queues: string[] }
-  /** Worker liveness heartbeat (see heartbeat.ts): age of the newest write. */
-  heartbeat?: { ageMs: number | null; fresh: boolean; queues?: Record<string, { ageMs: number | null; fresh: boolean }> }
+  /**
+   * Worker liveness heartbeat (see heartbeat.ts): age of the newest write.
+   *
+   * `perQueueReadOk` is false when the per-queue read itself failed, which is
+   * the difference between "no pool consumes this queue" and "we could not
+   * find out" — an alert that cannot tell those apart is the one nobody can
+   * act on. See resolveQueueFreshness.
+   */
+  heartbeat?: {
+    ageMs: number | null
+    fresh: boolean
+    perQueueReadOk?: boolean
+    queues?: Record<string, { ageMs: number | null; fresh: boolean }>
+  }
   /**
    * Dispatch-tick liveness (see tick-liveness.ts): age of the last completed
    * scheduling tick. Separate from `heartbeat` because the two fail
@@ -100,6 +112,42 @@ export function consumerVerdict(
     ok: reports.every((r) => r.workers > 0 || queueFresh(r.queue)),
     stranded: reports.filter((r) => r.workers === 0 && !queueFresh(r.queue) && r.waiting > 0).map((r) => r.queue),
   }
+}
+
+/**
+ * Per-queue heartbeat freshness, resolving "we could not read" separately from
+ * "nobody wrote one".
+ *
+ * Why this is its own function, and why the distinction is load-bearing: on
+ * managed Redis proxies `getWorkers()` reports 0 for every queue while the
+ * fleet drains normally, so this map is the ONLY signal holding `ok` up. When
+ * the read failed, every age is null — indistinguishable, without `readOk`,
+ * from a fleet that has never written a heartbeat. The probe used to take the
+ * pessimistic reading, so a single slow MGET turned a healthy queue plane into
+ * an alert; with nothing waiting on idle queues there was not even a stranded
+ * queue to name, which is how the page came out as a contentless "queue
+ * consumer check failed" once an hour.
+ *
+ * A FAILED read therefore defers to the global heartbeat, matching what
+ * resolveConsumerAlive already does at dispatch. A SUCCESSFUL read does NOT:
+ * a null age is then real evidence that nothing consumes that queue, and
+ * falling back to a global heartbeat the interactive worker keeps warm would
+ * mask precisely the dead-batch-pool outage the per-queue keys exist to catch.
+ */
+export function resolveQueueFreshness(input: {
+  queues: readonly string[]
+  ages: Record<string, number | null>
+  /** Did the per-queue read succeed at all? */
+  readOk: boolean
+  /** Global worker heartbeat, used only as the unknown-read fallback. */
+  globalFresh: boolean
+}): Record<string, boolean> {
+  const { queues, ages, readOk, globalFresh } = input
+  return Object.fromEntries(queues.map((queue) => {
+    if (!readOk) return [queue, globalFresh]
+    const age = ages[queue]
+    return [queue, age !== null && age <= WORKER_HEARTBEAT_STALE_MS]
+  }))
 }
 
 export const QUEUE_BACKLOG_COUNT_ALERT = Math.max(1, Number(process.env.QUEUE_BACKLOG_COUNT_ALERT) || 100)
@@ -163,7 +211,7 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
   }
   try {
     const queues = monitoredQueues()
-    const [reports, deadLetterCounts, heartbeatAge, queueHeartbeatAges, tickRaw] = await withTimeout(
+    const [reports, deadLetterCounts, heartbeatAge, queueHeartbeats, tickRaw] = await withTimeout(
       Promise.all([
         Promise.all(
           queues.map(async (name): Promise<QueueConsumerReport> => {
@@ -191,15 +239,18 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
           }),
         ),
         workerHeartbeatAgeMs(),
-        workerQueueHeartbeatAges(queues),
+        readWorkerQueueHeartbeats(queues),
         readTickLiveness(),
       ]),
     )
     const heartbeatFresh = heartbeatAge !== null && heartbeatAge <= WORKER_HEARTBEAT_STALE_MS
-    const queueFresh = Object.fromEntries(queues.map((queue) => [
-      queue,
-      queueHeartbeatAges[queue] !== null && queueHeartbeatAges[queue] <= WORKER_HEARTBEAT_STALE_MS,
-    ]))
+    const { readOk: queueHeartbeatReadOk, ages: queueHeartbeatAges } = queueHeartbeats
+    const queueFresh = resolveQueueFreshness({
+      queues,
+      ages: queueHeartbeatAges,
+      readOk: queueHeartbeatReadOk,
+      globalFresh: heartbeatFresh,
+    })
     for (const report of reports) report.heartbeatAgeMs = queueHeartbeatAges[report.queue]
     const now = Date.now()
     return {
@@ -213,6 +264,7 @@ export async function probeQueueConsumers(): Promise<QueueConsumerCheck> {
       heartbeat: {
         ageMs: heartbeatAge,
         fresh: heartbeatFresh,
+        perQueueReadOk: queueHeartbeatReadOk,
         queues: Object.fromEntries(queues.map((queue) => [queue, {
           ageMs: queueHeartbeatAges[queue],
           fresh: queueFresh[queue],

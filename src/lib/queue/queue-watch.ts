@@ -145,12 +145,44 @@ export type QueueWatchResult = {
   check: QueueConsumerCheck
 }
 
-/** Pure verdict: is the consumer-loss condition alertable right now, and why. */
+/** How old, in the units an operator reads at a glance. */
+function ageLabel(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return 'no heartbeat'
+  return ms < 60_000 ? `heartbeat ${Math.round(ms / 1000)}s old` : `heartbeat ${Math.round(ms / 60_000)}m old`
+}
+
+/**
+ * Pure verdict: is the consumer-loss condition alertable right now, and why.
+ *
+ * The "why" is the point. This used to answer every non-stranded failure with
+ * the bare string "queue consumer check failed", which is what the owner's
+ * phone notification, the audit row and the log line all showed — once an hour,
+ * identically, whether the probe had timed out or a batch pool had genuinely
+ * died. Naming the queue and its heartbeat age is what makes the alert
+ * triageable from the notification itself, which is the whole premise of
+ * linking it to /admin/queue.
+ */
 export function consumerLossReason(check: QueueConsumerCheck): string | null {
   if (!check.configured || check.ok) return null
-  return check.stranded.length > 0
-    ? `no consumer for queue(s) with waiting jobs: ${check.stranded.join(', ')}`
-    : 'queue consumer check failed'
+  // An unreadable probe is its own diagnosis, and a different one: nothing is
+  // known about the fleet, so naming queues would invent detail we do not have.
+  if (check.error) return `queue plane could not read its consumer state: ${check.error}`
+  // The acute case keeps its exact wording — the runbook and the tests index on it.
+  if (check.stranded.length > 0) return `no consumer for queue(s) with waiting jobs: ${check.stranded.join(', ')}`
+
+  // Otherwise: idle queues nobody is consuming. Name only the failing ones —
+  // an alert that lists healthy queues alongside them trains people to skim it.
+  const failing = (check.reports ?? []).filter((report) => report.workers === 0)
+  const readFailed = check.heartbeat?.perQueueReadOk === false
+  if (readFailed) {
+    return `queue consumer heartbeat read failed, and the global worker heartbeat is ${
+      check.heartbeat?.ageMs === null || check.heartbeat?.ageMs === undefined ? 'absent' : ageLabel(check.heartbeat.ageMs)
+    } — the fleet may be fine; this is an unreadable check, not a proven outage`
+  }
+  if (failing.length === 0) return 'queue consumer check failed with no queue reports — the probe returned an empty topology'
+  return `no consumer signal for queue(s): ${failing
+    .map((report) => `${report.queue} (${report.workers} workers, ${ageLabel(report.heartbeatAgeMs)})`)
+    .join(', ')}`
 }
 
 /** Pure verdict: is the dead-letter condition alertable right now, and why. */
@@ -310,7 +342,16 @@ export async function runQueueWatch(overrides: Partial<QueueWatchDeps> = {}): Pr
   const strandedClaimsReason = strandedActivityClaimsReason(strandedClaimCount)
 
   const queueDetail = { stranded: check.stranded, deadLetters: check.deadLetters, heartbeat: check.heartbeat }
-  const consumerAlerted = await watchCondition(consumerReason, COOLDOWN_KEYS.consumerLoss, queueDetail, deps)
+  // The consumer-loss condition carries `reports` and `error` too. Queue
+  // pressure already got `reports`; consumer loss — the condition most likely
+  // to be someone's first look at a queue incident — was the one shipping an
+  // audit row that could not answer "which queue?".
+  const consumerAlerted = await watchCondition(
+    consumerReason,
+    COOLDOWN_KEYS.consumerLoss,
+    { ...queueDetail, reports: check.reports, error: check.error },
+    deps,
+  )
   const pressureAlerted = await watchCondition(
     pressureReason,
     COOLDOWN_KEYS.queuePressure,

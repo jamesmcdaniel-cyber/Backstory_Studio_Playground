@@ -40,6 +40,7 @@ import { formatFlowToolConnectionId, type FlowToolPlane } from '@/lib/flows/tool
 import { recordCredentialUse } from '@/lib/credentials/audit'
 import { DATA_TABLE_TOOLS, DataTableToolClient, dataTableToolIsWrite } from '@/lib/data-tables/tools'
 import { BRAVE_SEARCH_ENDPOINT, ResearchToolClient, getResearchApiKey, researchTools } from '@/lib/integrations/research'
+import { AdapterToolClient, adapterTools } from '@/lib/adapters/tools'
 
 // Minimal interface every plane's execution client satisfies (McpClient,
 // BackstoryMcpClient, the built-in ToolClients, and adapters).
@@ -437,6 +438,14 @@ export async function loadNativePlaneGroups(
       new DataTableToolClient(organizationId, options.httpUserId),
       DATA_TABLE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
     ))
+  }
+
+  // Adapter regression checks — always available and entirely offline. No
+  // credential to gate on, so unlike every other plane here it can never
+  // report itself unavailable.
+  const adaptersConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'adapters')!
+  if (selected(adaptersConn)) {
+    groups.push(group(adaptersConn, 'backstory://adapters', new AdapterToolClient(), adapterTools()))
   }
 
   // Web research — gated on a per-org search key, so a workspace's research

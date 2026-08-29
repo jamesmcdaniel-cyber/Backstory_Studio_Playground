@@ -95,6 +95,17 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     available: () => true, // no credentials required; SSRF-guarded at call time
   },
   {
+    key: 'Adapter Checks',
+    label: 'Adapter Checks',
+    slug: 'checkmarx',
+    kind: 'builtin',
+    // Replaying a golden touches no upstream system and changes nothing.
+    isWrite: false,
+    providerId: 'adapters',
+    matches: (selected) => selected.toLowerCase().includes('adapter'),
+    available: () => true, // no credential: the whole point is that it runs offline
+  },
+  {
     key: 'Web Research',
     label: 'Web Research',
     slug: 'brave',

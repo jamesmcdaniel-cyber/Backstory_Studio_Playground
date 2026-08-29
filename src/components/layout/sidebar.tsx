@@ -95,7 +95,7 @@ const navigation = [
   { name: 'Home', href: '/dashboard', icon: HomeIcon },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Flows', href: '/flows', icon: Workflow },
-  { name: 'Data Tables', href: '/data-tables', icon: Database },
+  { name: 'Repository', href: '/data-tables', icon: Database },
   { name: 'Library', href: '/templates', icon: BookOpen },
   { name: 'Integrations', href: '/integrations', icon: Plug },
 ]

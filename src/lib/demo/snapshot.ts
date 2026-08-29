@@ -385,6 +385,9 @@ export async function ensureDemoWorkspace(
         ...anonRow({ ...document, id, organizationId: demoOrgId }, book),
         agentId: remap(agentIds, document.agentId),
         userId: remap(userIds, document.userId),
+        // StoredFile bytes are deliberately outside demo scope. Never retain
+        // the real workspace's foreign key in the anonymised copy.
+        storedFileId: null,
       }),
     })
   }

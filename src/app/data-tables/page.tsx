@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Database, Download, Loader2, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { Database, Download, Files, Loader2, Pencil, Plus, TableProperties, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { DATA_TABLE_COLUMN_TYPES, type DataTableColumn } from '@/lib/data-tables/schema'
 import { cn } from '@/lib/utils'
+import { ContentRepository } from '@/components/repository/content-repository'
 
 type DataTable = {
   id: string
@@ -60,9 +61,7 @@ function rowPayload(draft: Record<string, string | boolean>, columns: DataTableC
   }))
 }
 
-export default function DataTablesPage() {
-  const { can } = useAuth()
-  const writable = can('flow.write')
+function StructuredTables({ writable }: { writable: boolean }) {
   const [tables, setTables] = useState<DataTable[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [rows, setRows] = useState<DataRow[]>([])
@@ -183,12 +182,10 @@ export default function DataTablesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="Workspace data"
-        title="Data Tables"
-        description="Durable typed rows that people, flows, and agents can safely share across executions."
-        actions={writable ? <Button onClick={() => setTableDraft(emptyTable())}><Plus className="mr-1.5 h-4 w-4" />New table</Button> : undefined}
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div><h2 className="text-lg font-semibold">Structured tables</h2><p className="mt-1 text-sm text-muted-foreground">Typed reference data, queues, checkpoints, and cross-run workflow state.</p></div>
+        {writable && <Button onClick={() => setTableDraft(emptyTable())}><Plus className="mr-1.5 h-4 w-4" />New table</Button>}
+      </div>
 
       {tables.length === 0 ? (
         <EmptyState icon={Database} title="No data tables yet" description="Create a table for reference data, queues, checkpoints, or cross-run workflow state." action={writable ? <Button onClick={() => setTableDraft(emptyTable())}>Create data table</Button> : undefined} />
@@ -260,6 +257,27 @@ export default function DataTablesPage() {
 
       <ConfirmDialog open={Boolean(deleteTable)} onOpenChange={(open) => { if (!open) setDeleteTable(null) }} title="Delete data table?" description="This permanently deletes the table and every row. Flows and agents using it will fail until reconfigured." confirmLabel="Delete table" destructive requireText={deleteTable?.name} busy={saving} onConfirm={async () => { if (!deleteTable) return; setSaving(true); try { const response = await fetch('/api/data-tables', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: deleteTable.id, confirmation: deleteTable.name }) }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Could not delete table.'); setDeleteTable(null); await loadTables(); toast.success('Data table deleted.') } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) } finally { setSaving(false) } }} />
       <ConfirmDialog open={Boolean(deleteRow)} onOpenChange={(open) => { if (!open) setDeleteRow(null) }} title="Delete row?" description="This row will be removed immediately." confirmLabel="Delete row" destructive busy={saving} onConfirm={async () => { if (!selected || !deleteRow) return; setSaving(true); try { const response = await fetch(`/api/data-tables/${selected.id}/rows`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rowId: deleteRow.id }) }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Could not delete row.'); setDeleteRow(null); await loadRows(selected.id); toast.success('Row deleted.') } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) } finally { setSaving(false) } }} />
+    </div>
+  )
+}
+
+export default function DataTablesPage() {
+  const { can } = useAuth()
+  const writable = can('flow.write')
+  const [view, setView] = useState<'files' | 'tables'>('files')
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Workspace knowledge"
+        title="Content Repository"
+        description="Upload files, pull content from connected sources, and control exactly what agents can retrieve."
+      />
+      <div className="inline-flex rounded-lg border bg-muted/40 p-1" role="tablist" aria-label="Repository views">
+        <button type="button" role="tab" aria-selected={view === 'files'} onClick={() => setView('files')} className={cn('inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors', view === 'files' ? 'bg-background text-foreground shadow-1' : 'text-muted-foreground hover:text-foreground')}><Files className="h-4 w-4" />Files</button>
+        <button type="button" role="tab" aria-selected={view === 'tables'} onClick={() => setView('tables')} className={cn('inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors', view === 'tables' ? 'bg-background text-foreground shadow-1' : 'text-muted-foreground hover:text-foreground')}><TableProperties className="h-4 w-4" />Structured tables</button>
+      </div>
+      {view === 'files' ? <ContentRepository writable={writable} /> : <StructuredTables writable={writable} />}
     </div>
   )
 }

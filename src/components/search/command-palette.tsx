@@ -23,7 +23,7 @@ const NAV_ITEMS: NavResult[] = [
   { label: 'Home', href: '/dashboard', icon: Brain },
   { label: 'Agents', href: '/agents', icon: Bot },
   { label: 'Flows', href: '/flows', icon: Workflow },
-  { label: 'Data Tables', href: '/data-tables', icon: Database },
+  { label: 'Repository', href: '/data-tables', icon: Database },
   { label: 'Library', href: '/templates', icon: FileText },
   { label: 'Integrations', href: '/integrations', icon: Plug },
   { label: 'Credentials', href: '/credentials', icon: KeyRound },

@@ -139,6 +139,10 @@ const cases = (): Case[] => [
   { route: 'data-tables/[id]/rows', method: 'PATCH', run: async () => (await import('../data-tables/[id]/rows/route')).PATCH(rq('/api/data-tables/missing/rows', 'PATCH', { rowId: 'missing', data: {} })) },
   { route: 'data-tables/[id]/rows', method: 'DELETE', run: async () => (await import('../data-tables/[id]/rows/route')).DELETE(rq('/api/data-tables/missing/rows', 'DELETE', { rowId: 'missing' })) },
   { route: 'data-tables/[id]/csv', method: 'POST', run: async () => (await import('../data-tables/[id]/csv/route')).POST(rq('/api/data-tables/missing/csv', 'POST', 'name\nvalue')) },
+  { route: 'repository', method: 'POST', run: async () => (await import('../repository/route')).POST(rq('/api/repository', 'POST', {})) },
+  { route: 'repository/[id]', method: 'PATCH', run: async () => (await import('../repository/[id]/route')).PATCH(rq('/api/repository/missing', 'PATCH', { isEnabled: false })) },
+  { route: 'repository/[id]', method: 'DELETE', run: async () => (await import('../repository/[id]/route')).DELETE(rq('/api/repository/missing', 'DELETE', { confirmation: 'missing' })) },
+  { route: 'repository/pull', method: 'POST', run: async () => (await import('../repository/pull/route')).POST(rq('/api/repository/pull', 'POST', { connectionId: 'missing', toolName: 'missing', args: {} })) },
 
   // Unauthenticated by design — a browser posts violation reports with no
   // credentials. Must answer 204 to anything, including junk: a collector that

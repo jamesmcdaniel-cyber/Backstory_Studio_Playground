@@ -2,7 +2,7 @@ import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedQuery, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { applyRelevanceFloor } from '@/lib/rag/relevance'
 
-export type KnowledgeHit = { content: string; filename: string; score: number }
+export type KnowledgeHit = { content: string; filename: string; score: number; documentId?: string }
 
 /** Fallback relevance when embeddings are unavailable: query-term overlap. */
 export function keywordScore(query: string, content: string): number {
@@ -59,33 +59,50 @@ export async function retrieveKnowledge(params: {
         // under-return (or get zero) once the table is large enough for the
         // planner to pick the index. Relaxed order keeps recall with the filter.
         await tx.$executeRawUnsafe("SET LOCAL hnsw.iterative_scan = 'relaxed_order'")
-        return tx.$queryRaw<Array<{ content: string; filename: string; distance: number }>>`
-          SELECT c."content" AS content, d."filename" AS filename,
+        return tx.$queryRaw<Array<{ content: string; filename: string; documentId: string; distance: number }>>`
+          SELECT c."content" AS content, d."filename" AS filename, d."id" AS "documentId",
                  (c."embeddingVec" <=> ${vectorLiteral}::vector(1024)) AS distance
           FROM "knowledge_chunks" c
           JOIN "knowledge_documents" d ON d."id" = c."documentId"
           WHERE c."organizationId" = ${params.organizationId}::uuid
-            AND (c."agentId" = ${params.agentId} OR c."agentId" IS NULL)
+            AND d."organizationId" = ${params.organizationId}::uuid
+            AND (d."agentId" = ${params.agentId} OR d."agentId" IS NULL)
+            AND d."isEnabled" = true
+            AND d."status" = 'ready'
             AND c."embeddingVec" IS NOT NULL
           ORDER BY distance ASC
           LIMIT ${k}
         `
       })
-      const hits = rows.map((row) => ({ content: row.content, filename: row.filename, score: 1 - row.distance }))
+      const hits = rows.map((row) => ({
+        content: row.content,
+        filename: row.filename,
+        documentId: row.documentId,
+        score: 1 - row.distance,
+      }))
       return applyRelevanceFloor(hits, params.minScore)
     }
 
     // Keyword fallback: no embeddings configured (or the query embed call
     // failed) — score a bounded scan of the org/agent's chunks by term overlap.
     const chunks = await prisma.knowledgeChunk.findMany({
-      where: { organizationId: params.organizationId, OR: [{ agentId: params.agentId }, { agentId: null }] },
-      select: { content: true, document: { select: { filename: true } } },
+      where: {
+        organizationId: params.organizationId,
+        document: {
+          organizationId: params.organizationId,
+          OR: [{ agentId: params.agentId }, { agentId: null }],
+          isEnabled: true,
+          status: 'ready',
+        },
+      },
+      select: { content: true, document: { select: { id: true, filename: true } } },
       take: 500,
     })
     if (!chunks.length) return []
     const scored = chunks.map((chunk) => ({
       content: chunk.content,
       filename: chunk.document.filename,
+      documentId: chunk.document.id,
       score: keywordScore(params.query, chunk.content),
     }))
     scored.sort((a, b) => b.score - a.score)

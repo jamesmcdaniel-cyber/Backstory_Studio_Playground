@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Upload, FileText, Trash2, Loader2 } from 'lucide-react'
+import Link from 'next/link'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 
@@ -12,6 +13,7 @@ type KnowledgeDoc = {
   charCount: number
   chunkCount: number
   status: string
+  isEnabled: boolean
   createdAt: string
 }
 
@@ -78,12 +80,15 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between">
+      <div className="mb-2 flex items-center justify-between gap-3">
         <p className="eyebrow">Knowledge</p>
-        <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={uploading}>
-          {uploading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
-          Upload files
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild type="button" variant="ghost" size="sm"><Link href="/data-tables">Open repository</Link></Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={uploading}>
+            {uploading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
+            Upload files
+          </Button>
+        </div>
         <input
           ref={inputRef}
           type="file"
@@ -113,6 +118,7 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
               <span className="shrink-0 text-xs text-fg-muted">
                 {formatSize(doc.sizeBytes)} · {doc.chunkCount} passages
               </span>
+              {!doc.isEnabled && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium uppercase text-gray-500">Disabled</span>}
               <button
                 type="button"
                 onClick={() => remove(doc)}

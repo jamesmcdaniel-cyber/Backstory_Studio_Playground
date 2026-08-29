@@ -137,6 +137,32 @@ if (TEST_DB) {
     }
   })
 
+  test('vector retrieval excludes a disabled repository document', async () => {
+    if (!vectorReady) return
+    await prisma.knowledgeDocument.update({
+      where: { id: ids.document, organizationId: ids.org },
+      data: { isEnabled: false },
+    })
+    process.env.VOYAGE_API_KEY = 'test-key'
+    const origFetch = global.fetch
+    // @ts-expect-error test stub
+    global.fetch = async () => ({
+      ok: true,
+      json: async () => ({ data: [{ embedding: JSON.parse(dims((i) => (i === 0 ? 1 : 0))), index: 0 }] }),
+    })
+    try {
+      const hits = await retrieveKnowledge({ organizationId: ids.org, agentId: ids.agent, query: 'anything', k: 10 })
+      assert.ok(!hits.some((hit: any) => hit.documentId === ids.document), 'disabled repository content surfaced')
+    } finally {
+      global.fetch = origFetch
+      delete process.env.VOYAGE_API_KEY
+      await prisma.knowledgeDocument.update({
+        where: { id: ids.document, organizationId: ids.org },
+        data: { isEnabled: true },
+      })
+    }
+  })
+
   test('retrieveKnowledge falls back to keyword scoring when embeddings are unconfigured', async () => {
     if (!vectorReady) return
     delete process.env.VOYAGE_API_KEY

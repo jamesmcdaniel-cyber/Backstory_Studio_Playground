@@ -1711,7 +1711,8 @@ model StoredFile {
   data           Bytes?
   createdAt      DateTime @default(now())
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  repositoryDocument KnowledgeDocument?
 
   @@index([organizationId, createdAt])
   @@map("stored_files")
@@ -2083,26 +2084,45 @@ model FlowSideEffect {
   @@map("flow_side_effects")
 }
 
-/// A file uploaded as knowledge for an agent. We store the EXTRACTED TEXT (no
-/// blob storage); the original binary is not retained. Chunks are embedded (when
-/// embeddings are configured) and retrieved into the agent's context at run time.
+/// A workspace repository asset. Uploaded originals are retained through
+/// StoredFile; integration pulls and manual artifacts keep canonical text here.
+/// Enabled, ready assets are chunked/embedded and retrieved by agents at run time.
 model KnowledgeDocument {
-  id             String   @id @default(cuid())
-  organizationId String   @db.Uuid
-  agentId        String? // the agent this knowledge belongs to (null = org-wide)
-  userId         String?
-  filename       String
-  mimeType       String
-  sizeBytes      Int      @default(0)
-  charCount      Int      @default(0)
-  status         String   @default("ready") // ready | failed
-  error          String?
-  createdAt      DateTime @default(now())
+  id                 String    @id @default(cuid())
+  organizationId     String    @db.Uuid
+  agentId            String? // the agent this knowledge belongs to (null = org-wide)
+  userId             String?
+  filename           String
+  description        String    @default("") @db.Text
+  mimeType           String
+  sizeBytes          Int       @default(0)
+  charCount          Int       @default(0)
+  /// Canonical editable/indexed representation. The original binary, when
+  /// present, remains immutable in StoredFile and is available for download.
+  content            String?   @db.Text
+  storedFileId       String?   @unique
+  assetType          String    @default("file") // file | pull_artifact | note
+  sourceType         String    @default("upload") // upload | integration | manual
+  sourceProvider     String?
+  sourceConnectionId String?
+  sourceTool         String?
+  sourceMetadata     Json      @default("{}")
+  isEnabled          Boolean   @default(true)
+  version            Int       @default(1)
+  status             String    @default("ready") // ready | processing | failed
+  error              String?
+  lastSyncedAt       DateTime? @db.Timestamptz(6)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storedFile   StoredFile?      @relation(fields: [storedFileId], references: [id], onDelete: SetNull)
   chunks       KnowledgeChunk[]
 
   @@index([organizationId, agentId])
+  @@index([organizationId, isEnabled, updatedAt])
+  @@index([organizationId, sourceType, updatedAt])
+  @@index([organizationId, sourceProvider, lastSyncedAt])
   @@map("knowledge_documents")
 }
 

@@ -1,4 +1,4 @@
-# QA and parity closure — operator actions required (updated 2026-08-27)
+# QA and parity closure — operator actions required (updated 2026-08-28)
 
 These items from the QA audit cannot be closed from a code session. Each is
 ready to execute: the supporting code, tooling, and docs shipped with the
@@ -7,8 +7,14 @@ requires a deployed environment, customer/provider identity, or secret the
 repository must not manufacture.
 
 ## Deploy the 2026-08-27 closure
-- [ ] Apply migrations `20260827120000_data_tables` through `20260827160000_rls_flow_reviews_audit_streams` in staging, smoke Data Tables, external secrets, dynamic credential bindings, execution annotations, flow reviews, and audit-stream settings, then promote the same migration history to production.
+- [ ] Apply migrations `20260827120000_data_tables` through `20260828120000_content_repository` in staging, smoke Data Tables, the Content Repository, external secrets, dynamic credential bindings, execution annotations, flow reviews, and audit-stream settings, then promote the same migration history to production.
 - [ ] Deploy the updated web and worker artifacts together. The new universal item contract, graph schema v2, trace propagation, credential resolver, and external-secret resolution span both processes.
+
+## Content Repository
+- [ ] Confirm `FILE_SCAN_URL` is configured and healthy in staging and production. Production uploads fail closed when malware scanning is unavailable.
+- [ ] In staging, upload a PDF or DOCX from `/data-tables`, download the retained original, edit its indexed text, and verify the new version is retrieved by an in-scope agent.
+- [ ] Disable that file, run the same agent query again, and confirm the execution records no passage from the disabled document; re-enable it and confirm retrieval resumes.
+- [ ] Pull one read-only action from a connected source, verify a dated pull artifact and redacted provenance appear in the repository, then force one provider failure and verify a disabled failure-history artifact is retained without credential material.
 
 ## External secret managers
 - [ ] Create least-privilege runtime identities for every configured AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or Vault connection. Restrict each identity and each Backstory provider row to the smallest usable path/project/vault scope.

@@ -3,11 +3,17 @@ import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { ingestKnowledgeFile, UnsupportedFileError } from '@/lib/knowledge/ingest'
+import { STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
+import {
+  deleteRepositoryAsset,
+  findVisibleRepositoryAsset,
+  RepositoryAssetNotFoundError,
+} from '@/lib/knowledge/repository'
 
 export const runtime = 'nodejs'
 
 // Max upload size for a knowledge file (pre-extraction).
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 // 10 MB
+const MAX_UPLOAD_BYTES = STORED_FILE_MAX_BYTES
 
 /** Resolve the agent id from the path and enforce visibility. */
 async function requireAgent(request: Request, auth: { organizationId: string; dbUser: { id: string } }) {
@@ -21,7 +27,7 @@ async function requireAgent(request: Request, auth: { organizationId: string; db
   return agent.id
 }
 
-function serializeDoc(doc: { id: string; filename: string; mimeType: string; sizeBytes: number; charCount: number; status: string; createdAt: Date; _count?: { chunks: number } }) {
+function serializeDoc(doc: { id: string; filename: string; mimeType: string; sizeBytes: number; charCount: number; status: string; isEnabled: boolean; createdAt: Date; updatedAt: Date; _count?: { chunks: number } }) {
   return {
     id: doc.id,
     filename: doc.filename,
@@ -29,8 +35,11 @@ function serializeDoc(doc: { id: string; filename: string; mimeType: string; siz
     sizeBytes: doc.sizeBytes,
     charCount: doc.charCount,
     status: doc.status,
+    isEnabled: doc.isEnabled,
     chunkCount: doc._count?.chunks ?? 0,
     createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+    repositoryUrl: '/data-tables',
   }
 }
 
@@ -78,9 +87,21 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const agentId = await requireAgent(request, auth)
   const { documentId } = z.object({ documentId: z.string().min(1) }).parse(await request.json())
-  const result = await prisma.knowledgeDocument.deleteMany({
-    where: { id: documentId, organizationId: auth.organizationId, agentId },
-  })
-  if (!result.count) throw new ApiError('Document not found', 404, 'NOT_FOUND')
+  try {
+    const document = await findVisibleRepositoryAsset({
+      organizationId: auth.organizationId,
+      userId: auth.dbUser.id,
+      id: documentId,
+    })
+    if (document.agentId !== agentId) throw new RepositoryAssetNotFoundError('Document not found')
+    await deleteRepositoryAsset({
+      organizationId: auth.organizationId,
+      userId: auth.dbUser.id,
+      id: documentId,
+    })
+  } catch (error) {
+    if (error instanceof RepositoryAssetNotFoundError) throw new ApiError(error.message, 404, 'NOT_FOUND')
+    throw error
+  }
   return { success: true }
 }, { permission: 'agent.write' })

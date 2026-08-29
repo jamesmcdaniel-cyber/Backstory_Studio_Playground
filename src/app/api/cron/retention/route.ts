@@ -160,7 +160,13 @@ export async function GET(request: Request) {
     const fileDays = Number(process.env.FILE_RETENTION_DAYS) || days
     // systemPrisma: global retention read; each deletion below is re-scoped to its org.
     const staleFiles = await systemPrisma.storedFile.findMany({
-      where: { createdAt: { lt: new Date(Date.now() - fileDays * 24 * 60 * 60 * 1000) } },
+      // Repository originals are durable workspace content, not transient run
+      // attachments. The optional 1:1 relation keeps retention from silently
+      // stripping a file out from under an enabled catalogue asset.
+      where: {
+        createdAt: { lt: new Date(Date.now() - fileDays * 24 * 60 * 60 * 1000) },
+        repositoryDocument: { is: null },
+      },
       select: { id: true, organizationId: true },
       take: Math.min(CAP, 500),
     })

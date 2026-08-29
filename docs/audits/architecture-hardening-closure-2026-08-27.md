@@ -44,3 +44,25 @@ hosted database/Redis sizing, collector and alert destinations, authenticated
 E2E credentials, provider identities, staging load tests, and restore drills
 cannot be safely completed from a repository session. The current checklist is
 `docs/runbooks/qa-gap-ops-checklist.md`.
+
+## 2026-08-28 content-repository follow-up
+
+The Data Tables destination now opens on a governed Content Repository while
+retaining typed tables as a secondary view. Agent knowledge uploads and new
+workspace uploads share one scanned, quota-enforced storage/indexing path;
+original bytes remain immutable and downloadable while the extracted text is
+editable and versioned. Read-only connected-source actions can be materialized
+as dated pull artifacts with bounded, redacted provenance and failed-pull
+history. Availability is enforced in both keyword and pgvector retrieval, so a
+disabled or non-ready asset cannot enter an agent or flow prompt.
+
+The hardening pass also added optimistic edit conflict detection, retrieval
+tenant/document scope checks, durable-original retention protection, deletion
+cleanup, audit events, authenticated route coverage, database constraints, and
+workspace-export/teardown compatibility. Repository lists use stable cursor
+pagination and server-side filters rather than silently capping the catalogue,
+and abandoned indexing states can be repaired after a bounded processing lease.
+Migration
+`20260828120000_content_repository` applies from zero with no Prisma drift; the
+focused database and route suite passed 95/95 against a disposable PostgreSQL
+database.

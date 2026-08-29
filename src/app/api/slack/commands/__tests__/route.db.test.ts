@@ -161,11 +161,38 @@ if (ENABLED) {
     )
   }
 
-  /** The dispatch is fire-and-forget; let its microtasks and queries settle. */
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 250))
-
   const executions = () =>
-    systemPrisma.agentExecution.findMany({ where: { organizationId: ids.org }, select: { id: true, userId: true, trigger: true, input: true } })
+    systemPrisma.agentExecution.findMany({
+      where: { organizationId: ids.org },
+      select: { id: true, userId: true, trigger: true, input: true, idempotencyKey: true },
+      // Explicit: without it row order is whatever Postgres returns, which
+      // makes any positional assertion below a coin flip under parallel load.
+      orderBy: { startedAt: 'asc' },
+    })
+
+  /**
+   * The dispatch is fire-and-forget, so a fixed sleep is a race — it passes on
+   * an idle machine and fails under a loaded full-suite run. Poll for the
+   * condition instead, with a ceiling so a genuine regression still fails.
+   */
+  async function waitFor<T>(check: () => Promise<T | null | undefined>, what: string, timeoutMs = 5_000): Promise<T> {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const result = await check()
+      if (result) return result
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+
+  /** Settle for the NEGATIVE cases: prove no run appears, rather than wait for one. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 400))
+
+  const executionFor = (idempotencyKey: string) =>
+    waitFor(
+      async () => (await executions()).find((row: any) => row.idempotencyKey === idempotencyKey),
+      `the run for ${idempotencyKey}`,
+    )
 
   test('an unknown team and a bad signature are indistinguishable to the caller', async () => {
     const unknownTeam = await send({ team_id: 'T_NOT_CONNECTED' })
@@ -204,26 +231,25 @@ if (ENABLED) {
   })
 
   test('a bound command from a linked user starts exactly one run, as that person', async () => {
-    const response = await send({})
+    const response = await send({ trigger_id: 'trigger-bound' })
     assert.equal(response.status, 200)
     const ack = await response.json()
     assert.equal(ack.response_type, 'ephemeral', 'the acknowledgement is only for the caller')
-    await settle()
 
-    const rows = await executions()
-    assert.equal(rows.length, 1)
-    assert.equal(rows[0].userId, ids.user, 'the run belongs to the person who typed it')
-    assert.equal(rows[0].trigger.type, 'slack_command')
-    assert.equal(rows[0].trigger.command, 'dealcheck')
-    assert.equal(rows[0].input.prompt, 'Acme renewal')
+    const row = await executionFor('slash:trigger-bound')
+    assert.equal(row.userId, ids.user, 'the run belongs to the person who typed it')
+    assert.equal(row.trigger.type, 'slack_command')
+    assert.equal(row.trigger.command, 'dealcheck')
+    assert.equal(row.input.prompt, 'Acme renewal')
+    assert.equal((await executions()).length, 1, 'and exactly one run, not one per retry path')
   })
 
   test('a command typed with different casing reaches the same binding', async () => {
-    const before_ = (await executions()).length
-    await send({ command: '/DealCheck', text: 'casing check' })
-    await settle()
-    const rows = await executions()
-    assert.equal(rows.length, before_ + 1, 'Slack echoes the command as registered; the binding must not depend on that')
+    await send({ command: '/DealCheck', text: 'casing check', trigger_id: 'trigger-casing' })
+    // Slack echoes the command exactly as the app registered it, so a binding
+    // that depended on the casing would silently never match.
+    const row = await executionFor('slash:trigger-casing')
+    assert.equal(row.trigger.command, 'dealcheck')
   })
 
   test('a redelivered command does not start a second billed run', async () => {
@@ -253,7 +279,7 @@ if (ENABLED) {
       )
 
     await post()
-    await settle()
+    await executionFor('slash:trigger-fixed-retry')
     const afterFirst = (await executions()).length
     // Slack resends a command whose ack it did not see.
     await post()
@@ -263,9 +289,9 @@ if (ENABLED) {
 
   test('a command with no argument still runs, on a default prompt', async () => {
     await send({ text: '', trigger_id: 'trigger-empty-text' })
-    await settle()
-    const rows = await executions()
-    const latest = rows.at(-1)
-    assert.match(String(latest.input.prompt), /Deal Inspector/)
+    // Addressed by its own idempotency key, not by position: "the last row" is
+    // undefined under a parallel suite run.
+    const row = await executionFor('slash:trigger-empty-text')
+    assert.match(String(row.input.prompt), /Deal Inspector/)
   })
 }

@@ -20,7 +20,7 @@ export const runtime = 'nodejs'
 
 /**
  * Per-workspace credentials for the built-in integrations (Slack, Email,
- * Granola).
+ * Granola, Web Research).
  *
  * Without this there is no way for a customer org to supply its own key, and
  * the per-org gate in org-credential.ts would just turn those integrations off
@@ -33,6 +33,7 @@ const ENV_VALUE: Record<CredentialProvider, () => string | undefined> = {
   slack: () => process.env.SLACK_BOT_TOKEN,
   email: () => process.env.RESEND_API_KEY,
   granola: () => process.env.GRANOLA_API_KEY,
+  research: () => process.env.BRAVE_SEARCH_API_KEY,
 }
 
 function providerFrom(request: NextRequest): CredentialProvider {

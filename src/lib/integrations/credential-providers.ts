@@ -1,4 +1,5 @@
 import { GRANOLA_BASE_URL, testGranolaApiKey } from './granola'
+import { BRAVE_SEARCH_ENDPOINT, testResearchApiKey } from './research'
 
 /**
  * The built-in integrations a workspace supplies its own credential for.
@@ -16,7 +17,7 @@ import { GRANOLA_BASE_URL, testGranolaApiKey } from './granola'
  * run rather than a settings problem.
  */
 
-export const CREDENTIAL_PROVIDERS = ['slack', 'email', 'granola'] as const
+export const CREDENTIAL_PROVIDERS = ['slack', 'email', 'granola', 'research'] as const
 export type CredentialProvider = (typeof CREDENTIAL_PROVIDERS)[number]
 
 export function isCredentialProvider(value: string): value is CredentialProvider {
@@ -62,6 +63,13 @@ export const CREDENTIAL_SPECS: Record<CredentialProvider, CredentialProviderSpec
     fieldLabel: 'Granola API key',
     hint: 'Starts with grn_. Read-only access to your workspace’s meeting notes.',
     docsUrl: 'https://granola.ai',
+  },
+  research: {
+    provider: 'research',
+    label: 'Web Research',
+    fieldLabel: 'Brave Search API key',
+    hint: 'Lets agents search the open web and read public pages for market and account research. Free tier available.',
+    docsUrl: 'https://brave.com/search/api/',
   },
 }
 
@@ -118,6 +126,8 @@ export async function verifyCredential(
       return { ok: response.ok, status: response.status }
     }
 
+    if (provider === 'research') return await testResearchApiKey(value)
+
     return await testGranolaApiKey(value)
   } catch {
     // Network failure — unreachable, not invalid. The caller distinguishes.
@@ -130,4 +140,5 @@ export const CREDENTIAL_ENDPOINTS: Record<CredentialProvider, string> = {
   slack: 'https://slack.com/api',
   email: 'https://api.resend.com',
   granola: GRANOLA_BASE_URL,
+  research: BRAVE_SEARCH_ENDPOINT,
 }

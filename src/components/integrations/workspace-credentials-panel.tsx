@@ -22,7 +22,14 @@ import { Input } from '@/components/ui/input'
  * ever knows whether one exists and where it came from.
  */
 
-const PROVIDERS = ['slack', 'email', 'granola'] as const
+/**
+ * A hand-kept literal copy of CREDENTIAL_PROVIDERS. Importing the registry
+ * would drag its verifiers — and through them Prisma and the org-credential
+ * reader — into the client bundle, the same reason ACTIVITY_KINDS_CLIENT is a
+ * copy. A lockstep test pins the two lists together, because a provider missing
+ * here is an integration a workspace can never turn on.
+ */
+const PROVIDERS = ['slack', 'email', 'granola', 'research'] as const
 type Provider = (typeof PROVIDERS)[number]
 
 type CredentialState = {

@@ -39,6 +39,7 @@ import { BUILTIN_CONNECTORS, isSelected, nangoConnector, type ConnectorDescripto
 import { formatFlowToolConnectionId, type FlowToolPlane } from '@/lib/flows/tool-connection-id'
 import { recordCredentialUse } from '@/lib/credentials/audit'
 import { DATA_TABLE_TOOLS, DataTableToolClient, dataTableToolIsWrite } from '@/lib/data-tables/tools'
+import { BRAVE_SEARCH_ENDPOINT, ResearchToolClient, getResearchApiKey, researchTools } from '@/lib/integrations/research'
 
 // Minimal interface every plane's execution client satisfies (McpClient,
 // BackstoryMcpClient, the built-in ToolClients, and adapters).
@@ -436,6 +437,28 @@ export async function loadNativePlaneGroups(
       new DataTableToolClient(organizationId, options.httpUserId),
       DATA_TABLE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
     ))
+  }
+
+  // Web research — gated on a per-org search key, so a workspace's research
+  // spend is its own. Read-only: no approval gate, and the SSRF guard in the
+  // client is what bounds where `web_fetch` can be pointed.
+  const researchConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'research')!
+  if (selected(researchConn)) {
+    try {
+      const researchKey = await getResearchApiKey(organizationId)
+      if (researchKey) {
+        groups.push(group(researchConn, BRAVE_SEARCH_ENDPOINT, new ResearchToolClient(researchKey.apiKey), researchTools()))
+      } else {
+        reportUnavailable(researchConn, 'No web search key is configured for this workspace \u2014 add one in Integrations.')
+      }
+    } catch (error) {
+      apiLogger.warn('loadTools: Research tool setup failed, skipping provider', {
+        provider: 'research',
+        organizationId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      reportUnavailable(researchConn, 'Web research could not be set up for this run \u2014 reconnect it in Integrations.')
+    }
   }
 
   // Email via Resend REST API — gated on a per-org key, so an agent can only

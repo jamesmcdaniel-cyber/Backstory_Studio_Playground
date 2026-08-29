@@ -95,6 +95,23 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     available: () => true, // no credentials required; SSRF-guarded at call time
   },
   {
+    key: 'Web Research',
+    label: 'Web Research',
+    slug: 'brave',
+    kind: 'builtin',
+    // A read plane. Searching and reading public pages changes nothing
+    // outward, so it carries no approval gate — but see the note in
+    // research.ts: what it RETURNS is attacker-authorable, which is why the
+    // taint scan matters more on a run that uses it.
+    isWrite: false,
+    providerId: 'research',
+    matches: (selected) => {
+      const value = selected.toLowerCase()
+      return value.includes('research') || value.includes('web search')
+    },
+    available: () => true, // per-workspace search key; gated at the call site
+  },
+  {
     key: 'Data Tables',
     label: 'Data Tables',
     slug: 'postgresql',
@@ -178,6 +195,9 @@ export function fromNangoProviderKey(providerConfigKey: string): { key: string; 
   if (k === 'google-drive' || k === 'google_drive') return { key: 'google_drive', label: 'Google Drive', slug: 'googledrive' }
   if (k === 'google-sheet' || k === 'google-sheets' || k === 'google_sheets') {
     return { key: 'google_sheets', label: 'Google Sheets', slug: 'googlesheets' }
+  }
+  if (k === 'google-calendar' || k === 'google_calendar') {
+    return { key: 'google_calendar', label: 'Google Calendar', slug: 'googlecalendar' }
   }
   const key = k.replace(/-/g, '_')
   return { key, label: titleCase(key), slug: key === 'monday' ? 'mondaydotcom' : key }

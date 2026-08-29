@@ -87,6 +87,70 @@ export async function createDataTable(params: {
   })
 }
 
+/**
+ * The most tables one workspace may hold.
+ *
+ * Creation is reachable from an agent now, and an agent that misreads its own
+ * instructions can loop. A cap turns "the workspace quietly fills with
+ * near-duplicate tables" into an error the run reports on the first extra one.
+ */
+export const MAX_DATA_TABLES_PER_ORG = 200
+
+/**
+ * Get the table with this name, creating it only if it does not exist yet.
+ *
+ * This is the shape an agent needs and `createDataTable` is not. A scheduled
+ * agent told to "read the subscriber list" runs every morning against the same
+ * workspace; a plain create would throw P2002 on day two, so the model's only
+ * recovery would be to invent a new name — and the roster a human curates in
+ * the UI would drift away from the one the agent reads.
+ *
+ * An existing table is returned UNTOUCHED, schema included. Reconciling columns
+ * here would let a run whose instructions drifted rewrite the schema under rows
+ * that already satisfy the old one; widening a table stays a deliberate act in
+ * the UI (PATCH /api/data-tables, which re-validates every row first).
+ *
+ * Lookup is case-INSENSITIVE because that is how every read resolves a table by
+ * name (see refWhere), while the unique index is case-sensitive. Matching the
+ * index instead would let "Digest Subscribers" and "digest subscribers" both
+ * exist, after which a read by name resolves to whichever row comes back first.
+ */
+export async function ensureDataTable(params: {
+  organizationId: string
+  userId?: string | null
+  name: string
+  description?: string
+  columns?: unknown
+}): Promise<{ table: Awaited<ReturnType<typeof createDataTable>>; created: boolean }> {
+  const name = params.name.trim()
+  if (!name) throw new Error('A data table needs a name.')
+
+  const existing = await prisma.dataTable.findFirst({
+    where: { organizationId: params.organizationId, name: { equals: name, mode: 'insensitive' } },
+  })
+  if (existing) return { table: existing, created: false }
+
+  const count = await prisma.dataTable.count({ where: { organizationId: params.organizationId } })
+  if (count >= MAX_DATA_TABLES_PER_ORG) {
+    throw new Error(`This workspace already has the maximum of ${MAX_DATA_TABLES_PER_ORG} data tables. Delete one before creating another.`)
+  }
+
+  try {
+    return { table: await createDataTable({ ...params, name }), created: true }
+  } catch (error) {
+    // Lost a race with a concurrent run creating the same table. The caller
+    // asked for the table to exist, and it now does — that is success, not a
+    // failed run.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const raced = await prisma.dataTable.findFirst({
+        where: { organizationId: params.organizationId, name: { equals: name, mode: 'insensitive' } },
+      })
+      if (raced) return { table: raced, created: false }
+    }
+    throw error
+  }
+}
+
 export async function insertDataTableRow(params: {
   organizationId: string
   userId?: string | null

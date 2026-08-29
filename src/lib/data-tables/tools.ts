@@ -1,5 +1,6 @@
 import {
   deleteDataTableRow,
+  ensureDataTable,
   insertDataTableRow,
   listDataTableRows,
   listDataTables,
@@ -7,6 +8,7 @@ import {
   upsertDataTableRow,
   type DataTableRef,
 } from '@/lib/data-tables/service'
+import { DATA_TABLE_COLUMN_TYPES } from '@/lib/data-tables/schema'
 
 const tableRefProperties = {
   tableId: { type: 'string', description: 'The table id. Pass this or tableName.' },
@@ -19,6 +21,34 @@ export const DATA_TABLE_TOOLS = [
     description: 'List durable data tables in this workspace and their typed column schemas.',
     isWrite: false,
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'data_table_create_table',
+    description:
+      'Create a durable workspace data table, or return the existing one if a table with that name is already there. Use this to give a recurring job somewhere permanent to keep its own configuration — a subscriber roster, a watch list, per-account thresholds — that survives between runs and that a person can edit in the workspace UI. Declare the columns up front; an existing table keeps the schema it already has.',
+    isWrite: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Table name, as a person would read it, e.g. Digest Subscribers.' },
+        description: { type: 'string', description: 'What this table holds and who maintains it.' },
+        columns: {
+          type: 'array',
+          description: 'Typed columns. Leave empty only for genuinely free-form data — a declared schema is what lets a person edit the table safely.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Field key. Letters, digits, underscore, dot or dash; must start with a letter or underscore.' },
+              label: { type: 'string', description: 'Column heading shown in the UI.' },
+              type: { type: 'string', enum: [...DATA_TABLE_COLUMN_TYPES], description: 'Value type. Use date for a plain calendar day and dateTime for an instant.' },
+              required: { type: 'boolean' },
+            },
+            required: ['name'],
+          },
+        },
+      },
+      required: ['name'],
+    },
   },
   {
     name: 'data_table_get_rows',
@@ -111,6 +141,22 @@ export class DataTableToolClient {
     switch (name) {
       case 'data_table_list_tables':
         return { tables: await listDataTables(this.organizationId) }
+      case 'data_table_create_table': {
+        const { table, created } = await ensureDataTable({
+          organizationId: this.organizationId,
+          userId: this.userId,
+          name: String(args.name ?? ''),
+          ...(typeof args.description === 'string' ? { description: args.description } : {}),
+          columns: args.columns ?? [],
+        })
+        // `created` is reported rather than hidden: a run that expected to
+        // provision a fresh roster and instead met a populated one should say
+        // so in its report, not silently append to someone else's list.
+        return {
+          created,
+          table: { id: table.id, name: table.name, description: table.description, columns: table.columns },
+        }
+      }
       case 'data_table_get_rows': {
         const result = await listDataTableRows(this.organizationId, ref(args), {
           ...(args.where ? { where: record(args.where, 'where') } : {}),

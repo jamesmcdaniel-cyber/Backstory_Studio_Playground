@@ -69,6 +69,11 @@ const CLASSIFIED: Record<string, Classification> = {
   'FlowSideEffect.iterationKey': 'not-secret',
   'FlowSideEffect.scopeKey': 'not-secret',
   'NangoConnection.providerConfigKey': 'not-secret',
+  // Opaque SHA-256 idempotency hashes derived from connection ownership,
+  // repository/ref/scope, and path. Neither is a bearer credential, and the
+  // repository API serializer does not return either field.
+  'KnowledgeDocument.sourceKey': 'not-secret',
+  'KnowledgeDocument.sourceGroupKey': 'not-secret',
   'OutboxEvent.dedupeKey': 'not-secret',
   'Signal.dedupeKey': 'not-secret',
   // Prisma relation fields, not columns.

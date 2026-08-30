@@ -178,11 +178,13 @@ export type KnowledgeTextAssetInput = {
   sizeBytes?: number
   description?: string
   storedFileId?: string | null
-  assetType?: 'file' | 'pull_artifact' | 'note'
+  assetType?: 'file' | 'pull_artifact' | 'note' | 'project' | 'synced_file'
   sourceType?: 'upload' | 'integration' | 'manual'
   sourceProvider?: string | null
   sourceConnectionId?: string | null
   sourceTool?: string | null
+  sourceKey?: string | null
+  sourceGroupKey?: string | null
   sourceMetadata?: SourceMetadata
   lastSyncedAt?: Date | null
 }
@@ -209,6 +211,8 @@ export async function ingestKnowledgeText(params: KnowledgeTextAssetInput) {
         sourceProvider: params.sourceProvider ?? null,
         sourceConnectionId: params.sourceConnectionId ?? null,
         sourceTool: params.sourceTool ?? null,
+        sourceKey: params.sourceKey ?? null,
+        sourceGroupKey: params.sourceGroupKey ?? null,
         sourceMetadata: jsonValue(params.sourceMetadata),
         lastSyncedAt: params.lastSyncedAt ?? null,
         status: 'processing',

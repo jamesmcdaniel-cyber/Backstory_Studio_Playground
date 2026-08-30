@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Download,
   FileText,
+  FolderPlus,
+  Github,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -64,6 +66,17 @@ type PullSource = {
   inputSchema: unknown
 }
 
+type GitHubRepository = {
+  id: number
+  fullName: string
+  owner: string
+  name: string
+  private: boolean
+  defaultBranch: string
+  updatedAt: string | null
+  htmlUrl: string | null
+}
+
 type EditDraft = {
   asset: RepositoryAsset
   filename: string
@@ -78,6 +91,8 @@ function formatSize(bytes: number): string {
 }
 
 function sourceLabel(asset: RepositoryAsset): string {
+  if (asset.assetType === 'project') return 'Project'
+  if (asset.sourceTool === 'github_repository_sync') return 'GitHub sync'
   if (asset.sourceType === 'integration') {
     return asset.sourceProvider?.replace(/^nango:/, '').replace(/[-_]/g, ' ') || 'Integration pull'
   }
@@ -108,6 +123,19 @@ export function ContentRepository({ writable }: { writable: boolean }) {
   const [uploadAgentId, setUploadAgentId] = useState('')
   const [uploadDescription, setUploadDescription] = useState('')
   const uploadRef = useRef<HTMLInputElement>(null)
+  const [projectOpen, setProjectOpen] = useState(false)
+  const [projectName, setProjectName] = useState('')
+  const [projectSummary, setProjectSummary] = useState('')
+  const [projectContent, setProjectContent] = useState('')
+  const [projectScope, setProjectScope] = useState('')
+  const [githubOpen, setGithubOpen] = useState(false)
+  const [githubRepositories, setGithubRepositories] = useState<GitHubRepository[]>([])
+  const [githubLoading, setGithubLoading] = useState(false)
+  const [githubError, setGithubError] = useState('')
+  const [githubRepositoryId, setGithubRepositoryId] = useState('')
+  const [githubRef, setGithubRef] = useState('')
+  const [githubPath, setGithubPath] = useState('')
+  const [githubScope, setGithubScope] = useState('')
   const [pullOpen, setPullOpen] = useState(false)
   const [pullSources, setPullSources] = useState<PullSource[]>([])
   const [pullSourcesLoading, setPullSourcesLoading] = useState(false)
@@ -195,6 +223,93 @@ export function ContentRepository({ writable }: { writable: boolean }) {
     } finally {
       setBusy(false)
       if (uploadRef.current) uploadRef.current.value = ''
+    }
+  }
+
+  const submitProject = async () => {
+    if (!projectName.trim() || !projectContent.trim() || !projectScope) return
+    setBusy(true)
+    try {
+      const response = await fetch('/api/repository/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: projectName.trim(),
+          summary: projectSummary.trim(),
+          content: projectContent.trim(),
+          workspaceScope: projectScope === 'workspace',
+          ...(projectScope !== 'workspace' ? { agentId: projectScope } : {}),
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not save the project.')
+      await loadAssets()
+      toast.success('Project saved and indexed for reference.')
+      setProjectOpen(false)
+      setProjectName('')
+      setProjectSummary('')
+      setProjectContent('')
+      setProjectScope('')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openGitHub = async () => {
+    setGithubOpen(true)
+    if (githubRepositories.length || githubLoading) return
+    setGithubLoading(true)
+    setGithubError('')
+    try {
+      const response = await fetch('/api/repository/github/repositories', { cache: 'no-store' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not load GitHub repositories.')
+      setGithubRepositories(data.repositories ?? [])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setGithubError(message)
+      toast.error(message)
+    } finally {
+      setGithubLoading(false)
+    }
+  }
+
+  const selectedGitHubRepository = githubRepositories.find((repository) => String(repository.id) === githubRepositoryId) ?? null
+
+  const submitGitHubSync = async () => {
+    if (!selectedGitHubRepository || !githubScope) return
+    setBusy(true)
+    try {
+      const response = await fetch('/api/repository/github/sync', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          owner: selectedGitHubRepository.owner,
+          repo: selectedGitHubRepository.name,
+          ref: githubRef.trim() || selectedGitHubRepository.defaultBranch,
+          pathPrefix: githubPath.trim(),
+          workspaceScope: githubScope === 'workspace',
+          ...(githubScope !== 'workspace' ? { agentId: githubScope } : {}),
+          maxFiles: 50,
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not synchronize the GitHub repository.')
+      const result = data.result ?? {}
+      const skipped = Object.values(result.skipped ?? {}).reduce((sum: number, value) => sum + Number(value || 0), 0)
+      await loadAssets()
+      toast.success(`GitHub sync complete: ${result.created ?? 0} added, ${result.updated ?? 0} updated, ${result.unchanged ?? 0} unchanged${skipped ? `, ${skipped} skipped` : ''}${result.failed ? `, ${result.failed} failed` : ''}.`)
+      setGithubOpen(false)
+      setGithubRepositoryId('')
+      setGithubRef('')
+      setGithubPath('')
+      setGithubScope('')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -334,6 +449,8 @@ export function ContentRepository({ writable }: { writable: boolean }) {
         </div>
         {writable && (
           <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setProjectOpen(true)}><FolderPlus className="mr-1.5 h-4 w-4" />New project</Button>
+            <Button variant="outline" onClick={() => void openGitHub()}><Github className="mr-1.5 h-4 w-4" />Sync GitHub</Button>
             <Button variant="outline" onClick={() => void openPull()}><Plug className="mr-1.5 h-4 w-4" />Pull from integration</Button>
             <Button onClick={() => setUploadOpen(true)}><Upload className="mr-1.5 h-4 w-4" />Upload files</Button>
           </div>
@@ -341,9 +458,9 @@ export function ContentRepository({ writable }: { writable: boolean }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Card><CardContent className="p-4"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Repository</p><p className="mt-1 text-2xl font-semibold">{stats.total}</p><p className="text-xs text-muted-foreground">files and pull artifacts</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Repository</p><p className="mt-1 text-2xl font-semibold">{stats.total}</p><p className="text-xs text-muted-foreground">files, projects, and synced content</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Available to agents</p><p className="mt-1 text-2xl font-semibold">{stats.available}</p><p className="text-xs text-muted-foreground">ready and enabled</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Pull history</p><p className="mt-1 text-2xl font-semibold">{stats.pulls}</p><p className="text-xs text-muted-foreground">stored integration artifacts</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Integration files</p><p className="mt-1 text-2xl font-semibold">{stats.pulls}</p><p className="text-xs text-muted-foreground">synced and pulled content</p></CardContent></Card>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -365,7 +482,7 @@ export function ContentRepository({ writable }: { writable: boolean }) {
           icon={FileText}
           title="No files in the repository yet"
           description="Upload reference files or pull content from a connected source. Enabled content is automatically indexed for agents."
-          action={writable ? <div className="flex gap-2"><Button variant="outline" onClick={() => void openPull()}><Plug className="mr-1.5 h-4 w-4" />Pull from integration</Button><Button onClick={() => setUploadOpen(true)}><Upload className="mr-1.5 h-4 w-4" />Upload files</Button></div> : undefined}
+          action={writable ? <div className="flex flex-wrap justify-center gap-2"><Button variant="outline" onClick={() => setProjectOpen(true)}><FolderPlus className="mr-1.5 h-4 w-4" />New project</Button><Button variant="outline" onClick={() => void openGitHub()}><Github className="mr-1.5 h-4 w-4" />Sync GitHub</Button><Button onClick={() => setUploadOpen(true)}><Upload className="mr-1.5 h-4 w-4" />Upload files</Button></div> : undefined}
         />
       ) : assets.length === 0 ? (
         <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">No repository items match these filters.</CardContent></Card>
@@ -405,6 +522,33 @@ export function ContentRepository({ writable }: { writable: boolean }) {
             <div className="space-y-1.5"><Label>Description</Label><Input value={uploadDescription} onChange={(event) => setUploadDescription(event.target.value)} placeholder="What this content is for (optional)" /></div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setUploadOpen(false)} disabled={busy}>Cancel</Button><Button onClick={() => void submitUpload()} disabled={busy || !uploadFiles.length}>{busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}Upload {uploadFiles.length || ''}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={projectOpen} onOpenChange={(open) => { if (!busy) setProjectOpen(open) }}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>Save a project</DialogTitle><DialogDescription>Create an editable Markdown project reference. It is indexed immediately and follows the agent scope you choose.</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5"><Label>Project name</Label><Input aria-label="Project name" value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Customer onboarding redesign" /></div>
+            <div className="space-y-1.5"><Label>Summary</Label><Input aria-label="Project summary" value={projectSummary} onChange={(event) => setProjectSummary(event.target.value)} placeholder="Purpose, owner, and current status (optional)" /></div>
+            <div className="space-y-1.5"><Label>Project reference</Label><Textarea aria-label="Project reference" value={projectContent} onChange={(event) => setProjectContent(event.target.value)} rows={12} placeholder={'Goals\n- …\n\nDecisions\n- …\n\nNext steps\n- …'} /><p className="text-xs text-muted-foreground">You can edit and re-index this project later from the repository table.</p></div>
+            <div className="space-y-1.5"><Label>Reference scope</Label><select aria-label="Project reference scope" value={projectScope} onChange={(event) => setProjectScope(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Choose who can reference this project…</option><option value="workspace">All agents in this workspace</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.title} only</option>)}</select><p className="text-xs text-muted-foreground">A scope is required so project context is never shared implicitly.</p></div>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setProjectOpen(false)} disabled={busy}>Cancel</Button><Button onClick={() => void submitProject()} disabled={busy || !projectName.trim() || !projectContent.trim() || !projectScope}>{busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}Save project</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={githubOpen} onOpenChange={(open) => { if (!busy) setGithubOpen(open) }}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto"><DialogHeader><DialogTitle>Sync a GitHub repository</DialogTitle><DialogDescription>Index readable project files through your connected GitHub account. The sync is read-only and GitHub credentials remain with the connection provider.</DialogDescription></DialogHeader>
+          {githubLoading ? <div className="flex min-h-40 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div> : githubError ? <EmptyState icon={Github} title="GitHub is not ready" description={githubError} /> : githubRepositories.length === 0 ? <EmptyState icon={Github} title="No repositories available" description="The connected GitHub account did not return any repositories." /> : <div className="space-y-4">
+            <div className="space-y-1.5"><Label>Repository</Label><select aria-label="GitHub repository" value={githubRepositoryId} onChange={(event) => { const id = event.target.value; setGithubRepositoryId(id); const repository = githubRepositories.find((entry) => String(entry.id) === id); setGithubRef(repository?.defaultBranch ?? '') }} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Choose a repository…</option>{githubRepositories.map((repository) => <option key={repository.id} value={repository.id}>{repository.fullName}{repository.private ? ' (private)' : ''}</option>)}</select></div>
+            {selectedGitHubRepository && <>
+              <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label>Branch or ref</Label><Input aria-label="GitHub branch or ref" value={githubRef} onChange={(event) => setGithubRef(event.target.value)} placeholder={selectedGitHubRepository.defaultBranch} /></div><div className="space-y-1.5"><Label>Directory</Label><Input aria-label="GitHub directory" value={githubPath} onChange={(event) => setGithubPath(event.target.value)} placeholder="Entire repository" /></div></div>
+              <div className="space-y-1.5"><Label>Reference scope</Label><select aria-label="GitHub reference scope" value={githubScope} onChange={(event) => setGithubScope(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">Choose who can reference these files…</option><option value="workspace">All agents in this workspace</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.title} only</option>)}</select><p className="text-xs text-muted-foreground">A scope is required. Workspace scope makes content visible to every agent and repository reader in this workspace.</p></div>
+              {selectedGitHubRepository.private && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">This is a private repository. Its indexed text will be visible to the scope selected above.</div>}
+              <div className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">Each sync indexes up to 50 readable files (5 MB total). Secret-bearing paths/content, binaries, generated dependencies, lockfiles, and files over 200 KB are skipped. Removed or newly unsafe files are disabled for agents.</div>
+            </>}
+          </div>}
+          <DialogFooter><Button variant="outline" onClick={() => setGithubOpen(false)} disabled={busy}>Cancel</Button><Button onClick={() => void submitGitHubSync()} disabled={busy || !selectedGitHubRepository || !githubScope || !githubRef.trim()}>{busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}Sync repository</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

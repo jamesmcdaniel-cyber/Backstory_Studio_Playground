@@ -2104,11 +2104,18 @@ model KnowledgeDocument {
   /// present, remains immutable in StoredFile and is available for download.
   content            String?   @db.Text
   storedFileId       String?   @unique
-  assetType          String    @default("file") // file | pull_artifact | note
+  assetType          String    @default("file") // file | pull_artifact | note | project | synced_file
   sourceType         String    @default("upload") // upload | integration | manual
   sourceProvider     String?
   sourceConnectionId String?
   sourceTool         String?
+  /// Stable, opaque idempotency key for externally synchronized assets. The
+  /// raw upstream path stays in sourceMetadata; this hash prevents concurrent
+  /// syncs from creating duplicate repository entries.
+  sourceKey          String?
+  /// Groups synchronized files from the same upstream repository/ref/scope so
+  /// a complete sync can disable files that disappeared upstream.
+  sourceGroupKey     String?
   sourceMetadata     Json      @default("{}")
   isEnabled          Boolean   @default(true)
   version            Int       @default(1)
@@ -2126,6 +2133,8 @@ model KnowledgeDocument {
   @@index([organizationId, isEnabled, updatedAt])
   @@index([organizationId, sourceType, updatedAt])
   @@index([organizationId, sourceProvider, lastSyncedAt])
+  @@unique([organizationId, sourceKey])
+  @@index([organizationId, sourceGroupKey])
   @@map("knowledge_documents")
 }
 

@@ -54,6 +54,8 @@ test('repository files expose upload, integration pull, provenance, scope, and a
   assert.ok(screen.getByText('crm-snapshot.json'))
   assert.ok(screen.getByRole('button', { name: /Upload files/i }))
   assert.ok(screen.getByRole('button', { name: /Pull from integration/i }))
+  assert.ok(screen.getByRole('button', { name: /Sync GitHub/i }))
+  assert.ok(screen.getByRole('button', { name: /New project/i }))
   assert.ok(screen.getByText('File upload'))
   assert.ok(screen.getByText('salesforce'))
   assert.ok(screen.getAllByText('All agents').length >= 1)
@@ -91,6 +93,8 @@ test('read-only members can download but cannot mutate repository assets', async
   assert.ok(await screen.findByText('guide.md'))
   assert.equal(screen.queryByRole('button', { name: /Upload files/i }), null)
   assert.equal(screen.queryByRole('button', { name: /Pull from integration/i }), null)
+  assert.equal(screen.queryByRole('button', { name: /Sync GitHub/i }), null)
+  assert.equal(screen.queryByRole('button', { name: /New project/i }), null)
   assert.equal(screen.getByRole('switch', { name: 'Disable guide.md for agents' }).hasAttribute('disabled'), true)
 })
 
@@ -111,4 +115,73 @@ test('loads repository pages without silently capping the catalogue', async () =
   assert.ok(await screen.findByText('second.md'))
   assert.ok(screen.getByText('guide.md'))
   assert.ok(requests.some((url) => url.includes('cursor=next-page')))
+})
+
+test('saves a project with an explicit reference scope', async () => {
+  let submitted: Record<string, unknown> | null = null
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    if (url.startsWith('/api/repository?')) {
+      return response({ success: true, assets: [asset()], agents: [{ id: 'agent-1', title: 'Research agent' }], stats: { total: 1, available: 1, pulls: 0 } })
+    }
+    if (url === '/api/repository/projects' && init?.method === 'POST') {
+      submitted = JSON.parse(String(init.body))
+      return response({ success: true, document: { id: 'project-1' } })
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }) as typeof fetch
+
+  render(<ContentRepository writable />)
+  fireEvent.click(await screen.findByRole('button', { name: 'New project' }))
+  fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'Launch plan' } })
+  fireEvent.change(screen.getByLabelText('Project summary'), { target: { value: 'Q4 launch' } })
+  fireEvent.change(screen.getByLabelText('Project reference'), { target: { value: 'Owner: Maya\nStatus: active' } })
+  fireEvent.change(screen.getByLabelText('Project reference scope'), { target: { value: 'agent-1' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save project' }))
+
+  await waitFor(() => assert.ok(submitted))
+  assert.deepEqual(submitted, {
+    name: 'Launch plan',
+    summary: 'Q4 launch',
+    content: 'Owner: Maya\nStatus: active',
+    workspaceScope: false,
+    agentId: 'agent-1',
+  })
+})
+
+test('synchronizes a selected private GitHub repository without implicit workspace sharing', async () => {
+  let submitted: Record<string, unknown> | null = null
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    if (url.startsWith('/api/repository?')) {
+      return response({ success: true, assets: [asset()], agents: [{ id: 'agent-1', title: 'Research agent' }], stats: { total: 1, available: 1, pulls: 0 } })
+    }
+    if (url === '/api/repository/github/repositories') {
+      return response({ success: true, repositories: [{ id: 42, fullName: 'acme/private-docs', owner: 'acme', name: 'private-docs', private: true, defaultBranch: 'main', updatedAt: null, htmlUrl: 'https://github.com/acme/private-docs' }] })
+    }
+    if (url === '/api/repository/github/sync' && init?.method === 'POST') {
+      submitted = JSON.parse(String(init.body))
+      return response({ success: true, result: { created: 1, updated: 0, unchanged: 0, failed: 0, skipped: {} } })
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }) as typeof fetch
+
+  render(<ContentRepository writable />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Sync GitHub' }))
+  fireEvent.change(await screen.findByLabelText('GitHub repository'), { target: { value: '42' } })
+  assert.ok(screen.getByText(/This is a private repository/))
+  fireEvent.change(screen.getByLabelText('GitHub directory'), { target: { value: 'docs' } })
+  fireEvent.change(screen.getByLabelText('GitHub reference scope'), { target: { value: 'agent-1' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Sync repository' }))
+
+  await waitFor(() => assert.ok(submitted))
+  assert.deepEqual(submitted, {
+    owner: 'acme',
+    repo: 'private-docs',
+    ref: 'main',
+    pathPrefix: 'docs',
+    workspaceScope: false,
+    agentId: 'agent-1',
+    maxFiles: 50,
+  })
 })

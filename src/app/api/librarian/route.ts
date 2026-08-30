@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
@@ -26,6 +27,10 @@ import { buildPrompt, SYSTEM_PROMPT } from '@/lib/librarian/prompt'
 // wrote: the model cites by number and the numbers are resolved back to the
 // fetched sources here, so a citation cannot point at a page that does not
 // exist.
+//
+// The conversation belongs to the server too. A caller names a thread by id and
+// the earlier turns are read out of it here — nothing a caller merely CLAIMS
+// was said reaches the prompt.
 
 export type { LibrarianResult } from '@/lib/librarian/relevance'
 
@@ -33,6 +38,11 @@ export type { LibrarianResult } from '@/lib/librarian/relevance'
 const MAX_SOURCES = 4
 /** Workspace items shown as cards under an answer. */
 const MAX_RESULTS = 4
+/**
+ * Earlier exchanges replayed into the prompt — the same three the client used
+ * to send, now counted off the thread's own rows.
+ */
+const HISTORY_EXCHANGES = 3
 
 export type LibrarianSource = {
   title: string
@@ -56,21 +66,29 @@ function orContains(words: string[], fields: string[]) {
 }
 
 /**
- * `history` and `path` are optional so the /dashboard home keeps working
- * unchanged: they are what the Ask Backstory widget adds — a follow-up needs the
- * turns before it, and "how do I fix this?" needs to know which page "this" is.
- * Both are bounded here, and `path` is resolved against the surface registry
- * rather than quoted, so neither becomes a channel for arbitrary prompt text.
+ * What a caller may put in front of the model, and — as much to the point —
+ * what it may not.
+ *
+ * This schema used to take a `history` array: eight turns of two thousand
+ * characters, ASSISTANT turns included, all of it written by whoever sent the
+ * request. Fencing made that text safe to read; it never made it true, and a
+ * conversation the caller narrates is one an attacker can put words into the
+ * assistant's own mouth in. It is gone, and it is not kept as a fallback — a
+ * fallback would be an unverified path that only an attacker has a reason to
+ * take. Earlier turns now come off the thread named by `sessionId`.
+ *
+ * Strict for that reason: a client that starts sending `history` again gets a
+ * 400 rather than a silently dropped field, so the channel cannot be
+ * reintroduced quietly.
+ *
+ * `sessionId` and `path` stay optional so a first question and the /dashboard
+ * home both work unchanged. `path` is bounded and resolved against the surface
+ * registry rather than quoted, and `sessionId` carries no prose at all — it is
+ * an id that earlier turns are read AGAINST, never the turns themselves.
  */
 const requestSchema = z.object({
   question: z.string().min(1).max(2000),
-  history: z
-    .array(z.object({
-      role: z.enum(['user', 'assistant']),
-      content: z.string().transform((content) => content.slice(0, 2000)),
-    }))
-    .max(8)
-    .optional(),
+  sessionId: z.string().min(1).max(64).optional(),
   path: z.string().max(300).optional(),
   // Which surface is asking, and so which scope clause the model is held to.
   // The default is the TIGHTER tier on purpose: a caller that predates this
@@ -78,10 +96,22 @@ const requestSchema = z.object({
   // boundary rather than being silently promoted to the wider one. Widening is
   // something a caller has to ask for in as many words.
   mode: z.enum(['helper', 'assistant']).default('helper'),
-})
+}).strict()
+
+/**
+ * A thread's title, taken from the question that started it — the same
+ * derivation agent chat uses, so the two history lists read alike. Not imported
+ * from there: that `shared.ts` is private to the agent-scoped chat, and
+ * everything else it exports threads an agent id through it.
+ */
+function deriveTitle(question: string): string {
+  const text = question.trim().replace(/\s+/g, ' ')
+  if (!text) return 'New chat'
+  return text.length > 60 ? `${text.slice(0, 60)}…` : text
+}
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { question, history, path, mode } = requestSchema.parse(await request.json())
+  const { question, sessionId, path, mode } = requestSchema.parse(await request.json())
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `librarian:${auth.dbUser.id}`, limit: 30 })
 
   const words = terms(question)
@@ -91,9 +121,32 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // of matching on nothing.
   const hasWords = words.length > 0
 
+  // Which thread this question belongs to, settled before anything is read. An
+  // id this caller owns continues that thread; ANY other id — another user's,
+  // another workspace's, one cleared from a second tab an hour ago — quietly
+  // starts a new one.
+  //
+  // Deliberately not a 404. Answering "no such thread" for an id the caller
+  // does not own would confirm, for any id worth guessing, that it exists and
+  // whose it is not; the id would become a probe. It is also the kinder
+  // behaviour, since a thread deleted on another device must not turn the next
+  // question into an error.
+  const existing = sessionId
+    ? await prisma.librarianChatSession.findFirst({
+        where: { id: sessionId, organizationId: org, userId: uid },
+        select: { id: true, title: true },
+      })
+    : null
+  const session =
+    existing ??
+    (await prisma.librarianChatSession.create({
+      data: { organizationId: org, userId: uid, title: deriveTitle(question) },
+      select: { id: true, title: true },
+    }))
+
   // The public sources are fetched alongside the workspace queries, not after
   // them, so the docs cost concurrency rather than latency.
-  const [docs, agents, flows, templates, runs] = await Promise.all([
+  const [docs, agents, flows, templates, runs, turns] = await Promise.all([
     retrieveKnowledge(question),
     // AND, never two spread `OR` keys: the second would overwrite the first in
     // the same object literal, silently dropping the visibility scope for any
@@ -136,7 +189,43 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       take: 4,
       select: { id: true, agentType: true, status: true, startedAt: true, metadata: true },
     }),
+    // A thread being continued has turns to replay; one created three lines ago
+    // provably has none, so the first question of every conversation skips the
+    // round trip that could only come back empty.
+    existing
+      ? prisma.librarianChatMessage.findMany({
+          where: { organizationId: org, userId: uid, sessionId: session.id },
+          // Newest first under the cap, then reversed below — the ceiling has
+          // to be taken from the recent end of a long thread. The id breaks a
+          // createdAt tie in creation order (cuids are ordered within a
+          // process), so a question never replays after the answer it got.
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: HISTORY_EXCHANGES * 2,
+          select: { role: true, content: true },
+        })
+      : Promise.resolve([] as { role: string; content: string }[]),
   ])
+
+  // The earlier turns, oldest first, read from the thread rather than taken
+  // from the request. This is what the sessions table is FOR: the caller used
+  // to narrate the conversation back to us, assistant turns included, and the
+  // prompt had no way to tell an exchange that happened from one that was
+  // invented.
+  //
+  // Storage changes provenance, not trust. These rows are still text a person
+  // typed into their own workspace, and the assistant rows are still full of
+  // workspace text quoted back — so buildPrompt still redacts them and still
+  // fences them, exactly as it did when they arrived over the wire.
+  const history = turns.reverse().map((turn) => ({
+    // `role` is a free-form column with no CHECK behind it, so this mapping has
+    // to be total. Anything that is not an assistant turn reads as a user turn,
+    // which is the direction that grants nothing.
+    role: turn.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+    // The same per-turn ceiling the request schema used to impose. An answer
+    // can run to 1,400 tokens, and three of them unclipped would crowd the
+    // retrieved sources out of the context the question actually needs.
+    content: turn.content.slice(0, 2000),
+  }))
 
   const titleOf = (metadata: unknown, fallback: string) => {
     const m = (metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {}) as Record<string, unknown>
@@ -209,6 +298,62 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const sources: LibrarianSource[] = citedSources<KnowledgeDoc>(picked, workspaceItems.length, docs)
     .slice(0, MAX_SOURCES)
     .map((d) => ({ title: d.title, url: d.url, label: SOURCE_LABEL[d.source] }))
+  // The fallback is stored as well as returned: a thread read back later should
+  // be what happened, including the turn where nothing came out of the model.
+  const reply = answer || 'I couldn’t generate an answer just now — try rephrasing.'
 
-  return { success: true, answer: answer || 'I couldn’t generate an answer just now — try rephrasing.', results, sources }
+  // Written only once the model has answered, so a failed call leaves no
+  // half-thread behind for the user to find. Both turns in one statement for
+  // the same reason: an exchange is the unit a conversation reads back in, and
+  // a question stored without its answer is worse than neither.
+  // ...and tolerant of the thread having been deleted while the model was
+  // thinking. The gap between resolving the session and writing the turns is
+  // the whole model call — seconds — and "Delete all conversations" from
+  // another tab lands inside it easily. The row is gone, its messages cascaded,
+  // and this insert would violate the sessionId foreign key: a 500 and a Sentry
+  // report for a question that was answered fine. The user asked for the thread
+  // to go, so honouring that and still returning the answer is the correct
+  // outcome, and it matches what the DELETE routes already do — they use
+  // deleteMany precisely so a vanished thread is a no-op rather than a throw.
+  await prisma.librarianChatMessage.createMany({
+    data: [
+      { sessionId: session.id, organizationId: org, userId: uid, role: 'user', content: question },
+      {
+        sessionId: session.id,
+        organizationId: org,
+        userId: uid,
+        role: 'assistant',
+        content: reply,
+        // The cards and citations this answer actually shipped with, so a
+        // restored thread renders as it did live instead of as bare text — and
+        // so its links stay the ones this route resolved, rather than ones a
+        // later reader's model would have to guess at.
+        metadata: { results, sources } as unknown as Prisma.InputJsonValue,
+      },
+    ],
+  }).catch((error: unknown) => {
+    // P2003 is the foreign key: the session was deleted under us. Anything else
+    // is a real write failure and must still surface — swallowing every error
+    // here would turn "the database is down" into a silently unsaved thread.
+    if ((error as { code?: string })?.code !== 'P2003') throw error
+  })
+  // The write itself is the point: @updatedAt moves, and the thread sorts to
+  // the top of the history list. The title is RESTATED rather than recomputed,
+  // so a thread keeps the question that opened it instead of drifting to
+  // whatever was asked last — the fallback is only for a row that reached here
+  // without one.
+  //
+  // Best-effort: the turns above are already durable, and a cosmetic bump must
+  // not cost the user the answer they just waited for. Scoped by
+  // organizationId and userId all the same — the tenant guard rejects an
+  // unscoped write, and a swallowed throw is exactly how an unscoped one would
+  // go unnoticed forever.
+  await prisma.librarianChatSession
+    .update({
+      where: { id: session.id, organizationId: org, userId: uid },
+      data: { title: session.title ?? deriveTitle(question) },
+    })
+    .catch(() => undefined)
+
+  return { success: true, sessionId: session.id, answer: reply, results, sources }
 }, { permission: 'agent.run' })

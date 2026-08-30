@@ -64,6 +64,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'ActivityEvent', 'ActivityTriggerClaim', 'ActivitySourceCursor',
   'AdoptionWeek', 'AgentCohortWeek',
   'SlackIdentity', 'SlackChannelBinding', 'SlackCommandBinding',
+  'LibrarianChatSession', 'LibrarianChatMessage',
   // PLATFORM config, listed here only because it carries a required
   // organizationId. That column names the workspace domain members JOIN — it is
   // not the row's owner. Every real access is via systemPrisma (the sign-in gate

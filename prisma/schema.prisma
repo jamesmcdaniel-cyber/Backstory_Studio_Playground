@@ -125,6 +125,7 @@ model Organization {
   httpCredentialSecretReferences HttpCredentialSecretReference[]
   credentialResolvers            CredentialResolver[]
   credentialResolverBindings     CredentialResolverBinding[]
+  librarianChatSessions          LibrarianChatSession[]
   /// How this workspace's people must sign in.
   ///   optional (default) — any admitted method, exactly as before.
   ///   required — only an identity brokered by a federated IdP. Password and
@@ -2399,4 +2400,57 @@ model SlackChannelBinding {
   @@unique([organizationId, channelId])
   @@index([agentTaskId])
   @@map("slack_channel_bindings")
+}
+
+// One conversation with the help assistant — the Ask Backstory widget or the
+// dashboard assistant, which share a brain. Held server-side because the
+// sessionStorage version could not survive the tab that started it, could not
+// be cleared anywhere but in that tab, and — the security reason — put the
+// caller in charge of the turns replayed into the prompt.
+//
+// Modelled on AgentChatSession, minus its Slack thread columns: this assistant
+// only exists in-app, so there is no thread to continue a conversation in.
+model LibrarianChatSession {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  /// Scoped per user rather than per workspace: an admin has no business
+  /// reading a rep's help thread. Every read carries this beside organizationId.
+  userId         String
+  /// Auto-derived from the first question, matching agent chat; null until then.
+  title          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  /// Declared as a relation, not left a bare column: workspace teardown is a
+  /// single organization.delete() and everything it reaches goes with it. A
+  /// scalar organizationId would survive that delete, leaving a deleted
+  /// workspace's help threads — which quote its agents, flows and runs — in the
+  /// table after the workspace they belong to is gone.
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  messages     LibrarianChatMessage[]
+
+  @@index([organizationId, userId, updatedAt])
+  @@map("librarian_chat_sessions")
+}
+
+model LibrarianChatMessage {
+  id             String   @id @default(cuid())
+  /// Required, unlike AgentChatMessage.sessionId. That column is nullable only
+  /// because agent chat predates its own sessions and carries a legacy flat
+  /// thread; this table has no such history, and admitting a null would invite
+  /// the same synthetic "Earlier conversation" special case for nothing.
+  sessionId      String
+  organizationId String   @db.Uuid
+  userId         String
+  role           String
+  content        String   @db.Text
+  /// Cards and citations shown under an assistant turn, so a restored thread
+  /// renders as it did live rather than as bare text.
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  session LibrarianChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@map("librarian_chat_messages")
 }

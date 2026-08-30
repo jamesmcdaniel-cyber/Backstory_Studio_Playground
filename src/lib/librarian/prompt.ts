@@ -64,7 +64,10 @@ export function buildPrompt(
   candidates: LibrarianResult[],
   docs: KnowledgeDoc[],
   context: {
-    /** Earlier turns of this conversation, oldest first. */
+    /**
+     * Earlier turns of this conversation, oldest first, as the route read them
+     * back off the stored thread — never as a caller described them.
+     */
     history?: { role: 'user' | 'assistant'; content: string }[]
     /** The page the question was asked from, resolved against the registry. */
     surface?: AppSurface | null
@@ -128,6 +131,11 @@ export function buildPrompt(
   // turn is workspace text that has already been through the model once, so a
   // secret that reached an answer would otherwise be re-sent on every follow-up
   // for the rest of the conversation.
+  //
+  // These turns arrive from the conversation's own rows now rather than from the
+  // request, and that changes nothing in here. Storage settles who SAID a thing;
+  // it does not make what was said an instruction worth following. The text is
+  // still a person's, so it is still fenced and still redacted.
   const historyBlock = context.history?.length
     ? `\n\n${fenceUntrusted(
         'earlier conversation',

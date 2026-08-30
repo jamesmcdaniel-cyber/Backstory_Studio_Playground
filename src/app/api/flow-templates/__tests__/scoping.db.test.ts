@@ -32,7 +32,20 @@ if (TEST_DB) {
         category: 'Testing',
         graph,
         trigger: { type: 'manual' },
-        notes: { objective: 'o', inputs: [], steps: [], setup: [], customize: [] },
+        // A COMPLETE set of notes, not the minimum zod will parse. serializeFlowTemplate
+        // refuses a row whose notes leave an executable node unexplained, and
+        // findFlowTemplate turns that refusal into `null` — so a fixture with
+        // `steps: []` makes every assertion here read as "not visible" and this
+        // file silently stops testing the tenancy boundary it exists for. The
+        // one executable node is `ask`; `trigger` is not executable and needs
+        // no entry.
+        notes: {
+          objective: 'o',
+          inputs: [],
+          steps: [{ nodeId: 'ask', title: 'Ask', what: 'Asks the model a fixed question.' }],
+          setup: [],
+          customize: [],
+        },
         bindings: [],
         configuration: {},
         userId,

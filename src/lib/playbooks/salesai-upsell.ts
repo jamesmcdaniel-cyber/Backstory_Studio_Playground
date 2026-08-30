@@ -19,7 +19,7 @@ export const PLAYBOOK_AGENTS = {
   puller: {
     title: 'Upsell Candidate Puller',
     description: 'Lists in-segment accounts for the SalesAI upsell motion as strict JSON.',
-    integrations: ['Backstory MCP', 'nango:snowflake', 'nango:salesforce', 'HTTP API'],
+    integrations: ['Backstory MCP', 'nango:salesforce', 'HTTP API'],
     instructions: [
       'You list candidate accounts for a SalesAI upsell motion. The input names the target segment; when empty, default to accounts that own Data Foundation + EDB but NOT SalesAI (the low-hanging fruit). "ClosePlan-only" means customers whose only product is ClosePlan (e.g. Seismic, CRWD, ZS, PANW).',
       'Use the Backstory Sales AI tools to pull the account list for the segment. Cross-check product ownership against the CRM via your Salesforce tools when available. If Snowflake is available through your tools, enrich with product-usage/feature-adoption signals to pre-filter obviously inactive accounts. The http request tool is available for any additional REST API the user points you at.',
@@ -29,7 +29,7 @@ export const PLAYBOOK_AGENTS = {
   scorer: {
     title: 'Upsell Account Scorer',
     description: 'Scores one account across readiness, competitive risk, use-case fit, and sales motion — strict JSON.',
-    integrations: ['Backstory MCP', 'nango:snowflake', 'nango:salesforce', 'HTTP API'],
+    integrations: ['Backstory MCP', 'nango:salesforce', 'HTTP API'],
     instructions: [
       'You analyze ONE account (given as input) for SalesAI expansion across ALL FOUR dimensions of the upsell engine: adoption readiness, competitive risk, use-case alignment, and sales-motion planning.',
       'Sources: Backstory Sales AI (engagement, stakeholders, activity), Salesforce CRM (opportunities, win/loss history, account owner), Snowflake (product usage / feature adoption) — plus the http request tool for any extra API the user names. Use what is available; never fabricate what is not.',

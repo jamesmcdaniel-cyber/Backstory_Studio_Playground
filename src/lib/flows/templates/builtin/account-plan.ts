@@ -45,6 +45,28 @@ export const ACCOUNT_PLAN: FlowTemplateDef = {
         },
       },
       {
+        id: 'found',
+        type: 'condition',
+        data: {
+          label: 'Did Backstory resolve it?',
+          match: 'all',
+          clauses: [{ left: '{{step.find.output.peopleai_account_id}}', op: 'isNotEmpty', right: '' }],
+          note: 'Stops the enrichment path when the lookup returned no usable account id, so an unknown name can never produce a confident plan from empty context.',
+        },
+      },
+      {
+        id: 'not-found',
+        type: 'output',
+        data: {
+          label: 'Return a clear lookup failure',
+          outputs: [
+            { name: 'account', value: '{{trigger.input.accountName}}', type: 'text' },
+            { name: 'error', value: 'Backstory could not resolve that account name. Check the name and run the flow again.', type: 'text' },
+          ],
+          note: 'Returns an explicit, actionable result instead of passing an empty id into later tools.',
+        },
+      },
+      {
         id: 'status',
         type: 'tool',
         data: {
@@ -112,7 +134,9 @@ export const ACCOUNT_PLAN: FlowTemplateDef = {
     ],
     edges: [
       { id: 'e0', source: 'trigger', target: 'find' },
-      { id: 'e1', source: 'find', target: 'status' },
+      { id: 'e1', source: 'find', target: 'found' },
+      { id: 'e1a', source: 'found', target: 'status', branch: 'true' },
+      { id: 'e1b', source: 'found', target: 'not-found', branch: 'false' },
       { id: 'e2', source: 'status', target: 'ask' },
       { id: 'e3', source: 'ask', target: 'plan' },
       { id: 'e4', source: 'plan', target: 'approve' },
@@ -159,6 +183,8 @@ export const ACCOUNT_PLAN: FlowTemplateDef = {
         what: 'Resolves the typed name to the account Backstory holds.',
         why: 'Every step below is keyed to the resolved account, so this is the one step worth retrying hard.',
       },
+      { nodeId: 'found', title: 'Did Backstory resolve it?', what: 'Checks that the lookup returned a real Backstory account id before enrichment starts.' },
+      { nodeId: 'not-found', title: 'Return a clear lookup failure', what: 'Ends the run with an actionable error when the account cannot be resolved.' },
       { nodeId: 'status', title: 'Read the account status', what: 'Pulls engagement, open opportunities, and recent movement as facts.' },
       {
         nodeId: 'ask',
@@ -176,9 +202,9 @@ export const ACCOUNT_PLAN: FlowTemplateDef = {
       { nodeId: 'out', title: 'Return the plan', what: 'Returns the account, the plan, and the reviewer\'s reply.' },
     ],
     decisionRules:
-      'There is no branching here on purpose — every account gets the same three lookups and the same agent. What varies is the input, and what the account status and SalesAI answer come back with.',
+      'A resolved account follows the full enrichment and planning path. An unresolved name stops immediately with a clear lookup failure; it never reaches the status, SalesAI, or planning steps.',
     failureHandling:
-      'The account lookup and the status read each retry twice and fail the run if they cannot succeed, because a plan built without them would be guesswork. The SalesAI question continues on error. The agent retries once. The approval step has no timer, so a plan nobody reviews stays waiting rather than going out unread.',
+      'The account lookup and the status read each retry twice. A successful lookup with no usable id takes the explicit not-found path. The SalesAI question continues on error. The agent retries once. The approval step has no timer, so a plan nobody reviews stays waiting rather than going out unread.',
     setup: [
       { label: 'Run it once and confirm the account id from the lookup is what the status and SalesAI steps expect', kind: 'value', ref: 'status' },
       { label: 'Check the SalesAI question on the Ask SalesAI where it stands step says what you want to know', kind: 'value', ref: 'ask' },

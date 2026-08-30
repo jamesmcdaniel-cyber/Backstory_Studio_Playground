@@ -61,7 +61,7 @@ export const WEBHOOK_TRIAGE: FlowTemplateDef = {
         data: {
           label: 'Page on-call',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args:
             '{"channel":"#support-escalations","text":"Escalation from {{trigger.input.from}} — {{trigger.input.subject}}"}',
           retries: 2,
@@ -141,7 +141,7 @@ export const WEBHOOK_TRIAGE: FlowTemplateDef = {
       nodeId: 'notify-oncall',
       kind: 'connection',
       label: 'Pick the Slack workspace to page on-call in',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {

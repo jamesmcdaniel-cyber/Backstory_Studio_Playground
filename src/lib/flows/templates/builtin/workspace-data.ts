@@ -97,7 +97,7 @@ export const SHEET_ANOMALY_WATCH: FlowTemplateDef = {
         data: {
           label: 'Post the alert',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#data-quality","text":"{{step.alert.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -144,7 +144,7 @@ export const SHEET_ANOMALY_WATCH: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to alert in',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {
@@ -402,7 +402,7 @@ export const AIRTABLE_REVIEW_QUEUE: FlowTemplateDef = {
         data: {
           label: 'Post to the content channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#content","text":"{{step.digest.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -442,7 +442,7 @@ export const AIRTABLE_REVIEW_QUEUE: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the queue to',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {

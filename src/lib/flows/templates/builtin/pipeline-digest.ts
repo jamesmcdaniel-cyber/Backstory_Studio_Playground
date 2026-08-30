@@ -58,7 +58,7 @@ export const PIPELINE_DIGEST: FlowTemplateDef = {
         data: {
           label: 'Post it to the sales channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#sales","text":"{{step.digest.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -100,7 +100,7 @@ export const PIPELINE_DIGEST: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the digest to',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {

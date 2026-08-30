@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { builtInTemplates } from '@/lib/templates/builtin-agents'
+import { BUILTIN_AGENT_SCHEDULES, builtInTemplates } from '@/lib/templates/builtin-agents'
 import { EXAMPLE_REPORTS } from '@/lib/templates/example-reports'
 import { BUILTIN_CONNECTORS, isSelected } from '@/lib/connectors/registry'
 import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
@@ -14,6 +14,8 @@ import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
 type BuiltInAgent = (typeof builtInTemplates)[number] & {
   playbook?: string
   allowSubagents?: boolean
+  allowFlows?: boolean
+  requireApproval?: boolean
 }
 
 const templates = builtInTemplates as readonly BuiltInAgent[]
@@ -79,8 +81,6 @@ test('no example report is orphaned', () => {
  * label that matches neither is a requirement the workspace can never satisfy
  * and a tool the agent will never receive.
  */
-const KNOWN_UNMATCHED_INTEGRATIONS = new Set(['nango:snowflake', 'CRM', 'Calendar'])
-
 const activatesAPlane = (integration: string) =>
   BUILTIN_CONNECTORS.some((connector) => isSelected(connector, [integration])) ||
   NANGO_PROVIDERS.some((provider) => integration === `nango:${provider}` || integration.toLowerCase() === provider)
@@ -91,7 +91,7 @@ test('every declared integration activates a real tool plane', () => {
     for (const integration of template.integrations) {
       assert.equal(typeof integration, 'string', `${template.id}: non-string integration`)
       assert.equal(integration, integration.trim(), `${template.id}: "${integration}" has stray whitespace`)
-      if (!activatesAPlane(integration) && !KNOWN_UNMATCHED_INTEGRATIONS.has(integration)) {
+      if (!activatesAPlane(integration)) {
         offenders.push(`${template.id}: "${integration}"`)
       }
     }
@@ -105,7 +105,7 @@ test('every declared integration activates a real tool plane', () => {
  * run time: there is no Snowflake Nango provider, and no connector matches the
  * generic labels "CRM" or "Calendar".
  */
-test('the set of integrations that match nothing is exactly the documented backlog', () => {
+test('there is no unmatched-integration backlog', () => {
   const unmatched = new Set<string>()
   for (const template of templates) {
     for (const integration of template.integrations) {
@@ -114,9 +114,20 @@ test('the set of integrations that match nothing is exactly the documented backl
   }
   assert.deepEqual(
     [...unmatched].sort(),
-    [...KNOWN_UNMATCHED_INTEGRATIONS].sort(),
-    'the unmatched-integration backlog changed — fix the label, or update this pin deliberately',
+    [],
+    'every requirement must activate a real connector plane',
   )
+})
+
+test('every recurring agent imports with a configured but inactive schedule', () => {
+  for (const template of templates) {
+    if (!template.tags.includes('recurring')) continue
+    const schedule = BUILTIN_AGENT_SCHEDULES[template.id]
+    assert.ok(schedule, `${template.id}: recurring template has no suggested schedule`)
+    assert.equal(schedule.isActive, false, `${template.id}: a template must never start itself on import`)
+    if (schedule.type === 'cron') assert.ok(schedule.cron?.trim(), `${template.id}: cron schedule is empty`)
+    if (schedule.type === 'daily' || schedule.type === 'weekly') assert.ok(schedule.time?.trim(), `${template.id}: scheduled time is empty`)
+  }
 })
 
 test('instructions never leak raw token syntax to the reader', () => {
@@ -161,6 +172,17 @@ test('a template that delegates declares that subagents are allowed', () => {
   for (const template of templates) {
     if (!template.instructions.includes('run_agent')) continue
     assert.equal(template.allowSubagents, true, `${template.id}: calls run_agent but does not allow subagents`)
+  }
+})
+
+test('details that promise runtime capabilities enable those capabilities on import', () => {
+  for (const template of templates) {
+    if (template.instructions.includes('run_flow')) {
+      assert.equal(template.allowFlows, true, `${template.id}: calls run_flow but does not allow flows`)
+    }
+    if (/approval[- ]gat|requires? human approval/i.test(`${template.name} ${template.description}`)) {
+      assert.equal(template.requireApproval, true, `${template.id}: promises approval gating but does not enable it`)
+    }
   }
 })
 

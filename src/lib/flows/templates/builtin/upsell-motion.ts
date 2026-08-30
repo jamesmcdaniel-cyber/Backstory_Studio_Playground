@@ -110,7 +110,7 @@ export const UPSELL_MOTION: FlowTemplateDef = {
         data: {
           label: 'Post the shortlist to Slack',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#sales","text":"{{step.digest.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -157,7 +157,7 @@ export const UPSELL_MOTION: FlowTemplateDef = {
       nodeId: 'notify',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the shortlist to',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {

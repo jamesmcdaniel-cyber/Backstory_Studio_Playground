@@ -27,8 +27,8 @@ export const RENEWAL_BRIEF: FlowTemplateDef = {
         data: {
           label: 'Find upcoming renewals',
           connectionId: '',
-          toolName: 'list_renewals',
-          args: '{"withinDays":60}',
+          toolName: 'salesforce_query',
+          args: '{"soql":"SELECT Id, Name, Account.Name, CloseDate, Amount FROM Opportunity WHERE IsClosed = false AND CloseDate = NEXT_N_DAYS:60 ORDER BY CloseDate ASC LIMIT 200"}',
           retries: 2,
           timeoutMs: 30000,
           note: 'Reads renewals due in the next 60 days from your CRM. Retried twice — a transient CRM blip should not skip a day.',
@@ -40,7 +40,7 @@ export const RENEWAL_BRIEF: FlowTemplateDef = {
         data: {
           op: 'getItem',
           label: 'Take the nearest one',
-          input: '{{step.fetch.output}}',
+          input: '{{step.fetch.output.records}}',
           index: '0',
           note: 'One brief a day, for whichever renewal is closest. Turn this into a per-item step if you would rather brief all of them at once.',
         },
@@ -161,7 +161,7 @@ export const RENEWAL_BRIEF: FlowTemplateDef = {
       nodeId: 'fetch',
       kind: 'connection',
       label: 'Pick the CRM to read renewals from',
-      match: { provider: 'salesforce', toolName: 'list_renewals' },
+      match: { provider: 'salesforce', toolName: 'salesforce_query' },
     },
     {
       nodeId: 'brief-critical',
@@ -204,8 +204,6 @@ export const RENEWAL_BRIEF: FlowTemplateDef = {
       'The CRM read retries twice before failing the run. The agent path retries once. The approval step has no timer — the run stays waiting until someone answers, so use the runs list to spot briefs nobody picked up.',
     setup: [
       { label: 'Connect the CRM you track renewals in', kind: 'integration', ref: 'salesforce' },
-      { label: 'Deploy the Renewal Prep Brief agent template, or pick your own, on the full workup step', kind: 'agent', ref: 'brief-critical' },
-      { label: 'Confirm the read action name matches your CRM', kind: 'value', ref: 'fetch' },
     ],
     customize: [
       'Move the 15 and 30 day thresholds to match your renewal motion.',

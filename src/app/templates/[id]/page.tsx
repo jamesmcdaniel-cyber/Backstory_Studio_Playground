@@ -29,6 +29,17 @@ type Template = {
   exampleOutput?: string
   icon?: string
   allowSubagents?: boolean
+  allowFlows?: boolean
+  alwaysStrategize?: boolean
+  requireApproval?: boolean
+  schedule?: {
+    type: 'manual' | 'hourly' | 'daily' | 'weekly' | 'cron' | 'once'
+    time?: string
+    cron?: string
+    timezone?: string
+    runAt?: string
+    isActive?: boolean
+  }
   // Set on templates that provision a complete multi-step Flow (agents + graph).
   playbook?: string
 }

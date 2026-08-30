@@ -10,9 +10,9 @@ const context: BindingContext = {
     { id: 'agent_2', name: 'Account Risk Scorer' },
   ],
   connections: [
-    { id: 'nango:slack', name: 'Slack', tools: [{ name: 'send_message' }, { name: 'list_channels' }] },
-    { id: 'nango:salesforce', name: 'Salesforce', tools: [{ name: 'list_renewals' }] },
-    { id: 'cmcp123', name: 'Acme Internal MCP', tools: [{ name: 'send_message' }] },
+    { id: 'native:slack', name: 'Slack', tools: [{ name: 'post_message' }, { name: 'list_channels' }] },
+    { id: 'nango:salesforce', name: 'Salesforce', tools: [{ name: 'salesforce_query' }] },
+    { id: 'cmcp123', name: 'Acme Internal MCP', tools: [{ name: 'post_message' }] },
   ],
 }
 
@@ -38,14 +38,14 @@ test('an agent binding with no plausible match resolves to null', () => {
 })
 
 test('a provider hint matches with or without its plane prefix', () => {
-  assert.equal(resolveBindings([binding({ match: { provider: 'nango:slack' } })], context)[0].resolvedId, 'nango:slack')
-  assert.equal(resolveBindings([binding({ match: { provider: 'slack' } })], context)[0].resolvedId, 'nango:slack')
+  assert.equal(resolveBindings([binding({ match: { provider: 'native:slack' } })], context)[0].resolvedId, 'native:slack')
+  assert.equal(resolveBindings([binding({ match: { provider: 'slack' } })], context)[0].resolvedId, 'native:slack')
 })
 
 test('a tool hint narrows to a connection that actually exposes it', () => {
-  // Salesforce is named in the hint but has no send_message — so the match must
+  // Salesforce is named in the hint but has no post_message — so the match must
   // not fall through to it just because the name lines up.
-  const resolved = resolveBindings([binding({ match: { provider: 'salesforce', toolName: 'send_message' } })], context)
+  const resolved = resolveBindings([binding({ match: { provider: 'salesforce', toolName: 'post_message' } })], context)
   assert.notEqual(resolved[0].resolvedId, 'nango:salesforce')
 })
 
@@ -57,7 +57,7 @@ const graph = (): FlowGraph => ({
   nodes: [
     { id: 'trigger', type: 'trigger', data: { trigger: { type: 'manual' } } },
     { id: 'ask', type: 'agent', data: { agentId: '', label: 'Ask the scorer' } },
-    { id: 'post', type: 'tool', data: { connectionId: '', toolName: 'send_message', label: 'Post it' } },
+    { id: 'post', type: 'tool', data: { connectionId: '', toolName: 'post_message', label: 'Post it' } },
   ],
   edges: [
     { id: 'e0', source: 'trigger', target: 'ask' },
@@ -68,13 +68,13 @@ const graph = (): FlowGraph => ({
 test('resolved bindings are written into their nodes', () => {
   const bindings: FlowTemplateBinding[] = [
     binding({ nodeId: 'ask', kind: 'agent', match: { agentName: 'Account Risk Scorer' } }),
-    binding({ nodeId: 'post', kind: 'connection', match: { provider: 'slack', toolName: 'send_message' } }),
+    binding({ nodeId: 'post', kind: 'connection', match: { provider: 'slack', toolName: 'post_message' } }),
   ]
   const applied = applyBindings(graph(), resolveBindings(bindings, context))
   const agentNode = applied.nodes.find((node) => node.id === 'ask')
   const toolNode = applied.nodes.find((node) => node.id === 'post')
   assert.equal(agentNode?.type === 'agent' && agentNode.data.agentId, 'agent_2')
-  assert.equal(toolNode?.type === 'tool' && toolNode.data.connectionId, 'nango:slack')
+  assert.equal(toolNode?.type === 'tool' && toolNode.data.connectionId, 'native:slack')
 })
 
 test('an unresolved binding leaves its slot empty rather than guessing', () => {
@@ -92,7 +92,7 @@ test('a polling trigger binding writes into the trigger config', () => {
   const bindings = [binding({ nodeId: 'trigger', match: { provider: 'slack' } })]
   const applied = applyBindings(pollGraph, resolveBindings(bindings, context))
   const trigger = applied.nodes[0]
-  assert.equal(trigger.type === 'trigger' && (trigger.data.trigger as Record<string, unknown>).connectionId, 'nango:slack')
+  assert.equal(trigger.type === 'trigger' && (trigger.data.trigger as Record<string, unknown>).connectionId, 'native:slack')
   assert.equal(trigger.type === 'trigger' && (trigger.data.trigger as Record<string, unknown>).toolName, 'list_channels')
 })
 

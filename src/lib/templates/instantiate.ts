@@ -4,6 +4,7 @@ import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
 import { summarizeConnectedIntegrations } from '@/lib/integrations/integration-count'
 import { anchorSchedule } from '@/lib/scheduling/due'
+import type { AgentSchedule } from '@/lib/scheduling/due'
 
 /**
  * Turning an accepted recommendation into a LIVE, ready-to-run artifact — the
@@ -29,6 +30,27 @@ const ACTIVE_SCHEDULE_TYPES = new Set(['hourly', 'daily', 'weekly', 'cron'])
 export function scheduleFromCadence(cadence: unknown): { type: string; timezone: string; isActive: boolean } {
   const type = typeof cadence === 'string' && ACTIVE_SCHEDULE_TYPES.has(cadence) ? cadence : 'manual'
   return { type, timezone: 'UTC', isActive: type !== 'manual' }
+}
+
+function scheduleFromTemplate(value: unknown): Omit<AgentSchedule, 'anchor'> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    const cadence = scheduleFromCadence(value)
+    return { ...cadence, type: cadence.type as AgentSchedule['type'], time: '', cron: '' }
+  }
+  const schedule = value as Record<string, unknown>
+  const type = ['manual', 'hourly', 'daily', 'weekly', 'cron', 'once'].includes(String(schedule.type))
+    ? String(schedule.type) as AgentSchedule['type']
+    : 'manual'
+  return {
+    type,
+    time: typeof schedule.time === 'string' ? schedule.time : '',
+    cron: typeof schedule.cron === 'string' ? schedule.cron : '',
+    timezone: typeof schedule.timezone === 'string' && schedule.timezone ? schedule.timezone : 'UTC',
+    ...(typeof schedule.runAt === 'string' ? { runAt: schedule.runAt } : {}),
+    // Template imports are always inert until a person explicitly activates
+    // them, even when the template advertises a recurring cadence.
+    isActive: false,
+  }
 }
 
 /** Referenced integrations that the org/user has NOT connected yet (lowercased match). */
@@ -70,7 +92,7 @@ export async function provisionAgentFromConfig(
       description: str(config.description, title),
       objective: str(config.instructions, title),
       context: {},
-      schedule: anchorSchedule(scheduleFromCadence(config.schedule)),
+      schedule: anchorSchedule(scheduleFromTemplate(config.schedule)),
       status: 'ACTIVE',
       visibility: 'shared',
       organizationId,
@@ -82,6 +104,10 @@ export async function provisionAgentFromConfig(
         integrations,
         skills: [],
         icon: str(config.icon),
+        allowSubagents: config.allowSubagents === true,
+        allowFlows: config.allowFlows === true,
+        alwaysStrategize: config.alwaysStrategize === true,
+        requireApproval: config.requireApproval === true,
         ...(templateId ? { templateId } : {}),
       },
     },

@@ -1,6 +1,8 @@
 import type { AgentTemplate } from '@prisma/client'
+import { z } from 'zod'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { enhanceAutomationInstructions } from '@/lib/templates/automation-assets'
+import { apiLogger } from '@/lib/logger'
 
 /** The subset of an AgentTemplate row the serializer reads (row from DB or a test fixture). */
 export type AgentTemplateRow = Pick<AgentTemplate, 'id' | 'name' | 'type' | 'organizationId'> & {
@@ -23,6 +25,17 @@ export interface SerializedTemplate {
   exampleOutput: string
   icon: string
   allowSubagents: boolean
+  allowFlows: boolean
+  alwaysStrategize: boolean
+  requireApproval: boolean
+  schedule?: {
+    type: 'manual' | 'hourly' | 'daily' | 'weekly' | 'cron' | 'once'
+    time?: string
+    cron?: string
+    timezone?: string
+    runAt?: string
+    isActive?: boolean
+  }
   custom: boolean
   authorName: string
   source: string
@@ -30,26 +43,55 @@ export interface SerializedTemplate {
   mine: boolean
 }
 
+const storedAgentTemplateConfigSchema = z.object({
+  instructions: z.string().min(1),
+  integrations: z.array(z.string()).default([]),
+  skills: z.array(z.string()).default([]),
+  tags: z.array(z.string()).default([]),
+  model: z.string().min(1).default('gpt-4o'),
+  exampleOutput: z.string().default(''),
+  icon: z.string().default(''),
+  allowSubagents: z.boolean().default(false),
+  allowFlows: z.boolean().default(false),
+  alwaysStrategize: z.boolean().default(false),
+  requireApproval: z.boolean().default(false),
+  schedule: z.object({
+    type: z.enum(['manual', 'hourly', 'daily', 'weekly', 'cron', 'once']),
+    time: z.string().optional(),
+    cron: z.string().optional(),
+    timezone: z.string().optional(),
+    runAt: z.string().optional(),
+    isActive: z.boolean().optional(),
+  }).optional(),
+  authorName: z.string().default(''),
+})
+
 /** Serialize a stored template row for the API. `mine` gates edit/delete in the UI. */
 export function serializeTemplate(template: AgentTemplateRow, viewerOrgId?: string): SerializedTemplate {
-  const config = template.configuration && typeof template.configuration === 'object' ? (template.configuration as Record<string, unknown>) : {}
+  const config = storedAgentTemplateConfigSchema.parse(template.configuration)
   return {
     id: template.id,
     name: template.name,
     description: (template.description as string) || '',
     category: template.type,
     instructions: (template.source ?? 'user') === 'ai_generated'
-      ? enhanceAutomationInstructions((config.instructions as string) || (template.description as string) || '')
-      : (config.instructions as string) || (template.description as string) || '',
-    integrations: (config.integrations as string[]) || [],
-    skills: (config.skills as string[]) || [],
-    tags: (config.tags as string[]) || [],
-    model: (config.model as string) || 'gpt-4o',
-    exampleOutput: (config.exampleOutput as string) || '',
-    icon: (config.icon as string) || '',
+      ? enhanceAutomationInstructions(config.instructions)
+      : config.instructions,
+    integrations: config.integrations,
+    skills: config.skills,
+    tags: config.tags,
+    model: config.model,
+    exampleOutput: config.exampleOutput,
+    icon: config.icon,
     allowSubagents: config.allowSubagents === true,
+    allowFlows: config.allowFlows === true,
+    alwaysStrategize: config.alwaysStrategize === true,
+    requireApproval: config.requireApproval === true,
+    ...(config.schedule && typeof config.schedule === 'object' && !Array.isArray(config.schedule)
+      ? { schedule: config.schedule as SerializedTemplate['schedule'] }
+      : {}),
     custom: true,
-    authorName: (config.authorName as string) || '',
+    authorName: config.authorName,
     source: template.source ?? 'user',
     visibility: template.visibility ?? 'org',
     // Only the creating org may edit/delete a template.
@@ -101,5 +143,16 @@ export async function fetchCatalogueRows(organizationId: string): Promise<{ own:
 /** Own + global community templates, ranked own-first, serialized. */
 export async function listStoredCatalogue(organizationId: string): Promise<SerializedTemplate[]> {
   const { own, global } = await fetchCatalogueRows(organizationId)
-  return sortStoredTemplates([...own, ...global], organizationId).map((row) => serializeTemplate(row, organizationId))
+  return sortStoredTemplates([...own, ...global], organizationId).flatMap((row) => {
+    try {
+      return [serializeTemplate(row, organizationId)]
+    } catch (error) {
+      apiLogger.error('agent-template catalogue: quarantining malformed row', {
+        organizationId,
+        templateId: row.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return []
+    }
+  })
 }

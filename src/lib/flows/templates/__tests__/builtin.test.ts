@@ -4,7 +4,11 @@ import { flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
 import { BUILTIN_CONNECTORS } from '@/lib/connectors/registry'
-import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
+import { NANGO_PROVIDERS, NANGO_PROVIDER_TOOLS } from '@/lib/nango/provider-tools'
+import { DELIVERY_TOOLS } from '@/lib/nango/delivery'
+import { slackTools } from '@/lib/integrations/slack'
+import { emailTools } from '@/lib/integrations/email'
+import { httpTools } from '@/lib/integrations/http'
 import { flowTemplateNotesIssues, flowTemplateNotesSchema, flowTemplateBindingSchema } from '@/lib/flows/templates/types'
 
 /**
@@ -144,6 +148,93 @@ test('a template that calls a connection or an agent declares what it needs', ()
       )
     }
   }
+})
+
+const BACKSTORY_TEMPLATE_TOOLS = new Set([
+  'top_records',
+  'find_account',
+  'get_account_status',
+  'ask_sales_ai_about_account',
+])
+
+test('every connection binding names a tool the selected runtime plane actually exposes', () => {
+  const native = new Map([
+    ['slack', new Set(slackTools().map((tool) => tool.name))],
+    ['email', new Set(emailTools().map((tool) => tool.name))],
+    ['http api', new Set(httpTools().map((tool) => tool.name))],
+  ])
+  for (const template of BUILTIN_FLOW_TEMPLATES) {
+    for (const binding of template.bindings) {
+      if (binding.kind !== 'connection') continue
+      const provider = binding.match.provider?.trim().toLowerCase().replace(/^nango:/, '') ?? ''
+      const toolName = binding.match.toolName?.trim() ?? ''
+      assert.ok(toolName, `${template.id}: ${binding.nodeId} has no tool name in its binding`)
+      const available = new Set([
+        ...(native.get(provider) ?? []),
+        ...NANGO_PROVIDER_TOOLS.filter((tool) => tool.provider === provider).map((tool) => tool.name),
+        ...DELIVERY_TOOLS.filter((tool) => tool.capability === provider).map((tool) => tool.name),
+        ...(provider === 'backstory' ? BACKSTORY_TEMPLATE_TOOLS : []),
+      ])
+      assert.ok(
+        available.has(toolName),
+        `${template.id}: ${binding.nodeId} binds ${binding.match.provider}.${toolName}, but that runtime plane does not expose it`,
+      )
+    }
+  }
+})
+
+test('workspace-specific required values are declared as blocking setup, never hidden gaps', () => {
+  const requiredByTool = new Map<string, string[]>()
+  for (const tool of [...NANGO_PROVIDER_TOOLS, ...DELIVERY_TOOLS, ...slackTools(), ...emailTools(), ...httpTools()]) {
+    const schema = tool.inputSchema as { required?: unknown }
+    if (Array.isArray(schema.required)) requiredByTool.set(tool.name, schema.required.filter((entry): entry is string => typeof entry === 'string'))
+  }
+  for (const template of BUILTIN_FLOW_TEMPLATES) {
+    const declared = new Set(template.notes.setup.filter((step) => step.kind === 'value').map((step) => step.ref))
+    for (const node of template.graph.nodes) {
+      if (node.type !== 'tool') continue
+      const required = requiredByTool.get(node.data.toolName) ?? []
+      const args = JSON.parse(node.data.args || '{}') as Record<string, unknown>
+      const missing = required.filter((name) => args[name] === '' || args[name] == null)
+      if (missing.length) {
+        assert.ok(
+          declared.has(node.id),
+          `${template.id}: ${node.id} is missing ${missing.join(', ')} with no value-setup item`,
+        )
+      }
+    }
+  }
+})
+
+test('built-ins use credential-aware tools rather than unauthenticated raw HTTP nodes', () => {
+  for (const template of BUILTIN_FLOW_TEMPLATES) {
+    assert.deepEqual(
+      template.graph.nodes.filter((node) => node.type === 'http').map((node) => node.id),
+      [],
+      `${template.id}: raw HTTP cannot be one-click credential-bound; use the HTTP API tool plane`,
+    )
+  }
+})
+
+test('flagship details are backed by their executable graph', () => {
+  const byId = new Map(BUILTIN_FLOW_TEMPLATES.map((template) => [template.id, template]))
+
+  const renewal = byId.get('renewal-brief')!
+  const renewalRead = renewal.graph.nodes.find((node) => node.id === 'fetch')
+  assert.equal(renewalRead?.type === 'tool' && renewalRead.data.toolName, 'salesforce_query')
+  assert.match(renewalRead?.type === 'tool' ? (renewalRead.data.args ?? '') : '', /NEXT_N_DAYS:60/)
+
+  const churn = byId.get('churn-risk-scorecard')!
+  const rank = churn.graph.nodes.find((node) => node.id === 'rank')
+  assert.match(rank?.type === 'code' ? rank.data.code : '', /account: row\.account/, 'ranked churn rows must keep the account identity')
+
+  const accountPlan = byId.get('account-plan')!
+  const found = accountPlan.graph.nodes.find((node) => node.id === 'found')
+  assert.equal(found?.type, 'condition', 'an unresolved account must be guarded before enrichment')
+  assert.ok(accountPlan.graph.edges.some((edge) => edge.source === 'found' && edge.branch === 'false' && edge.target === 'not-found'))
+
+  const sync = byId.get('nightly-sync')!
+  assert.equal(sync.description.includes('publish downstream'), false, 'the details must not promise a downstream write the graph does not execute')
 })
 
 /**

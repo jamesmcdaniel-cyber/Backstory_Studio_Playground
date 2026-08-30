@@ -19,7 +19,13 @@ const row = (overrides: Partial<FlowTemplate> = {}): FlowTemplate =>
       edges: [{ id: 'e0', source: 'trigger', target: 'ask' }],
     },
     trigger: { type: 'manual' },
-    notes: { objective: 'o', inputs: [], steps: [], setup: [], customize: [] },
+    notes: {
+      objective: 'o',
+      inputs: [],
+      steps: [{ nodeId: 'ask', title: 'Ask', what: 'Asks the model.' }],
+      setup: [],
+      customize: [],
+    },
     bindings: [],
     configuration: { integrations: ['Slack'], tags: ['nightly'], icon: '🌙', exampleOutput: '', authorName: 'Ada' },
     isActive: true,
@@ -50,12 +56,8 @@ test('another org viewing a community row cannot edit it', () => {
   assert.equal(serializeFlowTemplate(row({ visibility: 'global' }), 'org_2').mine, false)
 })
 
-test('a malformed stored blob degrades instead of throwing', () => {
-  // A row written by an older version, or hand-edited — the gallery must still render.
-  const broken = serializeFlowTemplate(row({ graph: { nodes: 'nope' }, notes: 42, bindings: 'no' } as never))
-  assert.equal(broken.stepCount, 0)
-  assert.equal(broken.notes.objective, '')
-  assert.deepEqual(broken.bindings, [])
+test('a malformed stored blob is rejected so callers can quarantine it', () => {
+  assert.throws(() => serializeFlowTemplate(row({ graph: { nodes: 'nope' }, notes: 42, bindings: 'no' } as never)))
 })
 
 test('ranking puts the org\'s suggested templates first, then its own, then the community', () => {

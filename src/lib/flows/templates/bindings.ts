@@ -133,6 +133,22 @@ export function buildSetupChecklist(
     })
   }
   for (const step of notes?.setup ?? []) {
+    // Integration checklist entries describe prerequisites, not permanent
+    // chores. Once the provider is connected, do not keep telling the user to
+    // connect it. Likewise, a declared agent slot disappears after its binding
+    // resolved (including dependencies provisioned during import).
+    if (step.kind === 'integration' && step.ref) {
+      const wanted = norm(step.ref).replace(/^nango:/, '').replace(/^native:/, '')
+      const missing = missingIntegrations.some((provider) => {
+        const candidate = norm(provider).replace(/^nango:/, '').replace(/^native:/, '')
+        return candidate === wanted
+      })
+      if (!missing) continue
+    }
+    if (step.kind === 'agent' && step.ref) {
+      const binding = resolutions.find((entry) => entry.binding.nodeId === step.ref && entry.binding.kind === 'agent')
+      if (binding?.resolvedId) continue
+    }
     items.push({ kind: step.kind, label: step.label, ...(step.kind === 'integration' && step.ref ? { provider: step.ref } : {}) })
   }
   for (const provider of missingIntegrations) {

@@ -258,6 +258,12 @@ if (TEST_DB) {
     // Incident regressions: these 500'd under the tenant guard before the sweep.
     { name: 'GET /api/agents/[id]/chat/sessions', run: async () => (await import('../agents/[id]/chat/sessions/route')).GET(req(`/api/agents/${agentId}/chat/sessions`)) },
     { name: 'GET /api/agents/[id]/chat', run: async () => (await import('../agents/[id]/chat/route')).GET(req(`/api/agents/${agentId}/chat`)) },
+    // The help assistant's conversations, the two GETs beside the DELETEs in
+    // mutating-route-smoke. The [id] case asks for a thread nobody owns on
+    // purpose: that path returns an empty thread rather than a 404, so a
+    // seeded id would exercise the half that was never in doubt.
+    { name: 'GET /api/librarian/sessions', run: async () => (await import('../librarian/sessions/route')).GET(req('/api/librarian/sessions')) },
+    { name: 'GET /api/librarian/sessions/[id]', run: async () => (await import('../librarian/sessions/[id]/route')).GET(req('/api/librarian/sessions/missing')) },
     { name: 'GET /api/api-keys', run: async () => (await import('../api-keys/route')).GET(req('/api/api-keys')) },
     { name: 'GET /api/flows/[id]/export', run: async () => (await import('../flows/[id]/export/route')).GET(req(`/api/flows/${flowId}/export`)) },
     { name: 'GET /api/organizations/scim-tokens', run: async () => (await import('../organizations/scim-tokens/route')).GET(req('/api/organizations/scim-tokens')) },

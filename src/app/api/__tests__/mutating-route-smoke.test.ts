@@ -123,6 +123,12 @@ const cases = (): Case[] => [
   { route: 'agents/[id]/knowledge', method: 'DELETE', run: async () => (await import('../agents/[id]/knowledge/route')).DELETE(rq(`/api/agents/${agentId}/knowledge`, 'DELETE', { documentId: 'missing' })) },
   { route: 'agents/[id]/chat', method: 'PATCH', run: async () => (await import('../agents/[id]/chat/route')).PATCH(rq(`/api/agents/${agentId}/chat`, 'PATCH', { sessionId: 'missing', title: 'x' })) },
   { route: 'agents/[id]/runs/[runId]', method: 'DELETE', run: async () => (await import('../agents/[id]/runs/[runId]/route')).DELETE(rq(`/api/agents/${agentId}/runs/${executionId}`, 'DELETE', {})) },
+  // The help assistant's own conversations. Unlike POST /api/librarian these
+  // need no model, and an id nobody owns is the case worth running: it has to
+  // come back as an ordinary empty delete rather than as a 404 that would tell
+  // a stranger the thread is real.
+  { route: 'librarian/sessions', method: 'DELETE', run: async () => (await import('../librarian/sessions/route')).DELETE(rq('/api/librarian/sessions', 'DELETE')) },
+  { route: 'librarian/sessions/[id]', method: 'DELETE', run: async () => (await import('../librarian/sessions/[id]/route')).DELETE(rq('/api/librarian/sessions/missing', 'DELETE')) },
   { route: 'slack/my-identity', method: 'POST', run: async () => (await import('../slack/my-identity/route')).POST(rq('/api/slack/my-identity', 'POST', {})) },
   { route: 'slack/channel-bindings', method: 'PUT', run: async () => (await import('../slack/channel-bindings/route')).PUT(rq('/api/slack/channel-bindings', 'PUT', { channelId: 'C_SMOKE', agentTaskId: agentId })) },
   { route: 'slack/channel-bindings', method: 'DELETE', run: async () => (await import('../slack/channel-bindings/route')).DELETE(rq('/api/slack/channel-bindings', 'DELETE', { channelId: 'C_SMOKE' })) },

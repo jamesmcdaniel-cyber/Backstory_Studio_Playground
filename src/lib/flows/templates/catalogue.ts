@@ -1,15 +1,15 @@
 import type { FlowTemplate } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
-import { flowGraphSchema, emptyGraph, stepCountOf, type FlowGraph } from '@/lib/flows/graph'
+import { flowGraphSchema, stepCountOf } from '@/lib/flows/graph'
 import { triggerFromGraph } from '@/lib/flows/trigger'
+import { validateFlowGraph } from '@/lib/flows/validate'
 import { BUILTIN_FLOW_TEMPLATES } from '@/lib/flows/templates/builtin'
 import {
   flowTemplateBindingSchema,
+  flowTemplateNotesIssues,
   flowTemplateNotesSchema,
-  type FlowTemplateBinding,
   type FlowTemplateDef,
-  type FlowTemplateNotes,
   type SerializedFlowTemplate,
 } from '@/lib/flows/templates/types'
 
@@ -20,8 +20,6 @@ import {
  * identically — the only cross-org read is the public global slice.
  */
 
-const EMPTY_NOTES: FlowTemplateNotes = { objective: '', inputs: [], steps: [], setup: [], customize: [] }
-
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
@@ -29,26 +27,23 @@ function asObject(value: unknown): Record<string, unknown> {
 /** Count the steps a card shows — re-exported so existing importers are unchanged. */
 export { stepCountOf } from '@/lib/flows/graph'
 
-/** Tolerant parse: a malformed stored blob degrades to empty rather than 500ing the gallery. */
-function safeNotes(value: unknown): FlowTemplateNotes {
-  const parsed = flowTemplateNotesSchema.safeParse(value)
-  return parsed.success ? parsed.data : EMPTY_NOTES
-}
-
-function safeBindings(value: unknown): FlowTemplateBinding[] {
-  const parsed = flowTemplateBindingSchema.array().safeParse(value)
-  return parsed.success ? parsed.data : []
-}
-
-function safeGraph(value: unknown): FlowGraph {
-  const parsed = flowGraphSchema.safeParse(value)
-  return parsed.success ? parsed.data : emptyGraph()
-}
-
-/** Serialize a stored row for the API. `mine` gates edit/delete in the UI. */
+/**
+ * Serialize a stored row for the API. Invalid executable blobs throw: callers
+ * quarantine the row instead of advertising an empty, "importable" flow that
+ * can never do what its Details page promises.
+ */
 export function serializeFlowTemplate(row: FlowTemplate, viewerOrgId?: string): SerializedFlowTemplate {
   const config = asObject(row.configuration)
-  const graph = safeGraph(row.graph)
+  const graph = flowGraphSchema.parse(row.graph)
+  const notes = flowTemplateNotesSchema.parse(row.notes)
+  const bindings = flowTemplateBindingSchema.array().parse(row.bindings)
+  const notesIssues = flowTemplateNotesIssues(graph, notes, bindings)
+  if (notesIssues.length) throw new Error(notesIssues.join(' | '))
+  const boundNodes = new Set(bindings.map((binding) => binding.nodeId))
+  const graphErrors = validateFlowGraph(graph, { requireRunnable: true }).errors.filter(
+    (error) => !error.nodeId || !boundNodes.has(error.nodeId),
+  )
+  if (graphErrors.length) throw new Error(graphErrors.map((error) => error.message).join(' | '))
   return {
     id: row.id,
     name: row.name,
@@ -56,8 +51,8 @@ export function serializeFlowTemplate(row: FlowTemplate, viewerOrgId?: string): 
     category: row.category,
     graph,
     trigger: row.trigger ?? triggerFromGraph(graph),
-    notes: safeNotes(row.notes),
-    bindings: safeBindings(row.bindings),
+    notes,
+    bindings,
     integrations: Array.isArray(config.integrations) ? (config.integrations as string[]) : [],
     tags: Array.isArray(config.tags) ? (config.tags as string[]) : [],
     icon: typeof config.icon === 'string' ? config.icon : '',
@@ -150,9 +145,18 @@ export async function listFlowTemplateCatalogue(organizationId: string): Promise
   const builtins = BUILTIN_FLOW_TEMPLATES.map(serializeBuiltinFlowTemplate)
   try {
     const { own, global } = await fetchFlowTemplateRows(organizationId)
-    const stored = sortStoredFlowTemplates([...own, ...global], organizationId).map((row) =>
-      serializeFlowTemplate(row, organizationId),
-    )
+    const stored = sortStoredFlowTemplates([...own, ...global], organizationId).flatMap((row) => {
+      try {
+        return [serializeFlowTemplate(row, organizationId)]
+      } catch (error) {
+        apiLogger.error('flow-template catalogue: quarantining malformed row', {
+          organizationId,
+          templateId: row.id,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return []
+      }
+    })
     return [...stored, ...builtins]
   } catch (error) {
     apiLogger.error('flow-template catalogue: stored rows unavailable, serving built-ins only', {
@@ -175,5 +179,15 @@ export async function findFlowTemplate(id: string, organizationId: string): Prom
   const row = await systemPrisma.flowTemplate.findFirst({
     where: { id, isActive: true, OR: [{ organizationId }, { visibility: 'global' }] },
   })
-  return row ? serializeFlowTemplate(row, organizationId) : null
+  if (!row) return null
+  try {
+    return serializeFlowTemplate(row, organizationId)
+  } catch (error) {
+    apiLogger.error('flow-template catalogue: refusing malformed row', {
+      organizationId,
+      templateId: row.id,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return null
+  }
 }

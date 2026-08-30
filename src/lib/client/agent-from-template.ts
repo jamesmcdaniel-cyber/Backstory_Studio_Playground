@@ -12,6 +12,17 @@ export type AgentTemplateSource = {
   model: string
   icon?: string
   allowSubagents?: boolean
+  allowFlows?: boolean
+  alwaysStrategize?: boolean
+  requireApproval?: boolean
+  schedule?: {
+    type: 'manual' | 'hourly' | 'daily' | 'weekly' | 'cron' | 'once'
+    time?: string
+    cron?: string
+    timezone?: string
+    runAt?: string
+    isActive?: boolean
+  }
 }
 
 /**
@@ -76,11 +87,17 @@ export async function createAgentFromTemplate(
       integrations: template.integrations,
       skills: template.skills || [],
       model: template.model,
+      icon: template.icon,
       allowSubagents: template.allowSubagents === true,
+      allowFlows: template.allowFlows === true,
+      alwaysStrategize: template.alwaysStrategize === true,
+      requireApproval: template.requireApproval === true,
       ...(teammateId ? { teammateId } : {}),
       // Manual by default: connecting a template must never silently start a
       // recurring job on the user's behalf.
-      schedule: { type: 'manual', timezone: 'UTC', isActive: false },
+      schedule: template.schedule
+        ? { ...template.schedule, timezone: template.schedule.timezone || 'UTC', isActive: false }
+        : { type: 'manual', timezone: 'UTC', isActive: false },
     }),
   })
   const data = (await response.json().catch(() => ({}))) as { agent?: { id?: unknown }; error?: string }

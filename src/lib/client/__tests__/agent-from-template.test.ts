@@ -72,11 +72,29 @@ test('the new agent carries the template’s instructions and tools', async () =
   assert.deepEqual(body.integrations, TEMPLATE.integrations)
   assert.deepEqual(body.skills, TEMPLATE.skills)
   assert.equal(body.model, TEMPLATE.model)
-  // Agents are shown as avatars now, so no emoji is sent — asserting its
-  // ABSENCE keeps the dead field from quietly coming back.
-  assert.equal(body.icon, undefined)
+  assert.equal(body.icon, TEMPLATE.icon)
   assert.equal(body.allowSubagents, true)
   assert.equal(body.schedule.type, 'manual', 'a template-built agent starts manual, never on a live cadence')
+})
+
+test('suggested cadence and runtime capability flags survive import but remain inactive', async () => {
+  stubFetch({ status: 200, body: { success: true, agent: { id: 'agent_42' } } })
+
+  await createAgentFromTemplate({
+    ...TEMPLATE,
+    allowFlows: true,
+    alwaysStrategize: true,
+    requireApproval: true,
+    schedule: { type: 'cron', cron: '0 6 * * 1-5', timezone: 'America/Denver', isActive: true },
+  })
+
+  const post = calls.find((call) => call.url.startsWith('/api/agents') && call.init?.method === 'POST')
+  assert.ok(post)
+  const body = JSON.parse(String(post.init?.body))
+  assert.deepEqual(body.schedule, { type: 'cron', cron: '0 6 * * 1-5', timezone: 'America/Denver', isActive: false })
+  assert.equal(body.allowFlows, true)
+  assert.equal(body.alwaysStrategize, true)
+  assert.equal(body.requireApproval, true)
 })
 
 test('the shared snapshot is refreshed before the caller navigates', async () => {

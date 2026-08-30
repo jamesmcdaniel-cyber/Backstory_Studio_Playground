@@ -84,6 +84,8 @@ export const EXCLUDED: Record<string, string> = {
   SlackIdentity: 'binds a REAL person to a real Slack account; a sandbox must never be able to act as either, and demo transports do not reach Slack at all',
   SlackChannelBinding: 'points at real Slack channels in the real workspace; meaningless in a sandbox whose Slack transport is canned',
   SlackCommandBinding: 'binds a real Slack workspace\u2019s slash command; a sandbox has no Slack app to invoke it from',
+  LibrarianChatSession: 'a person\u2019s own help thread rather than workspace scenery, and the one text the assistant deliberately leaves un-redacted is the question the user typed \u2014 cloning it would carry a rep\u2019s own words into a sandbox that gains nothing from them',
+  LibrarianChatMessage: 'the turns of an excluded thread, each one citing pages and agents of the REAL workspace, so a copy would render as answers about somewhere the demo org is not',
 }
 
 const BOUND = 25

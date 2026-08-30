@@ -55,7 +55,7 @@ export const GITHUB_STANDUP_DIGEST: FlowTemplateDef = {
         data: {
           label: 'Post to the engineering channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#engineering","text":"{{step.digest.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -90,7 +90,7 @@ export const GITHUB_STANDUP_DIGEST: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the digest to',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {
@@ -200,7 +200,7 @@ export const GITHUB_STALE_PR_NUDGE: FlowTemplateDef = {
         data: {
           label: 'Post the nudge',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#engineering","text":"{{step.nudge.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -247,7 +247,7 @@ export const GITHUB_STALE_PR_NUDGE: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the nudge in',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {
@@ -357,7 +357,7 @@ export const BUG_INTAKE_TO_LINEAR: FlowTemplateDef = {
         data: {
           label: 'Page the team channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#eng-urgent","text":"Critical bug filed: {{trigger.input.title}} — {{step.extract.output.summary}}"}',
           retries: 2,
           onError: 'continue',
@@ -406,7 +406,7 @@ export const BUG_INTAKE_TO_LINEAR: FlowTemplateDef = {
       nodeId: 'page',
       kind: 'connection',
       label: 'Pick the Slack workspace to page for critical bugs',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {
@@ -496,7 +496,7 @@ export const FIGMA_REVIEW_DIGEST: FlowTemplateDef = {
         data: {
           label: 'Post to the design channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#design","text":"{{step.digest.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -531,7 +531,7 @@ export const FIGMA_REVIEW_DIGEST: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the digest to',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {

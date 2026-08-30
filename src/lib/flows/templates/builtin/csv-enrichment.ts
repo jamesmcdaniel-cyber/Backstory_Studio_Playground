@@ -12,7 +12,7 @@ export const CSV_ENRICHMENT: FlowTemplateDef = {
     'Upload a CSV, look every row up against an API, merge what comes back into the original rows, and get an enriched CSV out — with rows that failed lookup marked rather than dropped.',
   category: 'Data Operations',
   icon: '📊',
-  integrations: [],
+  integrations: ['HTTP API'],
   tags: ['files', 'per-item', 'enrichment'],
   graph: {
     nodes: [
@@ -52,16 +52,12 @@ export const CSV_ENRICHMENT: FlowTemplateDef = {
       },
       {
         id: 'lookup',
-        type: 'http',
+        type: 'tool',
         data: {
           label: 'Look each row up',
-          method: 'GET',
-          url: '{{var.lookupApiBase}}/enrich',
-          sendQuery: true,
-          query: '{"key":"{{item.domain}}"}',
-          sendBody: false,
-          bodyMode: 'none',
-          failOnHttpError: true,
+          connectionId: '',
+          toolName: 'request',
+          args: '{"method":"GET","url":"{{var.lookupApiBase}}/enrich?key={{item.domain}}"}',
           retries: 1,
           timeoutMs: 15000,
           perItem: { over: '{{step.rows.output}}', itemError: 'collect', concurrency: 5 },
@@ -83,7 +79,10 @@ export const CSV_ENRICHMENT: FlowTemplateDef = {
             'return rows.map((row, i) => {',
             '  const hit = hits[i]',
             '  if (!hit || hit.error || !hit.body) return { ...row, enriched: false, enrichmentError: hit && hit.error ? String(hit.error) : "no match" }',
-            '  return { ...row, ...hit.body, enriched: true, enrichmentError: "" }',
+            '  let body = hit.body',
+            '  if (typeof body === "string") { try { body = JSON.parse(body) } catch { return { ...row, enriched: false, enrichmentError: "non-JSON response" } } }',
+            '  if (!body || typeof body !== "object" || Array.isArray(body)) return { ...row, enriched: false, enrichmentError: "invalid response" }',
+            '  return { ...row, ...body, enriched: true, enrichmentError: "" }',
             '})',
           ].join('\n'),
           note: 'Positional merge: per-item results come back in input order, so row i pairs with lookup i. Rows that failed are kept and marked rather than silently dropped.',
@@ -140,7 +139,14 @@ export const CSV_ENRICHMENT: FlowTemplateDef = {
       { id: 'e7', source: 'stats', target: 'out' },
     ],
   },
-  bindings: [],
+  bindings: [
+    {
+      nodeId: 'lookup',
+      kind: 'connection',
+      label: 'Use the workspace HTTP API connection',
+      match: { provider: 'HTTP API', toolName: 'request' },
+    },
+  ],
   notes: {
     objective:
       'Take a CSV in, add columns from an API lookup, and get a CSV out where every original row is still present — enriched or explicitly marked as failed. It worked if the row count going in matches the row count coming out.',
@@ -171,11 +177,12 @@ export const CSV_ENRICHMENT: FlowTemplateDef = {
     failureHandling:
       'Each lookup retries once, then its failure is collected in place rather than failing the step. The merge is positional, so it depends on per-item results coming back in input order. Row count in always equals row count out.',
     setup: [
+      { label: 'Connect a saved HTTP credential for the enrichment API host when it requires authentication', kind: 'integration', ref: 'HTTP API' },
       { label: 'Set your enrichment API address on the Set the lookup API address step', kind: 'value', ref: 'api-base' },
       { label: 'Point the lookup at your key column — it reads a column named domain out of the box', kind: 'value', ref: 'lookup' },
     ],
     customize: [
-      'Add authentication to Look each row up if your API needs it.',
+      'Save a host-bound HTTP credential in Integrations when your API needs authentication; the request tool attaches it automatically.',
       'Raise the five-at-a-time concurrency, within whatever your API rate-limits to.',
       'Swap the CSV output for an HTML table if the result is going into an email.',
       'Add a filter before the lookup to skip rows with an empty key.',

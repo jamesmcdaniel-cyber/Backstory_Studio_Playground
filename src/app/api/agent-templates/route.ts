@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { serializeTemplate, listStoredCatalogue } from '@/lib/templates/catalogue'
 import { withOutputContract } from '@/lib/templates/example-reports'
-import { builtInTemplates } from '@/lib/templates/builtin-agents'
+import { BUILTIN_AGENT_SCHEDULES, builtInTemplates } from '@/lib/templates/builtin-agents'
 import { createTemplate } from '@/lib/templates/create-template'
 import { enhanceAutomationInstructions } from '@/lib/templates/automation-assets'
 
@@ -19,6 +19,17 @@ const templateSchema = z.object({
   exampleOutput: z.string().optional(),
   icon: z.string().trim().max(8).optional(),
   allowSubagents: z.boolean().optional(),
+  allowFlows: z.boolean().optional(),
+  alwaysStrategize: z.boolean().optional(),
+  requireApproval: z.boolean().optional(),
+  schedule: z.object({
+    type: z.enum(['manual', 'hourly', 'daily', 'weekly', 'cron', 'once']),
+    time: z.string().optional(),
+    cron: z.string().optional(),
+    timezone: z.string().default('UTC'),
+    runAt: z.string().optional(),
+    isActive: z.boolean().default(false),
+  }).optional(),
 })
 
 
@@ -35,6 +46,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     // the domain instructions it constrains.
     ...builtInTemplates.map((t) => ({
       ...t,
+      ...(BUILTIN_AGENT_SCHEDULES[t.id] ? { schedule: BUILTIN_AGENT_SCHEDULES[t.id] } : {}),
       instructions: enhanceAutomationInstructions(withOutputContract(t.id, t.instructions)),
       custom: false,
       mine: false,
@@ -65,6 +77,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       ...(data.exampleOutput ? { exampleOutput: data.exampleOutput } : {}),
       ...(data.icon ? { icon: data.icon } : {}),
       ...(data.allowSubagents ? { allowSubagents: true } : {}),
+      ...(data.allowFlows ? { allowFlows: true } : {}),
+      ...(data.alwaysStrategize ? { alwaysStrategize: true } : {}),
+      ...(data.requireApproval ? { requireApproval: true } : {}),
+      ...(data.schedule ? { schedule: { ...data.schedule, isActive: false } } : {}),
       authorName: auth.dbUser.name || auth.dbUser.email || '',
     },
   })
@@ -94,6 +110,10 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
         ...(body.exampleOutput !== undefined && { exampleOutput: body.exampleOutput }),
         ...(body.icon !== undefined && { icon: body.icon }),
         ...(body.allowSubagents !== undefined && { allowSubagents: body.allowSubagents }),
+        ...(body.allowFlows !== undefined && { allowFlows: body.allowFlows }),
+        ...(body.alwaysStrategize !== undefined && { alwaysStrategize: body.alwaysStrategize }),
+        ...(body.requireApproval !== undefined && { requireApproval: body.requireApproval }),
+        ...(body.schedule !== undefined && { schedule: { ...body.schedule, isActive: false } }),
       },
       // No visibility passthrough: an update cannot promote a template into
       // the shared catalogue. Only the reviewer publish path writes 'global'.

@@ -2,10 +2,13 @@ import type { Flow } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { readAgentMetadata } from '@/lib/agents/metadata'
-import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
+import { loadFlowToolCatalog, type FlowToolCatalogConnection } from '@/lib/flows/tool-catalog'
 import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
 import { validateFlowGraph } from '@/lib/flows/validate'
-import { missingIntegrations } from '@/lib/templates/instantiate'
+import { missingIntegrations, provisionAgentFromConfig } from '@/lib/templates/instantiate'
+import { BUILTIN_AGENT_SCHEDULES, builtInTemplates } from '@/lib/templates/builtin-agents'
+import { withOutputContract } from '@/lib/templates/example-reports'
+import { enhanceAutomationInstructions } from '@/lib/templates/automation-assets'
 import {
   applyBindings,
   buildSetupChecklist,
@@ -34,7 +37,9 @@ function jsonValue(value: unknown) {
 }
 
 /** The workspace roster + tool catalog the binding matcher runs against. */
-export async function loadBindingContext(organizationId: string, userId: string): Promise<BindingContext> {
+type LoadedBindingContext = BindingContext & { toolCatalog: FlowToolCatalogConnection[] }
+
+export async function loadBindingContext(organizationId: string, userId: string): Promise<LoadedBindingContext> {
   const [agents, connections] = await Promise.all([
     prisma.agentTask.findMany({
       where: { organizationId, status: 'ACTIVE', ...agentVisibilityScope(userId) },
@@ -52,6 +57,45 @@ export async function loadBindingContext(organizationId: string, userId: string)
       name: connection.name,
       tools: connection.tools.map((tool) => ({ name: tool.name })),
     })),
+    toolCatalog: connections,
+  }
+}
+
+/**
+ * Built-in flows are allowed to depend on built-in agents. Importing the flow
+ * provisions any missing dependency into the same workspace, so "Use flow"
+ * never leaves a permanently empty agent step merely because the user did not
+ * know there was a second catalogue item to install first.
+ */
+async function provisionMissingBuiltinAgents(
+  organizationId: string,
+  userId: string,
+  bindings: FlowTemplateBinding[],
+  context: LoadedBindingContext,
+): Promise<void> {
+  const existing = new Set(context.agents.map((agent) => agent.name.trim().toLowerCase()))
+  const wanted = [...new Set(bindings
+    .filter((binding) => binding.kind === 'agent')
+    .map((binding) => binding.match.agentName?.trim())
+    .filter((name): name is string => Boolean(name)))]
+
+  for (const name of wanted) {
+    if (existing.has(name.toLowerCase())) continue
+    const template = builtInTemplates.find((entry) => entry.name.trim().toLowerCase() === name.toLowerCase())
+    if (!template) continue
+    const { agent } = await provisionAgentFromConfig(
+      organizationId,
+      userId,
+      {
+        ...template,
+        ...(BUILTIN_AGENT_SCHEDULES[template.id] ? { schedule: BUILTIN_AGENT_SCHEDULES[template.id] } : {}),
+        instructions: enhanceAutomationInstructions(withOutputContract(template.id, template.instructions)),
+      },
+      template.name,
+      `builtin:${template.id}`,
+    )
+    context.agents.push({ id: agent.id, name: template.name })
+    existing.add(template.name.trim().toLowerCase())
   }
 }
 
@@ -68,11 +112,13 @@ export async function instantiateFlowTemplate(
   template: Pick<SerializedFlowTemplate, 'name' | 'description' | 'graph' | 'notes' | 'bindings' | 'integrations'> & { icon?: string },
 ): Promise<InstantiatedFlowTemplate> {
   const context = await loadBindingContext(organizationId, userId)
+  await provisionMissingBuiltinAgents(organizationId, userId, template.bindings as FlowTemplateBinding[], context)
   const resolutions = resolveBindings(template.bindings as FlowTemplateBinding[], context)
   const graph = applyBindings(template.graph, resolutions)
 
   const validation = validateFlowGraph(graph, {
     agents: context.agents.map((agent) => ({ id: agent.id, title: agent.name })),
+    toolCatalog: context.toolCatalog,
     requireRunnable: graph.nodes.length > 1,
   })
   const missing = await missingIntegrations(organizationId, userId, template.integrations)

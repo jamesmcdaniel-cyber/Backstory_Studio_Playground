@@ -328,7 +328,7 @@ export const ONBOARDING_KICKOFF: FlowTemplateDef = {
         data: {
           label: 'Announce the kickoff',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args:
             '{"channel":"#customers","text":"New customer kickoff: {{trigger.input.customerName}}, owned by {{trigger.input.accountOwner}}, kickoff {{trigger.input.kickoffDate}}. Onboarding task is filed in Asana."}',
           retries: 2,
@@ -367,7 +367,7 @@ export const ONBOARDING_KICKOFF: FlowTemplateDef = {
       nodeId: 'announce',
       kind: 'connection',
       label: 'Pick the Slack workspace to announce kickoffs in',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {
@@ -454,7 +454,7 @@ export const WEEKLY_EXEC_BRIEF: FlowTemplateDef = {
         data: {
           label: 'Post to the leadership channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#leadership","text":"{{step.brief.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -510,7 +510,7 @@ export const WEEKLY_EXEC_BRIEF: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace with the leadership channel',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
     {
       nodeId: 'send',

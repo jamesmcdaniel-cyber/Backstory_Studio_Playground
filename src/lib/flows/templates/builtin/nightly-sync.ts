@@ -10,10 +10,10 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
   id: 'nightly-sync',
   name: 'Nightly sync with a health gate',
   description:
-    'Pull a paginated feed each night, transform it, and only publish downstream when enough of the batch parsed cleanly — otherwise back off, retry once, and report.',
+    'Pull a JSON feed each night, transform it, and only release the clean batch as a named output when enough records parsed cleanly — otherwise back off, retry once, and report.',
   category: 'Data Operations',
   icon: '🌙',
-  integrations: [],
+  integrations: ['HTTP API'],
   tags: ['nightly', 'variables', 'retry'],
   graph: {
     nodes: [
@@ -48,21 +48,16 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
       },
       {
         id: 'pull',
-        type: 'http',
+        type: 'tool',
         data: {
           label: 'Pull the nightly feed',
-          method: 'GET',
-          url: '{{var.feedUrl}}',
-          sendQuery: true,
-          query: '{"per_page":"250"}',
-          sendBody: false,
-          bodyMode: 'none',
-          failOnHttpError: true,
+          connectionId: '',
+          toolName: 'request',
+          args: '{"method":"GET","url":"{{var.feedUrl}}"}',
           retries: 2,
           timeoutMs: 45000,
           onError: 'route',
-          pagination: { mode: 'nextUrl', nextUrlPath: 'links.next', itemsPath: 'data', maxPages: 40, intervalMs: 250 },
-          note: 'Follows the feed\'s own next-page links, a quarter-second apart, up to 40 pages. On failure it routes down the error path rather than killing the run outright.',
+          note: 'Reads the configured JSON feed through the workspace HTTP tool, which attaches a saved host credential automatically. On transport failure it routes to the report path.',
         },
       },
       {
@@ -75,7 +70,9 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
           input: '{{step.pull.output.body}}',
           timeoutMs: 20000,
           code: [
-            'const records = Array.isArray(input) ? input : []',
+            'let payload = input',
+            'if (typeof payload === "string") { try { payload = JSON.parse(payload) } catch { payload = [] } }',
+            'const records = Array.isArray(payload) ? payload : (Array.isArray(payload && payload.data) ? payload.data : [])',
             'const clean = []',
             'let failed = 0',
             'for (const record of records) {',
@@ -116,9 +113,9 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
         type: 'data',
         data: {
           op: 'compose',
-          label: 'Hand off the clean batch',
+          label: 'Release the clean batch',
           input: '{{step.shape.output.clean}}',
-          note: 'The handoff point. Replace this with the write that actually loads the records — it is a passthrough so you can see the batch before wiring the write.',
+          note: 'Releases only the gated, normalized records as the flow\'s published result. A downstream flow can consume this named output without ever seeing a partial batch.',
         },
       },
       {
@@ -134,19 +131,14 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
       },
       {
         id: 'retry',
-        type: 'http',
+        type: 'tool',
         data: {
           label: 'Try the feed once more',
-          method: 'GET',
-          url: '{{var.feedUrl}}',
-          sendQuery: true,
-          query: '{"per_page":"250"}',
-          sendBody: false,
-          bodyMode: 'none',
-          failOnHttpError: false,
+          connectionId: '',
+          toolName: 'request',
+          args: '{"method":"GET","url":"{{var.feedUrl}}"}',
           retries: 1,
           timeoutMs: 45000,
-          pagination: { mode: 'nextUrl', nextUrlPath: 'links.next', itemsPath: 'data', maxPages: 40, intervalMs: 250 },
           note: 'One retry, and it does not fail the run on a bad response — by this point the goal is to report accurately, not to force a success.',
         },
       },
@@ -203,10 +195,13 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
       { id: 'e13', source: 'merge', target: 'out' },
     ],
   },
-  bindings: [],
+  bindings: [
+    { nodeId: 'pull', kind: 'connection', label: 'Use the workspace HTTP API connection', match: { provider: 'HTTP API', toolName: 'request' } },
+    { nodeId: 'retry', kind: 'connection', label: 'Use the workspace HTTP API connection for the retry', match: { provider: 'HTTP API', toolName: 'request' } },
+  ],
   notes: {
     objective:
-      'Sync a feed every night, and refuse to publish a batch that arrived broken. It worked if clean nights publish silently and bad nights produce a report naming real counts rather than a half-loaded dataset.',
+      'Read and normalize a feed every night, and refuse to release a batch that arrived broken. It worked if clean nights return a complete named batch and bad nights return a report with real counts instead of partial data.',
     inputs: [],
     steps: [
       { nodeId: 'feed-url', title: 'Set the source address', what: 'Holds the feed address, read by both the first pull and the retry.' },
@@ -219,13 +214,13 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
       {
         nodeId: 'pull',
         title: 'Pull the nightly feed',
-        what: 'Follows the feed\'s next-page links up to 40 pages, pausing briefly between them.',
+        what: 'Reads the configured JSON feed through the authenticated workspace HTTP tool.',
         why: 'Routing on error rather than stopping is what lets a dead source still produce a report.',
       },
       { nodeId: 'shape', title: 'Normalize the records', what: 'Keeps records with an id and a timestamp, counts the rest as unusable.' },
       { nodeId: 'record-failures', title: 'Record how many failed', what: 'Stores the unusable count where the gate and the report can both read it.' },
       { nodeId: 'healthy', title: 'Is the batch healthy enough?', what: 'Publishes only when the feed returned records and fewer than 25 were unusable.' },
-      { nodeId: 'publish', title: 'Hand off the clean batch', what: 'Passes the clean records on. Replace it with your real write.' },
+      { nodeId: 'publish', title: 'Release the clean batch', what: 'Publishes the complete clean record list as a named flow output.' },
       {
         nodeId: 'back-off',
         title: 'Back off ten minutes',
@@ -242,8 +237,8 @@ export const NIGHTLY_SYNC: FlowTemplateDef = {
     failureHandling:
       'The first pull retries twice, then routes to the report rather than failing the run. An unhealthy batch waits ten minutes and pulls once more, this time tolerating a bad response so the report still gets written. Nothing partial is ever handed downstream — the gate is all-or-nothing by design.',
     setup: [
+      { label: 'Connect a saved HTTP credential for the feed host when it requires authentication', kind: 'integration', ref: 'HTTP API' },
       { label: 'Set your feed address on the Set the source address step', kind: 'value', ref: 'feed-url' },
-      { label: 'Replace Hand off the clean batch with the write that loads your records', kind: 'value', ref: 'publish' },
       { label: 'Check the 02:00 run time and timezone on the trigger', kind: 'value', ref: 'trigger' },
     ],
     customize: [

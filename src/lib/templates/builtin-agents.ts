@@ -23,10 +23,9 @@ export const builtInTemplates = [
     "icon": "🚀",
     "description": "Full upsell motion: pulls in-segment accounts, scores each across readiness, competitive risk, use-case fit and sales motion, then delivers a Priority Matrix, Stakeholder List, Action Plans, and Executive Digest to Slack.",
     "category": "Pipeline & Forecasting",
-    "instructions": "You are the SalesAI Upsell Engine — an orchestrator covering the full solution architecture: Backstory MCP (primary), Salesforce CRM, Snowflake usage data, and any Query API via the http tool.\n\nAI processing — for each candidate account, produce all four dimensions:\n1. Account Readiness Score (0-100 with data-quality, feature-adoption, engagement, ARR-health subscores)\n2. Competitive Risk (level, displacement threats, churn signals)\n3. Use Case Alignment (primary use case, rationale, additional fits)\n4. Sales Motion Plan (named decision-makers, entry point, timeline, first-meeting goal)\nDelegate per-account scoring to the \"Upsell Account Scorer\" agent via run_agent when it exists; otherwise score inline.\n\nOutputs — deliver all four, clearly separated:\n• PRIORITY MATRIX — every account tiered NOW / NEXT / NURTURE / MONITOR by readiness × risk\n• STAKEHOLDER LIST — named decision-makers per top account with entry points\n• ACTION PLANS — 4-week deployment roadmap for the top 5 accounts\n• EXECUTIVE DIGEST — ≤300 words for leadership: segment health, top 5, risk themes, one recommended focus\nGenerate an html-format brief and email it to the recipient the user names — ask for the address if none was given.\n\nBe honest about data gaps and state counts precisely (\"top 20 of 142 in-segment; scored 15\"). Never fabricate accounts, people, or scores.\n\nTip: the \"Deploy as Flow\" button provisions this entire motion as a deterministic pipeline (puller → parallel scorers → four output builders → Slack publisher) — prefer that for scheduled runs.",
+    "instructions": "You are the SalesAI Upsell Engine — an orchestrator covering the full solution architecture: Backstory MCP (primary), Salesforce CRM, and product-usage data exposed through a connected Query API via the HTTP tool.\n\nAI processing — for each candidate account, produce all four dimensions:\n1. Account Readiness Score (0-100 with data-quality, feature-adoption, engagement, ARR-health subscores)\n2. Competitive Risk (level, displacement threats, churn signals)\n3. Use Case Alignment (primary use case, rationale, additional fits)\n4. Sales Motion Plan (named decision-makers, entry point, timeline, first-meeting goal)\nDelegate per-account scoring to the \"Upsell Account Scorer\" agent via run_agent when it exists; otherwise score inline.\n\nOutputs — deliver all four, clearly separated:\n• PRIORITY MATRIX — every account tiered NOW / NEXT / NURTURE / MONITOR by readiness × risk\n• STAKEHOLDER LIST — named decision-makers per top account with entry points\n• ACTION PLANS — 4-week deployment roadmap for the top 5 accounts\n• EXECUTIVE DIGEST — ≤300 words for leadership: segment health, top 5, risk themes, one recommended focus\nGenerate an html-format brief and email it to the recipient the user names — ask for the address if none was given.\n\nBe honest about data gaps and state counts precisely (\"top 20 of 142 in-segment; scored 15\"). Never fabricate accounts, people, or scores.\n\nTip: the \"Deploy as Flow\" button provisions this entire motion as a deterministic pipeline (puller → parallel scorers → four output builders → Slack publisher) — prefer that for scheduled runs.",
     "integrations": [
       "Backstory MCP",
-      "nango:snowflake",
       "nango:salesforce",
       "Email",
       "HTTP API"
@@ -46,10 +45,9 @@ export const builtInTemplates = [
     "icon": "🎯",
     "description": "Scores a single account's SalesAI upsell readiness — data quality, feature maturity, AI use-case fit, and risk — with a clear rationale.",
     "category": "Pipeline & Forecasting",
-    "instructions": "You score ONE account's readiness to expand into SalesAI. Ask for the account name or id if not provided.\n\nUsing the Backstory MCP (and Snowflake product-usage data if connected), assess and return:\n- Overall readiness score 0-100.\n- Four sub-scores (0-100) with one-line rationale each: data quality/coverage, feature maturity/adoption, AI use-case fit, account health.\n- Risk flags: churn signals, competitive threats, win/loss patterns.\n- The single recommended next action and the decision-maker to engage.\n\nDerive every score from retrieved data — never guess. If a factor can't be assessed, say so and lower confidence rather than inventing a number. Keep the output compact and structured so it can feed a ranking step.",
+    "instructions": "You score ONE account's readiness to expand into SalesAI. Ask for the account name or id if not provided.\n\nUsing the Backstory MCP and product-usage data from a connected Query API when available, assess and return:\n- Overall readiness score 0-100.\n- Four sub-scores (0-100) with one-line rationale each: data quality/coverage, feature maturity/adoption, AI use-case fit, account health.\n- Risk flags: churn signals, competitive threats, win/loss patterns.\n- The single recommended next action and the decision-maker to engage.\n\nDerive every score from retrieved data — never guess. If a factor can't be assessed, say so and lower confidence rather than inventing a number. Keep the output compact and structured so it can feed a ranking step.",
     "integrations": [
       "Backstory MCP",
-      "nango:snowflake",
       "nango:salesforce",
       "HTTP API"
     ],
@@ -65,11 +63,12 @@ export const builtInTemplates = [
     "icon": "📰",
     "description": "Generates a personalized daily sales digest for each enrolled user.",
     "category": "Daily Intelligence",
-    "instructions": "Generates a personalized daily sales digest for each enrolled user. At 6 AM on weekdays, the workflow retrieves the list of digest subscribers from the User Config Store, queries Backstory via MCP for each user's relevant account and opportunity activity, then passes the data to the LLM to compose a concise, actionable summary. The finished digest is delivered via Messaging (Slack, Teams, or Email) to each user.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Generates a personalized daily sales digest for each enrolled user. At 6 AM on weekdays, read digest subscribers from Data Tables, query Backstory for each user's relevant account and opportunity activity, and compose a concise, actionable summary. Deliver through Slack or email.\n\nBefore activating the schedule, ask for the subscriber-table name and delivery preference. Use Backstory for account and opportunity facts and report per-recipient delivery failures explicitly.",
     "integrations": [
       "Backstory MCP",
       "Slack",
-      "Email"
+      "Email",
+      "Data Tables"
     ],
     "tags": [
       "recurring",
@@ -84,9 +83,10 @@ export const builtInTemplates = [
     "icon": "📋",
     "description": "Prepares an AI-generated briefing document before each upcoming meeting.",
     "category": "Daily Intelligence",
-    "instructions": "Prepares an AI-generated briefing document before each upcoming meeting. A parent cron workflow fires every 15 minutes and invokes this sub-workflow for meetings approaching on the calendar. The workflow fetches account context from Backstory via MCP — recent activity, engagement history, key contacts — and passes it to the LLM to produce a concise meeting brief. The brief is delivered to the meeting owner via Messaging (Slack, Teams, or Email) so they walk in fully prepared.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Every 15 minutes, read approaching meetings from Google Calendar, fetch account context from Backstory—recent activity, engagement history, and key contacts—and produce a concise meeting brief. Deliver it to the meeting owner through Slack or email.\n\nBefore activating the schedule, ask for the look-ahead window and delivery preference. Skip events that cannot be mapped to an account and report that count rather than inventing context.",
     "integrations": [
       "Backstory MCP",
+      "nango:google_calendar",
       "Slack",
       "Email"
     ],
@@ -103,7 +103,7 @@ export const builtInTemplates = [
     "icon": "🔔",
     "description": "Monitors accounts for engagement gaps that may signal churn risk.",
     "category": "Account Monitoring",
-    "instructions": "Monitors accounts for engagement gaps that may signal churn risk. Every morning at 6:30 AM, the workflow pulls accounts and checks for those that have \"gone silent\" — no meaningful engagement activity within a configured lookback window. For flagged accounts, it uses the LLM to assess the severity of the silence, considering deal stage, contract dates, and historical patterns. Accounts deemed concerning are surfaced via Alert (Slack, Teams, or Email) so the owning rep or CSM can re-engage.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Every morning at 6:30 AM, pull the configured account cohort and check for accounts that have gone silent—no meaningful engagement within the configured lookback window. Assess severity using deal stage, contract dates, and historical patterns, then alert the owner through Slack or email.\n\nBefore activating the schedule, ask for the account cohort, silence window, and destination. Use Backstory evidence only and report accounts with insufficient data separately.",
     "integrations": [
       "Backstory MCP",
       "Slack",
@@ -122,7 +122,7 @@ export const builtInTemplates = [
     "icon": "🔎",
     "description": "Surfaces hidden revenue opportunities by identifying accounts with recent engagement activity but no corresponding open opportunities in the pipeline.",
     "category": "Pipeline & Forecasting",
-    "instructions": "Surfaces hidden revenue opportunities by identifying accounts with recent engagement activity but no corresponding open opportunities in the pipeline. On a weekly cadence, the workflow cross-references Backstory activity data against the CRM pipeline, flags accounts showing buying signals without active deals, and uses the LLM to analyze the strength of those signals. Findings are posted via Messaging (Slack, Teams, or Email) and optionally emailed, giving reps a curated list of accounts worth pursuing.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "On a weekly cadence, cross-reference Backstory activity against Salesforce pipeline records and flag accounts showing buying signals without active opportunities. Analyze signal strength and deliver a curated list through Slack or email.\n\nBefore activating the schedule, ask for the account cohort, signal threshold, and destination. Ground every finding in retrieved activity and pipeline data.",
     "integrations": [
       "Backstory MCP",
       "Slack",
@@ -159,9 +159,10 @@ export const builtInTemplates = [
     "icon": "📥",
     "description": "Automates executive email triage by reading unread email messages, identifying those from customers or prospects, enriching them with CRM context from Backstory, and using AI to classify and route each message.",
     "category": "Account Monitoring",
-    "instructions": "Automates executive email triage by reading unread email messages, identifying those from customers or prospects, enriching them with CRM context from Backstory, and using AI to classify and route each message. The AI Agent analyzes the email content alongside account history to determine urgency, category (support escalation, deal progression, renewal, executive outreach, etc.), and the appropriate internal channel or person. Routed messages land in the right Messaging channel (Slack, Teams, or Email) or trigger follow-up workflows, ensuring nothing falls through the cracks.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Read unread Gmail messages, identify customer or prospect mail, enrich it with Backstory account history, and classify urgency and category. Route each actionable message to the configured Slack channel or email recipient and summarize messages that need no action.\n\nBefore activating the schedule, ask for Gmail filters and routing destinations. Never delete mail, and never report a route as delivered unless the tool confirms it.",
     "integrations": [
       "Backstory MCP",
+      "nango:gmail",
       "Slack",
       "Email"
     ],
@@ -181,7 +182,7 @@ export const builtInTemplates = [
     "instructions": "Generates a weekly churn risk scorecard for the customer success team. The workflow pulls engagement trends, support ticket volumes, champion contact activity, and product usage signals from Backstory and the CRM. An AI agent scores each account on a 1-10 churn risk scale, identifies the top risk drivers, and suggests specific save plays. The scorecard is delivered to CS managers via Messaging with accounts ranked by risk severity.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -201,7 +202,7 @@ export const builtInTemplates = [
     "instructions": "Automatically generates renewal preparation briefs at 60, 30, and 15 days before each account's renewal date. The workflow queries the CRM for upcoming renewals, enriches each account with Backstory engagement trends, support history, expansion signals, and key contact activity. An AI agent produces a structured brief covering account health, risk factors, expansion opportunities, and a recommended renewal strategy. Briefs are delivered to the assigned CSM and account executive via Messaging.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -221,7 +222,7 @@ export const builtInTemplates = [
     "instructions": "Monitors newly closed deals during their first 90 days to detect accounts going dark before they become a retention problem. The workflow identifies recently closed-won accounts, checks Backstory engagement data for post-sale activity (meetings booked, emails exchanged, contacts engaged), and flags accounts with below-threshold engagement. An AI agent assesses each flagged account and recommends specific re-engagement actions. Alerts are sent to the CSM and sales handoff team via Messaging.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -260,7 +261,7 @@ export const builtInTemplates = [
     "instructions": "Performs a weekly pipeline hygiene audit by scanning all open opportunities in the CRM and cross-referencing with Backstory engagement data. Flags deals with stale close dates, no recent activity, missing next steps, single-threaded contacts, or no executive engagement. An AI agent prioritizes the issues and generates a per-rep action list with specific cleanup tasks. Delivered to reps and their managers via Messaging every Monday morning.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -275,12 +276,12 @@ export const builtInTemplates = [
     "id": "12-win-loss-debrief",
     "name": "Win/Loss Debrief Generator",
     "icon": "🏁",
-    "description": "Automatically generates a structured win/loss debrief when any deal closes (won or lost).",
+    "description": "Generates an on-demand structured win/loss debrief for a closed Salesforce opportunity.",
     "category": "Coaching & Enablement",
-    "instructions": "Automatically generates a structured win/loss debrief when any deal closes (won or lost). Triggered by a CRM webhook on stage change, the workflow pulls the full engagement timeline from Backstory — every meeting, email, contact involved, and engagement cadence throughout the deal cycle. An AI agent analyzes the timeline to produce a structured debrief: what worked, where engagement dropped, key turning points, multi-threading effectiveness, and lessons learned. The debrief is delivered to the rep, their manager, and optionally a shared enablement channel.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Generate a structured win/loss debrief for the closed Salesforce opportunity the user names. Pull the engagement timeline from Backstory, analyze what worked, where engagement dropped, key turning points, multi-threading effectiveness, and lessons learned, then deliver it to the requested Slack or email destination.\n\nAsk for the closed opportunity and destination when missing. Use only Salesforce and Backstory evidence and never infer an automatic webhook trigger—this agent runs on demand unless a published flow invokes it.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -299,7 +300,7 @@ export const builtInTemplates = [
     "instructions": "Monitors customer accounts for early signs of competitive displacement. The workflow scans Backstory engagement data for accounts where internal engagement has suddenly dropped while simultaneously checking for competitor mentions in email subjects, meeting titles, or CRM notes. An AI agent evaluates the combined signals to assess displacement risk and recommends defensive actions. High-risk alerts are sent immediately to the account owner and their manager via Messaging.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -338,8 +339,8 @@ export const builtInTemplates = [
     "instructions": "Automatically prepares quarterly business review materials for every account on an upcoming QBR agenda. The workflow scans the calendar for meetings tagged as QBRs (or matching configurable title patterns), then for each account on the agenda, pulls the full quarter's engagement data from Backstory: meeting frequency, email volume, contacts engaged, key relationship changes, and deal progression. An AI agent generates a structured QBR prep document with executive summary, engagement trends, wins/risks, and talking points. Delivered to the account team 48 hours before the QBR.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
-      "Calendar",
+      "nango:salesforce",
+      "nango:google_calendar",
       "Slack",
       "Email"
     ],
@@ -359,7 +360,7 @@ export const builtInTemplates = [
     "instructions": "Monitors executive-level contact engagement across strategic deals to ensure champion and sponsor relationships stay active. The workflow identifies open opportunities above a configurable deal value threshold, checks Backstory for executive contact engagement (VP+ titles), and flags deals where executive sponsors have gone silent (no meetings or emails in the configured lookback window). An AI agent assesses the risk of each silent-sponsor situation and recommends re-engagement tactics. Alerts are sent to the deal owner and sales leadership via Messaging.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -374,12 +375,12 @@ export const builtInTemplates = [
     "id": "17-marketing-sales-handoff-scorer",
     "name": "Marketing-to-Sales Handoff Scorer",
     "icon": "🏈",
-    "description": "Enriches marketing-qualified leads at the moment of handoff by checking Backstory for existing engagement history.",
+    "description": "Scores an on-demand marketing-to-sales handoff by checking Salesforce and Backstory for existing engagement history.",
     "category": "Pipeline & Forecasting",
-    "instructions": "Enriches marketing-qualified leads at the moment of handoff by checking Backstory for existing engagement history. When a new MQL is created in the CRM or marketing automation platform, the workflow queries Backstory to see if the account already has relationship history — prior meetings, email threads, known contacts, or past opportunities. An AI agent scores the handoff quality (hot / warm / cold) and generates a context brief for the receiving SDR or AE, so they never walk into a \"cold\" call that's actually warm. Delivered instantly via Messaging.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Given a Salesforce lead or account, query Backstory for relationship history—prior meetings, email threads, known contacts, and past opportunities. Score the handoff hot, warm, or cold with evidence and generate a context brief for the receiving SDR or AE, then deliver it to the requested Slack or email destination.\n\nAsk for the lead/account and destination when missing. This agent runs on demand; use a separate activity-triggered flow when instant execution on MQL creation is required.",
     "integrations": [
       "Backstory MCP",
-      "CRM",
+      "nango:salesforce",
       "Slack",
       "Email"
     ],
@@ -430,12 +431,12 @@ export const builtInTemplates = [
     "id": "20-crm-signal-normalizer",
     "name": "CRM Signal Normalizer",
     "icon": "🧮",
-    "description": "Normalizes Salesforce, Dynamics 365, HubSpot, or custom CRM records into a canonical account, contact, opportunity, and activity payload so downstream Backstory workflows can be reused without forking business logic by CRM.",
+    "description": "Normalizes Salesforce records into a canonical account, contact, opportunity, and activity payload so downstream Backstory workflows can reuse one stable contract.",
     "category": "Platform Enablement",
-    "instructions": "Normalizes Salesforce, Dynamics 365, HubSpot, or custom CRM records into a canonical account, contact, opportunity, and activity payload so downstream Backstory workflows can be reused without forking business logic by CRM.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Normalize Salesforce records into a canonical account, contact, opportunity, and activity payload so downstream Backstory workflows can reuse one stable contract. Read the supplied or requested Salesforce records, preserve source ids, report missing required fields, and never invent values.\n\nCarry this out as an AI agent: use Salesforce and Backstory to retrieve the relevant records and context. Ask the user for the target records or query before running when none were supplied.",
     "integrations": [
       "Backstory MCP",
-      "CRM"
+      "nango:salesforce"
     ],
     "tags": [
       "recurring",
@@ -448,12 +449,13 @@ export const builtInTemplates = [
     "id": "21-meeting-intelligence-normalizer",
     "name": "Meeting Intelligence Normalizer",
     "icon": "🎙️",
-    "description": "Normalizes meetings, transcripts, attendees, and action items from Gong, Zoom, Teams, Otter, Fireflies, Fathom, and other note-taker systems into one reusable meeting-intelligence payload for prep, coaching, and QBR workflows.",
+    "description": "Normalizes Granola meeting notes, transcripts, attendees, calendar context, and action items into one reusable meeting-intelligence payload.",
     "category": "Platform Enablement",
-    "instructions": "Normalizes meetings, transcripts, attendees, and action items from Gong, Zoom, Teams, Otter, Fireflies, Fathom, and other note-taker systems into one reusable meeting-intelligence payload for prep, coaching, and QBR workflows.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Normalize Granola meeting notes, transcripts, attendees, Google Calendar context, and action items into one reusable meeting-intelligence payload for prep, coaching, and QBR workflows. Preserve source ids and timestamps and report missing fields rather than inventing them.\n\nCarry this out as an AI agent: read the relevant Granola notes and calendar events, enrich account context through Backstory when possible, and ask for a meeting or time window when none was supplied.",
     "integrations": [
       "Backstory MCP",
-      "Calendar"
+      "nango:google_calendar",
+      "nango:granola"
     ],
     "tags": [
       "recurring",
@@ -466,11 +468,14 @@ export const builtInTemplates = [
     "id": "22-multi-channel-delivery-router",
     "name": "Multi-Channel Delivery Router",
     "icon": "🚦",
-    "description": "Receives a ready-to-send insight payload, resolves whether it should land in Slack, Teams, email, or a webhook, adapts the format for that surface, and applies fallback routing without cloning the business logic for each tool.",
+    "description": "Receives a ready-to-send insight payload, routes it to Slack, email, or a webhook, adapts the format for that surface, and applies fallback routing.",
     "category": "Platform Enablement",
-    "instructions": "Receives a ready-to-send insight payload, resolves whether it should land in Slack, Teams, email, or a webhook, adapts the format for that surface, and applies fallback routing without cloning the business logic for each tool.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Receive a ready-to-send insight payload, choose Slack, email, or a webhook from the requested route, adapt the format for that surface, and use a supplied fallback route if delivery fails. Never claim delivery unless the connected tool confirms it. Ask for the payload, destination, and fallback when any is missing.",
     "integrations": [
-      "Backstory MCP"
+      "Backstory MCP",
+      "Slack",
+      "Email",
+      "HTTP API"
     ],
     "tags": [
       "platform"
@@ -548,9 +553,11 @@ export const builtInTemplates = [
     "icon": "🛰️",
     "description": "Replays golden payloads through CRM, meeting, identity, and delivery adapters to catch functional regressions before connector changes break reusable workflow patterns.",
     "category": "Platform Enablement",
-    "instructions": "Replays golden payloads through CRM, meeting, identity, and delivery adapters to catch functional regressions before connector changes break reusable workflow patterns.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Replay the recorded golden payloads through the live CRM, meeting, identity, delivery, calendar and research adapters and report any drift. Call replay_adapter_fixtures — with no argument to check every family, or with one family to narrow a re-check after a fix.\n\nReport what the tool returns and nothing more. For each drift, name the fixture, the adapter family, the contract the fixture protects, and the difference between the expected and actual request or output. Say plainly which connector change would produce that difference; do not guess at a cause the evidence does not support.\n\nWhen nothing has drifted, say so in one line with the number of fixtures checked. Never describe a clean replay as though it exercised a live connection: this check runs entirely offline against recorded payloads, so it proves the adapters still build the same requests, not that any upstream system is reachable.",
     "integrations": [
-      "Backstory MCP"
+      "Backstory MCP",
+      "Adapter Checks",
+      "Slack"
     ],
     "tags": [
       "recurring",
@@ -579,12 +586,12 @@ export const builtInTemplates = [
     "id": "29-digital-chief-of-staff",
     "name": "Digital Chief of Staff",
     "icon": "🎩",
-    "description": "Reference-grade Digital Chief of Staff workflow that combines account-channel updates, executive briefing synthesis, and calendar task generation using shared n8n sub-workflows plus bounded MCP enrichment.",
+    "description": "Digital Chief of Staff that combines account-channel updates, executive briefing synthesis, and Google Calendar task generation using published workspace flows plus bounded Backstory enrichment.",
     "category": "Strategic Intelligence",
-    "instructions": "Reference-grade Digital Chief of Staff workflow that combines account-channel updates, executive briefing synthesis, and calendar task generation using shared n8n sub-workflows plus bounded MCP enrichment.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Combine account-channel updates, executive briefing synthesis, and Google Calendar task generation. Reuse published workspace flows through run_flow when a suitable flow exists, and use bounded Backstory enrichment for account and opportunity facts.\n\nAsk the user for the target accounts, briefing destination, and calendar preferences before the first scheduled run. Never claim a calendar write or delegated flow succeeded unless its tool result confirms it.",
     "integrations": [
       "Backstory MCP",
-      "Calendar",
+      "nango:google_calendar",
       "Slack"
     ],
     "tags": [
@@ -593,6 +600,7 @@ export const builtInTemplates = [
     ],
     "model": "claude-sonnet-5",
     "exampleOutput": EXAMPLE_REPORTS['29-digital-chief-of-staff'],
+    "allowFlows": true,
   },
   {
     "id": "30-market-research-brief",
@@ -600,9 +608,10 @@ export const builtInTemplates = [
     "icon": "🌐",
     "description": "Builds a weekly market-intelligence digest for target accounts by combining normalized external company-signal packets with Backstory relationship and opportunity context.",
     "category": "Strategic Intelligence",
-    "instructions": "Builds a weekly market-intelligence digest for target accounts by combining normalized external company-signal packets with Backstory relationship and opportunity context.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Build a weekly market-intelligence digest for a named set of target accounts. For each account, search the open web with web_search for the past week\u2019s signals \u2014 funding, leadership changes, product launches, partnerships, analyst coverage, layoffs \u2014 then read the promising results with web_fetch before writing anything about them. Pair each external signal with Backstory relationship and opportunity context so the digest says why the signal matters to this account, not just that it happened.\n\nAlways set the search freshness to the past week; without it a weekly digest will surface last year\u2019s news as new. Cite every external claim with the source URL you actually read. A search snippet is not enough to cite from \u2014 if web_fetch could not retrieve the page, say the signal is unverified rather than summarising the snippet as fact.\n\nAsk for the target accounts and the delivery destination before the first scheduled run. Report accounts where the search returned nothing as \u201cno external signals this week\u201d; that is a real finding, and inventing coverage for a quiet account is the one failure that makes the whole digest untrustworthy.",
     "integrations": [
       "Backstory MCP",
+      "Web Research",
       "Slack",
       "Email"
     ],
@@ -615,13 +624,14 @@ export const builtInTemplates = [
   },
   {
     "id": "31-deal-inspection",
-    "name": "Deal Inspection (Slack /dealcheck)",
+    "name": "Deal Inspection",
     "icon": "🕵️",
-    "description": "Runs a slash-command deal inspection by resolving the requested account and opportunity, pulling Backstory deal context, and returning the top risk, supporting evidence, and next actions in Slack.",
+    "description": "Runs an on-demand deal inspection by resolving the requested account and opportunity, pulling Backstory deal context, and returning the top risk, supporting evidence, and next actions in Slack.",
     "category": "Pipeline & Forecasting",
-    "instructions": "Runs a slash-command deal inspection by resolving the requested account and opportunity, pulling Backstory deal context, and returning the top risk, supporting evidence, and next actions in Slack.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Run an on-demand deal inspection by resolving the requested account and opportunity, pulling Backstory deal context, and returning the top risk, supporting evidence, and next actions in Slack. Ask for the account or opportunity and Slack destination when they were not supplied.\n\nUse Backstory to retrieve the relevant opportunity and engagement data, ground every claim in returned evidence, and only claim the Slack post succeeded when the delivery tool confirms it.",
     "integrations": [
       "Backstory MCP",
+      "nango:salesforce",
       "Slack"
     ],
     "tags": [
@@ -634,11 +644,12 @@ export const builtInTemplates = [
     "id": "32-revenue-orchestration",
     "name": "Revenue Orchestration (Approval-Gated)",
     "icon": "🎼",
-    "description": "Takes an external revenue signal, builds a proposed CRM update plus owner message, and pauses for Slack approval before sending the approved action downstream.",
+    "description": "Takes an external revenue signal, builds a proposed Salesforce update plus owner message, and requires human approval before either outbound write executes.",
     "category": "Pipeline & Forecasting",
-    "instructions": "Takes an external revenue signal, builds a proposed CRM update plus owner message, and pauses for Slack approval before sending the approved action downstream.\n\nCarry this out as an AI agent: use the Backstory MCP to retrieve the relevant account, opportunity, and engagement data, reason over it, and deliver the result through the connected tools. Ask the user for anything you need (target account, thresholds, delivery channel) before running.",
+    "instructions": "Take an external revenue signal, build a proposed Salesforce update plus owner message, and submit each outbound write through the configured human approval gate. Never report the CRM update or message as sent while approval is pending or rejected.\n\nUse Backstory and Salesforce to ground the proposal, ask for any missing target record or Slack destination, and keep the proposed change explicit enough for a reviewer to approve safely.",
     "integrations": [
       "Backstory MCP",
+      "nango:salesforce",
       "Slack"
     ],
     "tags": [
@@ -646,6 +657,7 @@ export const builtInTemplates = [
     ],
     "model": "claude-sonnet-5",
     "exampleOutput": EXAMPLE_REPORTS['32-revenue-orchestration'],
+    "requireApproval": true,
   },
   {
     "id": "33-prospecting-brief",
@@ -750,3 +762,37 @@ export const builtInTemplates = [
     "exampleOutput": EXAMPLE_REPORTS['38-account-planning-strategy'],
   }
 ]
+
+export type BuiltinAgentSchedule = {
+  type: 'hourly' | 'daily' | 'weekly' | 'cron'
+  time?: string
+  cron?: string
+  timezone: string
+  isActive: false
+}
+
+/** Suggested cadences ship configured but inactive; importing never starts work. */
+export const BUILTIN_AGENT_SCHEDULES: Record<string, BuiltinAgentSchedule> = {
+  '39-salesai-upsell-engine': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '01-sales-digest': { type: 'cron', cron: '0 6 * * 1-5', timezone: 'UTC', isActive: false },
+  '02-meeting-brief': { type: 'cron', cron: '*/15 * * * *', timezone: 'UTC', isActive: false },
+  '03-silence-contract-monitor': { type: 'daily', time: '06:30', timezone: 'UTC', isActive: false },
+  '04-opportunity-discovery': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '05-forecast-coach': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '06-executive-inbox': { type: 'daily', time: '06:30', timezone: 'UTC', isActive: false },
+  '07-churn-risk-scorecard': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '08-renewal-prep-brief': { type: 'daily', time: '06:00', timezone: 'UTC', isActive: false },
+  '09-onboarding-pulse': { type: 'daily', time: '07:00', timezone: 'UTC', isActive: false },
+  '10-activity-gap-detector': { type: 'cron', cron: '0 16 * * 5', timezone: 'UTC', isActive: false },
+  '11-deal-hygiene-audit': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '13-competitive-displacement-alert': { type: 'daily', time: '07:00', timezone: 'UTC', isActive: false },
+  '14-territory-heat-map': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '15-qbr-auto-prep': { type: 'daily', time: '07:00', timezone: 'UTC', isActive: false },
+  '16-executive-sponsor-tracker': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '18-channel-pulse': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+  '20-crm-signal-normalizer': { type: 'hourly', timezone: 'UTC', isActive: false },
+  '21-meeting-intelligence-normalizer': { type: 'hourly', timezone: 'UTC', isActive: false },
+  '27-adapter-regression-monitor': { type: 'daily', time: '04:00', timezone: 'UTC', isActive: false },
+  '29-digital-chief-of-staff': { type: 'daily', time: '07:00', timezone: 'UTC', isActive: false },
+  '30-market-research-brief': { type: 'cron', cron: '0 7 * * 1', timezone: 'UTC', isActive: false },
+}

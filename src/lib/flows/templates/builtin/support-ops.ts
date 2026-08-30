@@ -84,7 +84,7 @@ export const ZENDESK_TICKET_PULSE: FlowTemplateDef = {
         data: {
           label: 'Post to the support channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#support","text":"{{step.digest.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -124,7 +124,7 @@ export const ZENDESK_TICKET_PULSE: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the pulse to',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {

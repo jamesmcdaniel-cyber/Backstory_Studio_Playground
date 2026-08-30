@@ -78,7 +78,7 @@ export const HUBSPOT_LEAD_ROUTER: FlowTemplateDef = {
         data: {
           label: 'Alert the sales channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args:
             '{"channel":"#sales","text":"Qualified inbound: {{trigger.input.name}} ({{trigger.input.company}}) — {{trigger.input.message}}"}',
           retries: 2,
@@ -141,7 +141,7 @@ export const HUBSPOT_LEAD_ROUTER: FlowTemplateDef = {
       nodeId: 'alert',
       kind: 'connection',
       label: 'Pick the Slack workspace to alert on qualified leads',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {
@@ -259,7 +259,7 @@ export const SALESFORCE_HYGIENE_AUDIT: FlowTemplateDef = {
         data: {
           label: 'Post to the revops channel',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"#revops","text":"{{step.brief.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -298,7 +298,7 @@ export const SALESFORCE_HYGIENE_AUDIT: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to post the cleanup list to',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {
@@ -371,7 +371,7 @@ export const INBOX_TRIAGE_BRIEF: FlowTemplateDef = {
         data: {
           label: 'Post the brief to Slack',
           connectionId: '',
-          toolName: 'send_message',
+          toolName: 'post_message',
           args: '{"channel":"","text":"{{step.triage.output}}"}',
           retries: 2,
           onError: 'continue',
@@ -405,7 +405,7 @@ export const INBOX_TRIAGE_BRIEF: FlowTemplateDef = {
       nodeId: 'post',
       kind: 'connection',
       label: 'Pick the Slack workspace to deliver the brief in',
-      match: { provider: 'slack', toolName: 'send_message' },
+      match: { provider: 'slack', toolName: 'post_message' },
     },
   ],
   notes: {

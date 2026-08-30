@@ -92,7 +92,7 @@ test('bindings are inferred from filled agent and tool slots', () => {
     nodes: [
       { id: 'trigger', type: 'trigger', data: { trigger: { type: 'manual' } } },
       { id: 'run', type: 'agent', data: { agentId: 'agent_7', label: 'Score it', note: 'n' } },
-      { id: 'post', type: 'tool', data: { connectionId: 'nango:slack', toolName: 'send_message', label: 'Post it', note: 'n' } },
+      { id: 'post', type: 'tool', data: { connectionId: 'native:slack', toolName: 'post_message', label: 'Post it', note: 'n' } },
     ],
     edges: [],
   }
@@ -101,7 +101,7 @@ test('bindings are inferred from filled agent and tool slots', () => {
   // The workspace's own agent id is never carried over — only its name, as a hint.
   assert.equal(bindings[0].match.agentName, 'Account Risk Scorer')
   assert.ok(!JSON.stringify(bindings).includes('agent_7'))
-  assert.equal(bindings[1].match.provider, 'nango:slack')
+  assert.equal(bindings[1].match.provider, 'native:slack')
 })
 
 test('the graph description covers every executable step and the connections', () => {

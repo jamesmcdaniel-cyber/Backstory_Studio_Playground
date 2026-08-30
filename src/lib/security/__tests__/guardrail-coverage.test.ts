@@ -28,21 +28,31 @@ import path from 'node:path'
  * read as debt, so it is held to a direction of travel rather than just a
  * reason per line.
  *
- * Three assertions hold that direction, and it is worth being exact about what
- * each one can and cannot do, because an earlier draft of this comment claimed
- * a guarantee the code did not make:
+ * MISSING_RULE is now EMPTY, which changes what this file asserts rather than
+ * retiring it. The pin used to say "the debt may only shrink"; it now says
+ * "no surface reaches a model without the boundaries, and none may be added
+ * that does". The three assertions are unchanged, and it is worth being exact
+ * about what each one does at zero, because an earlier draft of this comment
+ * claimed a guarantee the code did not make:
  *
  *   - A new model-calling file with no rule fails, unless someone writes it
- *     into one of the two maps by hand.
+ *     into one of the two maps by hand. At zero, that is the only way in.
  *   - A listed file that gains the rule, or stops calling a model, fails until
- *     its entry is deleted. Debt cannot be paid off and left on the books.
+ *     its entry is deleted. Debt cannot be paid off and left on the books —
+ *     which is why the list is empty rather than historical: the eight gaps
+ *     this file opened with on 2026-08-29 were each closed at the surface and
+ *     struck off here in the same pass, because leaving one listed after the
+ *     fix would have failed this guard just as loudly as never fixing it.
  *   - The list's LENGTH is pinned, so growing it means raising a number that
  *     exists only to be argued with. That is the honest limit of a ratchet
  *     living in the same file as the list it guards: it cannot make laundering
  *     a new gap in here impossible, only impossible to do quietly. Without it,
  *     a one-line addition turned a red build green with nothing to notice in
  *     review — which is exactly how the population this guard was written for
- *     accumulated in the first place.
+ *     accumulated in the first place. At zero there is no headroom left for
+ *     anything to slip into, which makes an empty map plus a pinned zero the
+ *     opposite of spare scaffolding to clear away now the debt is paid: it is
+ *     the state being defended.
  */
 
 const SRC = path.join(process.cwd(), 'src')
@@ -64,9 +74,28 @@ const SRC = path.join(process.cwd(), 'src')
  * written for is the vacuous pass the self-checks below exist to prevent, so
  * the widening was made here and then backported into the fencing guard,
  * which now pins the same two routes by name.
+ *
+ * `createPinnedRunner` is the second widening, and it is the same mistake in a
+ * quieter place: it is `createModelRunner`'s sibling — same module, same
+ * ModelRunner, one built without the fallback chain — so naming only one of the
+ * two constructors left lib/eval/bench.ts outside EXEMPT and MISSING_RULE
+ * alike. Not a gap on the books and not a decision: simply unseen, by both
+ * guards, which is the one state neither can report on.
  */
 const LLM_CALL =
-  /\b(generateStructured|generateText|runModel|streamText|callModel|createModelRunner|anthropic\.messages|messages\.create)\b/
+  /\b(generateStructured|generateText|runModel|streamText|callModel|createModelRunner|createPinnedRunner|anthropic\.messages|messages\.create)\b/
+
+/**
+ * Each alternative inside LLM_CALL, as its own detector.
+ *
+ * Derived from the regex rather than restated beside it: a second hand-written
+ * list is a second thing to forget, and the self-check below is worth nothing
+ * if it can measure a population the real detector no longer matches.
+ */
+function llmCallAlternatives(): RegExp[] {
+  const inner = LLM_CALL.source.replace(/^\\b\(/, '').replace(/\)\\b$/, '')
+  return inner.split('|').map((alternative) => new RegExp(`\\b(${alternative})\\b`))
+}
 
 /**
  * What counts as carrying the boundaries.
@@ -89,6 +118,17 @@ const GUARDRAIL = /\bGUARDRAIL_RULE\b/
  * a ranking or an id, clamped by a sanitizer or an enum before anything is
  * stored or shown. There is no free-form channel for a leaked credential, a
  * forged sender, or a destructive instruction to travel down.
+ *
+ * "Clamped" has to describe the WHOLE output, and the two AI-search routes are
+ * why that is spelled out. Both were exempt on the strength of their ids —
+ * resolved against a catalogue the caller sent, so a hallucinated one dies at
+ * the route — while each match also carried a `reason`, a sentence the model
+ * writes and the route returns verbatim as the product's own explanation of a
+ * match. A sanitizer over one field of a record is not a clamp on the record;
+ * the prose beside it was the free-form channel this paragraph says does not
+ * exist, fed by a catalogue that includes text other workspaces contributed.
+ * Both are now guarded rather than exempt, and the same question — what ELSE
+ * comes back alongside the clamped part — is the one to ask of the next entry.
  */
 const EXEMPT: Record<string, string> = {
   // The agent runtime DOES carry the rule — composed into its system prompt by
@@ -97,15 +137,23 @@ const EXEMPT: Record<string, string> = {
   // refusal in the reply. Exempt because the rule reaches the model, not
   // because it is unnecessary.
   'features/agents/execute-agent.ts': 'Carries GUARDRAIL_RULE via features/agents/system-prompt.ts.',
+  // The flow `ai` step DOES carry the rule: lib/flows/ai-prompts.ts composes it
+  // into the shared SYSTEM every op returns, and this file passes that exact
+  // string to runner.next(...) as the system argument. One addition there
+  // covers all five ops, because all five share the constant.
+  //
+  // This entry deliberately does NOT reuse the fencing guard's wording. That
+  // exemption ("AI-step fencing lives in ai-prompts.ts SYSTEM") was true and
+  // was then read as covering this guard too — but ai-prompts.ts SYSTEM carried
+  // a fencing line and no boundaries at all, so the inference was false for
+  // every day it stood. An exemption is only ever evidence about the control it
+  // names; the fix was to put the boundaries in the same place the fence is,
+  // and this line asserts that they are now actually there.
+  'features/flows/run-action-step.ts': 'AI-step boundaries live in lib/flows/ai-prompts.ts SYSTEM, passed here as runner.next(…) system.',
   // 1–2 word role labels for gallery cards, batched. Every answer goes through
   // sanitizeRoleLabel before it is stored or rendered, so the output channel is
   // two clamped words wide — nothing the boundaries describe fits through it.
   'app/api/agents/role-labels/route.ts': 'Emits 1–2 word labels clamped by sanitizeRoleLabel.',
-  // Both AI searches rank an already-authorised catalogue the caller sent, and
-  // return ids the route resolves back against that same list. The model picks
-  // from a closed set; it does not author anything the user keeps.
-  'app/api/integrations/ai-search/route.ts': 'Ranks a caller-supplied catalogue; returns ids resolved against it.',
-  'app/api/templates/ai-search/route.ts': 'Ranks a caller-supplied catalogue; output clamped by sanitizeMatches.',
   // The eval harness runs over CHECKED-IN FIXTURES, not live user data, and
   // only in development (skipped in CI without a key). Holding a fixture the
   // repo authored to the boundaries would test the boundaries, not the product.
@@ -114,6 +162,14 @@ const EXEMPT: Record<string, string> = {
   'lib/eval/rag/answer.ts': 'Dev-only eval over checked-in fixtures.',
   'lib/eval/rag/generate.ts': 'Dev-only eval over checked-in fixtures.',
   'lib/eval/rag/judge.ts': 'Dev-only eval over checked-in fixtures.',
+  // Bench is the second exemption here that is NOT dev-only — Admin → Models
+  // runs it on real spend — so, like shadow eval, it qualifies on mechanism
+  // rather than on being a script. Every prompt it sends is a checked-in
+  // fixture's own `system` and `input`, every tool return is that fixture's
+  // authored script, and the only free-form text it keeps is the judge's
+  // sentence ABOUT a fixture we wrote. Nothing a boundary describes has an
+  // origin here: no workspace text goes in and no connected system is touched.
+  'lib/eval/bench.ts': 'Prompts checked-in fixtures against a pinned runner; no workspace text, and every tool return is the fixture\'s own script.',
   // Shadow eval is the one exemption here that is NOT dev-only — it samples
   // real production tasks. It qualifies anyway, on two counts: the challenger
   // is handed the champion's own system prompt verbatim, so it inherits
@@ -125,43 +181,39 @@ const EXEMPT: Record<string, string> = {
 
 /**
  * Files where the boundaries DO apply and the rule is not there yet, each with
- * what it generates. Recorded 2026-08-29 while writing this guard.
+ * what it generates.
  *
- * These are not exemptions and must not be reworded into any. Every one of
- * them either authors an artifact the workspace keeps and executes, or feeds
- * free-form prose into a step that acts — which is precisely the population
- * guardrails.ts says the rule is for ("every system prompt that produces
- * artifacts or takes actions").
+ * Empty since 2026-08-29, and the emptiness is the assertion. This map opened
+ * with eight entries; every one was closed by importing GUARDRAIL_RULE into
+ * the surface and composing it into the SYSTEM prompt the model actually
+ * receives — never into the user turn, because a boundary sitting beside
+ * attacker-influenceable content is a boundary that content can argue with.
  *
- * Two are worth calling out. api/chat is a second INTERACTIVE surface without
- * the rule, alongside the librarian; the hardening spec called the librarian
- * "the only interactive LLM surface without GUARDRAIL_RULE" because the
- * fencing detector could not see this route either. And run-action-step.ts
- * was expected to inherit its fencing exemption, which does not transfer:
- * lib/flows/ai-prompts.ts SYSTEM carries a fencing line and no boundaries at
- * all, so nothing downstream of it is covered.
+ * Keep the map. An entry here remains the only alternative to fixing a
+ * surface, and it is deliberately the more expensive one: it costs a sentence
+ * naming what the file generates, a raised baseline below, and a reviewer who
+ * has to agree — against one import and one array element. The test that
+ * something belongs here rather than in EXEMPT is unchanged: it authors an
+ * artifact the workspace keeps and executes, or feeds free-form prose into a
+ * step that acts, which is the population guardrails.ts says the rule is for
+ * ("every system prompt that produces artifacts or takes actions"). These are
+ * not exemptions and must not be reworded into any.
  */
-const MISSING_RULE: Record<string, string> = {
-  'app/api/agents/draft/route.ts': 'Drafts an agent — title, description, operating instructions, integrations, schedule — that then runs with tools.',
-  'app/api/chat/route.ts': 'Interactive Q&A over a run record carrying whatever the agent’s tools returned.',
-  'app/api/flows/[id]/huddle/summary/route.ts': 'Summarises a captured human huddle into a persisted note and a decision list.',
-  'features/agents/reflection.ts': 'Writes free-form learnings and a suggested goal into agent memory, replayed into later runs.',
-  'features/flows/run-action-step.ts': 'Runs the flow `ai` step, whose free-text ask/summarize output feeds steps that send and write.',
-  'lib/flows/reflection-sweep.ts': 'Writes a process_improvement TemplateProposal from a recurring failure pattern.',
-  'lib/flows/templates/draft-notes.ts': 'Drafts the documentation saved with a flow template for other people to run.',
-  'lib/templates/generate-proposals.ts': 'Proposes agent and flow templates that promote to live, tool-using automations on accept.',
-}
+const MISSING_RULE: Record<string, string> = {}
 
 /**
- * How many gaps were on the books when this guard was written, and therefore
- * the most there may ever be again.
+ * How many gaps are on the books. Zero.
  *
- * Asserted exactly rather than as a ceiling, so the number walks DOWN with the
- * list and no headroom is ever left behind for a later gap to slip into. The
- * cost is one digit to edit when a gap is closed; the point is that adding one
- * costs the same edit in the other direction, with a message attached.
+ * Asserted exactly rather than as a ceiling, so the number walked DOWN with
+ * the list — 8 to 0 — and left no headroom behind for a later gap to slip
+ * into. At zero the assertion inverts: it used to catch a gap closed at the
+ * surface but left listed here, and it now catches the first surface that
+ * reaches a model with no boundaries, because raising this is the only way to
+ * record one. That raise is a deliberate line in a diff with a message
+ * attached, which is all a ratchet living in the same file as its list can
+ * offer — and still more than the silence the original eight accumulated in.
  */
-const MISSING_RULE_BASELINE = 8
+const MISSING_RULE_BASELINE = 0
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -176,13 +228,34 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc
 }
 
+/**
+ * lib/llm is the runner's own plumbing — ir.ts, qwen.ts, provider-brand.ts —
+ * and those files describe transport or DEFINE the helpers other surfaces call.
+ * They compose no prompt of their own, so there is no system prompt for the
+ * boundaries to be composed into.
+ *
+ * model-runner.ts is the exception, and the directory-wide skip is what hid it.
+ * The comment that used to sit here said the runner "defines the calls rather
+ * than making them", which was true of the file's other 800 lines and false of
+ * generateHeadline: it writes its own system prompt, calls messages.create, and
+ * bills its own ledger surface, over an agent's closing summary — model-authored
+ * text built on whatever that run's tools returned. The reply is clamped to one
+ * line of 120 characters, which bounds what a successful injection wins; being
+ * outside the population meant nothing was even asking.
+ *
+ * So the skip is narrowed to the plumbing it was always describing. Named as
+ * one file rather than a rule about who is allowed to prompt, for the reason
+ * the run-action-step exemption gives above: the next lib/llm file that starts
+ * prompting a model should have to say so here.
+ */
+const RUNNER_PLUMBING = path.join('lib', 'llm')
+const RUNNER_FILE_THAT_PROMPTS = path.join('lib', 'llm', 'model-runner.ts')
+
 function llmCallers(): string[] {
   return sourceFiles(SRC)
     .filter((file) => {
-      const source = readFileSync(file, 'utf8')
-      // The runner and its own helpers define the calls rather than making them.
-      if (file.includes(path.join('lib', 'llm'))) return false
-      return LLM_CALL.test(source)
+      if (file.includes(RUNNER_PLUMBING) && !file.endsWith(RUNNER_FILE_THAT_PROMPTS)) return false
+      return LLM_CALL.test(readFileSync(file, 'utf8'))
     })
     .map((file) => path.relative(SRC, file))
 }
@@ -191,16 +264,100 @@ describe('guardrail coverage', () => {
   it('still finds the model call sites it is meant to guard, so a renamed helper fails loudly instead of passing vacuously', () => {
     const callers = llmCallers()
     assert.ok(callers.length >= 5, `expected several LLM call sites, found ${callers.length}`)
+
+    // The floor alone did not earn this test's name. The population is
+    // lopsided — the overwhelming majority of these files reach a model through
+    // ONE helper, and the handful using every other spelling clear a floor of
+    // five between them — so renaming the busy one could drop most of the
+    // guarded set while this still passed. That is the vacuous pass, arrived at
+    // from the other direction.
+    //
+    // Concentration is the property that actually holds: the busiest
+    // alternative accounts for most of what is matched, so if it stops
+    // matching, no remainder can satisfy the ratio. A ratio and not a count,
+    // deliberately — a number pinned near today's population has to be raised
+    // every time a route is added, which teaches everyone to raise it without
+    // reading it.
+    //
+    // Measured over the CALLERS, not the definer: model-runner.ts exports every
+    // spelling in LLM_CALL, so it matches all of them and is evidence about
+    // none. Counting it inflates the alternatives it declares, which is the direction
+    // that flatters a helper nobody uses any more.
+    const measured = callers.filter((relative) => relative !== RUNNER_FILE_THAT_PROMPTS)
+    const sources = new Map(measured.map((relative) => [relative, readFileSync(path.join(SRC, relative), 'utf8')]))
+    const perAlternative = llmCallAlternatives().map(
+      (alternative) => measured.filter((relative) => alternative.test(sources.get(relative)!)).length,
+    )
+    const dominant = Math.max(...perAlternative)
+
+    assert.ok(
+      dominant * 2 > measured.length,
+      `the busiest LLM_CALL alternative covers ${dominant} of ${measured.length} matched files — no longer a ` +
+        'majority. Either the helper most of this tree prompts through was renamed and the detector stopped ' +
+        'seeing it, which is what this check is for: widen LLM_CALL rather than accepting the smaller set. Or a ' +
+        'second helper has genuinely grown to rival the first — in which case confirm the original still matches ' +
+        'something before reshaping this assertion, because a rename looks identical from here until you check.',
+    )
   })
 
   it('sees the routes that call the Messages API through a client variable, which the inherited detector missed entirely', () => {
-    // The pin that keeps the widened detector honest. If api/librarian ever
-    // stops matching, this guard silently stops covering the one surface the
-    // hardening spec was written for — a vacuous pass with no failing test.
+    // The pin that keeps the widened detector honest. If either route stops
+    // matching, this guard silently stops covering an interactive assistant
+    // over retrieved workspace text — a vacuous pass with no failing test.
+    //
+    // BOTH are named, which this check used to claim and not do. The comment on
+    // LLM_CALL says "the two routes that speak the Messages API directly" and
+    // only api/librarian was asserted, so api/chat — matched by nothing but the
+    // messages.create alternative — could have changed call shape and dropped
+    // out of the population with every assertion in this file still green. The
+    // fencing guard has pinned the pair since it was widened; this is the same
+    // list, checked the same way, so the two can be diffed.
     const callers = llmCallers()
-    assert.ok(
-      callers.includes(path.join('app', 'api', 'librarian', 'route.ts')),
-      'the librarian route no longer matches the detector — widen LLM_CALL rather than losing the coverage',
+    const directSdk = [
+      path.join('app', 'api', 'librarian', 'route.ts'),
+      path.join('app', 'api', 'chat', 'route.ts'),
+    ]
+    const missed = directSdk.filter((relative) => !callers.includes(relative))
+
+    assert.deepEqual(
+      missed,
+      [],
+      `LLM_CALL no longer matches these direct-SDK routes: ${missed.join(', ')}. ` +
+        'They call client.messages.create rather than a lib/llm helper — widen the detector rather than ' +
+        'losing the coverage, and only delete an entry here once the route genuinely stops prompting a model.',
+    )
+  })
+
+  it('pins a file by name behind every live detector alternative', () => {
+    // Neither of these was guarded OR exempt OR a recorded gap — they were
+    // outside the population, the one state no assertion in this file can
+    // report on. bench.ts drives a model through createPinnedRunner, a spelling
+    // LLM_CALL did not list; model-runner.ts prompts one in generateHeadline
+    // and was skipped for living under lib/llm. Pinned by name because a count
+    // cannot notice an absence, which is the lesson of the direct-SDK pin above.
+    const callers = llmCallers()
+    const pinned = [
+      path.join('lib', 'eval', 'bench.ts'),
+      path.join('lib', 'llm', 'model-runner.ts'),
+      // createModelRunner's only carriers. They are pinned because deleting
+      // that alternative fails NOTHING except the stale-exemption assertion,
+      // whose message says "remove these stale exemptions" — and following it
+      // turns the build green with these three outside the population
+      // entirely. A tripwire whose own advice completes the laundering is not
+      // a tripwire; every live alternative needs a file pinned by name behind
+      // it.
+      path.join('features', 'agents', 'execute-agent.ts'),
+      path.join('features', 'flows', 'run-action-step.ts'),
+      path.join('lib', 'eval', 'nightly.ts'),
+    ]
+    const missed = pinned.filter((relative) => !callers.includes(relative))
+
+    assert.deepEqual(
+      missed,
+      [],
+      `these files reach a model but are outside the guarded population again: ${missed.join(', ')}. ` +
+        'Restore the LLM_CALL alternative or the lib/llm carve-out that caught them — an unmatched file is ' +
+        'neither guarded nor exempt, it is simply unwatched.',
     )
   })
 
@@ -230,6 +387,9 @@ describe('guardrail coverage', () => {
   })
 
   it('only records gaps that are still gaps, so closing one forces the list to shrink', () => {
+    // Vacuous while MISSING_RULE is empty, and left in place for that reason:
+    // it is what stops the next entry — if there ever is one — from outliving
+    // its own fix. A guard is allowed to be quiet in the state it enforces.
     const callers = new Set(llmCallers())
     const fixed: string[] = []
 
@@ -250,20 +410,23 @@ describe('guardrail coverage', () => {
     )
   })
 
-  it('makes the gap list shrink or argue, because a new unguarded surface could otherwise be laundered into it in one green line', () => {
+  it('makes a new gap argue for itself, because an unguarded surface could otherwise be laundered into the list in one green line', () => {
     // The gap that was actually here: the two assertions above fail a NEW
     // unguarded file and fail a CLOSED one, and between them they still let a
     // developer add the file to MISSING_RULE with a plausible sentence and
     // watch CI go green. "Known debt" is the softest word in the file and the
     // least likely to be challenged in review; nothing counted the list, so
-    // nothing noticed it growing.
+    // nothing noticed it growing. Now that the count is zero, this is the
+    // whole ratchet: there is nothing left to close, so any change here is a
+    // raise, and a raise cannot happen without someone editing the number.
     assert.equal(
       Object.keys(MISSING_RULE).length,
       MISSING_RULE_BASELINE,
-      'MISSING_RULE changed size. If you CLOSED a gap, lower MISSING_RULE_BASELINE to match — well done. ' +
-        'If you are RAISING it, stop: you are recording a brand-new surface that reaches a model with no ' +
-        'boundaries, and this list only goes down. Import GUARDRAIL_RULE into that surface instead, or ' +
-        'exempt it with a reason naming why no boundary can bite.',
+      'MISSING_RULE is no longer empty. Every gap this file opened with has been closed, so this can only be ' +
+        'a RAISE: you are recording a brand-new surface that reaches a model with no boundaries. Import ' +
+        'GUARDRAIL_RULE from @/lib/security/guardrails into that surface and compose it into the SYSTEM ' +
+        'prompt (never the user turn) instead, or exempt it with a reason naming why no boundary can bite. ' +
+        'If you really mean to book the debt, raise MISSING_RULE_BASELINE in the same commit and say why.',
     )
   })
 

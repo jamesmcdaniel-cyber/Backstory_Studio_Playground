@@ -6,6 +6,7 @@ import { qwenClient, qwenModel } from '@/lib/llm/qwen'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { executionVisibilityScope } from '@/lib/server/visibility'
 import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { assertAiCallAllowed, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { recordLlmCall } from '@/lib/usage/ledger'
@@ -14,9 +15,17 @@ import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
 // The run record folded into the prompt below carries whatever the agent's
 // tools returned — email bodies, ticket text, fetched pages. That is
 // attacker-influenceable content, so the rule travels with the prompt.
+//
+// Boundary 1 is the one that bites, and fencing does not cover it: a tool can
+// echo a secret back into the record it fetched — an auth header quoted in an
+// error body, a key someone pasted into a ticket — and the answer here is
+// free-form prose to whoever asked. The fence settles that the record is data
+// rather than instructions; it says nothing about reading a credential back
+// out of it.
 const SYSTEM_PROMPT = [
   'Answer questions about an AI agent run. Be precise about its output, tool calls, and errors. Do not claim actions not present in the run data.',
   UNTRUSTED_DATA_RULE,
+  GUARDRAIL_RULE,
 ].join('\n\n')
 
 export const POST = withAuthenticatedApi(async (request, auth) => {

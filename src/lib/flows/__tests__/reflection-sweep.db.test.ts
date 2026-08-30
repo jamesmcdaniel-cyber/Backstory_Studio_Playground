@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { enterTestTenant } from '@/lib/server/__tests__/test-tenant'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 
 /**
  * Flows never reflected: reflectAndRemember had exactly one caller
@@ -113,6 +114,13 @@ if (TEST_DB) {
     const flows = await sweepFlowReflection(new Date(), { generate: gen.generate })
     assert.ok(flows.includes(ids.flow))
     assert.equal(gen.callsFor('Nightly brief').length, 1, 'exactly one model call for this flow')
+    // What the sweep actually SENT, not what came back: a model prompted
+    // without the boundaries writes a rationale that reads the same as one
+    // prompted with them, so the request is the only place this is visible.
+    assert.ok(
+      gen.callsFor('Nightly brief')[0].system.includes(GUARDRAIL_RULE),
+      'the boundaries must reach the model on the real call path, not just in buildReflectionPrompt',
+    )
 
     const proposal = await prisma.templateProposal.findFirst({
       where: {

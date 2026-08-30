@@ -1,4 +1,5 @@
 import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { NANGO_PROVIDERS } from '@/lib/nango/provider-tools'
@@ -74,6 +75,15 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       'Write instructions the agent can follow without further clarification: the goal, the steps, which tools to use, and what to include in the final report. If anything is genuinely ambiguous, instruct the agent to ask the user via its ask_user tool at run time.',
       'Set a schedule only when the user describes a recurring cadence; otherwise use type "manual" with isActive false.',
       UNTRUSTED_DATA_RULE,
+      // Boundaries 2 and 3 arrive here dressed as feature requests. What this
+      // route writes is an agent's operating instructions, and the agent then
+      // executes them with tools and the user's connected accounts: "draft me
+      // an agent that clears out every closed-lost opportunity" is a
+      // destructive bulk operation stated in the vocabulary of a config, and
+      // one that mails prospects as another company is a forged sender a step
+      // before it exists. Refusing at draft time is the last point where a
+      // human is still reading the words.
+      GUARDRAIL_RULE,
     ].join('\n'),
     user: description,
   })

@@ -1,4 +1,5 @@
 import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { z } from 'zod'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
@@ -69,9 +70,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     raw = await generateStructured({
       schemaName: 'template_matches',
       schema: MATCHES_SCHEMA as unknown as Record<string, unknown>,
-      system:
-        "You match a user's goal to the best library templates/skills. Return ONLY items that genuinely help accomplish the stated goal — an empty list is the correct answer when nothing fits. Rank best-first, at most 5, each with a one-sentence reason tied to the goal.\n\n" +
+      // sanitizeMatches closes the id half of every match against the catalogue
+      // the caller sent; it copies `reason` through untouched. That sentence is
+      // model-authored prose shown as the product's own explanation of a match,
+      // and the catalogue it is written from includes items other workspaces
+      // contributed — attacker-influenceable text in, free-form text out, which
+      // is exactly the pair the boundaries exist for.
+      system: [
+        "You match a user's goal to the best library templates/skills. Return ONLY items that genuinely help accomplish the stated goal — an empty list is the correct answer when nothing fits. Rank best-first, at most 5, each with a one-sentence reason tied to the goal.",
         UNTRUSTED_DATA_RULE,
+        GUARDRAIL_RULE,
+      ].join('\n\n'),
       user: `Goal: ${query}\n\nCatalog (id | kind | name | category | description | tags):\n${formatCatalog(items)}`,
       maxTokens: 1024,
     })

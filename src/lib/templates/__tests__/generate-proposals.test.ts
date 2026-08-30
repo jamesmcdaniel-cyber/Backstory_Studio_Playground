@@ -17,6 +17,8 @@ import {
   type NormalizeContext,
 } from '../generate-proposals'
 import { MAX_AUDIT_ROWS, type UsageProfile } from '../usage-profile'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
+import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import type { ProposalInput } from '../proposals'
 
 // --- Fixtures ---------------------------------------------------------------
@@ -305,4 +307,57 @@ test('PROPOSAL_SCHEMA: strict object with a required proposals array', () => {
   assert.equal(PROPOSAL_SCHEMA.type, 'object')
   assert.equal(PROPOSAL_SCHEMA.additionalProperties, false)
   assert.deepEqual([...PROPOSAL_SCHEMA.required], ['proposals'])
+})
+
+// --- Boundaries: what actually reaches the model ----------------------------
+
+/**
+ * Asserted through the injected `generate` rather than on the exported
+ * constant, because the constant is not the thing under test — the argument is.
+ * An accepted proposal promotes to a live, tool-using agent or flow, so the one
+ * question worth pinning is whether the call that authors it was made with the
+ * boundaries attached. A reply cannot answer that: an unguarded model returns
+ * perfectly ordinary-looking proposals.
+ */
+function captureSystemPrompt() {
+  const seen: Array<{ system: string; user: string }> = []
+  return {
+    seen,
+    generate: async (opts: { system: string; user: string }) => {
+      seen.push({ system: opts.system, user: opts.user })
+      return reply([rawTemplate()])
+    },
+  }
+}
+
+test('boundaries: the system prompt sent to the model carries GUARDRAIL_RULE verbatim', async () => {
+  const spy = captureSystemPrompt()
+  const { deps } = stubDeps({ generate: spy.generate })
+  await generateTemplateProposals('org-1', deps)
+
+  assert.equal(spy.seen.length, 1)
+  assert.ok(
+    spy.seen[0].system.includes(GUARDRAIL_RULE),
+    'an accepted proposal becomes something that runs — it must be authored under the boundaries',
+  )
+  // Byte-identical: a paraphrased local copy would drift away from guardrails.ts.
+  assert.equal(spy.seen[0].system.slice(spy.seen[0].system.indexOf(GUARDRAIL_RULE)), GUARDRAIL_RULE)
+})
+
+test('boundaries: they sit in the system prompt, not beside the workspace evidence', async () => {
+  const spy = captureSystemPrompt()
+  const { deps } = stubDeps({ generate: spy.generate })
+  await generateTemplateProposals('org-1', deps)
+
+  const { system, user } = spy.seen[0]
+  assert.ok(user.includes('## Observed usage'), 'the usage evidence is the user turn')
+  assert.equal(
+    user.includes(GUARDRAIL_RULE),
+    false,
+    'retrieved context can argue with a rule it shares a turn with',
+  )
+  assert.ok(
+    system.indexOf(UNTRUSTED_DATA_RULE) < system.indexOf(GUARDRAIL_RULE),
+    'fence first, boundaries last — the order every other surface composes',
+  )
 })

@@ -1,4 +1,5 @@
 import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { z } from 'zod'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
@@ -57,9 +58,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     raw = await generateStructured({
       schemaName: 'integration_matches',
       schema: MATCHES_SCHEMA as unknown as Record<string, unknown>,
-      system:
-        "You match a user's goal to the integrations that would help accomplish it. Return ONLY integrations from the catalog that genuinely help — an empty list is the correct answer when nothing fits. Rank best-first, at most 6, each with a one-sentence reason tied to the goal.\n\n" +
+      // The id half of each match is closed — the loop below drops anything the
+      // caller did not send — but `reason` is a sentence the model writes and
+      // this route hands back verbatim. That prose is the channel the
+      // boundaries are for: it is rendered as the product's own explanation of
+      // a match, so an integration name or provider string carrying an
+      // injection has somewhere to put a forged notice.
+      system: [
+        "You match a user's goal to the integrations that would help accomplish it. Return ONLY integrations from the catalog that genuinely help — an empty list is the correct answer when nothing fits. Rank best-first, at most 6, each with a one-sentence reason tied to the goal.",
         UNTRUSTED_DATA_RULE,
+        GUARDRAIL_RULE,
+      ].join('\n\n'),
       user: `Goal: ${query}\n\nIntegrations (id | name | provider):\n${formatCatalog(items)}`,
       maxTokens: 1024,
     })

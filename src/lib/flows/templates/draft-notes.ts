@@ -1,3 +1,4 @@
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { generateStructured } from '@/lib/llm/model-runner'
 import { AI_OP_LABELS, DATA_OPS, type FlowGraph, type FlowNode } from '@/lib/flows/graph'
@@ -33,7 +34,16 @@ const NOTES_JSON_SCHEMA = {
   additionalProperties: false,
 }
 
-const SYSTEM = [
+/**
+ * Boundary 1 is the one that bites here. describeGraphForNotes hands the model
+ * every executable node's raw `data` — request headers, code bodies, inline
+ * values — and the notes it writes are SAVED WITH the template and read by
+ * whoever installs it next, so this is the one place a secret sitting in a
+ * config could be copied into prose that outlives the flow it came from.
+ * Boundary 2 follows it: `setup` tells a stranger what to connect, and that is
+ * a natural shape for "sign in here" pointing somewhere it should not.
+ */
+export const DRAFT_NOTES_SYSTEM = [
   'You document workflow automations for the people who will run them.',
   UNTRUSTED_DATA_RULE,
   'You are given a flow graph. Return ONE JSON object with a single property, notesJson: a JSON string holding the notes object.',
@@ -44,7 +54,7 @@ const SYSTEM = [
   'setup: the ordered list of things a person must do before the flow can run — connect an integration, pick an agent, set a value. kind is integration, agent, or value.',
   'CRITICAL: never write template token syntax (double curly braces) in any string. Refer to earlier steps by their title instead, e.g. "the accounts from Pull open accounts".',
   'Do not invent capabilities the graph does not have. If a step is a passthrough placeholder, say so.',
-].join(' ')
+].join(' ') + `\n\n${GUARDRAIL_RULE}`
 
 /** A compact, model-readable rendering of the graph — labels, types, and the config that matters. */
 export function describeGraphForNotes(graph: FlowGraph): string {
@@ -170,7 +180,7 @@ export async function draftFlowTemplateNotes(
     .filter(Boolean)
     .join('\n')
 
-  const raw = await generateStructured({ system: SYSTEM, user, schema: NOTES_JSON_SCHEMA, schemaName: 'flow_template_notes', maxTokens: 3000 })
+  const raw = await generateStructured({ system: DRAFT_NOTES_SYSTEM, user, schema: NOTES_JSON_SCHEMA, schemaName: 'flow_template_notes', maxTokens: 3000 })
   const notes = repairDraftedNotes(flowTemplateNotesSchema.parse(parseNotesReply(raw)), graph)
-  return { notes, bindings: inferBindings(graph, context.agents), rawParts: [SYSTEM, user, raw] }
+  return { notes, bindings: inferBindings(graph, context.agents), rawParts: [DRAFT_NOTES_SYSTEM, user, raw] }
 }

@@ -1,4 +1,5 @@
 import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { z } from 'zod'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
@@ -48,7 +49,13 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!transcript) return { success: true, note: null, empty: true }
 
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `huddle-summary:${auth.dbUser.id}`, limit: 10 })
-  const system = `You turn meeting transcripts into concise, faithful team notes.\n\n${UNTRUSTED_DATA_RULE}`
+  // Boundary 1, with 5 behind it. The segments are DELETED below, so the note
+  // this call writes becomes the only surviving record of the room: a token
+  // read aloud or pasted into the capture would be copied verbatim into a
+  // durable artifact, and a remark about a named individual would outlive the
+  // conversation it belonged to. A transcript is also the least curated input
+  // on the platform — nobody drafted it, so nothing was held back.
+  const system = `You turn meeting transcripts into concise, faithful team notes.\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`
   const user = summaryPrompt(flow.name, transcript)
   const raw = await generateStructured({ system, user, schema: SUMMARY_SCHEMA, schemaName: 'huddle_note', maxTokens: 1200 })
   recordEstimatedUsage(auth.organizationId, system, user, raw)

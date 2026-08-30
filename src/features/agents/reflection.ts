@@ -1,4 +1,5 @@
 import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
@@ -78,9 +79,21 @@ export function buildReflectionPrompt(params: {
   processLog: string
 }): { system: string; user: string } {
   return {
+    // Boundary 1 is the one that bites hardest here, and it bites in an unusual
+    // direction: this pass reads a run summary and process log — raw tool
+    // output — and writes free-form prose into agent memory, which is retrieved
+    // back into LATER runs. A "durable learning" that records the token an http
+    // step returned is a credential copied out of one run's transcript and into
+    // every future run's prompt, where the fencing rule no longer applies to it
+    // because by then it is the agent's own remembered fact. Boundary 3 lands
+    // the same way through suggestedGoal, which persists as the agent's goal
+    // and steers what it does next. The output outlives the run that made it,
+    // so it is held to the boundaries at the moment it is authored.
     system:
       UNTRUSTED_DATA_RULE +
-      '\n\nYou are the reflection pass for an autonomous agent. Given a completed run, extract durable learnings (facts about where data lives, what worked, what failed), one short self-critique paragraph the agent should read before its next run, and up to 3 user-actionable suggestions that would help future runs serve the larger goal better (missing connections, data gaps, objective improvements). Be concrete and terse. If no goal was provided, infer one from the objective and return it as suggestedGoal.',
+      '\n\nYou are the reflection pass for an autonomous agent. Given a completed run, extract durable learnings (facts about where data lives, what worked, what failed), one short self-critique paragraph the agent should read before its next run, and up to 3 user-actionable suggestions that would help future runs serve the larger goal better (missing connections, data gaps, objective improvements). Be concrete and terse. If no goal was provided, infer one from the objective and return it as suggestedGoal.' +
+      '\n\n' +
+      GUARDRAIL_RULE,
     user: [
       `Larger goal: ${params.goal ?? '(none provided — infer one)'}`,
       `Objective: ${params.objective}`,

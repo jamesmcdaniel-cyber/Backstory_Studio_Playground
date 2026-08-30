@@ -1,3 +1,4 @@
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 /**
  * The HEART of sub-project C: turn a workspace's usage profile + graph-RAG
@@ -457,6 +458,15 @@ export function buildGenerationUser(
   return lines.join('\n')
 }
 
+/**
+ * Boundary 3 is the one that bites, because a proposal is not advice. Accepting
+ * one promotes it to a live agent or flow with tools bound to it, so
+ * "reconcile the stale opportunities" stops being a sentence and becomes
+ * something that runs against the workspace's connected systems — with only a
+ * reviewer between the model's wording and the write. Boundary 1 rides along
+ * with it: the evidence below is the workspace's own tool output, and the
+ * `instructions` it produces are free-form second-person text.
+ */
 const GENERATION_SYSTEM = [
   'You propose REVIEWABLE automation templates for a team workspace, grounded strictly in its observed integration usage.',
   UNTRUSTED_DATA_RULE,
@@ -466,6 +476,7 @@ const GENERATION_SYSTEM = [
   'The server appends a standard asset contract for polished HTML, canonical workflow JSON, cross-platform mappings, and an operations README. Focus your instructions on the automation’s domain-specific logic and make them detailed enough for that contract to produce a deployable package.',
   'Do NOT duplicate an existing template title or its intent. Prefer proposals that combine providers you see used together.',
   'For sourceEvidenceJson, return a JSON object string naming the specific signals (providers, co-occurrences, themes) that justify the proposal.',
+  GUARDRAIL_RULE,
 ].join('\n')
 
 /**

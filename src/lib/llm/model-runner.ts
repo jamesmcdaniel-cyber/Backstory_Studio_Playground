@@ -8,6 +8,8 @@ import { qwenClient, qwenConfigured, qwenModel } from './qwen'
 import { modelTier, UNLIMITED_MODEL_ALLOWANCE, type ModelAllowance } from '@/lib/usage/model-tiers'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { withBreaker, CircuitOpenError } from '@/lib/resilience/circuit-breaker'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
+import { UNTRUSTED_DATA_RULE, fenceUntrusted } from '@/lib/security/prompt'
 import {
   type IRMessage,
   irUser,
@@ -521,13 +523,44 @@ export function resolveServedModel(target: { target: 'claude' | 'qwen'; model: s
   return target.target === 'qwen' ? qwenModel(target.model) : target.model
 }
 
+/**
+ * The headline call's two halves, built where they can be asserted on.
+ *
+ * This module DEFINES the calls the rest of the tree makes, which is why the
+ * coverage guards skip its neighbours — and generateHeadline is the one place
+ * here that also MAKES one, so it inherited a directory-shaped free pass it
+ * never earned. What it prompts over is an agent's own closing text, written on
+ * top of whatever that run's tools returned: a scraped page, an inbound email,
+ * a CRM note someone else typed. Same provenance as any retrieved content, so
+ * the same envelope and the same boundaries.
+ *
+ * The 120-character clamp below narrows what a successful injection could
+ * achieve; it does not decide whether one lands. The line is rendered in the
+ * activity feed as the platform's own account of what a run did, which is
+ * precisely the voice a forged one wants to borrow — rule 2's shape, in a
+ * channel small enough that nobody thought to look at it.
+ *
+ * Exported because the composition is the control: the rules belong in the
+ * system prompt, on the other side of the boundary from the summary, and a test
+ * can only pin that if it can see both halves without a provider call.
+ */
+export function buildHeadlinePrompt(summary: string): { system: string; user: string } {
+  return {
+    system: [
+      'Summarize what an AI agent run accomplished in one short, friendly past-tense line of at most 10 words. Respond with the line only — no quotes, no preamble.',
+      UNTRUSTED_DATA_RULE,
+      GUARDRAIL_RULE,
+    ].join('\n\n'),
+    user: fenceUntrusted('agent run summary', summary.slice(0, 4000)),
+  }
+}
+
 // Cheap one-line summary for the activity feed. Best-effort: returns null when
 // no provider is configured or the call fails.
 export async function generateHeadline(summary: string, ledger?: LedgerContext): Promise<string | null> {
   const target = summaryTarget()
   if (!target || !summary.trim()) return null
-  const system =
-    'Summarize what an AI agent run accomplished in one short, friendly past-tense line of at most 10 words. Respond with the line only — no quotes, no preamble.'
+  const { system, user } = buildHeadlinePrompt(summary)
   const startedAt = Date.now()
   try {
     // Both endpoints speak the Anthropic Messages API.
@@ -537,7 +570,7 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
       model: servedModel,
       max_tokens: 64,
       system,
-      messages: [{ role: 'user', content: summary.slice(0, 4000) }],
+      messages: [{ role: 'user', content: user }],
     })
     if (ledger) {
       trackDetached(

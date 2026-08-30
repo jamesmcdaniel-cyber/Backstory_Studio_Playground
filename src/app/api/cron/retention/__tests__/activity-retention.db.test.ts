@@ -32,7 +32,24 @@ if (TEST_DB) {
     const stamp = Date.now()
     const org = await prisma.organization.create({ data: { name: 'Activity Retention', slug: `activity-retention-${stamp}` } })
     ids.org = org.id
+  })
 
+  /**
+   * Seeded from INSIDE the locked critical section, not from `before`.
+   *
+   * These rows are older than the cutoff, which makes them fair game for any
+   * global retention sweep — including a sibling suite's. Seeding them in
+   * `before` left them sitting in the shared database, unprotected, for however
+   * long the runner took to reach the test body: a sweep landing in that window
+   * carried them off, and this test then measured its own sweep finding nothing
+   * to delete. Under the lock the window does not exist, because the only other
+   * caller of this sweep now waits for the same lock.
+   *
+   * Writes go through the outer client rather than the lock's `tx` on purpose —
+   * the route reads on its own connection and cannot see an uncommitted row.
+   */
+  async function seedAgedFixtures() {
+    const stamp = Date.now()
     const ninetyOneDaysAgo = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000)
 
     const staleEvent = await prisma.activityEvent.create({
@@ -95,7 +112,7 @@ if (TEST_DB) {
       },
     })
     ids.freshClaimedClaim = freshClaimedClaim.id
-  })
+  }
 
   after(async () => {
     if (!ids.org) return
@@ -115,15 +132,21 @@ if (TEST_DB) {
     // the same tables from a sibling test file. Holding the lock for the
     // GET call's whole duration keeps this test's own before/after deltas
     // (already org-scoped below) honest even under full-suite parallelism.
+    //
+    // The seed is inside the lock for the same reason the GET is: aged rows
+    // left lying around before the lock is held are exactly what a sibling
+    // sweep deletes, and a counter of 0 then reads as "the sweep missed them"
+    // rather than "someone else got there first".
     const { GET } = await import('../route')
     const response = await prisma.$transaction(
       async (tx: any) => {
         await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(918273646)')
+        await seedAgedFixtures()
         return GET(new Request('http://localhost/api/cron/retention', {
           headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
         }))
       },
-      { timeout: 30_000 },
+      { timeout: 30_000, maxWait: 30_000 },
     )
     const body = await response.json()
 

@@ -48,13 +48,20 @@ const stable = (value: unknown) =>
  * into another workspace, and the assertion here is specifically about the
  * latter.
  *
- * Deliberately narrow: only the four fields a delivery attempt writes. The
- * row's identity, topic, payload, and organization are all still compared
+ * Deliberately narrow: exactly the columns processOutboxBatch writes, and no
+ * others — the claim, the compare-and-set, and both terminal branches together
+ * touch these six and nothing else. The row's identity, topic, aggregate,
+ * dedupe key, payload, creation time and organization are all still compared
  * byte-for-byte, so a teardown that deleted or rewrote a bystander's outbox row
  * still fails exactly as before.
+ *
+ * `status` and `deliveredAt` belong here for the same reason the other four do,
+ * and their absence was a hole rather than a decision: the claim itself moves a
+ * row pending -> processing, so the sweep this list exists to tolerate tripped
+ * the assertion on its very first write.
  */
 const SWEEP_OWNED: Record<string, string[]> = {
-  OutboxEvent: ['attempts', 'availableAt', 'lastError', 'lockedAt'],
+  OutboxEvent: ['attempts', 'availableAt', 'deliveredAt', 'lastError', 'lockedAt', 'status'],
 }
 
 async function snapshotOrg(organizationId: string): Promise<Record<string, string>> {

@@ -248,7 +248,21 @@ const cases = (): Case[] => [
   // due wait, outbox batch, approval reap and health sweep — if it throws,
   // every schedule in the product silently stops, and nothing else calls it.
   { route: 'cron/dispatch', method: 'GET', run: async () => (await import('../cron/dispatch/route')).GET(new Request('http://test/api/cron/dispatch', { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } })) },
-  { route: 'cron/retention', method: 'GET', run: async () => (await import('../cron/retention/route')).GET(new Request('http://test/api/cron/retention', { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } })) },
+  // Retention is a DESTRUCTIVE global sweep — no organizationId filter on any
+  // of its deletes — so invoking it here reaches into every other suite's
+  // fixtures on the shared CI database. activity-retention.db.test.ts asserts
+  // the sweep's counters over fixtures it seeded, and this smoke call was
+  // silently eating them first, leaving that suite's own sweep with nothing to
+  // count. Lock 918273646 is that suite's; taking it makes the two sweeps take
+  // turns. Nothing here is relaxed by holding it: this case still asserts the
+  // handler responds without a 5xx, exactly as before.
+  { route: 'cron/retention', method: 'GET', run: async () => {
+    const { GET } = await import('../cron/retention/route')
+    return prisma.$transaction(async (tx: any) => {
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(918273646)')
+      return GET(new Request('http://test/api/cron/retention', { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } }))
+    }, { timeout: 30_000, maxWait: 30_000 })
+  } },
 ]
 
 test('every mutating handler responds instead of crashing', { skip: !TEST_DB }, async () => {

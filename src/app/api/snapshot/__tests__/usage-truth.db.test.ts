@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { NextRequest } from 'next/server'
+import { lockedLedgerClient, withUsageAggregateLock } from '@/lib/server/__tests__/usage-aggregate-lock'
 
 /**
  * GET /api/snapshot used to source its usage numerator from agentExecution
@@ -21,6 +22,7 @@ if (TEST_DB) {
   process.env[ENV] = '1000000000'
 
   let prisma: any
+  let systemPrisma: any
   let seedTestOrg: any
   let installTestAuth: any
   let recordLlmCall: any
@@ -29,7 +31,7 @@ if (TEST_DB) {
   let seeded: any
 
   before(async () => {
-    ;({ prisma } = await import('@/lib/prisma'))
+    ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     ;({ seedTestOrg, installTestAuth } = await import('@/lib/server/__tests__/test-auth'))
     ;({ recordLlmCall } = await import('@/lib/usage/ledger'))
     ;({ GET } = await import('../route'))
@@ -45,12 +47,12 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-sonnet-5',
       usage: { inputTokens: 700, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 300 },
-    })
+    }, lockedLedgerClient(systemPrisma))
   })
 
   after(async () => {
     if (seeded) {
-      await prisma.llmCall.deleteMany({ where: { organizationId: seeded.organizationId } })
+      await withUsageAggregateLock(prisma, () => prisma.llmCall.deleteMany({ where: { organizationId: seeded.organizationId } }))
       await seeded.cleanup()
     }
   })

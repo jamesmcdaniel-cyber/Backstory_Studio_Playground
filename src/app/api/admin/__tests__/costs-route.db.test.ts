@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import { NextRequest } from 'next/server'
+import { withUsageAggregateLock } from '@/lib/server/__tests__/usage-aggregate-lock'
 
 /**
  * /api/admin/costs against a real database.
@@ -61,26 +62,33 @@ if (TEST_DB) {
     // already reflects that residue.
     totalBefore = (await total()).total.costUsd
 
-    for (let index = 0; index < ORG_COUNT; index += 1) {
-      const org = await prisma.organization.create({
-        data: { name: `Cost Org ${index}`, slug: `cost-org-${crypto.randomUUID()}` },
-      })
-      orgIds.push(org.id)
-      // Distinct spend per org so ordering by cost is deterministic and no two
-      // organizations tie for the 50th spot.
-      await prisma.llmCall.create({
-        data: {
-          organizationId: org.id,
-          surface: 'agent_turn',
-          provider: 'anthropic',
-          model: 'claude-test',
-          priceVersion: 'test-2026-08',
-          costUsd: (index + 1).toFixed(2),
-          inputTokens: 10,
-          outputTokens: 10,
-        },
-      })
-    }
+    // Under the same lock the teardown below takes, and for the mirror-image
+    // reason: 55 orgs' worth of spend arriving one statement at a time is a
+    // long, loud change to the very cross-org total models-route-demo.db.
+    // test.ts asserts is unchanged across two reads. Seeding was the half of
+    // this suite's lifecycle that never took the lock.
+    await withUsageAggregateLock(prisma, async () => {
+      for (let index = 0; index < ORG_COUNT; index += 1) {
+        const org = await prisma.organization.create({
+          data: { name: `Cost Org ${index}`, slug: `cost-org-${crypto.randomUUID()}` },
+        })
+        orgIds.push(org.id)
+        // Distinct spend per org so ordering by cost is deterministic and no two
+        // organizations tie for the 50th spot.
+        await prisma.llmCall.create({
+          data: {
+            organizationId: org.id,
+            surface: 'agent_turn',
+            provider: 'anthropic',
+            model: 'claude-test',
+            priceVersion: 'test-2026-08',
+            costUsd: (index + 1).toFixed(2),
+            inputTokens: 10,
+            outputTokens: 10,
+          },
+        })
+      }
+    })
   })
 
   after(async () => {

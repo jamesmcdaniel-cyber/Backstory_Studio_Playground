@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { NextRequest } from 'next/server'
+import { lockedLedgerClient, withUsageAggregateLock } from '@/lib/server/__tests__/usage-aggregate-lock'
 
 /**
  * GET /api/admin/users/[id]/usage — the per-user drill-down behind the
@@ -22,6 +23,7 @@ if (TEST_DB) {
   process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'test-key'
 
   let prisma: any
+  let systemPrisma: any
   let recordLlmCall: any
   let usageRoute: any
   let operator: any
@@ -32,7 +34,7 @@ if (TEST_DB) {
     new NextRequest(new URL(`http://test/api/admin/users/${id}/usage${search}`))
 
   before(async () => {
-    ;({ prisma } = await import('@/lib/prisma'))
+    ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     const testAuth = await import('@/lib/server/__tests__/test-auth')
     ;({ recordLlmCall } = await import('@/lib/usage/ledger'))
 
@@ -60,7 +62,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-sonnet-5',
       usage: { inputTokens: 100, cacheWriteTokens: 10, cacheReadTokens: 5, outputTokens: 50 },
-    })
+    }, lockedLedgerClient(systemPrisma))
     await recordLlmCall({
       organizationId: userA.organizationId,
       userId: userA.userId,
@@ -68,7 +70,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
       usage: { inputTokens: 20, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10 },
-    })
+    }, lockedLedgerClient(systemPrisma))
     // User B's own spend — must never bleed into user A's report.
     await recordLlmCall({
       organizationId: userA.organizationId,
@@ -77,11 +79,11 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-sonnet-5',
       usage: { inputTokens: 9999, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 9999 },
-    })
+    }, lockedLedgerClient(systemPrisma))
   })
 
   after(async () => {
-    await prisma.llmCall.deleteMany({ where: { organizationId: userA.organizationId } })
+    await withUsageAggregateLock(prisma, () => prisma.llmCall.deleteMany({ where: { organizationId: userA.organizationId } }))
     await prisma.user.deleteMany({ where: { id: userB.id } }).catch(() => {})
     await userA?.cleanup()
     await operator?.cleanup()
@@ -134,7 +136,7 @@ if (TEST_DB) {
     // No NULL-userId rows seeded for this org yet.
     assert.equal(body.hasUnattributedOrgUsage, false)
 
-    await prisma.llmCall.create({
+    await withUsageAggregateLock(prisma, () => prisma.llmCall.create({
       data: {
         organizationId: userA.organizationId,
         userId: null,
@@ -146,7 +148,7 @@ if (TEST_DB) {
         inputTokens: 5,
         outputTokens: 5,
       },
-    })
+    }))
     const after = await usageRoute.GET(get(userA.userId))
     const afterBody = await after.json()
     assert.equal(afterBody.hasUnattributedOrgUsage, true, 'a NULL-userId row in the org must flip the footnote flag')

@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { lockedLedgerClient, withUsageAggregateLock } from '@/lib/server/__tests__/usage-aggregate-lock'
 
 /**
  * checkMonthlyTokenBudget's DB fallback used to sum agentExecution only, which
@@ -25,6 +26,7 @@ if (TEST_DB) {
   const prevEnv = process.env[ENV]
 
   let prisma: any
+  let systemPrisma: any
   let checkMonthlyTokenBudget: any
   let monthlyTokenBudgetFor: any
   let recordTokenUsage: any
@@ -35,7 +37,7 @@ if (TEST_DB) {
 
   before(async () => {
     process.env[ENV] = '1000000000' // 1B — high enough that no fixture tips it over
-    ;({ prisma } = await import('@/lib/prisma'))
+    ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     ;({ checkMonthlyTokenBudget, monthlyTokenBudgetFor, recordTokenUsage, resetMonthlyTokenUsage } = await import('../budget'))
     ;({ recordLlmCall } = await import('../ledger'))
 
@@ -50,7 +52,7 @@ if (TEST_DB) {
 
   after(async () => {
     if (ids.org) {
-      await prisma.llmCall.deleteMany({ where: { organizationId: ids.org } })
+      await withUsageAggregateLock(prisma, () => prisma.llmCall.deleteMany({ where: { organizationId: ids.org } }))
       await prisma.organization.delete({ where: { id: ids.org } })
     }
     if (prevEnv === undefined) delete process.env[ENV]
@@ -72,7 +74,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-sonnet-5',
       usage: { inputTokens: 1000, cacheWriteTokens: 200, cacheReadTokens: 300, outputTokens: 500 },
-    })
+    }, lockedLedgerClient(systemPrisma))
 
     const result = await checkMonthlyTokenBudget(ids.org)
     // 1000 + 200 + 300 + 500 = 2000 — the same four-bucket sum the ledger writes.
@@ -82,7 +84,7 @@ if (TEST_DB) {
 
     // Clean up so later tests exercise the live-counter path in isolation,
     // rather than racing this fixture's DB total forever.
-    await prisma.llmCall.deleteMany({ where: { organizationId: ids.org } })
+    await withUsageAggregateLock(prisma, () => prisma.llmCall.deleteMany({ where: { organizationId: ids.org } }))
   })
 
   test('estimated and provider-reported usage are sibling keys that both count toward enforcement', async () => {

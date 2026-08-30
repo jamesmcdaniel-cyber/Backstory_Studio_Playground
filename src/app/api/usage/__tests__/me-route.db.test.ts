@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { NextRequest } from 'next/server'
+import { lockedLedgerClient, withUsageAggregateLock } from '@/lib/server/__tests__/usage-aggregate-lock'
 
 /**
  * GET /api/usage/me — the self-serve "what did I spend" view.
@@ -20,6 +21,7 @@ if (TEST_DB) {
   process.env.AGENT_MONTHLY_TOKEN_LIMIT = process.env.AGENT_MONTHLY_TOKEN_LIMIT || '1000000000'
 
   let prisma: any
+  let systemPrisma: any
   let recordLlmCall: any
   let meRoute: any
   let installTestAuth: any
@@ -29,7 +31,7 @@ if (TEST_DB) {
   const get = () => new NextRequest(new URL('http://test/api/usage/me'))
 
   before(async () => {
-    ;({ prisma } = await import('@/lib/prisma'))
+    ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     const testAuth = await import('@/lib/server/__tests__/test-auth')
     installTestAuth = testAuth.installTestAuth
     ;({ recordLlmCall } = await import('@/lib/usage/ledger'))
@@ -55,7 +57,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-sonnet-5',
       usage: { inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 50 },
-    })
+    }, lockedLedgerClient(systemPrisma))
     await recordLlmCall({
       organizationId: self.organizationId,
       userId: self.userId,
@@ -63,7 +65,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
       usage: { inputTokens: 30, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10 },
-    })
+    }, lockedLedgerClient(systemPrisma))
     // The colleague's own spend, same org — must never appear in `self`'s view.
     await recordLlmCall({
       organizationId: self.organizationId,
@@ -72,11 +74,11 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-opus-4',
       usage: { inputTokens: 12345, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 6789 },
-    })
+    }, lockedLedgerClient(systemPrisma))
     // Org-level bench spend (userId null) — must not silently vanish into an
     // "other" bucket total; it must be grouped out of the per-user view
     // entirely, which the hasUnattributedOrgUsage footnote then discloses.
-    await prisma.llmCall.create({
+    await withUsageAggregateLock(prisma, () => prisma.llmCall.create({
       data: {
         organizationId: self.organizationId,
         userId: null,
@@ -88,11 +90,11 @@ if (TEST_DB) {
         inputTokens: 40,
         outputTokens: 40,
       },
-    })
+    }))
   })
 
   after(async () => {
-    await prisma.llmCall.deleteMany({ where: { organizationId: self.organizationId } })
+    await withUsageAggregateLock(prisma, () => prisma.llmCall.deleteMany({ where: { organizationId: self.organizationId } }))
     await prisma.user.deleteMany({ where: { id: colleague.id } }).catch(() => {})
     await self?.cleanup()
   })

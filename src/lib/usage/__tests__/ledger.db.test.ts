@@ -1,5 +1,6 @@
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
+import { lockedLedgerClient } from '@/lib/server/__tests__/usage-aggregate-lock'
 
 // DB-gated: runs only under TEST_DATABASE_URL (CI-mode), like sibling DB tests.
 const TEST_DB = process.env.TEST_DATABASE_URL
@@ -8,11 +9,12 @@ if (TEST_DB) {
   process.env.DIRECT_URL = TEST_DB
 
   let prisma: any
+  let systemPrisma: any
   let recordLlmCall: any
   const ids: Record<string, string> = {}
 
   before(async () => {
-    ;({ prisma } = await import('@/lib/prisma'))
+    ;({ prisma, systemPrisma } = await import('@/lib/prisma'))
     ;({ recordLlmCall } = await import('@/lib/usage/ledger'))
 
     const stamp = Date.now()
@@ -36,7 +38,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-sonnet-5',
       usage: { inputTokens: 1000, cacheWriteTokens: 200, cacheReadTokens: 5000, outputTokens: 300 },
-    })
+    }, lockedLedgerClient(systemPrisma))
 
     const rows = await prisma.llmCall.findMany({ where: { organizationId: ids.org, agentExecutionId: ids.execution } })
     assert.equal(rows.length, 1)
@@ -56,7 +58,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-sonnet-5',
       usage: { inputTokens: 1000, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 100 },
-    })
+    }, lockedLedgerClient(systemPrisma))
 
     const execution = await prisma.agentExecution.findFirst({ where: { id: ids.execution, organizationId: ids.org } })
     const rows = await prisma.llmCall.findMany({ where: { organizationId: ids.org, agentExecutionId: ids.execution } })
@@ -72,7 +74,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
       usage: { inputTokens: 500, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 20 },
-    })
+    }, lockedLedgerClient(systemPrisma))
 
     const rows = await prisma.llmCall.findMany({ where: { organizationId: ids.org, surface: 'headline' } })
     assert.equal(rows.length, 1)
@@ -88,7 +90,7 @@ if (TEST_DB) {
       provider: 'anthropic',
       model: 'claude-model-from-the-future',
       usage: { inputTokens: 100, cacheWriteTokens: 0, cacheReadTokens: 0, outputTokens: 10 },
-    })
+    }, lockedLedgerClient(systemPrisma))
 
     const row = await prisma.llmCall.findFirst({
       where: { organizationId: ids.org, agentExecutionId: ids.execution, model: 'claude-model-from-the-future' },

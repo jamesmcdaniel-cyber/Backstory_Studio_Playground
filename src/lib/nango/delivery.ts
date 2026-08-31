@@ -15,6 +15,7 @@ import { prisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { fromNangoProviderKey } from '@/lib/connectors/registry'
 import { getNangoClient, nangoConfigured } from './client'
+import { cacheGet, cacheSet } from '@/lib/cache'
 import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
 import { withBreaker } from '@/lib/resilience/circuit-breaker'
 
@@ -132,6 +133,56 @@ export function defaultProxy(): NangoProxy {
  * way delivery tools do.
  */
 export async function resolveNangoConnection(
+  organizationId: string,
+  providerConfigKeys: readonly string[],
+  userId?: string | null,
+): Promise<DeliveryConnection | null> {
+  const resolved = await resolveFromMirror(organizationId, providerConfigKeys, userId)
+  if (resolved) return resolved
+
+  // COLD MIRROR. Nango owns the connections; this table is only our copy of
+  // them, refreshed when someone opens the integrations page or when a webhook
+  // arrives. Neither is guaranteed to have happened: a rebuilt Nango
+  // environment starts with an empty mirror, and the webhook needs a signing
+  // key that a deployment may not have set. Until then Nango holds a perfectly
+  // good connection while every tool call here reports "connect your account"
+  // to someone who just did.
+  //
+  // So on a miss, reconcile once against Nango and retry. Rate-limited per org
+  // because a genuine "not connected" is the common miss and must not become a
+  // Nango round-trip on every tool call, and best-effort because a Nango
+  // outage must degrade to the mirror rather than break resolution outright.
+  if (!(await claimMirrorResync(organizationId))) return null
+  try {
+    const { syncOrgNangoConnections } = await import('./mirror')
+    await syncOrgNangoConnections(organizationId)
+  } catch (error) {
+    apiLogger.warn('nango: mirror resync on resolution miss failed', {
+      organizationId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    return null
+  }
+  return resolveFromMirror(organizationId, providerConfigKeys, userId)
+}
+
+/** How long one resolution miss suppresses further Nango reconciliations for an org. */
+const MIRROR_RESYNC_TTL_MS = 60_000
+
+/** True if this caller may reconcile now — first miss in the window wins. */
+async function claimMirrorResync(organizationId: string): Promise<boolean> {
+  const key = `nango:resync:${organizationId}`
+  try {
+    if (await cacheGet<number>(key)) return false
+    await cacheSet(key, Date.now(), MIRROR_RESYNC_TTL_MS)
+    return true
+  } catch {
+    // Cache unavailable: prefer resolving the connection over rate-limiting.
+    return true
+  }
+}
+
+async function resolveFromMirror(
   organizationId: string,
   providerConfigKeys: readonly string[],
   userId?: string | null,

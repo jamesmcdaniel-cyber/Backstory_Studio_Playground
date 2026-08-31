@@ -51,10 +51,11 @@ function tooMany(retryAfterMs?: number) {
  * connected account immediately.
  *
  * Authenticated by the Nango webhook signature (verifyIncomingWebhookRequest,
- * keyed by NANGO_SECRET_KEY) rather than a session — same "verify then act"
- * shape as the People.ai and flow-trigger webhooks. Configure the endpoint URL
- * in the Nango dashboard (Environment Settings → Webhooks); Nango signs it with
- * the same environment secret key the backend client already uses.
+ * keyed by NANGO_WEBHOOK_SIGNING_KEY) rather than a session — same "verify then
+ * act" shape as the People.ai and flow-trigger webhooks. Configure the endpoint
+ * URL in the Nango dashboard (Environment Settings → Webhooks). Nango signs
+ * with the webhook signing key, NEVER with the API key, so that value must be
+ * set independently — see src/lib/nango/client.ts.
  *
  * Always returns 200 on a verified request (even when we choose not to act), so
  * transient errors on our side don't trigger Nango's retry/backoff — the next

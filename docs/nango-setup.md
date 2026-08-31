@@ -28,15 +28,26 @@ this mismatch is visible at a glance.
 
 Set in Vercel (web) **and** the worker (Render / docker-compose):
 
+Nango **split its old single secret into two credentials**. Environments created
+after 2026-04-20 (or any that rotated) are issued a scoped **API key** and a
+separate **webhook signing key**, and have no "secret key" in the dashboard at
+all. Both models are supported:
+
 | Var | Required | Notes |
 |---|---|---|
-| `NANGO_SECRET_KEY` | **Yes** | Environment secret key (Nango dashboard → Environment Settings). Also verifies the webhook signature. |
+| `NANGO_API_KEY` | **Yes** | Authorizes API calls. Scoped — needs at least `environment:integrations:list` and `environment:connections:list`, or the grid 403s. |
+| `NANGO_WEBHOOK_SIGNING_KEY` | For webhooks | Verifies webhook HMACs. Nango **never** signs with the API key, so without this every connection event fails verification. |
+| `NANGO_SECRET_KEY` | Legacy | The old single secret that did both jobs. Still honoured as a fallback for either of the two above, so existing deployments are unaffected. |
 | `NANGO_HOST` | No | Self-hosted/regional API host. Blank = Nango Cloud. |
 | `NEXT_PUBLIC_NANGO_CONNECT_URL` | No | Self-hosted Connect UI base URL. Blank = `https://connect.nango.dev`. |
 | `NANGO_PROXY_TIMEOUT_MS` | No | Per-request proxy ceiling (ms). Default `20000`. |
 
-Without `NANGO_SECRET_KEY`, every Nango route returns `503 NANGO_UNAVAILABLE`
-and the agent tool planes are empty — integrations are effectively off.
+Without an API key, every Nango route returns `503 NANGO_UNAVAILABLE` and the
+agent tool planes are empty — integrations are effectively off.
+
+A scoped key missing `environment:integrations:list` is the subtle failure: it
+authenticates, so nothing looks misconfigured, and then 403s on the one call
+that populates the grid. `npm run nango:doctor` reports Nango's own reason.
 
 ## 2. Enable these integrations in the Nango dashboard
 
@@ -91,7 +102,8 @@ integrations page, point Nango at our webhook:
 - Enable connection (auth) events.
 
 The route (`src/app/api/nango/webhook/route.ts`) verifies the signature with
-`NANGO_SECRET_KEY` and re-syncs that org's connection mirror. It's optional —
+`NANGO_WEBHOOK_SIGNING_KEY` (falling back to the legacy `NANGO_SECRET_KEY`) and
+re-syncs that org's connection mirror. It's optional —
 the mirror also refreshes whenever the integrations page loads — but recommended
 for scheduled/headless runs.
 
@@ -111,9 +123,9 @@ If the Nango account is wiped, re-created, or the integrations are rebuilt under
 a **new secret key**, the app does not need a code change — but three pieces of
 state outlive the old account and have to be dealt with.
 
-**1. Point the deployments at the new key.** Set `NANGO_SECRET_KEY` in Vercel
-(all environments that should use it) **and** on the worker (Fly/Render/
-docker-compose). The worker resolves connections independently, so a worker left
+**1. Point the deployments at the new key.** Set `NANGO_API_KEY` and
+`NANGO_WEBHOOK_SIGNING_KEY` in Vercel (all environments that should use it)
+**and** on the worker (Fly/Render/docker-compose). The worker resolves connections independently, so a worker left
 on the old key keeps failing every tool call after the web app is fixed. The
 worker needs a redeploy to pick it up.
 

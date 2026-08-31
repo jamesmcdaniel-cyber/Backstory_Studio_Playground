@@ -85,29 +85,33 @@ async function main() {
   const argvKey = argvFlag('key')
   const host = argvFlag('host') || process.env.NANGO_HOST || env.NANGO_HOST?.[0]
 
+  // Nango split its single environment secret into an API key (scoped, for API
+  // calls) and a webhook signing key. NANGO_API_KEY is the current name;
+  // NANGO_SECRET_KEY is the legacy single secret that did both jobs.
+  const envKeys = [...(env.NANGO_API_KEY ?? []), ...(env.NANGO_SECRET_KEY ?? [])]
   let source: string
   let rawKeys: string[]
   if (argvKey) {
     source = '--key argv'
     rawKeys = [argvKey]
-  } else if (process.env.NANGO_SECRET_KEY) {
-    source = 'NANGO_SECRET_KEY env var'
-    rawKeys = [process.env.NANGO_SECRET_KEY]
+  } else if (process.env.NANGO_API_KEY || process.env.NANGO_SECRET_KEY) {
+    source = process.env.NANGO_API_KEY ? 'NANGO_API_KEY env var' : 'NANGO_SECRET_KEY env var'
+    rawKeys = [(process.env.NANGO_API_KEY || process.env.NANGO_SECRET_KEY) as string]
   } else {
     source = '.env.local'
-    rawKeys = env.NANGO_SECRET_KEY ?? []
+    rawKeys = envKeys
   }
   // Distinct values, order preserved.
   const keys = [...new Set(rawKeys.filter(Boolean))]
 
   if (keys.length === 0) {
-    console.log('❌ No NANGO_SECRET_KEY found.')
+    console.log('❌ No Nango API key found (NANGO_API_KEY, or legacy NANGO_SECRET_KEY).')
     console.log('   Pass one without persisting it:  npm run nango:doctor -- --key=<secret>')
-    console.log('   ...or set NANGO_SECRET_KEY in the environment, or in .env.local.')
+    console.log('   ...or set NANGO_API_KEY in the environment, or in .env.local.')
     process.exit(1)
   }
   if (rawKeys.length > 1) {
-    console.log(`⚠️  NANGO_SECRET_KEY is set ${rawKeys.length}× in .env.local (${keys.length} distinct value(s)) — remove the duplicate; the loader's choice is ambiguous.`)
+    console.log(`⚠️  The API key is set ${rawKeys.length}× in .env.local (${keys.length} distinct value(s)) — remove the duplicate; the loader's choice is ambiguous.`)
   }
   console.log(`Key source: ${source}`)
   console.log(`Testing ${keys.length} distinct key value(s)${host ? ` against host=${host}` : ' against US Nango Cloud (api.nango.dev)'}…\n`)
@@ -142,15 +146,16 @@ async function main() {
       console.log('   Scopes alone are not enough, though: the Nango webhook is signed with the')
       console.log('   ENVIRONMENT SECRET KEY, and /api/nango/webhook verifies the HMAC with this')
       console.log('   same value — so a scoped key fails webhook verification however it is scoped.')
-      console.log('\n   Fix: Nango dashboard → Environment Settings → Secret Key, and use that value')
-      console.log('   for NANGO_SECRET_KEY (Vercel + the worker).')
+      console.log('\n   Fix: grant this key those scopes in the Nango dashboard, or use the key')
+      console.log('   that already has them, as NANGO_API_KEY (Vercel + the worker). Webhook')
+      console.log('   HMACs are verified with NANGO_WEBHOOK_SIGNING_KEY, a separate value.')
       process.exit(1)
     }
-    console.log('\n❌ No configured NANGO_SECRET_KEY authenticated. Checklist:')
-    console.log('   • Use the SECRET key (Nango dashboard → Environment Settings), not the public key.')
+    console.log('\n❌ No configured Nango API key authenticated. Checklist:')
+    console.log('   • Use a key from the Nango dashboard that can list integrations, not the public key.')
     console.log('   • Match the ENVIRONMENT: the key and the enabled integrations must be in the same Nango env (Dev vs Prod).')
     console.log('   • EU region? set NANGO_HOST=https://api-eu.nango.dev (currently defaulting to US Cloud).')
-    console.log('   • Remove the duplicate NANGO_SECRET_KEY line so the right value is used.')
+    console.log('   • Remove the duplicate key line so the right value is used.')
     process.exit(1)
   }
 
@@ -188,6 +193,15 @@ async function main() {
   if (!mismatched.length && !missing.length) {
     console.log('   🎉 Every supported provider is enabled and correctly keyed.')
   }
+
+  // Nango never signs webhooks with the API key, so a deployment with only an
+  // API key verifies nothing and silently drops every connection event.
+  const signing = process.env.NANGO_WEBHOOK_SIGNING_KEY || env.NANGO_WEBHOOK_SIGNING_KEY?.[0] || env.NANGO_SECRET_KEY?.[0]
+  console.log(
+    signing
+      ? '   ✅ A webhook signing key is configured (NANGO_WEBHOOK_SIGNING_KEY).'
+      : '   ⚠️  No NANGO_WEBHOOK_SIGNING_KEY — webhook deliveries will fail verification.',
+  )
 }
 
 main().catch((e) => {

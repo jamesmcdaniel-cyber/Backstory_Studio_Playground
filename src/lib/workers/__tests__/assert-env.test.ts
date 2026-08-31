@@ -17,7 +17,7 @@ const FULL_ENV: Record<string, string> = {
   ENCRYPTION_KEY: 'k'.repeat(32),
   ANTHROPIC_API_KEY: 'sk-ant-test',
   SENTRY_DSN: 'https://x@sentry.example/1',
-  NANGO_SECRET_KEY: 'nango',
+  NANGO_API_KEY: 'nango',
   VOYAGE_API_KEY: 'voyage',
   VAPID_PUBLIC_KEY: 'vpub',
   VAPID_PRIVATE_KEY: 'vpriv',
@@ -81,11 +81,20 @@ describe('auditWorkerEnv', () => {
     assert.deepEqual(audit.warnings, [])
   })
 
+  it('the legacy NANGO_SECRET_KEY alone does not warn — it still works', () => {
+    // Nango split its secret into an API key + a signing key, but the old
+    // single value is still honoured by the client. A worker correctly
+    // configured with it must not be told its integration tools will fail.
+    const env = { ...without('NANGO_API_KEY'), NANGO_SECRET_KEY: 'legacy' }
+    const audit = auditWorkerEnv(env, 5, ALL_SPECS)
+    assert.equal(audit.warnings.some((w) => w.includes('NANGO_API_KEY')), false)
+  })
+
   it('each missing tool-plane secret warns and names its lost capability', () => {
-    const audit = auditWorkerEnv(without('SENTRY_DSN', 'NANGO_SECRET_KEY', 'SUPABASE_SERVICE_ROLE_KEY'), 5, ALL_SPECS)
+    const audit = auditWorkerEnv(without('SENTRY_DSN', 'NANGO_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY'), 5, ALL_SPECS)
     assert.deepEqual(audit.fatal, [])
     assert.ok(audit.warnings.some((w) => w.includes('SENTRY_DSN')))
-    assert.ok(audit.warnings.some((w) => w.includes('NANGO_SECRET_KEY')))
+    assert.ok(audit.warnings.some((w) => w.includes('NANGO_API_KEY')))
     assert.ok(audit.warnings.some((w) => w.includes('SUPABASE_SERVICE_ROLE_KEY')))
   })
 

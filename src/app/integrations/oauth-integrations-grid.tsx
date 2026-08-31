@@ -200,7 +200,7 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
           description={
             integrationsError instanceof Error && integrationsError.message
               ? integrationsError.message
-              : 'Nango did not return the integration catalog. Check NANGO_SECRET_KEY for this environment.'
+              : 'Nango did not return the integration catalog. Check NANGO_API_KEY (and its scopes) for this environment.'
           }
         />
       )}

@@ -48,7 +48,6 @@ const FATAL_VARS = [
 
 const WARN_VARS = [
   ['SENTRY_DSN', 'worker crashes and dead-letters are console-only (invisible outside fly logs)'],
-  ['NANGO_SECRET_KEY', 'integration tools in flows will fail'],
   ['VOYAGE_API_KEY', 'RAG embeddings are unavailable'],
   ['VAPID_PUBLIC_KEY', 'run-completion push notifications are dropped'],
   ['VAPID_PRIVATE_KEY', 'run-completion push notifications are dropped'],
@@ -68,6 +67,13 @@ export function auditWorkerEnv(
   const warnings = WARN_VARS.filter(([name]) => !env[name]).map(
     ([name, consequence]) => `${name} is missing — ${consequence}.`,
   )
+  // Nango accepts EITHER name: NANGO_API_KEY is the current one, NANGO_SECRET_KEY
+  // the legacy single secret that still works. Checking only the new name would
+  // warn at every worker still correctly configured with the old one.
+  if (!env.NANGO_API_KEY && !env.NANGO_SECRET_KEY) {
+    warnings.push('NANGO_API_KEY is missing — integration tools in flows will fail.')
+  }
+
   const hasAnthropic = Boolean(env.ANTHROPIC_API_KEY)
   const hasQwenKey = Boolean(env.QWEN_API_KEY)
   const hasQwenUrl = Boolean(env.QWEN_BASE_URL)

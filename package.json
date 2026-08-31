@@ -39,6 +39,7 @@
     "secrets:rotate": "tsx scripts/rotate-encryption-key.ts",
     "embeddings:backfill": "tsx scripts/reembed-backfill.ts",
     "queue:dlq": "tsx scripts/queue-dlq.ts",
+    "nango:doctor": "tsx scripts/nango-doctor.ts",
     "worker:smoke": "bash scripts/worker-smoke.sh",
     "backup:create": "node scripts/backup/create.mjs",
     "backup:restore": "node scripts/backup/restore.mjs",

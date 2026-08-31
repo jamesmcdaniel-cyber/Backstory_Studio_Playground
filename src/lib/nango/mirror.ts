@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { apiLogger } from '@/lib/logger'
 import { getNangoClient, NANGO_ORG_TAG } from './client'
 import { recordCredentialGrant } from '@/lib/credentials/audit'
 import { reviewScopes, type ScopeReview } from '@/lib/credentials/scopes'
@@ -169,6 +170,34 @@ export async function syncOrgNangoConnections(
   if (seen.length > 0) {
     await prisma.nangoConnection.deleteMany({
       where: { organizationId, connectionId: { notIn: seen } },
+    })
+    return connections
+  }
+
+  // An EMPTY snapshot from a call that SUCCEEDED. Not deleting is still right
+  // (see above), but leaving the rows `connected` is not: this is what a
+  // rebuilt/emptied Nango environment looks like, and the two readers then
+  // disagree. The integrations page renders the live listing, so it correctly
+  // shows nothing connected — while the agent runtime reads THIS mirror
+  // (resolveNangoConnection filters status:'connected') and keeps handing
+  // agents connection ids that no longer exist, so every tool call fails deep
+  // in the provider proxy instead of surfacing "connect your account".
+  //
+  // So: demote rather than delete. Demotion makes the runtime agree with the
+  // UI immediately, keeps the row (and its audit trail) for a genuinely
+  // transient empty, and self-heals — the next non-empty sync upserts these
+  // same rows back to 'connected'.
+  const demoted = await prisma.nangoConnection.updateMany({
+    where: { organizationId, status: 'connected' },
+    data: {
+      status: 'error',
+      lastError: 'Nango reports no connection for this workspace. Reconnect the account.',
+    },
+  })
+  if (demoted.count > 0) {
+    apiLogger.warn('nango: empty connection snapshot, demoted mirror rows pending reconnect', {
+      organizationId,
+      demoted: demoted.count,
     })
   }
 

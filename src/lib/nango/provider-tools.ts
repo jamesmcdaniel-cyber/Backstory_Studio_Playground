@@ -13,6 +13,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { type DeliveryConnection, type NangoProxy, defaultProxy, slackData, DELIVERY_TOOLS, DELIVERY_PROVIDERS } from './delivery'
+import { PROVIDER_CONFIG_KEYS } from './provider-config-keys'
 
 export type NangoToolSpec = {
   /** Capability/provider key, e.g. 'github'. Runtime provider id is `nango:<provider>`. */
@@ -26,34 +27,11 @@ export type NangoToolSpec = {
   run: (connection: DeliveryConnection, args: Record<string, unknown>, proxy?: NangoProxy) => Promise<unknown>
 }
 
-/**
- * Provider key → Nango connection config key(s) to resolve a connection from.
- * The first is the canonical Nango dashboard integration id; alternates cover
- * naming variants. Extend as providers are added.
- */
-export const PROVIDER_CONFIG_KEYS: Record<string, readonly string[]> = {
-  github: ['github'],
-  linear: ['linear'],
-  jira: ['jira', 'atlassian'],
-  asana: ['asana'],
-  notion: ['notion'],
-  hubspot: ['hubspot'],
-  confluence: ['confluence'],
-  zendesk: ['zendesk'],
-  monday: ['monday'],
-  google_drive: ['google-drive', 'google_drive'],
-  google_sheets: ['google-sheet', 'google-sheets', 'google_sheets'],
-  google_calendar: ['google-calendar', 'google_calendar'],
-  slack: ['slack'],
-  gmail: ['google-mail', 'gmail'],
-  salesforce: ['salesforce', 'salesforce-sandbox'],
-  airtable: ['airtable'],
-  figma: ['figma'],
-  granola: ['granola'],
-}
-
-/** Provider keys offered to agent drafting and template generation. */
-export const NANGO_PROVIDERS = Object.keys(PROVIDER_CONFIG_KEYS)
+// The map that joins the Nango dashboard catalog to these tools lives in its
+// own dependency-free module so `scripts/nango-doctor.ts` can import the real
+// thing rather than duplicating it. Re-exported here: this is still where
+// callers expect to find it.
+export { PROVIDER_CONFIG_KEYS, NANGO_PROVIDERS } from './provider-config-keys'
 
 const str = (v: unknown) => (v == null ? '' : String(v))
 const num = (v: unknown, fallback: number) => {

@@ -392,10 +392,13 @@ async function loadTools(
   // Planes that produced no usable client. Kept so the run can report WHICH
   // attached tool is unavailable and why, instead of behaving as though the
   // agent had nothing attached at all.
-  const unavailable: { name: string; reason: string }[] = []
+  const unavailable: UnavailableTool[] = []
   const pushGroup = (group: ToolPlaneGroup, options: { cap?: number; namePrefix?: string } = {}) => {
     if (!group.client) {
-      if (group.toolsError) unavailable.push({ name: group.name, reason: group.toolsError })
+      // isWrite matters downstream: a missing DELIVERY integration is a
+      // blocker (the run cannot do the thing it was asked to do), while a
+      // missing read source only narrows what it had to work with.
+      if (group.toolsError) unavailable.push({ name: group.name, reason: group.toolsError, isWrite: group.isWrite })
       return
     }
     const prefix = options.namePrefix ?? group.provider
@@ -456,6 +459,26 @@ async function loadTools(
   return { ...selected, unavailable }
 }
 
+/** An integration attached to the agent that produced no usable client. */
+export type UnavailableTool = { name: string; reason: string; isWrite: boolean }
+
+/**
+ * The unavailable integrations that must STOP a run from reporting success.
+ *
+ * Only write/delivery ones. A run told to email a summary, whose Gmail
+ * integration never resolved, has not done its job however good the draft is —
+ * reporting that as a success is the run claiming an outbound action it never
+ * performed. A missing READ source is different in kind: the run still did its
+ * work, on less input, and says so.
+ *
+ * These entries are already narrow: a plane only reports itself unavailable
+ * when the agent EXPLICITLY selected it (see loadNangoPlaneGroups), so this
+ * never trips on a provider that merely happens to be unconfigured.
+ */
+export function blockingUnavailable(unavailable: UnavailableTool[]): UnavailableTool[] {
+  return unavailable.filter((entry) => entry.isWrite)
+}
+
 /**
  * The tool inventory the model is told about.
  *
@@ -467,7 +490,7 @@ async function loadTools(
  */
 export function toolInventorySection(
   tools: { name: string }[],
-  unavailable: { name: string; reason: string }[],
+  unavailable: UnavailableTool[],
 ): string {
   const lines: string[] = ['TOOLS AVAILABLE THIS RUN']
   if (tools.length) {
@@ -484,6 +507,16 @@ export function toolInventorySection(
       ...unavailable.map((entry) => `- ${entry.name}: ${entry.reason}`),
       'If the task needs one of these, say exactly which integration is unavailable and quote its reason. Do not describe it as "no tools connected".',
     )
+    const blocking = blockingUnavailable(unavailable)
+    if (blocking.length) {
+      // The failure this prevents: the run drafts the email, cannot send it,
+      // and reports "compiled and sent three options". Never describe an
+      // outbound action as done when the integration to do it never loaded.
+      lines.push(
+        `You CANNOT deliver anything through: ${blocking.map((entry) => entry.name).join(', ')}.`,
+        'Never state or imply that you sent, posted, emailed, delivered, or created anything through those — not as done, not as scheduled, not as queued, not as "pending delivery". Produce the work itself and state plainly that delivery did not happen and why. This run will be recorded as blocked, not successful.',
+      )
+    }
   }
   return lines.join('\n')
 }
@@ -1655,6 +1688,16 @@ async function runAgentExecutionInner(
 
     const summary = finalText || 'Agent reached the maximum number of tool-call turns.'
     const output = { summary }
+    // A run whose DELIVERY integration never resolved did not do what it was
+    // asked to do, however good the artifact it produced is. Reporting that as
+    // a success is how notifications came to say work had been delivered
+    // through an integration that was not even connected. It terminates as
+    // 'blocked': a distinct outcome from 'failed' (nothing errored — the
+    // workspace configuration is incomplete) and from 'completed'.
+    const blocking = blockingUnavailable(unavailable)
+    const blockedReason = blocking.length
+      ? `Not delivered — ${blocking.map((entry) => `${entry.name}: ${entry.reason}`).join(' ')}`
+      : null
     // Flow-step conversation memory: persist this exchange so the session's
     // next run replays it. Best-effort — memory must never fail a finished run.
     if (stepMemory) {
@@ -1694,7 +1737,8 @@ async function runAgentExecutionInner(
       systemPrisma.agentExecution.update({
         where: { id: execution.id },
         data: {
-          status: 'completed',
+          status: blockedReason ? 'blocked' : 'completed',
+          ...(blockedReason ? { error: blockedReason } : {}),
           output,
           transcript: jsonValue(transcript),
           inputTokens: { increment: usage.inputTokens },
@@ -1718,9 +1762,9 @@ async function runAgentExecutionInner(
         data: flowSignalOutboxEvent({
           organizationId,
           aggregateId: execution.id,
-          dedupeKey: `agent:${execution.id}:completed`,
+          dedupeKey: `agent:${execution.id}:${blockedReason ? 'blocked' : 'completed'}`,
           signal: {
-            signal: 'agent.completed',
+            signal: blockedReason ? 'agent.blocked' : 'agent.completed',
             payload: { agentId: agent.id, executionId: execution.id, summary: summary.slice(0, 2000) },
             depth: 1,
           },
@@ -1730,10 +1774,17 @@ async function runAgentExecutionInner(
     await notify({
       organizationId,
       userId,
-      type: 'agent.completed',
-      level: 'success',
-      title: `${agentMetadata.title || agent.description} completed`,
-      body: headline || summary,
+      // The notification is the surface the lie showed up on, so it carries the
+      // blocker rather than the model's own summary — the summary is exactly
+      // the text that claimed delivery had happened.
+      type: blockedReason ? 'agent.blocked' : 'agent.completed',
+      // 'action', not 'error': nothing broke — someone has to reconnect the
+      // integration. It renders amber, distinct from the green success tick.
+      level: blockedReason ? 'action' : 'success',
+      title: blockedReason
+        ? `${agentMetadata.title || agent.description} blocked — not delivered`
+        : `${agentMetadata.title || agent.description} completed`,
+      body: blockedReason ?? (headline || summary),
       agentTaskId: agent.id,
       executionId: execution.id,
     })
@@ -1755,7 +1806,7 @@ async function runAgentExecutionInner(
       signalId: (queuedExecution?.input as { signal?: { id?: string } } | null)?.signal?.id ?? null,
       input: queuedExecution?.input ?? { prompt: data.input },
       output,
-      status: 'completed',
+      status: blockedReason ? 'blocked' : 'completed',
       // Runs inherit the agent's scope: a private agent's runs stay private to
       // its owner, matching executionVisibilityScope for row-level access.
       ownerUserId: agent.userId ?? null,

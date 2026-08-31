@@ -30,7 +30,7 @@ export const EVENT_TRIGGER_LABELS = {
 // new concept): publish a flow that listens for flow.failed and it runs
 // whenever any other published flow in the org fails, with the failing flow's
 // id/name/error as its input.
-export const KNOWN_SIGNALS = ['flow.completed', 'flow.failed', 'agent.completed'] as const
+export const KNOWN_SIGNALS = ['flow.completed', 'flow.failed', 'agent.completed', 'agent.blocked'] as const
 export type KnownSignal = (typeof KNOWN_SIGNALS)[number]
 
 /** Plain-english descriptions for the signal picker — no raw event names shown. */
@@ -38,6 +38,10 @@ export const KNOWN_SIGNAL_LABELS: Record<KnownSignal, string> = {
   'flow.completed': 'When any flow finishes successfully',
   'flow.failed': 'When any flow fails (build an error handler)',
   'agent.completed': 'When any agent finishes',
+  // Its own signal, deliberately NOT folded into agent.completed: a blocked run
+  // did its work but could not deliver it, so a flow chained off "finished"
+  // must not treat it as though the delivery happened.
+  'agent.blocked': 'When an agent finishes but cannot deliver (integration not connected)',
 }
 
 /**

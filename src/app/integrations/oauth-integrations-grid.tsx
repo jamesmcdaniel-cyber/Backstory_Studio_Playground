@@ -101,7 +101,7 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
   // Cached (stale-while-revalidate): the integration catalog is static (also
   // server-cached), connections revalidate in the background. A revisit paints
   // the last-seen grid instantly instead of the loading skeleton.
-  const { data: integrationsData, loading: loadingIntegrations, refresh: refreshIntegrations } =
+  const { data: integrationsData, loading: loadingIntegrations, error: integrationsError, refresh: refreshIntegrations } =
     useCachedJson<{ integrations?: Integration[] }>('/api/nango/integrations')
   const { data: statusData, loading: loadingStatus, refresh: refreshStatus } =
     useCachedJson<{ connections?: Record<string, Connection> }>('/api/nango/status')
@@ -189,7 +189,23 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
         </Button>
       </div>
 
-      {!filtered.length && !loading && (
+      {/* A failed catalog fetch is NOT an empty catalog. Both used to render
+          "No integrations are enabled yet — enable them in your Nango
+          dashboard", which sent someone to a dashboard whose integrations were
+          already there: the real fault was that our key could not list them.
+          Show what actually went wrong, and never blame the dashboard for it. */}
+      {!filtered.length && !loading && Boolean(integrationsError) && (
+        <EmptyState
+          title="Could not load integrations from Nango"
+          description={
+            integrationsError instanceof Error && integrationsError.message
+              ? integrationsError.message
+              : 'Nango did not return the integration catalog. Check NANGO_SECRET_KEY for this environment.'
+          }
+        />
+      )}
+
+      {!filtered.length && !loading && !integrationsError && (
         <EmptyState
           title={q ? 'No integrations match your search' : 'No integrations are enabled yet'}
           description={q ? 'Try a different name or provider.' : 'Enable integrations in your Nango dashboard and they appear here.'}

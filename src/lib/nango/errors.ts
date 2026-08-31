@@ -11,10 +11,26 @@ export function nangoApiError(error: unknown): ApiError {
   if (/not configured/i.test(message)) {
     return new ApiError('Nango is not configured for this environment.', 503, 'NANGO_UNAVAILABLE')
   }
-  const err = error as { response?: { status?: number }; status?: number; statusCode?: number }
+  const err = error as {
+    response?: { status?: number; data?: { error?: { message?: string; code?: string } } }
+    status?: number
+    statusCode?: number
+  }
   const status = err?.response?.status ?? err?.status ?? err?.statusCode
   if (status === 401 || status === 403) {
-    return new ApiError('Nango credentials are invalid or unauthorized.', 502, 'NANGO_UNAUTHORIZED')
+    // Pass Nango's own reason through. "invalid or unauthorized" sent someone
+    // hunting for a bad/expired key when Nango was saying something far more
+    // specific and actionable — that the key is a SCOPED API key missing
+    // `environment:integrations:list`, which no amount of re-copying the key
+    // fixes. The upstream text is the difference between a dead end and a fix.
+    const upstream = err?.response?.data?.error?.message
+    return new ApiError(
+      upstream
+        ? `Nango rejected our credentials: ${upstream.slice(0, 200)}`
+        : 'Nango credentials are invalid or unauthorized.',
+      502,
+      'NANGO_UNAUTHORIZED',
+    )
   }
   return new ApiError(`Nango request failed: ${message.slice(0, 160)}`, 502, 'NANGO_ERROR')
 }

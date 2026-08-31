@@ -270,8 +270,11 @@ function AgentHQ() {
     [activities, selectedAgent],
   )
 
+  // 'blocked' counts too: a run that produced its work but could not deliver it
+  // is exactly the case this indicator exists to surface, and it is the one
+  // that used to read as a success.
   const hasFailedRun = useMemo(
-    () => agentActivities.some((activity) => activity.status.toLowerCase() === 'failed'),
+    () => agentActivities.some((activity) => ['failed', 'blocked'].includes(activity.status.toLowerCase())),
     [agentActivities],
   )
 

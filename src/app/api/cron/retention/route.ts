@@ -187,7 +187,7 @@ export async function GET(request: Request) {
     const staleTranscripts = await systemPrisma.agentExecution.findMany({
       where: {
         completedAt: { lt: transcriptCutoff },
-        status: { in: ['completed', 'failed'] },
+        status: { in: ['completed', 'failed', 'blocked'] },
         NOT: { transcript: { equals: Prisma.DbNull } },
       },
       select: { id: true },

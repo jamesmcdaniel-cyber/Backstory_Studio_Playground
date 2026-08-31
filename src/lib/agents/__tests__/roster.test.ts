@@ -67,17 +67,17 @@ test('teammate stats add up across the whole roster', () => {
     agent({ id: 'a2', title: 'B', teammateId: 't1' }),
   ]
   const kpis: Record<string, CardStats> = {
-    a1: { runs: 10, completed: 8, failed: 2, approximateRuns: 0 },
-    a2: { runs: 5, completed: 5, failed: 0, approximateRuns: 0 },
+    a1: { runs: 10, completed: 8, failed: 2, blocked: 0, approximateRuns: 0 },
+    a2: { runs: 5, completed: 5, failed: 0, blocked: 0, approximateRuns: 0 },
   }
   const { teammateCards } = buildRoster(agents, [teammate('t1', 'Dana')], kpis)
-  assert.deepEqual(teammateCards[0].stats, { runs: 15, completed: 13, failed: 2, approximateRuns: 0 })
+  assert.deepEqual(teammateCards[0].stats, { runs: 15, completed: 13, failed: 2, blocked: 0, approximateRuns: 0 })
 })
 
 test('falls back to the agent\'s own counter when no execution rows remain, and marks it approximate', () => {
   const agents = [agent({ id: 'a1', title: 'A', executionCount: 42 })]
   const { agentCards } = buildRoster(agents, [], {})
-  assert.deepEqual(agentCards[0].stats, { runs: 0, completed: 0, failed: 0, approximateRuns: 42 })
+  assert.deepEqual(agentCards[0].stats, { runs: 0, completed: 0, failed: 0, blocked: 0, approximateRuns: 42 })
 })
 
 test('sumStats keeps a group\'s query-derived and approximate counts separate -- never summed into one mixed total', () => {
@@ -89,12 +89,12 @@ test('sumStats keeps a group\'s query-derived and approximate counts separate --
     agent({ id: 'a2', title: 'B', teammateId: 't1', executionCount: 42 }),
   ]
   const kpis: Record<string, CardStats> = {
-    a1: { runs: 10, completed: 8, failed: 2, approximateRuns: 0 },
+    a1: { runs: 10, completed: 8, failed: 2, blocked: 0, approximateRuns: 0 },
   }
   const { teammateCards } = buildRoster(agents, [teammate('t1', 'Dana')], kpis)
   // Measured runs/completed/failed come ONLY from a1; a2's counter-derived 42
   // lands in approximateRuns, never folded into the measured "runs" total.
-  assert.deepEqual(teammateCards[0].stats, { runs: 10, completed: 8, failed: 2, approximateRuns: 42 })
+  assert.deepEqual(teammateCards[0].stats, { runs: 10, completed: 8, failed: 2, blocked: 0, approximateRuns: 42 })
 })
 
 test('a group of purely approximate (counter-fallback) agents reports no success rate', () => {
@@ -103,7 +103,7 @@ test('a group of purely approximate (counter-fallback) agents reports no success
     agent({ id: 'a2', title: 'B', teammateId: 't1', executionCount: 20 }),
   ]
   const { teammateCards } = buildRoster(agents, [teammate('t1', 'Dana')], {})
-  assert.deepEqual(teammateCards[0].stats, { runs: 0, completed: 0, failed: 0, approximateRuns: 30 })
+  assert.deepEqual(teammateCards[0].stats, { runs: 0, completed: 0, failed: 0, blocked: 0, approximateRuns: 30 })
   // No measured finish exists for either agent -- the denominator must stay 0,
   // not divide across the approximate counter total.
   assert.equal(successRate(teammateCards[0].stats), null)
@@ -174,4 +174,15 @@ test('search finds a teammate by the job they run, not just their name', () => {
 test('search is case-insensitive and ignores surrounding whitespace', () => {
   const agents = [agent({ id: 'a1', title: 'Renewals watcher' })]
   assert.equal(buildRoster(agents, [], {}, '  RENEWALS  ').agentCards.length, 1)
+})
+
+test('blocked runs are finished-but-not-successful, so they drag the rate down', () => {
+  // The case this exists for: an agent that ran every day and delivered
+  // nothing, because its Gmail integration never resolved. Counting those as
+  // successes read as 100% while the workspace shipped nothing.
+  assert.equal(successRate({ completed: 0, failed: 0, blocked: 5 }), 0)
+  assert.equal(successRate({ completed: 5, failed: 0, blocked: 5 }), 50)
+  assert.equal(successRate({ completed: 8, failed: 1, blocked: 1 }), 80)
+  // Absent (older callers / pre-blocked stats) still behaves as before.
+  assert.equal(successRate({ completed: 8, failed: 2 }), 80)
 })

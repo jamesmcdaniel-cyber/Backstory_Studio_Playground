@@ -12,8 +12,10 @@ const CANCELLABLE_STATUSES = new Set(['running', 'waiting_for_input', 'waiting_f
  *  finalize to 'cancelled' immediately instead of waiting for the loop. */
 const WAITING_STATUSES = new Set(['waiting_for_input', 'waiting_for_approval'])
 
-/** Finished runs, safe to delete outright (no in-flight work references them). */
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
+/** Finished runs, safe to delete outright (no in-flight work references them).
+ *  'blocked' is terminal like the rest: the run finished its turn loop, it just
+ *  could not deliver through a write integration that never resolved. */
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'blocked'])
 
 export function isCancellableRunStatus(status: string): boolean {
   return CANCELLABLE_STATUSES.has(status)

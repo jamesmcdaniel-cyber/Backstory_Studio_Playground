@@ -60,7 +60,7 @@ type RunDetails = {
   messages: Array<{ id: string; role: string; content: string; createdAt: string }>
 }
 
-export const groupOrder = ['running', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'failed', 'cancelled', 'completed'] as const
+export const groupOrder = ['running', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'failed', 'blocked', 'cancelled', 'completed'] as const
 type ActivityGroup = (typeof groupOrder)[number]
 
 // Keep the initial HQ view inside the available pane height. Counts remain
@@ -73,6 +73,9 @@ export const groupLabels: Record<string, string> = {
   waiting_for_input: 'Needs input',
   waiting_for_approval: 'Needs approval',
   failed: 'Error',
+  // Distinct from both Error and Success: the run did its work but could not
+  // deliver it, because a write integration never resolved.
+  blocked: 'Not delivered',
   cancelled: 'Cancelled',
   completed: 'Success',
 }
@@ -89,6 +92,8 @@ function runStatusIcon(status: string) {
       return <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" aria-label="Success" />
     case 'failed':
       return <XCircle className="h-4 w-4 shrink-0 text-red-600" aria-label="Failed" />
+    case 'blocked':
+      return <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" aria-label="Not delivered" />
     case 'running':
     case 'pending':
       return <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-blue-600" aria-label="Running" />
@@ -783,6 +788,7 @@ export function AgentActivityPane({
                 groupStatus === 'cancelling' ? <CircleDashed className="h-4 w-4 animate-spin text-gray-400" /> :
                 groupStatus === 'waiting_for_input' || groupStatus === 'waiting_for_approval' ? <HelpCircle className="h-4 w-4 text-amber-500" /> :
                 groupStatus === 'cancelled' ? <XCircle className="h-4 w-4 text-gray-400" /> :
+                groupStatus === 'blocked' ? <AlertCircle className="h-4 w-4 text-amber-600" /> :
                 <AlertCircle className="h-4 w-4 text-red-600" />}
               {groupLabels[groupStatus]} <span className="font-mono text-xs tabular-nums text-fg-muted">{items.length}</span>
             </div>

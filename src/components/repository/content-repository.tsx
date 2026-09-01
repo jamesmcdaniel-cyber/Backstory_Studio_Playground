@@ -52,6 +52,9 @@ type RepositoryAsset = {
   version: number
   status: string
   error: string | null
+  indexState?: string
+  indexError?: string | null
+  truncated?: boolean
   lastSyncedAt: string | null
   createdAt: string
   updatedAt: string
@@ -329,6 +332,26 @@ export function ContentRepository({ writable }: { writable: boolean }) {
     }
   }
 
+  /**
+   * Rebuild one asset's chunks and embeddings now. The scheduled sweep would
+   * get there anyway; this is for someone looking at a Not searchable badge
+   * who does not want to wait for the next tick.
+   */
+  const reindexAsset = async (target: RepositoryAsset) => {
+    setBusy(true)
+    try {
+      const response = await fetch(`/api/repository/${target.id}/reindex`, { method: 'POST' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not rebuild the search index.')
+      await loadAssets()
+      toast.success(`Rebuilt the search index for "${target.filename}".`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const selectedPull = pullIndex === '' ? null : pullSources[Number(pullIndex)] ?? null
 
   const submitPull = async () => {
@@ -497,11 +520,26 @@ export function ContentRepository({ writable }: { writable: boolean }) {
                   <TableCell className="capitalize"><span className="block text-sm">{sourceLabel(asset)}</span>{asset.sourceTool && <span className="block text-[11px] text-muted-foreground">{humanizeToolName(asset.sourceTool)}</span>}</TableCell>
                   <TableCell>{asset.agentName ? <Badge variant="info">{asset.agentName}</Badge> : <Badge variant="secondary">All agents</Badge>}</TableCell>
                   <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{relativeTime(asset.updatedAt)}</TableCell>
-                  <TableCell><Badge variant={statusVariant(asset.status)} className="capitalize">{asset.status}</Badge>{asset.error && <p className="mt-1 max-w-48 truncate text-[11px] text-red-600" title={asset.error}>{asset.error}</p>}</TableCell>
+                  <TableCell>
+                    <Badge variant={statusVariant(asset.status)} className="capitalize">{asset.status}</Badge>
+                    {asset.error && <p className="mt-1 max-w-48 truncate text-[11px] text-red-600" title={asset.error}>{asset.error}</p>}
+                    {asset.indexState === 'unindexed' && (
+                      <Badge variant="risk" className="mt-1 block w-fit" title={asset.indexError ?? undefined}>Not searchable</Badge>
+                    )}
+                    {asset.indexState === 'partial' && (
+                      <Badge variant="warn" className="mt-1 block w-fit" title={asset.indexError ?? undefined}>Partly searchable</Badge>
+                    )}
+                    {asset.truncated && (
+                      <p className="mt-1 max-w-48 text-[11px] text-muted-foreground">This file is longer than the indexing limit, so only the first part is searchable. The download is complete.</p>
+                    )}
+                  </TableCell>
                   <TableCell><div className="flex items-center gap-2"><Switch checked={asset.isEnabled} disabled={!writable || asset.status !== 'ready'} onCheckedChange={(checked) => void toggleAsset(asset, checked)} aria-label={`${asset.isEnabled ? 'Disable' : 'Enable'} ${asset.filename} for agents`} /><span className="text-xs text-muted-foreground">{asset.isEnabled ? 'Enabled' : 'Disabled'}</span></div></TableCell>
                   <TableCell>
                     <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for ${asset.filename}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
                       {writable && <DropdownMenuItem onSelect={() => void openEditor(asset)}><Pencil className="mr-2 h-4 w-4" />Edit indexed content</DropdownMenuItem>}
+                      {writable && asset.indexState !== undefined && asset.indexState !== 'indexed' && (
+                        <DropdownMenuItem onSelect={() => void reindexAsset(asset)}><RefreshCw className="mr-2 h-4 w-4" />Rebuild search index</DropdownMenuItem>
+                      )}
                       <DropdownMenuItem asChild><a href={asset.downloadUrl}><Download className="mr-2 h-4 w-4" />{asset.hasOriginal ? 'Download original' : 'Download artifact'}</a></DropdownMenuItem>
                       {writable && <DropdownMenuItem onSelect={() => setDeleteTarget(asset)} className="text-red-600 focus:text-red-600"><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>}
                     </DropdownMenuContent></DropdownMenu>

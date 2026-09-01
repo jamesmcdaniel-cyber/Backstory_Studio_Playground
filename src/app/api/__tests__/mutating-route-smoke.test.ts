@@ -150,6 +150,7 @@ const cases = (): Case[] => [
   { route: 'repository', method: 'POST', run: async () => (await import('../repository/route')).POST(rq('/api/repository', 'POST', {})) },
   { route: 'repository/[id]', method: 'PATCH', run: async () => (await import('../repository/[id]/route')).PATCH(rq('/api/repository/missing', 'PATCH', { isEnabled: false })) },
   { route: 'repository/[id]', method: 'DELETE', run: async () => (await import('../repository/[id]/route')).DELETE(rq('/api/repository/missing', 'DELETE', { confirmation: 'missing' })) },
+  { route: 'repository/[id]/reindex', method: 'POST', run: async () => (await import('../repository/[id]/reindex/route')).POST(rq('/api/repository/missing/reindex', 'POST', {})) },
   { route: 'repository/pull', method: 'POST', run: async () => (await import('../repository/pull/route')).POST(rq('/api/repository/pull', 'POST', { connectionId: 'missing', toolName: 'missing', args: {} })) },
   { route: 'repository/projects', method: 'POST', run: async () => (await import('../repository/projects/route')).POST(rq('/api/repository/projects', 'POST', { name: 'Smoke project', content: 'A repository reference created by the mutation smoke test.', agentId, workspaceScope: false })) },
   { route: 'repository/github/sync', method: 'POST', run: async () => (await import('../repository/github/sync/route')).POST(rq('/api/repository/github/sync', 'POST', { owner: 'missing', repo: 'missing', agentId, workspaceScope: false })) },

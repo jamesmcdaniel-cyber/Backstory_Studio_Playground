@@ -29,6 +29,9 @@ type RepositoryRow = {
   version: number
   status: string
   error: string | null
+  indexState: string
+  indexError: string | null
+  truncated: boolean
   lastSyncedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -57,6 +60,9 @@ function serialize(row: RepositoryRow, agentNames: Map<string, string>) {
     version: row.version,
     status: row.status,
     error: row.error,
+    indexState: row.indexState,
+    indexError: row.indexError,
+    truncated: row.truncated,
     lastSyncedAt: row.lastSyncedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

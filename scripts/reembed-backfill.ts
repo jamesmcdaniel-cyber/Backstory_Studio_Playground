@@ -41,7 +41,7 @@ import { Prisma } from '@prisma/client'
 import { systemPrisma } from '../src/lib/prisma'
 import { embedTexts, embeddingsConfigured, toSqlVector, EMBEDDING_DIM } from '../src/lib/rag/embeddings'
 import { computeCostUsd } from '../src/lib/usage/pricing'
-import { decideAction, isValidLegacyVector, chunk, estimateTokens, type BackfillRow } from '../src/lib/rag/reembed-decision'
+import { decideAction, estimateTokens, type BackfillRow } from '../src/lib/rag/reembed-decision'
 
 const DRY_RUN = process.argv.includes('--dry-run')
 const DEFAULT_BATCH_SIZE = 100

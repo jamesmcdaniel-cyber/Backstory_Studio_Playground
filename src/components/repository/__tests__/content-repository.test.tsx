@@ -185,3 +185,29 @@ test('synchronizes a selected private GitHub repository without implicit workspa
     maxFiles: 50,
   })
 })
+
+test('an unindexed asset says so instead of reading as ready', async () => {
+  globalThis.fetch = (async () => response({
+    success: true,
+    assets: [asset({ status: 'ready', indexState: 'unindexed', indexError: 'Embedding provider returned 429.' })],
+    agents: [],
+  })) as typeof fetch
+
+  render(<ContentRepository writable />)
+
+  assert.ok(await screen.findByText('guide.md'))
+  assert.ok(screen.getByText(/Not searchable/i))
+})
+
+test('a partly indexed asset says only part of it was indexed', async () => {
+  globalThis.fetch = (async () => response({
+    success: true,
+    assets: [asset({ truncated: true, charCount: 200_000 })],
+    agents: [],
+  })) as typeof fetch
+
+  render(<ContentRepository writable />)
+
+  assert.ok(await screen.findByText('guide.md'))
+  assert.ok(screen.getByText(/longer than the indexing limit/i))
+})

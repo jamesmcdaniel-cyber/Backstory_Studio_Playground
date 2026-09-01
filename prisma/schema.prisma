@@ -2121,6 +2121,17 @@ model KnowledgeDocument {
   version            Int       @default(1)
   status             String    @default("ready") // ready | processing | failed
   error              String?
+  /// How completely this asset is embedded — see src/lib/knowledge/index-state.ts.
+  /// Anything but 'indexed' means the vector path cannot see some chunks, so
+  /// retrieval supplements it with a keyword pass rather than silently
+  /// returning nothing.
+  indexState         String    @default("pending") // indexed | partial | unindexed | pending
+  /// Why embedding failed, when it did. Persisted rather than swallowed so a
+  /// dead document can explain itself.
+  indexError         String?
+  /// Set when extraction hit KNOWLEDGE_MAX_CHARS or KNOWLEDGE_MAX_CHUNKS: the
+  /// original is intact and downloadable, but only part of it is indexed.
+  truncated          Boolean   @default(false)
   lastSyncedAt       DateTime? @db.Timestamptz(6)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -2135,6 +2146,7 @@ model KnowledgeDocument {
   @@index([organizationId, sourceProvider, lastSyncedAt])
   @@unique([organizationId, sourceKey])
   @@index([organizationId, sourceGroupKey])
+  @@index([organizationId, indexState])
   @@map("knowledge_documents")
 }
 

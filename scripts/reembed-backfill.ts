@@ -41,6 +41,7 @@ import { Prisma } from '@prisma/client'
 import { systemPrisma } from '../src/lib/prisma'
 import { embedTexts, embeddingsConfigured, toSqlVector, EMBEDDING_DIM } from '../src/lib/rag/embeddings'
 import { computeCostUsd } from '../src/lib/usage/pricing'
+import { decideAction, isValidLegacyVector, chunk, estimateTokens, type BackfillRow } from '../src/lib/rag/reembed-decision'
 
 const DRY_RUN = process.argv.includes('--dry-run')
 const DEFAULT_BATCH_SIZE = 100
@@ -60,44 +61,14 @@ const LIMIT = argNumber('--limit', Infinity)
 // scripts/reembed-backfill.test.ts without a live DB or provider.
 // ---------------------------------------------------------------------------
 
-export type RowAction = 'convert' | 'reembed' | 'skip'
-
-/** A legacy `embedding Json?` value is usable iff it's a number[] of exactly `dim` finite numbers. */
-export function isValidLegacyVector(value: unknown, dim: number): value is number[] {
-  return (
-    Array.isArray(value) &&
-    value.length === dim &&
-    value.every((n) => typeof n === 'number' && Number.isFinite(n))
-  )
-}
-
-export interface BackfillRow {
-  id: string
-  /** Text to send to the embedding provider if a re-embed is needed. */
-  text: string
-  /** The legacy Json column's current value (already JSON-parsed). */
-  legacyEmbedding: unknown
-}
-
-/** Decide what one row needs, preferring a free legacy conversion over a paid re-embed. */
-export function decideAction(row: BackfillRow, dim: number = EMBEDDING_DIM): RowAction {
-  if (isValidLegacyVector(row.legacyEmbedding, dim)) return 'convert'
-  if (row.text.trim().length > 0) return 'reembed'
-  return 'skip'
-}
-
-/** Split ids into stable, order-preserving batches of at most `size`. */
-export function chunk<T>(items: T[], size: number): T[][] {
-  if (size <= 0) throw new Error('chunk size must be positive')
-  const out: T[][] = []
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
-  return out
-}
-
-/** Rough token estimate for a cost preview (~4 chars/token, matches common heuristics elsewhere in this codebase's ops tooling). */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
-}
+export {
+  isValidLegacyVector,
+  decideAction,
+  chunk,
+  estimateTokens,
+  type RowAction,
+  type BackfillRow,
+} from '../src/lib/rag/reembed-decision'
 
 // ---------------------------------------------------------------------------
 // Model-specific plumbing

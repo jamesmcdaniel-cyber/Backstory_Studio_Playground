@@ -77,6 +77,7 @@ const readExempt = new Set([
   'cron/retention',                 // CRON_SECRET, fail-closed
   'cron/queue-watch',               // CRON_SECRET, fail-closed
   'cron/indexer-sweep',             // CRON_SECRET, fail-closed
+  'cron/reembed-sweep',             // CRON_SECRET, fail-closed
   'cron/adoption-rollup',           // CRON_SECRET, fail-closed
   'mcp-connections/oauth/callback', // OAuth state/PKCE cookie minted by the authenticated start route
   'slack/oauth/callback',           // OAuth redirect, validated by the encrypted state cookie

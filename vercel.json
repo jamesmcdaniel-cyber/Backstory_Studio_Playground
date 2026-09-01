@@ -2,7 +2,9 @@
   "framework": "nextjs",
   "installCommand": "npm ci --include=dev",
   "buildCommand": "npm run build",
-  "regions": ["iad1"],
+  "regions": [
+    "iad1"
+  ],
   "crons": [
     {
       "path": "/api/cron/dispatch",
@@ -19,6 +21,10 @@
     {
       "path": "/api/cron/indexer-sweep",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/reembed-sweep",
+      "schedule": "*/10 * * * *"
     },
     {
       "path": "/api/cron/adoption-rollup",

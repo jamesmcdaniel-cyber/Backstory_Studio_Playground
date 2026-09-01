@@ -2,7 +2,44 @@ import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedQuery, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { applyRelevanceFloor } from '@/lib/rag/relevance'
 
-export type KnowledgeHit = { content: string; filename: string; score: number; documentId?: string }
+export type KnowledgeHit = {
+  content: string
+  filename: string
+  score: number
+  documentId?: string
+  /**
+   * Which retrieval path produced this hit. Keyword hits come from documents
+   * whose chunks are not fully embedded — honest about a degraded match.
+   */
+  matchedBy?: 'vector' | 'keyword'
+}
+
+/**
+ * Minimum query-term overlap for a keyword hit to be worth showing. Below
+ * this, a "match" is one incidental word and is noise next to a vector hit.
+ */
+export const KEYWORD_ADMISSION_SCORE = 0.5
+
+/**
+ * Combine the two retrieval paths without pretending their scores are
+ * comparable — cosine similarity and term overlap are different scales, so
+ * they are never sorted together. Vector hits fill the result set; keyword
+ * hits only fill what is left, and only when they clear the admission score.
+ */
+export function mergeHits(vectorHits: KnowledgeHit[], keywordHits: KnowledgeHit[], k: number): KnowledgeHit[] {
+  const out = vectorHits.slice(0, k)
+  if (out.length >= k) return out
+  const seen = new Set(out.map((hit) => `${hit.documentId ?? ''}:${hit.content}`))
+  for (const hit of keywordHits) {
+    if (out.length >= k) break
+    if (hit.score < KEYWORD_ADMISSION_SCORE) continue
+    const key = `${hit.documentId ?? ''}:${hit.content}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(hit)
+  }
+  return out
+}
 
 /** Fallback relevance when embeddings are unavailable: query-term overlap. */
 export function keywordScore(query: string, content: string): number {
@@ -24,8 +61,10 @@ export function renderKnowledge(hits: KnowledgeHit[]): string {
 /**
  * Retrieve the most relevant knowledge chunks for an agent. Ranks in-database
  * by pgvector cosine distance (HNSW index) over ALL of the org/agent's
- * embedded chunks when embeddings are available, else falls back to keyword
- * overlap over a bounded scan. Best-effort: never throws (returns [] on
+ * embedded chunks when embeddings are available, supplemented by a keyword
+ * pass over documents that are not fully embedded (which the vector query
+ * cannot see), and falling back to keyword overlap entirely when the query
+ * itself cannot be embedded. Best-effort: never throws (returns [] on
  * failure).
  */
 export async function retrieveKnowledge(params: {
@@ -74,13 +113,50 @@ export async function retrieveKnowledge(params: {
           LIMIT ${k}
         `
       })
-      const hits = rows.map((row) => ({
-        content: row.content,
-        filename: row.filename,
-        documentId: row.documentId,
-        score: 1 - row.distance,
-      }))
-      return applyRelevanceFloor(hits, params.minScore)
+      const vectorHits = applyRelevanceFloor(
+        rows.map((row) => ({
+          content: row.content,
+          filename: row.filename,
+          documentId: row.documentId,
+          score: 1 - row.distance,
+          matchedBy: 'vector' as const,
+        })),
+        params.minScore,
+      )
+      if (vectorHits.length >= k) return vectorHits
+
+      // Supplementary pass. The query above requires `embeddingVec IS NOT
+      // NULL`, so a document whose chunks never embedded — a provider outage
+      // during ingest, a workspace that predates embeddings — is structurally
+      // invisible to it, and the keyword branch below never runs because the
+      // QUERY embedded fine. Those documents were unreachable by either path.
+      // Score them by term overlap so they degrade instead of disappearing.
+      // Bounded scan: this is a fallback, not a second index.
+      const unindexedChunks = await prisma.knowledgeChunk.findMany({
+        where: {
+          organizationId: params.organizationId,
+          document: {
+            organizationId: params.organizationId,
+            OR: [{ agentId: params.agentId }, { agentId: null }],
+            isEnabled: true,
+            status: 'ready',
+            indexState: { not: 'indexed' },
+          },
+        },
+        select: { content: true, document: { select: { id: true, filename: true } } },
+        take: 500,
+      })
+      if (!unindexedChunks.length) return vectorHits
+      const keywordHits = unindexedChunks
+        .map((chunk) => ({
+          content: chunk.content,
+          filename: chunk.document.filename,
+          documentId: chunk.document.id,
+          score: keywordScore(params.query, chunk.content),
+          matchedBy: 'keyword' as const,
+        }))
+        .sort((a, b) => b.score - a.score)
+      return mergeHits(vectorHits, keywordHits, k)
     }
 
     // Keyword fallback: no embeddings configured (or the query embed call
@@ -104,6 +180,7 @@ export async function retrieveKnowledge(params: {
       filename: chunk.document.filename,
       documentId: chunk.document.id,
       score: keywordScore(params.query, chunk.content),
+      matchedBy: 'keyword' as const,
     }))
     scored.sort((a, b) => b.score - a.score)
     return applyRelevanceFloor(scored.filter((s) => s.score > 0).slice(0, k), params.minScore)

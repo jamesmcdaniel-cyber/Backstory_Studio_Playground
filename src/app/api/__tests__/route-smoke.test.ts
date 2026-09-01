@@ -206,6 +206,7 @@ if (TEST_DB) {
     { name: 'GET /api/repository/[id]', run: async () => (await import('../repository/[id]/route')).GET(req('/api/repository/nonexistent')) },
     { name: 'GET /api/repository/[id]/download', run: async () => (await import('../repository/[id]/download/route')).GET(req('/api/repository/nonexistent/download')) },
     { name: 'GET /api/repository/sources', run: async () => (await import('../repository/sources/route')).GET(req('/api/repository/sources')) },
+    { name: 'GET /api/repository/github/repositories', run: async () => (await import('../repository/github/repositories/route')).GET(req('/api/repository/github/repositories')) },
     { name: 'GET /api/flows/huddle-ice', run: async () => (await import('../flows/huddle-ice/route')).GET(req('/api/flows/huddle-ice')) },
     { name: 'GET /api/flows/[id]/huddle/notes', run: async () => (await import('../flows/[id]/huddle/notes/route')).GET(req(`/api/flows/${flowId}/huddle/notes`)) },
     { name: 'GET /api/granola/notes', run: async () => (await import('../granola/notes/route')).GET(req('/api/granola/notes')) },

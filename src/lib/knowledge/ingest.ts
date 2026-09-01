@@ -3,6 +3,7 @@ import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedTexts, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { saveStoredFile, deleteStoredFile } from '@/lib/files/storage'
 import { extractTextAuto, chunkText, isSupported } from './extract'
+import { deriveIndexState } from './index-state'
 import { DocxExtractionError } from './docx'
 
 // Bound indexing work and prompt surface per asset. The original upload still
@@ -20,20 +21,28 @@ function jsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? {})) as Prisma.InputJsonValue
 }
 
-function normalizedContent(raw: string): string {
-  const text = raw.trim().slice(0, KNOWLEDGE_MAX_CHARS)
+function normalizedContent(raw: string): { text: string; truncated: boolean } {
+  const trimmed = raw.trim()
+  const text = trimmed.slice(0, KNOWLEDGE_MAX_CHARS)
   if (!text) throw new UnsupportedFileError('No readable text was found in that file.')
-  return text
+  return { text, truncated: trimmed.length > KNOWLEDGE_MAX_CHARS }
 }
 
-async function embeddingsFor(chunks: string[]): Promise<number[][] | null> {
-  if (!embeddingsConfigured() || !chunks.length) return null
+async function embeddingsFor(
+  chunks: string[],
+): Promise<{ vectors: number[][] | null; error: string | null }> {
+  if (!chunks.length) return { vectors: null, error: null }
+  if (!embeddingsConfigured()) {
+    return { vectors: null, error: 'No embedding provider is configured for this deployment.' }
+  }
   try {
-    return await embedTexts(chunks, { inputType: 'document' })
-  } catch {
-    // Retrieval degrades to keyword matching when an embedding provider is not
-    // available. Ingestion itself should remain useful.
-    return null
+    return { vectors: await embedTexts(chunks, { inputType: 'document' }), error: null }
+  } catch (error) {
+    // Retrieval degrades to the per-document keyword pass rather than failing
+    // the upload — but the reason is persisted so the document can say why it
+    // is only keyword-searchable, and so the sweep can retry it.
+    const message = error instanceof Error ? error.message : String(error)
+    return { vectors: null, error: message.slice(0, 500) }
   }
 }
 
@@ -75,15 +84,22 @@ export async function replaceKnowledgeDocumentContent(params: {
   content: string
   incrementVersion?: boolean
   expectedVersion?: number
+  /**
+   * Set by a caller that already sliced the text to KNOWLEDGE_MAX_CHARS — the
+   * second normalization below cannot see truncation that already happened.
+   */
+  truncated?: boolean
   metadata?: {
     filename?: string
     description?: string
     isEnabled?: boolean
   }
 }) {
-  const text = normalizedContent(params.content)
-  const chunks = chunkText(text).slice(0, KNOWLEDGE_MAX_CHUNKS)
-  const embeddings = await embeddingsFor(chunks)
+  const { text, truncated: contentTruncated } = normalizedContent(params.content)
+  const allChunks = chunkText(text)
+  const chunks = allChunks.slice(0, KNOWLEDGE_MAX_CHUNKS)
+  const truncated = Boolean(params.truncated) || contentTruncated || allChunks.length > KNOWLEDGE_MAX_CHUNKS
+  const { vectors: embeddings, error: indexError } = await embeddingsFor(chunks)
 
   await tenantTransaction(params.organizationId, async (tx) => {
     if (params.incrementVersion) {
@@ -152,7 +168,15 @@ export async function replaceKnowledgeDocumentContent(params: {
     await writeVectorColumns(params.organizationId, params.documentId, embeddings)
     await prisma.knowledgeDocument.update({
       where: { id: params.documentId, organizationId: params.organizationId },
-      data: { status: 'ready', error: null },
+      data: {
+        status: 'ready',
+        error: null,
+        // Derived after the vectors are actually written, so the column
+        // reflects what retrieval can see rather than what was attempted.
+        indexState: deriveIndexState(chunks.length, embeddings ? chunks.length : 0),
+        indexError,
+        truncated,
+      },
     })
   } catch (error) {
     await prisma.knowledgeDocument.updateMany({
@@ -187,11 +211,14 @@ export type KnowledgeTextAssetInput = {
   sourceGroupKey?: string | null
   sourceMetadata?: SourceMetadata
   lastSyncedAt?: Date | null
+  /** Set when the caller already truncated `content` (see ingestKnowledgeFile). */
+  truncated?: boolean
 }
 
 /** Create an editable repository asset from already-extracted or pulled text. */
 export async function ingestKnowledgeText(params: KnowledgeTextAssetInput) {
-  const content = normalizedContent(params.content)
+  const { text: content, truncated: contentTruncated } = normalizedContent(params.content)
+  const truncated = Boolean(params.truncated) || contentTruncated
   let doc
   try {
     doc = await prisma.knowledgeDocument.create({
@@ -231,6 +258,7 @@ export async function ingestKnowledgeText(params: KnowledgeTextAssetInput) {
       documentId: doc.id,
       agentId: params.agentId,
       content,
+      truncated,
     })
     const ready = await prisma.knowledgeDocument.findUnique({
       where: { id: doc.id, organizationId: params.organizationId },
@@ -286,7 +314,10 @@ export async function ingestKnowledgeFile(params: {
     if (error instanceof DocxExtractionError) throw new UnsupportedFileError(error.message)
     throw error
   }
-  const content = normalizedContent(raw)
+  // Validate before reserving storage — and capture truncation here, because
+  // this slice is what makes the second normalization downstream see a string
+  // that is already exactly at the cap.
+  const { text: content, truncated } = normalizedContent(raw)
   const stored = await saveStoredFile({
     organizationId: params.organizationId,
     userId: params.userId,
@@ -298,6 +329,7 @@ export async function ingestKnowledgeFile(params: {
   return ingestKnowledgeText({
     ...params,
     content,
+    truncated,
     sizeBytes: params.buffer.length,
     mimeType: stored.mimeType,
     storedFileId: stored.id,

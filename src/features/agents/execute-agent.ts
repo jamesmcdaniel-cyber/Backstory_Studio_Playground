@@ -56,6 +56,12 @@ import { aiEgressRefusal, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent, scanToolResultForInjection } from '@/lib/security/tool-call-guard'
 import { injectTraceContext, withExtractedTraceContext, withSpan } from '@/lib/observability/otel'
 import { describeUpstreamFailure } from '@/lib/upstream-error'
+import {
+  unrecoveredToolFailures,
+  toolFailureBlockReason,
+  toolFailureWarnings,
+  type ToolFailure,
+} from './tool-failure-outcome'
 
 export type AgentExecutionJob = {
   executionId?: string
@@ -1259,6 +1265,10 @@ async function runAgentExecutionInner(
     // the run. One-way by design: content cannot un-taint a run, and the flag
     // resets only because the next run starts clean.
     let injectionTainted = false
+    // Which tools failed, and which later succeeded — the run's own record of
+    // whether it actually did what it set out to do. Read at termination.
+    const toolFailures: ToolFailure[] = []
+    const toolSuccesses = new Set<string>()
     let finalText = ''
     let planEmitted = false
 
@@ -1492,6 +1502,7 @@ async function runAgentExecutionInner(
             where: { id: step.id },
             data: { status: 'succeeded', output: jsonValue(result), completedAt: new Date() },
           })
+          toolSuccesses.add(binding.toolName)
           await recordEvent(execution.id, step.id, 'tool.completed', { name: step.node })
           // Immutable audit trail; the args are hashed, not stored.
           // Classified by the tool's own isWrite, not by its plane — see
@@ -1512,6 +1523,9 @@ async function runAgentExecutionInner(
           // bare "Request failed with status code 400" cannot tell a malformed
           // payload from a misrouted connection, and both reach here.
           const message = describeUpstreamFailure(error)
+          // A binding that never resolved is already reported through the
+          // unavailable-integration path; there is no call to classify here.
+          if (binding) toolFailures.push({ name: binding.toolName, isWrite: binding.isWrite, message })
           await prisma.workflowStep.update({
             where: { id: step.id },
             data: { status: 'failed', error: jsonValue({ message }), completedAt: new Date() },
@@ -1691,17 +1705,26 @@ async function runAgentExecutionInner(
     }
 
     const summary = finalText || 'Agent reached the maximum number of tool-call turns.'
-    const output = { summary }
     // A run whose DELIVERY integration never resolved did not do what it was
     // asked to do, however good the artifact it produced is. Reporting that as
     // a success is how notifications came to say work had been delivered
     // through an integration that was not even connected. It terminates as
     // 'blocked': a distinct outcome from 'failed' (nothing errored — the
     // workspace configuration is incomplete) and from 'completed'.
+    // Tool calls that failed and were never recovered decide the outcome
+    // alongside integrations that never loaded — see ./tool-failure-outcome.
+    // An unavailable integration and a failed send are the same failure to a
+    // reader; only the layer differs.
+    const unrecovered = unrecoveredToolFailures(toolFailures, toolSuccesses)
+    const failedWriteReason = toolFailureBlockReason(unrecovered)
+    const degraded = toolFailureWarnings(unrecovered)
     const blocking = blockingUnavailable(unavailable)
     const blockedReason = blocking.length
       ? `Not delivered — ${blocking.map((entry) => `${entry.name}: ${entry.reason}`).join(' ')}`
-      : null
+      : failedWriteReason
+    // Degraded evidence rides on the output so a finished run stops reading as
+    // a clean success when the search behind it timed out.
+    const output = degraded.length ? { summary, degraded } : { summary }
     // Flow-step conversation memory: persist this exchange so the session's
     // next run replays it. Best-effort — memory must never fail a finished run.
     if (stepMemory) {

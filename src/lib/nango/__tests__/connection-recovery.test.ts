@@ -23,6 +23,30 @@ test('a 404 naming the connection is recognised', () => {
   assert.equal(isUnknownConnectionError(nangoError(404, { message: 'connection not found' })), true)
 })
 
+// The two bodies below are VERBATIM captures from Nango production
+// (2026-09-02), not guesses — the first predicate shipped with guessed
+// phrasing and never fired on the real thing.
+test("Nango's real dead-connection body is recognised", () => {
+  assert.equal(
+    isUnknownConnectionError(nangoError(400, { error: { code: 'server_error', message: 'Failed to get connection' } })),
+    true,
+  )
+})
+
+test("Nango's real unknown-provider-config body is recognised", () => {
+  assert.equal(
+    isUnknownConnectionError(
+      nangoError(404, {
+        error: {
+          code: 'unknown_provider_config',
+          message: 'Provider config not found for the given provider config key. Please make sure the provider config exists in the Nango dashboard.',
+        },
+      }),
+    ),
+    true,
+  )
+})
+
 test("the provider's own rejection of our payload is NOT a stale connection", () => {
   assert.equal(
     isUnknownConnectionError(nangoError(400, { error: { message: "Invalid value at 'message.raw'" } })),

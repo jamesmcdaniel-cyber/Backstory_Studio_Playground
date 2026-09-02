@@ -22,9 +22,16 @@ import { apiLogger } from '@/lib/logger'
 import { upstreamDetail } from '@/lib/upstream-error'
 import type { DeliveryConnection } from './delivery'
 
-/** Nango's phrasing for a reference it cannot resolve. */
+/**
+ * Nango's phrasing for a reference it cannot resolve. The first two
+ * alternatives are VERBATIM production captures (2026-09-02): a dead
+ * connection id answers 400 `{"error":{"code":"server_error","message":
+ * "Failed to get connection"}}` and a dead provider config key answers 404
+ * `unknown_provider_config` — the initial guessed phrasing matched neither,
+ * so the recovery shipped and never fired.
+ */
 const UNKNOWN_REFERENCE =
-  /(unknown|invalid|no such|not\s+found|does\s+not\s+exist).{0,40}(connection|provider[_\s-]?config)|(connection|provider[_\s-]?config[_\s-]?key)\b.{0,40}(not\s+found|unknown|invalid|does\s+not\s+exist)/i
+  /failed to (?:get|find|resolve)\s+(?:the\s+)?connection|unknown_provider_config|(unknown|invalid|no such|not\s+found|does\s+not\s+exist).{0,40}(connection|provider[_\s-]?config)|(connection|provider[_\s-]?config[_\s-]?key)\b.{0,40}(not\s+found|unknown|invalid|does\s+not\s+exist)/i
 
 /**
  * Whether a failure means "the connection reference we sent is dead", as

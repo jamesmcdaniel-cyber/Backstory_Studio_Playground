@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Markdown } from '@/components/ui/markdown'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
+import { detectArtifact, type FlowArtifact } from '@/lib/flows/artifact-preview'
 import { StructuredValueView } from '@/components/flows/structured-value-view'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
@@ -233,7 +234,7 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
   return rows
 }
 
-function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { step: RunStep; label: string; waitingKind?: 'input' | 'approval' | 'unknown'; onRerunFrom?: () => void; onForkWithEdits?: () => void }) {
+function StepRow({ step, label, toolName, waitingKind, onRerunFrom, onForkWithEdits }: { step: RunStep; label: string; toolName?: string | null; waitingKind?: 'input' | 'approval' | 'unknown'; onRerunFrom?: () => void; onForkWithEdits?: () => void }) {
   const [open, setOpen] = useState(false)
   // An in-flight agent step with a linked execution shows the agent's REAL
   // process (below) instead of the decorative typewriter word. Steps without
@@ -290,6 +291,11 @@ function StepRow({ step, label, waitingKind, onRerunFrom, onForkWithEdits }: { s
               ))}
             </ul>
           )}
+          {(() => {
+            const artifact = detectArtifact(toolName ?? null, step.input)
+            if (!artifact) return null
+            return <ArtifactPreviewCard artifact={artifact} delivered={step.status === 'succeeded'} />
+          })()}
           <div>
             <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Input</p>
             <pre className="max-h-40 overflow-auto rounded bg-muted px-2 py-1.5 text-xs">{preview((step.input as { prompt?: unknown })?.prompt ?? step.input)}</pre>
@@ -623,12 +629,63 @@ function RunAnnotation({ run }: { run: FlowRunDetail }) {
   )
 }
 
+/**
+ * The deliverable a step produced, rendered the way its recipient sees it —
+ * the email, the message, the record — instead of (not in place of) the
+ * technical input/output JSON below it. A failed step still previews: "what
+ * was ATTEMPTED" is exactly what someone debugging a failed send needs.
+ */
+function ArtifactPreviewCard({ artifact, delivered }: { artifact: FlowArtifact; delivered: boolean }) {
+  const heading = artifact.kind === 'email'
+    ? (delivered ? 'Email sent' : 'Email (not sent)')
+    : artifact.kind === 'message'
+      ? (delivered ? 'Message posted' : 'Message (not posted)')
+      : (delivered ? 'Record created' : 'Record (not created)')
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      <p className={`px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${delivered ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300'}`}>
+        {heading}
+      </p>
+      {artifact.kind === 'email' && (
+        <div>
+          <dl className="space-y-0.5 border-b border-border/60 bg-muted/40 px-2.5 py-1.5 text-xs">
+            <div className="flex gap-1.5"><dt className="shrink-0 font-medium text-muted-foreground">To</dt><dd className="min-w-0 break-words">{artifact.to}</dd></div>
+            {artifact.cc && <div className="flex gap-1.5"><dt className="shrink-0 font-medium text-muted-foreground">Cc</dt><dd className="min-w-0 break-words">{artifact.cc}</dd></div>}
+            {artifact.bcc && <div className="flex gap-1.5"><dt className="shrink-0 font-medium text-muted-foreground">Bcc</dt><dd className="min-w-0 break-words">{artifact.bcc}</dd></div>}
+            <div className="flex gap-1.5"><dt className="shrink-0 font-medium text-muted-foreground">Subject</dt><dd className="min-w-0 break-words font-medium">{artifact.subject}</dd></div>
+          </dl>
+          {looksLikeHtml(artifact.body)
+            ? <HtmlPreview html={artifact.body} />
+            : <div className="max-h-72 overflow-auto px-2.5 py-2"><Markdown className="text-xs [&_p]:leading-5">{artifact.body}</Markdown></div>}
+        </div>
+      )}
+      {artifact.kind === 'message' && (
+        <div className="px-2.5 py-2">
+          <p className="mb-1 text-[11px] text-muted-foreground">{artifact.channel}</p>
+          <div className="max-h-72 overflow-auto rounded bg-muted/40 px-2.5 py-2">
+            <Markdown className="text-xs [&_p]:leading-5">{artifact.text}</Markdown>
+          </div>
+        </div>
+      )}
+      {artifact.kind === 'record' && (
+        <dl className="space-y-0.5 px-2.5 py-2 text-xs">
+          <div className="flex gap-1.5"><dt className="shrink-0 font-medium text-muted-foreground">Object</dt><dd>{artifact.object}</dd></div>
+          {Object.entries(artifact.fields).map(([field, value]) => (
+            <div key={field} className="flex gap-1.5"><dt className="shrink-0 font-medium text-muted-foreground">{field}</dt><dd className="min-w-0 break-words">{typeof value === 'string' ? value : JSON.stringify(value)}</dd></div>
+          ))}
+        </dl>
+      )}
+    </div>
+  )
+}
+
 export function RunPanel({
   runs,
   selected,
   onSelectRun,
   onClose,
   labelForNode,
+  toolNameForNode,
   onReply,
   onRerunFrom,
   onForkWithEdits,
@@ -643,6 +700,8 @@ export function RunPanel({
   onSelectRun: (runId: string) => void
   onClose: () => void
   labelForNode: (nodeId: string) => string
+  /** The tool a node calls, for artifact detection. Optional — shape detection covers callers without a graph. */
+  toolNameForNode?: (nodeId: string) => string | null
   onReply?: (flowRunId: string, reply: string, stepKey?: string) => Promise<void>
   onRerunFrom?: (runId: string, nodeId: string) => void
   onForkWithEdits?: (runId: string, nodeId: string, recordedOutput: unknown, runFailed: boolean) => void
@@ -738,6 +797,7 @@ export function RunPanel({
                   key={`${step.nodeId}-${i}`}
                   step={step}
                   label={labelForNode(step.nodeId)}
+                  toolName={toolNameForNode?.(step.nodeId.split('#')[0]) ?? null}
                   onRerunFrom={
                     onRerunFrom && (selected.status === 'succeeded' || selected.status === 'failed')
                       ? () => onRerunFrom(selected.id, step.nodeId.split('#')[0])

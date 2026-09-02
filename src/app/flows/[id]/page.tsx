@@ -1058,6 +1058,16 @@ function FlowBuilder() {
     [graph, agentsById],
   )
 
+  // What tool a node calls — the run panel uses it to recognise the artifact
+  // a delivery step produced (the email, the message) and preview it.
+  const toolNameForNode = useCallback(
+    (nodeId: string) => {
+      const node = graph.nodes.find((n) => n.id === nodeId)
+      return node && node.type === 'tool' && typeof node.data.toolName === 'string' ? node.data.toolName : null
+    },
+    [graph],
+  )
+
   // "Make a subflow": the picked start step + pending end/name choices.
   const [subflowDraft, setSubflowDraft] = useState<{ startId: string; endId: string; name: string } | null>(null)
   const [makingSubflow, setMakingSubflow] = useState(false)
@@ -2892,6 +2902,7 @@ function FlowBuilder() {
               onRun={() => void run()}
               starting={running}
               labelForNode={labelForNode}
+              toolNameForNode={toolNameForNode}
               onReply={replyToRun}
               onRerunFrom={(runId, nodeId) => void rerunFromStep(runId, nodeId)}
               onForkWithEdits={(runId, nodeId, recordedOutput, runFailed) =>

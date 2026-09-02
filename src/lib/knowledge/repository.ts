@@ -36,6 +36,7 @@ type RepositoryRow = {
   createdAt: Date
   updatedAt: Date
   _count?: { chunks: number }
+  collections?: Array<{ collection: { id: string; name: string } }>
 }
 
 function serialize(row: RepositoryRow, agentNames: Map<string, string>) {
@@ -63,6 +64,7 @@ function serialize(row: RepositoryRow, agentNames: Map<string, string>) {
     indexState: row.indexState,
     indexError: row.indexError,
     truncated: row.truncated,
+    collections: (row.collections ?? []).map((join) => ({ id: join.collection.id, name: join.collection.name })),
     lastSyncedAt: row.lastSyncedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -134,7 +136,10 @@ export async function listRepositoryAssets(params: {
   const rows = await prisma.knowledgeDocument.findMany({
     where,
     orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-    include: { _count: { select: { chunks: true } } },
+    include: {
+      _count: { select: { chunks: true } },
+      collections: { select: { collection: { select: { id: true, name: true } } } },
+    },
     take: limit + 1,
     ...(params.cursor ? { cursor: { id: params.cursor }, skip: 1 } : {}),
   })
@@ -166,7 +171,10 @@ export async function findVisibleRepositoryAsset(params: {
       organizationId: params.organizationId,
       OR: [{ agentId: null }, { agentId: { in: visible.ids } }, { userId: params.userId }],
     },
-    include: { _count: { select: { chunks: true } } },
+    include: {
+      _count: { select: { chunks: true } },
+      collections: { select: { collection: { select: { id: true, name: true } } } },
+    },
   })
   if (!row) throw new RepositoryAssetNotFoundError('Repository asset not found.')
 

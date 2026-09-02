@@ -7,6 +7,7 @@ import {
   RepositoryAssetNotFoundError,
 } from '@/lib/knowledge/repository'
 import { recordAudit } from '@/lib/audit'
+import { setDocumentCollections } from '@/lib/knowledge/collections'
 
 export const runtime = 'nodejs'
 
@@ -39,6 +40,18 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
   const agentIdRaw = form?.get('agentId')
   const descriptionRaw = form?.get('description')
+  // Optional collection membership, as a JSON array in a form field. Invalid
+  // JSON degrades to no collections rather than failing the upload.
+  const collectionIdsRaw = form?.get('collectionIds')
+  const collectionIds: string[] = (() => {
+    if (typeof collectionIdsRaw !== 'string' || !collectionIdsRaw.trim()) return []
+    try {
+      const parsed = JSON.parse(collectionIdsRaw)
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string').slice(0, 50) : []
+    } catch {
+      return []
+    }
+  })()
   const agentId = await assertRepositoryAgentScope({
     organizationId: auth.organizationId,
     userId: auth.dbUser.id,
@@ -58,6 +71,13 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       buffer: Buffer.from(await file.arrayBuffer()),
       description: typeof descriptionRaw === 'string' ? descriptionRaw : undefined,
     })
+    if (collectionIds.length) {
+      await setDocumentCollections({
+        organizationId: auth.organizationId,
+        documentId: document.id,
+        collectionIds,
+      })
+    }
     await recordAudit({
       organizationId: auth.organizationId,
       actorUserId: auth.dbUser.id,

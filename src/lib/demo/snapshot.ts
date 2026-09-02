@@ -29,7 +29,8 @@ import { anonymizeJson, anonymizeText, harvestAliases } from './anonymize'
 export const COPY_FULL = [
   'User', 'Team', 'AgentTeammate', 'AgentTask', 'AgentConnector', 'AgentTemplate',
   'Flow', 'FlowVersion', 'FlowReview', 'FlowTemplate', 'FlowTemplateVersion', 'SharedSkill',
-  'KnowledgeDocument', 'KnowledgeChunk', 'SignalSubscription', 'CustomSignal',
+  'KnowledgeDocument', 'KnowledgeChunk', 'KnowledgeCollection',
+  'KnowledgeDocumentCollection', 'AgentKnowledgeCollection', 'SignalSubscription', 'CustomSignal',
   'WorkspaceFolder', 'DataTable', 'DataTableRow',
 ] as const
 
@@ -405,6 +406,30 @@ export async function ensureDemoWorkspace(
         embedding: undefined,
       }),
     })
+  }
+
+  // Collections are workspace scenery worth keeping: names are anonymised like
+  // any other text, and the join rows follow the freshly-minted document and
+  // agent ids — a join whose either end was not copied is dropped.
+  const collectionIds: Ids = new Map()
+  for (const collection of await systemPrisma.knowledgeCollection.findMany({ where: { organizationId: realOrgId } })) {
+    const id = randomUUID()
+    collectionIds.set(collection.id, id)
+    await systemPrisma.knowledgeCollection.create({
+      data: compact({ ...anonRow({ ...collection, id, organizationId: demoOrgId }, book) }),
+    })
+  }
+  for (const join of await systemPrisma.knowledgeDocumentCollection.findMany({ where: { organizationId: realOrgId } })) {
+    const documentId = remap(documentIds, join.documentId)
+    const collectionId = remap(collectionIds, join.collectionId)
+    if (!documentId || !collectionId) continue
+    await systemPrisma.knowledgeDocumentCollection.create({ data: { documentId, collectionId, organizationId: demoOrgId } })
+  }
+  for (const join of await systemPrisma.agentKnowledgeCollection.findMany({ where: { organizationId: realOrgId } })) {
+    const agentId = remap(agentIds, join.agentId)
+    const collectionId = remap(collectionIds, join.collectionId)
+    if (!agentId || !collectionId) continue
+    await systemPrisma.agentKnowledgeCollection.create({ data: { agentId, collectionId, organizationId: demoOrgId } })
   }
 
   const signalIds: Ids = new Map()

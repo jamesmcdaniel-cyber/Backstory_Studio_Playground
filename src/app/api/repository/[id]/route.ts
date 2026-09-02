@@ -8,6 +8,7 @@ import {
   updateRepositoryAsset,
 } from '@/lib/knowledge/repository'
 import { recordAudit } from '@/lib/audit'
+import { setDocumentCollections } from '@/lib/knowledge/collections'
 
 function idFrom(request: Request) {
   return new URL(request.url).pathname.split('/').at(-1) || ''
@@ -41,17 +42,32 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     description: z.string().max(2_000).optional(),
     content: z.string().trim().min(1).max(200_000).optional(),
     isEnabled: z.boolean().optional(),
+    collectionIds: z.array(z.string().min(1)).max(50).optional(),
     expectedVersion: z.number().int().positive(),
   }).refine((value) =>
-    value.filename !== undefined || value.description !== undefined || value.content !== undefined || value.isEnabled !== undefined,
+    value.filename !== undefined || value.description !== undefined || value.content !== undefined ||
+    value.isEnabled !== undefined || value.collectionIds !== undefined,
   'Nothing to update.').parse(await request.json())
+  const { collectionIds, ...update } = input
   try {
-    const asset = await updateRepositoryAsset({
+    let asset = await updateRepositoryAsset({
       organizationId: auth.organizationId,
       userId: auth.dbUser.id,
       id: idFrom(request),
-      ...input,
+      ...update,
     })
+    if (collectionIds !== undefined) {
+      await setDocumentCollections({
+        organizationId: auth.organizationId,
+        documentId: asset.id,
+        collectionIds,
+      })
+      asset = await findVisibleRepositoryAsset({
+        organizationId: auth.organizationId,
+        userId: auth.dbUser.id,
+        id: asset.id,
+      })
+    }
     await recordAudit({
       organizationId: auth.organizationId,
       actorUserId: auth.dbUser.id,

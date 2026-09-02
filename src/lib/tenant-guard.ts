@@ -60,6 +60,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'AuditStreamDestination',
   'FlowSideEffect',
   'HuddleSegment', 'HuddleNote', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
+  'KnowledgeCollection', 'KnowledgeDocumentCollection', 'AgentKnowledgeCollection',
   'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent',
   'ActivityEvent', 'ActivityTriggerClaim', 'ActivitySourceCursor',
   'AdoptionWeek', 'AgentCohortWeek',

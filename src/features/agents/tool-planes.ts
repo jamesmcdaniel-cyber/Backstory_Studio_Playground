@@ -22,7 +22,8 @@ import { apiLogger } from '@/lib/logger'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { BackstoryMcpClient, backstoryMcpConfigured } from '@/lib/mcp/backstory-mcp'
 import { getPeopleAiClientForUser, getPeopleAiServiceClient } from '@/lib/peopleai/client'
-import { DELIVERY_TOOLS, nangoConfigured, resolveDeliveryConnection, resolveNangoConnection, type DeliveryCapability, type DeliveryConnection } from '@/lib/nango/delivery'
+import { DELIVERY_TOOLS, DELIVERY_PROVIDERS, nangoConfigured, resolveDeliveryConnection, resolveNangoConnection, type DeliveryCapability, type DeliveryConnection } from '@/lib/nango/delivery'
+import { withStaleConnectionRecovery } from '@/lib/nango/connection-recovery'
 import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import {
@@ -532,7 +533,17 @@ export async function loadNangoPlaneGroups(
         continue
       }
       const deliveryClient: McpToolClient = {
-        executeTool: (_serverUrl, _toolName, args) => spec.run(connection, args),
+        // The connection is resolved once here and held for the whole run, so a
+        // reference Nango has since replaced would fail every call until the
+        // run ended. Recover on Nango's own rejection instead.
+        executeTool: (_serverUrl, _toolName, args) =>
+          withStaleConnectionRecovery({
+            organizationId,
+            providerConfigKeys: DELIVERY_PROVIDERS[spec.capability],
+            userId: ownerUserId,
+            connection,
+            call: (resolved) => spec.run(resolved, args),
+          }),
       }
       groups.push({
         id: formatFlowToolConnectionId('nango', spec.capability),
@@ -589,7 +600,16 @@ export async function loadNangoPlaneGroups(
         provider: `nango:${tool.provider}`,
         serverUrl: 'nango',
         isWrite: tool.isWrite,
-        client: { executeTool: (_serverUrl, _toolName, args) => tool.run(connection, args) },
+        client: {
+          executeTool: (_serverUrl, _toolName, args) =>
+            withStaleConnectionRecovery({
+              organizationId,
+              providerConfigKeys: PROVIDER_CONFIG_KEYS[tool.provider] ?? [tool.provider],
+              userId: ownerUserId,
+              connection,
+              call: (resolved) => tool.run(resolved, args),
+            }),
+        },
         tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }],
       })
     } catch (error) {

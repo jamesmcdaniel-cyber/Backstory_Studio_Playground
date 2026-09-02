@@ -9,10 +9,10 @@ import { apiLogger } from '@/lib/logger'
 import { recordAudit, toolAuditAction } from '@/lib/audit'
 import { createApproval, requiresApproval } from '@/lib/agents/approval'
 import { retrieveContext, renderContext } from '@/lib/rag/retrieve'
-import { retrieveKnowledge, renderKnowledge } from '@/lib/knowledge/retrieve'
+import { loadManifestEntries, renderRepositoryManifest, MANIFEST_MAX_ENTRIES } from '@/lib/knowledge/manifest'
 import { embeddingsConfigured, embedQuery, embedTexts, cosineSimilarity } from '@/lib/rag/embeddings'
 import { getGraphRagStore } from '@/lib/rag/get-store'
-import { KNOWLEDGE_RELEVANCE_FLOOR, MEMORY_RELEVANCE_FLOOR, CONTEXT_RELEVANCE_FLOOR } from '@/lib/rag/relevance'
+import { MEMORY_RELEVANCE_FLOOR, CONTEXT_RELEVANCE_FLOOR } from '@/lib/rag/relevance'
 import { indexExecution } from '@/lib/rag/indexer'
 import {
   loadPeopleAiPlaneGroup,
@@ -443,7 +443,10 @@ async function loadTools(
 
   // ---- Native built-ins (Granola / Slack / HTTP / Email) --------------------
   // Each gated on its availability AND a matching providers entry.
-  for (const group of await loadNativePlaneGroups(organizationId, { providers, httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId })) pushGroup(group)
+  // 'repository' rides along unconditionally: the retrieval it replaces
+  // (pre-run passage injection) reached every agent with documents, so the
+  // tools that replace it must too. Read-only, so no approval-gate impact.
+  for (const group of await loadNativePlaneGroups(organizationId, { providers: [...providers, 'repository'], httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId })) pushGroup(group)
 
   // ---- Nango delivery (outbound writes as the acting user) -----------------
   // Slack/Gmail/Salesforce writes through the org's Nango connections,
@@ -1189,26 +1192,24 @@ async function runAgentExecutionInner(
       })
     }
 
-    // Uploaded file knowledge: retrieve the most relevant chunks for this agent
-    // and inject them into the system prompt. Best-effort — never blocks a run.
+    // Repository: tell the agent WHAT is available and let it fetch what it
+    // needs through the repository_* tools. Injecting passages here instead
+    // meant every run paid for five passages chosen before the run started —
+    // and gave a long document no way to be read in order. Best-effort —
+    // never blocks a run.
     try {
-      const knowledgeHits = await retrieveKnowledge({
-        organizationId,
-        agentId: agent.id,
-        query: `${agent.objective}\n${data.input ?? ''}`.slice(0, 2000),
-        minScore: KNOWLEDGE_RELEVANCE_FLOOR,
-      })
-      const knowledgeBlock = renderKnowledge(knowledgeHits)
-      if (knowledgeBlock) {
-        retrievedBlocks.push(knowledgeBlock)
-        await recordEvent(execution.id, null, 'knowledge.retrieved', {
-          source: 'uploaded-files',
-          files: [...new Set(knowledgeHits.map((h) => h.filename))],
-          summary: `Pulled ${knowledgeHits.length} passage(s) from ${new Set(knowledgeHits.map((h) => h.filename)).size} uploaded file(s).`,
+      const entries = await loadManifestEntries({ organizationId, agentId: agent.id })
+      const manifest = renderRepositoryManifest(entries)
+      if (manifest) {
+        retrievedBlocks.push(manifest)
+        await recordEvent(execution.id, null, 'knowledge.available', {
+          source: 'repository',
+          files: entries.slice(0, MANIFEST_MAX_ENTRIES).map((entry) => entry.filename),
+          summary: `Offered ${entries.length} repository document(s). The agent retrieves passages on demand.`,
         })
       }
     } catch (error) {
-      apiLogger.warn('execute-agent: knowledge retrieval skipped', {
+      apiLogger.warn('execute-agent: repository manifest skipped', {
         organizationId,
         error: error instanceof Error ? error.message : String(error),
       })

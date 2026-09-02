@@ -55,6 +55,7 @@ import { isGuardrailRefusal } from '@/lib/security/guardrails'
 import { aiEgressRefusal, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent, scanToolResultForInjection } from '@/lib/security/tool-call-guard'
 import { injectTraceContext, withExtractedTraceContext, withSpan } from '@/lib/observability/otel'
+import { describeUpstreamFailure } from '@/lib/upstream-error'
 
 export type AgentExecutionJob = {
   executionId?: string
@@ -1507,7 +1508,10 @@ async function runAgentExecutionInner(
           })
           results.push({ toolCallId: call.id, content: serializeToolResult(result) })
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
+          // The provider's own explanation, not just axios's status line — a
+          // bare "Request failed with status code 400" cannot tell a malformed
+          // payload from a misrouted connection, and both reach here.
+          const message = describeUpstreamFailure(error)
           await prisma.workflowStep.update({
             where: { id: step.id },
             data: { status: 'failed', error: jsonValue({ message }), completedAt: new Date() },

@@ -1,4 +1,5 @@
 import { ApiError } from '@/lib/server/api-handler'
+import { upstreamDetail } from '@/lib/upstream-error'
 
 // Converts a Nango SDK / config failure into a clear ApiError instead of a
 // generic 500. The Nango node SDK is axios-based, so upstream HTTP failures
@@ -17,6 +18,18 @@ export function nangoApiError(error: unknown): ApiError {
     statusCode?: number
   }
   const status = err?.response?.status ?? err?.status ?? err?.statusCode
+  if (typeof status === 'number' && status >= 400 && status < 500 && status !== 401 && status !== 403) {
+    // Every other 4xx is a fact about OUR request — a malformed body, an
+    // unknown provider config key — and the provider says which in its
+    // response body. Reporting only the status code sent the reader hunting
+    // through layers that were all working.
+    const upstream = upstreamDetail(error)
+    return new ApiError(
+      upstream ? `Nango rejected the request: ${upstream}` : `Nango rejected the request (${status}).`,
+      502,
+      'NANGO_BAD_REQUEST',
+    )
+  }
   if (status === 401 || status === 403) {
     // Pass Nango's own reason through. "invalid or unauthorized" sent someone
     // hunting for a bad/expired key when Nango was saying something far more

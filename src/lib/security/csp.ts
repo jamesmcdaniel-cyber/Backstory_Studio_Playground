@@ -98,6 +98,29 @@ export function buildContentSecurityPolicy({ nonce, isDevelopment = false }: Csp
     ...(isDevelopment ? ["'unsafe-eval'"] : []),
   ]
 
+  /**
+   * Who may put this app in an iframe. Ships locked ('none'); an operator
+   * opts in per deployment with EMBED_FRAME_ANCESTORS — a space-separated
+   * list of https origins, e.g. "https://*.lightning.force.com" for a
+   * Salesforce Lightning embed.
+   *
+   * The value feeds a security header, so it is sanitized, not trusted:
+   * only https origin tokens survive (no schemes that execute, no CSP
+   * keywords, and a `;` can never travel through to smuggle a directive).
+   * A value that sanitizes down to nothing falls back to 'none' — a typo
+   * must fail closed, not open. `'self'` rides along whenever embedding is
+   * on so same-origin previews keep working.
+   *
+   * Deliberately NOT defaulted to Salesforce's wildcards in code: which
+   * organisations may frame a workspace is an operator decision, and
+   * `*.force.com` in particular includes anonymous Experience Cloud sites —
+   * an allow-list someone chose is the whole safety argument.
+   */
+  const embedAncestors = (process.env.EMBED_FRAME_ANCESTORS ?? '')
+    .split(/\s+/)
+    .filter((token) => /^https:\/\/[a-z0-9*][a-z0-9*.:-]*$/i.test(token))
+  const frameAncestors = embedAncestors.length ? `'self' ${embedAncestors.join(' ')}` : "'none'"
+
   const connectSrc = [
     "'self'",
     ...(supabase ? [supabase.http, supabase.ws] : []),
@@ -132,8 +155,9 @@ export function buildContentSecurityPolicy({ nonce, isDevelopment = false }: Csp
     `frame-src 'self' blob: ${TURNSTILE_ORIGIN} ${nangoConnectOrigin()}`,
     "media-src 'self' data: blob:",
     "worker-src 'self' blob:",
-    // Anti-clickjacking and injection-hardening, carried over unchanged.
-    "frame-ancestors 'none'",
+    // Anti-clickjacking and injection-hardening. 'none' unless an operator
+    // configured an embed allow-list above.
+    `frame-ancestors ${frameAncestors}`,
     "base-uri 'self'",
     "object-src 'none'",
     "form-action 'self'",

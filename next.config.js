@@ -22,7 +22,15 @@ const nextConfig = {
       {
         source: '/:path*',
         headers: [
-          { key: 'X-Frame-Options', value: 'DENY' },
+          // X-Frame-Options has no allow-list form, so when an operator turns
+          // on embedding (EMBED_FRAME_ANCESTORS, read at build/deploy time) it
+          // is omitted and CSP frame-ancestors — which carries the actual
+          // allow-list, built in src/lib/security/csp.ts — governs alone.
+          // Every modern browser prefers frame-ancestors anyway; sending DENY
+          // alongside it would block embedding in the ones that don't.
+          ...(process.env.EMBED_FRAME_ANCESTORS?.trim()
+            ? []
+            : [{ key: 'X-Frame-Options', value: 'DENY' }]),
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           // microphone=(self): the flows voice huddle needs getUserMedia;

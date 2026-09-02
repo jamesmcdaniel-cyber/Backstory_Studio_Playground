@@ -89,3 +89,37 @@ test('img-src admits Google avatars but stays a named-host list', () => {
   // image URL query strings — the named-host list IS the control.
   assert.ok(!/img-src[^;]*\shttps:(\s|$)/.test(imgSrc), 'img-src must not admit all of https:')
 })
+
+// ── Embedding allow-list (EMBED_FRAME_ANCESTORS) ─────────────────────────────
+
+test('unset embed allow-list keeps frame-ancestors none', () => {
+  delete process.env.EMBED_FRAME_ANCESTORS
+  assert.match(buildContentSecurityPolicy({ nonce: 'test-nonce' }), /frame-ancestors 'none'/)
+})
+
+test('a configured allow-list frames for those origins plus self', () => {
+  process.env.EMBED_FRAME_ANCESTORS = 'https://*.lightning.force.com https://acme.my.salesforce.com'
+  const csp = buildContentSecurityPolicy({ nonce: 'test-nonce' })
+  assert.match(csp, /frame-ancestors 'self' https:\/\/\*\.lightning\.force\.com https:\/\/acme\.my\.salesforce\.com/)
+  assert.equal(csp.includes("frame-ancestors 'none'"), false)
+})
+
+test('the allow-list only admits https origins — anything else is dropped', () => {
+  process.env.EMBED_FRAME_ANCESTORS = "http://evil.test javascript:alert(1) https://ok.example.com 'unsafe-inline'"
+  const csp = buildContentSecurityPolicy({ nonce: 'test-nonce' })
+  const directive = csp.split(';').map((part) => part.trim()).find((part) => part.startsWith('frame-ancestors'))!
+  assert.equal(directive, "frame-ancestors 'self' https://ok.example.com")
+})
+
+test('an env value that is only garbage falls back to none, not to an empty directive', () => {
+  process.env.EMBED_FRAME_ANCESTORS = 'http://nope ;; img-src *'
+  const csp = buildContentSecurityPolicy({ nonce: 'test-nonce' })
+  assert.match(csp, /frame-ancestors 'none'/)
+  assert.equal(csp.includes('img-src *'), false)
+})
+
+test('a directive-injection attempt cannot smuggle a semicolon into the policy', () => {
+  process.env.EMBED_FRAME_ANCESTORS = 'https://a.example.com;script-src *'
+  const csp = buildContentSecurityPolicy({ nonce: 'test-nonce' })
+  assert.equal(csp.includes('script-src *'), false)
+})

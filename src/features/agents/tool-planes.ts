@@ -24,6 +24,7 @@ import { BackstoryMcpClient, backstoryMcpConfigured } from '@/lib/mcp/backstory-
 import { getPeopleAiClientForUser, getPeopleAiServiceClient } from '@/lib/peopleai/client'
 import { DELIVERY_TOOLS, DELIVERY_PROVIDERS, nangoConfigured, resolveDeliveryConnection, resolveNangoConnection, type DeliveryCapability, type DeliveryConnection } from '@/lib/nango/delivery'
 import { withStaleConnectionRecovery } from '@/lib/nango/connection-recovery'
+import { REPOSITORY_TOOLS, RepositoryToolClient } from '@/lib/knowledge/tools'
 import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import {
@@ -341,7 +342,7 @@ export async function loadMcpConnectionPlaneGroups(
  */
 export async function loadNativePlaneGroups(
   organizationId: string,
-  options: { providers?: string[]; httpEndpoints?: AgentHttpEndpoint[]; httpUserId?: string } = {},
+  options: { providers?: string[]; httpEndpoints?: AgentHttpEndpoint[]; httpUserId?: string; agentId?: string | null } = {},
 ): Promise<ToolPlaneGroup[]> {
   const selected = (descriptor: ConnectorDescriptor) =>
     options.providers ? isSelected(descriptor, options.providers) : true
@@ -438,6 +439,21 @@ export async function loadNativePlaneGroups(
       'backstory://data-tables',
       new DataTableToolClient(organizationId, options.httpUserId),
       DATA_TABLE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    ))
+  }
+
+  // Workspace Repository — always available and tenant-scoped, no credential.
+  // Read-only, so unlike Data Tables the whole plane is classified as a read.
+  // The agent id scopes retrieval to the caller's own documents, org-wide
+  // documents, and attached collections; the flow catalog (no agentId) gets
+  // the org-wide view.
+  const repositoryConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'repository')!
+  if (selected(repositoryConn)) {
+    groups.push(group(
+      repositoryConn,
+      'backstory://repository',
+      new RepositoryToolClient(organizationId, options.httpUserId ?? '', options.agentId ?? null),
+      REPOSITORY_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
     ))
   }
 

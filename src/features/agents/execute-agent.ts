@@ -389,6 +389,7 @@ async function loadTools(
   query?: string,
   httpEndpoints: AgentHttpEndpoint[] = [],
   toolSettings: AgentToolSettings = {},
+  agentId?: string,
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
   // at the end (capDiscoveredTools) so write tools aren't crowded out. Plane
@@ -442,7 +443,7 @@ async function loadTools(
 
   // ---- Native built-ins (Granola / Slack / HTTP / Email) --------------------
   // Each gated on its availability AND a matching providers entry.
-  for (const group of await loadNativePlaneGroups(organizationId, { providers, httpEndpoints, httpUserId: ownerUserId ?? undefined })) pushGroup(group)
+  for (const group of await loadNativePlaneGroups(organizationId, { providers, httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId })) pushGroup(group)
 
   // ---- Nango delivery (outbound writes as the acting user) -----------------
   // Slack/Gmail/Salesforce writes through the org's Nango connections,
@@ -909,7 +910,7 @@ async function runAgentExecutionInner(
     // repos) are enforced below on descriptions + call args; MCP tool toggles
     // are enforced inside loadTools by never loading a disabled tool.
     const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
-    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings)
+    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id)
     const { bindings, unavailable } = loaded
 
     // Applied AFTER the agent's own tools and any step-granted connections, so

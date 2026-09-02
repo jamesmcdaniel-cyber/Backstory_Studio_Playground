@@ -1,5 +1,6 @@
 import type { TriggerInputField } from '@/lib/flows/graph'
 import type { ApiScope } from '@/lib/public-api/auth'
+import { REPOSITORY_TOOLS } from '@/lib/knowledge/tools'
 
 /**
  * Published flows, described as MCP tools.
@@ -400,6 +401,17 @@ export const MCP_MANAGEMENT_TOOLS: readonly McpManagementToolDescriptor[] = [
       match: { type: 'object' },
       data: { type: 'object' },
     }, operation === 'insert' ? ['data'] : operation === 'update' ? ['rowId', 'data'] : operation === 'upsert' ? ['match', 'data'] : ['rowId']),
+  })),
+
+  // The workspace repository, derived from the SAME definitions the agent
+  // plane serves (src/lib/knowledge/tools.ts) so the two surfaces cannot
+  // drift — a guard test pins the parity. Read-only tools take the read scope,
+  // which keeps a least-privileged management key usable against them.
+  ...REPOSITORY_TOOLS.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    requiredScope: 'flows:read' as const,
+    inputSchema: tool.inputSchema as McpToolDescriptor['inputSchema'],
   })),
 ] as const
 

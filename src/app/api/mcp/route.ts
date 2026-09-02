@@ -23,6 +23,7 @@ import { readRequestJsonLimited, RequestBodyError } from '@/lib/server/request-b
 import { createDataTable, listDataTables } from '@/lib/data-tables/service'
 import { DataTableToolClient } from '@/lib/data-tables/tools'
 import { dataTableColumnsSchema, normalizeDataTableRow } from '@/lib/data-tables/schema'
+import { RepositoryToolClient } from '@/lib/knowledge/tools'
 import {
   GET_RUN_TOOL,
   MCP_MANAGEMENT_TOOLS,
@@ -731,6 +732,20 @@ async function callManagementTool(
           detail: { source: 'mcp', name: table.name },
         }).catch(() => undefined)
         return toolResult({ deleted: true, tableId: table.id })
+      }
+
+      case 'repository_search':
+      case 'repository_read':
+      case 'repository_list': {
+        // No agent identity on this surface: an MCP caller sees workspace-wide
+        // documents plus their own, bounded by the same user-visibility rule
+        // the repository UI applies.
+        const repositoryClient = new RepositoryToolClient(auth.organizationId, auth.userId, null)
+        try {
+          return toolResult(await repositoryClient.executeTool('', name, args))
+        } catch (error) {
+          return toolResult(error instanceof Error ? error.message : 'Repository lookup failed.', true)
+        }
       }
 
       case 'data_table_get_rows':

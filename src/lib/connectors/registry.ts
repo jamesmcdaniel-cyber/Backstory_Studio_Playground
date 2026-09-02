@@ -123,6 +123,21 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     available: () => true, // per-workspace search key; gated at the call site
   },
   {
+    key: 'Repository',
+    label: 'Repository',
+    slug: 'files',
+    kind: 'builtin',
+    // Read-only by construction: search, read, list. Nothing here mutates,
+    // so the plane never triggers the approval gate.
+    isWrite: false,
+    providerId: 'repository',
+    matches: (selected) => {
+      const value = selected.toLowerCase()
+      return value.includes('repository') || value.includes('knowledge') || value.includes('enablement')
+    },
+    available: () => true,
+  },
+  {
     key: 'Data Tables',
     label: 'Data Tables',
     slug: 'postgresql',

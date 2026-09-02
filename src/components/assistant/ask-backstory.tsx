@@ -27,6 +27,7 @@ import { indentOnTab } from '@/components/ui/textarea'
 import { Markdown } from '@/components/ui/markdown'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
+import { shouldOfferLauncher, useAssistantSurfaceVisible } from '@/components/assistant/assistant-surface'
 import { surfaceForPath } from '@/lib/librarian/surfaces'
 import { relativeTime } from '@/lib/relative-time'
 import { cn } from '@/lib/utils'
@@ -156,6 +157,11 @@ export function AskBackstory({ raised = false }: {
   const router = useRouter()
   const reduced = useReducedMotion()
   const [open, setOpen] = useState(false)
+  // A page-level assistant (the agents Assistant, the flow builder Copilot)
+  // puts its own composer in this corner, and the launcher was sitting on
+  // top of its text field. Yield the corner — but only when closed, so an
+  // conversation the user is mid-way through is never yanked away.
+  const surfaceVisible = useAssistantSurfaceVisible()
   // The thread being continued. null is a conversation that has not been
   // started yet, not an error state — the first answer names the one it opened.
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -845,7 +851,7 @@ export function AskBackstory({ raised = false }: {
 
       {/* The launcher is hidden while the panel is open on a phone, where the
           panel covers the whole screen and the button would sit on top of it. */}
-      <button
+      {shouldOfferLauncher(surfaceVisible, open) && <button
         ref={launcherRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -864,7 +870,7 @@ export function AskBackstory({ raised = false }: {
             in Name"), so the two change together rather than staying "Ask
             Backstory" over a close icon. */}
         <span className="hidden sm:inline">{open ? 'Close' : 'Ask Backstory'}</span>
-      </button>
+      </button>}
     </>
   )
 }

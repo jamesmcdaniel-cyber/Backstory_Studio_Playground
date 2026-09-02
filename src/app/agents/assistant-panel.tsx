@@ -12,6 +12,7 @@ import { Markdown } from '@/components/ui/markdown'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { cn } from '@/lib/utils'
 import type { Agent } from '@/lib/types'
+import { useAssistantSurface } from '@/components/assistant/assistant-surface'
 
 /**
  * Persistent assistant chat for the selected agent. The thread is agent-scoped
@@ -231,6 +232,9 @@ export function AssistantPanel({
   const scrollRef = useRef<HTMLDivElement>(null)
   const historyRef = useRef<HTMLDivElement | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // Ask Backstory's floating launcher shares this corner; it steps aside
+  // while this panel is on screen. See components/assistant/assistant-surface.
+  useAssistantSurface(panelRef)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   // The in-flight ask, so the stop button (and an agent switch) can cancel it.
   const abortRef = useRef<AbortController | null>(null)

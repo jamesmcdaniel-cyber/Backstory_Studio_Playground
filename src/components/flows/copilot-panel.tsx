@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import type { FlowGraph } from '@/lib/flows/graph'
 import type { CopilotOp } from '@/lib/flows/copilot-ops'
+import { useAssistantSurface } from '@/components/assistant/assistant-surface'
 
 type NeedsAttentionItem = { nodeId?: string; message: string }
 
@@ -50,6 +51,9 @@ export function CopilotPanel({
   const threadRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // Ask Backstory's floating launcher shares this corner; it steps aside
+  // while this panel is on screen. See components/assistant/assistant-surface.
+  useAssistantSurface(panelRef)
   // The in-flight request, so the stop button can cancel it.
   const abortRef = useRef<AbortController | null>(null)
   // The graph prop (and the page's onOps closure over it) changes on every

@@ -1,4 +1,6 @@
+import { Prisma } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
+import { agentScopeSql, agentScopeWhere } from './scope'
 import { embedQuery, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { applyRelevanceFloor } from '@/lib/rag/relevance'
 
@@ -71,6 +73,8 @@ export async function retrieveKnowledge(params: {
   organizationId: string
   agentId: string
   query: string
+  /** Restrict the search to one collection's documents (still scope-checked). */
+  collectionId?: string
   k?: number
   minScore?: number
 }): Promise<KnowledgeHit[]> {
@@ -105,7 +109,10 @@ export async function retrieveKnowledge(params: {
           JOIN "knowledge_documents" d ON d."id" = c."documentId"
           WHERE c."organizationId" = ${params.organizationId}::uuid
             AND d."organizationId" = ${params.organizationId}::uuid
-            AND (d."agentId" = ${params.agentId} OR d."agentId" IS NULL)
+            AND ${agentScopeSql(params.organizationId, params.agentId)}
+            ${params.collectionId
+              ? Prisma.sql`AND d."id" IN (SELECT "documentId" FROM "knowledge_document_collections" WHERE "collectionId" = ${params.collectionId} AND "organizationId" = ${params.organizationId}::uuid)`
+              : Prisma.empty}
             AND d."isEnabled" = true
             AND d."status" = 'ready'
             AND c."embeddingVec" IS NOT NULL
@@ -137,7 +144,8 @@ export async function retrieveKnowledge(params: {
           organizationId: params.organizationId,
           document: {
             organizationId: params.organizationId,
-            OR: [{ agentId: params.agentId }, { agentId: null }],
+            ...agentScopeWhere(params.organizationId, params.agentId),
+            ...(params.collectionId ? { collections: { some: { collectionId: params.collectionId } } } : {}),
             isEnabled: true,
             status: 'ready',
             indexState: { not: 'indexed' },
@@ -166,7 +174,8 @@ export async function retrieveKnowledge(params: {
         organizationId: params.organizationId,
         document: {
           organizationId: params.organizationId,
-          OR: [{ agentId: params.agentId }, { agentId: null }],
+          ...agentScopeWhere(params.organizationId, params.agentId),
+          ...(params.collectionId ? { collections: { some: { collectionId: params.collectionId } } } : {}),
           isEnabled: true,
           status: 'ready',
         },

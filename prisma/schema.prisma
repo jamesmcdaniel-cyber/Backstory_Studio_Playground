@@ -93,6 +93,7 @@ model Organization {
   customSignals                  CustomSignal[]
   pushSubscriptions              PushSubscription[]
   knowledgeDocuments             KnowledgeDocument[]
+  knowledgeCollections           KnowledgeCollection[]
   sharedSkills                   SharedSkill[]
   templateProposals              TemplateProposal[]
   invitations                    Invitation[]
@@ -699,6 +700,7 @@ model AgentTask {
   connectors           AgentConnector[]
   memories             AgentMemory[]
   slackChannelBindings SlackChannelBinding[]
+  knowledgeCollections AgentKnowledgeCollection[]
   slackCommandBindings SlackCommandBinding[]
 
   @@index([organizationId, status])
@@ -2136,9 +2138,10 @@ model KnowledgeDocument {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  storedFile   StoredFile?      @relation(fields: [storedFileId], references: [id], onDelete: SetNull)
+  organization Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storedFile   StoredFile?                   @relation(fields: [storedFileId], references: [id], onDelete: SetNull)
   chunks       KnowledgeChunk[]
+  collections  KnowledgeDocumentCollection[]
 
   @@index([organizationId, agentId])
   @@index([organizationId, isEnabled, updatedAt])
@@ -2172,6 +2175,53 @@ model KnowledgeChunk {
   // `prisma migrate diff` from proposing to drop it as drift.
   @@index([embeddingVec], map: "knowledge_chunks_embedding_vec_hnsw")
   @@map("knowledge_chunks")
+}
+
+/// A named set of repository assets — "Customer Journey", "Competitive" —
+/// attachable to many agents at once. Without this, an enablement library is
+/// either org-wide or bound to exactly one agent, and re-attaching every new
+/// document by hand is the only way to serve a team of agents.
+model KnowledgeCollection {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  name           String
+  description    String   @default("") @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  documents    KnowledgeDocumentCollection[]
+  agents       AgentKnowledgeCollection[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, updatedAt])
+  @@map("knowledge_collections")
+}
+
+model KnowledgeDocumentCollection {
+  documentId     String
+  collectionId   String
+  organizationId String @db.Uuid
+
+  document   KnowledgeDocument   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  collection KnowledgeCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, collectionId])
+  @@index([organizationId, collectionId])
+  @@map("knowledge_document_collections")
+}
+
+model AgentKnowledgeCollection {
+  agentId        String
+  collectionId   String
+  organizationId String @db.Uuid
+
+  agent      AgentTask           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  collection KnowledgeCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, collectionId])
+  @@index([organizationId, agentId])
+  @@map("agent_knowledge_collections")
 }
 
 /// A user-authored skill in the PUBLIC community library: readable by every

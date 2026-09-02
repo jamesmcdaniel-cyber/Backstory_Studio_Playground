@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/settings/dialogs'
 import { cn } from '@/lib/utils'
 
 import type { Agent, Activity } from '@/lib/types'
+import { agentHasLiveRun } from '@/lib/agents/run-status'
 
 type GranolaNote = {
   id: string
@@ -557,12 +558,14 @@ function AgentHQ() {
                     <Button
                       variant="outline"
                       size="icon"
-                      disabled={runningId === selectedAgent.id}
+                      disabled={runningId === selectedAgent.id || agentHasLiveRun(activities, selectedAgent.id)}
                       onClick={() => runAgent(selectedAgent)}
-                      aria-label={`Run ${selectedAgent.title}`}
-                      title="Run agent"
+                      aria-label={agentHasLiveRun(activities, selectedAgent.id) ? `${selectedAgent.title} is running` : `Run ${selectedAgent.title}`}
+                      title={agentHasLiveRun(activities, selectedAgent.id) ? 'Running — watch or stop it below' : 'Run agent'}
                     >
-                      {runningId === selectedAgent.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                      {runningId === selectedAgent.id || agentHasLiveRun(activities, selectedAgent.id)
+                        ? <Loader2 className="h-4 w-4 animate-spin text-horizon-600" />
+                        : <Play className="h-4 w-4" />}
                     </Button>
                     <Button
                       variant="outline"

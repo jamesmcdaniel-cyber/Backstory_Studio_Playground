@@ -28,3 +28,28 @@ export function isWaitingRunStatus(status: string): boolean {
 export function isTerminalRunStatus(status: string): boolean {
   return TERMINAL_STATUSES.has(status)
 }
+
+/**
+ * Whether an agent currently has a run in flight, from an activity list the
+ * client already holds (the /api/snapshot poll, the agents page). "Live" is
+ * simply not-terminal: running, queued, cancelling, or paused waiting on a
+ * person — in every one of those the agent has unfinished business, which is
+ * what a run indicator on the agent's row is telling the reader.
+ */
+export function agentHasLiveRun(
+  activities: ReadonlyArray<{ agentTaskId?: string | null; status: string }>,
+  agentId: string,
+): boolean {
+  return activities.some((activity) => activity.agentTaskId === agentId && !isTerminalRunStatus(activity.status))
+}
+
+/** Every agent id with a live run, for rendering a whole list in one pass. */
+export function liveAgentIds(
+  activities: ReadonlyArray<{ agentTaskId?: string | null; status: string }>,
+): Set<string> {
+  const ids = new Set<string>()
+  for (const activity of activities) {
+    if (activity.agentTaskId && !isTerminalRunStatus(activity.status)) ids.add(activity.agentTaskId)
+  }
+  return ids
+}

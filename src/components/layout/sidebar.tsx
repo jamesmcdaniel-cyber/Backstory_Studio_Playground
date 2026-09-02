@@ -45,11 +45,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useAuth } from '@/hooks/use-auth'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { resetSnapshotCache, getSnapshot } from '@/lib/client/snapshot'
+import { liveAgentIds } from '@/lib/agents/run-status'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { creditUsagePct } from '@/lib/usage/credit-pct'
 import { cn } from '@/lib/utils'
-import type { Agent as AgentType } from '@/lib/types'
+import type { Activity, Agent as AgentType } from '@/lib/types'
 
 type Agent = Pick<AgentType, 'id' | 'title' | 'description' | 'instructions' | 'avatarSeed' | 'folder' | 'visibility'>
 
@@ -71,7 +72,7 @@ type Usage = { executions: number; usedTokens: number; budgetTokens: number; exe
 // to empty state and flash the default logo + no agents until the refetch
 // resolves. Seeding state from this snapshot makes a remounted sidebar paint the
 // real org logo + agents instantly, then revalidate in the background.
-type SidebarSnapshot = { organizations: Organization[]; activeOrgId: string | null; agents: Agent[]; workspaceFolders: WorkspaceFolder[]; usage: Usage | null }
+type SidebarSnapshot = { organizations: Organization[]; activeOrgId: string | null; agents: Agent[]; workspaceFolders: WorkspaceFolder[]; usage: Usage | null; activities: Activity[] }
 let sidebarCache: SidebarSnapshot | null = null
 
 const SIDEBAR_COLLAPSED_KEY = 'backstory:sidebar-collapsed'
@@ -139,6 +140,7 @@ export function Sidebar() {
   const [agents, setAgents] = useState<Agent[]>(() => sidebarCache?.agents ?? [])
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>(() => sidebarCache?.workspaceFolders ?? [])
   const [usage, setUsage] = useState<Usage | null>(() => sidebarCache?.usage ?? null)
+  const [activities, setActivities] = useState<Activity[]>(() => sidebarCache?.activities ?? [])
   const [folderCollapsed, setFolderCollapsed] = useState<Record<string, boolean>>({})
   const [desktopCollapsed, setDesktopCollapsed] = useState(false)
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -160,11 +162,13 @@ export function Sidebar() {
       agents: snapshot.agents || [],
       workspaceFolders: snapshot.workspaceFolders || [],
       usage: snapshot.usage || null,
+      activities: snapshot.activities || [],
     }
     sidebarCache = next
     setAgents(next.agents)
     setWorkspaceFolders(next.workspaceFolders)
     setUsage(next.usage)
+    setActivities(next.activities)
     setOrganizations(next.organizations)
     setActiveOrgId(next.activeOrgId)
   }, [])
@@ -468,6 +472,8 @@ export function Sidebar() {
     },
   })
 
+  const runningAgents = useMemo(() => liveAgentIds(activities), [activities])
+
   const renderAgent = (agent: Agent) => (
     <div
       key={agent.id}
@@ -484,8 +490,18 @@ export function Sidebar() {
         {agent.title}
       </button>
       <div className="flex gap-0.5 opacity-70 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-        <Button size="icon" variant="ghost" className="h-8 w-8" disabled={runningId === agent.id} onClick={() => runAgent(agent)} aria-label={`Run ${agent.title}`}>
-          {runningId === agent.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8"
+          disabled={runningId === agent.id || runningAgents.has(agent.id)}
+          onClick={() => runAgent(agent)}
+          aria-label={runningAgents.has(agent.id) ? `${agent.title} is running` : `Run ${agent.title}`}
+          title={runningAgents.has(agent.id) ? 'Running — open the agent to watch or stop it' : `Run ${agent.title}`}
+        >
+          {runningId === agent.id || runningAgents.has(agent.id)
+            ? <Loader2 className="h-3 w-3 animate-spin text-horizon-600" />
+            : <Play className="h-3 w-3" />}
         </Button>
         <Button size="icon" variant="ghost" className="h-8 w-8 text-red-600" onClick={() => setDeleteTarget(agent)} aria-label={`Delete ${agent.title}`}>
           <Trash2 className="h-3 w-3" />

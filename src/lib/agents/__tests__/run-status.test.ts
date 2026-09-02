@@ -1,38 +1,39 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isCancellableRunStatus, isTerminalRunStatus, isWaitingRunStatus } from '../run-status'
+import { agentHasLiveRun, liveAgentIds } from '../run-status'
 
-test('isCancellableRunStatus: running and waiting states are cancellable', () => {
-  assert.equal(isCancellableRunStatus('running'), true)
-  assert.equal(isCancellableRunStatus('waiting_for_input'), true)
-  assert.equal(isCancellableRunStatus('waiting_for_approval'), true)
+const activity = (agentTaskId: string | null, status: string) => ({ agentTaskId, status })
+
+test('running, pending and cancelling runs count as live', () => {
+  for (const status of ['running', 'pending', 'cancelling']) {
+    assert.equal(agentHasLiveRun([activity('a1', status)], 'a1'), true, status)
+  }
 })
 
-test('isCancellableRunStatus: terminal and pending states are not cancellable', () => {
-  assert.equal(isCancellableRunStatus('completed'), false)
-  assert.equal(isCancellableRunStatus('failed'), false)
-  assert.equal(isCancellableRunStatus('cancelled'), false)
-  assert.equal(isCancellableRunStatus('cancelling'), false)
-  assert.equal(isCancellableRunStatus('pending'), false)
+test('a run waiting on a person is still live — the agent has not finished', () => {
+  for (const status of ['waiting', 'waiting_for_approval', 'waiting_for_input']) {
+    assert.equal(agentHasLiveRun([activity('a1', status)], 'a1'), true, status)
+  }
 })
 
-test('isWaitingRunStatus: only the two waiting-on-user states', () => {
-  assert.equal(isWaitingRunStatus('waiting_for_input'), true)
-  assert.equal(isWaitingRunStatus('waiting_for_approval'), true)
-  assert.equal(isWaitingRunStatus('running'), false)
-  assert.equal(isWaitingRunStatus('completed'), false)
+test('terminal runs are not live', () => {
+  for (const status of ['completed', 'failed', 'blocked', 'cancelled']) {
+    assert.equal(agentHasLiveRun([activity('a1', status)], 'a1'), false, status)
+  }
 })
 
-test('isTerminalRunStatus: completed, failed, cancelled are terminal', () => {
-  assert.equal(isTerminalRunStatus('completed'), true)
-  assert.equal(isTerminalRunStatus('failed'), true)
-  assert.equal(isTerminalRunStatus('cancelled'), true)
+test('only the asked-about agent counts', () => {
+  assert.equal(agentHasLiveRun([activity('other', 'running')], 'a1'), false)
+  assert.equal(agentHasLiveRun([activity(null, 'running')], 'a1'), false)
 })
 
-test('isTerminalRunStatus: active/paused/cancelling states are not terminal', () => {
-  assert.equal(isTerminalRunStatus('running'), false)
-  assert.equal(isTerminalRunStatus('pending'), false)
-  assert.equal(isTerminalRunStatus('waiting_for_input'), false)
-  assert.equal(isTerminalRunStatus('waiting_for_approval'), false)
-  assert.equal(isTerminalRunStatus('cancelling'), false)
+test('liveAgentIds collects every agent with a live run, once', () => {
+  const ids = liveAgentIds([
+    activity('a1', 'running'),
+    activity('a1', 'waiting_for_input'),
+    activity('a2', 'completed'),
+    activity('a3', 'pending'),
+    activity(null, 'running'),
+  ])
+  assert.deepEqual([...ids].sort(), ['a1', 'a3'])
 })

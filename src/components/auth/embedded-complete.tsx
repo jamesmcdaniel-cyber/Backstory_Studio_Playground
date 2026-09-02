@@ -26,8 +26,16 @@ export function EmbeddedComplete() {
       <div>
         <p className="text-lg font-medium">You&apos;re signed in.</p>
         <p className="mt-2 text-sm text-white/60">
-          This window will close itself — then head back to the Salesforce tab.
+          This window will try to close itself — if it stays open, close it and
+          head back to the Salesforce tab. Your workspace is already loading there.
         </p>
+        <button
+          type="button"
+          onClick={() => window.close()}
+          className="mt-5 rounded-lg border border-white/20 px-4 py-2 text-sm text-white/80 hover:bg-white/10"
+        >
+          Close window
+        </button>
       </div>
     </main>
   )

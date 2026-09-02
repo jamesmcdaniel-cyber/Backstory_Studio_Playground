@@ -111,12 +111,17 @@ export async function updateSession(request: NextRequest, requestHeaders?: Heade
   // password recovery link deliberately lands there WITH a session (that is what
   // the recovery token buys), so bouncing signed-in users would make the reset
   // link a redirect to the dashboard and the password would never get changed.
+  // /auth/embedded-complete is the same shape again: the embedded sign-in
+  // POPUP lands there PRECISELY BECAUSE it now has a session — its whole job
+  // is to announce that and close. Bounced to /dashboard, the popup stayed
+  // open showing the full app instead of closing.
   if (
     user &&
     isAuthPage &&
     pathname !== '/auth/callback' &&
     pathname !== '/auth/mfa' &&
-    pathname !== '/auth/update-password'
+    pathname !== '/auth/update-password' &&
+    pathname !== '/auth/embedded-complete'
   ) {
     const carried = validatedReturnPath(request.nextUrl.searchParams.get('return_to'))
     return copyCookies(response, NextResponse.redirect(new URL(carried ?? '/dashboard', request.url)))

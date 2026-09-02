@@ -25,10 +25,10 @@ import type { GoldenItem, RagScorecard, SweepRow, GroundingMetrics } from './typ
 export const SWEEP_FLOORS = [0.2, 0.25, 0.3, 0.35, 0.4, 0.45]
 
 /** Gates the grounding pass — mirrors the eval judge's own gating (skips
- * without a model key). hasAnthropic/hasQwen in model-runner.ts are NOT
+ * without a model key). hasAnthropic in model-runner.ts is NOT
  * exported, so this checks the env vars directly rather than importing them. */
 function modelKeyConfigured(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.QWEN_API_KEY)
+  return Boolean(process.env.ANTHROPIC_API_KEY)
 }
 
 /** One query's retrieval result: the ranked corpus doc ids + their scores. */

@@ -74,13 +74,8 @@ export function auditWorkerEnv(
     warnings.push('NANGO_API_KEY is missing — integration tools in flows will fail.')
   }
 
-  const hasAnthropic = Boolean(env.ANTHROPIC_API_KEY)
-  const hasQwenKey = Boolean(env.QWEN_API_KEY)
-  const hasQwenUrl = Boolean(env.QWEN_BASE_URL)
-  if (!hasAnthropic && !(hasQwenKey && hasQwenUrl)) {
-    fatal.push('No model provider is configured — set ANTHROPIC_API_KEY or both QWEN_API_KEY and QWEN_BASE_URL.')
-  } else if (hasQwenKey !== hasQwenUrl) {
-    warnings.push('Qwen configuration is incomplete — QWEN_API_KEY and QWEN_BASE_URL are both required, so Qwen fallback is disabled.')
+  if (!env.ANTHROPIC_API_KEY) {
+    fatal.push('No model provider is configured — set ANTHROPIC_API_KEY.')
   }
   if (specs.length === 0) {
     fatal.push(`WORKER_POOL=${env.WORKER_POOL || 'all'} consumes no queues in this edition.`)

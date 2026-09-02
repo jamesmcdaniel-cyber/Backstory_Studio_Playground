@@ -3,8 +3,7 @@ import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
-import { qwenClient, qwenModel } from '@/lib/llm/qwen'
-import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
 import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { scopeRule } from '@/lib/security/scope'
@@ -259,11 +258,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // this one calls the Messages API directly and so never passes through it.
   void recordPiiEgress({ organizationId: org, userId: uid, surface: 'librarian', text: prompt })
 
-  const useClaude = Boolean(process.env.ANTHROPIC_API_KEY)
-  const client = useClaude ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : qwenClient()
-  const model = useClaude
-    ? (DEFAULT_SUMMARY_MODEL.startsWith('claude') ? DEFAULT_SUMMARY_MODEL : 'claude-haiku-4-5')
-    : qwenModel(DEFAULT_SUMMARY_MODEL.startsWith('claude') ? 'qwen-3.7' : DEFAULT_SUMMARY_MODEL)
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new ApiError('No model provider is configured', 503, 'AI_UNAVAILABLE')
+  }
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const model = DEFAULT_SUMMARY_MODEL.startsWith('claude') ? DEFAULT_SUMMARY_MODEL : 'claude-haiku-4-5'
 
   const response = await client.messages.create({
     model,

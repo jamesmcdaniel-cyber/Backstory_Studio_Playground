@@ -20,7 +20,6 @@
  * Costs real tokens and needs DATABASE_URL — an operator tool, never a PR gate.
  */
 import { createPinnedRunner, DEFAULT_AGENT_MODEL, type LedgerContext, type ModelRunner } from '@/lib/llm/model-runner'
-import { qwenConfigured, qwenModel } from '@/lib/llm/qwen'
 import { modelProviderBrand } from '@/lib/llm/provider-brand'
 import { computeCostUsd } from '@/lib/usage/pricing'
 import { runLoop, fixtureDispatch, checkTrajectory, RunLoopError, CURRENT_HARNESS_VERSION } from './harness'
@@ -39,7 +38,6 @@ const SAMPLES = 3
  */
 export function benchableCandidates(input: {
   anthropic: boolean
-  qwen: boolean
   extra?: string[]
 }): string[] {
   const roster = [
@@ -47,11 +45,10 @@ export function benchableCandidates(input: {
     'claude-sonnet-5',
     'claude-opus-4-8',
     'claude-haiku-4-5',
-    'qwen-3.7',
     ...(input.extra ?? []),
   ]
-  return [...new Set(roster.map((model) => model.trim()).filter(Boolean))].filter((model) =>
-    model.startsWith('claude') ? input.anthropic : input.qwen,
+  return [...new Set(roster.map((model) => model.trim()).filter(Boolean))].filter(
+    (model) => model.startsWith('claude') && input.anthropic,
   )
 }
 
@@ -59,7 +56,6 @@ export function benchableCandidates(input: {
 export function benchableModels(): string[] {
   return benchableCandidates({
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
-    qwen: qwenConfigured(),
     extra: (process.env.BENCH_MODELS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
   })
 }
@@ -73,7 +69,6 @@ export function benchableModels(): string[] {
 export function resolveBenchModels(input: {
   env: string | undefined
   anthropic: boolean
-  qwen: boolean
   selection?: string[]
 }): string[] {
   const requested = input.selection?.length
@@ -82,10 +77,8 @@ export function resolveBenchModels(input: {
         .split(',')
         .map((entry) => entry.trim())
         .filter(Boolean)
-  const candidates = requested.length ? requested : [DEFAULT_AGENT_MODEL, 'qwen-3.7']
-  return [...new Set(candidates)].filter((model) =>
-    model.startsWith('claude') ? input.anthropic : input.qwen,
-  )
+  const candidates = requested.length ? requested : [DEFAULT_AGENT_MODEL]
+  return [...new Set(candidates)].filter((model) => model.startsWith('claude') && input.anthropic)
 }
 
 function providerOf(model: string): string {
@@ -197,11 +190,10 @@ export async function runBench(
   const models = resolveBenchModels({
     env: process.env.BENCH_MODELS,
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
-    qwen: qwenConfigured(),
     selection: opts.models,
   })
   if (!models.length) {
-    throw new Error('No benchable model configured — set ANTHROPIC_API_KEY and/or QWEN_API_KEY (+QWEN_BASE_URL).')
+    throw new Error('No benchable model configured — set ANTHROPIC_API_KEY.')
   }
   // Imported lazily so the pure helpers above stay importable in DB-less tests.
   const prisma = opts.prisma ?? ((await import('@/lib/prisma')).systemPrisma as unknown as BenchPrismaClient)
@@ -214,10 +206,9 @@ export async function runBench(
   log(`Bench: ${models.join(', ')} — judged by ${judge}`)
 
   for (const model of models) {
-    // Qwen candidates resolve through QWEN_MODEL exactly as production does,
-    // so the bench measures the model production would actually serve.
-    const served = model.startsWith('claude') ? model : qwenModel(model)
-    log(`${model}${served === model ? '' : ` (served as ${served})`}:`)
+    // The UI id IS the wire id now that Anthropic is the only endpoint.
+    const served = model
+    log(`${model}:`)
     for (const fixture of fixtures) {
       if (!fixture.rubric) continue
       const runner = createRunner(served)

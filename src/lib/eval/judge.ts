@@ -9,21 +9,16 @@
  * when no key is present.
  */
 import { generateStructured, type LedgerContext } from '@/lib/llm/model-runner'
-import { qwenModel } from '@/lib/llm/qwen'
 import type { JudgeResult, Trajectory } from './types'
 
 /**
  * The one model that grades a cross-model comparison (bench and shadow both).
  * Overridable via BENCH_JUDGE_MODEL, never per-candidate: a judge is itself a
  * model with tastes, and scores are only comparable when the same judge
- * produced them. Claude when available; otherwise the configured Qwen model
- * judges — grading its own output, which the stored judgeModel makes visible
- * instead of hiding.
+ * produced them.
  */
 export function pinnedJudgeModel(): string {
-  const override = process.env.BENCH_JUDGE_MODEL?.trim()
-  if (override) return override
-  return process.env.ANTHROPIC_API_KEY ? 'claude-sonnet-5' : qwenModel('qwen-3.7')
+  return process.env.BENCH_JUDGE_MODEL?.trim() || 'claude-sonnet-5'
 }
 
 const JUDGE_SCHEMA = {

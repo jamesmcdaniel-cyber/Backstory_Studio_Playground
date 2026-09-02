@@ -1,6 +1,5 @@
 import { ApiError } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
-import { qwenConfigured } from '@/lib/llm/qwen'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
 import { prisma } from '@/lib/prisma'
 import { recordAudit } from '@/lib/audit'
@@ -89,7 +88,7 @@ export async function assertAiCallAllowed(opts: {
   /** Window length; defaults to 60s. */
   windowMs?: number
 }): Promise<void> {
-  if (!process.env.ANTHROPIC_API_KEY && !qwenConfigured()) {
+  if (!process.env.ANTHROPIC_API_KEY) {
     throw new ApiError('No model provider is configured', 503, 'AI_UNAVAILABLE')
   }
   // Workspace-level AI opt-out — the enforceable switch for customers whose

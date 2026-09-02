@@ -2,26 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { isProviderAvailabilityError, structuredProviderOrder } from '../model-runner'
 
-test('qwen default prefers qwen, falls back to claude', () => {
-  assert.deepEqual(
-    structuredProviderOrder({ defaultModel: 'qwen-3.7', qwen: true, anthropic: true }),
-    ['qwen', 'claude'],
-  )
-})
-
-test('claude default prefers claude', () => {
-  assert.deepEqual(
-    structuredProviderOrder({ defaultModel: 'claude-opus-4-8', qwen: true, anthropic: true }),
-    ['claude', 'qwen'],
-  )
-})
-
-test('only configured providers appear', () => {
-  assert.deepEqual(
-    structuredProviderOrder({ defaultModel: 'qwen-3.7', qwen: false, anthropic: true }),
-    ['claude'],
-  )
-  assert.deepEqual(structuredProviderOrder({ defaultModel: 'qwen-3.7', qwen: false, anthropic: false }), [])
+test('anthropic configured is the whole order; unconfigured is empty', () => {
+  assert.deepEqual(structuredProviderOrder({ defaultModel: 'claude-opus-4-8', anthropic: true }), ['claude'])
+  // A non-Claude default has no endpoint of its own any more and still lands on Claude.
+  assert.deepEqual(structuredProviderOrder({ defaultModel: 'some-other-model', anthropic: true }), ['claude'])
+  assert.deepEqual(structuredProviderOrder({ defaultModel: 'claude-opus-4-8', anthropic: false }), [])
 })
 
 test('quota/auth/overload errors are availability failures; schema errors are not', () => {

@@ -456,20 +456,20 @@ const emptyDraft: AgentDraft = {
 }
 
 // ── Model catalog ───────────────────────────────────────────────────────────
-// id must satisfy the runtime's provider routing (model-runner.ts): a `claude*`
-// id routes to Anthropic, anything else to the OpenAI-compatible slot (Qwen).
-// Claude first (platform default / most capable); logos via IntegrationLogo.
+// id must satisfy the runtime's provider routing (model-runner.ts). An agent
+// saved with a removed model id (the old Qwen slot) still runs — the runner
+// routes anything non-Claude onto the Claude fallback — it just cannot be
+// picked any more. Claude first (platform default); logos via IntegrationLogo.
 const MODELS = [
   { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', provider: 'anthropic' as const },
   { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', provider: 'anthropic' as const },
   { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', provider: 'anthropic' as const },
-  { id: 'qwen-3.7', label: 'Qwen 3.7', provider: 'qwen' as const },
 ]
 
-function ModelOption({ provider, label }: { provider: 'anthropic' | 'qwen'; label: string }) {
+function ModelOption({ label }: { label: string }) {
   return (
     <span className="flex items-center gap-2">
-      <IntegrationLogo slug={provider} name={provider === 'anthropic' ? 'Claude' : 'Qwen'} className="h-4 w-4" />
+      <IntegrationLogo slug="anthropic" name="Claude" className="h-4 w-4" />
       {label}
     </span>
   )
@@ -1050,7 +1050,7 @@ export function AgentConfigForm({
           <SelectContent>
             {MODELS.map((m) => (
               <SelectItem key={m.id} value={m.id}>
-                <ModelOption provider={m.provider} label={m.label} />
+                <ModelOption label={m.label} />
               </SelectItem>
             ))}
           </SelectContent>

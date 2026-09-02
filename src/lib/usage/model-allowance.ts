@@ -1,27 +1,25 @@
 /**
  * Daily ceilings on WHICH model a standard user's runs may reach for.
  *
+ * ── DORMANT ────────────────────────────────────────────────────────────────
+ *
+ * These ceilings enforced by ROUTING: a spent allowance removed Claude steps
+ * from the chain and the run proceeded on the Qwen endpoint. That endpoint was
+ * removed (2026-09-02), and a redirect with nowhere to go would be a refusal —
+ * the failure mode this design explicitly rejects, because a cap that stops
+ * work gets raised until it means nothing. So nothing calls modelAllowanceFor
+ * from the run paths any more; the module and its limits are kept for the
+ * admin report and for the day the ceilings get a redirect target again.
+ *
  * The caps in free-tier-limits.ts bound how many runs a person starts. These
- * bound how expensive those runs are allowed to be, which is a different lever:
- * a workspace can be well inside its run count and still be spending Opus money
- * on work Qwen would have done.
- *
- * ── Redirect, never refuse ─────────────────────────────────────────────────
- *
- * Exhausting one of these caps does not fail a run. It removes the Claude steps
- * from the routing chain, so the run proceeds on Qwen. That is the whole design
- * intent — the ceiling exists to move load onto the cheaper endpoint, not to
- * stop people working, and a cap that stops work gets raised until it means
- * nothing. It follows that the caps only apply when Qwen is actually configured
- * (see routeModel): with nowhere to redirect to, a missing env var would
- * otherwise silently halt every run in the workspace.
+ * bounded how expensive those runs were allowed to be — a different lever.
  *
  * ── Two tiers ──────────────────────────────────────────────────────────────
  *
  * Frontier Claude (Opus, Fable, Mythos) is several times the price of the rest
  * of the family, so it gets the tighter cap and degrades to Sonnet — still
  * Claude, still capable, a fraction of the cost. The wider cap covers the whole
- * family, and past it the workspace is on Qwen for the rest of the UTC day.
+ * family for the rest of the UTC day.
  *
  * Exempt: super admins and the usage-exempt identities, exactly as in
  * free-tier-limits.ts — one definition of "standard user", not two.

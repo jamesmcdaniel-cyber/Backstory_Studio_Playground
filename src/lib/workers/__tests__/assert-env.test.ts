@@ -41,13 +41,17 @@ describe('auditWorkerEnv', () => {
     assert.ok(audit.fatal.some((f) => f.includes('DATABASE_URL')))
   })
 
-  it('accepts Qwen as the only configured model provider', () => {
-    const audit = auditWorkerEnv({
-      ...without('ANTHROPIC_API_KEY'),
-      QWEN_API_KEY: 'qwen-test',
-      QWEN_BASE_URL: 'https://qwen.example.test',
-    }, 5, ALL_SPECS)
-    assert.deepEqual(audit.fatal, [])
+  it('a leftover Qwen configuration no longer satisfies the model-provider gate', () => {
+    const audit = auditWorkerEnv(
+      {
+        ...without('ANTHROPIC_API_KEY'),
+        QWEN_API_KEY: 'qwen-test',
+        QWEN_BASE_URL: 'https://qwen.example.test',
+      },
+      5,
+      ALL_SPECS,
+    )
+    assert.ok(audit.fatal.some((finding) => /ANTHROPIC_API_KEY/.test(finding)))
   })
 
   it('refuses to boot without one complete model provider', () => {

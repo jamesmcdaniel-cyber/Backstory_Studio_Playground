@@ -28,7 +28,6 @@
  */
 import { randomUUID } from 'node:crypto'
 import { createPinnedRunner, generateStructured, type TokenUsage } from '@/lib/llm/model-runner'
-import { qwenModel } from '@/lib/llm/qwen'
 import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { computeCostUsd } from '@/lib/usage/pricing'
@@ -150,7 +149,10 @@ export async function maybeShadowFlowAiStep(input: {
     if (!config || !input.championText.trim()) return
     if (!shouldSample(config.rate, Math.random())) return
 
-    const challengerModel = config.model.startsWith('claude') ? config.model : qwenModel(config.model)
+    // Only Claude challengers remain — the Qwen endpoint was removed. A
+    // non-Claude SHADOW_EVAL_MODEL has nowhere to run, so the sample is skipped.
+    if (!config.model.startsWith('claude')) return
+    const challengerModel = config.model
     // Champion vs itself measures judge noise, not model quality.
     if (challengerModel === input.championModel) return
 

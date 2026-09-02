@@ -4,8 +4,6 @@ import { recordLlmCall, type LlmSurface } from '@/lib/usage/ledger'
 import { trackDetached } from '@/lib/flows/keep-alive'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { currentAmbientOrganization } from '@/lib/tenant-database-context'
-import { qwenClient, qwenConfigured, qwenModel } from './qwen'
-import { modelTier, UNLIMITED_MODEL_ALLOWANCE, type ModelAllowance } from '@/lib/usage/model-tiers'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { withBreaker, CircuitOpenError } from '@/lib/resilience/circuit-breaker'
 import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
@@ -104,7 +102,12 @@ export function accumulateUsage(total: TokenUsage, turn: TokenUsage): void {
  * Qwen spend under Anthropic, and the Claude-usage caps counted Qwen runs
  * against the Claude allowance they exist to relieve.
  */
-export type ProviderId = 'anthropic' | 'qwen'
+/**
+ * Providers we can route to. Qwen was removed as an endpoint; historical usage
+ * and IR rows still carry the string 'qwen', and those are read as plain data
+ * rather than re-validated against this union.
+ */
+export type ProviderId = 'anthropic'
 
 export type ModelTurn = {
   text: string
@@ -399,27 +402,19 @@ class AgentRunner implements ModelRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Default models. Both Claude and Qwen speak the Anthropic Messages API (Qwen
-// via DashScope's Anthropic-compatible endpoint), so routing picks an ENDPOINT,
-// not a wire format. AGENT_MODEL drives agent runs; SUMMARY_MODEL drives cheap
-// surfaces (headlines, run Q&A). Qwen activates when QWEN_API_KEY/QWEN_BASE_URL/
-// QWEN_MODEL are set; ChatGPT/OpenAI is no longer used.
+// Default models. AGENT_MODEL drives agent runs; SUMMARY_MODEL drives cheap
+// surfaces (headlines, run Q&A). Anthropic is the only endpoint: the Qwen
+// slot was removed, and with it the second endpoint a spent allowance used to
+// redirect to.
 // ---------------------------------------------------------------------------
 export const DEFAULT_AGENT_MODEL = process.env.AGENT_MODEL?.trim() || 'claude-sonnet-5'
 export const DEFAULT_SUMMARY_MODEL = process.env.SUMMARY_MODEL?.trim() || 'claude-haiku-4-5'
 const FALLBACK_CLAUDE_MODEL = 'claude-opus-4-8'
-// Where a frontier model lands when this actor's frontier allowance is spent:
-// still Claude, still capable, a fraction of the price. See usage/model-allowance.ts.
-const DOWNGRADE_CLAUDE_MODEL = 'claude-sonnet-5'
-// UI id for the Qwen slot; the exact model string is resolved from QWEN_MODEL.
-const FALLBACK_QWEN_MODEL = 'qwen-3.7'
-
-const hasQwen = () => qwenConfigured()
 const hasAnthropic = () => !!process.env.ANTHROPIC_API_KEY
 const isClaude = (model: string) => model.startsWith('claude')
 
-/** A routed step: which endpoint (Claude vs Qwen) and the model to send it. */
-type RouteStep = { target: 'claude' | 'qwen'; model: string }
+/** A routed step: the endpoint and the model to send it. */
+type RouteStep = { target: 'claude'; model: string }
 
 /**
  * Explicit model routing. Returns the ORDERED endpoint chain for a run: the
@@ -429,42 +424,24 @@ type RouteStep = { target: 'claude' | 'qwen'; model: string }
  * when Qwen isn't configured, and every run gains a cross-endpoint fallback when
  * both are present. This is the single source of truth for run routing.
  */
-export function routeModel(requested?: string, allowance: ModelAllowance = UNLIMITED_MODEL_ALLOWANCE): RouteStep[] {
+export function routeModel(requested?: string): RouteStep[] {
   const model = requested?.trim() || DEFAULT_AGENT_MODEL
-  const wantsClaude = isClaude(model)
+  if (!hasAnthropic()) return []
 
-  // A spent allowance REDIRECTS to Qwen; it never refuses. With no Qwen
-  // endpoint configured there is nowhere to redirect to, so the ceilings do not
-  // apply at all — otherwise an unset env var would quietly stop every run in
-  // the workspace, which is a far worse failure than an unenforced cap.
-  const capsApply = hasQwen()
-  const claudeAllowed = !capsApply || allowance.claude
-  const frontierAllowed = !capsApply || allowance.frontier
-  /** Hold a Claude model to the tier this actor may still reach today. */
-  const permitted = (id: string) => (frontierAllowed || modelTier(id) !== 'frontier' ? id : DOWNGRADE_CLAUDE_MODEL)
-
-  const claudeStep: RouteStep = { target: 'claude', model: permitted(wantsClaude ? model : FALLBACK_CLAUDE_MODEL) }
-  const qwenStep: RouteStep = { target: 'qwen', model: wantsClaude ? FALLBACK_QWEN_MODEL : model }
-  const ordered = wantsClaude ? [claudeStep, qwenStep] : [qwenStep, claudeStep]
-  // A spent whole-family allowance drops Claude from the chain entirely, not
-  // just from first place: leaving it as the fallback would hand every Qwen
-  // overload straight back to the endpoint the ceiling exists to relieve.
-  const available = ordered.filter((step) => (step.target === 'qwen' ? hasQwen() : hasAnthropic() && claudeAllowed))
-  // When Anthropic is the ONLY configured endpoint (the common deployment), a
-  // transient overload (529) of the primary has nowhere to fall back and fails
-  // the run immediately. Append a second Claude step on a different model so the
-  // run retries there instead. No-op when the primary already IS the fallback
-  // model, or when a cross-provider fallback already exists.
-  if (available.length === 1 && available[0].target === 'claude' && available[0].model !== permitted(FALLBACK_CLAUDE_MODEL)) {
-    available.push({ target: 'claude', model: permitted(FALLBACK_CLAUDE_MODEL) })
+  const primary: RouteStep = { target: 'claude', model: isClaude(model) ? model : FALLBACK_CLAUDE_MODEL }
+  const available: RouteStep[] = [primary]
+  // Anthropic is now the only endpoint, so a transient overload (529) of the
+  // primary has nowhere else to go and would fail the run immediately. Append
+  // a second Claude step on a different model so the run retries there. No-op
+  // when the primary already IS the fallback model.
+  if (primary.model !== FALLBACK_CLAUDE_MODEL) {
+    available.push({ target: 'claude', model: FALLBACK_CLAUDE_MODEL })
   }
   return available
 }
 
 function buildProvider(step: RouteStep): Provider {
-  return step.target === 'qwen'
-    ? new AnthropicProvider('qwen', qwenModel(step.model), qwenClient(), 'compat')
-    : new AnthropicProvider('anthropic', step.model, claudeClient(), 'anthropic')
+  return new AnthropicProvider('anthropic', step.model, claudeClient(), 'anthropic')
 }
 
 /**
@@ -472,10 +449,10 @@ function buildProvider(step: RouteStep): Provider {
  * endpoint chain (primary + cross-endpoint fallback). Keeps the same signature
  * and ModelRunner contract as before; callers are unchanged.
  */
-export function createModelRunner(requested?: string, allowance?: ModelAllowance): ModelRunner {
-  const chain = routeModel(requested, allowance).map(buildProvider)
+export function createModelRunner(requested?: string): ModelRunner {
+  const chain = routeModel(requested).map(buildProvider)
   if (chain.length === 0) {
-    throw new Error('No model provider configured — set ANTHROPIC_API_KEY (or QWEN_API_KEY + QWEN_BASE_URL).')
+    throw new Error('No model provider configured — set ANTHROPIC_API_KEY.')
   }
   return new AgentRunner(chain)
 }
@@ -491,36 +468,25 @@ export function createModelRunner(requested?: string, allowance?: ModelAllowance
  * production run would degrade, and for measurement that is correct.
  */
 export function createPinnedRunner(requested: string): ModelRunner {
-  const wantsClaude = isClaude(requested)
-  if (wantsClaude && !hasAnthropic()) throw new Error(`ANTHROPIC_API_KEY is not configured — cannot pin ${requested}`)
-  if (!wantsClaude && !hasQwen()) throw new Error(`Qwen is not configured — cannot pin ${requested}`)
-  return new AgentRunner([
-    buildProvider(wantsClaude ? { target: 'claude', model: requested } : { target: 'qwen', model: requested }),
-  ])
+  if (!hasAnthropic()) throw new Error(`ANTHROPIC_API_KEY is not configured — cannot pin ${requested}`)
+  return new AgentRunner([buildProvider({ target: 'claude', model: requested })])
 }
 
 // Resolve which endpoint/model to use for a cheap "summary" call, honoring
 // SUMMARY_MODEL but falling back to whichever endpoint's key is present.
-function summaryTarget(): { target: 'claude' | 'qwen'; model: string } | null {
-  const wantsClaude = isClaude(DEFAULT_SUMMARY_MODEL)
-  if (wantsClaude && hasAnthropic()) return { target: 'claude', model: DEFAULT_SUMMARY_MODEL }
-  if (!wantsClaude && hasQwen()) return { target: 'qwen', model: DEFAULT_SUMMARY_MODEL }
-  if (hasAnthropic()) return { target: 'claude', model: 'claude-haiku-4-5' }
-  if (hasQwen()) return { target: 'qwen', model: FALLBACK_QWEN_MODEL }
-  return null
+function summaryTarget(): { target: 'claude'; model: string } | null {
+  if (!hasAnthropic()) return null
+  return { target: 'claude', model: isClaude(DEFAULT_SUMMARY_MODEL) ? DEFAULT_SUMMARY_MODEL : 'claude-haiku-4-5' }
 }
 
 /**
- * The model id actually sent to the provider for a routed target. Claude's UI
- * id IS its wire id; Qwen's is not — QWEN_MODEL (the endpoint's exact model
- * string, e.g. qwen3.7-plus) overrides the UI-facing alias (e.g. 'qwen-3.7')
- * whenever it's set. Ledger attribution must key on THIS, the served id, not
- * the alias, or every Qwen call is misattributed to a model that was never
- * actually served. Exported so the mapping is unit-testable without a live
- * provider call.
+ * The model id actually sent to the provider for a routed target. With
+ * Anthropic as the only endpoint the UI id IS the wire id, so this is now the
+ * identity — kept as a named seam because ledger attribution keys on the
+ * SERVED id, and a future second endpoint would need the mapping back.
  */
-export function resolveServedModel(target: { target: 'claude' | 'qwen'; model: string }): string {
-  return target.target === 'qwen' ? qwenModel(target.model) : target.model
+export function resolveServedModel(target: { target: 'claude'; model: string }): string {
+  return target.model
 }
 
 /**
@@ -563,9 +529,8 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
   const { system, user } = buildHeadlinePrompt(summary)
   const startedAt = Date.now()
   try {
-    // Both endpoints speak the Anthropic Messages API.
     const servedModel = resolveServedModel(target)
-    const client = target.target === 'qwen' ? qwenClient() : claudeClient()
+    const client = claudeClient()
     const response = await client.messages.create({
       model: servedModel,
       max_tokens: 64,
@@ -578,7 +543,7 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
           organizationId: ledger.organizationId,
           userId: ledger.userId ?? null,
           surface: 'headline',
-          provider: target.target === 'qwen' ? 'qwen' : 'anthropic',
+          provider: 'anthropic',
           model: servedModel,
           usage: {
             inputTokens: response.usage.input_tokens,
@@ -642,12 +607,9 @@ export function isProviderAvailabilityError(error: unknown): boolean {
 /** Endpoint order for structured calls: honor the default model's endpoint, try the other second. */
 export function structuredProviderOrder(input: {
   defaultModel: string
-  qwen: boolean
   anthropic: boolean
-}): Array<'claude' | 'qwen'> {
-  const wantsClaude = input.defaultModel.startsWith('claude')
-  const order: Array<'claude' | 'qwen'> = wantsClaude ? ['claude', 'qwen'] : ['qwen', 'claude']
-  return order.filter((target) => (target === 'qwen' ? input.qwen : input.anthropic))
+}): Array<'claude'> {
+  return input.anthropic ? ['claude'] : []
 }
 
 /**
@@ -839,24 +801,21 @@ export async function generateStructured(opts: StructuredOpts): Promise<string> 
   const effectiveDefaultModel = overrideModel || DEFAULT_AGENT_MODEL
   const order = structuredProviderOrder({
     defaultModel: effectiveDefaultModel,
-    qwen: hasQwen(),
     anthropic: hasAnthropic(),
   })
   if (order.length === 0) {
-    throw new Error('No model provider configured — set ANTHROPIC_API_KEY (or QWEN_API_KEY + QWEN_BASE_URL).')
+    throw new Error('No model provider configured — set ANTHROPIC_API_KEY.')
   }
 
-  // The override only threads onto the Claude path — Qwen resolves its own
-  // model via QWEN_MODEL, so an unusable (non-Claude) override falls back to
+  // A non-Claude override has no endpoint to serve it any more; fall back to
   // the pre-existing DEFAULT_AGENT_MODEL selection unchanged.
   const claudeModel = overrideModel && isClaude(overrideModel) ? overrideModel : isClaude(DEFAULT_AGENT_MODEL) ? DEFAULT_AGENT_MODEL : FALLBACK_CLAUDE_MODEL
 
   let lastError: unknown
   for (const target of order) {
     try {
-      return target === 'qwen'
-        ? await anthropicWireStructured(opts, qwenClient(), qwenModel(FALLBACK_QWEN_MODEL), 'qwen', 'compat')
-        : await anthropicWireStructured(opts, claudeClient(), claudeModel, 'anthropic', 'anthropic')
+      void target
+      return await anthropicWireStructured(opts, claudeClient(), claudeModel, 'anthropic', 'anthropic')
     } catch (error) {
       lastError = error
       if (!isProviderAvailabilityError(error)) throw error

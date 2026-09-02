@@ -48,7 +48,6 @@ import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent } from '@
 import { ApiError } from '@/lib/server/api-handler'
 import { aiEgressRefusal, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
-import { modelAllowanceFor } from '@/lib/usage/model-allowance'
 import { downgradeNotice } from '@/lib/usage/model-tiers'
 import type { FlowExecutionJob } from './execute-flow'
 import type { RunActionFn } from './interpret'
@@ -309,10 +308,10 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
         // Same record as the agent path: the resolved input is tenant data on
         // its way to a model provider.
         trackDetached(recordPiiEgress({ organizationId: job.organizationId, userId: job.userId, surface: 'flow.ai_step', text: prompt.user }))
-        // Same daily model ceilings as the agent plane, applied to the run's
-        // owner. A spent allowance moves the step to Qwen rather than failing
-        // it. See usage/model-allowance.ts.
-        const runner = createModelRunner(model, await modelAllowanceFor(run.userId))
+        // Daily model ceilings are dormant since the Qwen endpoint was
+        // removed (nowhere to redirect a spent allowance) — the step routes on
+        // the model alone, same as the agent plane.
+        const runner = createModelRunner(model)
         // Surfaced as a step warning, the same channel a ledger replay uses:
         // a step that quietly ran on a different model than the flow asks for
         // reads as the model misbehaving rather than as a policy.

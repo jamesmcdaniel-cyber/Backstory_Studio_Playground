@@ -32,8 +32,8 @@ async function meanScore(fixtureName: string, rubric: string, trajectory: Trajec
 }
 
 async function main() {
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.QWEN_API_KEY) {
-    console.error('No model key configured — set ANTHROPIC_API_KEY or QWEN_API_KEY.')
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error('No model key configured — set ANTHROPIC_API_KEY.')
     process.exit(1)
   }
 

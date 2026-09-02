@@ -10,7 +10,6 @@ import {
   coerceToIR,
   type IRMessage,
 } from '../ir'
-import { routeModel } from '../model-runner'
 
 // A synthetic Anthropic response with a thinking block, text, and a tool call.
 const anthropicMessage = {
@@ -122,42 +121,4 @@ test('coerceToIR is idempotent on already-IR input', () => {
   assert.deepEqual(coerceToIR(ir as unknown[]), ir)
 })
 
-// ── Explicit routing ─────────────────────────────────────────────────────────
-test('routeModel orders the requested provider first, then the fallback', () => {
-  const prevA = process.env.ANTHROPIC_API_KEY
-  const prevK = process.env.QWEN_API_KEY
-  const prevU = process.env.QWEN_BASE_URL
-  try {
-    process.env.ANTHROPIC_API_KEY = 'x'
-    // Qwen (the OpenAI-compatible slot) needs both a key and a base URL.
-    process.env.QWEN_API_KEY = 'y'
-    process.env.QWEN_BASE_URL = 'https://qwen.example/v1'
-    assert.deepEqual(routeModel('claude-opus-4-8'), [
-      { target: 'claude', model: 'claude-opus-4-8' },
-      { target: 'qwen', model: 'qwen-3.7' },
-    ])
-    assert.deepEqual(routeModel('qwen-3.7'), [
-      { target: 'qwen', model: 'qwen-3.7' },
-      { target: 'claude', model: 'claude-opus-4-8' },
-    ])
-    // Only the configured provider survives when Qwen is not configured.
-    delete process.env.QWEN_API_KEY
-    delete process.env.QWEN_BASE_URL
-    assert.deepEqual(routeModel('qwen-3.7'), [{ target: 'claude', model: 'claude-opus-4-8' }])
-    // Anthropic-only + a primary that ISN'T the fallback model → a second Claude
-    // step is appended, so a 529 of the primary has somewhere to fall back.
-    assert.deepEqual(routeModel('claude-sonnet-5'), [
-      { target: 'claude', model: 'claude-sonnet-5' },
-      { target: 'claude', model: 'claude-opus-4-8' },
-    ])
-    // …but not duplicated when the primary already IS the fallback model.
-    assert.deepEqual(routeModel('claude-opus-4-8'), [{ target: 'claude', model: 'claude-opus-4-8' }])
-  } finally {
-    if (prevA === undefined) delete process.env.ANTHROPIC_API_KEY
-    else process.env.ANTHROPIC_API_KEY = prevA
-    if (prevK === undefined) delete process.env.QWEN_API_KEY
-    else process.env.QWEN_API_KEY = prevK
-    if (prevU === undefined) delete process.env.QWEN_BASE_URL
-    else process.env.QWEN_BASE_URL = prevU
-  }
-})
+// Explicit routing is pinned in src/lib/usage/__tests__/model-allowance.test.ts.

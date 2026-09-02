@@ -4,93 +4,59 @@ import { MODEL_LIMITS, downgradeNotice, modelTier } from '../model-tiers'
 import { routeModel } from '@/lib/llm/model-runner'
 
 /**
- * The ceilings are enforced by ROUTING, so what has to be pinned is which
- * endpoint chain a spent allowance produces — not a boolean somewhere. The
- * failure mode that matters most is a cap that refuses instead of redirecting,
- * which would turn a cost control into an outage.
+ * The ceilings used to be enforced by ROUTING: a spent allowance redirected to
+ * the Qwen endpoint. That endpoint was removed, and with nowhere to redirect
+ * the ceilings are deliberately dormant — an unenforceable cap must not become
+ * an outage. What is pinned now is the single-endpoint chain itself: primary
+ * model first, a different Claude model appended as the overload fallback.
  */
 
 const env = { ...process.env }
 beforeEach(() => {
   process.env = { ...env }
   process.env.ANTHROPIC_API_KEY = 'test-key'
-  process.env.QWEN_API_KEY = 'test-key'
-  process.env.QWEN_BASE_URL = 'https://example.invalid/anthropic'
-  delete process.env.QWEN_MODEL
   delete process.env.AGENT_MODEL
 })
 
-const ALL = { frontier: true, claude: true }
-const NO_FRONTIER = { frontier: false, claude: true }
-const NO_CLAUDE = { frontier: false, claude: false }
-
-test('tiers split frontier Claude from the rest of the family', () => {
+test('tiers still split frontier Claude from the rest of the family', () => {
   assert.equal(modelTier('claude-opus-4-8'), 'frontier')
   assert.equal(modelTier('claude-fable-5'), 'frontier')
   assert.equal(modelTier('claude-mythos-5'), 'frontier')
   assert.equal(modelTier('claude-sonnet-5'), 'claude')
   assert.equal(modelTier('claude-haiku-4-5'), 'claude')
-  assert.equal(modelTier('qwen-3.7'), 'open')
 })
 
-test('a full allowance routes exactly as before', () => {
-  assert.deepEqual(routeModel('claude-opus-4-8', ALL), [
+test('a Claude model routes to itself with the overload fallback appended', () => {
+  assert.deepEqual(routeModel('claude-sonnet-5'), [
+    { target: 'claude', model: 'claude-sonnet-5' },
     { target: 'claude', model: 'claude-opus-4-8' },
-    { target: 'qwen', model: 'qwen-3.7' },
   ])
 })
 
-test('a spent frontier allowance downgrades to Sonnet but stays on Claude', () => {
-  const chain = routeModel('claude-opus-4-8', NO_FRONTIER)
-  assert.deepEqual(chain[0], { target: 'claude', model: 'claude-sonnet-5' })
-  assert.equal(chain.some((step) => modelTier(step.model) === 'frontier'), false)
+test('the fallback model gets no duplicate step', () => {
+  assert.deepEqual(routeModel('claude-opus-4-8'), [{ target: 'claude', model: 'claude-opus-4-8' }])
 })
 
-test('no step in the chain is frontier once that allowance is spent', () => {
-  // The cross-endpoint fallback defaults to Opus, so a cap applied only to the
-  // requested model would be handed straight back on the first 529.
-  for (const requested of ['claude-sonnet-5', 'claude-opus-4-8', 'qwen-3.7', undefined]) {
-    const chain = routeModel(requested, NO_FRONTIER)
-    assert.equal(
-      chain.some((step) => modelTier(step.model) === 'frontier'),
-      false,
-      `frontier model survived in the chain for ${requested ?? 'the default'}`,
-    )
-  }
-})
-
-test('a spent Claude allowance leaves Qwen as the only endpoint', () => {
-  assert.deepEqual(routeModel('claude-opus-4-8', NO_CLAUDE), [{ target: 'qwen', model: 'qwen-3.7' }])
-})
-
-test('Claude is dropped from the chain entirely, not just from first place', () => {
-  // Keeping it as the fallback would send every Qwen overload straight back to
-  // the endpoint the ceiling exists to relieve.
-  const chain = routeModel('claude-sonnet-5', NO_CLAUDE)
-  assert.equal(chain.some((step) => step.target === 'claude'), false)
-})
-
-test('caps never refuse: with no Qwen endpoint they do not apply at all', () => {
-  delete process.env.QWEN_API_KEY
-  delete process.env.QWEN_BASE_URL
-  const chain = routeModel('claude-opus-4-8', NO_CLAUDE)
-  assert.ok(chain.length > 0, 'an unset env var must not stop every run in the workspace')
+test('a non-Claude model lands on the Claude fallback rather than failing', () => {
+  const chain = routeModel('qwen-3.7')
+  assert.ok(chain.length >= 1)
+  assert.ok(chain.every((step) => step.target === 'claude'))
   assert.equal(chain[0].model, 'claude-opus-4-8')
 })
 
-test('a Qwen run is unaffected by Claude ceilings', () => {
-  assert.deepEqual(routeModel('qwen-3.7', NO_CLAUDE), [{ target: 'qwen', model: 'qwen-3.7' }])
+test('no key configured routes nowhere', () => {
+  delete process.env.ANTHROPIC_API_KEY
+  assert.deepEqual(routeModel('claude-sonnet-5'), [])
 })
 
-test('the notice names the limit and says when it lifts', () => {
+test('downgradeNotice still names both models when a served model differs', () => {
+  const note = downgradeNotice('claude-opus-4-8', 'claude-sonnet-5')
+  assert.ok(note)
+  assert.match(note!, /claude-opus-4-8/)
+  assert.match(note!, /claude-sonnet-5/)
   assert.equal(downgradeNotice('claude-sonnet-5', 'claude-sonnet-5'), null)
+})
 
-  const frontier = downgradeNotice('claude-opus-4-8', 'claude-sonnet-5')
-  assert.ok(frontier?.includes(String(MODEL_LIMITS.frontierClaudeRunsPerDay)))
-  assert.ok(frontier?.includes('claude-sonnet-5'))
-  assert.ok(frontier?.includes('midnight UTC'))
-
-  const spent = downgradeNotice('claude-opus-4-8', 'qwen-3.7')
-  assert.ok(spent?.includes(String(MODEL_LIMITS.claudeRunsPerDay)))
-  assert.ok(spent?.includes('qwen-3.7'))
+test('MODEL_LIMITS remain defined for the day the ceilings get a lever again', () => {
+  assert.ok(MODEL_LIMITS)
 })

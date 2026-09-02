@@ -47,24 +47,20 @@ test('production with missing vars: throws listing every missing name', async ()
   )
 })
 
-test('production with only QWEN_API_KEY as model key: passes', async () => {
+test('production with only the removed provider key: still throws — Anthropic is required', async () => {
   Object.assign(process.env, FULL_PROD_ENV)
   delete process.env.ANTHROPIC_API_KEY
-  process.env.QWEN_API_KEY = 'sk-qwen-x'
+  process.env.QWEN_API_KEY = 'sk-qwen-x' // a leftover var from the removed endpoint must not satisfy the gate
   const { assertServerEnv } = await freshEnv()
-  assert.doesNotThrow(() => assertServerEnv())
+  assert.throws(() => assertServerEnv(), /ANTHROPIC_API_KEY/)
 })
 
-test('production with no model key: throws mentioning both options', async () => {
+test('production with no model key: throws naming the required key', async () => {
   Object.assign(process.env, FULL_PROD_ENV)
   delete process.env.ANTHROPIC_API_KEY
   delete process.env.QWEN_API_KEY
   const { assertServerEnv } = await freshEnv()
-  assert.throws(
-    () => assertServerEnv(),
-    (error: Error) =>
-      error.message.includes('ANTHROPIC_API_KEY') && error.message.includes('QWEN_API_KEY'),
-  )
+  assert.throws(() => assertServerEnv(), /ANTHROPIC_API_KEY/)
 })
 
 test('development with nothing set: does not throw (dev ergonomics)', async () => {

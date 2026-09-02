@@ -49,7 +49,7 @@ export function modelTier(model: string): ModelTier {
 export type ModelAllowance = {
   /** Frontier Claude is still available; false downgrades those runs to Sonnet. */
   frontier: boolean
-  /** Any Claude is still available; false leaves Qwen as the only endpoint. */
+  /** Any Claude is still available; false meant only the (since removed) second endpoint. */
   claude: boolean
 }
 

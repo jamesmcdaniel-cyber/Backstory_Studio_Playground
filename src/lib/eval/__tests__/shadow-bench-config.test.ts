@@ -35,77 +35,67 @@ test('sampling is a strict threshold on the roll', () => {
   assert.equal(shouldSample(1, 0.999), true)
 })
 
-test('bench candidates come from BENCH_MODELS, filtered to configured endpoints', () => {
+test('bench candidates come from BENCH_MODELS, filtered to the configured endpoint', () => {
   assert.deepEqual(
-    resolveBenchModels({ env: 'claude-sonnet-5, qwen-3.7', anthropic: true, qwen: true }),
-    ['claude-sonnet-5', 'qwen-3.7'],
+    resolveBenchModels({ env: 'claude-sonnet-5, claude-haiku-4-5', anthropic: true }),
+    ['claude-sonnet-5', 'claude-haiku-4-5'],
   )
-  // An unconfigured endpoint drops its candidates rather than failing the run.
+  // Candidates for removed endpoints drop rather than failing the run.
   assert.deepEqual(
-    resolveBenchModels({ env: 'claude-sonnet-5,qwen-3.7', anthropic: true, qwen: false }),
+    resolveBenchModels({ env: 'claude-sonnet-5,qwen-3.7', anthropic: true }),
     ['claude-sonnet-5'],
   )
-  assert.deepEqual(resolveBenchModels({ env: 'qwen-3.7', anthropic: true, qwen: false }), [])
+  assert.deepEqual(resolveBenchModels({ env: 'qwen-3.7', anthropic: true }), [])
   // Duplicates collapse so a model is not benched (and billed) twice.
   assert.deepEqual(
-    resolveBenchModels({ env: 'qwen-3.7,qwen-3.7', anthropic: false, qwen: true }),
-    ['qwen-3.7'],
+    resolveBenchModels({ env: 'claude-sonnet-5,claude-sonnet-5', anthropic: true }),
+    ['claude-sonnet-5'],
   )
 })
 
-test('an explicit selection beats BENCH_MODELS, and still drops unconfigured endpoints', () => {
+test('an explicit selection beats BENCH_MODELS, and still drops removed endpoints', () => {
   // The panel's chips are the selection; the env var stays the CLI/default
   // source. Endpoint filtering applies to BOTH — a stale queued selection must
   // never make the worker call an endpoint it has no key for.
   assert.deepEqual(
-    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, qwen: true, selection: ['claude-haiku-4-5', 'qwen-3.7'] }),
-    ['claude-haiku-4-5', 'qwen-3.7'],
-  )
-  assert.deepEqual(
-    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, qwen: false, selection: ['claude-haiku-4-5', 'qwen-3.7'] }),
+    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, selection: ['claude-haiku-4-5', 'qwen-3.7'] }),
     ['claude-haiku-4-5'],
   )
   // An empty selection is "no selection", not "bench nothing".
   assert.deepEqual(
-    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, qwen: true, selection: [] }),
+    resolveBenchModels({ env: 'claude-opus-4-8', anthropic: true, selection: [] }),
     ['claude-opus-4-8'],
   )
 })
 
 test('the benchable roster is the picker contract: configured endpoints only, extras included once', async () => {
   const { benchableCandidates } = await import('../bench')
-  assert.deepEqual(benchableCandidates({ anthropic: true, qwen: true }), [
+  assert.deepEqual(benchableCandidates({ anthropic: true }), [
     'claude-sonnet-5',
     'claude-opus-4-8',
     'claude-haiku-4-5',
-    'qwen-3.7',
   ])
-  assert.deepEqual(benchableCandidates({ anthropic: false, qwen: true }), ['qwen-3.7'])
+  assert.deepEqual(benchableCandidates({ anthropic: false }), [])
   // BENCH_MODELS extends the roster (a dated variant) without duplicating it.
   assert.deepEqual(
-    benchableCandidates({ anthropic: true, qwen: false, extra: ['claude-sonnet-5', 'claude-opus-4-7'] }),
+    benchableCandidates({ anthropic: true, extra: ['claude-sonnet-5', 'claude-opus-4-7'] }),
     ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-opus-4-7'],
   )
 })
 
-test('the default candidate set covers both endpoints when configured', () => {
+test('the default candidate set is the default agent model', () => {
   delete process.env.AGENT_MODEL
-  const models = resolveBenchModels({ env: undefined, anthropic: true, qwen: true })
-  assert.ok(models.some((model) => model.startsWith('claude')))
-  assert.ok(models.includes('qwen-3.7'))
+  const models = resolveBenchModels({ env: undefined, anthropic: true })
+  assert.ok(models.length >= 1)
+  assert.ok(models.every((model) => model.startsWith('claude')))
 })
 
-test('the judge is pinned: override first, Claude when available, Qwen last', () => {
+test('the judge is pinned: override first, Claude otherwise', () => {
   process.env.BENCH_JUDGE_MODEL = 'claude-opus-4-8'
   assert.equal(pinnedJudgeModel(), 'claude-opus-4-8')
 
   delete process.env.BENCH_JUDGE_MODEL
-  process.env.ANTHROPIC_API_KEY = 'key'
   assert.equal(pinnedJudgeModel(), 'claude-sonnet-5')
-
-  delete process.env.ANTHROPIC_API_KEY
-  process.env.QWEN_MODEL = 'qwen3-max'
-  assert.equal(pinnedJudgeModel(), 'qwen3-max')
 })
 
 test('benchErrorDetail surfaces the provider body, not just the SDK line', async () => {

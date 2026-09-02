@@ -236,9 +236,8 @@ export function ModelsPanel({ days }: { days: number }) {
           <p className="font-medium">Some calls have no price, so the spend above is understated.</p>
           <p className="mt-1 text-muted-foreground">
             {unpriced.map((row) => `${row.provider}:${row.model}`).join(', ')} — Claude rates live in
-            src/lib/usage/pricing.ts. Qwen has no list price to hardcode (it is whatever endpoint QWEN_BASE_URL
-            points at, on your own contract), so set QWEN_PRICE_INPUT_PER_MTOK and QWEN_PRICE_OUTPUT_PER_MTOK to
-            price it.
+            src/lib/usage/pricing.ts. Historical rows from removed providers keep whatever price they were
+            recorded with; add a rate there if one is missing.
           </p>
         </div>
       )}
@@ -570,8 +569,8 @@ export function ModelsPanel({ days }: { days: number }) {
         calls in the table above, {shownTimedCalls.toLocaleString()} carry a latency measurement — so a window
         reaching further back than that shows fewer timed calls than total calls. Everyone outside the operator tier
         is held to {report?.limits.frontierClaudeRunsPerDay ?? '—'} frontier-Claude runs and{' '}
-        {report?.limits.claudeRunsPerDay ?? '—'} Claude runs a day; past either ceiling their runs route to Qwen
-        rather than failing.
+        {report?.limits.claudeRunsPerDay ?? '—'} Claude runs a day. The ceilings are currently dormant: they
+        redirected spent allowances to a second model endpoint, and no second endpoint is configured.
       </p>
     </div>
   )

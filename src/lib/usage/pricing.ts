@@ -58,37 +58,14 @@ const PER_MILLION: Record<string, Rates> = {
 }
 
 /**
- * Qwen rates, read from the environment rather than hardcoded here.
- *
- * Every other row in this table is a published list price for a first-party
- * endpoint. Qwen is not: it is reached through whatever Anthropic-compatible
- * endpoint QWEN_BASE_URL points at, on whatever contract the operator holds, so
- * there is no number this file could state that would be true for every
- * deployment. Guessing one would be worse than admitting the gap — an invented
- * rate silently produces confident, wrong dollars in the operator console,
- * while no rate produces priceVersion 'unknown', which that console already
- * surfaces as "some calls have no price".
- *
- * Set QWEN_PRICE_INPUT_PER_MTOK and QWEN_PRICE_OUTPUT_PER_MTOK (USD per million
- * tokens) to price it. Cache buckets equal the input rate because the compat
- * dialect sends no cache_control at all (see WireDialect in model-runner.ts) —
- * those buckets are always zero, and pretending to a cache discount there would
- * describe a mechanism that is not running.
- */
-function qwenRates(): Rates | null {
-  const input = Number(process.env.QWEN_PRICE_INPUT_PER_MTOK)
-  const output = Number(process.env.QWEN_PRICE_OUTPUT_PER_MTOK)
-  if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) return null
-  return { input, cacheWrite: input, cacheRead: input, output }
-}
-
-/**
  * Match a model string to a rate row. Exact match first, then longest-prefix —
  * so a dated variant (claude-sonnet-5-20260101) prices as its family rather
- * than falling through to unknown.
+ * than falling through to unknown. Rows from removed providers (the old Qwen
+ * endpoint) match nothing and price as 'unknown', which the operator console
+ * already surfaces; their historical rows carry the cost computed when they
+ * were written.
  */
 function ratesFor(provider: string, model: string): Rates | null {
-  if (provider === 'qwen') return qwenRates()
   const key = `${provider}:${model}`
   if (PER_MILLION[key]) return PER_MILLION[key]
 

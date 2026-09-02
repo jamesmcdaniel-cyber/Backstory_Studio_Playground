@@ -1,7 +1,7 @@
 'use client'
 
 import { useId } from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AgentInlineCreate } from '../agent-inline-create'
 import { useWorkspaceFlows } from '../use-workspace-flows'
 import { CodeAssist } from '@/components/flows/code-assist'
@@ -71,6 +71,71 @@ type Props = {
   rawInput?: unknown
   onRefreshAgents?: () => void
 } & TokenEditorPlumbing
+
+function KnowledgeScopeSelect({
+  uid,
+  scope,
+  agents,
+  labelClass,
+  fieldClass,
+  onScopeChange,
+}: {
+  uid: string
+  scope: { agentId?: string; collectionId?: string } | undefined
+  agents: { id: string; title: string }[]
+  labelClass: string
+  fieldClass: string
+  onScopeChange: (scope: { agentId?: string; collectionId?: string } | undefined) => void
+}) {
+  const [collections, setCollections] = useState<Array<{ id: string; name: string }>>([])
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/repository/collections', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.collections)) setCollections(data.collections)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  // One select, three kinds of value, no raw identifiers shown: the encoded
+  // option value is unpacked back into the node's scope object on change.
+  const value = scope?.collectionId ? `collection:${scope.collectionId}` : scope?.agentId ? `agent:${scope.agentId}` : ''
+  return (
+    <div>
+      <label className={labelClass} htmlFor={`${uid}-knowledge-scope`}>Search in</label>
+      <select
+        id={`${uid}-knowledge-scope`}
+        className={fieldClass}
+        value={value}
+        onChange={(event) => {
+          const next = event.target.value
+          if (!next) return onScopeChange(undefined)
+          const [kind, id] = [next.slice(0, next.indexOf(':')), next.slice(next.indexOf(':') + 1)]
+          onScopeChange(kind === 'collection' ? { collectionId: id } : { agentId: id })
+        }}
+      >
+        <option value="">Everything shared with the workspace</option>
+        {collections.length > 0 && (
+          <optgroup label="Collections">
+            {collections.map((collection) => (
+              <option key={collection.id} value={`collection:${collection.id}`}>{collection.name}</option>
+            ))}
+          </optgroup>
+        )}
+        {agents.length > 0 && (
+          <optgroup label="One agent's documents">
+            {agents.map((agent) => (
+              <option key={agent.id} value={`agent:${agent.id}`}>{agent.title}</option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+    </div>
+  )
+}
 
 export function StepFields({
   node,
@@ -382,7 +447,15 @@ export function StepFields({
             aria-label="How many passages"
           />
         </div>
-        <p className="text-xs text-muted-foreground">Searches the documents uploaded to your workspace and outputs the best-matching passages as a list.</p>
+        <KnowledgeScopeSelect
+          uid={uid}
+          scope={node.data.scope as { agentId?: string; collectionId?: string } | undefined}
+          agents={agents}
+          labelClass={labelClass}
+          fieldClass={fieldClass}
+          onScopeChange={(scope) => onChange({ ...node, data: { ...node.data, scope } })}
+        />
+        <p className="text-xs text-muted-foreground">Searches the documents in your repository — workspace-wide, one collection, or one agent's set — and outputs the best-matching passages as a list.</p>
       </>
     )}
 

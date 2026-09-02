@@ -41,6 +41,7 @@ import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { truncateWithMarker } from '@/lib/flows/truncate'
 import { extractTextAuto, isSupported } from '@/lib/knowledge/extract'
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve'
+import { KNOWLEDGE_RELEVANCE_FLOOR } from '@/lib/rag/relevance'
 import { DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL, billableTokens, createModelRunner } from '@/lib/llm/model-runner'
 import { readResponseBytesLimited } from '@/lib/net/response-body'
 import { assertPublicUrl } from '@/lib/net/ssrf'
@@ -99,6 +100,36 @@ export interface RunActionStepContext {
  */
 async function flowEngine() {
   return import('./execute-flow')
+}
+
+/**
+ * Read a knowledge node's config into retrieval parameters.
+ *
+ * Pure and exported so the clamping and defaulting are testable without a run.
+ * An unscoped node keeps the historical workspace-wide behavior — `agentId: ''`
+ * matches no agent row, so only `agentId IS NULL` documents are searched — so
+ * saved flows do not change meaning under this change.
+ */
+export function resolveKnowledgeStepParams(config: Record<string, unknown>): {
+  query: string
+  agentId: string
+  collectionId?: string
+  k: number
+  minScore: number
+} {
+  const scope = (config.scope && typeof config.scope === 'object' && !Array.isArray(config.scope)
+    ? config.scope
+    : {}) as { agentId?: unknown; collectionId?: unknown }
+  const rawK = typeof config.topK === 'number' && Number.isFinite(config.topK) ? Math.round(config.topK) : 5
+  return {
+    query: typeof config.query === 'string' ? config.query.trim() : '',
+    agentId: typeof scope.agentId === 'string' && scope.agentId ? scope.agentId : '',
+    ...(typeof scope.collectionId === 'string' && scope.collectionId ? { collectionId: scope.collectionId } : {}),
+    k: Math.max(1, Math.min(20, rawK)),
+    minScore: typeof config.minScore === 'number' && Number.isFinite(config.minScore)
+      ? config.minScore
+      : KNOWLEDGE_RELEVANCE_FLOOR,
+  }
 }
 
 export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
@@ -553,19 +584,21 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
         return { output: result.output }
       }
       if (node.kind === 'knowledge') {
-        // Org-shared knowledge only: agentId '' matches no agent-owned chunks,
-        // so the `agentId IS NULL` branch (workspace documents) is what's
-        // searched. Best-effort by contract — empty query or no hits is a
-        // successful empty list, never a failure.
-        const query = typeof node.config.query === 'string' ? node.config.query.trim() : ''
+        const { query, agentId, collectionId, k, minScore } = resolveKnowledgeStepParams(node.config)
+        // Best-effort by contract — an empty query or no hits is a successful
+        // empty list, never a failure.
         if (!query) {
           await finish({ status: 'succeeded', output: [] })
           return { output: [] }
         }
-        const k = typeof node.config.topK === 'number' && Number.isFinite(node.config.topK)
-          ? Math.max(1, Math.min(20, Math.round(node.config.topK)))
-          : undefined
-        const hits = await retrieveKnowledge({ organizationId: job.organizationId, agentId: '', query, k })
+        const hits = await retrieveKnowledge({
+          organizationId: job.organizationId,
+          agentId,
+          query,
+          k,
+          minScore,
+          ...(collectionId ? { collectionId } : {}),
+        })
         await finish({ status: 'succeeded', output: hits })
         return { output: hits }
       }

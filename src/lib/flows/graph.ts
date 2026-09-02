@@ -785,6 +785,13 @@ const knowledgeNode = z.object({
   data: z.object({
     query: z.string().optional(),
     topK: z.number().int().min(1).max(20).optional(),
+    /** Where to search: one agent's documents or one collection. Absent =
+     *  workspace-wide, the historical behavior every saved flow relies on. */
+    scope: z.object({
+      agentId: z.string().optional(),
+      collectionId: z.string().optional(),
+    }).optional(),
+    minScore: z.number().min(0).max(1).optional(),
     label: z.string().optional(),
     note: z.string().optional(),
     perItem: perItemSchema.optional(),

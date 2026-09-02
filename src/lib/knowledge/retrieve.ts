@@ -56,8 +56,14 @@ export function keywordScore(query: string, content: string): number {
 /** Render knowledge hits into a compact block for the agent's system prompt. */
 export function renderKnowledge(hits: KnowledgeHit[]): string {
   if (!hits.length) return ''
-  const body = hits.map((h) => `— From "${h.filename}":\n${h.content}`).join('\n\n')
-  return `## Knowledge (from uploaded files)\nUse the following reference material when relevant. Cite the source file when you rely on it.\n\n${body}`
+  const body = hits
+    .map((hit) => {
+      // A handle the UI can resolve back to the document, not just a name.
+      const handle = hit.documentId ? `[doc:${hit.documentId} "${hit.filename}"]` : `"${hit.filename}"`
+      return `— From ${handle}:\n${hit.content}`
+    })
+    .join('\n\n')
+  return `## Knowledge (from the repository)\nUse the following reference material when relevant. When you rely on a passage, cite it with the handle shown above it, exactly as written.\n\n${body}`
 }
 
 /**

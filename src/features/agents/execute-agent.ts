@@ -10,6 +10,7 @@ import { recordAudit, toolAuditAction } from '@/lib/audit'
 import { createApproval, requiresApproval } from '@/lib/agents/approval'
 import { retrieveContext, renderContext } from '@/lib/rag/retrieve'
 import { loadManifestEntries, renderRepositoryManifest, MANIFEST_MAX_ENTRIES } from '@/lib/knowledge/manifest'
+import { extractCitedDocuments } from '@/lib/knowledge/tools'
 import { embeddingsConfigured, embedQuery, embedTexts, cosineSimilarity } from '@/lib/rag/embeddings'
 import { getGraphRagStore } from '@/lib/rag/get-store'
 import { MEMORY_RELEVANCE_FLOOR, CONTEXT_RELEVANCE_FLOOR } from '@/lib/rag/relevance'
@@ -1507,6 +1508,20 @@ async function runAgentExecutionInner(
           })
           toolSuccesses.add(binding.toolName)
           await recordEvent(execution.id, step.id, 'tool.completed', { name: step.node })
+          // Which repository documents this run actually drew on — the payload
+          // shape the run panel already renders for knowledge.retrieved, now
+          // emitted where retrieval genuinely happens. Best-effort.
+          if (binding.toolName.startsWith('repository_')) {
+            const cited = extractCitedDocuments(result)
+            if (cited.length) {
+              await recordEvent(execution.id, step.id, 'knowledge.retrieved', {
+                source: 'repository',
+                files: [...new Set(cited.map((doc) => doc.filename))],
+                documents: cited,
+                summary: `Retrieved from ${new Set(cited.map((doc) => doc.filename)).size} repository document(s).`,
+              }).catch(() => undefined)
+            }
+          }
           // Immutable audit trail; the args are hashed, not stored.
           // Classified by the tool's own isWrite, not by its plane — see
           // toolAuditAction for what the plane-name regex got wrong.

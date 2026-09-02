@@ -228,3 +228,30 @@ export class RepositoryToolClient {
     }
   }
 }
+
+/**
+ * Pull {id, filename} pairs out of a repository tool result, whatever its
+ * shape — search results carry passages, reads carry one document. Used to
+ * record which documents a run actually drew on; a malformed result yields
+ * nothing rather than throwing inside the run loop. Duplicates collapse.
+ */
+export function extractCitedDocuments(result: unknown): Array<{ id: string; filename: string }> {
+  if (!result || typeof result !== 'object') return []
+  const value = result as { passages?: unknown; documentId?: unknown; filename?: unknown }
+  const seen = new Set<string>()
+  const out: Array<{ id: string; filename: string }> = []
+  const add = (id: unknown, filename: unknown) => {
+    if (typeof id !== 'string' || typeof filename !== 'string' || seen.has(id)) return
+    seen.add(id)
+    out.push({ id, filename })
+  }
+  if (Array.isArray(value.passages)) {
+    for (const passage of value.passages) {
+      if (passage && typeof passage === 'object') {
+        add((passage as { documentId?: unknown }).documentId, (passage as { filename?: unknown }).filename)
+      }
+    }
+  }
+  add(value.documentId, value.filename)
+  return out
+}

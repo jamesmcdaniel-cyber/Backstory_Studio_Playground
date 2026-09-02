@@ -33,3 +33,35 @@ test('repository_search requires a query and repository_read requires a document
   const read = REPOSITORY_TOOLS.find((tool) => tool.name === 'repository_read')!
   assert.deepEqual(read.inputSchema.required, ['documentId'])
 })
+
+// ── extractCitedDocuments ────────────────────────────────────────────────────
+
+import { extractCitedDocuments } from '../tools'
+
+test('a search result yields every cited document once per passage source', () => {
+  const cited = extractCitedDocuments({
+    passages: [
+      { documentId: 'd1', filename: 'journey.md', text: 'x' },
+      { documentId: 'd1', filename: 'journey.md', text: 'y' },
+      { documentId: 'd2', filename: 'playbook.md', text: 'z' },
+    ],
+  })
+  assert.deepEqual(cited, [
+    { id: 'd1', filename: 'journey.md' },
+    { id: 'd2', filename: 'playbook.md' },
+  ])
+})
+
+test('a read result yields its single document', () => {
+  assert.deepEqual(
+    extractCitedDocuments({ documentId: 'd1', filename: 'journey.md', text: '…' }),
+    [{ id: 'd1', filename: 'journey.md' }],
+  )
+})
+
+test('a malformed result yields nothing rather than throwing', () => {
+  assert.deepEqual(extractCitedDocuments(null), [])
+  assert.deepEqual(extractCitedDocuments('oops'), [])
+  assert.deepEqual(extractCitedDocuments({ passages: 'not-an-array' }), [])
+  assert.deepEqual(extractCitedDocuments({ passages: [{ text: 'no ids' }] }), [])
+})

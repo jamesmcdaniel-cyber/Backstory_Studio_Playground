@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { feedLabel, type TimelineItem } from '../process-feed'
+import { buildProcessTimeline, feedLabel, type TimelineItem } from '../process-feed'
 
 function toolItem(node: string, status = 'succeeded'): TimelineItem {
   return { key: 'k', ts: 0, kind: 'tool', step: { id: 's', node, status } }
@@ -26,4 +26,18 @@ test('provider-less tools still humanize', () => {
 test('ask_user keeps its own copy', () => {
   assert.equal(feedLabel(toolItem('ask_user', 'succeeded')), 'Got your answer')
   assert.equal(feedLabel(toolItem('ask_user', 'running')), 'Asking you a question')
+})
+
+test('knowledge events land on the timeline with their cited documents', () => {
+  const { items } = buildProcessTimeline(
+    [
+      { id: 'e1', kind: 'knowledge.available', ts: '2026-09-02T10:00:00Z', payload: { summary: 'Offered 3 repository document(s).', files: ['journey.md'] } },
+      { id: 'e2', kind: 'knowledge.retrieved', ts: '2026-09-02T10:00:05Z', payload: { summary: 'Retrieved from 1 repository document(s).', documents: [{ id: 'd1', filename: 'journey.md' }] } },
+    ] as never,
+    [],
+  )
+  const knowledge = items.filter((item) => item.kind === 'knowledge')
+  assert.equal(knowledge.length, 2)
+  assert.match((knowledge[0] as { summary: string }).summary, /Offered 3/)
+  assert.deepEqual((knowledge[1] as { documents: unknown }).documents, [{ id: 'd1', filename: 'journey.md' }])
 })

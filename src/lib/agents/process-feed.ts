@@ -31,6 +31,7 @@ export type TimelineItem =
   | { key: string; ts: number; kind: 'thinking'; text: string }
   | { key: string; ts: number; kind: 'tool'; step: ProcessToolStep }
   | { key: string; ts: number; kind: 'context'; summary: string; hits: ContextFact[]; related: ContextFact[] }
+  | { key: string; ts: number; kind: 'knowledge'; summary: string; documents: Array<{ id: string; filename: string }> }
   | { key: string; ts: number; kind: 'plan'; text: string }
   | { key: string; ts: number; kind: 'memory'; summary: string }
   | { key: string; ts: number; kind: 'autoanswer'; question: string; answer: string }
@@ -53,6 +54,23 @@ export function buildProcessTimeline(
         summary: String(event.payload?.summary ?? 'Retrieved correlated context'),
         hits: Array.isArray(event.payload?.hits) ? (event.payload.hits as ContextFact[]) : [],
         related: Array.isArray(event.payload?.related) ? (event.payload.related as ContextFact[]) : [],
+      })
+    }
+    if (event.kind === 'knowledge.available' || event.kind === 'knowledge.retrieved') {
+      // Offered vs actually drawn on — both matter to a reader asking "did it
+      // know the document was there, and did it open it?". `documents` carries
+      // resolvable ids so the pane can link straight to the source.
+      const documents = Array.isArray(event.payload?.documents)
+        ? (event.payload.documents as Array<{ id?: unknown; filename?: unknown }>)
+            .filter((doc) => typeof doc?.id === 'string' && typeof doc?.filename === 'string')
+            .map((doc) => ({ id: String(doc.id), filename: String(doc.filename) }))
+        : []
+      items.push({
+        key: `k-${event.id}`,
+        ts: new Date(event.ts).getTime(),
+        kind: 'knowledge',
+        summary: String(event.payload?.summary ?? 'Used the repository'),
+        documents,
       })
     }
     if (event.kind === 'agent.plan' && event.payload?.text) {
@@ -147,6 +165,8 @@ export function feedLabel(item: TimelineItem): string {
     case 'plan':
       return `Made a plan — ${snippet(item.text)}`
     case 'context':
+      return snippet(item.summary)
+    case 'knowledge':
       return snippet(item.summary)
     case 'memory':
       return `Recalled from memory — ${snippet(item.summary)}`

@@ -161,6 +161,25 @@ export function ContentRepository({ writable }: { writable: boolean }) {
   const [deleteTarget, setDeleteTarget] = useState<RepositoryAsset | null>(null)
   const requestSequence = useRef(0)
 
+  // Deep link from a run's citation: /data-tables?doc=<id> opens that
+  // document's editor once, then clears the parameter so refreshes and
+  // back-navigation do not re-open it. window.location (not useSearchParams)
+  // keeps this component Suspense-free.
+  const openedFromLink = useRef(false)
+  useEffect(() => {
+    if (openedFromLink.current || loading) return
+    const params = new URLSearchParams(window.location.search)
+    const docId = params.get('doc')
+    if (!docId) return
+    const target = assets.find((candidate) => candidate.id === docId)
+    if (!target) return
+    openedFromLink.current = true
+    void openEditor(target)
+    params.delete('doc')
+    const query = params.toString()
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
+  }, [assets, loading])
+
   const loadCollections = useCallback(async () => {
     try {
       const response = await fetch('/api/repository/collections', { cache: 'no-store' })

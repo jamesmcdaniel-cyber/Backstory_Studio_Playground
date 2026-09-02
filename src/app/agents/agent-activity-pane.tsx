@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import {
+  FileText,
   AlertCircle,
   Brain,
   CheckCircle2,
@@ -354,6 +355,26 @@ function PlanCard({ text }: { text: string }) {
 
 // A memory the agent pulled in from a prior run — kept to a single collapsed
 // summary line, matching the context card's default (unexpanded) density.
+function KnowledgeCard({ summary, documents }: { summary: string; documents: Array<{ id: string; filename: string }> }) {
+  return (
+    <div className="rounded-lg border border-dashed border-horizon-200 bg-horizon-50/40 px-3 py-2">
+      <p className="mono-label mb-1 flex items-center gap-1.5 text-horizon-700">
+        <FileText className="h-3 w-3" /> Repository
+      </p>
+      <p className="text-sm text-gray-600">{summary}</p>
+      {documents.length > 0 && (
+        <p className="mt-1 flex flex-wrap gap-2">
+          {documents.map((doc) => (
+            <Link key={doc.id} href={`/data-tables?doc=${encodeURIComponent(doc.id)}`} className="text-xs text-horizon-700 underline underline-offset-2 hover:text-horizon-800">
+              {doc.filename}
+            </Link>
+          ))}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function MemoryCard({ summary }: { summary: string }) {
   return (
     <div className="rounded-lg border border-dashed border-horizon-200 bg-horizon-50/40 px-3 py-2">
@@ -680,7 +701,9 @@ function RunRow({
                           ? <MemoryCard summary={item.summary} />
                           : item.kind === 'autoanswer'
                             ? <AutoAnswerCard question={item.question} answer={item.answer} />
-                            : <ToolCallCard step={item.step} />}
+                            : item.kind === 'knowledge'
+                              ? <KnowledgeCard summary={item.summary} documents={item.documents} />
+                              : <ToolCallCard step={item.step} />}
                 </div>
               ))}
               {isActive && (

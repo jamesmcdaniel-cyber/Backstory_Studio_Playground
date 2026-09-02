@@ -14,3 +14,16 @@ test('renderKnowledge produces an empty string for no hits, a block otherwise', 
   assert.ok(block.includes('pricing.md'))
   assert.ok(block.includes('Enterprise tier is $50k'))
 })
+
+test('renderKnowledge emits a resolvable citation handle, not just a filename', () => {
+  const block = renderKnowledge([
+    { content: 'Enterprise tier is $50k', filename: 'pricing.md', documentId: 'doc_123', score: 0.9 },
+  ])
+  assert.ok(block.includes('[doc:doc_123 "pricing.md"]'))
+})
+
+test('a hit with no documentId still renders rather than emitting a broken handle', () => {
+  const block = renderKnowledge([{ content: 'x', filename: 'pricing.md', score: 0.9 }])
+  assert.ok(block.includes('pricing.md'))
+  assert.equal(block.includes('[doc:undefined'), false)
+})

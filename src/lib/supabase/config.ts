@@ -35,5 +35,10 @@ export function getSupabaseConfig() {
  */
 export const SUPABASE_COOKIE_OPTIONS = {
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax',
+  // None in production so the session travels inside a third-party iframe —
+  // the Salesforce embed is permanently signed out under Lax, which never
+  // sends a cookie in a framed context. None requires Secure, so development
+  // (plain http) stays on Lax. The CSRF exposure None reopens is closed by
+  // the origin check in src/middleware.ts (src/lib/security/cross-origin-guard).
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
 } as const

@@ -7,6 +7,8 @@ import { motion } from 'motion/react'
 import { Check, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { GoogleButton } from '@/components/auth/google-button'
+import { EmbeddedGateway } from '@/components/auth/embedded-gateway'
+import { isEmbedded } from '@/lib/embed'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -28,6 +30,12 @@ function safeReturnTo(): string {
 
 export function AuthGateway() {
   const { user, loading: authLoading, signInWithSSO } = useSupabase()
+  // Resolved after mount: the server render must match the first client render,
+  // and only the client can know whether it is inside a frame.
+  const [embedded, setEmbedded] = useState(false)
+  useEffect(() => {
+    if (isEmbedded()) setEmbedded(true)
+  }, [])
   const router = useRouter()
   const [ssoDomain, setSsoDomain] = useState('')
   const [ssoLoading, setSsoLoading] = useState(false)
@@ -77,6 +85,8 @@ export function AuthGateway() {
 
     if (!authLoading && user) router.replace(safeReturnTo())
   }, [authLoading, router, user])
+
+  if (embedded) return <EmbeddedGateway />
 
   return (
     <TooltipProvider delayDuration={250}>

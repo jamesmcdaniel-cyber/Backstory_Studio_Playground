@@ -7,6 +7,7 @@ import {
   generateNonce,
   reportingEndpointsHeader,
 } from '@/lib/security/csp'
+import { rejectsCrossOriginWrite } from '@/lib/security/cross-origin-guard'
 
 export async function middleware(request: NextRequest) {
   // Refused at the edge, before any session work: in the customer edition the
@@ -14,6 +15,13 @@ export async function middleware(request: NextRequest) {
   // and the internalOnly gate on every route the page calls.
   if (isEditionBlockedPath(request.nextUrl.pathname)) {
     return new NextResponse(null, { status: 404 })
+  }
+
+  // Session cookies are SameSite=None so the embedded app (Salesforce) can
+  // carry a session at all — which makes this origin check the CSRF boundary.
+  // Rejected before any session or render work.
+  if (rejectsCrossOriginWrite(request.method, request.headers.get('origin'), request.nextUrl.origin)) {
+    return NextResponse.json({ success: false, error: 'Cross-origin write rejected.' }, { status: 403 })
   }
 
   // The CSP nonce is minted here because it must be per-response, and the

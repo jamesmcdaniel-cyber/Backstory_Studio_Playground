@@ -211,3 +211,24 @@ test('a partly indexed asset says only part of it was indexed', async () => {
   assert.ok(await screen.findByText('guide.md'))
   assert.ok(screen.getByText(/longer than the indexing limit/i))
 })
+
+test('assets show their collections and a collection filter is offered', async () => {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/api/repository/collections')) {
+      return response({ success: true, collections: [{ id: 'c1', name: 'Customer Journey', documentCount: 1, agentCount: 2 }] })
+    }
+    return response({
+      success: true,
+      assets: [asset({ collections: [{ id: 'c1', name: 'Customer Journey' }] })],
+      agents: [],
+    })
+  }) as typeof fetch
+
+  render(<ContentRepository writable />)
+
+  assert.ok(await screen.findByText('guide.md'))
+  // Renders twice by design: the row badge and the filter option.
+  assert.ok((await screen.findAllByText('Customer Journey')).length >= 2)
+  assert.ok(screen.getByLabelText(/Filter by collection/i))
+})

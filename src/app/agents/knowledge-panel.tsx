@@ -28,7 +28,51 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [collections, setCollections] = useState<Array<{ id: string; name: string; documentCount: number }>>([])
+  const [attachedIds, setAttachedIds] = useState<string[]>([])
+  const [savingCollections, setSavingCollections] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const [catalogueRes, attachedRes] = await Promise.all([
+          fetch('/api/repository/collections', { cache: 'no-store' }),
+          fetch(`/api/agents/${agentId}/collections`, { cache: 'no-store' }),
+        ])
+        const catalogue = await catalogueRes.json().catch(() => ({}))
+        const attached = await attachedRes.json().catch(() => ({}))
+        if (cancelled) return
+        if (catalogueRes.ok) setCollections(catalogue.collections ?? [])
+        if (attachedRes.ok) setAttachedIds(attached.collectionIds ?? [])
+      } catch {
+        // Collections are additive; the file list must render without them.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [agentId])
+
+  const toggleCollection = async (collectionId: string, attach: boolean) => {
+    const next = attach ? [...attachedIds, collectionId] : attachedIds.filter((id) => id !== collectionId)
+    setAttachedIds(next)
+    setSavingCollections(true)
+    try {
+      const response = await fetch(`/api/agents/${agentId}/collections`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ collectionIds: next }),
+      })
+      if (!response.ok) throw new Error()
+    } catch {
+      setAttachedIds(attachedIds) // roll back the optimistic flip
+      toast.error('Could not update the attached collections.')
+    } finally {
+      setSavingCollections(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -130,6 +174,26 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
             </li>
           ))}
         </ul>
+      )}
+      {collections.length > 0 && (
+        <fieldset className="mt-4">
+          <legend className="eyebrow mb-1">Attached collections</legend>
+          <div className="flex flex-wrap gap-3">
+            {collections.map((collection) => (
+              <label key={collection.id} className="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  checked={attachedIds.includes(collection.id)}
+                  disabled={savingCollections}
+                  onChange={(event) => void toggleCollection(collection.id, event.target.checked)}
+                />
+                {collection.name}
+                <span className="text-xs text-fg-muted">({collection.documentCount})</span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-xs text-gray-500">Files in these collections are available to this agent.</p>
+        </fieldset>
       )}
     </div>
   )

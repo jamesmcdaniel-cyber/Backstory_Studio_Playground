@@ -33,6 +33,8 @@ import { relativeTime } from '@/lib/relative-time'
 
 type AgentOption = { id: string; title: string }
 
+type CollectionOption = { id: string; name: string; documentCount: number; agentCount: number }
+
 type RepositoryAsset = {
   id: string
   agentId: string | null
@@ -59,6 +61,7 @@ type RepositoryAsset = {
   createdAt: string
   updatedAt: string
   downloadUrl: string
+  collections?: Array<{ id: string; name: string }>
 }
 
 type PullSource = {
@@ -121,6 +124,12 @@ export function ContentRepository({ writable }: { writable: boolean }) {
   const [search, setSearch] = useState('')
   const [availability, setAvailability] = useState<'all' | 'enabled' | 'disabled'>('all')
   const [sourceFilter, setSourceFilter] = useState<'all' | 'upload' | 'integration' | 'manual'>('all')
+  const [collections, setCollections] = useState<CollectionOption[]>([])
+  const [collectionFilter, setCollectionFilter] = useState('')
+  const [manageCollectionsOpen, setManageCollectionsOpen] = useState(false)
+  const [newCollectionName, setNewCollectionName] = useState('')
+  const [deleteCollectionTarget, setDeleteCollectionTarget] = useState<CollectionOption | null>(null)
+  const [uploadCollectionIds, setUploadCollectionIds] = useState<string[]>([])
   const [uploadOpen, setUploadOpen] = useState(false)
   const [uploadFiles, setUploadFiles] = useState<File[]>([])
   const [uploadAgentId, setUploadAgentId] = useState('')
@@ -152,6 +161,20 @@ export function ContentRepository({ writable }: { writable: boolean }) {
   const [deleteTarget, setDeleteTarget] = useState<RepositoryAsset | null>(null)
   const requestSequence = useRef(0)
 
+  const loadCollections = useCallback(async () => {
+    try {
+      const response = await fetch('/api/repository/collections', { cache: 'no-store' })
+      const data = await response.json().catch(() => ({}))
+      if (response.ok) setCollections(data.collections ?? [])
+    } catch {
+      // The catalogue is a convenience; the file list must render without it.
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadCollections()
+  }, [loadCollections])
+
   const loadAssets = useCallback(async (cursor?: string) => {
     const requestId = ++requestSequence.current
     if (cursor) setLoadingMore(true)
@@ -159,6 +182,7 @@ export function ContentRepository({ writable }: { writable: boolean }) {
     if (search.trim()) query.set('q', search.trim())
     if (availability !== 'all') query.set('enabled', availability === 'enabled' ? 'true' : 'false')
     if (sourceFilter !== 'all') query.set('sourceType', sourceFilter)
+    if (collectionFilter) query.set('collectionId', collectionFilter)
     if (cursor) query.set('cursor', cursor)
 
     try {
@@ -188,7 +212,7 @@ export function ContentRepository({ writable }: { writable: boolean }) {
         setLoadingMore(false)
       }
     }
-  }, [availability, search, sourceFilter])
+  }, [availability, search, sourceFilter, collectionFilter])
 
   useEffect(() => {
     // Invalidate an older request as soon as filters change, including during
@@ -210,6 +234,7 @@ export function ContentRepository({ writable }: { writable: boolean }) {
         form.append('file', file)
         if (uploadAgentId) form.append('agentId', uploadAgentId)
         if (uploadDescription.trim()) form.append('description', uploadDescription.trim())
+        if (uploadCollectionIds.length) form.append('collectionIds', JSON.stringify(uploadCollectionIds))
         const response = await fetch('/api/repository', { method: 'POST', body: form })
         const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data.error || `Could not upload ${file.name}.`)
@@ -497,6 +522,11 @@ export function ContentRepository({ writable }: { writable: boolean }) {
         <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as typeof sourceFilter)} className="h-10 rounded-md border bg-background px-3 text-sm" aria-label="Source filter">
           <option value="all">All sources</option><option value="upload">Uploads</option><option value="integration">Integration pulls</option><option value="manual">Created here</option>
         </select>
+        <select value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm" aria-label="Filter by collection">
+          <option value="">All collections</option>
+          {collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
+        </select>
+        {writable && <Button variant="outline" onClick={() => setManageCollectionsOpen(true)}><FolderPlus className="mr-1.5 h-4 w-4" />Collections</Button>}
         <Button variant="ghost" size="icon" aria-label="Refresh repository" onClick={() => void loadAssets()}><RefreshCw className="h-4 w-4" /></Button>
       </div>
 
@@ -518,7 +548,12 @@ export function ContentRepository({ writable }: { writable: boolean }) {
                 <TableRow key={asset.id}>
                   <TableCell className="max-w-sm"><div className="flex items-start gap-2.5"><span className="mt-0.5 rounded-md bg-horizon-50 p-1.5 text-horizon-700"><FileText className="h-4 w-4" /></span><span className="min-w-0"><span className="block truncate font-medium" title={asset.filename}>{asset.filename}</span><span className="block truncate text-xs text-muted-foreground">{asset.description || `${formatSize(asset.sizeBytes)} · ${asset.chunkCount} passages`}</span></span></div></TableCell>
                   <TableCell className="capitalize"><span className="block text-sm">{sourceLabel(asset)}</span>{asset.sourceTool && <span className="block text-[11px] text-muted-foreground">{humanizeToolName(asset.sourceTool)}</span>}</TableCell>
-                  <TableCell>{asset.agentName ? <Badge variant="info">{asset.agentName}</Badge> : <Badge variant="secondary">All agents</Badge>}</TableCell>
+                  <TableCell>
+                    {asset.agentName ? <Badge variant="info">{asset.agentName}</Badge> : <Badge variant="secondary">All agents</Badge>}
+                    {(asset.collections ?? []).map((collection) => (
+                      <Badge key={collection.id} variant="outline" className="ml-1 mt-1">{collection.name}</Badge>
+                    ))}
+                  </TableCell>
                   <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{relativeTime(asset.updatedAt)}</TableCell>
                   <TableCell>
                     <Badge variant={statusVariant(asset.status)} className="capitalize">{asset.status}</Badge>
@@ -557,6 +592,26 @@ export function ContentRepository({ writable }: { writable: boolean }) {
           <div className="space-y-4">
             <div className="rounded-xl border border-dashed p-5 text-center"><Upload className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2 text-sm font-medium">PDF, DOCX, text, Markdown, CSV, JSON, HTML, and source files</p><p className="mt-1 text-xs text-muted-foreground">Up to 10 MB per file</p><input ref={uploadRef} type="file" multiple className="mt-3 block w-full text-sm" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.log,.pdf,.docx,text/*,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))} /></div>
             <div className="space-y-1.5"><Label>Agent scope</Label><select value={uploadAgentId} onChange={(event) => setUploadAgentId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">All agents in this workspace</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.title}</option>)}</select><p className="text-xs text-muted-foreground">Agent-specific files are only retrieved by that agent.</p></div>
+            {collections.length > 0 && (
+              <fieldset className="space-y-1.5">
+                <legend className="text-sm font-medium">Collections</legend>
+                <div className="flex flex-wrap gap-3">
+                  {collections.map((collection) => (
+                    <label key={collection.id} className="flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={uploadCollectionIds.includes(collection.id)}
+                        onChange={(event) => setUploadCollectionIds((current) => event.target.checked
+                          ? [...current, collection.id]
+                          : current.filter((id) => id !== collection.id))}
+                      />
+                      {collection.name}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">Agents attached to a collection can use every file in it.</p>
+              </fieldset>
+            )}
             <div className="space-y-1.5"><Label>Description</Label><Input value={uploadDescription} onChange={(event) => setUploadDescription(event.target.value)} placeholder="What this content is for (optional)" /></div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setUploadOpen(false)} disabled={busy}>Cancel</Button><Button onClick={() => void submitUpload()} disabled={busy || !uploadFiles.length}>{busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}Upload {uploadFiles.length || ''}</Button></DialogFooter>
@@ -608,6 +663,74 @@ export function ContentRepository({ writable }: { writable: boolean }) {
           <DialogFooter><Button variant="outline" onClick={() => setEditDraft(null)} disabled={busy}>Cancel</Button><Button onClick={() => void saveEdit()} disabled={busy || !editDraft?.filename.trim() || !editDraft?.content.trim()}>{busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}Save and re-index</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={manageCollectionsOpen} onOpenChange={setManageCollectionsOpen}>
+        <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Collections</DialogTitle><DialogDescription>Group files so a whole set can be attached to agents at once. Deleting a collection removes the grouping — the files stay in your repository.</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault()
+                const name = newCollectionName.trim()
+                if (!name) return
+                void (async () => {
+                  const response = await fetch('/api/repository/collections', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) })
+                  const data = await response.json().catch(() => ({}))
+                  if (!response.ok) { toast.error(data.error || 'Could not create the collection.'); return }
+                  setNewCollectionName('')
+                  await loadCollections()
+                  toast.success(`Created "${name}".`)
+                })()
+              }}
+            >
+              <Input aria-label="New collection name" value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} placeholder="Customer Journey" />
+              <Button type="submit" disabled={!newCollectionName.trim()}>Create</Button>
+            </form>
+            {collections.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No collections yet. Create one, then pick it when uploading or editing files.</p>
+            ) : (
+              <ul className="divide-y rounded-lg border">
+                {collections.map((collection) => (
+                  <li key={collection.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                    <span className="min-w-0 truncate">{collection.name}</span>
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                      {collection.documentCount} file{collection.documentCount === 1 ? '' : 's'} · {collection.agentCount} agent{collection.agentCount === 1 ? '' : 's'}
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600" aria-label={`Delete ${collection.name}`} onClick={() => setDeleteCollectionTarget(collection)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(deleteCollectionTarget)}
+        onOpenChange={(open) => { if (!open) setDeleteCollectionTarget(null) }}
+        title="Delete collection?"
+        description="Deleting a collection removes the grouping. The files stay in your repository."
+        confirmLabel="Delete collection"
+        destructive
+        busy={busy}
+        onConfirm={async () => {
+          if (!deleteCollectionTarget) return
+          setBusy(true)
+          try {
+            const response = await fetch(`/api/repository/collections/${deleteCollectionTarget.id}`, { method: 'DELETE' })
+            const data = await response.json().catch(() => ({}))
+            if (!response.ok) throw new Error(data.error || 'Could not delete the collection.')
+            setDeleteCollectionTarget(null)
+            if (collectionFilter === deleteCollectionTarget.id) setCollectionFilter('')
+            await Promise.all([loadCollections(), loadAssets()])
+            toast.success('Collection deleted. The files are untouched.')
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : String(error))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
 
       <ConfirmDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }} title="Delete repository file?" description="This permanently deletes the indexed content and retained original. Agents stop using it immediately." confirmLabel="Delete file" destructive requireText={deleteTarget?.filename} busy={busy} onConfirm={async () => { if (!deleteTarget) return; setBusy(true); try { const response = await fetch(`/api/repository/${deleteTarget.id}`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ confirmation: deleteTarget.filename }) }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Could not delete the file.'); setDeleteTarget(null); await loadAssets(); toast.success('Repository file deleted.') } catch (error) { toast.error(error instanceof Error ? error.message : String(error)) } finally { setBusy(false) } }} />
     </div>

@@ -25,6 +25,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     search: request.nextUrl.searchParams.get('q') || undefined,
     enabled,
     sourceType,
+    collectionId: request.nextUrl.searchParams.get('collectionId')?.slice(0, 100) || undefined,
     cursor: request.nextUrl.searchParams.get('cursor')?.slice(0, 200) || undefined,
     limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
   })

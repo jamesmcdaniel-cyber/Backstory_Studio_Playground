@@ -99,6 +99,7 @@ export async function listRepositoryAssets(params: {
   search?: string
   enabled?: boolean
   sourceType?: string
+  collectionId?: string
   cursor?: string
   limit?: number
 }) {
@@ -117,6 +118,7 @@ export async function listRepositoryAssets(params: {
     ...visibility,
     ...(params.enabled === undefined ? {} : { isEnabled: params.enabled }),
     ...(params.sourceType ? { sourceType: params.sourceType } : {}),
+    ...(params.collectionId ? { collections: { some: { collectionId: params.collectionId } } } : {}),
     ...(search
       ? {
           AND: [{

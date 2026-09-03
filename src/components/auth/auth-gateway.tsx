@@ -7,7 +7,7 @@ import { motion } from 'motion/react'
 import { Check, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { GoogleButton } from '@/components/auth/google-button'
-import { EmbeddedGateway } from '@/components/auth/embedded-gateway'
+import { EmbeddedSignInActions } from '@/components/auth/embedded-gateway'
 import { isEmbedded } from '@/lib/embed'
 import { useSupabase } from '@/components/providers/supabase-provider'
 import { Button } from '@/components/ui/button'
@@ -85,8 +85,6 @@ export function AuthGateway() {
 
     if (!authLoading && user) router.replace(safeReturnTo())
   }, [authLoading, router, user])
-
-  if (embedded) return <EmbeddedGateway />
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -204,7 +202,9 @@ export function AuthGateway() {
                   <span className="block text-graphite-500">you left off.</span>
                 </h1>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
-                  Continue with your Google account, or through your organization&apos;s identity provider below.
+                  {embedded
+                    ? 'Sign-in opens in its own window — identity providers do not allow signing in inside an embedded page.'
+                    : "Continue with your Google account, or through your organization's identity provider below."}
                 </p>
               </div>
 
@@ -223,7 +223,9 @@ export function AuthGateway() {
                   buttons that did the same thing as the form invited the wrong
                   conclusion that they were the ONLY Okta-verified path. */}
               <div className="mt-10">
-                {authLoading ? (
+                {embedded ? (
+                  <EmbeddedSignInActions />
+                ) : authLoading ? (
                   <Button disabled loading variant="outline" className="h-14 w-full rounded-xl text-base">
                     Checking session…
                   </Button>
@@ -235,9 +237,13 @@ export function AuthGateway() {
                 )}
               </div>
 
-              <div className="my-5 flex items-center gap-3 text-xs text-fg-muted">
+              {/* The SSO form cannot run inside a frame either — the popup's
+                  full login page offers it, so the framed view keeps one clear
+                  action instead of two that both open the same window. */}
+              {!embedded && <div className="my-5 flex items-center gap-3 text-xs text-fg-muted">
                 <span className="h-px flex-1 bg-graphite-200" /> Enterprise SSO <span className="h-px flex-1 bg-graphite-200" />
-              </div>
+              </div>}
+              {!embedded && (
               <form
                 className="space-y-2"
                 onSubmit={async (event) => {
@@ -259,8 +265,9 @@ export function AuthGateway() {
                   <Button type="submit" variant="outline" loading={ssoLoading} disabled={!ssoDomain.trim()}>Continue</Button>
                 </div>
               </form>
+              )}
 
-              {!isInternalEdition() && (
+              {!embedded && !isInternalEdition() && (
                 <div className="mt-6 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-graphite-500">Approved accounts:</span>
                   {COMPANY_EMAIL_DOMAINS.map((domain) => (

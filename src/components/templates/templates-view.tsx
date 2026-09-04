@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import {
   Sparkles, TrendingUp, CalendarClock, ShieldAlert, Target,
-  Inbox, LineChart, Bell, Plus, Pencil, Trash2, X,
+  Inbox, LineChart, Bell, Plus, Pencil, Trash2, Copy,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
@@ -20,7 +20,7 @@ import { Pagination, paginate } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { IntegrationChip } from '@/components/integrations/integration-chip'
-import { IntegrationLogo } from '@/components/integrations/integration-logo'
+import { IntegrationPicker } from '@/components/integrations/integration-picker'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import type { WorkspaceConnections } from '@/components/integrations/integration-match'
@@ -167,6 +167,23 @@ export function TemplatesView() {
       instructions: t.instructions ?? '', tags: (t.tags ?? []).join(', '), integrations: t.integrations ?? [],
       exampleOutput: t.exampleOutput ?? '',
     })
+  /**
+   * Duplicate a template this workspace cannot edit — a built-in, or another
+   * workspace's community template — into one it owns.
+   *
+   * Built-ins live in code and community templates belong to the org that wrote
+   * them, so neither can be changed in place. A copy is the honest way to keep
+   * a version whose instructions or tool list actually match this stack. It
+   * opens as an unsaved draft (no id, so saving POSTs) with the name already
+   * marked, because a second card with an identical title helps nobody.
+   */
+  const openCopyTemplate = (t: TemplateItem) =>
+    setDialog({
+      kind: 'template', name: `${t.name} (copy)`, category: t.category, description: t.description,
+      instructions: t.instructions ?? '', tags: (t.tags ?? []).join(', '), integrations: t.integrations ?? [],
+      exampleOutput: t.exampleOutput ?? '',
+    })
+
   const openEditSkill = (s: SkillItem) =>
     setDialog({
       id: s.id, kind: 'skill', name: s.name, category: s.category, description: s.description,
@@ -461,12 +478,16 @@ export function TemplatesView() {
                     )}>
                         {/* colored accent bar that brightens on hover */}
                         <div className={cn('absolute inset-x-0 top-0 z-10 h-1 bg-gradient-to-r opacity-80 transition-opacity group-hover:opacity-100', accent.bar)} />
-                        {t.mine && (
-                          <div className="absolute right-2 top-2 z-20 flex gap-1 opacity-75 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                            <button type="button" aria-label={`Edit ${t.name}`} onClick={() => openEditTemplate(t)} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-indigo-600"><Pencil className="h-3.5 w-3.5" /></button>
-                            <button type="button" aria-label={`Delete ${t.name}`} onClick={() => setDeleteTarget({ kind: 'template', id: t.id, name: t.name })} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
-                          </div>
-                        )}
+                        <div className="absolute right-2 top-2 z-20 flex gap-1 opacity-75 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                          {t.mine ? (
+                            <>
+                              <button type="button" aria-label={`Edit ${t.name}`} onClick={() => openEditTemplate(t)} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-indigo-600"><Pencil className="h-3.5 w-3.5" /></button>
+                              <button type="button" aria-label={`Delete ${t.name}`} onClick={() => setDeleteTarget({ kind: 'template', id: t.id, name: t.name })} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
+                            </>
+                          ) : (
+                            <button type="button" aria-label={`Copy ${t.name} to your workspace`} title="Save an editable copy" onClick={() => openCopyTemplate(t)} className="flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground shadow-1 hover:text-indigo-600"><Copy className="h-3.5 w-3.5" /></button>
+                          )}
+                        </div>
                         <Link href={`/templates/${t.id}`} className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                         <CardHeader className="space-y-2.5 pt-5">
                           <div className="flex items-center gap-1.5">
@@ -683,71 +704,12 @@ export function TemplatesView() {
               </div>
               <div>
                 <span id="template-dialog-integrations" className="mb-1 block text-xs font-medium text-muted-foreground">Integrations</span>
-                {availableIntegrations ? (
-                  <div role="group" aria-labelledby="template-dialog-integrations" className="flex flex-wrap gap-2">
-                    {availableIntegrations.tools.map((t) => {
-                      const selected = dialog.integrations.includes(t.key)
-                      return (
-                        <button
-                          key={t.key}
-                          type="button"
-                          onClick={() => toggleDialogIntegration(t.key)}
-                          className={cn(
-                            'flex items-center gap-1.5 rounded-full border py-1 pl-1.5 pr-3 text-xs transition-colors duration-150',
-                            selected
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border bg-transparent text-muted-foreground hover:border-primary hover:text-foreground',
-                          )}
-                        >
-                          <IntegrationLogo slug={t.slug} name={t.label} className="h-4 w-4 bg-white/70" />
-                          {t.label}
-                        </button>
-                      )
-                    })}
-                    {availableIntegrations.connections.map((c) => {
-                      const selected = dialog.integrations.includes(c.name)
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => toggleDialogIntegration(c.name)}
-                          className={cn(
-                            'flex items-center gap-1.5 rounded-full border py-1 pl-1.5 pr-3 text-xs transition-colors duration-150',
-                            selected
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border bg-transparent text-muted-foreground hover:border-primary hover:text-foreground',
-                          )}
-                        >
-                          <IntegrationLogo slug={c.name.toLowerCase().replace(/[^a-z0-9]+/g, '')} name={c.name} className="h-4 w-4 bg-white/70" />
-                          {c.name}
-                        </button>
-                      )
-                    })}
-                    {/* Integrations saved before the picker existed (or from a
-                        removed tool) stay visible so they can be deselected. */}
-                    {dialog.integrations
-                      .filter((name) =>
-                        !availableIntegrations.tools.some((t) => t.key === name) &&
-                        !availableIntegrations.connections.some((c) => c.name === name))
-                      .map((name) => (
-                        <button
-                          key={name}
-                          type="button"
-                          onClick={() => toggleDialogIntegration(name)}
-                          className="flex items-center gap-1.5 rounded-full border border-primary bg-primary py-1 pl-3 pr-2 text-xs text-primary-foreground transition-colors duration-150"
-                        >
-                          {name}
-                          <X className="h-3 w-3" />
-                        </button>
-                      ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    <Skeleton className="h-7 w-24 rounded-full" />
-                    <Skeleton className="h-7 w-20 rounded-full" />
-                    <Skeleton className="h-7 w-28 rounded-full" />
-                  </div>
-                )}
+                <IntegrationPicker
+                  available={availableIntegrations}
+                  selected={dialog.integrations}
+                  onToggle={toggleDialogIntegration}
+                  labelledBy="template-dialog-integrations"
+                />
               </div>
               {dialog.kind === 'template' && (
                 <div>

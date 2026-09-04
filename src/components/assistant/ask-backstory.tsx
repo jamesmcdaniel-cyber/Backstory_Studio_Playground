@@ -27,7 +27,6 @@ import { indentOnTab } from '@/components/ui/textarea'
 import { Markdown } from '@/components/ui/markdown'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
-import { shouldOfferLauncher, useAssistantSurfaceVisible } from '@/components/assistant/assistant-surface'
 import { surfaceForPath } from '@/lib/librarian/surfaces'
 import { relativeTime } from '@/lib/relative-time'
 import { cn } from '@/lib/utils'
@@ -144,24 +143,12 @@ function foldTurns(messages: unknown): Turn[] {
 /** Openers that show the three things this widget is for: features, trouble, and where things are. */
 const GENERIC_SUGGESTIONS = ['What can I build with Flows?', 'Why did my run fail?', 'Where do I connect Slack?']
 
-export function AskBackstory({ raised = false }: {
-  /**
-   * Lift the launcher and panel clear of a fullscreen canvas's own bottom-right
-   * furniture — today the flow builder's minimap, which sits at bottom-6 right-4
-   * and is exactly where this would otherwise land.
-   */
-  raised?: boolean
-}) {
+export function AskBackstory() {
   const pathname = usePathname() ?? ''
   const searchParams = useSearchParams()
   const router = useRouter()
   const reduced = useReducedMotion()
   const [open, setOpen] = useState(false)
-  // A page-level assistant (the agents Assistant, the flow builder Copilot)
-  // puts its own composer in this corner, and the launcher was sitting on
-  // top of its text field. Yield the corner — but only when closed, so an
-  // conversation the user is mid-way through is never yanked away.
-  const surfaceVisible = useAssistantSurfaceVisible()
   // The thread being continued. null is a conversation that has not been
   // started yet, not an error state — the first answer names the one it opened.
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -457,8 +444,7 @@ export function AskBackstory({ raised = false }: {
             'fixed bottom-4 right-4 z-40 flex w-[calc(100vw-2rem)] max-w-[400px] flex-col overflow-hidden rounded-2xl border border-graphite-200 bg-white shadow-4',
             // Tall enough to hold a worked answer, never taller than the phone
             // it is on.
-            'h-[min(600px,calc(100dvh-2rem))] sm:h-[min(560px,calc(100dvh-8rem))]',
-            raised ? 'sm:bottom-[11rem] sm:h-[min(520px,calc(100dvh-13rem))]' : 'sm:bottom-24',
+            'h-[min(600px,calc(100dvh-2rem))] sm:bottom-24 sm:h-[min(560px,calc(100dvh-8rem))]',
             !reduced && 'animate-fade-in-up',
           )}
         >
@@ -851,15 +837,14 @@ export function AskBackstory({ raised = false }: {
 
       {/* The launcher is hidden while the panel is open on a phone, where the
           panel covers the whole screen and the button would sit on top of it. */}
-      {shouldOfferLauncher(surfaceVisible, open) && <button
+      <button
         ref={launcherRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-label={open ? 'Close Ask Backstory' : 'Ask Backstory'}
         className={cn(
-          'fixed right-4 z-40 flex items-center gap-2 rounded-full border border-graphite-200 bg-white py-2.5 pl-3 pr-4 text-sm font-medium text-graphite-900 shadow-3 transition-[transform,box-shadow,border-color] duration-base hover:-translate-y-0.5 hover:border-horizon-300 hover:shadow-4',
-          raised ? 'bottom-[8.5rem]' : 'bottom-4',
+          'fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-graphite-200 bg-white py-2.5 pl-3 pr-4 text-sm font-medium text-graphite-900 shadow-3 transition-[transform,box-shadow,border-color] duration-base hover:-translate-y-0.5 hover:border-horizon-300 hover:shadow-4',
           open && 'hidden sm:flex',
         )}
       >
@@ -870,7 +855,7 @@ export function AskBackstory({ raised = false }: {
             in Name"), so the two change together rather than staying "Ask
             Backstory" over a close icon. */}
         <span className="hidden sm:inline">{open ? 'Close' : 'Ask Backstory'}</span>
-      </button>}
+      </button>
     </>
   )
 }

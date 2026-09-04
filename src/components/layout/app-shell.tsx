@@ -81,6 +81,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   // container, so only exactly one path segment past "/flows/" goes edge-to-edge.
   const flowSegments = pathname.startsWith('/flows/') ? pathname.slice('/flows/'.length).split('/').filter(Boolean) : []
   const fullscreen = FULLSCREEN_ROUTES.has(pathname) || flowSegments.length === 1
+  // Routes that carry an assistant of their own: the agent HQ's Assistant (and
+  // the run panel beside it) and the flow builder's Copilot. Both answer the
+  // questions the floating launcher answers, with the page's own context, so
+  // the shell does not put a second assistant on top of them.
+  const ownsAssistant = pathname === '/agents' || flowSegments.length === 1
   // Fullscreen workspaces must have stable geometry from their first paint.
   // A translated fullscreen wrapper can temporarily create overflow and makes
   // the route appear to resize after hydration.
@@ -143,14 +148,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           Suspense because it reads useSearchParams() to tell the assistant
           which page the question came from.
-
-          `raised` is the flow builder specifically, not every fullscreen route:
-          the builder's minimap occupies the same bottom-right corner, while
-          /agents has nothing there.
         */}
-        <Suspense fallback={null}>
-          <AskBackstory raised={flowSegments.length === 1} />
-        </Suspense>
+        {!ownsAssistant && (
+          <Suspense fallback={null}>
+            <AskBackstory />
+          </Suspense>
+        )}
       </div>
     </ErrorBoundary>
   )

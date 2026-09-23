@@ -1,13 +1,16 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { AlertCircle, ArrowRight, Check, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { gateMeter } from '@/lib/onboarding/gate-meter'
 import { ProposalInbox } from '@/components/onboarding/proposal-inbox'
+import { ConnectAction } from '@/components/onboarding/connect-action'
 import { isCustomerEdition } from '@/lib/edition'
+import { isEmbedded } from '@/lib/embed'
+import { connectReturnPath, entitlementConnectHref, mcpConnectHref } from '@/lib/onboarding/connect-links'
 import {
   onboardingStages,
   liveStageIndex,
@@ -60,32 +63,45 @@ function ConnectInner() {
   const [catalogue, setCatalogue] = useState<CatalogueRow[]>([])
   const [stage, setStage] = useState(0)
   const [openProposals, setOpenProposals] = useState<number | null>(null)
+  // Resolved after mount: only the client can know whether it is in a frame,
+  // and the server render must match the first client render.
+  const [embedded, setEmbedded] = useState(false)
+  useEffect(() => {
+    if (isEmbedded()) setEmbedded(true)
+  }, [])
+
+  /**
+   * Re-read the server's view of setup. Called on mount, and again whenever a
+   * connect flow run in a popup might have changed the answer — the server is
+   * the only thing that knows whether a connection really landed.
+   */
+  const loadStatus = useCallback(async (): Promise<SetupStatusState> => {
+    try {
+      const response = await fetch('/api/setup/status', { cache: 'no-store' })
+      const data = await response.json()
+      if (data?.success) {
+        const next: SetupStatusState = {
+          entitled: Boolean(data.entitled),
+          backstoryConnected: Boolean(data.backstoryConnected),
+          backstoryConnectionId: data.backstoryConnectionId ?? null,
+          backstoryServerUrl: data.backstoryServerUrl ?? null,
+          loading: false,
+        }
+        setStatus(next)
+        return next
+      }
+    } catch {
+      // Transient failure — the caller just learns nothing changed yet.
+    }
+    setStatus((prev) => ({ ...prev, loading: false }))
+    return { ...initialStatus, loading: false }
+  }, [])
 
   useEffect(() => {
-    let cancelled = false
-    fetch('/api/setup/status', { cache: 'no-store' })
-      .then((response) => response.json())
-      .then((data) => {
-        if (cancelled) return
-        if (data?.success) {
-          setStatus({
-            entitled: Boolean(data.entitled),
-            backstoryConnected: Boolean(data.backstoryConnected),
-            backstoryConnectionId: data.backstoryConnectionId ?? null,
-            backstoryServerUrl: data.backstoryServerUrl ?? null,
-            loading: false,
-          })
-        } else {
-          setStatus((prev) => ({ ...prev, loading: false }))
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStatus((prev) => ({ ...prev, loading: false }))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    void loadStatus()
+  }, [loadStatus])
+
+  const returnTo = connectReturnPath(embedded)
 
   const entitlementDone = status.entitled && status.backstoryConnected
 
@@ -208,13 +224,14 @@ function ConnectInner() {
                     <Check className="h-4 w-4 shrink-0" /> Sales AI connected
                   </p>
                 ) : (
-                  <a
-                    href="/api/peopleai/connect?return_to=/connect"
-                    aria-disabled={status.loading}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-1 transition-all duration-fast ease-out-quart hover:bg-gray-800 hover:shadow-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-[0.98] aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                  >
-                    Connect Backstory <ArrowRight className="h-4 w-4" />
-                  </a>
+                  <ConnectAction
+                    href={entitlementConnectHref(returnTo)}
+                    label="Connect Backstory"
+                    popupName="backstory-connect-entitlement"
+                    embedded={embedded}
+                    disabled={status.loading}
+                    check={async () => (await loadStatus()).entitled}
+                  />
                 )}
               </div>
 
@@ -234,13 +251,14 @@ function ConnectInner() {
                     <Check className="h-4 w-4 shrink-0" /> Backstory MCP connected
                   </p>
                 ) : (
-                  <a
-                    href={`/api/mcp-connections/oauth/start?connectionId=${status.backstoryConnectionId ?? ''}&returnTo=/connect`}
-                    aria-disabled={status.loading || !status.backstoryConnectionId}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-1 transition-all duration-fast ease-out-quart hover:bg-gray-800 hover:shadow-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:scale-[0.98] aria-disabled:pointer-events-none aria-disabled:opacity-50"
-                  >
-                    Connect Backstory MCP <ArrowRight className="h-4 w-4" />
-                  </a>
+                  <ConnectAction
+                    href={mcpConnectHref(status.backstoryConnectionId, returnTo)}
+                    label="Connect Backstory MCP"
+                    popupName="backstory-connect-mcp"
+                    embedded={embedded}
+                    disabled={status.loading || !status.backstoryConnectionId}
+                    check={async () => (await loadStatus()).backstoryConnected}
+                  />
                 )}
               </div>
 

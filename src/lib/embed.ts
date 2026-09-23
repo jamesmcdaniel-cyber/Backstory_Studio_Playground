@@ -17,6 +17,17 @@
 
 export const EMBED_SIGNIN_MESSAGE = 'backstory:embed-signed-in'
 
+/**
+ * Posted when a CONNECT flow run in the popup has finished, whether it worked
+ * or not. It is a "go look again" nudge, never a verdict: the frame re-reads
+ * /api/setup/status and believes that.
+ */
+export const EMBED_CONNECT_DONE_MESSAGE = 'backstory:embed-connect-done'
+
+/** Where every popup-run flow lands: the one page that can notify the frame
+ *  and close itself. */
+export const EMBED_COMPLETE_PATH = '/auth/embedded-complete'
+
 export function isEmbedded(): boolean {
   if (typeof window === 'undefined') return false
   try {
@@ -30,11 +41,51 @@ export function isEmbedded(): boolean {
 /** The popup runs the FULL login flow top-level, then lands on the
  *  embedded-complete page, which notifies and closes. */
 export function embeddedSignInUrl(): string {
-  return '/auth/login?return_to=%2Fauth%2Fembedded-complete'
+  return `/auth/login?return_to=${encodeURIComponent(EMBED_COMPLETE_PATH)}`
+}
+
+/**
+ * Open a flow the frame cannot run itself in a popup, where it is top-level.
+ *
+ * This is the ONLY way an OAuth connect can work from inside the frame, for
+ * two independent reasons: the identity provider refuses to render framed at
+ * all, and the flow's SameSite=Lax state cookie is never stored in a
+ * third-party frame — so the callback finds no state and bounces the frame
+ * back to the start of onboarding. A popup is a first-party, top-level
+ * context, where both hold.
+ */
+export function openEmbeddedPopup(url: string, name: string): Window | null {
+  return window.open(url, name, 'popup,width=560,height=760')
 }
 
 export function openEmbeddedSignIn(): Window | null {
-  return window.open(embeddedSignInUrl(), 'backstory-signin', 'popup,width=560,height=760')
+  return openEmbeddedPopup(embeddedSignInUrl(), 'backstory-signin')
+}
+
+export type EmbedCompletion = {
+  outcome: 'signed-in' | 'connected' | 'failed'
+  message: typeof EMBED_SIGNIN_MESSAGE | typeof EMBED_CONNECT_DONE_MESSAGE
+}
+
+/**
+ * What the popup's landing page just witnessed, read off its own query string.
+ *
+ * Sign-in lands here bare; every connect callback appends its outcome
+ * (`connected=1` / `peopleai=<status>` / `error=<code>`), so the presence of an
+ * outcome parameter is what separates the two flows. A failure still posts the
+ * connect-done message — the frame must stop waiting and show what happened,
+ * not sit on a spinner until the user gives up.
+ */
+export function resolveEmbedCompletion(search: string): EmbedCompletion {
+  const params = new URLSearchParams(search)
+  const peopleai = params.get('peopleai')
+  if (params.get('error') || (peopleai && peopleai !== 'connected')) {
+    return { outcome: 'failed', message: EMBED_CONNECT_DONE_MESSAGE }
+  }
+  if (params.get('connected') === '1' || peopleai === 'connected') {
+    return { outcome: 'connected', message: EMBED_CONNECT_DONE_MESSAGE }
+  }
+  return { outcome: 'signed-in', message: EMBED_SIGNIN_MESSAGE }
 }
 
 /**

@@ -15,8 +15,12 @@ import type { Teammate } from '@/lib/types'
  * Picks who does the job a template describes.
  *
  * A template is work, not a person, so installing one asks which avatar takes
- * it on: an existing teammate gains another job, or a new teammate is hired for
- * it. The dialog only chooses a destination — the caller does the installing.
+ * it on: an existing agent gains another job, or a new agent is created for it.
+ * The dialog only chooses a destination — the caller does the installing.
+ *
+ * Says AGENT throughout, never "teammate": that word also means a human
+ * colleague elsewhere in the product (jams, approvals, invites), and on a
+ * template it read as “share this with a co-worker”.
  */
 export function AssignTemplateDialog({
   templateName,
@@ -31,7 +35,7 @@ export function AssignTemplateDialog({
 }) {
   const [teammates, setTeammates] = useState<Teammate[]>([])
   const [loading, setLoading] = useState(true)
-  // Either an existing teammate's id, or the sentinel for hiring a new one.
+  // Either an existing agent's id, or the sentinel for creating a new one.
   const [choice, setChoice] = useState<string>('new')
   const [newName, setNewName] = useState(templateName)
 
@@ -41,8 +45,8 @@ export function AssignTemplateDialog({
       .then((data) => {
         const list: Teammate[] = data?.teammates ?? []
         setTeammates(list)
-        // Default to the first existing teammate when there is one: adding to
-        // the roster you already have is the common case once it exists.
+        // Default to the first existing agent when there is one: adding to the
+        // roster you already have is the common case once it exists.
         if (list.length) setChoice(list[0].id)
       })
       .catch(() => undefined)
@@ -65,7 +69,7 @@ export function AssignTemplateDialog({
         <DialogHeader>
           <DialogTitle>Who takes this on?</DialogTitle>
           <DialogDescription>
-            “{templateName}” becomes a job on someone’s roster. One teammate can run several.
+            “{templateName}” becomes a job on someone’s roster. One agent can run several.
           </DialogDescription>
         </DialogHeader>
 
@@ -107,16 +111,16 @@ export function AssignTemplateDialog({
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500">
               <UserPlus className="h-4 w-4" aria-hidden="true" />
             </span>
-            <span className="text-sm font-medium text-foreground">Hire a new teammate</span>
+            <span className="text-sm font-medium text-foreground">Create a new agent</span>
           </button>
 
           {choice === 'new' && (
             <div className="px-1 pt-1">
-              <label htmlFor="new-teammate-name" className="mb-1 block text-xs font-medium text-muted-foreground">
-                Teammate name
+              <label htmlFor="new-agent-name" className="mb-1 block text-xs font-medium text-muted-foreground">
+                Agent name
               </label>
               <Input
-                id="new-teammate-name"
+                id="new-agent-name"
                 value={newName}
                 maxLength={60}
                 autoFocus

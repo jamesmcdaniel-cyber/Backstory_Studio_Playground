@@ -320,7 +320,7 @@ export default function TemplateDetails() {
                   disabled={Boolean(problem)}
                 >
                   <Bot className="mr-1.5 h-4 w-4" />
-                  {creating ? 'Adding…' : 'Add to a teammate'}
+                  {creating ? 'Adding…' : 'Add to an agent'}
                 </Button>
                 {template.playbook && (
                   <Button onClick={deployPlaybook} loading={deploying}>
@@ -348,7 +348,7 @@ export default function TemplateDetails() {
                   </>
                 ) : (
                   <span className="text-muted-foreground">
-                    Instructions off, or tools you don’t use? Adjust them before adding this to a teammate.
+                    Instructions off, or tools you don’t use? Adjust them before adding this to an agent.
                   </span>
                 )}
               </div>

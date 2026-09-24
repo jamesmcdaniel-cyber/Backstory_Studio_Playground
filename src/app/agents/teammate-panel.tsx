@@ -91,7 +91,7 @@ export function TeammatePanel({
       })
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        toast.error(data.error || 'Could not rename this teammate.')
+        toast.error(data.error || 'Could not rename this agent.')
         return
       }
       setRenaming(false)
@@ -110,10 +110,10 @@ export function TeammatePanel({
     })
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
-      toast.error(data.error || 'Could not disband this teammate.')
+      toast.error(data.error || 'Could not disband this agent.')
       return
     }
-    toast.success(`${teammate.name} disbanded. Their agents are back on the roster.`)
+    toast.success(`${teammate.name} disbanded. Their jobs are back on the roster.`)
     onChanged()
     // Disbanding puts agents back on the roster — snapshot data the sidebar
     // shows, which otherwise stays stale until its 30s poll.
@@ -152,7 +152,7 @@ export function TeammatePanel({
                         if (event.key === 'Enter') rename()
                         if (event.key === 'Escape') { setRenaming(false); setName(teammate.name) }
                       }}
-                      aria-label="Teammate name"
+                      aria-label="Agent name"
                       className="h-8"
                     />
                     <Button size="icon" variant="ghost" onClick={rename} disabled={saving} aria-label="Save name">
@@ -193,7 +193,7 @@ export function TeammatePanel({
           <div className="-mx-1 max-h-80 overflow-y-auto px-1">
             {agents.length === 0 ? (
               <p className="rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
-                No jobs yet. Install a template to give this teammate something to do.
+                No jobs yet. Install a template to give this agent something to do.
               </p>
             ) : (
               <ul className="divide-y rounded-xl border">
@@ -263,7 +263,7 @@ export function TeammatePanel({
         open={confirmDisband}
         onOpenChange={setConfirmDisband}
         title={`Disband ${teammate.name}?`}
-        description="Their agents stay on the roster as their own cards. Nothing they've done is deleted."
+        description="Their jobs stay on the roster as their own cards. Nothing they've done is deleted."
         confirmLabel="Disband"
         destructive
         onConfirm={disband}

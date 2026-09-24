@@ -38,8 +38,8 @@ test('the title describes what is actually in the bar', () => {
 test('the subtitle counts each group and gets its plurals right', () => {
   assert.equal(inboxSubtitle(['applicant']), '1 wants to join your team')
   assert.equal(inboxSubtitle(['applicant', 'applicant']), '2 want to join your team')
-  assert.equal(inboxSubtitle(['staff']), '1 teammate needs a look')
-  assert.equal(inboxSubtitle(['staff', 'staff']), '2 teammates need a look')
+  assert.equal(inboxSubtitle(['staff']), '1 agent needs a look')
+  assert.equal(inboxSubtitle(['staff', 'staff']), '2 agents need a look')
   assert.equal(inboxSubtitle(['applicant', 'staff', 'staff']), '1 wants to join · 2 need a look')
   assert.equal(inboxSubtitle(['applicant', 'applicant', 'staff']), '2 want to join · 1 needs a look')
 })

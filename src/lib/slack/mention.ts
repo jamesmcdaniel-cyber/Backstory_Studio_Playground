@@ -76,14 +76,14 @@ export function resolveMention(params: {
   boundAgentId?: string | null
 }): MentionResolution {
   const { agents } = params
-  // Nothing to offer and nothing to run. Asking "which teammate?" against an
+  // Nothing to offer and nothing to run. Asking "which agent?" against an
   // empty roster would be a dead end.
   if (agents.length === 0) return { kind: 'none' }
 
   const body = stripBotMention(params.text, params.botUserId)
 
   // 1. An explicit name or role label wins over any binding.
-  //    Longest label first, so "Spend review" is not shadowed by a teammate
+  //    Longest label first, so "Spend review" is not shadowed by an agent
   //    called "Spend".
   const labelled = agents
     .flatMap((agent) => [
@@ -106,7 +106,7 @@ export function resolveMention(params: {
     !QUESTION_OPENERS.has(normalize(firstWord))
   if (looksLikeAName) return { kind: 'ask', candidates: agents, reason: 'no-match' }
 
-  // 3. The channel's default teammate.
+  // 3. The channel's default agent.
   if (params.boundAgentId) {
     const bound = agents.find((agent) => agent.id === params.boundAgentId)
     // A binding whose agent is not in this roster asks rather than running

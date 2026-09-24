@@ -39,7 +39,7 @@ async function assertTeammateInOrg(teammateId: string, organizationId: string): 
     where: { id: teammateId, organizationId },
     select: { id: true },
   })
-  if (!teammate) throw new ApiError('Teammate not found', 404, 'NOT_FOUND')
+  if (!teammate) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
   return teammate.id
 }
 

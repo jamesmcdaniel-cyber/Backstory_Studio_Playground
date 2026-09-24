@@ -124,7 +124,7 @@ export function AgentsGallery({
         <EmptyState
           icon={Users}
           title="Hire your first agent"
-          description="Agents are teammates that do real work — research accounts, draft reports, watch your pipeline. Create one and it shows up here."
+          description="Agents do real work — research accounts, draft reports, watch your pipeline. Create one and it shows up here."
         />
         <div className="mt-4 flex justify-center">
           <Button onClick={onCreateAgent}>
@@ -146,7 +146,7 @@ export function AgentsGallery({
           <p className="text-sm text-muted-foreground">
             {query.trim()
               ? `${shown} of ${total} matching “${query.trim()}”`
-              : total === 1 ? '1 teammate on your roster' : `${total} teammates on your roster`}
+              : total === 1 ? '1 agent on your roster' : `${total} agents on your roster`}
           </p>
         </div>
         <div className="flex items-center gap-2">

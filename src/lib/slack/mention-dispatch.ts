@@ -111,7 +111,7 @@ export async function dispatchSlackMention(activityEventId: string): Promise<Out
   }
   if (resolution.kind === 'ask') {
     const names = resolution.candidates.slice(0, 8).map((agent) => agent.name).filter(Boolean)
-    await reply(`Which teammate should take this? ${names.join(', ')}`)
+    await reply(`Which agent should take this? ${names.join(', ')}`)
     return { outcome: 'asked', reason: resolution.reason }
   }
 

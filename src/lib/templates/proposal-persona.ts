@@ -75,6 +75,6 @@ export function inboxSubtitle(personas: PersonaKind[]): string {
   if (applicants && flags) {
     return `${applicants} ${applicants === 1 ? 'wants' : 'want'} to join · ${flags} ${flags === 1 ? 'needs' : 'need'} a look`
   }
-  if (flags) return `${flags} ${flags === 1 ? 'teammate needs' : 'teammates need'} a look`
+  if (flags) return `${flags} ${flags === 1 ? 'agent needs' : 'agents need'} a look`
   return applicants === 1 ? '1 wants to join your team' : `${applicants} want to join your team`
 }

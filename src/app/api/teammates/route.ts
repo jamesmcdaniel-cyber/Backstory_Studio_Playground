@@ -83,7 +83,7 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
       ...(avatarSeed !== undefined && { avatarSeed: avatarSeed || null }),
     },
   })
-  if (!result.count) throw new ApiError('Teammate not found', 404, 'NOT_FOUND')
+  if (!result.count) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
   return { success: true }
 }, { permission: 'agent.write' })
 
@@ -94,6 +94,6 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const result = await prisma.agentTeammate.deleteMany({
     where: { id, organizationId: auth.organizationId },
   })
-  if (!result.count) throw new ApiError('Teammate not found', 404, 'NOT_FOUND')
+  if (!result.count) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
   return { success: true }
 }, { permission: 'agent.write' })

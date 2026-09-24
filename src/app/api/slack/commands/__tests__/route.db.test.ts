@@ -227,7 +227,7 @@ if (ENABLED) {
     assert.equal(response.status, 200)
     await settle()
     assert.equal((await executions()).length, 0)
-    assert.match(responses.at(-1)?.body.text ?? '', /No teammate is set up to answer \/unbound/)
+    assert.match(responses.at(-1)?.body.text ?? '', /No agent is set up to answer \/unbound/)
   })
 
   test('a bound command from a linked user starts exactly one run, as that person', async () => {

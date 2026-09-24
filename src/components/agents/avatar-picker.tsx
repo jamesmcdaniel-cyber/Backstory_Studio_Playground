@@ -38,7 +38,7 @@ export function AvatarPicker({
         <div className="border-b bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-6 pb-5 pt-6">
           <DialogHeader>
             <DialogTitle>Choose an avatar</DialogTitle>
-            <DialogDescription>Choose a look for your teammate. You can change it any time.</DialogDescription>
+            <DialogDescription>Choose a look for your agent. You can change it any time.</DialogDescription>
           </DialogHeader>
 
           <div className="mt-5 flex items-center gap-4 rounded-2xl border border-white/80 bg-white/70 p-3 shadow-sm backdrop-blur-sm">

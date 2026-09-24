@@ -39,7 +39,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     })
     .parse(await request.json())
   if (!agentIds.length && !teammateIds.length) {
-    throw new ApiError('Name at least one agent or teammate to label', 400, 'NOTHING_TO_LABEL')
+    throw new ApiError('Name at least one agent or job to label', 400, 'NOTHING_TO_LABEL')
   }
 
   const labels: Record<string, string> = {}
@@ -108,8 +108,8 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           kind: 'teammate',
           id: teammate.id,
           block: [
-            `Subject: a teammate who runs ${roster.length} agent${roster.length === 1 ? '' : 's'}. Summarise the whole group as ONE role.`,
-            `Teammate name: ${teammate.name}`,
+            `Subject: an agent that runs ${roster.length} job${roster.length === 1 ? '' : 's'}. Summarise the whole group as ONE role.`,
+            `Agent name: ${teammate.name}`,
             ...roster.map((member, index) =>
               `  Agent ${index + 1}: ${agentTitle(member)} — ${(member.objective || member.description || '').slice(0, 200)}`),
           ].join('\n'),

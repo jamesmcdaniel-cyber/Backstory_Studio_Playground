@@ -72,7 +72,7 @@ export async function createAgentFromTemplate(
     })
     const createdData = (await created.json().catch(() => ({}))) as { teammate?: { id?: unknown }; error?: string }
     if (!created.ok) {
-      return { ok: false, error: createdData.error || 'Could not create that teammate. Please try again.' }
+      return { ok: false, error: createdData.error || 'Could not create that agent. Please try again.' }
     }
     teammateId = typeof createdData.teammate?.id === 'string' ? createdData.teammate.id : null
   }

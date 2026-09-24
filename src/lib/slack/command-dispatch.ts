@@ -71,7 +71,7 @@ export async function dispatchSlackCommand(params: {
   })
   if (!binding) {
     await respond(
-      `No teammate is set up to answer /${payload.command} in this workspace yet. ` +
+      `No agent is set up to answer /${payload.command} in this workspace yet. ` +
         'An admin can bind it to an agent in Backstory under Integrations → Slack.',
     )
     return { outcome: 'unbound' }
@@ -84,7 +84,7 @@ export async function dispatchSlackCommand(params: {
   if (!agent) {
     // The cascade covers a deleted row; this covers one that was soft-deleted,
     // which leaves the binding intact and pointing at something unrunnable.
-    await respond(`The teammate bound to /${payload.command} is no longer available. An admin can re-bind it.`)
+    await respond(`The agent bound to /${payload.command} is no longer available. An admin can re-bind it.`)
     return { outcome: 'unbound' }
   }
   const agentName = String(asRecord(agent.metadata).title ?? agent.description ?? 'Backstory').trim() || 'Backstory'

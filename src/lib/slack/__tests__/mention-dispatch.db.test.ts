@@ -182,14 +182,14 @@ if (TEST_DB) {
     )
   })
 
-  test('a bare mention in an unbound channel asks which teammate', async () => {
+  test('a bare mention in an unbound channel asks which agent', async () => {
     posted = []
     const before = await runCount()
     const eventId = await seedMention({ slackUser: 'U_LINKED', text: '<@U0BOT> what changed?' })
     const result = await dispatchSlackMention(eventId)
     assert.equal(result.outcome, 'asked')
     assert.equal(await runCount(), before)
-    assert.ok(posted.some((p) => /which teammate/i.test(String(p.body.text))))
+    assert.ok(posted.some((p) => /which agent/i.test(String(p.body.text))))
   })
 
   test('a bare mention in a BOUND channel runs that channel default', async () => {

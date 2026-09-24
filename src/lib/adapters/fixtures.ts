@@ -200,7 +200,7 @@ export const ADAPTER_FIXTURES: AdapterFixture[] = [
     kind: 'transform',
     id: 'identity/mention-longest-label-wins',
     family: 'identity',
-    pins: '"Spend review" must not be shadowed by a teammate called "Spend".',
+    pins: '"Spend review" must not be shadowed by an agent called "Spend".',
     transform: 'resolveMention',
     input: {
       text: '<@U_BOT> Spend review: what changed this week?',

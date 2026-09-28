@@ -67,7 +67,7 @@ jobs:
 
       - name: Open or update the pinned incident issue
         if: steps.config.outputs.configured == 'true' && steps.probe.outputs.healthy == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs')
@@ -115,7 +115,7 @@ jobs:
 
       - name: Close the pinned incident issue on recovery
         if: steps.config.outputs.configured == 'true' && steps.probe.outputs.healthy == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const existing = await github.rest.issues.listForRepo({

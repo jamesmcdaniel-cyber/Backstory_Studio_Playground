@@ -43,6 +43,24 @@ function supabaseAdmin() {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
+// The bucket is created on first use rather than assumed: a project that has
+// never stored a file has no bucket, and "Bucket not found" is a poor way for
+// an upload to learn that. Checked once per process.
+let bucketReady: Promise<void> | null = null
+function ensureBucket(supabase: NonNullable<ReturnType<typeof supabaseAdmin>>): Promise<void> {
+  bucketReady ??= (async () => {
+    const existing = await supabase.storage.getBucket(BUCKET)
+    if (!existing.error && existing.data) return
+    const created = await supabase.storage.createBucket(BUCKET, { public: false, fileSizeLimit: DATASET_MAX_BYTES })
+    // A concurrent creator winning the race is fine; anything else is not.
+    if (created.error && !/already exists|duplicate/i.test(created.error.message)) {
+      bucketReady = null
+      throw new Error(`Could not prepare file storage: ${created.error.message}`)
+    }
+  })()
+  return bucketReady
+}
+
 export async function saveStoredFile(params: {
   organizationId: string
   userId?: string | null
@@ -84,6 +102,7 @@ export async function saveStoredFile(params: {
   })
   const supabase = supabaseAdmin()
   if (supabase) {
+    await ensureBucket(supabase)
     const row = await reserveAndCreate('supabase')
     const storagePath = `${params.organizationId}/${row.id}`
     const uploaded = await supabase.storage.from(BUCKET).upload(storagePath, params.buffer, {
@@ -159,6 +178,7 @@ export async function createPendingUpload(params: {
 }): Promise<{ id: string; uploadUrl: string; token: string; storagePath: string; bucket: string }> {
   const supabase = supabaseAdmin()
   if (!supabase) throw new DirectUploadUnavailableError('Direct uploads need object storage, which this deployment does not have configured.')
+  await ensureBucket(supabase)
   const ceiling = maxBytesForFile(params.filename)
   if (!Number.isFinite(params.size) || params.size <= 0) throw new Error('The file is empty.')
   if (params.size > ceiling) throw new Error(`Files can be at most ${Math.round(ceiling / 1_000_000)} MB.`)

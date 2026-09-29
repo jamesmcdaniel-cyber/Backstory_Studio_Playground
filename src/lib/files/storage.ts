@@ -49,6 +49,10 @@ export async function saveStoredFile(params: {
   filename: string
   mimeType: string
   buffer: Buffer
+  /** Content the platform produced itself (a computed result) or an operator
+   *  loaded from a CLI after inspecting it. Skips the malware scanner, which
+   *  exists for what browsers send us; every upload route leaves this unset. */
+  trusted?: boolean
 }): Promise<{ id: string; filename: string; mimeType: string; size: number }> {
   const ceiling = maxBytesForFile(params.filename)
   if (params.buffer.length > ceiling) {
@@ -56,7 +60,7 @@ export async function saveStoredFile(params: {
   }
   const filename = safeFilename(params.filename)
   const mimeType = verifyFileMime(params.buffer, params.mimeType, filename)
-  await scanFileBuffer(params.buffer, filename)
+  if (!params.trusted) await scanFileBuffer(params.buffer, filename)
   const quota = Math.max(STORED_FILE_MAX_BYTES, Number(process.env.ORG_FILE_STORAGE_MAX_BYTES) || DEFAULT_ORG_FILE_STORAGE_MAX_BYTES)
   const reserveAndCreate = async (backend: 'supabase' | 'db') => tenantTransaction(params.organizationId, async (tx) => {
     const reserved = await tx.organization.updateMany({

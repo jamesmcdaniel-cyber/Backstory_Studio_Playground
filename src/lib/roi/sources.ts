@@ -83,6 +83,8 @@ export async function loadRoiSource(params: {
   kind: RoiSourceKind
   filename: string
   buffer: Buffer
+  /** Operator CLI loads of inspected files skip the browser-upload scanner. */
+  trusted?: boolean
 }): Promise<{ documentId: string; rows: number | null }> {
   const stored = await saveStoredFile({
     organizationId: params.organizationId,
@@ -90,6 +92,7 @@ export async function loadRoiSource(params: {
     filename: params.filename,
     mimeType: 'text/csv',
     buffer: params.buffer,
+    trusted: params.trusted === true,
   })
   const document = await ingestKnowledgeDataset({
     organizationId: params.organizationId,

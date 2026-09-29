@@ -6,8 +6,10 @@
  *   npx tsx scripts/roi-load-extracts.ts --org <organizationId> --account "Iron Mountain" \
  *     --activity "Raw Data Extract.csv" --usage "Usage Cohort.csv" \
  *     --engagement OppEngagement.csv --stages "Closed Deals Opp Engagement Stage Analysis.csv" \
- *     [--user <userId>] [--run <userId>]
+ *     [--user <userId>] [--run <userId>] [--trusted]
  *
+ * --trusted skips the browser-upload malware scanner: use it only for files
+ * you have inspected yourself (the worker has no scanner configured).
  * --run starts the first analysis for that user once the extracts are in,
  * so the page has a dashboard waiting instead of an empty form.
  */
@@ -30,7 +32,7 @@ async function main() {
   for (const [kind, file] of files) {
     const buffer = fs.readFileSync(file)
     const started = Date.now()
-    const loaded = await loadRoiSource({ organizationId, userId, account, kind, filename: path.basename(file), buffer })
+    const loaded = await loadRoiSource({ organizationId, userId, account, kind, filename: path.basename(file), buffer, trusted: process.argv.includes('--trusted') })
     console.log(`${kind}: ${path.basename(file)} → ${loaded.documentId} (${loaded.rows?.toLocaleString() ?? '?'} rows, ${(buffer.length / 1e6).toFixed(1)} MB, ${Date.now() - started} ms)`)
   }
   const runAs = arg('run')

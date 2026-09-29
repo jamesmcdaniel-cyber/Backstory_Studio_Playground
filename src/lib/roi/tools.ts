@@ -86,6 +86,8 @@ export class RoiToolClient {
       filename: `${ROI_FACTS_FILENAME_PREFIX}${Date.now()}.json`,
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(facts)),
+      // Computed here from datasets that were scanned on their way in.
+      trusted: true,
     })
     const summary = summarizeFacts(facts)
     return {

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
+import { registerVersionFromExecution } from '@/lib/artifacts/service'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { apiLogger } from '@/lib/logger'
@@ -1822,6 +1823,28 @@ async function runAgentExecutionInner(
         }),
       }),
     ])
+    // An HTML answer is an artifact: register it (or the new version of the
+    // artifact this run was asked to change) so it has a home of its own, and
+    // land the completion notification there unless the run's origin already
+    // named a page. Never fatal — a run that finished has finished.
+    const artifactLink = blockedReason
+      ? null
+      : await registerVersionFromExecution({
+          organizationId,
+          userId,
+          executionId: execution.id,
+          agentTaskId: agent.id,
+          agentTitle: agentMetadata.title || agent.description,
+          trigger: execution.trigger,
+          summary,
+          headline,
+        })
+          .then((registered) => (registered ? `/artifacts/${registered.artifactId}` : null))
+          .catch((error) => {
+            apiLogger.warn('artifact registration failed', { executionId: execution.id, error: error instanceof Error ? error.message : String(error) })
+            return null
+          })
+    const completionLink = triggerLink ?? artifactLink
     await notify({
       organizationId,
       userId,
@@ -1839,8 +1862,9 @@ async function runAgentExecutionInner(
       agentTaskId: agent.id,
       executionId: execution.id,
       // A run started from a page of its own (an ROI analysis) lands the
-      // reader back on that page, not on the generic run view.
-      ...(triggerLink ? { link: triggerLink } : {}),
+      // reader back on that page; a run that produced an artifact lands on
+      // the artifact; anything else on the generic run view.
+      ...(completionLink ? { link: completionLink } : {}),
     })
     // The final status is the tick a waiting page cares about most; every
     // intermediate event already broadcast one.

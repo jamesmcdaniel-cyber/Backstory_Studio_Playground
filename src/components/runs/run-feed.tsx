@@ -52,7 +52,7 @@ export function RunFeed({ executionId, status, onStatusChange }: { executionId: 
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-medium">
           {live && <Loader2 className="h-4 w-4 animate-spin text-horizon-600" aria-hidden />}
-          {live ? 'The ROI Analyst is working' : 'Run finished'}
+          {live ? 'The agent is working' : 'Run finished'}
         </div>
         <Link href={`/agents?run=${executionId}`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
           Open in Runs <ExternalLink className="h-3 w-3" aria-hidden />

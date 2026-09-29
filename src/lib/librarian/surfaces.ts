@@ -40,6 +40,13 @@ export const APP_SURFACES: AppSurface[] = [
     permission: 'agent.run',
   },
   {
+    id: 'artifacts',
+    title: 'Artifacts',
+    href: '/artifacts',
+    purpose: 'every report, dashboard and document an agent has produced — open one, ask the agent about it, or ask for a change and get a new version',
+    permission: 'agent.read',
+  },
+  {
     id: 'home',
     title: 'Home',
     href: '/dashboard',

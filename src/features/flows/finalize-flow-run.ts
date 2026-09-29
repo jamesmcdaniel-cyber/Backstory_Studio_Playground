@@ -1,3 +1,4 @@
+import { registerVersionFromFlowRun } from '@/lib/artifacts/service'
 import { Prisma } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
@@ -104,6 +105,13 @@ export async function finalizeFlowRun(
       where: { id: run.id, organizationId: job.organizationId },
       data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt, degraded },
     })
+    // A run started from an artifact page ("re-run the flow") adds a version
+    // when its output holds a document. Outside the transaction's own tables
+    // but inside its scope: a registered version with no finished run would
+    // be worse than a finished run with no version, and this order prevents it.
+    if (status === 'succeeded' && (job.trigger as { artifactId?: unknown } | undefined)?.artifactId) {
+      await registerVersionFromFlowRun({ organizationId: job.organizationId, flowRunId: run.id, trigger: job.trigger, output: effectiveOutput }).catch(() => null)
+    }
     // Commit the terminal state and its downstream signal atomically. The
     // outbox worker handles delivery/retry after commit, so a process crash can
     // no longer leave a completed run without its chained flows.

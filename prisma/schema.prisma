@@ -91,6 +91,8 @@ model Organization {
   flows                          Flow[]
   storedFiles                    StoredFile[]
   roiAnalyses                    RoiAnalysis[]
+  artifacts                      Artifact[]
+  artifactVersions               ArtifactVersion[]
   customSignals                  CustomSignal[]
   pushSubscriptions              PushSubscription[]
   knowledgeDocuments             KnowledgeDocument[]
@@ -1735,6 +1737,58 @@ model RoiAnalysis {
   @@index([organizationId, createdAt])
   @@index([organizationId, userId])
   @@map("roi_analyses")
+}
+
+/// A thing an agent produced — a report, a dashboard, a document — kept as a
+/// first-class object with versions and a conversation. Every emission is a
+/// version tied to the run that made it; asking for a change adds a version.
+model Artifact {
+  id               String    @id @default(cuid())
+  organizationId   String    @db.Uuid
+  userId           String?
+  /// report | roi_dashboard | document
+  kind             String    @default("report")
+  title            String
+  agentTaskId      String?
+  /// The flow whose agent step produced it, when there was one.
+  flowId           String?
+  currentVersionId String?
+  versionCount     Int       @default(0)
+  chat             Json      @default("[]")
+  archivedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  versions     ArtifactVersion[]
+
+  @@index([organizationId, updatedAt])
+  @@index([organizationId, agentTaskId])
+  @@index([organizationId, kind])
+  @@map("artifacts")
+}
+
+model ArtifactVersion {
+  id              String   @id @default(cuid())
+  organizationId  String   @db.Uuid
+  artifactId      String
+  number          Int
+  /// The agent run that emitted this version, when an agent did.
+  executionId     String?  @unique
+  /// The flow run that emitted this version, when a flow did.
+  flowRunId       String?
+  /// The change that was asked for, when this version answers one.
+  request         String?  @db.Text
+  content         String   @db.Text
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  artifact     Artifact     @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@unique([artifactId, number])
+  @@index([organizationId, createdAt])
+  @@map("artifact_versions")
 }
 
 model StoredFile {

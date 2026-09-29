@@ -50,6 +50,8 @@ export const PARENT_SCOPED_COPIES = [
 
 /** Never copied — each with the reason a reviewer needs. */
 export const EXCLUDED: Record<string, string> = {
+  Artifact: 'agent-produced content about the real workspace (reports, dashboards) and the conversation about it; a demo sandbox produces its own',
+  ArtifactVersion: 'the versions of the above — same reason',
   RoiAnalysis: 'an operator-only ROI request tied to a real run, real datasets and a stored facts file; a demo sandbox starts with none and builds its own',
   AuditEvent: 'the audit trail is the record of the REAL workspace; a copy in a sandbox is noise at best',
   LlmCall: 'cost/latency accounting for real usage; demo runs write their own rows',

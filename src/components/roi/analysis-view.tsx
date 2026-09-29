@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, ArrowUp, Loader2, MessageSquare, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ArrowUp, FileOutput, Loader2, MessageSquare, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -11,8 +11,8 @@ import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { cn } from '@/lib/utils'
 import type { RoiAnalysisView } from '@/lib/roi/types'
-import { RunFeed } from './run-feed'
-import { useAgentExecStream } from './use-agent-exec-stream'
+import { RunFeed } from '@/components/runs/run-feed'
+import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 
 /**
  * One analysis: the run while it is running, the dashboard once it is
@@ -78,7 +78,12 @@ export function AnalysisView({ id }: { id: string }) {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{analysis.account}</h1>
           <p className="text-sm text-muted-foreground">{analysis.timeframeLabel} · {analysis.datasets.length} dataset{analysis.datasets.length === 1 ? '' : 's'} · started {new Date(analysis.createdAt).toLocaleString()}</p>
         </div>
-        <Link href="/roi"><Button variant="outline" size="sm"><RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />New analysis</Button></Link>
+        <div className="flex items-center gap-2">
+          {typeof (analysis.results as { artifactId?: unknown } | null)?.artifactId === 'string' && (
+            <Link href={`/artifacts/${(analysis.results as { artifactId: string }).artifactId}`}><Button variant="outline" size="sm"><FileOutput className="mr-1.5 h-3.5 w-3.5" aria-hidden />Open as artifact</Button></Link>
+          )}
+          <Link href="/roi"><Button variant="outline" size="sm"><RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />New analysis</Button></Link>
+        </div>
       </div>
 
       {analysis.executionId && (running || analysis.status !== 'completed') && (

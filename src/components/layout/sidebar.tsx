@@ -31,6 +31,7 @@ import {
   Trash2,
   TrendingUp,
   Workflow,
+  FileOutput,
 } from 'lucide-react'
 import { HomeIcon } from '@radix-ui/react-icons'
 import { toast } from 'sonner'
@@ -99,6 +100,7 @@ const navigation = [
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Flows', href: '/flows', icon: Workflow },
   { name: 'Repository', href: '/data-tables', icon: Database },
+  { name: 'Artifacts', href: '/artifacts', icon: FileOutput },
   { name: 'Library', href: '/templates', icon: BookOpen },
   { name: 'Integrations', href: '/integrations', icon: Plug },
 ]

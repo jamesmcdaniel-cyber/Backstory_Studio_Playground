@@ -5,6 +5,7 @@ import { datasetFrameName } from '@/lib/code-analysis/frame-name'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { unwrapHtmlFence } from '@/lib/roi/text'
 import { readStoredFile } from '@/lib/files/storage'
+import { createArtifact } from '@/lib/artifacts/service'
 import { ensureRoiAgent } from './agent'
 import { extractRoiNarrative, type RoiNarrative } from './contract'
 import { renderRoiDashboard } from './dashboard'
@@ -82,7 +83,7 @@ export function buildAnalysisPrompt(params: { account: string; timeframe: RoiTim
   ].filter((line) => line !== undefined).join('\n')
 }
 
-export type RoiResults = { narrative: RoiNarrative; summary: RoiFactsSummary; factsFileId: string }
+export type RoiResults = { narrative: RoiNarrative; summary: RoiFactsSummary; factsFileId: string; artifactId?: string }
 
 export function buildFollowUpPrompt(params: { account: string; question: string; results: RoiResults | null; chat: RoiChatMessage[]; datasets: RoiDataset[] }): string {
   const history = params.chat
@@ -265,15 +266,22 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
   }
   const generatedAt = new Date().toISOString()
   const timeframe = row.timeframe as RoiTimeframe | null
-  const results: RoiResults = { narrative: extracted.data, summary: summarizeFacts(facts), factsFileId }
+  const reportHtml = renderRoiDashboard(facts, extracted.data, { account: row.account, generatedAt, timeframePreset: timeframe?.preset })
+  // The dashboard is an artifact like any other report: it gets a home on
+  // /artifacts with versions and a conversation, alongside the ROI page.
+  const artifactId = await createArtifact({
+    organizationId: row.organizationId,
+    userId: row.userId,
+    kind: 'roi_dashboard',
+    title: `ROI analysis · ${row.account}`,
+    content: reportHtml,
+    agentTaskId: row.agentTaskId,
+    executionId: row.executionId,
+  }).then(({ artifact }) => artifact.id).catch(() => undefined)
+  const results: RoiResults = { narrative: extracted.data, summary: summarizeFacts(facts), factsFileId, ...(artifactId ? { artifactId } : {}) }
   return prisma.roiAnalysis.update({
     where: { id: row.id, organizationId: row.organizationId },
-    data: {
-      status: 'completed',
-      error: null,
-      results: jsonValue(results),
-      reportHtml: renderRoiDashboard(facts, extracted.data, { account: row.account, generatedAt, timeframePreset: timeframe?.preset }),
-    },
+    data: { status: 'completed', error: null, results: jsonValue(results), reportHtml },
   })
 }
 

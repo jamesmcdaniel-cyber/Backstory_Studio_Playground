@@ -12,6 +12,7 @@ import { renderRoiDashboard } from './dashboard'
 import type { RoiFacts } from './prep'
 import { summarizeFacts, type RoiFactsSummary } from './facts'
 import { timeframeInstruction, timeframeLabel, type RoiTimeframe } from './timeframe'
+import { resolveRoiDatasetIds } from './sources'
 
 /**
  * ROI analyses: the service behind /roi.
@@ -155,10 +156,13 @@ export async function createRoiAnalysis(params: {
   account: string
   timeframe: RoiTimeframe
   context: string
-  datasetIds: string[]
+  datasetIds?: string[]
 }): Promise<RoiAnalysis> {
-  const datasets = await loadDatasets(params.organizationId, params.datasetIds.slice(0, ROI_MAX_DATASETS))
-  if (!datasets.length) throw new Error('Pick at least one dataset for the analysis.')
+  // The account's extracts live in the repository, tagged by account; an
+  // explicit list (the API's older shape) still wins when one is given.
+  const ids = params.datasetIds?.length ? params.datasetIds : await resolveRoiDatasetIds(params.organizationId, params.account)
+  const datasets = await loadDatasets(params.organizationId, ids.slice(0, ROI_MAX_DATASETS))
+  if (!datasets.length) throw new Error(`No extracts are loaded for "${params.account.trim()}" yet. An operator loads them into the repository.`)
   const agent = await ensureRoiAgent(params.organizationId, params.userId)
   const row = await prisma.roiAnalysis.create({
     data: {

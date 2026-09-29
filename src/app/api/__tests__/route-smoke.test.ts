@@ -250,6 +250,7 @@ if (TEST_DB) {
     { name: 'GET /api/artifacts', run: async () => (await import('../artifacts/route')).GET(req('/api/artifacts')) },
     { name: 'GET /api/artifacts/[id]', run: async () => (await import('../artifacts/[id]/route')).GET(req('/api/artifacts/missing')) },
     { name: 'GET /api/artifacts/[id]/versions/[versionId]/content', run: async () => (await import('../artifacts/[id]/versions/[versionId]/content/route')).GET(req('/api/artifacts/missing/versions/current/content')) },
+    { name: 'GET /api/roi/sources', run: async () => (await import('../roi/sources/route')).GET(req('/api/roi/sources')) },
     { name: 'GET /api/roi/analyses', run: async () => (await import('../roi/analyses/route')).GET(req('/api/roi/analyses')) },
     { name: 'GET /api/roi/analyses/[id]', run: async () => (await import('../roi/analyses/[id]/route')).GET(req('/api/roi/analyses/missing')) },
     { name: 'GET /api/roi/analyses/[id]/report', run: async () => (await import('../roi/analyses/[id]/report/route')).GET(req('/api/roi/analyses/missing/report')) },

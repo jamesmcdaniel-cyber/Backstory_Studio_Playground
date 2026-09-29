@@ -54,6 +54,7 @@ export const INTERNAL_ONLY_ROUTES = [
   // routes are as internal as /admin's. The customer edition 404s /roi at
   // the edge too (CUSTOMER_BLOCKED_PREFIXES).
   'roi/analyses',
+  'roi/sources',
   'roi/analyses/[id]',
   'roi/analyses/[id]/chat',
   'roi/analyses/[id]/report',
@@ -70,6 +71,7 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'catalogue/entries/[id]', load: () => import('../catalogue/entries/[id]/route'), methods: ['DELETE'] },
   { name: 'admin/costs', load: () => import('../admin/costs/route'), methods: ['GET'] },
   { name: 'roi/analyses', load: () => import('../roi/analyses/route'), methods: ['GET', 'POST'] },
+  { name: 'roi/sources', load: () => import('../roi/sources/route'), methods: ['GET', 'POST'] },
   { name: 'roi/analyses/[id]', load: () => import('../roi/analyses/[id]/route'), methods: ['GET'] },
   { name: 'roi/analyses/[id]/chat', load: () => import('../roi/analyses/[id]/chat/route'), methods: ['POST'] },
   { name: 'roi/analyses/[id]/report', load: () => import('../roi/analyses/[id]/report/route'), methods: ['GET'] },

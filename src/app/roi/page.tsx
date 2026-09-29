@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronRight, Loader2, TrendingUp } from 'lucide-react'
+import { ChevronRight, ExternalLink, Loader2, MessageSquare, RotateCcw, TrendingUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { RoiForm } from '@/components/roi/roi-form'
 import type { RoiAnalysisView } from '@/lib/roi/types'
 import { relativeTime } from '@/lib/relative-time'
@@ -17,8 +18,14 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: 'Cancelled',
 }
 
+/**
+ * The ROI page leads with the dashboard: the newest finished analysis
+ * renders here, full width, with the way to ask about it one click away.
+ * Building a new one — another account, another window — is below it.
+ */
 export default function RoiPage() {
   const [analyses, setAnalyses] = useState<RoiAnalysisView[] | null>(null)
+  const [showForm, setShowForm] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -29,25 +36,53 @@ export default function RoiPage() {
     return () => { cancelled = true }
   }, [])
 
+  const latest = analyses?.find((analysis) => analysis.status === 'completed' && analysis.hasReport) ?? null
+  const formOpen = showForm || (analyses !== null && !latest)
+
   return (
     <div className="space-y-8">
-      <div>
-        <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-horizon-700"><TrendingUp className="h-3.5 w-3.5" aria-hidden /> ROI analysis</div>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Build the ROI story for an account</h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Pick the account, the time frame and the extracts. The ROI Analyst computes leading indicators, adoption cohorts, engagement-to-outcome correlations and persona timing, then hands you an interactive dashboard you can question.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-horizon-700"><TrendingUp className="h-3.5 w-3.5" aria-hidden /> ROI analysis</div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">{latest ? latest.account : 'Build the ROI story for an account'}</h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            {latest
+              ? `${latest.timeframeLabel} · built ${relativeTime(latest.updatedAt)} from the account's extracts in the Repository.`
+              : 'Pick the account and the time frame. The ROI Analyst computes leading indicators, adoption cohorts, engagement-to-outcome correlations and persona timing, then hands you an interactive dashboard you can question.'}
+          </p>
+        </div>
+        {latest && (
+          <div className="flex items-center gap-2">
+            <Link href={`/roi/${latest.id}`}><Button size="sm"><MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden />Ask the analyst</Button></Link>
+            <a href={`/api/roi/analyses/${latest.id}/report`} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs font-medium hover:bg-muted">Full page <ExternalLink className="h-3 w-3" aria-hidden /></a>
+            <Button variant="outline" size="sm" onClick={() => setShowForm((value) => !value)}><RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />{showForm ? 'Hide' : 'New analysis'}</Button>
+          </div>
+        )}
       </div>
 
-      <div className="rounded-2xl border border-border bg-background p-5 shadow-sm">
-        <RoiForm />
-      </div>
+      {latest && (
+        <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
+          <iframe
+            title={`ROI dashboard for ${latest.account}`}
+            src={`/api/roi/analyses/${latest.id}/report`}
+            sandbox="allow-scripts"
+            className="block h-[calc(100vh-200px)] min-h-[720px] w-full"
+          />
+        </div>
+      )}
 
-      <section aria-labelledby="roi-past">
-        <h2 id="roi-past" className="text-sm font-medium">Past analyses</h2>
-        {analyses === null ? (
-          <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>
-        ) : analyses.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">Nothing yet. The first analysis appears here as soon as it starts.</p>
-        ) : (
+      {analyses === null ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>
+      ) : formOpen ? (
+        <div className="rounded-2xl border border-border bg-background p-5 shadow-sm">
+          {latest && <h2 className="mb-4 text-sm font-medium">New analysis</h2>}
+          <RoiForm />
+        </div>
+      ) : null}
+
+      {analyses && analyses.length > 0 && (
+        <section aria-labelledby="roi-past">
+          <h2 id="roi-past" className="text-sm font-medium">All analyses</h2>
           <ul className="mt-3 divide-y divide-border rounded-xl border border-border">
             {analyses.map((analysis) => (
               <li key={analysis.id}>
@@ -64,8 +99,8 @@ export default function RoiPage() {
               </li>
             ))}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   )
 }

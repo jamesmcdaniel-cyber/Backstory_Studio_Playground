@@ -1,31 +1,50 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, Sparkles } from 'lucide-react'
+import { Database, Loader2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { indentOnTab } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { ROI_TIMEFRAMES, type RoiTimeframePreset } from '@/lib/roi/timeframe'
-import { DatasetPicker } from './dataset-picker'
+
+type Source = { account: string; datasets: Partial<Record<'activity' | 'usage' | 'engagement' | 'stages', { documentId: string; filename: string; rows: number | null; loadedAt: string }>> }
+
+const KIND_LABEL: Record<string, string> = { activity: 'Activity', usage: 'Usage', engagement: 'Deal engagement', stages: 'Stage & persona' }
 
 /**
- * The static form: account, time frame, optional context, the extracts to
- * use. Submitting starts the run and lands on the analysis page, which
- * follows the run live — nobody has to prompt an agent.
+ * The static form: account, plain-English time frame, optional context.
+ * The account's extracts already live in the repository (loaded by an
+ * operator, or by the warehouse flow); nobody picks files here. Submitting
+ * starts the run and lands on the analysis page, which follows it live.
  */
 export function RoiForm() {
   const router = useRouter()
+  const [sources, setSources] = useState<Source[] | null>(null)
   const [account, setAccount] = useState('')
   const [timeframe, setTimeframe] = useState<RoiTimeframePreset>('last6_vs_prior6')
   const [context, setContext] = useState('')
-  const [datasets, setDatasets] = useState<Record<string, string | null>>({})
   const [submitting, setSubmitting] = useState(false)
 
-  const datasetIds = [...new Set(Object.values(datasets).filter((id): id is string => Boolean(id)))]
-  const canSubmit = account.trim().length > 0 && datasetIds.length > 0 && !submitting
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/roi/sources', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((data: { sources?: Source[] }) => {
+        if (cancelled) return
+        const list = data.sources ?? []
+        setSources(list)
+        if (list.length && !account) setAccount(list[0].account)
+      })
+      .catch(() => { if (!cancelled) setSources([]) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const selected = sources?.find((source) => source.account === account) ?? null
+  const kinds = selected ? (Object.keys(selected.datasets) as Array<keyof Source['datasets']>) : []
+  const canSubmit = Boolean(selected) && kinds.length > 0 && !submitting
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -35,7 +54,7 @@ export function RoiForm() {
       const response = await fetch('/api/roi/analyses', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ account: account.trim(), timeframe, context, datasetIds }),
+        body: JSON.stringify({ account, timeframe, context }),
       })
       const data = await response.json().catch(() => ({})) as { analysis?: { id: string }; error?: string }
       if (!response.ok || !data.analysis) throw new Error(data.error || 'The analysis could not be started.')
@@ -52,8 +71,27 @@ export function RoiForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label htmlFor="roi-account" className="text-sm font-medium">Account</label>
-          <Input id="roi-account" value={account} onChange={(event) => setAccount(event.target.value)} placeholder="e.g. Iron Mountain" className="mt-1.5" required maxLength={200} />
-          <p className="mt-1 text-xs text-muted-foreground">The customer the extracts belong to.</p>
+          {sources === null ? (
+            <div className="mt-1.5 flex h-10 items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading accounts…</div>
+          ) : sources.length === 0 ? (
+            <div className="mt-1.5 rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+              No accounts have extracts loaded yet. An operator loads an account's extracts into the Repository; it then appears here.
+            </div>
+          ) : (
+            <select id="roi-account" value={account} onChange={(event) => setAccount(event.target.value)} className="mt-1.5 h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+              {sources.map((source) => <option key={source.account} value={source.account}>{source.account}</option>)}
+            </select>
+          )}
+          {selected && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <Database className="h-3.5 w-3.5" aria-hidden />
+              {(['activity', 'usage', 'engagement', 'stages'] as const).map((kind) => (
+                <span key={kind} className={cn('rounded-full border px-2 py-0.5', selected.datasets[kind] ? 'border-horizon-300 bg-horizon-50 text-horizon-800' : 'border-border text-muted-foreground line-through')} title={selected.datasets[kind] ? `${selected.datasets[kind]!.filename} · ${selected.datasets[kind]!.rows?.toLocaleString() ?? '?'} rows` : 'Not loaded'}>
+                  {KIND_LABEL[kind]}
+                </span>
+              ))}
+            </p>
+          )}
         </div>
         <div>
           <p className="text-sm font-medium" id="roi-timeframe-label">Time frame</p>
@@ -77,12 +115,6 @@ export function RoiForm() {
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{ROI_TIMEFRAMES.find((option) => option.preset === timeframe)?.description}</p>
         </div>
-      </div>
-
-      <div>
-        <p className="text-sm font-medium">Data</p>
-        <p className="mb-2 mt-0.5 text-xs text-muted-foreground">Pick the extracts from the repository, or upload fresh ones. Sections without data are left out of the dashboard, not made up.</p>
-        <DatasetPicker value={datasets} onChange={setDatasets} />
       </div>
 
       <div>

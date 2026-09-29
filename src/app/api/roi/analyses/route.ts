@@ -22,7 +22,7 @@ const bodySchema = z.object({
   account: z.string().trim().min(1).max(200),
   timeframe: z.string().refine(isRoiTimeframePreset, 'Pick a time frame.'),
   context: z.string().max(ROI_CONTEXT_MAX_CHARS).default(''),
-  datasetIds: z.array(z.string().min(1)).min(1).max(ROI_MAX_DATASETS),
+  datasetIds: z.array(z.string().min(1)).max(ROI_MAX_DATASETS).optional(),
 })
 
 // POST /api/roi/analyses — start an analysis. Returns at once; the run

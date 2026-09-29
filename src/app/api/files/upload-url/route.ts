@@ -29,7 +29,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       mimeType: mimeType || 'application/octet-stream',
       size,
     })
-    return { success: true, upload: { id: upload.id, uploadUrl: upload.uploadUrl, token: upload.token } }
+    return { success: true, upload: { id: upload.id, uploadUrl: upload.uploadUrl, token: upload.token, bucket: upload.bucket, path: upload.storagePath } }
   } catch (error) {
     if (error instanceof DirectUploadUnavailableError) throw new ApiError(error.message, 501, 'DIRECT_UPLOAD_UNAVAILABLE')
     throw new ApiError(error instanceof Error ? error.message : 'The upload could not be started.', 400, 'UPLOAD_REJECTED')

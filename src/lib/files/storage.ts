@@ -152,7 +152,7 @@ export async function createPendingUpload(params: {
   filename: string
   mimeType: string
   size: number
-}): Promise<{ id: string; uploadUrl: string; token: string; storagePath: string }> {
+}): Promise<{ id: string; uploadUrl: string; token: string; storagePath: string; bucket: string }> {
   const supabase = supabaseAdmin()
   if (!supabase) throw new DirectUploadUnavailableError('Direct uploads need object storage, which this deployment does not have configured.')
   const ceiling = maxBytesForFile(params.filename)
@@ -188,7 +188,7 @@ export async function createPendingUpload(params: {
     throw new Error(`Could not start the upload: ${signed.error?.message ?? 'no signed URL'}`)
   }
   await prisma.storedFile.update({ where: { id: row.id, organizationId: params.organizationId }, data: { storagePath } })
-  return { id: row.id, uploadUrl: signed.data.signedUrl, token: signed.data.token, storagePath }
+  return { id: row.id, uploadUrl: signed.data.signedUrl, token: signed.data.token, storagePath, bucket: BUCKET }
 }
 
 async function deletePending(id: string, organizationId: string, size: number): Promise<void> {

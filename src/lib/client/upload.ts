@@ -9,6 +9,8 @@
  * with its 10 MB ceiling.
  */
 
+import { createClient } from '@/lib/supabase/client'
+
 export type UploadedFile = { id: string; filename: string; mimeType: string; size: number; url: string; content?: string }
 
 export const DIRECT_UPLOAD_MIN_BYTES = 4_000_000
@@ -40,13 +42,13 @@ export async function uploadDirect(file: File): Promise<UploadedFile | null> {
   })
   if (started.status === 501) return null
   if (!started.ok) throw new Error(await readError(started, `Could not upload ${file.name}.`))
-  const { upload } = await started.json() as { upload: { id: string; uploadUrl: string; token: string } }
-  const put = await fetch(upload.uploadUrl, {
-    method: 'PUT',
-    headers: { 'content-type': file.type || 'application/octet-stream', 'x-upsert': 'true' },
-    body: file,
-  })
-  if (!put.ok) throw new Error(`The upload of ${file.name} was interrupted. Try again.`)
+  const { upload } = await started.json() as { upload: { id: string; uploadUrl: string; token: string; bucket: string; path: string } }
+  // The PUT goes through the Supabase SDK, not a bare fetch: the storage
+  // gateway wants the project apikey alongside the signed token, and the
+  // SDK sets that (and the exact x-upsert the signature was made with).
+  const supabase = createClient()
+  const put = await supabase.storage.from(upload.bucket).uploadToSignedUrl(upload.path, upload.token, file, { contentType: file.type || 'application/octet-stream' })
+  if (put.error) throw new Error(`The upload of ${file.name} failed: ${put.error.message}`)
   const completed = await fetch(`/api/files/${upload.id}/complete`, { method: 'POST' })
   if (!completed.ok) throw new Error(await readError(completed, `Could not finish uploading ${file.name}.`))
   const data = await completed.json() as { file: UploadedFile }

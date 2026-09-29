@@ -34,7 +34,9 @@ export function isInternalEdition(): boolean {
  * `internalOnly` gate on the handler, which answers 404 before auth — two
  * distinct layers, deliberately not collapsed into one prefix match.
  */
-const CUSTOMER_BLOCKED_PREFIXES = ['/admin']
+// /roi is an operator surface: it reads People.ai warehouse extracts about
+// customers, which a customer workspace must never see exist.
+const CUSTOMER_BLOCKED_PREFIXES = ['/admin', '/roi']
 
 /**
  * Whether the current edition must refuse `pathname` before any auth work.

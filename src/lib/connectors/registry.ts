@@ -1,3 +1,5 @@
+import { isCustomerEdition } from '@/lib/edition'
+
 /**
  * Connector registry — the single source of truth for the tool "planes" an
  * agent can attach.
@@ -151,6 +153,19 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
       return value === 'code' || value.includes('python')
     },
     available: () => true,
+  },
+  {
+    key: 'ROI',
+    label: 'ROI analysis',
+    slug: 'plotly',
+    kind: 'builtin',
+    // Runs the fixed ROI prep over repository datasets and stores the result
+    // in the workspace's own file storage. Nothing leaves; no approval gate.
+    isWrite: false,
+    providerId: 'roi',
+    matches: (selected) => selected.toLowerCase() === 'roi' || selected.toLowerCase().includes('roi analysis'),
+    // Operator surface: the customer edition never sees the plane exist.
+    available: () => !isCustomerEdition(),
   },
   {
     key: 'Data Tables',

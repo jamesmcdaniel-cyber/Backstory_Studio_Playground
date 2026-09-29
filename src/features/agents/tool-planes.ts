@@ -26,6 +26,7 @@ import { DELIVERY_TOOLS, DELIVERY_PROVIDERS, nangoConfigured, resolveDeliveryCon
 import { withStaleConnectionRecovery } from '@/lib/nango/connection-recovery'
 import { REPOSITORY_TOOLS, RepositoryToolClient } from '@/lib/knowledge/tools'
 import { CODE_TOOLS, CodeAnalysisToolClient } from '@/lib/code-analysis/tools'
+import { ROI_TOOLS, RoiToolClient } from '@/lib/roi/tools'
 import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import {
@@ -467,6 +468,18 @@ export async function loadNativePlaneGroups(
       'backstory://code',
       new CodeAnalysisToolClient(organizationId, options.httpUserId ?? '', options.agentId ?? null),
       CODE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    ))
+  }
+
+  // ROI analysis — the fixed prep behind /roi. Same scope rules as the code
+  // plane for which datasets it may read; internal edition only.
+  const roiConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'roi')!
+  if (selected(roiConn) && roiConn.available()) {
+    groups.push(group(
+      roiConn,
+      'backstory://roi',
+      new RoiToolClient(organizationId, options.httpUserId ?? '', options.agentId ?? null),
+      ROI_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
     ))
   }
 

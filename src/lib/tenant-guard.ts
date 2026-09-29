@@ -61,7 +61,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'FlowSideEffect',
   'HuddleSegment', 'HuddleNote', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
   'KnowledgeCollection', 'KnowledgeDocumentCollection', 'AgentKnowledgeCollection',
-  'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent',
+  'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent', 'RoiAnalysis',
   'ActivityEvent', 'ActivityTriggerClaim', 'ActivitySourceCursor',
   'AdoptionWeek', 'AgentCohortWeek',
   'SlackIdentity', 'SlackChannelBinding', 'SlackCommandBinding',

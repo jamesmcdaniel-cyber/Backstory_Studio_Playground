@@ -33,6 +33,13 @@ export type AppSurface = {
 
 export const APP_SURFACES: AppSurface[] = [
   {
+    id: 'roi',
+    title: 'ROI',
+    href: '/roi',
+    purpose: 'build the ROI story for a customer account from activity, usage and deal-engagement extracts, then ask follow-up questions',
+    permission: 'agent.run',
+  },
+  {
     id: 'home',
     title: 'Home',
     href: '/dashboard',

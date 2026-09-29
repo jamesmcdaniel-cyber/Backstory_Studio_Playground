@@ -1745,6 +1745,10 @@ async function runAgentExecutionInner(
     // Degraded evidence rides on the output so a finished run stops reading as
     // a clean success when the search behind it timed out.
     const output = degraded.length ? { summary, degraded } : { summary }
+    const triggerLink = (() => {
+      const link = (execution.trigger as { link?: unknown } | null)?.link
+      return typeof link === 'string' && link.startsWith('/') ? link : null
+    })()
     // Flow-step conversation memory: persist this exchange so the session's
     // next run replays it. Best-effort — memory must never fail a finished run.
     if (stepMemory) {
@@ -1834,7 +1838,13 @@ async function runAgentExecutionInner(
       body: blockedReason ?? (headline || summary),
       agentTaskId: agent.id,
       executionId: execution.id,
+      // A run started from a page of its own (an ROI analysis) lands the
+      // reader back on that page, not on the generic run view.
+      ...(triggerLink ? { link: triggerLink } : {}),
     })
+    // The final status is the tick a waiting page cares about most; every
+    // intermediate event already broadcast one.
+    broadcastAgentEventTick(execution.id)
     // A Slack-initiated run answers in the thread it came from. Fire-and-forget
     // and self-describing: the Slack context lives on the execution's persisted
     // trigger, so the queue payload carries nothing extra and a non-Slack run
@@ -1924,7 +1934,9 @@ async function runAgentExecutionInner(
       body: message,
       agentTaskId: agent.id,
       executionId: execution.id,
+      ...((() => { const link = (execution.trigger as { link?: unknown } | null)?.link; return typeof link === 'string' && link.startsWith('/') ? { link } : {} })()),
     })
+    broadcastAgentEventTick(execution.id)
     throw error
   }
 }

@@ -90,6 +90,7 @@ model Organization {
   flowTemplateVersions           FlowTemplateVersion[]
   flows                          Flow[]
   storedFiles                    StoredFile[]
+  roiAnalyses                    RoiAnalysis[]
   customSignals                  CustomSignal[]
   pushSubscriptions              PushSubscription[]
   knowledgeDocuments             KnowledgeDocument[]
@@ -1704,6 +1705,38 @@ model FlowCollaborator {
 // Binary/original file uploads (run-form file inputs, future step outputs).
 // Bytes live in Supabase Storage when configured (backend 'supabase',
 // storagePath set) else inline in the row (backend 'db', data set).
+/// One "build the ROI story for account X over time frame Y" request. The
+/// work is an ordinary AgentExecution; this row is the page's handle on it:
+/// what was asked, which datasets, the rendered dashboard once the run
+/// finished, and the follow-up conversation (each answer is its own run).
+model RoiAnalysis {
+  id             String   @id @default(cuid())
+  organizationId String   @db.Uuid
+  userId         String
+  agentTaskId    String?
+  executionId    String?  @unique
+  account        String
+  timeframe      Json     @default("{}")
+  context        String   @default("") @db.Text
+  datasetIds     Json     @default("[]")
+  /// pending | running | completed | failed | blocked | cancelled
+  status         String   @default("pending")
+  error          String?  @db.Text
+  /// The agent's structured output (see src/lib/roi/contract.ts) — what the
+  /// dashboard renders and what follow-up questions are answered from.
+  results        Json?
+  reportHtml     String?  @db.Text
+  chat           Json     @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, userId])
+  @@map("roi_analyses")
+}
+
 model StoredFile {
   id             String   @id @default(cuid())
   organizationId String   @db.Uuid

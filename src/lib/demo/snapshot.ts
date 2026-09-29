@@ -50,6 +50,7 @@ export const PARENT_SCOPED_COPIES = [
 
 /** Never copied — each with the reason a reviewer needs. */
 export const EXCLUDED: Record<string, string> = {
+  RoiAnalysis: 'an operator-only ROI request tied to a real run, real datasets and a stored facts file; a demo sandbox starts with none and builds its own',
   AuditEvent: 'the audit trail is the record of the REAL workspace; a copy in a sandbox is noise at best',
   LlmCall: 'cost/latency accounting for real usage; demo runs write their own rows',
   ModelEvalResult: 'platform-level model quality measurements (same family as LlmCall); a demo copy would double-count real scores',

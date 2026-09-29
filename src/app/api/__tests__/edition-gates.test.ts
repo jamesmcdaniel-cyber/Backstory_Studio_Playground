@@ -49,6 +49,14 @@ export const INTERNAL_ONLY_ROUTES = [
   // caller's own) that spends provider API quota walking a workspace's Slack
   // history, same posture as the bench trigger it mirrors.
   'admin/activity/backfill',
+  // The ROI page: builds a customer's ROI story from People.ai warehouse
+  // extracts about that customer — an operator surface end to end, so its
+  // routes are as internal as /admin's. The customer edition 404s /roi at
+  // the edge too (CUSTOMER_BLOCKED_PREFIXES).
+  'roi/analyses',
+  'roi/analyses/[id]',
+  'roi/analyses/[id]/chat',
+  'roi/analyses/[id]/report',
 ]
 
 const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>; methods: string[] }> = [
@@ -61,6 +69,10 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'catalogue/entries', load: () => import('../catalogue/entries/route'), methods: ['GET'] },
   { name: 'catalogue/entries/[id]', load: () => import('../catalogue/entries/[id]/route'), methods: ['DELETE'] },
   { name: 'admin/costs', load: () => import('../admin/costs/route'), methods: ['GET'] },
+  { name: 'roi/analyses', load: () => import('../roi/analyses/route'), methods: ['GET', 'POST'] },
+  { name: 'roi/analyses/[id]', load: () => import('../roi/analyses/[id]/route'), methods: ['GET'] },
+  { name: 'roi/analyses/[id]/chat', load: () => import('../roi/analyses/[id]/chat/route'), methods: ['POST'] },
+  { name: 'roi/analyses/[id]/report', load: () => import('../roi/analyses/[id]/report/route'), methods: ['GET'] },
   { name: 'admin/domains', load: () => import('../admin/domains/route'), methods: ['GET', 'POST', 'PATCH'] },
   { name: 'admin/models', load: () => import('../admin/models/route'), methods: ['GET'] },
   { name: 'admin/models/bench', load: () => import('../admin/models/bench/route'), methods: ['POST'] },

@@ -21,7 +21,7 @@ import { AskBackstory } from '@/components/assistant/ask-backstory'
 
 // Route prefixes that get the app chrome. Everything else (/, /auth/*, /connect,
 // /privacy, /terms, /auth-code-error) renders bare.
-const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/data-tables', '/approvals', '/settings', '/admin']
+const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/data-tables', '/approvals', '/settings', '/admin', '/roi']
 
 // Only the agent HQ (/agents) + the flow builder want an edge-to-edge
 // (fullscreen) content area; the rest — incl. the Librarian assistant home

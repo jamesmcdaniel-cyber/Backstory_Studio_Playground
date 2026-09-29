@@ -31,14 +31,17 @@ CREATE UNIQUE INDEX "roi_analyses_executionId_key" ON "roi_analyses"("executionI
 DO $rls$
 DECLARE table_name text;
 BEGIN
-  FOREACH table_name IN ARRAY ARRAY['roi_analyses'] LOOP
+  FOREACH table_name IN ARRAY ARRAY[
+    'roi_analyses'
+  ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
     EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', table_name);
     EXECUTE format(
-      'CREATE POLICY tenant_isolation ON %I USING ("organizationId" = nullif(current_setting(''app.organization_id'', true), )::uuid) WITH CHECK ("organizationId" = nullif(current_setting(app.organization_id, true), )::uuid)',
+      'CREATE POLICY tenant_isolation ON %I USING ("organizationId" = nullif(current_setting(''app.organization_id'', true), '''')::uuid) WITH CHECK ("organizationId" = nullif(current_setting(''app.organization_id'', true), '''')::uuid)',
       table_name
     );
+
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'backstory_app') THEN
       EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I TO backstory_app', table_name);
     END IF;

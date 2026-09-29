@@ -249,8 +249,6 @@ const cases = (): Case[] => [
   { route: 'files', method: 'POST', run: async () => (await import('../files/route')).POST(rq('/api/files', 'POST', {})) },
   { route: 'roi/analyses', method: 'POST', run: async () => (await import('../roi/analyses/route')).POST(rq('/api/roi/analyses', 'POST', { account: 'Acme', timeframe: 'last6_vs_prior6', datasetIds: ['missing'] })) },
   { route: 'roi/analyses/[id]/chat', method: 'POST', run: async () => (await import('../roi/analyses/[id]/chat/route')).POST(rq('/api/roi/analyses/missing/chat', 'POST', { question: 'Why?' })) },
-  { route: 'files/upload-url', method: 'POST', run: async () => (await import('../files/upload-url/route')).POST(rq('/api/files/upload-url', 'POST', { filename: 'extract.csv', mimeType: 'text/csv', size: 1024 })) },
-  { route: 'files/[id]/complete', method: 'POST', run: async () => (await import('../files/[id]/complete/route')).POST(rq('/api/files/missing/complete', 'POST', {})) },
   { route: 'rag/backfill', method: 'POST', run: async () => (await import('../rag/backfill/route')).POST(rq('/api/rag/backfill', 'POST', {})) },
   { route: 'template-proposals/[id]/accept', method: 'POST', run: async () => (await import('../template-proposals/[id]/accept/route')).POST(rq('/api/template-proposals/missing/accept', 'POST', {})) },
   { route: 'template-proposals/[id]/dismiss', method: 'POST', run: async () => (await import('../template-proposals/[id]/dismiss/route')).POST(rq('/api/template-proposals/missing/dismiss', 'POST', {})) },
@@ -415,6 +413,13 @@ const SKIPS: Record<string, string> = {
   // handler's operations in src/lib/queue/__tests__/dead-letter-admin*.test.ts
   // (including a real Redis round-trip behind TEST_REDIS_URL).
   'admin/queue/dead-letters:POST': 'covered by src/app/api/admin/queue/__tests__/dead-letters-route.test.ts (gate) + src/lib/queue/__tests__/dead-letter-admin.test.ts (operations)',
+  // Direct-to-storage uploads need Supabase Storage, which the smoke env
+  // does not have: both routes answer 501 DIRECT_UPLOAD_UNAVAILABLE before
+  // touching anything (the browser then falls back to multipart). Same
+  // posture as the Nango routes' 503. The storage layer they call is covered
+  // in src/lib/files/__tests__.
+  'files/upload-url:POST': 'no coverage: needs SUPABASE_SERVICE_ROLE_KEY — answers 501 DIRECT_UPLOAD_UNAVAILABLE before any storage call; the storage helpers it wraps are unit-tested',
+  'files/[id]/complete:POST': 'no coverage: needs SUPABASE_SERVICE_ROLE_KEY — answers 501 DIRECT_UPLOAD_UNAVAILABLE before any storage call; the storage helpers it wraps are unit-tested',
 }
 
 test('every mutating handler is either smoke-tested or documented as skipped', () => {

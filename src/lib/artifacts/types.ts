@@ -25,6 +25,8 @@ export type ArtifactVersionView = {
   request: string | null
   createdAt: string
   bytes: number
+  /** How the viewer shows it: a sandboxed frame, or rendered Markdown. */
+  format: 'html' | 'markdown'
 }
 
 export type ArtifactView = {

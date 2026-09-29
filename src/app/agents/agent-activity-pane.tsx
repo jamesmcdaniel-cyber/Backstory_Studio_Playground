@@ -25,6 +25,7 @@ import {
   Wrench,
   X,
   XCircle,
+  FileOutput,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { startVisibleInterval } from '@/lib/client/visible-interval'
@@ -622,6 +623,16 @@ function RunRow({
         </div>
         <time className="shrink-0 font-mono text-xs tabular-nums text-fg-muted">{new Date(activity.startedAt).toLocaleString()}</time>
         <span role="presentation" className="flex shrink-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
+          {activity.artifactId && (
+            <Link
+              href={`/artifacts/${activity.artifactId}`}
+              title="Open the artifact this run produced"
+              aria-label="Open artifact"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-fg-muted transition-colors duration-150 hover:bg-horizon-50 hover:text-horizon-700"
+            >
+              <FileOutput className="h-4 w-4" />
+            </Link>
+          )}
           {isCancellable && (
             <button
               type="button"

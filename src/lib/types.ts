@@ -46,6 +46,8 @@ export type Teammate = {
 }
 
 export type Activity = {
+  /** The artifact this run produced (or revised), when it did — see /artifacts. */
+  artifactId?: string | null
   id: string
   agentTaskId?: string | null
   agentType: string

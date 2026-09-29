@@ -289,6 +289,7 @@ function AgentHQ() {
       at: selectedRun.startedAt,
       status: selectedRun.status.toLowerCase(),
       text,
+      artifactId: selectedRun.artifactId ?? null,
     }
   }, [selectedRun])
 

@@ -1,10 +1,12 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { describeSchedule } from '@/lib/scheduling/cadence'
 import { toast } from 'sonner'
-import { ArrowRight, Check, Clock, Loader2, MessageSquare, Play, Plus, Send, Settings2, Sparkles, Square } from 'lucide-react'
+import { ArrowRight, Check, Clock, Loader2, MessageSquare, Play, Plus, Send, Settings2, Sparkles, Square, FileOutput,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
@@ -213,7 +215,7 @@ export function AssistantPanel({
   agent: Agent | null
   hasFailedRun?: boolean
   /** The run expanded on the left, whose output renders at the top here. */
-  runOutput?: { title: string; at: string; status: string; text: string } | null
+  runOutput?: { title: string; at: string; status: string; text: string; artifactId?: string | null } | null
   onAgentUpdated: () => void
   /** Select another agent — used to jump to one a proposal just created. */
   onOpenAgent?: (agentId: string) => void
@@ -584,7 +586,14 @@ export function AssistantPanel({
               <div className={cn('rounded-lg border p-3', runOutput.status === 'failed' ? 'border-red-200 bg-red-50' : 'bg-white')}>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="eyebrow">{runOutput.status === 'failed' ? 'Run error' : 'Output'} · {runOutput.title}</p>
-                  <span className="shrink-0 text-xs text-fg-muted">{new Date(runOutput.at).toLocaleString()}</span>
+                  <span className="flex shrink-0 items-center gap-2 text-xs text-fg-muted">
+                    {runOutput.artifactId && (
+                      <Link href={`/artifacts/${runOutput.artifactId}`} className="inline-flex items-center gap-1 font-medium text-horizon-700 hover:underline">
+                        <FileOutput className="h-3 w-3" aria-hidden /> Open artifact
+                      </Link>
+                    )}
+                    {new Date(runOutput.at).toLocaleString()}
+                  </span>
                 </div>
                 <div className={cn('text-sm', runOutput.status === 'failed' && 'whitespace-pre-wrap text-red-700')}>
                   {runOutput.status === 'failed' ? runOutput.text : <AgentOutput text={runOutput.text} />}

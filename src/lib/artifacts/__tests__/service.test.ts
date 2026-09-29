@@ -27,7 +27,8 @@ test('the producing flow is read from either trigger shape', () => {
 
 test('a change request demands the whole revised document; a question forbids it', () => {
   const change = buildArtifactPrompt({ mode: 'change', title: 'Q3 review', content: '<html><body>doc</body></html>', message: 'Add a risks section', chat: [] })
-  assert.match(change, /COMPLETE revised HTML document/)
+  assert.match(change, /COMPLETE revised document/)
+  assert.match(change, /html fence/)
   assert.match(change, /REQUEST: Add a risks section/)
   assert.match(change, /<html><body>doc<\/body><\/html>/)
   const ask = buildArtifactPrompt({ mode: 'ask', title: 'Q3 review', content: 'doc', message: 'Why did it drop?', chat: [{ role: 'user', content: 'earlier', createdAt: 'x', status: 'completed' }, { role: 'agent', content: 'answer', createdAt: 'x', status: 'completed' }] })
@@ -46,4 +47,20 @@ test('a very long document is truncated with a marker, not dropped', () => {
 test('only the ROI dashboard kind runs scripts', () => {
   assert.equal(isInteractiveKind('roi_dashboard'), true)
   assert.equal(isInteractiveKind('report'), false)
+})
+
+test('headed Markdown of document length registers; a short reply does not', async () => {
+  const { markdownDocumentOf, markdownTitleOf } = await import('@/lib/html-detect')
+  const doc = '# Account plan: Acme\n\n' + 'Context paragraph. '.repeat(60) + '\n\n## Risks\n\n' + 'Risk detail. '.repeat(60)
+  assert.equal(markdownDocumentOf(doc), doc.trim())
+  assert.equal(markdownTitleOf(doc), 'Account plan: Acme')
+  assert.equal(markdownDocumentOf('## Summary\n\nWin rate rose 4 points.'), null)
+  assert.equal(markdownDocumentOf('x'.repeat(5_000)), null) // long, but no heading: a transcript, not a document
+  assert.equal(markdownDocumentOf('<html><body>' + 'x'.repeat(2_000) + '</body></html>'), null) // HTML is the other path
+})
+
+test('a change to a Markdown document asks for Markdown back', () => {
+  const prompt = buildArtifactPrompt({ mode: 'change', title: 'Plan', content: '# Plan\n\nbody', message: 'Add a timeline', chat: [] })
+  assert.match(prompt, /as Markdown, in the same structure/)
+  assert.doesNotMatch(prompt, /html fence/)
 })

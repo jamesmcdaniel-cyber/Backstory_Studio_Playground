@@ -1,5 +1,6 @@
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { versionContent, isInteractiveKind } from '@/lib/artifacts/service'
+import { looksLikeHtml } from '@/lib/html-detect'
 
 export const runtime = 'nodejs'
 
@@ -19,6 +20,10 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   if (!id || !versionId) throw new ApiError('Artifact and version ids are required.', 400, 'ID_REQUIRED')
   const found = await versionContent(auth.organizationId, id, versionId === 'current' ? 'current' : versionId)
   if (!found) throw new ApiError('Version not found.', 404, 'NOT_FOUND')
+  // A Markdown document is not a page: the viewer renders it itself.
+  if (!looksLikeHtml(found.content.slice(0, 4_000))) {
+    return new Response(found.content, { status: 200, headers: { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'private, no-store' } })
+  }
   const interactive = isInteractiveKind(found.kind)
   const body = /<html[\s>]/i.test(found.content)
     ? found.content

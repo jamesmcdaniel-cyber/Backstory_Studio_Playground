@@ -36,3 +36,20 @@ export function htmlTitleOf(html: string): string | null {
   const raw = (title || heading || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
   return raw ? raw.slice(0, 160) : null
 }
+
+const HEADING = /^#{1,3} \S/m
+/** Enough headed Markdown to be a document someone will keep, not a reply. */
+export function markdownDocumentOf(text: string): string | null {
+  const content = text.trim()
+  if (looksLikeHtml(content)) return null
+  const headings = (content.match(/^#{1,3} \S/gm) ?? []).length
+  if ((content.length >= 1_500 && headings >= 2) || (content.length >= 3_000 && HEADING.test(content))) return content
+  return null
+}
+
+/** A Markdown document's title: its first heading. */
+export function markdownTitleOf(text: string): string | null {
+  const heading = /^#{1,3} (.+)$/m.exec(text)?.[1]
+  const raw = heading?.replace(/[*_`]/g, '').trim()
+  return raw ? raw.slice(0, 160) : null
+}

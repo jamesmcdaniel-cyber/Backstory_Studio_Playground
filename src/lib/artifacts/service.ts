@@ -2,7 +2,7 @@ import type { Artifact, ArtifactVersion, Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
-import { htmlDocumentOf, htmlTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
+import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdownTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
@@ -146,16 +146,19 @@ export async function registerVersionFromExecution(params: {
   headline?: string | null
 }): Promise<{ artifactId: string; versionId: string; created: boolean } | null> {
   const html = htmlDocumentOf(params.summary)
-  if (!html) return null
   const t = (params.trigger ?? {}) as TriggerShape
   const targetId = str(t.artifactId)
   if (targetId) {
-    const target = await prisma.artifact.findFirst({ where: { id: targetId, organizationId: params.organizationId }, select: { id: true } })
-    if (target) {
+    const target = await prisma.artifact.findFirst({ where: { id: targetId, organizationId: params.organizationId }, select: { id: true, kind: true } })
+    // A change to a Markdown document comes back as Markdown; a change to an
+    // HTML report must come back as HTML (a prose reply is an answer, not a
+    // version — the chat shows it as such).
+    const revised = html ?? (target?.kind === 'document' && t.artifactMode === 'change' ? unwrapHtmlFence(params.summary).trim() || null : null)
+    if (target && revised) {
       const version = await addVersion({
         artifactId: target.id,
         organizationId: params.organizationId,
-        content: html,
+        content: revised,
         executionId: params.executionId,
         request: str(t.artifactRequest),
         createdByUserId: params.userId,
@@ -164,13 +167,16 @@ export async function registerVersionFromExecution(params: {
       return { artifactId: target.id, versionId: version.id, created: false }
     }
   }
-  const title = params.headline?.trim() || htmlTitleOf(html) || `${params.agentTitle} · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+  const markdown = html ? null : markdownDocumentOf(params.summary)
+  if (!html && !markdown) return null
+  const content = html ?? markdown!
+  const title = params.headline?.trim() || (html ? htmlTitleOf(html) : markdownTitleOf(content)) || `${params.agentTitle} · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
   const { artifact, version } = await createArtifact({
     organizationId: params.organizationId,
     userId: params.userId,
-    kind: 'report',
+    kind: html ? 'report' : 'document',
     title,
-    content: html,
+    content,
     agentTaskId: params.agentTaskId,
     flowId: flowIdFromTrigger(params.trigger),
     executionId: params.executionId,
@@ -255,6 +261,7 @@ export async function loadArtifact(organizationId: string, id: string): Promise<
       request: version.request,
       createdAt: version.createdAt.toISOString(),
       bytes: Buffer.byteLength(version.content),
+      format: looksLikeHtml(version.content.slice(0, 4_000)) ? 'html' : 'markdown',
     })),
     chat: chatOf(row),
     interactive: isInteractiveKind(row.kind),
@@ -289,7 +296,7 @@ async function reconcileChat(row: Artifact): Promise<Artifact> {
         if (version) {
           message.versionId = version.id
           message.content = message.mode === 'change' ? 'Done — a new version is ready.' : 'The answer is a new version of the artifact.'
-        } else if (message.mode === 'change' && htmlDocumentOf(text) === null) {
+        } else if (message.mode === 'change') {
           message.content = `The agent replied without a revised document:\n\n${unwrapHtmlFence(text).slice(0, 4_000)}`
         } else {
           message.content = unwrapHtmlFence(text) || 'The agent finished without an answer.'
@@ -325,8 +332,9 @@ export function buildArtifactPrompt(params: { mode: 'ask' | 'change'; title: str
     .map((m) => `${m.role === 'user' ? 'User' : 'You'}: ${m.content.slice(0, 1_200)}`)
     .join('\n\n')
   const doc = params.content.length > CONTEXT_MAX_CHARS ? `${params.content.slice(0, CONTEXT_MAX_CHARS)}\n<!-- truncated: the document continues -->` : params.content
+  const isHtml = looksLikeHtml(params.content.slice(0, 4_000))
   const head = params.mode === 'change'
-    ? `CHANGE REQUEST for the artifact "${params.title}". Revise the document below as asked and answer with the COMPLETE revised HTML document — every section, not only the changed part — inside one \`\`\`html fence and nothing else. Keep everything the request does not touch exactly as it is. Recompute with your tools only where the change needs new facts.`
+    ? `CHANGE REQUEST for the artifact "${params.title}". Revise the document below as asked and answer with the COMPLETE revised document — every section, not only the changed part — ${isHtml ? 'as one HTML document inside a single \`\`\`html fence' : 'as Markdown, in the same structure'} and nothing else. Keep everything the request does not touch exactly as it is. Recompute with your tools only where the change needs new facts.`
     : `QUESTION about the artifact "${params.title}". Answer in Markdown, grounded in the document below (and your tools where a fact is missing). Do not return the document.`
   return [head, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `${params.mode === 'change' ? 'REQUEST' : 'QUESTION'}: ${params.message.trim()}`].join('\n')
 }

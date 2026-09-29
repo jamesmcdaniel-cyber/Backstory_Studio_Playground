@@ -12,5 +12,14 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     orderBy: { startedAt: 'desc' },
     take: limit,
   })
-  return { success: true, activities }
+  // A run that produced an artifact links to it from the Runs panel. One
+  // query for the page of runs, not one per row.
+  const versions = activities.length
+    ? await prisma.artifactVersion.findMany({
+        where: { organizationId: auth.organizationId, executionId: { in: activities.map((activity) => activity.id) } },
+        select: { executionId: true, artifactId: true },
+      })
+    : []
+  const artifactByExecution = new Map(versions.map((version) => [version.executionId, version.artifactId]))
+  return { success: true, activities: activities.map((activity) => ({ ...activity, artifactId: artifactByExecution.get(activity.id) ?? null })) }
 }, { permission: 'agent.read' })

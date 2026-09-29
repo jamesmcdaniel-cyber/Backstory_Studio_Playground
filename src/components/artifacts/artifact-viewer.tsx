@@ -27,6 +27,7 @@ export function ArtifactViewer({ id }: { id: string }) {
   const [message, setMessage] = useState('')
   const [mode, setMode] = useState<'ask' | 'change'>('ask')
   const [sending, setSending] = useState(false)
+  const [markdown, setMarkdown] = useState<{ versionId: string; text: string } | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
@@ -50,6 +51,17 @@ export function ArtifactViewer({ id }: { id: string }) {
   useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'nearest' }) }, [artifact?.chat.length, pending])
   // A new version arriving moves the viewer to it.
   useEffect(() => { if (artifact?.currentVersionId) setVersionId(artifact.currentVersionId) }, [artifact?.currentVersionId])
+  // Markdown versions are rendered here rather than framed; fetch the text when the shown version changes.
+  const markdownVersionId = artifact?.versions.find((v) => v.id === (versionId ?? artifact.currentVersionId))?.format === 'markdown' ? (versionId ?? artifact?.currentVersionId ?? null) : null
+  useEffect(() => {
+    if (!markdownVersionId) return
+    let cancelled = false
+    fetch(`/api/artifacts/${id}/versions/${markdownVersionId}/content`, { cache: 'no-store' })
+      .then((response) => (response.ok ? response.text() : Promise.reject(new Error('Could not load the document.'))))
+      .then((text) => { if (!cancelled) setMarkdown({ versionId: markdownVersionId, text }) })
+      .catch(() => { if (!cancelled) setMarkdown({ versionId: markdownVersionId, text: '_The document could not be loaded._' }) })
+    return () => { cancelled = true }
+  }, [id, markdownVersionId])
 
   const send = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -95,6 +107,7 @@ export function ArtifactViewer({ id }: { id: string }) {
 
   const shownVersion = artifact.versions.find((v) => v.id === versionId) ?? artifact.versions[0]
   const canAsk = Boolean(artifact.agent)
+  const shownMarkdown = shownVersion?.format === 'markdown' ? shownVersion : null
 
   return (
     <div className="space-y-4">
@@ -141,7 +154,11 @@ export function ArtifactViewer({ id }: { id: string }) {
             </div>
           )}
           <div className="overflow-hidden rounded-xl border border-border bg-white">
-            {shownVersion ? (
+            {shownMarkdown ? (
+              <div className="prose prose-sm max-w-none overflow-y-auto p-6 dark:prose-invert" style={{ maxHeight: 'calc(100vh - 240px)' }}>
+                {markdown?.versionId === shownMarkdown.id ? <Markdown>{markdown.text}</Markdown> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>}
+              </div>
+            ) : shownVersion ? (
               <iframe
                 key={shownVersion.id}
                 title={artifact.title}

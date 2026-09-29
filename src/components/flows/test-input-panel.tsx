@@ -1,5 +1,6 @@
 'use client'
 
+import { uploadFile } from '@/lib/client/upload'
 import { useId } from 'react'
 import type { TriggerInputField } from '@/lib/flows/graph'
 import { indentOnTab } from '@/components/ui/textarea'
@@ -53,14 +54,9 @@ export function inputForField({
             }
             // Binary or large files (PDFs included) upload to org storage; the
             // server extracts text when the format supports it.
-            const form = new FormData()
-            form.append('file', file)
             onChange(JSON.stringify({ filename: file.name, uploading: true }))
-            fetch('/api/files', { method: 'POST', body: form })
-              .then((response) => response.json())
-              .then((data) => {
-                if (!data?.success) throw new Error(data?.error || 'upload failed')
-                const { id, filename, content, url } = data.file
+            uploadFile(file)
+              .then(({ id, filename, content, url }) => {
                 onChange(JSON.stringify({ fileId: id, filename, url, ...(content ? { content } : {}) }))
               })
               .catch(() => {

@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedTexts, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
-import { saveStoredFile, deleteStoredFile } from '@/lib/files/storage'
+import { saveStoredFile, deleteStoredFile, readStoredFile, isDatasetFilename } from '@/lib/files/storage'
+import { profileDataset, datasetProfileText } from './dataset'
 import { extractTextAuto, chunkText, isSupported } from './extract'
 import { deriveIndexState } from './index-state'
 import { DocxExtractionError } from './docx'
@@ -202,7 +203,7 @@ export type KnowledgeTextAssetInput = {
   sizeBytes?: number
   description?: string
   storedFileId?: string | null
-  assetType?: 'file' | 'pull_artifact' | 'note' | 'project' | 'synced_file'
+  assetType?: 'file' | 'pull_artifact' | 'note' | 'project' | 'synced_file' | 'dataset'
   sourceType?: 'upload' | 'integration' | 'manual'
   sourceProvider?: string | null
   sourceConnectionId?: string | null
@@ -302,6 +303,19 @@ export async function ingestKnowledgeFile(params: {
   buffer: Buffer
   description?: string
 }) {
+  // A CSV/TSV is a dataset, whatever its size: stored whole, described by its
+  // profile, computed over in run_code. Indexing its first 200K characters as
+  // prose was how a 38K-row extract became "about 300 rows" to an agent.
+  if (isDatasetFilename(params.filename)) {
+    const stored = await saveStoredFile({
+      organizationId: params.organizationId,
+      userId: params.userId,
+      filename: params.filename,
+      mimeType: params.mimeType,
+      buffer: params.buffer,
+    })
+    return ingestKnowledgeDataset({ ...params, storedFileId: stored.id, buffer: params.buffer })
+  }
   if (!isSupported(params.mimeType, params.filename)) {
     throw new UnsupportedFileError(
       'Unsupported file type. Upload PDF, DOCX, text, markdown, CSV, JSON, HTML, or source files.',
@@ -335,5 +349,50 @@ export async function ingestKnowledgeFile(params: {
     storedFileId: stored.id,
     assetType: 'file',
     sourceType: 'upload',
+  })
+}
+
+
+/**
+ * Ingest a tabular file already in StoredFile (a direct upload, a flow step's
+ * output) as a dataset: profile it, index the profile, keep the bytes whole.
+ * `buffer` may be passed when the caller already holds the bytes.
+ */
+export async function ingestKnowledgeDataset(params: {
+  organizationId: string
+  agentId: string | null
+  userId: string | null
+  storedFileId: string
+  filename?: string
+  description?: string
+  buffer?: Buffer
+  sourceType?: 'upload' | 'integration' | 'manual'
+  sourceMetadata?: SourceMetadata
+}) {
+  const stored = params.buffer
+    ? null
+    : await readStoredFile(params.storedFileId, params.organizationId)
+  const buffer = params.buffer ?? stored?.buffer
+  if (!buffer) throw new Error('The uploaded file could not be read.')
+  const filename = params.filename ?? stored?.filename ?? 'dataset.csv'
+  if (!isDatasetFilename(filename)) throw new UnsupportedFileError('Datasets are CSV or TSV files.')
+  const profile = profileDataset(buffer, filename)
+  if (!profile.columns.length || profile.rowCount === 0) {
+    await deleteStoredFile(params.storedFileId, params.organizationId).catch(() => {})
+    throw new UnsupportedFileError('That file has no rows to work with.')
+  }
+  return ingestKnowledgeText({
+    organizationId: params.organizationId,
+    agentId: params.agentId,
+    userId: params.userId,
+    filename,
+    mimeType: filename.toLowerCase().endsWith('.tsv') ? 'text/tab-separated-values' : 'text/csv',
+    content: datasetProfileText(profile),
+    sizeBytes: buffer.length,
+    description: params.description,
+    storedFileId: params.storedFileId,
+    assetType: 'dataset',
+    sourceType: params.sourceType ?? 'upload',
+    sourceMetadata: { ...(params.sourceMetadata ?? {}), dataset: { ...profile, sample: profile.sample.slice(0, 3) } },
   })
 }

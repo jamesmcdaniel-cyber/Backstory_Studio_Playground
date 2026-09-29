@@ -1,5 +1,6 @@
 'use client'
 
+import { isDatasetFile, uploadDirect, DIRECT_UPLOAD_MIN_BYTES } from '@/lib/client/upload'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Download,
@@ -98,6 +99,7 @@ function formatSize(bytes: number): string {
 
 function sourceLabel(asset: RepositoryAsset): string {
   if (asset.assetType === 'project') return 'Project'
+  if (asset.assetType === 'dataset') return 'Dataset'
   if (asset.sourceTool === 'github_repository_sync') return 'GitHub sync'
   if (asset.sourceType === 'integration') {
     return asset.sourceProvider?.replace(/^nango:/, '').replace(/[-_]/g, ' ') || 'Integration pull'
@@ -249,12 +251,28 @@ export function ContentRepository({ writable }: { writable: boolean }) {
     let completed = 0
     try {
       for (const file of uploadFiles) {
-        const form = new FormData()
-        form.append('file', file)
-        if (uploadAgentId) form.append('agentId', uploadAgentId)
-        if (uploadDescription.trim()) form.append('description', uploadDescription.trim())
-        if (uploadCollectionIds.length) form.append('collectionIds', JSON.stringify(uploadCollectionIds))
-        const response = await fetch('/api/repository', { method: 'POST', body: form })
+        // Datasets and big files go straight to storage, then the repository
+        // is told about them; small files still travel with the request.
+        const direct = isDatasetFile(file) || file.size > DIRECT_UPLOAD_MIN_BYTES ? await uploadDirect(file) : null
+        const response = direct
+          ? await fetch('/api/repository', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                storedFileId: direct.id,
+                ...(uploadAgentId ? { agentId: uploadAgentId } : {}),
+                ...(uploadDescription.trim() ? { description: uploadDescription.trim() } : {}),
+                ...(uploadCollectionIds.length ? { collectionIds: uploadCollectionIds } : {}),
+              }),
+            })
+          : await (() => {
+              const form = new FormData()
+              form.append('file', file)
+              if (uploadAgentId) form.append('agentId', uploadAgentId)
+              if (uploadDescription.trim()) form.append('description', uploadDescription.trim())
+              if (uploadCollectionIds.length) form.append('collectionIds', JSON.stringify(uploadCollectionIds))
+              return fetch('/api/repository', { method: 'POST', body: form })
+            })()
         const data = await response.json().catch(() => ({}))
         if (!response.ok) throw new Error(data.error || `Could not upload ${file.name}.`)
         completed += 1
@@ -609,7 +627,7 @@ export function ContentRepository({ writable }: { writable: boolean }) {
       <Dialog open={uploadOpen} onOpenChange={(open) => { if (!busy) setUploadOpen(open) }}>
         <DialogContent className="max-w-xl"><DialogHeader><DialogTitle>Upload files</DialogTitle><DialogDescription>Originals are scanned and retained. Readable text is extracted and indexed for the selected agent scope.</DialogDescription></DialogHeader>
           <div className="space-y-4">
-            <div className="rounded-xl border border-dashed p-5 text-center"><Upload className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2 text-sm font-medium">PDF, DOCX, text, Markdown, CSV, JSON, HTML, and source files</p><p className="mt-1 text-xs text-muted-foreground">Up to 10 MB per file</p><input ref={uploadRef} type="file" multiple className="mt-3 block w-full text-sm" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.log,.pdf,.docx,text/*,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))} /></div>
+            <div className="rounded-xl border border-dashed p-5 text-center"><Upload className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2 text-sm font-medium">PDF, DOCX, text, Markdown, CSV, JSON, HTML, and source files</p><p className="mt-1 text-xs text-muted-foreground">Up to 10 MB per file; CSV and TSV datasets up to 200 MB</p><input ref={uploadRef} type="file" multiple className="mt-3 block w-full text-sm" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.log,.pdf,.docx,text/*,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))} /></div>
             <div className="space-y-1.5"><Label>Agent scope</Label><select value={uploadAgentId} onChange={(event) => setUploadAgentId(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm"><option value="">All agents in this workspace</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.title}</option>)}</select><p className="text-xs text-muted-foreground">Agent-specific files are only retrieved by that agent.</p></div>
             {collections.length > 0 && (
               <fieldset className="space-y-1.5">

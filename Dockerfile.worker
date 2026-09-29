@@ -16,6 +16,11 @@ COPY prisma ./prisma/
 # Install all dependencies (ts-node, tsconfig-paths are dev deps)
 RUN npm ci && npm cache clean --force
 
+# Dataset runs need pandas/numpy, which pyodide fetches on first use. Fetch
+# them now so a run never waits on (or fails without) the CDN.
+COPY scripts/warm-pyodide.mjs ./scripts/
+RUN node scripts/warm-pyodide.mjs
+
 # Copy source
 COPY src ./src/
 

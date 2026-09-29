@@ -1,5 +1,6 @@
 'use client'
 
+import { isDatasetFile, uploadDirect, DIRECT_UPLOAD_MIN_BYTES } from '@/lib/client/upload'
 import { useEffect, useRef, useState } from 'react'
 import { Upload, FileText, Trash2, Loader2 } from 'lucide-react'
 import Link from 'next/link'
@@ -95,9 +96,11 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
     setUploading(true)
     try {
       for (const file of Array.from(files)) {
-        const form = new FormData()
-        form.append('file', file)
-        const response = await fetch(`/api/agents/${agentId}/knowledge`, { method: 'POST', body: form })
+        const direct = isDatasetFile(file) || file.size > DIRECT_UPLOAD_MIN_BYTES ? await uploadDirect(file).catch((error: Error) => { toast.error(error.message); return null }) : null
+        if (!direct && (isDatasetFile(file) || file.size > DIRECT_UPLOAD_MIN_BYTES) && file.size > 10_000_000) continue
+        const response = direct
+          ? await fetch(`/api/agents/${agentId}/knowledge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ storedFileId: direct.id }) })
+          : await (() => { const form = new FormData(); form.append('file', file); return fetch(`/api/agents/${agentId}/knowledge`, { method: 'POST', body: form }) })()
         const data = await response.json().catch(() => ({}))
         if (response.ok && data.document) {
           setDocs((prev) => [data.document, ...prev])

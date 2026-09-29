@@ -14,6 +14,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { datasetFrameName } from '@/lib/code-analysis/frame-name'
 import { retrieveKnowledge } from './retrieve'
 import { agentScopeWhere } from './scope'
 import { listCollections } from './collections'
@@ -214,19 +215,32 @@ export class RepositoryToolClient {
           orderBy: { updatedAt: 'desc' },
           take: REPOSITORY_LIST_MAX,
           select: {
-            id: true, filename: true, description: true, charCount: true, indexState: true,
+            id: true, filename: true, description: true, charCount: true, indexState: true, assetType: true, sizeBytes: true, sourceMetadata: true,
             collections: { select: { collection: { select: { name: true } } } },
           },
         })
         return {
-          documents: documents.map((document) => ({
-            documentId: document.id,
-            filename: document.filename,
-            description: document.description,
-            chars: document.charCount,
-            collections: document.collections.map((join) => join.collection.name),
-            searchable: document.indexState === 'indexed' ? 'full' : 'keyword only',
-          })),
+          documents: documents.map((document) => {
+            const dataset = document.assetType === 'dataset'
+              ? (document.sourceMetadata as { dataset?: { rowCount?: number; columns?: { name: string }[] } } | null)?.dataset
+              : undefined
+            return {
+              documentId: document.id,
+              filename: document.filename,
+              description: document.description,
+              ...(dataset
+                ? {
+                    kind: 'dataset',
+                    frame: datasetFrameName(document.filename),
+                    rows: dataset.rowCount,
+                    columns: dataset.columns?.length,
+                    note: 'Load with run_code (documentIds) — arrives as input["frames"][frame].',
+                  }
+                : { chars: document.charCount }),
+              collections: document.collections.map((join) => join.collection.name),
+              searchable: document.indexState === 'indexed' ? 'full' : 'keyword only',
+            }
+          }),
           collections: (await listCollections({ organizationId: this.organizationId }))
             .map((collection) => ({ name: collection.name, documents: collection.documentCount })),
         }

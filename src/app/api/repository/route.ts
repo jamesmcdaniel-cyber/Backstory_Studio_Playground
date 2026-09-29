@@ -1,6 +1,6 @@
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
-import { ingestKnowledgeFile, UnsupportedFileError } from '@/lib/knowledge/ingest'
+import { ingestKnowledgeFile, ingestKnowledgeDataset, UnsupportedFileError } from '@/lib/knowledge/ingest'
 import {
   assertRepositoryAgentScope,
   listRepositoryAssets,
@@ -33,17 +33,24 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 }, { permission: 'flow.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const form = await request.formData().catch(() => null)
+  // Two ways in. Multipart carries the bytes (small files). JSON names a file
+  // that was uploaded straight to storage — the only way a dataset larger
+  // than a request body gets here.
+  const isJson = /application\/json/i.test(request.headers.get('content-type') ?? '')
+  const json = isJson ? (await request.json().catch(() => null)) as Record<string, unknown> | null : null
+  const form = isJson ? null : await request.formData().catch(() => null)
   const file = form?.get('file')
-  if (!(file instanceof File)) throw new ApiError('Choose a file to upload.', 400, 'FILE_REQUIRED')
-  if (file.size > STORED_FILE_MAX_BYTES) {
+  const storedFileId = typeof json?.storedFileId === 'string' ? json.storedFileId : null
+  if (!isJson && !(file instanceof File)) throw new ApiError('Choose a file to upload.', 400, 'FILE_REQUIRED')
+  if (isJson && !storedFileId) throw new ApiError('Send the storedFileId of a completed upload.', 400, 'FILE_REQUIRED')
+  if (file instanceof File && file.size > STORED_FILE_MAX_BYTES) {
     throw new ApiError(`Files can be at most ${Math.round(STORED_FILE_MAX_BYTES / 1_000_000)} MB.`, 413, 'FILE_TOO_LARGE')
   }
-  const agentIdRaw = form?.get('agentId')
-  const descriptionRaw = form?.get('description')
+  const agentIdRaw = json ? json.agentId : form?.get('agentId')
+  const descriptionRaw = json ? json.description : form?.get('description')
   // Optional collection membership, as a JSON array in a form field. Invalid
   // JSON degrades to no collections rather than failing the upload.
-  const collectionIdsRaw = form?.get('collectionIds')
+  const collectionIdsRaw = json ? JSON.stringify(json.collectionIds ?? []) : form?.get('collectionIds')
   const collectionIds: string[] = (() => {
     if (typeof collectionIdsRaw !== 'string' || !collectionIdsRaw.trim()) return []
     try {
@@ -63,15 +70,23 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
 
   try {
-    const document = await ingestKnowledgeFile({
-      organizationId: auth.organizationId,
-      agentId,
-      userId: auth.dbUser.id,
-      filename: file.name || 'upload',
-      mimeType: file.type || 'application/octet-stream',
-      buffer: Buffer.from(await file.arrayBuffer()),
-      description: typeof descriptionRaw === 'string' ? descriptionRaw : undefined,
-    })
+    const document = storedFileId
+      ? await ingestKnowledgeDataset({
+          organizationId: auth.organizationId,
+          agentId,
+          userId: auth.dbUser.id,
+          storedFileId,
+          description: typeof descriptionRaw === 'string' ? descriptionRaw : undefined,
+        })
+      : await ingestKnowledgeFile({
+          organizationId: auth.organizationId,
+          agentId,
+          userId: auth.dbUser.id,
+          filename: (file as File).name || 'upload',
+          mimeType: (file as File).type || 'application/octet-stream',
+          buffer: Buffer.from(await (file as File).arrayBuffer()),
+          description: typeof descriptionRaw === 'string' ? descriptionRaw : undefined,
+        })
     if (collectionIds.length) {
       await setDocumentCollections({
         organizationId: auth.organizationId,

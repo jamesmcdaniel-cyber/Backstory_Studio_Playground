@@ -170,7 +170,16 @@ export async function GET(request: Request) {
       select: { id: true, organizationId: true },
       take: Math.min(CAP, 500),
     })
-    const fileResults = await Promise.allSettled(staleFiles.map((file) => deleteStoredFile(file.id, file.organizationId)))
+    // A direct upload that never called /complete leaves a pending row and a
+    // quota reservation (and maybe an object). A day is far longer than any
+    // upload takes, so anything older is abandoned.
+    // systemPrisma: global retention read; each deletion below is re-scoped to its org.
+    const abandonedUploads = await systemPrisma.storedFile.findMany({
+      where: { status: 'pending', createdAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+      select: { id: true, organizationId: true },
+      take: 500,
+    })
+    const fileResults = await Promise.allSettled([...staleFiles, ...abandonedUploads].map((file) => deleteStoredFile(file.id, file.organizationId)))
     const storedFilesPruned = fileResults.filter((result) => result.status === 'fulfilled' && result.value).length
     const storedFileDeleteFailures = fileResults.filter((result) => result.status === 'rejected').length
     if (storedFileDeleteFailures) {

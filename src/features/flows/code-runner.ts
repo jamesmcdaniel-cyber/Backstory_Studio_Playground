@@ -5,6 +5,10 @@ import { loadPyodide, type PyodideAPI } from 'pyodide'
 export type CodeLanguage = 'javascript' | 'python'
 export type CodeMode = 'all' | 'each'
 
+/** A tabular file mounted into the Python sandbox's virtual filesystem and
+ *  handed to the code as a pandas DataFrame under `input["frames"][name]`. */
+export type CodeDataset = { name: string; filename: string; bytes: Buffer }
+
 type CodeRunOptions = {
   language: CodeLanguage
   mode: CodeMode
@@ -16,6 +20,9 @@ type CodeRunOptions = {
    *  and date coercion) to Python's builtins. Agents' `run_code` sets it;
    *  plain flow code steps keep the minimal builtin set. */
   analysis?: boolean
+  /** Dataset mode (Python only): mounts these files and loads pandas/numpy.
+   *  Bytes never cross into the model — only what the code returns does. */
+  datasets?: CodeDataset[]
 }
 
 /** The value the user code returned, plus any console.log / print output it
@@ -29,6 +36,14 @@ export type CodeRunResult = {
 const MAX_OUTPUT_BYTES = 1_000_000
 const MAX_ITEMS = 1_000
 const DEFAULT_TIMEOUT_MS = 5_000
+const TIMEOUT_MAX_MS = 30_000
+// Dataset runs are pandas over tens of megabytes: a 30 s ceiling would turn a
+// legitimate 24-month cohort analysis into a timeout, and the chart series a
+// dashboard needs do not fit in 1 MB. Both ceilings still exist — they are
+// just sized for the work.
+export const DATASET_TIMEOUT_MAX_MS = 300_000
+const DATASET_MAX_OUTPUT_BYTES = 5_000_000
+const DATASET_MOUNT = '/datasets'
 const MAX_LOG_ENTRIES = 200
 let pyodidePromise: Promise<PyodideAPI> | undefined
 let pythonQueue: Promise<void> = Promise.resolve()
@@ -47,6 +62,15 @@ function getPyodide(): Promise<PyodideAPI> {
     return pyodide
   })
   return pyodidePromise
+}
+
+let pandasPromise: Promise<void> | undefined
+/** pandas + numpy are pyodide packages, not part of the npm bundle: the first
+ *  load fetches the wheels into pyodide's package cache (pre-warmed in the
+ *  worker image by scripts/warm-pyodide.mjs), later loads come from disk. */
+function loadPandas(pyodide: PyodideAPI): Promise<void> {
+  pandasPromise ??= pyodide.loadPackage(['pandas', 'numpy'], { messageCallback: () => undefined }).then(() => undefined)
+  return pandasPromise
 }
 
 // The AST gate blocks imports, filesystem/process primitives, and dunder-based
@@ -126,13 +150,64 @@ try:
             "isinstance": isinstance, "to_number": to_number, "parse_date": parse_date, "month_key": month_key,
             "KeyError": KeyError, "TypeError": TypeError, "ZeroDivisionError": ZeroDivisionError,
         })
+    user_input = request.get("input")
+    datasets = request.get("datasets") or []
+    if datasets:
+        import pandas as pd
+        import numpy as np
+        import math
+
+        def clean(value):
+            # pandas hands back numpy scalars, NaN and Timestamps — none of
+            # which JSON.parse on the host will accept. Normalise once here so
+            # the code can return frames and series as they are.
+            if isinstance(value, dict):
+                return {str(k): clean(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple, set)):
+                return [clean(v) for v in value]
+            if isinstance(value, pd.DataFrame):
+                return clean(value.to_dict(orient="records"))
+            if isinstance(value, pd.Series):
+                return clean(value.to_dict())
+            if isinstance(value, pd.Index):
+                return clean(list(value))
+            if isinstance(value, np.generic):
+                return clean(value.item())
+            if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+                return None
+            if value is pd.NaT:
+                return None
+            if isinstance(value, (pd.Timestamp, datetime.datetime, datetime.date)):
+                return value.isoformat()
+            if isinstance(value, (pd.Period, pd.Interval, pd.Timedelta, datetime.timedelta)):
+                return str(value)
+            return value
+
+        def records(frame):
+            return clean(frame)
+
+        frames = {}
+        for dataset in datasets:
+            sep = "\t" if dataset["filename"].lower().endswith(".tsv") else ","
+            frames[dataset["name"]] = pd.read_csv(dataset["path"], sep=sep, low_memory=False)
+        if isinstance(user_input, dict):
+            user_input = dict(user_input, frames=frames)
+        else:
+            user_input = {"frames": frames, "data": user_input}
+        safe_builtins.update({"pd": pd, "np": np, "records": records, "clean": clean})
     scope = {"__builtins__": safe_builtins}
     exec(compile(tree, "flow-code.py", "exec"), scope, scope)
-    value = scope["__flow_user__"](request.get("input"), request.get("context") or {})
+    value = scope["__flow_user__"](user_input, request.get("context") or {})
+    if datasets:
+        value = clean(value)
     # Analysis output may hold dates; render them as strings rather than failing.
     _flow_result_json = json.dumps({"ok": True, "value": value, "logs": logs}, separators=(",", ":"), default=str if request.get("analysis") else None)
 except BaseException as error:
     _flow_result_json = json.dumps({"ok": False, "error": str(error), "logs": logs}, separators=(",", ":"))
+finally:
+    # Frames are tens of MB; nothing from this run may survive into the next.
+    for _name in ("frames", "datasets", "user_input", "scope", "value", "request", "tree"):
+        globals().pop(_name, None)
 
 _flow_result_json
 `
@@ -148,8 +223,8 @@ function itemsOf(input: unknown): unknown[] {
   return [input]
 }
 
-function parseResponse(raw: string): CodeRunResult {
-  if (Buffer.byteLength(raw) > MAX_OUTPUT_BYTES) throw new Error('Code step output exceeded 1 MB.')
+function parseResponse(raw: string, maxOutputBytes = MAX_OUTPUT_BYTES): CodeRunResult {
+  if (Buffer.byteLength(raw) > maxOutputBytes) throw new Error(`Code step output exceeded ${Math.round(maxOutputBytes / 1_000_000)} MB.`)
   const response = JSON.parse(raw) as { ok: boolean; value?: unknown; error?: string; logs?: unknown }
   const logs = Array.isArray(response.logs) ? response.logs.map((entry) => String(entry)) : []
   if (!response.ok) throw new Error(response.error || 'Code step failed.')
@@ -228,6 +303,17 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
   // remove the one temporary global after every execution.
   const execution = pythonQueue.catch(() => undefined).then(async () => {
     const pyodide = await getPyodide()
+    const datasets = options.datasets ?? []
+    const mounted: string[] = []
+    if (datasets.length) {
+      await loadPandas(pyodide)
+      if (!pyodide.FS.analyzePath(DATASET_MOUNT).exists) pyodide.FS.mkdir(DATASET_MOUNT)
+      datasets.forEach((dataset, index) => {
+        const path = `${DATASET_MOUNT}/${index}-${dataset.name.replace(/[^\w.-]+/g, '_')}`
+        pyodide.FS.writeFile(path, dataset.bytes)
+        mounted.push(path)
+      })
+    }
     Atomics.store(pythonInterruptBuffer, 0, 0)
     Atomics.store(pythonInterruptBuffer, 1, 0)
     // A separate Node thread can flip Pyodide's signal word even while Python
@@ -250,9 +336,10 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
       input: options.input ?? null,
       context: options.context ?? {},
       analysis: options.analysis === true,
+      datasets: datasets.map((dataset, index) => ({ name: dataset.name, filename: dataset.filename, path: mounted[index] })),
     }))
     try {
-      result = parseResponse(String(pyodide.runPython(PYTHON_HOST)))
+      result = parseResponse(String(pyodide.runPython(PYTHON_HOST)), datasets.length ? DATASET_MAX_OUTPUT_BYTES : MAX_OUTPUT_BYTES)
       if (Atomics.load(pythonInterruptBuffer, 1) === 1) {
         throw new Error(`Code step timed out after ${Math.round(timeoutMs / 1000)}s.`)
       }
@@ -263,6 +350,9 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
     } finally {
       void timer.terminate()
       pyodide.globals.delete('_flow_request_json')
+      for (const path of mounted) {
+        try { pyodide.FS.unlink(path) } catch { /* already gone */ }
+      }
       Atomics.store(pythonInterruptBuffer, 0, 0)
       Atomics.store(pythonInterruptBuffer, 1, 0)
     }
@@ -274,7 +364,9 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
 }
 
 async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<CodeRunResult> {
-  const timeoutMs = Math.max(1_000, Math.min(30_000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS))
+  const ceiling = options.datasets?.length ? DATASET_TIMEOUT_MAX_MS : TIMEOUT_MAX_MS
+  const timeoutMs = Math.max(1_000, Math.min(ceiling, options.timeoutMs ?? DEFAULT_TIMEOUT_MS))
+  if (options.datasets?.length && options.language !== 'python') throw new Error('Datasets are available to Python code only.')
   return options.language === 'javascript'
     ? runJavaScript(options, timeoutMs)
     : runPython(options, timeoutMs)

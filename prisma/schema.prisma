@@ -1714,6 +1714,9 @@ model StoredFile {
   backend        String   @default("db")
   storagePath    String?
   data           Bytes?
+  /// ready | pending. Pending rows hold a quota reservation for a direct-to-
+  /// storage upload that has not been verified yet; reads never return them.
+  status         String   @default("ready")
   createdAt      DateTime @default(now())
 
   organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -2106,7 +2109,7 @@ model KnowledgeDocument {
   /// present, remains immutable in StoredFile and is available for download.
   content            String?   @db.Text
   storedFileId       String?   @unique
-  assetType          String    @default("file") // file | pull_artifact | note | project | synced_file
+  assetType          String    @default("file") // file | pull_artifact | note | project | synced_file | dataset
   sourceType         String    @default("upload") // upload | integration | manual
   sourceProvider     String?
   sourceConnectionId String?

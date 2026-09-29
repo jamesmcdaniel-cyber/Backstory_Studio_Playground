@@ -247,6 +247,8 @@ const cases = (): Case[] => [
   { route: 'executions/[id]', method: 'DELETE', run: async () => (await import('../executions/[id]/route')).DELETE(rq(`/api/executions/${executionId}`, 'DELETE', {})) },
   { route: 'executions/[id]/reply', method: 'POST', run: async () => (await import('../executions/[id]/reply/route')).POST(rq(`/api/executions/${executionId}/reply`, 'POST', {})) },
   { route: 'files', method: 'POST', run: async () => (await import('../files/route')).POST(rq('/api/files', 'POST', {})) },
+  { route: 'files/upload-url', method: 'POST', run: async () => (await import('../files/upload-url/route')).POST(rq('/api/files/upload-url', 'POST', { filename: 'extract.csv', mimeType: 'text/csv', size: 1024 })) },
+  { route: 'files/[id]/complete', method: 'POST', run: async () => (await import('../files/[id]/complete/route')).POST(rq('/api/files/missing/complete', 'POST', {})) },
   { route: 'rag/backfill', method: 'POST', run: async () => (await import('../rag/backfill/route')).POST(rq('/api/rag/backfill', 'POST', {})) },
   { route: 'template-proposals/[id]/accept', method: 'POST', run: async () => (await import('../template-proposals/[id]/accept/route')).POST(rq('/api/template-proposals/missing/accept', 'POST', {})) },
   { route: 'template-proposals/[id]/dismiss', method: 'POST', run: async () => (await import('../template-proposals/[id]/dismiss/route')).POST(rq('/api/template-proposals/missing/dismiss', 'POST', {})) },

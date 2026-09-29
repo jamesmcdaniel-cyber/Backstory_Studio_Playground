@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
-import { ingestKnowledgeFile, UnsupportedFileError } from '@/lib/knowledge/ingest'
+import { ingestKnowledgeFile, ingestKnowledgeDataset, UnsupportedFileError } from '@/lib/knowledge/ingest'
 import { STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
 import {
   deleteRepositoryAsset,
@@ -58,6 +58,19 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 // POST — upload a file (multipart form-data, field "file") as knowledge.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const agentId = await requireAgent(request, auth)
+  // JSON names a file already uploaded straight to storage (a dataset too
+  // large for a request body); multipart carries small files itself.
+  if (/application\/json/i.test(request.headers.get('content-type') ?? '')) {
+    const body = (await request.json().catch(() => null)) as { storedFileId?: unknown } | null
+    if (typeof body?.storedFileId !== 'string') throw new ApiError('Send the storedFileId of a completed upload.')
+    try {
+      const document = await ingestKnowledgeDataset({ organizationId: auth.organizationId, agentId, userId: auth.dbUser.id, storedFileId: body.storedFileId })
+      return { success: true, document }
+    } catch (error) {
+      if (error instanceof UnsupportedFileError) throw new ApiError(error.message, 415, 'UNSUPPORTED_TYPE')
+      throw error
+    }
+  }
   const form = await request.formData().catch(() => null)
   const file = form?.get('file')
   if (!(file instanceof File)) throw new ApiError('Attach a file in the "file" field.')

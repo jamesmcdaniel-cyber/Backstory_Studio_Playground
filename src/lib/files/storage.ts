@@ -51,7 +51,10 @@ function ensureBucket(supabase: NonNullable<ReturnType<typeof supabaseAdmin>>): 
   bucketReady ??= (async () => {
     const existing = await supabase.storage.getBucket(BUCKET)
     if (!existing.error && existing.data) return
-    const created = await supabase.storage.createBucket(BUCKET, { public: false, fileSizeLimit: DATASET_MAX_BYTES })
+    // No per-bucket size limit: it may not exceed the project's own cap (50 MB
+    // on the free plan), and a limit above it makes creation fail outright.
+    // The project cap applies either way; our ceilings are enforced in code.
+    const created = await supabase.storage.createBucket(BUCKET, { public: false })
     // A concurrent creator winning the race is fine; anything else is not.
     if (created.error && !/already exists|duplicate/i.test(created.error.message)) {
       bucketReady = null

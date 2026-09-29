@@ -25,6 +25,7 @@ import { getPeopleAiClientForUser, getPeopleAiServiceClient } from '@/lib/people
 import { DELIVERY_TOOLS, DELIVERY_PROVIDERS, nangoConfigured, resolveDeliveryConnection, resolveNangoConnection, type DeliveryCapability, type DeliveryConnection } from '@/lib/nango/delivery'
 import { withStaleConnectionRecovery } from '@/lib/nango/connection-recovery'
 import { REPOSITORY_TOOLS, RepositoryToolClient } from '@/lib/knowledge/tools'
+import { CODE_TOOLS, CodeAnalysisToolClient } from '@/lib/code-analysis/tools'
 import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import {
@@ -457,6 +458,18 @@ export async function loadNativePlaneGroups(
     ))
   }
 
+  // Code & data analysis — always available, no credential, no egress. It
+  // loads repository documents under the same scope as the Repository plane.
+  const codeConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'code')!
+  if (selected(codeConn)) {
+    groups.push(group(
+      codeConn,
+      'backstory://code',
+      new CodeAnalysisToolClient(organizationId, options.httpUserId ?? '', options.agentId ?? null),
+      CODE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    ))
+  }
+
   // Adapter regression checks — always available and entirely offline. No
   // credential to gate on, so unlike every other plane here it can never
   // report itself unavailable.
@@ -713,6 +726,10 @@ export async function resolveFlowToolExecutor(params: {
         isWrite: dataTableToolIsWrite(params.toolName),
         execute: (name, args) => client.executeTool('', name, args),
       }
+    }
+    if (ref === 'code') {
+      const client = new CodeAnalysisToolClient(organizationId, userId)
+      return { provider: ref, isWrite: false, execute: (name, args) => client.executeTool('', name, args) }
     }
     if (ref === 'slack' || ref === 'email' || ref === 'http') {
       const descriptor = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === ref)!

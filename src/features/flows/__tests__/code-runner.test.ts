@@ -162,3 +162,47 @@ test('interrupts Python/WASM that exceeds its deadline', async () => {
     /timed out/,
   )
 })
+
+test('analysis mode gives Python the data helpers an agent needs for a CSV', async () => {
+  const { output } = await runFlowCode({
+    language: 'python',
+    mode: 'all',
+    analysis: true,
+    code: [
+      'by_rep = defaultdict(list)',
+      'for row in input:',
+      '    by_rep[row["rep"]].append(to_number(row["amount"]))',
+      'return {',
+      '    "avg": {rep: mean(v) for rep, v in sorted(by_rep.items())},',
+      '    "median": median([1, 3, 2]),',
+      '    "months": [month_key(d) for d in ["2026-01-15", "02/03/2026", "Mar 4, 2026"]],',
+      '    "top": Counter([r["rep"] for r in input]).most_common(1),',
+      '}',
+    ].join('\n'),
+    input: [
+      { rep: 'Ana', amount: '$1,000' },
+      { rep: 'Ana', amount: '3000' },
+      { rep: 'Bo', amount: '12.5%' },
+    ],
+  })
+  assert.deepEqual(output, {
+    avg: { Ana: 2000, Bo: 12.5 },
+    median: 2,
+    months: ['2026-01', '2026-02', '2026-03'],
+    top: [['Ana', 2]],
+  })
+})
+
+test('analysis helpers stay out of plain flow code', async () => {
+  await assert.rejects(
+    runFlowCode({ language: 'python', mode: 'all', code: 'return mean([1, 2])', input: null }),
+    /mean/,
+  )
+})
+
+test('analysis mode still blocks imports', async () => {
+  await assert.rejects(
+    runFlowCode({ language: 'python', mode: 'all', analysis: true, code: 'import os\nreturn 1', input: null }),
+    /Imports/,
+  )
+})

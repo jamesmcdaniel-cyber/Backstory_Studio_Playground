@@ -446,8 +446,10 @@ async function loadTools(
   // Each gated on its availability AND a matching providers entry.
   // 'repository' rides along unconditionally: the retrieval it replaces
   // (pre-run passage injection) reached every agent with documents, so the
-  // tools that replace it must too. Read-only, so no approval-gate impact.
-  for (const group of await loadNativePlaneGroups(organizationId, { providers: [...providers, 'repository'], httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId })) pushGroup(group)
+  // tools that replace it must too. 'code' rides along for the same reason:
+  // an agent that can read a CSV but not compute over it can only refuse or
+  // guess. Both read-only, so no approval-gate impact.
+  for (const group of await loadNativePlaneGroups(organizationId, { providers: [...providers, 'repository', 'code'], httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId })) pushGroup(group)
 
   // ---- Nango delivery (outbound writes as the acting user) -----------------
   // Slack/Gmail/Salesforce writes through the org's Nango connections,

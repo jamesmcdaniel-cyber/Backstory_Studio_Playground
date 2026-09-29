@@ -87,6 +87,17 @@ const clamp = (value: unknown, fallback: number, min: number, max: number): numb
   return Math.max(min, Math.min(max, n))
 }
 
+/**
+ * The documents a repository caller may read: the agent's scope when an agent
+ * is calling, otherwise (MCP, flows) org-wide documents plus the caller's own.
+ * Shared with the code-analysis plane, which loads the same documents as data.
+ */
+export function repositoryScopeWhere(organizationId: string, userId: string, agentId: string | null) {
+  return agentId
+    ? agentScopeWhere(organizationId, agentId)
+    : { OR: [{ agentId: null }, { userId }] }
+}
+
 export class RepositoryToolClient {
   /**
    * `agentId` is the agent's own id when an agent is calling. MCP callers pass
@@ -100,9 +111,7 @@ export class RepositoryToolClient {
   ) {}
 
   private scopeWhere() {
-    return this.agentId
-      ? agentScopeWhere(this.organizationId, this.agentId)
-      : { OR: [{ agentId: null }, { userId: this.userId }] }
+    return repositoryScopeWhere(this.organizationId, this.userId, this.agentId)
   }
 
   private async collectionIdByName(name: string): Promise<string | null> {

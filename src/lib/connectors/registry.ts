@@ -138,6 +138,21 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     available: () => true,
   },
   {
+    key: 'Code',
+    label: 'Code & data analysis',
+    slug: 'python',
+    kind: 'builtin',
+    // Sandboxed compute (WASM, no network/filesystem). The code can only
+    // return a value, so the plane never triggers the approval gate.
+    isWrite: false,
+    providerId: 'code',
+    matches: (selected) => {
+      const value = selected.toLowerCase()
+      return value === 'code' || value.includes('python')
+    },
+    available: () => true,
+  },
+  {
     key: 'Data Tables',
     label: 'Data Tables',
     slug: 'postgresql',

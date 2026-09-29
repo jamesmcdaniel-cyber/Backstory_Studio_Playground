@@ -12,6 +12,10 @@ type CodeRunOptions = {
   input: unknown
   context?: Record<string, unknown>
   timeoutMs?: number
+  /** Adds the data-analysis helpers (statistics, Counter/defaultdict, number
+   *  and date coercion) to Python's builtins. Agents' `run_code` sets it;
+   *  plain flow code steps keep the minimal builtin set. */
+  analysis?: boolean
 }
 
 /** The value the user code returned, plus any console.log / print output it
@@ -49,7 +53,7 @@ function getPyodide(): Promise<PyodideAPI> {
 // object traversal before the function is compiled. Only a small builtin
 // allowlist is exposed. The host request crosses the WASM boundary as JSON.
 const PYTHON_HOST = String.raw`
-import ast, json
+import ast, json, statistics, collections, datetime, re
 
 request = json.loads(_flow_request_json)
 source = "def __flow_user__(input, context):\n" + "".join("    " + line + "\n" for line in request["code"].splitlines())
@@ -86,10 +90,47 @@ try:
         "round": round, "set": set, "sorted": sorted, "str": str, "sum": sum,
         "tuple": tuple, "zip": zip, "Exception": Exception, "ValueError": ValueError,
     }
+    if request.get("analysis"):
+        def to_number(value, default=None):
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return value
+            text = re.sub(r"[\s$€£,%]", "", str(value or ""))
+            if text.startswith("(") and text.endswith(")"):
+                text = "-" + text[1:-1]
+            try:
+                return float(text)
+            except ValueError:
+                return default
+
+        date_formats = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%d-%b-%Y", "%b %d, %Y", "%B %d, %Y", "%Y-%m")
+        def parse_date(value):
+            text = str(value or "").strip()
+            try:
+                return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+            for fmt in date_formats:
+                try:
+                    return datetime.datetime.strptime(text, fmt)
+                except ValueError:
+                    pass
+            return None
+
+        def month_key(value):
+            parsed = parse_date(value)
+            return parsed.strftime("%Y-%m") if parsed else None
+
+        safe_builtins.update({
+            "mean": statistics.fmean, "median": statistics.median, "stdev": statistics.stdev,
+            "Counter": collections.Counter, "defaultdict": collections.defaultdict,
+            "isinstance": isinstance, "to_number": to_number, "parse_date": parse_date, "month_key": month_key,
+            "KeyError": KeyError, "TypeError": TypeError, "ZeroDivisionError": ZeroDivisionError,
+        })
     scope = {"__builtins__": safe_builtins}
     exec(compile(tree, "flow-code.py", "exec"), scope, scope)
     value = scope["__flow_user__"](request.get("input"), request.get("context") or {})
-    _flow_result_json = json.dumps({"ok": True, "value": value, "logs": logs}, separators=(",", ":"))
+    # Analysis output may hold dates; render them as strings rather than failing.
+    _flow_result_json = json.dumps({"ok": True, "value": value, "logs": logs}, separators=(",", ":"), default=str if request.get("analysis") else None)
 except BaseException as error:
     _flow_result_json = json.dumps({"ok": False, "error": str(error), "logs": logs}, separators=(",", ":"))
 
@@ -208,6 +249,7 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
       code: options.code,
       input: options.input ?? null,
       context: options.context ?? {},
+      analysis: options.analysis === true,
     }))
     try {
       result = parseResponse(String(pyodide.runPython(PYTHON_HOST)))

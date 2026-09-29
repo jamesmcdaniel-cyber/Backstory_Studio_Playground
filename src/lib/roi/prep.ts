@@ -53,7 +53,7 @@ def classify():
             stages = df
         elif has(df, "months") and has(df, "email") and has(df, "meeting_count"):
             activity = df
-        elif find_col(df, ["engagement"]) is not None and find_col(df, ["opportunity"]) is not None:
+        elif find_col(df, ["engagement"]) is not None and (find_col(df, ["won"]) is not None or find_col(df, ["close"]) is not None):
             opp = df
         elif find_col(df, ["email"]) is not None:
             usage = df
@@ -187,7 +187,7 @@ else:
 
 # ---------------------------------------------------------------- opportunities
 def opp_level_frame(df, source):
-    idc = "opportunity_crm_id" if has(df, "opportunity_crm_id") else (find_col(df, ["opportunity", "id"]) or find_col(df, ["opp", "id"]))
+    idc = "opportunity_crm_id" if has(df, "opportunity_crm_id") else (find_col(df, ["opportunity", "id"]) or find_col(df, ["opp", "id"]) or find_col(df, ["crm_id"]) or ("id" if has(df, "id") else None))
     won_c = "opportunity_is_won" if has(df, "opportunity_is_won") else find_col(df, ["is_won"]) or find_col(df, ["won"])
     type_c = "opportunity_type" if has(df, "opportunity_type") else find_col(df, ["type"], exclude=["activity"])
     score_c = "opportunity_engagement_level" if has(df, "opportunity_engagement_level") else (find_col(df, ["engagement", "score"]) or find_col(df, ["engagement", "level"]) or find_col(df, ["engagement"], exclude=["account"]))
@@ -213,13 +213,24 @@ def opp_level_frame(df, source):
     if name_c:
         o = o[~o[name_c].astype(str).str.lower().str.contains("framework", na=False)]
     o = o[~o["type"].str.lower().str.contains("framework", na=False)]
-    if created_c and close_c:
+    days_c = find_col(df, ["open_to_close"]) or find_col(df, ["cycle"]) or find_col(df, ["days_to_close"])
+    if days_c:
+        o["days"] = fnum(o[days_c])
+    elif created_c and close_c:
         cr = pd.to_datetime(o[created_c], errors="coerce")
         cl = pd.to_datetime(o[close_c], errors="coerce")
         o["days"] = (cl - cr).dt.days
-        o.loc[o["days"] < 0, "days"] = np.nan
     else:
         o["days"] = np.nan
+    o.loc[o["days"] < 0, "days"] = np.nan
+    # Close dates limited to the activity window, as the reference does, so
+    # the deal story and the behaviour story describe the same period.
+    if close_c and activity is not None:
+        cl = pd.to_datetime(o[close_c], errors="coerce")
+        lo_m = pd.to_datetime(months[0] + "-01")
+        hi_m = pd.to_datetime(months[-1] + "-01") + pd.offsets.MonthEnd(1)
+        keep = cl.isna() | ((cl >= lo_m) & (cl <= hi_m))
+        o = o[keep]
     return o[["id", "won", "score", "type", "amount", "days"]]
 
 def bucket_rows(o, key_col, label_fn):
@@ -254,6 +265,9 @@ OPP = None
 opp_frame = None
 if opp is not None:
     opp_frame = opp_level_frame(opp, "Opportunity engagement")
+if opp_frame is not None and stages is not None and opp_frame["amount"].isna().all() and has(stages, "opportunity_amount") and has(stages, "opportunity_crm_id"):
+    amounts = stages.drop_duplicates("opportunity_crm_id").set_index(stages.drop_duplicates("opportunity_crm_id")["opportunity_crm_id"].astype(str))["opportunity_amount"]
+    opp_frame["amount"] = fnum(opp_frame["id"].map(amounts))
 if opp_frame is None and stages is not None:
     opp_frame = opp_level_frame(stages, "Closed deals by stage")
     if opp_frame is not None:
@@ -394,7 +408,10 @@ else:
         breadth_k.setdefault(min(k, 6), []).append(i)
     breadth = [{"k": k, "n": len(ids), "win_rate": wr(ids), "med_days_won": med_days_won(ids)} for k, ids in sorted(breadth_k.items())]
     early_tot = early.groupby("id")["acts"].sum()
+    # Quintiles among deals that had early activity at all: a deal with none
+    # is the transactional / late-entry case, not a low-intensity one.
     eq_series = pd.Series({i: float(early_tot.get(i, 0)) for i in pre_ids})
+    eq_series = eq_series[eq_series > 0]
     early_q = []
     if len(eq_series) >= 25:
         q = pd.qcut(eq_series.rank(method="first"), 5, labels=False)

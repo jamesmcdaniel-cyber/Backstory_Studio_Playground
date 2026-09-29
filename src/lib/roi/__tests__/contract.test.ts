@@ -102,3 +102,12 @@ test('prompts name the datasets by frame and document id', () => {
   assert.match(follow, /FACTS SUMMARY/)
   assert.match(follow, /QUESTION: Why did VP meetings drop\?/)
 })
+
+test('an over-long narrative is trimmed rather than rejected', () => {
+  const long = { ...narrative, lede: 'x'.repeat(3_000), findings: [{ ...narrative.findings[0], p: 'y'.repeat(5_000) }, narrative.findings[1]] }
+  const result = extractRoiNarrative(JSON.stringify(long))
+  assert.equal(result.error, undefined)
+  assert.ok(result.data!.lede.length <= 1_200)
+  assert.ok(result.data!.lede.endsWith('…'))
+  assert.ok(result.data!.findings[0].p.length <= 1_200)
+})

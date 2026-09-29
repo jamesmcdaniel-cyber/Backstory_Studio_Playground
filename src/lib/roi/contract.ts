@@ -10,14 +10,14 @@ import { z } from 'zod'
  * missing are omitted from the page, so their asides are optional.
  */
 
-const para = z.string().min(1).max(900)
+const para = z.string().min(1).max(2_000)
 const paras = z.array(para).min(1).max(4)
 
 export const roiNarrativeSchema = z.object({
   /** One sentence, the thesis. Rendered as the masthead headline. */
-  headline: z.string().min(10).max(160),
+  headline: z.string().min(10).max(240),
   /** Two or three sentences under the headline. */
-  lede: z.string().min(10).max(500),
+  lede: z.string().min(10).max(1_200),
   findings: z.array(z.object({
     /** The figure, formatted: "2.0×", "+54%", "30%", "+9 pts". */
     fig: z.string().min(1).max(16),
@@ -26,12 +26,12 @@ export const roiNarrativeSchema = z.object({
     /** The finding as a short heading. */
     h: z.string().min(1).max(90),
     /** One or two sentences with the numbers that prove it. */
-    p: z.string().min(1).max(600),
+    p: z.string().min(1).max(1_200),
     /** Which tab shows the detail. */
     tab: z.enum(['lead', 'adopt', 'users', 'deal', 'stage']),
   })).min(2).max(4),
   /** Three or four "what to watch" items; a bold lead phrase then the point. */
-  watch: z.array(z.object({ lead: z.string().min(1).max(90), text: z.string().min(1).max(500) })).min(2).max(5),
+  watch: z.array(z.object({ lead: z.string().min(1).max(160), text: z.string().min(1).max(1_200) })).min(2).max(6),
   notes: z.object({
     lead: paras.optional(),
     adopt: paras.optional(),
@@ -46,10 +46,29 @@ export const roiNarrativeSchema = z.object({
     breadth: paras.optional(),
   }),
   /** Data notes for the Method tab — joins that did not match, exclusions, anything a sceptical reader should know. */
-  caveats: z.array(z.string().max(400)).max(10).default([]),
+  caveats: z.array(z.string().max(800)).max(12).default([]),
 })
 
 export type RoiNarrative = z.infer<typeof roiNarrativeSchema>
+
+/** A narrative that runs long is trimmed, not rejected: the page has room
+ *  limits, the analysis does not deserve to fail over them. Strings are cut
+ *  at a generous ceiling and lists at their maximum length. */
+function clampStrings(value: unknown, depth = 0): unknown {
+  if (depth > 6) return value
+  if (typeof value === 'string') return value.length > 2_000 ? value.slice(0, 1_997).trimEnd() + '…' : value
+  if (Array.isArray(value)) return value.slice(0, 12).map((item) => clampStrings(item, depth + 1))
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      const limit = key === 'headline' ? 240 : key === 'lede' ? 1_200 : key === 'fig' ? 16 : key === 'cap' ? 80 : key === 'h' ? 90 : key === 'lead' ? 160 : key === 'p' || key === 'text' ? 1_200 : null
+      const clamped = clampStrings(item, depth + 1)
+      out[key] = limit !== null && typeof clamped === 'string' && clamped.length > limit ? clamped.slice(0, limit - 1).trimEnd() + '…' : clamped
+    }
+    return out
+  }
+  return value
+}
 
 export function extractRoiNarrative(text: string): { data: RoiNarrative; error?: undefined } | { data?: undefined; error: string } {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
@@ -66,7 +85,7 @@ export function extractRoiNarrative(text: string): { data: RoiNarrative; error?:
       lastError = `The agent output was not valid JSON: ${error instanceof Error ? error.message : String(error)}`
       continue
     }
-    const result = roiNarrativeSchema.safeParse(parsed)
+    const result = roiNarrativeSchema.safeParse(clampStrings(parsed))
     if (result.success) return { data: result.data }
     const issue = result.error.issues[0]
     lastError = `The agent output did not match the ROI narrative contract at ${issue.path.join('.') || 'root'}: ${issue.message}`

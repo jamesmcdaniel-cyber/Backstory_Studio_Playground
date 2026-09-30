@@ -1,3 +1,6 @@
+/** A file the platform refuses to store; the message is safe to show the uploader. */
+export class FileRejectedError extends Error {}
+
 const TEXT_MIME = /^text\//i
 
 function startsWith(buffer: Buffer, bytes: number[]): boolean {
@@ -33,17 +36,43 @@ export function detectFileMime(buffer: Buffer, declared: string, filename: strin
 export function verifyFileMime(buffer: Buffer, declared: string, filename: string): string {
   const detected = detectFileMime(buffer, declared, filename)
   if ((/^application\/pdf/i.test(declared) || /\.pdf$/i.test(filename)) && detected !== 'application/pdf') {
-    throw new Error('The uploaded file is named or labeled as a PDF but its contents are not a valid PDF.')
+    throw new FileRejectedError('The uploaded file is named or labeled as a PDF but its contents are not a valid PDF.')
   }
   return detected
 }
 
-/** Optional malware-scanner hook. When required, absence/outage fails closed. */
+/**
+ * Executable formats never belong in a workspace's files: Windows PE, ELF,
+ * Mach-O (both byte orders, 32/64-bit and universal). Checked on every
+ * upload whether or not a scanner is configured — it needs only the head.
+ */
+const EXECUTABLE_SIGNATURES: number[][] = [
+  [0x4d, 0x5a],
+  [0x7f, 0x45, 0x4c, 0x46],
+  [0xfe, 0xed, 0xfa, 0xce], [0xfe, 0xed, 0xfa, 0xcf], [0xce, 0xfa, 0xed, 0xfe], [0xcf, 0xfa, 0xed, 0xfe],
+  [0xca, 0xfe, 0xba, 0xbe],
+]
+
+export function assertNotExecutable(buffer: Buffer): void {
+  if (EXECUTABLE_SIGNATURES.some((signature) => startsWith(buffer, signature))) {
+    throw new FileRejectedError('Executable files cannot be uploaded.')
+  }
+}
+
+/**
+ * Malware scanning. With FILE_SCAN_URL set, every untrusted upload is sent to
+ * the scanner and anything it doesn't call clean is rejected. Without one,
+ * the built-in checks (content-derived type, no executables) are the gate —
+ * unless FILE_SCAN_REQUIRED=true, which makes a missing or failing scanner
+ * reject uploads. Production used to imply "required", and with no scanner
+ * deployed that turned every small upload into a 500.
+ */
 export async function scanFileBuffer(buffer: Buffer, filename: string): Promise<void> {
+  assertNotExecutable(buffer)
   const url = process.env.FILE_SCAN_URL?.trim()
-  const required = process.env.NODE_ENV === 'production' || process.env.FILE_SCAN_REQUIRED === 'true'
+  const required = process.env.FILE_SCAN_REQUIRED === 'true'
   if (!url) {
-    if (required) throw new Error('File scanning is required but FILE_SCAN_URL is not configured.')
+    if (required) throw new FileRejectedError('Uploads are paused: file scanning is required but no scanner is configured.')
     return
   }
   try {
@@ -54,9 +83,13 @@ export async function scanFileBuffer(buffer: Buffer, filename: string): Promise<
       signal: AbortSignal.timeout(20_000),
     })
     const result = await response.json().catch(() => ({})) as { clean?: boolean }
-    if (!response.ok || result.clean !== true) throw new Error('The file did not pass malware scanning.')
+    if (response.ok && result.clean === false) throw new FileRejectedError('The file did not pass malware scanning.')
+    if (!response.ok || result.clean !== true) throw new Error('The malware scanner did not return a result.')
   } catch (error) {
-    if (required) throw error
-    // Optional scanners may degrade without taking ordinary uploads down.
+    // A scanner that says "infected" always rejects; one that is down only
+    // rejects when scanning is required.
+    if (error instanceof FileRejectedError || required) {
+      throw error instanceof FileRejectedError ? error : new FileRejectedError('The malware scanner is unavailable; try again shortly.')
+    }
   }
 }

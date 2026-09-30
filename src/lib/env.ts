@@ -15,7 +15,8 @@ const REQUIRED_IN_PRODUCTION = [
   'NEXT_PUBLIC_SUPABASE_URL',
   'NEXT_PUBLIC_SUPABASE_ANON_KEY',
   'ENCRYPTION_KEY',
-  'FILE_SCAN_URL',
+  // FILE_SCAN_URL is optional: without it uploads pass the built-in checks
+  // (src/lib/files/security.ts); FILE_SCAN_REQUIRED=true makes it mandatory.
 ] as const
 
 /** The model provider key agent runs require. Anthropic is the only endpoint

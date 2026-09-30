@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { prisma, tenantTransaction } from '@/lib/prisma'
-import { scanFileBuffer, verifyFileMime } from '@/lib/files/security'
+import { assertNotExecutable, FileRejectedError, scanFileBuffer, verifyFileMime } from '@/lib/files/security'
 
 /**
  * Original-file storage for uploads (run-form file inputs and future step
@@ -77,7 +77,7 @@ export async function saveStoredFile(params: {
 }): Promise<{ id: string; filename: string; mimeType: string; size: number }> {
   const ceiling = maxBytesForFile(params.filename)
   if (params.buffer.length > ceiling) {
-    throw new Error(`Files can be at most ${Math.round(ceiling / 1_000_000)} MB.`)
+    throw new FileRejectedError(`Files can be at most ${Math.round(ceiling / 1_000_000)} MB.`)
   }
   const filename = safeFilename(params.filename)
   const mimeType = verifyFileMime(params.buffer, params.mimeType, filename)
@@ -89,7 +89,7 @@ export async function saveStoredFile(params: {
       data: { storageBytes: { increment: BigInt(params.buffer.length) } },
     })
     if (reserved.count !== 1) {
-      throw new Error(`Workspace file storage limit reached (${Math.round(quota / 1_000_000)} MB). Delete old files and try again.`)
+      throw new FileRejectedError(`Workspace file storage limit reached (${Math.round(quota / 1_000_000)} MB). Delete old files and try again.`)
     }
     return tx.storedFile.create({
       data: {
@@ -183,8 +183,8 @@ export async function createPendingUpload(params: {
   if (!supabase) throw new DirectUploadUnavailableError('Direct uploads need object storage, which this deployment does not have configured.')
   await ensureBucket(supabase)
   const ceiling = maxBytesForFile(params.filename)
-  if (!Number.isFinite(params.size) || params.size <= 0) throw new Error('The file is empty.')
-  if (params.size > ceiling) throw new Error(`Files can be at most ${Math.round(ceiling / 1_000_000)} MB.`)
+  if (!Number.isFinite(params.size) || params.size <= 0) throw new FileRejectedError('The file is empty.')
+  if (params.size > ceiling) throw new FileRejectedError(`Files can be at most ${Math.round(ceiling / 1_000_000)} MB.`)
   const filename = safeFilename(params.filename)
   const quota = Math.max(STORED_FILE_MAX_BYTES, Number(process.env.ORG_FILE_STORAGE_MAX_BYTES) || DEFAULT_ORG_FILE_STORAGE_MAX_BYTES)
   const row = await tenantTransaction(params.organizationId, async (tx) => {
@@ -193,7 +193,7 @@ export async function createPendingUpload(params: {
       data: { storageBytes: { increment: BigInt(params.size) } },
     })
     if (reserved.count !== 1) {
-      throw new Error(`Workspace file storage limit reached (${Math.round(quota / 1_000_000)} MB). Delete old files and try again.`)
+      throw new FileRejectedError(`Workspace file storage limit reached (${Math.round(quota / 1_000_000)} MB). Delete old files and try again.`)
     }
     return tx.storedFile.create({
       data: {
@@ -246,7 +246,7 @@ export async function finalizeUpload(params: {
   const reject = async (message: string): Promise<never> => {
     await bucket.remove([storagePath]).catch(() => undefined)
     await deletePending(row.id, params.organizationId, row.size)
-    throw new Error(message)
+    throw new FileRejectedError(message)
   }
   const info = await bucket.info(storagePath).catch(() => null)
   const actualSize = Number(info?.data?.size ?? NaN)
@@ -273,6 +273,7 @@ export async function finalizeUpload(params: {
   let mimeType: string
   try {
     mimeType = verifyFileMime(head, row.mimeType, row.filename)
+    assertNotExecutable(head)
     if (isDatasetFilename(row.filename) && !/^text\//.test(mimeType) && mimeType !== 'application/json') {
       throw new Error('That file is named like a dataset but does not contain text.')
     }

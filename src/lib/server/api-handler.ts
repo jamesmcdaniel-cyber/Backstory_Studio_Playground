@@ -10,6 +10,7 @@ import { clientIp, recordSecurityEvent } from '@/lib/security/events'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { recordPresence } from '@/lib/server/presence'
 import { CircuitOpenError } from '@/lib/resilience/circuit-breaker'
+import { FileRejectedError } from '@/lib/files/security'
 import { boundedNextRequest, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 
 /**
@@ -269,6 +270,12 @@ export function withAuthenticatedApi(
             headers: { 'Retry-After': String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))) },
           },
         )
+      }
+
+      // A file the platform won't store (too big, over quota, an executable,
+      // a scanner verdict): the uploader's to fix, so say why — never a 500.
+      if (error instanceof FileRejectedError) {
+        return NextResponse.json({ success: false, error: error.message, code: 'FILE_REJECTED' }, { status: 422 })
       }
 
       if (error instanceof ZodError) {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, Eye, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Settings2, Share2, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
@@ -36,6 +36,40 @@ export function ArtifactViewer({ id }: { id: string }) {
   const [markdown, setMarkdown] = useState<{ versionId: string; text: string } | null>(null)
   const [panel, setPanel] = useState<'assistant' | 'history' | 'settings'>('assistant')
   const [shareOpen, setShareOpen] = useState(false)
+  // The artifact and its assistant share the rest of the viewport: the page
+  // fills to the bottom edge and the conversation scrolls inside its panel,
+  // instead of the chat stretching the page below a shorter frame.
+  const workspaceRef = useRef<HTMLDivElement | null>(null)
+  const [workspaceHeight, setWorkspaceHeight] = useState(720)
+  useLayoutEffect(() => {
+    const el = workspaceRef.current
+    if (!el) return
+    const scroller = (() => {
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        const overflow = getComputedStyle(node).overflowY
+        if (overflow === 'auto' || overflow === 'scroll') return node
+      }
+      return null
+    })()
+    const measure = () => {
+      const top = el.getBoundingClientRect().top + (scroller ? scroller.scrollTop - scroller.getBoundingClientRect().top : window.scrollY)
+      const viewport = scroller ? scroller.clientHeight : window.innerHeight
+      // Every wrapper's bottom padding between here and the scroller (the page
+      // container's py-8, say) sits below the workspace too.
+      let bottomGap = 0
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        bottomGap += parseFloat(getComputedStyle(node).paddingBottom) || 0
+        if (node === scroller) break
+      }
+      setWorkspaceHeight(Math.max(520, Math.round(viewport - top - bottomGap)))
+    }
+    measure()
+    const resize = new ResizeObserver(measure)
+    resize.observe(document.documentElement)
+    if (el.previousElementSibling) resize.observe(el.previousElementSibling)
+    window.addEventListener('resize', measure)
+    return () => { resize.disconnect(); window.removeEventListener('resize', measure) }
+  })
   const [model, setModel] = useChatModel('artifact')
   const [restoring, setRestoring] = useState<string | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
@@ -200,8 +234,12 @@ export function ArtifactViewer({ id }: { id: string }) {
       )}
 
       {artifact.versions.length > 0 && (
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="min-w-0 space-y-2">
+      <div
+        ref={workspaceRef}
+        className="grid gap-4 xl:h-[var(--workspace-h)] xl:grid-cols-[minmax(0,1fr)_340px]"
+        style={{ '--workspace-h': `${workspaceHeight}px` } as React.CSSProperties}
+      >
+        <div className="flex h-[var(--workspace-h)] min-h-0 min-w-0 flex-col gap-2 xl:h-full">
           {shownVersion && shownVersion.id !== artifact.currentVersionId ? (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
               <History className="h-3.5 w-3.5" aria-hidden />
@@ -221,9 +259,9 @@ export function ArtifactViewer({ id }: { id: string }) {
               {shownVersion?.executionId && <Link href={`/agents?run=${shownVersion.executionId}`} className="hover:text-foreground">Open the run</Link>}
             </div>
           ) : null}
-          <div className="overflow-hidden rounded-xl border border-border bg-white">
+          <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-white">
             {shownMarkdown ? (
-              <div className="prose prose-sm max-w-none overflow-y-auto p-6 dark:prose-invert" style={{ maxHeight: 'calc(100vh - 240px)' }}>
+              <div className="prose prose-sm h-full max-w-none overflow-y-auto p-6 dark:prose-invert">
                 {markdown?.versionId === shownMarkdown.id ? <Markdown>{markdown.text}</Markdown> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>}
               </div>
             ) : shownVersion ? (
@@ -235,7 +273,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                 // the app. Whether its scripts run is the server's call — the
                 // content route's CSP blocks them in a script-less document.
                 sandbox={ARTIFACT_FRAME_SANDBOX}
-                className="block h-[calc(100dvh-190px)] min-h-[560px] w-full"
+                className="block h-full w-full"
               />
             ) : (
               <p className="p-6 text-sm text-muted-foreground">No content yet.</p>
@@ -243,7 +281,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           </div>
         </div>
 
-        <aside className="flex min-h-[420px] flex-col rounded-xl border border-border bg-background">
+        <aside className="flex h-[640px] min-h-0 flex-col rounded-xl border border-border bg-background xl:h-full">
           <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
             {(['assistant', 'history', 'settings'] as const).map((tab) => (
               <button
@@ -262,7 +300,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           {panel === 'settings' ? (
             <AssistantSettingsPanel artifactId={artifact.id} canEdit={canConfigure} />
           ) : panel === 'history' ? (
-            <ol className="flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
+            <ol className="min-h-0 flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
               {artifact.versions.map((version) => {
                 const isCurrent = version.id === artifact.currentVersionId
                 const isShown = version.id === shownVersion?.id
@@ -293,7 +331,7 @@ export function ArtifactViewer({ id }: { id: string }) {
             </ol>
           ) : (
             <>
-          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
             {!artifact.chat.length && canAsk && (
               <div className="flex flex-col gap-1.5">
                 {(artifact.kind === 'roi_dashboard'

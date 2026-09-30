@@ -77,7 +77,7 @@ export function AssistantSettingsPanel({ artifactId, canEdit }: { artifactId: st
   const fixed = setup.tools.filter((tool) => tool.source !== 'optional')
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex-1 space-y-5 overflow-y-auto px-4 py-3">
         <section>
           <label htmlFor="assistant-instructions" className="text-sm font-medium">Instructions</label>

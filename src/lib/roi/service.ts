@@ -15,7 +15,10 @@ import { stateJson, storeFacts } from './artifact-state'
 import { datasetFrameName as frameName } from '@/lib/code-analysis/frame-name'
 import { summarizeFacts, type RoiFactsSummary } from './facts'
 import { timeframeInstruction, timeframeLabel, type RoiTimeframe } from './timeframe'
-import { resolveRoiDatasetIds } from './sources'
+import { resolveRoiDatasetIds, ROI_TEMPLATES, type RoiTemplate } from './sources'
+import { renderAccount360Dashboard } from './account360/dashboard'
+import type { Account360Facts } from './account360/prep'
+import { summarizeAccount360 } from './account360/facts'
 
 /**
  * ROI analyses: the service behind /roi.
@@ -87,7 +90,20 @@ export function buildAnalysisPrompt(params: { account: string; timeframe: RoiTim
   ].filter((line) => line !== undefined).join('\n')
 }
 
+export function buildAccount360Prompt(params: { account: string; context: string; datasets: RoiDataset[] }): string {
+  return [
+    `Build the Account 360 ROI analysis for the account "${params.account}".`,
+    '',
+    'DATASETS (repository documents — pass every documentId to prepare_account360):',
+    datasetsBlock(params.datasets),
+    '',
+    params.context.trim() ? `ADDITIONAL CONTEXT FROM THE REQUESTER:\n${params.context.trim()}\n` : '',
+    'Call prepare_account360 once, then answer with the headline only.',
+  ].join('\n')
+}
+
 export type RoiResults = { narrative: RoiNarrative; summary: RoiFactsSummary; factsFileId: string; artifactId?: string }
+export type Account360Results = { template: 'account360'; headline: string; summary: ReturnType<typeof summarizeAccount360>; factsFileId: string; artifactId?: string }
 
 async function startRun(params: {
   organizationId: string
@@ -137,12 +153,15 @@ export async function createRoiAnalysis(params: {
   datasetIds?: string[]
   /** The view to render with — carried over when a dashboard is rebuilt for another account. */
   view?: RoiView
+  /** Which analysis to build. Defaults to the rep engagement dashboard. */
+  template?: RoiTemplate
 }): Promise<RoiAnalysis> {
+  const template: RoiTemplate = params.template ?? 'engagement'
   // The account's extracts live in the repository, tagged by account; an
   // explicit list (the API's older shape) still wins when one is given.
-  const ids = params.datasetIds?.length ? params.datasetIds : await resolveRoiDatasetIds(params.organizationId, params.account)
+  const ids = params.datasetIds?.length ? params.datasetIds : await resolveRoiDatasetIds(params.organizationId, params.account, template)
   const datasets = await loadDatasets(params.organizationId, ids.slice(0, ROI_MAX_DATASETS))
-  if (!datasets.length) throw new Error(`No extracts are loaded for "${params.account.trim()}" yet. An operator loads them into the repository.`)
+  if (!datasets.length) throw new Error(`No ${ROI_TEMPLATES[template].label} extracts are loaded for "${params.account.trim()}" yet. An operator loads them into the repository.`)
   const agent = await ensureRoiAgent(params.organizationId, params.userId)
   const row = await prisma.roiAnalysis.create({
     data: {
@@ -150,6 +169,7 @@ export async function createRoiAnalysis(params: {
       userId: params.userId,
       agentTaskId: agent.id,
       account: params.account.trim().slice(0, 200),
+      template,
       timeframe: jsonValue(params.timeframe),
       context: params.context.trim().slice(0, ROI_CONTEXT_MAX_CHARS),
       datasetIds: jsonValue(datasets.map((dataset) => dataset.documentId)),
@@ -160,24 +180,29 @@ export async function createRoiAnalysis(params: {
   // The artifact is the only ROI surface, so it exists from the start (no
   // versions yet) and its page follows the run. The first version lands on
   // it when the run finishes.
+  // An Account 360 dashboard is an interactive page like any uploaded one:
+  // the assistant edits it directly, and rebuilds it from its extracts.
+  const title = template === 'account360' ? `Account 360 ROI · ${row.account}` : `ROI analysis · ${row.account}`
   const artifact = await prisma.artifact.create({
     data: {
       organizationId: params.organizationId,
       userId: params.userId,
-      kind: 'roi_dashboard',
-      title: `ROI analysis · ${row.account}`,
+      kind: template === 'account360' ? 'page' : 'roi_dashboard',
+      title,
       agentTaskId: agent.id,
     },
   })
   await prisma.roiAnalysis.update({ where: { id: row.id, organizationId: params.organizationId }, data: { artifactId: artifact.id } })
-  const input = buildAnalysisPrompt({ account: row.account, timeframe: params.timeframe, context: row.context, datasets })
+  const input = template === 'account360'
+    ? buildAccount360Prompt({ account: row.account, context: row.context, datasets })
+    : buildAnalysisPrompt({ account: row.account, timeframe: params.timeframe, context: row.context, datasets })
   try {
     const executionId = await startRun({
       organizationId: params.organizationId,
       userId: params.userId,
       agentId: agent.id,
       agentType: agent.agentType,
-      title: `ROI analysis · ${row.account}`,
+      title,
       input,
       trigger: { type: 'roi_analysis', analysisId: row.id, link: `/artifacts/${artifact.id}` },
     })
@@ -201,10 +226,10 @@ export async function loadRoiAnalysis(organizationId: string, id: string): Promi
   return { ...row, datasets }
 }
 
-/** The facts file the run's prepare_roi_facts call stored — the newest, if it ran more than once. */
-async function factsFileIdFor(executionId: string): Promise<string | null> {
+/** The facts file the run's prep call stored — the newest, if it ran more than once. */
+async function factsFileIdFor(executionId: string, tool = 'prepare_roi_facts'): Promise<string | null> {
   const steps = await prisma.workflowStep.findMany({
-    where: { executionId, node: { contains: 'prepare_roi_facts' } },
+    where: { executionId, node: { contains: tool } },
     orderBy: { createdAt: 'desc' },
     select: { output: true },
   })
@@ -241,6 +266,7 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
       data: { status: run.status, error: run.error ?? (run.status === 'blocked' ? 'The run was blocked before it could finish.' : 'The run did not complete.') },
     })
   }
+  if (row.template === 'account360') return completeAccount360(row, run.text)
   const extracted = extractRoiNarrative(run.text)
   if (extracted.error !== undefined) {
     return prisma.roiAnalysis.update({
@@ -313,6 +339,45 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
   })
 }
 
+/** A finished Account 360 run: render the page from its stored result, headed by the agent's line. */
+async function completeAccount360(row: RoiAnalysis, text: string): Promise<RoiAnalysis> {
+  const fail = (error: string) => prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { status: 'failed', error } })
+  const factsFileId = row.executionId ? await factsFileIdFor(row.executionId, 'prepare_account360') : null
+  const stored = factsFileId ? await readStoredFile(factsFileId, row.organizationId) : null
+  if (!factsFileId || !stored) return fail('The run finished without computing the analysis (prepare_account360 did not store a result). Open the run to see what happened.')
+  let facts: Account360Facts
+  try {
+    facts = JSON.parse(stored.buffer.toString('utf8')) as Account360Facts
+  } catch {
+    return fail('The stored analysis could not be read.')
+  }
+  // The headline is prose; anything that isn't (a fence, JSON, a heading)
+  // is dropped rather than shown.
+  const headline = unwrapHtmlFence(text).replace(/^#+\s*/gm, '').trim().split(/\n\s*\n/)[0]?.trim().slice(0, 400) ?? ''
+  const lede = /^[[{<]/.test(headline) ? '' : headline
+  const html = renderAccount360Dashboard(facts, { account: row.account, generatedAt: new Date().toISOString(), lede })
+  const state = { roi: { template: 'account360', analysisId: row.id, account: row.account, factsFileId, datasetIds: datasetIdsOf(row), headline: lede } }
+  const artifactId = row.artifactId
+    ? await addVersion({ artifactId: row.artifactId, organizationId: row.organizationId, content: html, executionId: row.executionId, request: 'Built from the extracts', createdByUserId: row.userId, state: jsonValue(state) })
+      .then(() => row.artifactId!)
+      .catch(() => undefined)
+    : await createArtifact({
+      organizationId: row.organizationId,
+      userId: row.userId,
+      kind: 'page',
+      title: `Account 360 ROI · ${row.account}`,
+      content: html,
+      agentTaskId: row.agentTaskId,
+      executionId: row.executionId,
+      state: jsonValue(state),
+    }).then(({ artifact }) => artifact.id).catch(() => undefined)
+  const results: Account360Results = { template: 'account360', headline: lede, summary: summarizeAccount360(facts), factsFileId, ...(artifactId ? { artifactId } : {}) }
+  return prisma.roiAnalysis.update({
+    where: { id: row.id, organizationId: row.organizationId },
+    data: { status: 'completed', error: null, results: jsonValue(results), reportHtml: html },
+  })
+}
+
 async function reconcileChat(row: RoiAnalysis): Promise<RoiAnalysis> {
   const chat = chatOf(row)
   const pending = chat.filter((message) => message.role === 'agent' && message.status === 'pending' && message.executionId)
@@ -338,6 +403,7 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
   return {
     id: row.id,
     account: row.account,
+    template: row.template,
     timeframe: row.timeframe as RoiTimeframe,
     timeframeLabel: timeframeLabel(row.timeframe as RoiTimeframe),
     context: row.context,

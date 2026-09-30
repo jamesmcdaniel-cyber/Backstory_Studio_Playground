@@ -19,6 +19,7 @@ export type RoiDataset = { documentId: string; filename: string; frame: string; 
 export type RoiAnalysisView = {
   id: string
   account: string
+  template: string
   timeframe: RoiTimeframe
   timeframeLabel: string
   context: string

@@ -5,6 +5,7 @@ import { rateLimit } from '@/lib/ratelimit'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
 import { createRoiAnalysis, serializeRoiAnalysis, ROI_CONTEXT_MAX_CHARS, ROI_MAX_DATASETS } from '@/lib/roi/service'
 import { isRoiTimeframePreset } from '@/lib/roi/timeframe'
+import { isRoiTemplate } from '@/lib/roi/sources'
 
 export const runtime = 'nodejs'
 
@@ -21,6 +22,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
 const bodySchema = z.object({
   account: z.string().trim().min(1).max(200),
   timeframe: z.string().refine(isRoiTimeframePreset, 'Pick a time frame.'),
+  template: z.string().refine(isRoiTemplate, 'Pick an analysis.').optional(),
   context: z.string().max(ROI_CONTEXT_MAX_CHARS).default(''),
   datasetIds: z.array(z.string().min(1)).max(ROI_MAX_DATASETS).optional(),
 })
@@ -42,6 +44,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       timeframe: { preset: parsed.data.timeframe },
       context: parsed.data.context,
       datasetIds: parsed.data.datasetIds,
+      template: isRoiTemplate(parsed.data.template) ? parsed.data.template : undefined,
     })
     return { success: true, analysis: serializeRoiAnalysis(row) }
   } catch (error) {

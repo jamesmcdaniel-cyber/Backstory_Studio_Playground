@@ -202,7 +202,10 @@ export function ArtifactViewer({ id }: { id: string }) {
                 key={shownVersion.id}
                 title={artifact.title}
                 src={`/api/artifacts/${id}/versions/${shownVersion.id}/content`}
-                sandbox={artifact.interactive ? 'allow-scripts' : ''}
+                // Opaque origin (never allow-same-origin): the page cannot reach
+                // the app. Whether its scripts run is the server's call — the
+                // content route's CSP blocks them in a script-less document.
+                sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads"
                 className="block h-[calc(100dvh-190px)] min-h-[560px] w-full"
               />
             ) : (

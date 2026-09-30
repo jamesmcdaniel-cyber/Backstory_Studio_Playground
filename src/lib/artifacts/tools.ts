@@ -9,7 +9,9 @@ import { summarizeFacts } from '@/lib/roi/facts'
 import { renderRoiDashboard } from '@/lib/roi/dashboard'
 import { applyOperations, describeView, roiOperationSchema } from '@/lib/roi/view'
 import { currentRoiState, readFacts, stateJson, storeFacts } from '@/lib/roi/artifact-state'
-import { listRoiSources } from '@/lib/roi/sources'
+import { isRoiTemplate, listRoiSources, ROI_TEMPLATES, type RoiTemplate } from '@/lib/roi/sources'
+import { summarizeAccount360 } from '@/lib/roi/account360/facts'
+import type { Account360Facts } from '@/lib/roi/account360/prep'
 import { isRoiTimeframePreset } from '@/lib/roi/timeframe'
 import { addVersion, createArtifact } from './service'
 
@@ -153,19 +155,20 @@ const ROI_TOOLS = [
   },
   {
     name: 'list_roi_accounts',
-    description: 'Accounts whose ROI extracts are loaded in this workspace, and which extracts each has. Use before start_roi_analysis to match the account the user named.',
+    description: 'Accounts whose ROI extracts are loaded in this workspace, which extracts each has, and which analyses (templates) those extracts can run. Use before start_roi_analysis to match the account the user named.',
     isWrite: false,
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'start_roi_analysis',
-    description: 'Build this ROI dashboard for another account (or the same account over another time frame). Starts a new analysis in the background — five to fifteen minutes — carrying over this dashboard\'s view (hidden and added metrics, sections). Returns a link the user can open; tell them it will notify them when ready. The account must be one list_roi_accounts returns.',
+    description: 'Build this ROI dashboard for another account (or the same account over another time frame). Starts a new analysis in the background — five to fifteen minutes — carrying over this dashboard\'s view (hidden and added metrics, sections) where it has one. Returns a link the user can open; tell them it will notify them when ready. The account must be one list_roi_accounts returns, with the template this dashboard uses (or the one the user asked for) among its templates.',
     isWrite: false,
     inputSchema: {
       type: 'object',
       properties: {
         account: { type: 'string', description: 'Exactly as list_roi_accounts names it.' },
-        timeframe: { type: 'string', enum: ['last6_vs_prior6', 'last6_vs_year_ago', 'last12_vs_prior12', 'last3_vs_prior3'] },
+        template: { type: 'string', enum: ['engagement', 'account360'], description: 'engagement = rep engagement ROI; account360 = Account 360 click-stream → pipeline. Defaults to this dashboard\'s own.' },
+        timeframe: { type: 'string', enum: ['last6_vs_prior6', 'last6_vs_year_ago', 'last12_vs_prior12', 'last3_vs_prior3'], description: 'Rep engagement only.' },
         context: { type: 'string', description: 'Optional context for the analyst, from the user\'s request.' },
       },
       required: ['account'],
@@ -178,8 +181,21 @@ export type ArtifactToolDescriptor = { name: string; description: string; inputS
 /** The tools for an artifact of this kind. */
 export function artifactToolsFor(kind: string): ArtifactToolDescriptor[] {
   const generic = kind === 'roi_dashboard' ? GENERIC_TOOLS.filter((tool) => tool.name === 'get_artifact') : [...GENERIC_TOOLS]
+  // An ROI dashboard is edited through its view; a page (an Account 360
+  // dashboard among them) is edited as HTML, and can still be rebuilt for
+  // another account from its extracts.
+  const roi = kind === 'roi_dashboard' ? ROI_TOOLS : kind === 'page' ? ROI_TOOLS.filter((tool) => tool.name !== 'update_roi_dashboard') : []
+  return [...generic, ...roi].map(({ name, description, inputSchema }) => ({ name, description, inputSchema: inputSchema as Record<string, unknown> }))
+}
 
-  return [...generic, ...(kind === 'roi_dashboard' ? ROI_TOOLS : [])].map(({ name, description, inputSchema }) => ({ name, description, inputSchema: inputSchema as Record<string, unknown> }))
+type PageRoiState = { template: RoiTemplate; account: string; factsFileId: string; datasetIds: string[]; headline?: string }
+
+/** The analysis a page was built from, when it was built by one (an Account 360 dashboard). */
+function pageRoiState(state: unknown): PageRoiState | null {
+  const roi = (state as { roi?: Partial<PageRoiState> } | null)?.roi
+  return roi && isRoiTemplate(roi.template) && typeof roi.account === 'string' && typeof roi.factsFileId === 'string'
+    ? { template: roi.template, account: roi.account, factsFileId: roi.factsFileId, datasetIds: Array.isArray(roi.datasetIds) ? roi.datasetIds : [], headline: roi.headline }
+    : null
 }
 
 const MAX_DOC_CHARS = 120_000
@@ -219,7 +235,7 @@ export class ArtifactToolClient {
         case 'find_in_artifact': return await this.find(args)
         case 'read_artifact': return await this.read(args)
         case 'update_roi_dashboard': return await this.updateRoi(args)
-        case 'list_roi_accounts': return { accounts: (await listRoiSources(this.organizationId)).map((source) => ({ account: source.account, extracts: Object.keys(source.datasets) })) }
+        case 'list_roi_accounts': return { accounts: (await listRoiSources(this.organizationId)).map((source) => ({ account: source.account, extracts: Object.keys(source.datasets), templates: source.templates })) }
         case 'start_roi_analysis': return await this.startRoi(args)
         default: throw new Error(`Unknown artifact tool "${name}".`)
       }
@@ -254,15 +270,39 @@ export class ArtifactToolClient {
         facts: summarizeFacts(facts),
       }
     }
-    const version = artifact.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { content: true } }) : null
+    const version = artifact.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { content: true, state: true } }) : null
     const content = version?.content ?? ''
     const large = content.length > MAX_DOC_CHARS
+    const analysis = await this.pageAnalysis(version?.state)
     return {
       ...base,
+      ...(analysis ? { analysis } : {}),
       format: looksLikeHtml(content.slice(0, 4_000)) ? 'html' : 'markdown',
       size: content.length,
       content: large ? content.slice(0, LARGE_DOC_PREVIEW_CHARS) : content,
       ...(large ? { note: `This is the first ${LARGE_DOC_PREVIEW_CHARS.toLocaleString()} of ${content.length.toLocaleString()} characters. Use find_in_artifact to locate what a change touches, read_artifact for a window around it, and edit_artifact to change it.` } : {}),
+    }
+  }
+
+  /** An Account 360 page's computed facts, so questions are answered from them rather than from the page's text. */
+  private async pageAnalysis(state: unknown) {
+    const roi = pageRoiState(state)
+    if (!roi) return null
+    const stored = await readStoredFile(roi.factsFileId, this.organizationId).catch(() => null)
+    let summary: ReturnType<typeof summarizeAccount360> | null = null
+    try {
+      summary = stored ? summarizeAccount360(JSON.parse(stored.buffer.toString('utf8')) as Account360Facts) : null
+    } catch {
+      summary = null
+    }
+    return {
+      template: roi.template,
+      templateLabel: ROI_TEMPLATES[roi.template].label,
+      account: roi.account,
+      headline: roi.headline ?? null,
+      summary,
+      datasetIds: roi.datasetIds,
+      note: 'Built from repository extracts. Answer questions from `summary` (and run_code over datasetIds for anything it lacks); rebuild for another account with start_roi_analysis.',
     }
   }
 
@@ -414,12 +454,22 @@ export class ArtifactToolClient {
     const artifact = await this.artifact()
     const account = typeof args.account === 'string' ? args.account.trim() : ''
     if (!account) throw new Error('Name the account.')
+    const pageState = artifact.kind === 'page' && artifact.currentVersionId
+      ? pageRoiState((await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { state: true } }))?.state)
+      : null
+    const template: RoiTemplate | null = isRoiTemplate(args.template) ? args.template : artifact.kind === 'roi_dashboard' ? 'engagement' : pageState?.template ?? null
+    if (!template) throw new Error('This page was not built by an ROI analysis; pass template (engagement or account360).')
     const sources = await listRoiSources(this.organizationId)
     const match = sources.find((source) => source.account.toLowerCase() === account.toLowerCase())
-    if (!match) {
-      return { started: false, reason: `No extracts are loaded for "${account}".`, accountsWithExtracts: sources.map((source) => source.account), hint: 'An operator loads an account\'s extracts into the Repository; until then it cannot be analysed.' }
+    if (!match || !match.templates.includes(template)) {
+      return {
+        started: false,
+        reason: match ? `"${match.account}" has extracts loaded, but not the ones the ${ROI_TEMPLATES[template].label} needs.` : `No extracts are loaded for "${account}".`,
+        accountsWithExtracts: sources.filter((source) => source.templates.includes(template)).map((source) => source.account),
+        hint: 'An operator loads an account\'s extracts into the Repository; until then it cannot be analysed.',
+      }
     }
-    const current = artifact.kind === 'roi_dashboard' ? await currentRoiState(this.organizationId, artifact.id) : null
+    const current = artifact.kind === 'roi_dashboard' && template === 'engagement' ? await currentRoiState(this.organizationId, artifact.id) : null
     const timeframe = isRoiTimeframePreset(args.timeframe) ? args.timeframe : (current?.state.timeframePreset && isRoiTimeframePreset(current.state.timeframePreset) ? current.state.timeframePreset : 'last6_vs_prior6')
     const { createRoiAnalysis } = await import('@/lib/roi/service')
     const row = await createRoiAnalysis({
@@ -429,9 +479,10 @@ export class ArtifactToolClient {
       timeframe: { preset: timeframe },
       context: typeof args.context === 'string' ? args.context.slice(0, 4_000) : '',
       view: current?.state.view,
+      template,
     })
     if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
-    return { started: true, account: match.account, timeframe, link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background, five to fifteen minutes; the user is notified when the dashboard is ready.' }
+    return { started: true, account: match.account, template, ...(template === 'engagement' ? { timeframe } : {}), link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background, five to fifteen minutes; the user is notified when the dashboard is ready.' }
   }
 }
 

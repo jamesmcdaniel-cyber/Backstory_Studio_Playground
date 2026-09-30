@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { htmlDocumentOf, htmlTitleOf, looksLikeHtml } from '@/lib/html-detect'
-import { buildArtifactPrompt, flowIdFromTrigger, isInteractiveKind } from '../service'
+import { buildArtifactPrompt, flowIdFromTrigger, isInteractiveContent, isInteractiveKind } from '../service'
 
 test('an HTML answer is detected whether fenced or bare; prose is not', () => {
   const doc = '<!doctype html><html><head><title>Q3 pipeline review</title></head><body><h1>Q3</h1></body></html>'
@@ -45,9 +45,14 @@ test('a very long document is truncated with a marker, not dropped', () => {
   assert.ok(prompt.length < 30_000)
 })
 
-test('only the ROI dashboard kind runs scripts', () => {
+test('a page runs its scripts whatever it was registered as; a script-less report does not', () => {
   assert.equal(isInteractiveKind('roi_dashboard'), true)
+  assert.equal(isInteractiveKind('page'), true)
   assert.equal(isInteractiveKind('report'), false)
+  // An agent's HTML with tabs and views works as a page even when stored as a report.
+  assert.equal(isInteractiveContent('report', '<html><body><button onclick="show(2)">Tab 2</button><script>function show(n){}</script></body></html>'), true)
+  assert.equal(isInteractiveContent('report', '<html><body><h1>Q3</h1><p>No script here.</p></body></html>'), false)
+  assert.equal(isInteractiveContent('report', '<p>Use a <scripted> approach</p>'), false, 'a tag that merely starts with "script" is not a script')
 })
 
 test('headed Markdown of document length registers; a short reply does not', async () => {

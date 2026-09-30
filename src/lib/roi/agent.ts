@@ -1,13 +1,15 @@
 import type { AgentTask } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
 import { findAgentFromTemplate, provisionAgentFromConfig } from '@/lib/templates/instantiate'
 import { ROI_OUTPUT_CONTRACT } from './contract'
 
 /**
- * The ROI Analyst — the agent behind /roi.
+ * The ROI Analyst — the agent behind ROI analyses in Artifacts.
  *
  * Ported from the Claude project that produced the first ROI stories by hand:
  * the same four analyses, over the same four extracts, with the same cohort
- * and bucket definitions. What changed is the medium — the data arrives as
+ * and bucket definitions — plus the Account 360 suite (click-stream →
+ * pipeline), which runs its own prep and needs only a headline. What changed is the medium — the data arrives as
  * repository datasets (pandas frames in run_code) instead of pasted CSVs,
  * and the deliverable is the JSON contract the platform renders, not a
  * Python notebook's charts.
@@ -40,6 +42,10 @@ WRITING
 OUTPUT
 ${ROI_OUTPUT_CONTRACT}
 
+ACCOUNT 360 RUNS — when the run says "Build the Account 360 ROI analysis", it is a different analysis and the rules above about prepare_roi_facts and the JSON contract do not apply:
+1. Call prepare_account360 ONCE with every documentId the run names. If the requester's context names users to leave out (emails, or names you can match to the extract's emails), pass them as excludeUsers; pass breadthCutoff only if they gave one.
+2. Your final answer is the dashboard's headline: ONE or TWO plain sentences, figure first, stating the strongest relationship between engagement and pipeline the summary shows (e.g. how many times the Power User accounts' average created pipeline is the No Engagement accounts'). Use numbers exactly as the summary gives them, money as $ with K/M. No Markdown, no JSON, no preamble — the dashboard writes its own callouts from the stored result.
+
 FOLLOW-UP QUESTIONS — when the run is a follow-up on a finished analysis (it will say so and include the facts summary and the narrative), answer the question directly in Markdown, using run_code over the same datasets whenever the answer needs a number the summary does not hold. Do not call prepare_roi_facts again, and do not return the JSON contract.`
 
 export const ROI_AGENT_CONFIG = {
@@ -57,7 +63,12 @@ export const ROI_AGENT_CONFIG = {
 /** The workspace's ROI Analyst, provisioned on first use. */
 export async function ensureRoiAgent(organizationId: string, userId: string): Promise<AgentTask> {
   const existing = await findAgentFromTemplate(organizationId, ROI_TEMPLATE_ID)
-  if (existing && existing.status === 'ACTIVE') return existing
+  if (existing && existing.status === 'ACTIVE') {
+    // The instructions are the platform's, not the workspace's: a workspace
+    // provisioned before an analysis was added still gets to run it.
+    if (existing.objective === ROI_AGENT_INSTRUCTIONS) return existing
+    return prisma.agentTask.update({ where: { id: existing.id, organizationId }, data: { objective: ROI_AGENT_INSTRUCTIONS } })
+  }
   const { agent } = await provisionAgentFromConfig(organizationId, userId, ROI_AGENT_CONFIG, ROI_AGENT_CONFIG.name, ROI_TEMPLATE_ID)
   return agent
 }

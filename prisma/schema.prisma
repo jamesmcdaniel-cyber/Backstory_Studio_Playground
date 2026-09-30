@@ -1720,6 +1720,9 @@ model RoiAnalysis {
   /// The artifact this analysis builds (created when the analysis starts).
   artifactId     String?
   account        String
+  /// Which analysis: engagement (rep activity/usage/deals — the Iron Mountain
+  /// dashboard) | account360 (Account 360 click-stream → pipeline — the HP suite).
+  template       String   @default("engagement")
   timeframe      Json     @default("{}")
   context        String   @default("") @db.Text
   datasetIds     Json     @default("[]")

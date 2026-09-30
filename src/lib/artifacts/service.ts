@@ -46,6 +46,20 @@ export function isInteractiveKind(kind: string): boolean {
   return kind === 'roi_dashboard' || kind === 'page'
 }
 
+/** Whether HTML carries its own script — tabs, views, charts — and so must run to work. */
+export function htmlHasScript(content: string): boolean {
+  return /<script[\s>]/i.test(content)
+}
+
+/**
+ * A version runs its scripts when its kind is interactive or its HTML has
+ * any: a report an agent wrote with tabs and views is a page, whatever it
+ * was registered as. Scripts run sandboxed (opaque origin, no network).
+ */
+export function isInteractiveContent(kind: string, content: string): boolean {
+  return isInteractiveKind(kind) || htmlHasScript(content)
+}
+
 export const ARTIFACT_UPLOAD_MAX_BYTES = 2_000_000
 
 type TriggerShape = {
@@ -189,11 +203,13 @@ export async function registerVersionFromExecution(params: {
   const markdown = html ? null : markdownDocumentOf(params.summary)
   if (!html && !markdown) return null
   const content = html ?? markdown!
-  const title = params.headline?.trim() || (html ? htmlTitleOf(html) : markdownTitleOf(content)) || `${params.agentTitle} · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+  // The document's own title (its <title> or first heading) names it best; the
+  // run's one-line headline is a summary of the run, not a name for the page.
+  const title = (html ? htmlTitleOf(html) : markdownTitleOf(content)) || params.headline?.trim() || `${params.agentTitle} · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
   const { artifact, version } = await createArtifact({
     organizationId: params.organizationId,
     userId: params.userId,
-    kind: html ? 'report' : 'document',
+    kind: html ? (htmlHasScript(html) ? 'page' : 'report') : 'document',
     title,
     content,
     agentTaskId: params.agentTaskId,
@@ -288,7 +304,8 @@ export async function loadArtifact(organizationId: string, id: string): Promise<
     })),
     chat: chatOf(row),
     interactive: isInteractiveKind(row.kind),
-    build: row.kind === 'roi_dashboard'
+    // ROI dashboards, and pages an Account 360 analysis builds, follow their run.
+    build: row.kind === 'roi_dashboard' || (row.kind === 'page' && versions.length === 0)
       ? await import('@/lib/roi/service').then(({ roiBuildFor }) => roiBuildFor(organizationId, row.id)).then((b) => (b && (b.status !== 'completed' || versions.length === 0) ? { status: b.status, executionId: b.executionId, error: b.error, account: b.account } : null)).catch(() => null)
       : null,
     archivedAt: row.archivedAt?.toISOString() ?? null,
@@ -368,6 +385,7 @@ const DOCUMENT_ASSISTANT_RULES = (isHtml: boolean) => `You are the assistant for
 2. A CHANGE to it ("remove the risks section", "update the Q3 numbers", "make the header blue"): make it with edit_artifact — exact find-and-replace edits of the parts that change, everything else untouched. For a large page, locate the text first with find_in_artifact (and read_artifact for the surroundings) and copy the exact snippet into \`find\`. Use revise_artifact only to rewrite a small document from scratch. ${isHtml ? 'It is HTML: keep it valid, and if it is an interactive page keep its scripts working — chart data usually lives in inline <script> blocks, so a data change is an edit there.' : 'It is Markdown: keep its structure.'} Then tell the user in one or two sentences what changed.
 3. A COPY or VARIANT ("make a version for the EMEA team", "save this as a new one"): make the edits with saveAsNew: true and a fitting title, and share the new artifact's link. The original stays as it is.
 4. A question or change that needs facts the document does not hold: fetch them with the tools you have — the Sales AI / Backstory MCP and the integrations that produced this artifact — and say where each fact came from.
+5. THE SAME ANALYSIS FOR ANOTHER ACCOUNT — when get_artifact shows an \`analysis\` (the page was built from repository extracts, e.g. an Account 360 ROI dashboard): answer questions from its summary, and for "show me this for Acme" call list_roi_accounts, match the account, then start_roi_analysis; share the link it returns.
 Recompute with your tools only where a change needs new facts.`
 
 export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[] }): string {

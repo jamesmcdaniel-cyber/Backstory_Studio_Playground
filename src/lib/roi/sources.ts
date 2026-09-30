@@ -6,14 +6,14 @@ import { saveStoredFile } from '@/lib/files/storage'
 /**
  * Managed ROI extracts.
  *
- * The four extracts behind an ROI story are loaded once per account by an
- * operator and kept in the workspace repository as datasets tagged with the
+ * The extracts behind an ROI story (four for the rep engagement analysis,
+ * three for Account 360) are loaded once per account by an operator and kept in the workspace repository as datasets tagged with the
  * account and the extract kind (`sourceMetadata.roi`). The ROI page reads
  * that tag: users pick an account, never a file. The Databricks flow, when it
  * lands, writes the same tag on what it pulls — nothing downstream changes.
  */
 
-export const ROI_SOURCE_KINDS = ['activity', 'usage', 'engagement', 'stages'] as const
+export const ROI_SOURCE_KINDS = ['activity', 'usage', 'engagement', 'stages', 'clickstream', 'accounts', 'opportunities'] as const
 export type RoiSourceKind = (typeof ROI_SOURCE_KINDS)[number]
 
 export const ROI_SOURCE_LABEL: Record<RoiSourceKind, string> = {
@@ -21,6 +21,45 @@ export const ROI_SOURCE_LABEL: Record<RoiSourceKind, string> = {
   usage: 'Usage cohort',
   engagement: 'Opportunity engagement',
   stages: 'Closed deals by stage',
+  clickstream: 'Account 360 click-stream',
+  accounts: 'Parent accounts',
+  opportunities: 'Opportunity pull',
+}
+
+/**
+ * The analyses an account's extracts can feed. Each names its extracts and
+ * the ones it cannot run without; an account offers a template once those
+ * are loaded.
+ */
+export const ROI_TEMPLATES = {
+  engagement: {
+    label: 'Rep engagement ROI',
+    description: 'Leading indicators per rep, adoption cohorts, deal engagement vs win rate, and stage/persona — the Iron Mountain dashboard.',
+    kinds: ['activity', 'usage', 'engagement', 'stages'],
+    required: [] as RoiSourceKind[],
+  },
+  account360: {
+    label: 'Account 360 ROI',
+    description: 'Which accounts the team works in Account 360, cohorted by how often and how deep, against the pipeline those accounts carry — the HP suite.',
+    kinds: ['clickstream', 'accounts', 'opportunities'],
+    required: ['clickstream', 'opportunities'] as RoiSourceKind[],
+  },
+} as const satisfies Record<string, { label: string; description: string; kinds: readonly RoiSourceKind[]; required: RoiSourceKind[] }>
+
+export type RoiTemplate = keyof typeof ROI_TEMPLATES
+export const ROI_TEMPLATE_IDS = Object.keys(ROI_TEMPLATES) as RoiTemplate[]
+
+export function isRoiTemplate(value: unknown): value is RoiTemplate {
+  return typeof value === 'string' && value in ROI_TEMPLATES
+}
+
+/** The templates an account's loaded extracts can run. */
+export function templatesFor(datasets: Partial<Record<RoiSourceKind, unknown>>): RoiTemplate[] {
+  return ROI_TEMPLATE_IDS.filter((id) => {
+    const template = ROI_TEMPLATES[id]
+    const loaded = template.kinds.filter((kind) => datasets[kind])
+    return loaded.length > 0 && template.required.every((kind) => datasets[kind])
+  })
 }
 
 export type RoiSourceTag = { account: string; kind: RoiSourceKind; loadedAt: string; organizationId?: string }
@@ -28,6 +67,8 @@ export type RoiSourceTag = { account: string; kind: RoiSourceKind; loadedAt: str
 export type RoiAccountSources = {
   account: string
   datasets: Partial<Record<RoiSourceKind, { documentId: string; filename: string; rows: number | null; loadedAt: string }>>
+  /** The analyses these extracts can run. */
+  templates: RoiTemplate[]
 }
 
 export function isRoiSourceKind(value: unknown): value is RoiSourceKind {
@@ -53,7 +94,7 @@ export async function listRoiSources(organizationId: string): Promise<RoiAccount
   for (const doc of docs) {
     const tag = tagOf(doc.sourceMetadata)
     if (!tag) continue
-    const entry = byAccount.get(tag.account) ?? { account: tag.account, datasets: {} }
+    const entry = byAccount.get(tag.account) ?? { account: tag.account, datasets: {}, templates: [] }
     if (!entry.datasets[tag.kind]) {
       entry.datasets[tag.kind] = {
         documentId: doc.id,
@@ -64,15 +105,17 @@ export async function listRoiSources(organizationId: string): Promise<RoiAccount
     }
     byAccount.set(tag.account, entry)
   }
-  return [...byAccount.values()].sort((a, b) => a.account.localeCompare(b.account))
+  return [...byAccount.values()]
+    .map((entry) => ({ ...entry, templates: templatesFor(entry.datasets) }))
+    .sort((a, b) => a.account.localeCompare(b.account))
 }
 
-/** The dataset ids for an account, newest per kind. Empty when nothing is loaded. */
-export async function resolveRoiDatasetIds(organizationId: string, account: string): Promise<string[]> {
+/** The dataset ids a template reads for an account, newest per kind. Empty when nothing is loaded. */
+export async function resolveRoiDatasetIds(organizationId: string, account: string, template: RoiTemplate = 'engagement'): Promise<string[]> {
   const sources = await listRoiSources(organizationId)
   const match = sources.find((source) => source.account.toLowerCase() === account.trim().toLowerCase())
   if (!match) return []
-  return ROI_SOURCE_KINDS.map((kind) => match.datasets[kind]?.documentId).filter((id): id is string => Boolean(id))
+  return ROI_TEMPLATES[template].kinds.map((kind) => match.datasets[kind]?.documentId).filter((id): id is string => Boolean(id))
 }
 
 /** Load one extract for an account from bytes (the seed script and the admin route). */

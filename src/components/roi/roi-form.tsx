@@ -9,9 +9,20 @@ import { indentOnTab } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { ROI_TIMEFRAMES, type RoiTimeframePreset } from '@/lib/roi/timeframe'
 
-type Source = { account: string; datasets: Partial<Record<'activity' | 'usage' | 'engagement' | 'stages', { documentId: string; filename: string; rows: number | null; loadedAt: string }>> }
+type Kind = 'activity' | 'usage' | 'engagement' | 'stages' | 'clickstream' | 'accounts' | 'opportunities'
+type Template = 'engagement' | 'account360'
+type Source = { account: string; datasets: Partial<Record<Kind, { documentId: string; filename: string; rows: number | null; loadedAt: string }>>; templates?: Template[] }
 
-const KIND_LABEL: Record<string, string> = { activity: 'Activity', usage: 'Usage', engagement: 'Deal engagement', stages: 'Stage & persona' }
+const KIND_LABEL: Record<Kind, string> = {
+  activity: 'Activity', usage: 'Usage', engagement: 'Deal engagement', stages: 'Stage & persona',
+  clickstream: 'Account 360 clicks', accounts: 'Parent accounts', opportunities: 'Opportunities',
+}
+
+// Mirrors ROI_TEMPLATES in src/lib/roi/sources.ts (server-only module).
+const TEMPLATES: Record<Template, { label: string; description: string; kinds: Kind[] }> = {
+  engagement: { label: 'Rep engagement', description: 'Leading indicators per rep, adoption cohorts, deal engagement vs win rate, stage and persona.', kinds: ['activity', 'usage', 'engagement', 'stages'] },
+  account360: { label: 'Account 360', description: 'Accounts cohorted by how often and how deep the team works them in Account 360, against the pipeline they carry.', kinds: ['clickstream', 'accounts', 'opportunities'] },
+}
 
 /**
  * The static form: account, plain-English time frame, optional context.
@@ -24,6 +35,7 @@ export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
   const [sources, setSources] = useState<Source[] | null>(null)
   const [account, setAccount] = useState('')
   const [timeframe, setTimeframe] = useState<RoiTimeframePreset>('last6_vs_prior6')
+  const [template, setTemplate] = useState<Template>('engagement')
   const [context, setContext] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -43,8 +55,10 @@ export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
   }, [])
 
   const selected = sources?.find((source) => source.account === account) ?? null
-  const kinds = selected ? (Object.keys(selected.datasets) as Array<keyof Source['datasets']>) : []
-  const canSubmit = Boolean(selected) && kinds.length > 0 && !submitting
+  const available: Template[] = selected?.templates?.length ? selected.templates : selected && Object.keys(selected.datasets).length ? ['engagement'] : []
+  // The account decides which analyses exist; keep the choice to one of them.
+  const activeTemplate: Template = available.includes(template) ? template : available[0] ?? 'engagement'
+  const canSubmit = Boolean(selected) && available.length > 0 && !submitting
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -54,7 +68,7 @@ export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
       const response = await fetch('/api/roi/analyses', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ account, timeframe, context }),
+        body: JSON.stringify({ account, timeframe, context, template: activeTemplate }),
       })
       const data = await response.json().catch(() => ({})) as { analysis?: { id: string; artifactId: string | null }; error?: string }
       if (!response.ok || !data.analysis) throw new Error(data.error || 'The analysis could not be started.')
@@ -86,7 +100,7 @@ export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
           {selected && (
             <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <Database className="h-3.5 w-3.5" aria-hidden />
-              {(['activity', 'usage', 'engagement', 'stages'] as const).map((kind) => (
+              {TEMPLATES[activeTemplate].kinds.map((kind) => (
                 <span key={kind} className={cn('rounded-full border px-2 py-0.5', selected.datasets[kind] ? 'border-horizon-300 bg-horizon-50 text-horizon-800' : 'border-border text-muted-foreground line-through')} title={selected.datasets[kind] ? `${selected.datasets[kind]!.filename} · ${selected.datasets[kind]!.rows?.toLocaleString() ?? '?'} rows` : 'Not loaded'}>
                   {KIND_LABEL[kind]}
                 </span>
@@ -94,6 +108,31 @@ export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
             </p>
           )}
         </div>
+        {available.length > 1 && (
+          <div className="sm:col-span-2">
+            <p className="text-sm font-medium" id="roi-template-label">Analysis</p>
+            <div role="radiogroup" aria-labelledby="roi-template-label" className="mt-1.5 flex flex-wrap gap-1.5">
+              {available.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={activeTemplate === id}
+                  onClick={() => setTemplate(id)}
+                  title={TEMPLATES[id].description}
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    activeTemplate === id ? 'border-horizon-600 bg-horizon-600 text-white' : 'border-border bg-background text-foreground hover:bg-muted',
+                  )}
+                >
+                  {TEMPLATES[id].label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{TEMPLATES[activeTemplate].description}</p>
+          </div>
+        )}
+        {activeTemplate === 'engagement' ? (
         <div>
           <p className="text-sm font-medium" id="roi-timeframe-label">Time frame</p>
           <div role="radiogroup" aria-labelledby="roi-timeframe-label" className="mt-1.5 flex flex-wrap gap-1.5">
@@ -116,6 +155,12 @@ export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{ROI_TIMEFRAMES.find((option) => option.preset === timeframe)?.description}</p>
         </div>
+        ) : (
+          <div>
+            <p className="text-sm font-medium">Time frame</p>
+            <p className="mt-1.5 text-xs text-muted-foreground">The click-stream's full months. The dashboard's sliders zoom into any range.</p>
+          </div>
+        )}
       </div>
 
       <div>
@@ -127,7 +172,7 @@ export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
           onKeyDown={indentOnTab}
           rows={3}
           maxLength={4000}
-          placeholder="Anything the analyst should know: the customer's goals, a region to focus on, what leadership has asked for…"
+          placeholder={activeTemplate === 'account360' ? 'Anything the analyst should know — e.g. users to leave out (admins, enablement staff) by email…' : "Anything the analyst should know: the customer's goals, a region to focus on, what leadership has asked for…"}
           className="mt-1.5 flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </div>

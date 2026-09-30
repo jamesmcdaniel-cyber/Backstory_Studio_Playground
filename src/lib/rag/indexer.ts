@@ -62,8 +62,16 @@ export async function commitGraph(organizationId: string, nodes: PendingNode[], 
 
 /** Embed pending nodes in one batch and persist nodes + edges. */
 async function commit(organizationId: string, nodes: PendingNode[], edges: GraphEdge[], options: CommitOptions = {}): Promise<void> {
-  if ((!options.store && !ragEnabled()) || nodes.length === 0) return
+  if (!options.store && !ragEnabled()) return
+  // Edges may come on their own — the backfill writes every node first, then
+  // all edges in one final call. Returning early on "no nodes" silently
+  // dropped every one of them (the graph had nodes and no relationships).
+  if (nodes.length === 0 && edges.length === 0) return
   const store = options.store ?? getGraphRagStore()
+  if (nodes.length === 0) {
+    await store.upsertEdges(edges)
+    return
+  }
   const embeddings = await embedTexts(nodes.map((n) => n.text), { inputType: 'document', fetchImpl: options.fetchImpl })
   const graphNodes: GraphNode[] = nodes.map((n, i) => ({
     id: n.id,

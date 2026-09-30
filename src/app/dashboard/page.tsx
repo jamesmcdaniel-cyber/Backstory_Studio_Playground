@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { Markdown } from '@/components/ui/markdown'
+import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
+import { postStreaming } from '@/lib/client/stream'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RecentFlows } from '@/components/dashboard/recent-flows'
 import { relativeTime } from '@/lib/relative-time'
@@ -104,6 +106,8 @@ export default function AssistantHome() {
   const [thread, setThread] = useState<Turn[]>([])
   const [restore, setRestore] = useState<'idle' | 'loading' | 'failed'>('idle')
   const [busy, setBusy] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [model, setModel] = useChatModel('librarian')
   // A failed question stays on screen with a retry, instead of vanishing into a toast.
   const [failure, setFailure] = useState<{ question: string; message: string } | null>(null)
   const [hello, setHello] = useState('GOOD MORNING')
@@ -218,10 +222,8 @@ export default function AssistantHome() {
     setFailure(null)
     setBusy(true)
     try {
-      const res = await fetch('/api/librarian', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      setDraft('')
+      const { ok, data } = await postStreaming<Record<string, any>>('/api/librarian', {
           question: q,
           // Which conversation this belongs to, and nothing about what was said
           // in it: the server reads the earlier turns off this id. The
@@ -234,11 +236,10 @@ export default function AssistantHome() {
           // The wider tier: this surface also answers the go-to-market work
           // Backstory automates, not just questions about the product.
           mode: 'assistant',
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
+          model,
+        }, (delta) => { if (seq === threadSeq.current) setDraft((current) => current + delta) })
       if (seq !== threadSeq.current) return // the user started or opened another chat meanwhile
-      if (!res.ok) { setFailure({ question: q, message: data.error || 'The Assistant couldn’t answer that.' }); return }
+      if (!ok) { setFailure({ question: q, message: data.error || 'The Assistant couldn’t answer that.' }); return }
       // The thread this answer landed in — the same one on a follow-up, a fresh
       // one when this question opened the conversation.
       if (typeof data.sessionId === 'string') setSessionId(data.sessionId)
@@ -246,7 +247,7 @@ export default function AssistantHome() {
     } catch {
       if (seq === threadSeq.current) setFailure({ question: q, message: 'Could not reach the Assistant. Check your connection and try again.' })
     } finally {
-      if (seq === threadSeq.current) setBusy(false)
+      if (seq === threadSeq.current) { setBusy(false); setDraft('') }
     }
   }
 
@@ -422,7 +423,8 @@ export default function AssistantHome() {
           />
         </div>
 
-        <div className="flex items-center justify-end px-5 py-3.5">
+        <div className="flex items-center justify-end gap-3 px-5 py-3.5">
+          <ModelPicker value={model} onChange={setModel} disabled={busy} />
           <button
             type="button"
             onClick={() => void ask(input)}
@@ -571,12 +573,18 @@ export default function AssistantHome() {
               <div className="flex items-center gap-1.5 text-xs font-medium text-horizon-600">
                 <Sparkles className="h-3.5 w-3.5" /> Assistant
               </div>
-              <p className="mt-2 text-sm text-fg-muted">Searching your library…</p>
-              <div className="mt-3 space-y-2">
-                <Skeleton className="h-3.5 w-full rounded" />
-                <Skeleton className="h-3.5 w-11/12 rounded" />
-                <Skeleton className="h-3.5 w-3/5 rounded" />
-              </div>
+              {draft ? (
+                <div className="mt-2 text-sm text-gray-900" aria-live="polite"><Markdown>{draft}</Markdown></div>
+              ) : (
+                <>
+                  <p className="mt-2 text-sm text-fg-muted">Searching your library…</p>
+                  <div className="mt-3 space-y-2">
+                    <Skeleton className="h-3.5 w-full rounded" />
+                    <Skeleton className="h-3.5 w-11/12 rounded" />
+                    <Skeleton className="h-3.5 w-3/5 rounded" />
+                  </div>
+                </>
+              )}
             </div>
           )}
           <div ref={threadEndRef} />

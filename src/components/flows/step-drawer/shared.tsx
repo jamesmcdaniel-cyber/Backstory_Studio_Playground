@@ -11,6 +11,7 @@
  */
 
 import { useId, useState } from 'react'
+import { CHAT_MODELS } from '@/lib/llm/models'
 import { DataTree } from '@/components/flows/data-tree'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import { Button } from '@/components/ui/button'
@@ -429,7 +430,9 @@ export const NODE_TYPES: { value: EditableType; label: string }[] = [
   { value: 'stop', label: 'Stop and Error' },
 ]
 
-export const AGENT_STEP_MODELS = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5']
+// The same list every chat surface offers (src/lib/llm/models.ts); a step
+// pinned to an older model keeps it — the pickers prepend a current value.
+export const AGENT_STEP_MODELS = CHAT_MODELS.map((model) => model.id)
 
 export type OrgMember = { id: string; name: string | null; email: string | null }
 

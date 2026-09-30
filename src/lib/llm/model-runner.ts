@@ -704,7 +704,12 @@ export function buildStructuredRequest(input: {
     // Compat cannot be handed `output_config`, so the schema is instructed
     // instead — appended AFTER the caller's system prompt so the guardrails
     // it carries stay first and stay intact.
-    system: full ? input.system : `${input.system}\n\n${schemaInstruction(input.schemaName, schema)}`,
+    // On the full dialect the system prompt — the long, fixed part of every
+    // interactive surface (Copilot's graph rules, the assistant's contract) —
+    // is a cache breakpoint, so repeat turns skip re-reading it.
+    system: full
+      ? [{ type: 'text' as const, text: input.system, cache_control: { type: 'ephemeral' as const } }]
+      : `${input.system}\n\n${schemaInstruction(input.schemaName, schema)}`,
     messages: [{ role: 'user', content: input.user }],
     ...(full ? { output_config: { format: { type: 'json_schema' as const, schema } } } : {}),
   }
@@ -827,4 +832,56 @@ export async function generateStructured(opts: StructuredOpts): Promise<string> 
     }
   }
   throw lastError
+}
+
+
+/**
+ * generateStructured, streamed: the same request (schema, caching, ledger,
+ * egress record), with each text delta handed to `onText` as the model
+ * writes it. Interactive surfaces use it to show an answer as it forms
+ * instead of after the whole JSON is done. Returns the full text, exactly
+ * what generateStructured would have.
+ */
+export async function streamStructured(opts: StructuredOpts, onText: (delta: string) => void): Promise<string> {
+  recordStructuredEgress(opts)
+  if (!hasAnthropic()) throw new Error('No model provider configured — set ANTHROPIC_API_KEY.')
+  const overrideModel = opts.model?.trim() || undefined
+  const model = overrideModel && isClaude(overrideModel) ? overrideModel : isClaude(DEFAULT_AGENT_MODEL) ? DEFAULT_AGENT_MODEL : FALLBACK_CLAUDE_MODEL
+  const startedAt = Date.now()
+  const request = buildStructuredRequest({
+    system: opts.system,
+    user: opts.user,
+    schema: opts.schema,
+    schemaName: opts.schemaName,
+    model,
+    maxTokens: opts.maxTokens,
+    dialect: 'anthropic',
+  })
+  const stream = claudeClient().messages.stream(request)
+  stream.on('text', (delta) => onText(delta))
+  const response = await stream.finalMessage()
+  if (opts.ledger) {
+    trackDetached(
+      recordLlmCall({
+        organizationId: opts.ledger.organizationId,
+        userId: opts.ledger.userId ?? null,
+        surface: opts.ledger.surface ?? 'structured',
+        provider: 'anthropic',
+        model,
+        usage: {
+          inputTokens: response.usage.input_tokens,
+          cacheWriteTokens: response.usage.cache_creation_input_tokens || 0,
+          cacheReadTokens: response.usage.cache_read_input_tokens || 0,
+          outputTokens: response.usage.output_tokens,
+        },
+        latencyMs: Date.now() - startedAt,
+        agentExecutionId: opts.ledger.agentExecutionId,
+        flowRunId: opts.ledger.flowRunId,
+      }),
+    )
+  }
+  return response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
 }

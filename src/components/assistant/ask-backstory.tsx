@@ -25,6 +25,8 @@ import {
 } from 'lucide-react'
 import { indentOnTab } from '@/components/ui/textarea'
 import { Markdown } from '@/components/ui/markdown'
+import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
+import { postStreaming } from '@/lib/client/stream'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { useDismissOnOutsidePointer } from '@/hooks/use-dismiss-on-outside-pointer'
 import { surfaceForPath } from '@/lib/librarian/surfaces'
@@ -156,6 +158,8 @@ export function AskBackstory() {
   const [restore, setRestore] = useState<'idle' | 'loading' | 'failed'>('idle')
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [model, setModel] = useChatModel('librarian')
   // A failed question stays on screen with a retry, rather than vanishing into
   // a toast the user has already navigated away from.
   const [failure, setFailure] = useState<{ question: string; message: string } | null>(null)
@@ -342,10 +346,8 @@ export function AskBackstory() {
     setFailure(null)
     setBusy(true)
     try {
-      const response = await fetch('/api/librarian', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      setDraft('')
+      const { ok, data } = await postStreaming<Record<string, any>>('/api/librarian', {
           question: q,
           // Which conversation this belongs to, and nothing whatsoever about
           // what was said in it. The server reads the earlier turns off this
@@ -358,11 +360,10 @@ export function AskBackstory() {
           // The narrower tier: this is the in-product helper, so it stays on
           // Backstory, this workspace, and why a run failed.
           mode: 'helper',
-        }),
-      })
-      const data = await response.json().catch(() => ({}))
+          model,
+        }, (delta) => { if (seq === threadSeq.current) setDraft((current) => current + delta) })
       if (seq !== threadSeq.current) return
-      if (!response.ok) {
+      if (!ok) {
         setFailure({ question: q, message: data.error || 'Ask Backstory couldn’t answer that.' })
         return
       }
@@ -381,9 +382,9 @@ export function AskBackstory() {
         setFailure({ question: q, message: 'Could not reach Ask Backstory. Check your connection and try again.' })
       }
     } finally {
-      if (seq === threadSeq.current) setBusy(false)
+      if (seq === threadSeq.current) { setBusy(false); setDraft('') }
     }
-  }, [busy, currentPath, rememberSession, sessionId])
+  }, [busy, currentPath, model, rememberSession, sessionId])
 
   const startNewChat = () => {
     setHistoryOpen(false)
@@ -727,11 +728,13 @@ export function AskBackstory() {
                   </div>
                 ))}
 
-                {busy && (
+                {busy && (draft ? (
+                  <div className="text-sm text-graphite-900" aria-live="polite"><Markdown>{draft}</Markdown></div>
+                ) : (
                   <p className="flex items-center gap-2 text-sm text-fg-muted">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Looking it up…
                   </p>
-                )}
+                ))}
 
                 {failure && (
                   <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3">
@@ -788,7 +791,10 @@ export function AskBackstory() {
                     {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                   </button>
                 </div>
-                <p className="mt-2 text-[11px] text-fg-muted">AI-generated from Backstory’s docs and your workspace.</p>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-fg-muted">AI-generated from Backstory’s docs and your workspace.</p>
+                  <ModelPicker value={model} onChange={setModel} disabled={busy} />
+                </div>
               </div>
             </>
           )}

@@ -2,7 +2,9 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runner'
+import { resolveChatModel } from '@/lib/llm/models'
+import { createTrailerFilter } from '@/lib/llm/stream-text'
+import { eventStream, wantsEventStream, type StreamSend } from '@/lib/server/sse'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
 import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
@@ -95,6 +97,9 @@ const requestSchema = z.object({
   // boundary rather than being silently promoted to the wider one. Widening is
   // something a caller has to ask for in as many words.
   mode: z.enum(['helper', 'assistant']).default('helper'),
+  // The model the person picked; anything not on the chat list falls back to
+  // the surface default (see src/lib/llm/models.ts).
+  model: z.string().max(80).optional(),
 }).strict()
 
 /**
@@ -110,7 +115,8 @@ function deriveTitle(question: string): string {
 }
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { question, sessionId, path, mode } = requestSchema.parse(await request.json())
+  const { question, sessionId, path, mode, model: requestedModel } = requestSchema.parse(await request.json())
+  const streaming = wantsEventStream(request)
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `librarian:${auth.dbUser.id}`, limit: 30 })
 
   const words = terms(question)
@@ -261,98 +267,114 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new ApiError('No model provider is configured', 503, 'AI_UNAVAILABLE')
   }
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const model = DEFAULT_SUMMARY_MODEL.startsWith('claude') ? DEFAULT_SUMMARY_MODEL : 'claude-haiku-4-5'
+  const answerQuestion = async (send: StreamSend | null) => {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const model = resolveChatModel(requestedModel, 'librarian')
 
-  const response = await client.messages.create({
-    model,
-    // Headroom for a fully-worked capability answer plus the RELEVANT line; a
-    // 700-token ceiling truncated them mid-list.
-    max_tokens: 1_400,
-    // Composed here rather than baked into SYSTEM_PROMPT, matching the other
-    // three model surfaces: `mode` is a per-request value, and the guardrails
-    // are a platform-wide clause that must read identically wherever it appears.
-    // `mode` reaches ONLY this string — retrieval, candidate assembly, the
-    // shared numbering and citation resolution above are byte-identical across
-    // tiers, which is what makes "one brain, two scopes" a claim you can test
-    // rather than a claim you have to trust.
-    system: `${SYSTEM_PROMPT}\n\n${scopeRule(mode)}\n\n${GUARDRAIL_RULE}`,
-    messages: [{ role: 'user', content: prompt }],
-  })
-  void recordTokenUsage(org, (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)).catch(() => undefined)
+    const params = {
+      model,
+      // Headroom for a fully-worked capability answer plus the RELEVANT line; a
+      // 700-token ceiling truncated them mid-list.
+      max_tokens: 1_400,
+      // Composed here rather than baked into SYSTEM_PROMPT, matching the other
+      // three model surfaces: `mode` is a per-request value, and the guardrails
+      // are a platform-wide clause that must read identically wherever it appears.
+      // `mode` reaches ONLY this string — retrieval, candidate assembly, the
+      // shared numbering and citation resolution above are byte-identical across
+      // tiers, which is what makes "one brain, two scopes" a claim you can test
+      // rather than a claim you have to trust.
+      // One cached block: the prompt, scope and guardrails are fixed per mode,
+      // so repeat questions skip re-reading ~12 KB of instructions.
+      system: [{ type: 'text' as const, text: `${SYSTEM_PROMPT}\n\n${scopeRule(mode)}\n\n${GUARDRAIL_RULE}`, cache_control: { type: 'ephemeral' as const } }],
+      messages: [{ role: 'user' as const, content: prompt }],
+    }
+    // Streamed when the client asked: the answer appears as it is written, with
+    // the trailing citation line held back (it is parsed, never shown).
+    let response: Anthropic.Message
+    if (send) {
+      const visible = createTrailerFilter()
+      const stream = client.messages.stream(params)
+      stream.on('text', (delta) => send.delta(visible(delta)))
+      response = await stream.finalMessage()
+    } else {
+      response = await client.messages.create(params)
+    }
+    void recordTokenUsage(org, (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)).catch(() => undefined)
 
-  const raw = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .trim()
+    const raw = response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
+      .trim()
 
-  // Only the items the model actually stood behind are returned — the rest of
-  // the keyword match stays out of the UI.
-  const { answer, picked } = parseRelevance(raw, candidateCount)
-  const results = citedItems(picked, workspaceItems).slice(0, MAX_RESULTS)
+    // Only the items the model actually stood behind are returned — the rest of
+    // the keyword match stays out of the UI.
+    const { answer, picked } = parseRelevance(raw, candidateCount)
+    const results = citedItems(picked, workspaceItems).slice(0, MAX_RESULTS)
 
-  // Every URL shown is one this route fetched, resolved back from the number
-  // the model gave — so a citation cannot point at a page that does not exist.
-  const sources: LibrarianSource[] = citedSources<KnowledgeDoc>(picked, workspaceItems.length, docs)
-    .slice(0, MAX_SOURCES)
-    .map((d) => ({ title: d.title, url: d.url, label: SOURCE_LABEL[d.source] }))
-  // The fallback is stored as well as returned: a thread read back later should
-  // be what happened, including the turn where nothing came out of the model.
-  const reply = answer || 'I couldn’t generate an answer just now — try rephrasing.'
+    // Every URL shown is one this route fetched, resolved back from the number
+    // the model gave — so a citation cannot point at a page that does not exist.
+    const sources: LibrarianSource[] = citedSources<KnowledgeDoc>(picked, workspaceItems.length, docs)
+      .slice(0, MAX_SOURCES)
+      .map((d) => ({ title: d.title, url: d.url, label: SOURCE_LABEL[d.source] }))
+    // The fallback is stored as well as returned: a thread read back later should
+    // be what happened, including the turn where nothing came out of the model.
+    const reply = answer || 'I couldn’t generate an answer just now — try rephrasing.'
 
-  // Written only once the model has answered, so a failed call leaves no
-  // half-thread behind for the user to find. Both turns in one statement for
-  // the same reason: an exchange is the unit a conversation reads back in, and
-  // a question stored without its answer is worse than neither.
-  // ...and tolerant of the thread having been deleted while the model was
-  // thinking. The gap between resolving the session and writing the turns is
-  // the whole model call — seconds — and "Delete all conversations" from
-  // another tab lands inside it easily. The row is gone, its messages cascaded,
-  // and this insert would violate the sessionId foreign key: a 500 and a Sentry
-  // report for a question that was answered fine. The user asked for the thread
-  // to go, so honouring that and still returning the answer is the correct
-  // outcome, and it matches what the DELETE routes already do — they use
-  // deleteMany precisely so a vanished thread is a no-op rather than a throw.
-  await prisma.librarianChatMessage.createMany({
-    data: [
-      { sessionId: session.id, organizationId: org, userId: uid, role: 'user', content: question },
-      {
-        sessionId: session.id,
-        organizationId: org,
-        userId: uid,
-        role: 'assistant',
-        content: reply,
-        // The cards and citations this answer actually shipped with, so a
-        // restored thread renders as it did live instead of as bare text — and
-        // so its links stay the ones this route resolved, rather than ones a
-        // later reader's model would have to guess at.
-        metadata: { results, sources } as unknown as Prisma.InputJsonValue,
-      },
-    ],
-  }).catch((error: unknown) => {
-    // P2003 is the foreign key: the session was deleted under us. Anything else
-    // is a real write failure and must still surface — swallowing every error
-    // here would turn "the database is down" into a silently unsaved thread.
-    if ((error as { code?: string })?.code !== 'P2003') throw error
-  })
-  // The write itself is the point: @updatedAt moves, and the thread sorts to
-  // the top of the history list. The title is RESTATED rather than recomputed,
-  // so a thread keeps the question that opened it instead of drifting to
-  // whatever was asked last — the fallback is only for a row that reached here
-  // without one.
-  //
-  // Best-effort: the turns above are already durable, and a cosmetic bump must
-  // not cost the user the answer they just waited for. Scoped by
-  // organizationId and userId all the same — the tenant guard rejects an
-  // unscoped write, and a swallowed throw is exactly how an unscoped one would
-  // go unnoticed forever.
-  await prisma.librarianChatSession
-    .update({
-      where: { id: session.id, organizationId: org, userId: uid },
-      data: { title: session.title ?? deriveTitle(question) },
+    // Written only once the model has answered, so a failed call leaves no
+    // half-thread behind for the user to find. Both turns in one statement for
+    // the same reason: an exchange is the unit a conversation reads back in, and
+    // a question stored without its answer is worse than neither.
+    // ...and tolerant of the thread having been deleted while the model was
+    // thinking. The gap between resolving the session and writing the turns is
+    // the whole model call — seconds — and "Delete all conversations" from
+    // another tab lands inside it easily. The row is gone, its messages cascaded,
+    // and this insert would violate the sessionId foreign key: a 500 and a Sentry
+    // report for a question that was answered fine. The user asked for the thread
+    // to go, so honouring that and still returning the answer is the correct
+    // outcome, and it matches what the DELETE routes already do — they use
+    // deleteMany precisely so a vanished thread is a no-op rather than a throw.
+    await prisma.librarianChatMessage.createMany({
+      data: [
+        { sessionId: session.id, organizationId: org, userId: uid, role: 'user', content: question },
+        {
+          sessionId: session.id,
+          organizationId: org,
+          userId: uid,
+          role: 'assistant',
+          content: reply,
+          // The cards and citations this answer actually shipped with, so a
+          // restored thread renders as it did live instead of as bare text — and
+          // so its links stay the ones this route resolved, rather than ones a
+          // later reader's model would have to guess at.
+          metadata: { results, sources } as unknown as Prisma.InputJsonValue,
+        },
+      ],
+    }).catch((error: unknown) => {
+      // P2003 is the foreign key: the session was deleted under us. Anything else
+      // is a real write failure and must still surface — swallowing every error
+      // here would turn "the database is down" into a silently unsaved thread.
+      if ((error as { code?: string })?.code !== 'P2003') throw error
     })
-    .catch(() => undefined)
+    // The write itself is the point: @updatedAt moves, and the thread sorts to
+    // the top of the history list. The title is RESTATED rather than recomputed,
+    // so a thread keeps the question that opened it instead of drifting to
+    // whatever was asked last — the fallback is only for a row that reached here
+    // without one.
+    //
+    // Best-effort: the turns above are already durable, and a cosmetic bump must
+    // not cost the user the answer they just waited for. Scoped by
+    // organizationId and userId all the same — the tenant guard rejects an
+    // unscoped write, and a swallowed throw is exactly how an unscoped one would
+    // go unnoticed forever.
+    await prisma.librarianChatSession
+      .update({
+        where: { id: session.id, organizationId: org, userId: uid },
+        data: { title: session.title ?? deriveTitle(question) },
+      })
+      .catch(() => undefined)
 
-  return { success: true, sessionId: session.id, answer: reply, results, sources }
+    return { success: true, sessionId: session.id, answer: reply, results, sources, model }
+  }
+  return streaming ? eventStream((send) => answerQuestion(send)) : answerQuestion(null)
 }, { permission: 'agent.run' })

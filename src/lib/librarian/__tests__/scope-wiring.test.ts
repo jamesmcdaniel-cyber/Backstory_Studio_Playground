@@ -29,7 +29,8 @@ const SRC = path.join(process.cwd(), 'src')
 const ROUTE = path.join(SRC, 'app', 'api', 'librarian', 'route.ts')
 
 /** How a file betrays that it is a user-facing caller of the librarian. */
-const LIBRARIAN_FETCH = /fetch\(\s*['"`]\/api\/librarian['"`]/
+// A direct fetch, or the streaming helper the chat panels use.
+const LIBRARIAN_FETCH = /(?:fetch|postStreaming(?:<.+?>)?)\(\s*['"`]\/api\/librarian['"`]/
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -78,9 +79,11 @@ test('the route holds the model to the mode it was given, not to a tier of its o
 
 test('the system prompt carries the base prompt, the scope clause and the guardrails together', () => {
   assert.match(route, /from '@\/lib\/security\/guardrails'/, 'the librarian was the last model surface without GUARDRAIL_RULE')
+  // Sent as one cached system block; the text inside it is the same three
+  // clauses, composed in the route, in that order.
   assert.match(
     route,
-    /system: `\$\{SYSTEM_PROMPT\}\\n\\n\$\{scopeRule\(mode\)\}\\n\\n\$\{GUARDRAIL_RULE\}`/,
+    /system: \[\{ type: 'text' as const, text: `\$\{SYSTEM_PROMPT\}\\n\\n\$\{scopeRule\(mode\)\}\\n\\n\$\{GUARDRAIL_RULE\}`/,
     'the three clauses must be composed in the route, in that order',
   )
 })

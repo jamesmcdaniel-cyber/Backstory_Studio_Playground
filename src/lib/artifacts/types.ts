@@ -14,6 +14,8 @@ export type ArtifactChatMessage = {
   /** Set on an agent message once its run produced a version. */
   versionId?: string
   status?: 'pending' | 'completed' | 'failed'
+  /** The model that answered, when one was picked. */
+  model?: string
   createdAt: string
 }
 

@@ -11,6 +11,8 @@ import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { relativeTime } from '@/lib/relative-time'
 import { cn } from '@/lib/utils'
 import { ARTIFACT_KIND_LABEL, type ArtifactView } from '@/lib/artifacts/types'
+import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
+import { chatModelLabel } from '@/lib/llm/models'
 import { RunFeed } from '@/components/runs/run-feed'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 
@@ -28,6 +30,7 @@ export function ArtifactViewer({ id }: { id: string }) {
   const [sending, setSending] = useState(false)
   const [markdown, setMarkdown] = useState<{ versionId: string; text: string } | null>(null)
   const [panel, setPanel] = useState<'assistant' | 'history'>('assistant')
+  const [model, setModel] = useChatModel('artifact')
   const [restoring, setRestoring] = useState<string | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
 
@@ -71,7 +74,7 @@ export function ArtifactViewer({ id }: { id: string }) {
     if (!outgoing || sending || !artifact) return
     setSending(true)
     try {
-      const response = await fetch(`/api/artifacts/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text ?? message, mode: 'auto' }) })
+      const response = await fetch(`/api/artifacts/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text ?? message, mode: 'auto', model }) })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
       if (!response.ok || !data.artifact) throw new Error(data.error || 'The message could not be sent.')
       setArtifact(data.artifact)
@@ -282,6 +285,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                 ) : m.role === 'agent' ? (
                   <div className={cn(m.status === 'failed' && 'text-destructive')}>
                     <Markdown>{m.content}</Markdown>
+                    {m.model && <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">{chatModelLabel(m.model)}</p>}
                     {m.versionId && <button type="button" onClick={() => setVersionId(m.versionId!)} className="mt-1 text-xs font-medium text-horizon-700 underline underline-offset-2">View this version</button>}
                   </div>
                 ) : (
@@ -300,6 +304,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                   </button>
                 </div>
               )}
+              <div className="mb-2 flex justify-end"><ModelPicker value={model} onChange={setModel} disabled={busy} /></div>
               <label htmlFor="artifact-message" className="sr-only">Message</label>
               <div className="flex items-end gap-2">
                 <textarea

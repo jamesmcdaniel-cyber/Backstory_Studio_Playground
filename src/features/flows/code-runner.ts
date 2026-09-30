@@ -396,3 +396,13 @@ export async function runFlowCode(options: CodeRunOptions): Promise<CodeRunResul
   }
   return { output, logs }
 }
+
+/**
+ * Load the Python runtime and the data packages ahead of the first run that
+ * needs them. The worker calls this at boot so the first analysis after a
+ * deploy does not pay for interpreter start-up and the pandas load.
+ */
+export async function warmPythonRuntime(): Promise<void> {
+  const pyodide = await getPyodide()
+  await loadPandas(pyodide)
+}

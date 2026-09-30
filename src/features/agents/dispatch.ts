@@ -23,13 +23,9 @@ export async function dispatchAgentExecution(
 ): Promise<{ queued: boolean }> {
   if (inlineExecution) {
     const { runAgentExecution } = await import('./execute-agent')
-    await runAgentExecution({
-      executionId: job.executionId,
-      agentId: job.agentId,
-      organizationId: job.organizationId,
-      userId: job.userId,
-      input: job.input ?? '',
-    })
+    // The whole job, not a subset: an inline run must honour the same
+    // overrides (a picked model, a flow step's settings) as a queued one.
+    await runAgentExecution({ ...job, input: job.input ?? '' })
     return { queued: false }
   }
 

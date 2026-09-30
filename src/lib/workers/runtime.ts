@@ -364,6 +364,12 @@ class WorkerRuntime {
     // the CI worker smoke step) can prove the topology this build registered
     // rather than inferring it from silence.
     this.server.log.info(`worker ready: consuming ${this.queues.join(', ')}`)
+    // Off the critical path: jobs are already being consumed; this only makes
+    // the first data-analysis run after a deploy as fast as the rest.
+    void import('@/features/flows/code-runner')
+      .then(({ warmPythonRuntime }) => warmPythonRuntime())
+      .then(() => this.server.log.info('python runtime warm'))
+      .catch((error: unknown) => this.server.log.warn(`python runtime warm-up failed: ${error instanceof Error ? error.message : String(error)}`))
   }
 }
 

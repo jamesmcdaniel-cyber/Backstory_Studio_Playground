@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { apiLogger } from '@/lib/logger'
 import { captureError } from '@/lib/observability/sentry'
-import { generateStructured } from '@/lib/llm/model-runner'
+import { streamStructured, generateStructured } from '@/lib/llm/model-runner'
 import { flowGraphSchema, emptyGraph } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { buildCopilotGrounding } from '@/lib/flows/copilot-grounding'
@@ -12,6 +12,9 @@ import { applyCopilotOps } from '@/lib/flows/copilot-ops'
 import { parseCopilotChatReply, sanitizeCopilotOps, discardNotice } from '@/lib/flows/copilot-chat'
 import { assertAiCallAllowed, recordEstimatedUsage } from '@/lib/usage/ai-guard'
 import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
+import { resolveChatModel } from '@/lib/llm/models'
+import { createJsonStringFieldReader } from '@/lib/llm/stream-text'
+import { eventStream, wantsEventStream, type StreamSend } from '@/lib/server/sse'
 
 // Anthropic strict structured outputs can't express free-form objects (a
 // {type:'object'} with no declared properties — see strictifySchema and the
@@ -69,10 +72,14 @@ const requestSchema = z.object({
   // buildCopilotGrounding). Client-declared, but over-claiming only REDUCES
   // what Copilot can reference, so it needs no server-side verification.
   external: z.boolean().optional(),
+  // The model the person picked (see src/lib/llm/models.ts).
+  model: z.string().max(80).optional(),
 })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { messages, graph: rawGraph, external } = requestSchema.parse(await request.json())
+  const { messages, graph: rawGraph, external, model: requestedModel } = requestSchema.parse(await request.json())
+  const model = resolveChatModel(requestedModel, 'copilot')
+  const streaming = wantsEventStream(request)
   // Gate before any model spend: provider, per-user rate limit, monthly ceiling.
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `flow-copilot-chat:${auth.dbUser.id}`, limit: 20 })
   const { roster, toolCatalog, httpCredentials, contextBlock, graphRules } = await buildCopilotGrounding(auth.organizationId, auth.dbUser.id, {
@@ -106,58 +113,68 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     'Respond to the latest user message.',
   ].join('\n')
 
-  try {
-    const raw = await generateStructured({
-      system,
-      user,
-      schema: OPS_JSON_SCHEMA,
-      schemaName: 'flow_edit_ops',
-      maxTokens: 3500,
-      // Same 'run.chat' surface as /api/chat and the per-agent assistant
-      // thread — all three are interactive chat, and the /usage page's chat
-      // bucket keys on this literal string (see src/lib/usage/chat-ledger.ts).
-      ledger: buildChatLedgerContext({ organizationId: auth.organizationId, userId: auth.dbUser.id }),
-    })
-    recordEstimatedUsage(auth.organizationId, system, user, raw)
-    const reply = parseCopilotChatReply(raw)
-    const { ops, discarded } = sanitizeCopilotOps(reply.candidates, { agents: roster, toolCatalog })
-    const totalDiscarded = discarded + (reply.opsUnreadable ? 1 : 0)
+  const respond = async (send: StreamSend | null) => {
+    try {
+      const structured = {
+        system,
+        user,
+        schema: OPS_JSON_SCHEMA,
+        schemaName: 'flow_edit_ops',
+        maxTokens: 3500,
+        // Same 'run.chat' surface as /api/chat and the per-agent assistant
+        // thread — all three are interactive chat, and the /usage page's chat
+        // bucket keys on this literal string (see src/lib/usage/chat-ledger.ts).
+        ledger: buildChatLedgerContext({ organizationId: auth.organizationId, userId: auth.dbUser.id }),
+        model,
+      }
+      // Streamed: the explanation appears as it is written; the edits that
+      // follow it are sanitised, applied and validated once they are complete.
+      const messageReader = createJsonStringFieldReader('message')
+      const raw = send
+        ? await streamStructured(structured, (delta) => send.delta(messageReader(delta)))
+        : await generateStructured(structured)
+      recordEstimatedUsage(auth.organizationId, system, user, raw)
+      const reply = parseCopilotChatReply(raw)
+      const { ops, discarded } = sanitizeCopilotOps(reply.candidates, { agents: roster, toolCatalog })
+      const totalDiscarded = discarded + (reply.opsUnreadable ? 1 : 0)
 
-    // Apply the sanitized ops server-side so needsAttention reflects the
-    // post-edit state the client will land on — and so the fallback message
-    // is honest about whether anything actually applied.
-    const applied = applyCopilotOps(graph, ops)
-    const baseMessage =
-      reply.message ||
-      (ops.length === 0
-        ? 'I could not work out a change to make — could you rephrase?'
-        : applied.applied === 0
-          ? 'I could not apply those changes — the targets may no longer exist.'
-          : 'I applied the requested changes.')
-    let message = totalDiscarded > 0 ? baseMessage + discardNotice(totalDiscarded) : baseMessage
-    // Fires even when nothing applied but the model supplied its own (possibly
-    // optimistic) message — the applied===0 fallback only covers the no-message case.
-    if (applied.skipped.length > 0 && (applied.applied > 0 || reply.message)) {
-      message += ` (${applied.skipped.length} change${applied.skipped.length === 1 ? '' : 's'} could not be applied.)`
-    }
-    const validation = validateFlowGraph(applied.graph, {
-      ...validationContext,
-      requireRunnable: applied.graph.nodes.length > 1,
-    })
-    const needsAttention = [...validation.errors, ...validation.warnings].map((issue) => ({ nodeId: issue.nodeId, message: issue.message }))
+      // Apply the sanitized ops server-side so needsAttention reflects the
+      // post-edit state the client will land on — and so the fallback message
+      // is honest about whether anything actually applied.
+      const applied = applyCopilotOps(graph, ops)
+      const baseMessage =
+        reply.message ||
+        (ops.length === 0
+          ? 'I could not work out a change to make — could you rephrase?'
+          : applied.applied === 0
+            ? 'I could not apply those changes — the targets may no longer exist.'
+            : 'I applied the requested changes.')
+      let message = totalDiscarded > 0 ? baseMessage + discardNotice(totalDiscarded) : baseMessage
+      // Fires even when nothing applied but the model supplied its own (possibly
+      // optimistic) message — the applied===0 fallback only covers the no-message case.
+      if (applied.skipped.length > 0 && (applied.applied > 0 || reply.message)) {
+        message += ` (${applied.skipped.length} change${applied.skipped.length === 1 ? '' : 's'} could not be applied.)`
+      }
+      const validation = validateFlowGraph(applied.graph, {
+        ...validationContext,
+        requireRunnable: applied.graph.nodes.length > 1,
+      })
+      const needsAttention = [...validation.errors, ...validation.warnings].map((issue) => ({ nodeId: issue.nodeId, message: issue.message }))
 
-    return { success: true, message, ops, needsAttention }
-  } catch (error) {
-    // Same reasoning as /api/flows/copilot: only unexpected failures reach here,
-    // and their messages are internal detail rather than user guidance.
-    apiLogger.error('flow copilot chat failed', {
-      organizationId: auth.organizationId,
-      error: error instanceof Error ? error.message : String(error),
-    })
-    captureError(error, { path: '/api/flows/copilot/chat' })
-    return {
-      success: false,
-      error: 'Could not apply that change. Try rephrasing what you want.',
+      return { success: true, message, ops, needsAttention, model }
+    } catch (error) {
+      // Same reasoning as /api/flows/copilot: only unexpected failures reach here,
+      // and their messages are internal detail rather than user guidance.
+      apiLogger.error('flow copilot chat failed', {
+        organizationId: auth.organizationId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      captureError(error, { path: '/api/flows/copilot/chat' })
+      return {
+        success: false,
+        error: 'Could not apply that change. Try rephrasing what you want.',
+      }
     }
   }
+  return streaming ? eventStream((send) => respond(send)) : respond(null)
 }, { permission: 'flow.write' })

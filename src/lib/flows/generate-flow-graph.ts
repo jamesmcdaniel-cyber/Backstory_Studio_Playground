@@ -60,7 +60,7 @@ export async function generateFlowGraph(
   organizationId: string,
   userId: string,
   description: string,
-  opts: { currentGraph?: unknown; issues?: string[] } = {},
+  opts: { currentGraph?: unknown; issues?: string[]; model?: string } = {},
 ): Promise<GeneratedFlowGraph> {
   const { roster, toolCatalog, contextBlock, graphRules } = await buildCopilotGrounding(organizationId, userId)
   const system = `${graphRules}\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`
@@ -84,7 +84,8 @@ export async function generateFlowGraph(
     agents: roster.map((agent) => ({ id: agent.id, title: agent.name })),
     toolCatalog,
   }
-  const raw = await generateStructured({ system, user, schema: GRAPH_JSON_SCHEMA, schemaName: 'flow_graph', maxTokens: 3500 })
+  const raw = await generateStructured({
+      ...(opts.model ? { model: opts.model } : {}), system, user, schema: GRAPH_JSON_SCHEMA, schemaName: 'flow_graph', maxTokens: 3500 })
   const rawParts: string[] = [system, user, raw]
   let graph = repairGeneratedFlowGraph(flowGraphSchema.parse(normalizeGeneratedFlowGraphInput(parseGeneratedGraphReply(raw))), { agents: roster, toolCatalog })
   let validation = validateFlowGraph(graph, { ...validationContext, requireRunnable: graph.nodes.length > 1 })
@@ -99,7 +100,8 @@ export async function generateFlowGraph(
       '',
       `Broken graph:\n${JSON.stringify(graph)}`,
     ].join('\n')
-    const repairedRaw = await generateStructured({ system, user: repairUser, schema: GRAPH_JSON_SCHEMA, schemaName: 'flow_graph_repair', maxTokens: 3500 })
+    const repairedRaw = await generateStructured({
+      ...(opts.model ? { model: opts.model } : {}), system, user: repairUser, schema: GRAPH_JSON_SCHEMA, schemaName: 'flow_graph_repair', maxTokens: 3500 })
     rawParts.push(repairUser, repairedRaw)
     graph = repairGeneratedFlowGraph(flowGraphSchema.parse(normalizeGeneratedFlowGraphInput(parseGeneratedGraphReply(repairedRaw))), { agents: roster, toolCatalog })
     validation = validateFlowGraph(graph, { ...validationContext, requireRunnable: graph.nodes.length > 1 })

@@ -429,7 +429,12 @@ async function loadTools(
   // EVERY agent whenever a People.ai client resolves — the same "connect once,
   // available everywhere" model as the org MCP connections below. Identity
   // order (owner connection → org service key → legacy env) lives in the loader.
-  const peopleAiGroup = await loadPeopleAiPlaneGroup(organizationId, ownerUserId)
+  // A conversation about an ROI dashboard works only on the dashboard and its
+  // extracts. Loading every integration's tools there cost ~60K prompt tokens
+  // a turn (and, for an expired connection, a slow failed discovery) for
+  // tools the conversation can never use.
+  const dashboardOnly = artifact?.kind === 'roi_dashboard'
+  const peopleAiGroup = dashboardOnly ? null : await loadPeopleAiPlaneGroup(organizationId, ownerUserId)
   if (peopleAiGroup) pushGroup(peopleAiGroup, { cap: 20 })
 
   // ---- Per-org MCP connections (all active connections, any authType) ------
@@ -438,7 +443,7 @@ async function loadTools(
   // Per-agent tool toggles (agent setup → MCP chip gear) filter HERE, before
   // the per-group cap and the global 64-tool cap, so a disabled tool never
   // exists for the run — no description, no cap slot, nothing to call.
-  const mcpGroups = await loadMcpConnectionPlaneGroups(organizationId, ownerUserId)
+  const mcpGroups = dashboardOnly ? [] : await loadMcpConnectionPlaneGroups(organizationId, ownerUserId)
   for (const group of mcpGroups) {
     const allowed = mcpAllowedToolNames(toolSettings, group.id)
     pushGroup(allowed ? { ...group, tools: group.tools.filter((tool) => allowed.has(tool.name)) } : group, { cap: 20 })
@@ -451,14 +456,14 @@ async function loadTools(
   // tools that replace it must too. 'code' rides along for the same reason:
   // an agent that can read a CSV but not compute over it can only refuse or
   // guess. Both read-only, so no approval-gate impact.
-  for (const group of await loadNativePlaneGroups(organizationId, { providers: [...providers, 'repository', 'code'], httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId, artifact })) pushGroup(group)
+  for (const group of await loadNativePlaneGroups(organizationId, { providers: dashboardOnly ? ['repository', 'code', 'roi'] : [...providers, 'repository', 'code'], httpEndpoints: dashboardOnly ? [] : httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId, artifact })) pushGroup(group)
 
   // ---- Nango delivery (outbound writes as the acting user) -----------------
   // Slack/Gmail/Salesforce writes through the org's Nango connections,
   // preferring the agent owner's own connection so messages arrive as the rep.
   // Gated per capability on both a matching providers entry and a resolvable
   // connection. Failures never abort the run.
-  for (const group of await loadNangoPlaneGroups(organizationId, ownerUserId, { providers })) {
+  for (const group of dashboardOnly ? [] : await loadNangoPlaneGroups(organizationId, ownerUserId, { providers })) {
     pushGroup(group, { namePrefix: 'nango' })
   }
 
@@ -1786,7 +1791,12 @@ async function runAgentExecutionInner(
       })
     }
 
-    const headline = await generateHeadline(summary, { organizationId, agentExecutionId: execution.id })
+    // A chat turn on an artifact, or an ROI build, never shows a headline (the
+    // artifact has its own title), so it does not wait for one.
+    const triggerType = (execution.trigger as { type?: unknown } | null)?.type
+    const headline = triggerType === 'artifact' || triggerType === 'roi_analysis'
+      ? null
+      : await generateHeadline(summary, { organizationId, agentExecutionId: execution.id })
 
     await prisma.executionMessage.create({
       data: { executionId: execution.id, role: 'agent', content: summary },

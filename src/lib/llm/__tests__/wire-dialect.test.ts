@@ -80,7 +80,10 @@ test('compat structured calls keep the guardrails and instruct the schema instea
 
 test('the full dialect constrains structurally and leaves the system prompt alone', () => {
   const params = structured('anthropic')
-  assert.equal(params.system, `Draft a flow.\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`)
+  // The full dialect sends the system prompt as one cached block, text unchanged.
+  const blocks = params.system as Array<{ text: string; cache_control: unknown }>
+  assert.equal(blocks[0].text, `Draft a flow.\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`)
+  assert.deepEqual(blocks[0].cache_control, { type: 'ephemeral' })
   assert.ok(params.output_config)
 })
 

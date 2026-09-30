@@ -1,3 +1,4 @@
+import { resolveChatModel } from '@/lib/llm/models'
 import { z } from 'zod'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { apiLogger } from '@/lib/logger'
@@ -10,17 +11,19 @@ const requestSchema = z.object({
   description: z.string().min(1),
   currentGraph: z.unknown().optional(),
   issues: z.array(z.string()).max(50).optional(),
+  model: z.string().max(80).optional(),
 })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
-  const { description, currentGraph, issues } = requestSchema.parse(await request.json())
+  const { description, currentGraph, issues, model: requestedModel } = requestSchema.parse(await request.json())
+  const model = resolveChatModel(requestedModel, 'copilot')
   // Gate before any model spend: provider configured, caller under rate limit,
   // workspace under its monthly ceiling. Generation makes up to 3 model calls,
   // so a tighter per-minute limit than plain chat.
   await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `flow-copilot:${auth.dbUser.id}`, limit: 10 })
 
   try {
-    const { graph, validation, rawParts } = await generateFlowGraph(auth.organizationId, auth.dbUser.id, description, { currentGraph, issues })
+    const { graph, validation, rawParts } = await generateFlowGraph(auth.organizationId, auth.dbUser.id, description, { currentGraph, issues, model })
     recordEstimatedUsage(auth.organizationId, ...rawParts)
     const needsAttention = [...validation.errors, ...validation.warnings].map((issue) => ({ nodeId: issue.nodeId, message: issue.message }))
     return { success: true, graph, validation, needsAttention }

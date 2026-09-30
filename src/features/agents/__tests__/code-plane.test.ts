@@ -14,5 +14,8 @@ test('code execution is a builtin, read-only plane', () => {
 test('every agent gets the code plane, not only ones that selected it', () => {
   // An agent handed a CSV without it can only refuse or guess at the numbers.
   const source = readFileSync(new URL('../execute-agent.ts', import.meta.url), 'utf8')
-  assert.match(source, /providers: \[\.\.\.providers, 'repository', 'code'\]/)
+  // Every agent: its own providers plus repository and code. A conversation
+  // about an ROI dashboard narrows the list to its own planes — code included.
+  assert.match(source, /\[\.\.\.providers, 'repository', 'code'\]/)
+  assert.match(source, /dashboardOnly \? \['repository', 'code', 'roi'\]/)
 })

@@ -381,7 +381,7 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
 }
 
 /** Ask the producing agent a question, or ask it for a change (a new version). */
-export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: ArtifactChatMode }): Promise<ArtifactView> {
+export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: ArtifactChatMode; model?: string }): Promise<ArtifactView> {
   const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
   if (!row) throw new Error('Artifact not found.')
   if (!row.agentTaskId) throw new Error('This artifact has no producing agent to ask.')
@@ -406,7 +406,7 @@ export async function askArtifact(params: { organizationId: string; userId: stri
     },
   })
   try {
-    await dispatchAgentExecution({ executionId: execution.id, agentId: agent.id, organizationId: params.organizationId, userId: params.userId, input })
+    await dispatchAgentExecution({ executionId: execution.id, agentId: agent.id, organizationId: params.organizationId, userId: params.userId, input, ...(params.model ? { stepOverrides: { model: params.model } } : {}) })
   } catch (error) {
     await prisma.agentExecution.update({ where: { id: execution.id, organizationId: params.organizationId }, data: { status: 'failed', error: error instanceof Error ? error.message : String(error), completedAt: new Date() } }).catch(() => undefined)
     throw error
@@ -415,7 +415,7 @@ export async function askArtifact(params: { organizationId: string; userId: stri
   const next: ArtifactChatMessage[] = [
     ...chat,
     { role: 'user', mode: params.mode, content: message, createdAt: now },
-    { role: 'agent', mode: params.mode, content: '', executionId: execution.id, status: 'pending', createdAt: now },
+    { role: 'agent', mode: params.mode, content: '', executionId: execution.id, status: 'pending', createdAt: now, ...(params.model ? { model: params.model } : {}) },
   ]
   await prisma.artifact.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue(next) } })
   return (await loadArtifact(params.organizationId, row.id))!

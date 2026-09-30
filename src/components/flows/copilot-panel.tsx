@@ -6,6 +6,8 @@ import { indentOnTab } from '@/components/ui/textarea'
 import { Sparkles, Send, Square, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
+import { postStreaming } from '@/lib/client/stream'
 import { Button } from '@/components/ui/button'
 import type { FlowGraph } from '@/lib/flows/graph'
 import type { CopilotOp } from '@/lib/flows/copilot-ops'
@@ -47,6 +49,8 @@ export function CopilotPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [model, setModel] = useChatModel('copilot')
   const threadRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -99,7 +103,7 @@ export function CopilotPanel({
       const response = await fetch('/api/flows/copilot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify({ description, model }),
         signal: controller.signal,
       })
       const data = await response.json()
@@ -125,6 +129,7 @@ export function CopilotPanel({
     } finally {
       if (abortRef.current === controller) abortRef.current = null
       setLoading(false)
+      setDraft('')
     }
   }
 
@@ -140,14 +145,14 @@ export function CopilotPanel({
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      const response = await fetch('/api/flows/copilot/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, graph: graphRef.current, ...(external ? { external: true } : {}) }),
-        signal: controller.signal,
-      })
-      const data = await response.json()
-      if (response.ok && data.success) {
+      setDraft('')
+      const { ok, data } = await postStreaming<Record<string, any>>(
+        '/api/flows/copilot/chat',
+        { messages: history, graph: graphRef.current, model, ...(external ? { external: true } : {}) },
+        (delta) => setDraft((current) => current + delta),
+        { signal: controller.signal },
+      )
+      if (ok && data.success) {
         const result = onOpsRef.current((data.ops ?? []) as CopilotOp[])
         const parts: string[] = []
         if (result.applied > 0) parts.push(`Applied ${result.applied} change${result.applied === 1 ? '' : 's'}`)
@@ -178,6 +183,7 @@ export function CopilotPanel({
     } finally {
       if (abortRef.current === controller) abortRef.current = null
       setLoading(false)
+      setDraft('')
     }
   }
 
@@ -252,7 +258,7 @@ export function CopilotPanel({
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950/40">
               <Sparkles className="h-3.5 w-3.5 animate-pulse text-indigo-500" />
             </span>
-            <p className="text-xs text-muted-foreground">Thinking…</p>
+            {draft ? <p className="whitespace-pre-wrap text-sm" aria-live="polite">{draft}</p> : <p className="text-xs text-muted-foreground">Thinking…</p>}
           </div>
         )}
       </div>
@@ -304,9 +310,12 @@ export function CopilotPanel({
             </Button>
           )}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          {emptyCanvas ? 'AI-generated — Generate replaces the canvas. Review before running.' : 'AI edits apply directly to the canvas — ⌘Z to undo.'}
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-muted-foreground">
+            {emptyCanvas ? 'AI-generated — Generate replaces the canvas. Review before running.' : 'AI edits apply directly to the canvas — ⌘Z to undo.'}
+          </p>
+          <ModelPicker value={model} onChange={setModel} disabled={loading} />
+        </div>
       </div>
     </div>
   )

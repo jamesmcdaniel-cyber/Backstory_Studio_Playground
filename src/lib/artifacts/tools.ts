@@ -61,7 +61,51 @@ const ROI_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        operations: { type: 'array', items: { type: 'object' }, description: 'The edits, applied in order.' },
+        operations: {
+          type: 'array',
+          description: 'The edits, applied in order. One object per edit; set `op` and only the fields that op uses.',
+          items: {
+            type: 'object',
+            properties: {
+              op: {
+                type: 'string',
+                enum: ['hide_tab', 'show_tab', 'hide_section', 'show_section', 'hide_metric', 'show_metric', 'rename_metric', 'add_metric', 'remove_added_metric', 'set_default_comparison', 'set_headline', 'set_lede', 'remove_finding', 'upsert_finding', 'remove_watch_item', 'upsert_watch_item', 'set_note', 'add_caveat'],
+              },
+              tab: { type: 'string', enum: ['lead', 'adopt', 'users', 'deal', 'stage', 'method'], description: 'hide_tab / show_tab' },
+              section: { type: 'string', description: 'hide_section / show_section: a section id from get_artifact' },
+              metric: {
+                description: 'hide_metric / show_metric / rename_metric / remove_added_metric: the metric KEY (a string, e.g. "pipeline_created"). add_metric: an OBJECT {key, label, columns, format}.',
+                anyOf: [
+                  { type: 'string' },
+                  {
+                    type: 'object',
+                    properties: {
+                      key: { type: 'string', description: 'lower_snake_case, new' },
+                      label: { type: 'string' },
+                      columns: { type: 'array', items: { type: 'string' }, description: 'activity-extract column names from get_artifact, summed per rep per month' },
+                      format: { type: 'string', enum: ['count', 'currency'] },
+                    },
+                    required: ['key', 'label', 'columns'],
+                  },
+                ],
+              },
+              label: { type: 'string', description: 'rename_metric: the new label' },
+              preset: { type: 'string', enum: ['last6_vs_prior6', 'last6_vs_year_ago', 'last12_vs_prior12', 'last3_vs_prior3'], description: 'set_default_comparison' },
+              text: { type: 'string', description: 'set_headline / set_lede / add_caveat' },
+              index: { type: 'integer', description: 'remove_/upsert_finding, remove_/upsert_watch_item: 0-based; omit on upsert to append' },
+              finding: {
+                type: 'object',
+                description: 'upsert_finding',
+                properties: { fig: { type: 'string' }, cap: { type: 'string' }, h: { type: 'string' }, p: { type: 'string' }, tab: { type: 'string', enum: ['lead', 'adopt', 'users', 'deal', 'stage'] } },
+                required: ['fig', 'cap', 'h', 'p', 'tab'],
+              },
+              item: { type: 'object', description: 'upsert_watch_item', properties: { lead: { type: 'string' }, text: { type: 'string' } }, required: ['lead', 'text'] },
+              note: { type: 'string', enum: ['lead', 'adopt', 'users', 'usersTrend', 'dealWin', 'dealVel', 'stageProf', 'stageHeat', 'stageSurv', 'breadth'], description: 'set_note' },
+              paragraphs: { type: 'array', items: { type: 'string' }, description: 'set_note: 1-4 paragraphs' },
+            },
+            required: ['op'],
+          },
+        },
         summary: { type: 'string', description: 'What changed, in one line, for the version history.' },
       },
       required: ['operations', 'summary'],
@@ -193,7 +237,14 @@ export class ArtifactToolClient {
     const operations = Array.isArray(args.operations) ? args.operations : []
     if (!operations.length) throw new Error('Pass at least one operation.')
     const parsedOps = operations.map((operation) => roiOperationSchema.safeParse(operation))
-    const malformed = parsedOps.map((result, index) => (result.success ? null : `operation ${index + 1}: ${result.error.issues[0]?.message ?? 'malformed'}`)).filter(Boolean) as string[]
+    const malformed = parsedOps
+      .map((result, index) => {
+        if (result.success) return null
+        const issue = result.error.issues[0]
+        const op = (operations[index] as { op?: unknown } | null)?.op
+        return `operation ${index + 1} (${typeof op === 'string' ? op : 'no op'}): ${issue?.path.length ? `${issue.path.join('.')} — ` : ''}${issue?.message ?? 'malformed'}`
+      })
+      .filter(Boolean) as string[]
     const valid = parsedOps.flatMap((result) => (result.success ? [result.data] : []))
     const current = await currentRoiState(this.organizationId, artifact.id)
     if (!current) throw new Error('The dashboard\'s underlying facts could not be found, so it cannot be edited.')
@@ -208,7 +259,11 @@ export class ArtifactToolClient {
     if (!result.applied.length) return { saved: false, rejected }
     let factsFileId = current.state.factsFileId
     if (result.recompute) {
-      facts = await this.recompute(current.state.datasetIds, result.view.extraMetrics)
+      // Only the activity section depends on metrics: recompute it (from the
+      // activity and usage extracts) and keep the deal and stage sections.
+      const fresh = await this.recompute(current.state.datasetIds, result.view.extraMetrics)
+      if (!fresh.U) throw new Error('The activity extract could not be recomputed.')
+      facts = { ...facts, U: fresh.U, META: { ...facts.META, capP: fresh.META.capP, capPO: fresh.META.capPO } }
       factsFileId = await storeFacts(this.organizationId, this.userId, facts)
     }
     const state = { ...current.state, factsFileId, narrative: result.narrative, view: result.view }
@@ -219,7 +274,20 @@ export class ArtifactToolClient {
   }
 
   private async recompute(datasetIds: string[], extraMetrics: Array<{ key: string; label: string; columns: string[]; format?: string }>): Promise<RoiFacts> {
-    const docs = await prisma.knowledgeDocument.findMany({ where: { id: { in: datasetIds }, organizationId: this.organizationId, assetType: 'dataset' }, select: { filename: true, storedFileId: true } })
+    const all = await prisma.knowledgeDocument.findMany({ where: { id: { in: datasetIds }, organizationId: this.organizationId, assetType: 'dataset' }, select: { filename: true, storedFileId: true, sourceMetadata: true } })
+    // The activity and usage extracts only — the two the activity section is
+    // built from. Tagged extracts say which they are; untagged ones are read
+    // by their columns (activity has months + email; usage has an email and no
+    // months or opportunity columns).
+    const kindOf = (doc: (typeof all)[number]) => {
+      const meta = doc.sourceMetadata as { roi?: { kind?: string }; dataset?: { columns?: Array<{ name: string }> } } | null
+      if (meta?.roi?.kind) return meta.roi.kind
+      const names = (meta?.dataset?.columns ?? []).map((column) => column.name.toLowerCase())
+      if (names.includes('months') && names.includes('email')) return 'activity'
+      if (names.some((name) => name.includes('email')) && !names.some((name) => name.includes('opportunit') || name === 'months')) return 'usage'
+      return 'other'
+    }
+    const docs = all.filter((doc) => kindOf(doc) === 'activity' || kindOf(doc) === 'usage')
     const datasets: CodeDataset[] = []
     for (const doc of docs) {
       if (!doc.storedFileId) continue
@@ -228,7 +296,7 @@ export class ArtifactToolClient {
       datasets.push({ name: datasetFrameName(doc.filename), filename: doc.filename, bytes: stored.buffer })
     }
     if (!datasets.length) throw new Error('The extracts behind this dashboard are no longer in the repository.')
-    return runRoiPrep(datasets, { extraMetrics })
+    return runRoiPrep(datasets, { extraMetrics, onlyActivity: true })
   }
 
   private async startRoi(args: Record<string, unknown>) {

@@ -22,6 +22,9 @@ import { runFlowCode, type CodeDataset, DATASET_TIMEOUT_MAX_MS } from '@/feature
 export const ROI_PREP_CODE = String.raw`
 frames = input["frames"]
 notes = []
+# Adding a metric only changes the activity section; the deal and stage
+# sections are carried over from the existing facts, so skip them.
+ONLY_ACTIVITY = bool(input.get("onlyActivity"))
 PERSONAS = [
     ("Director", "director_activity_count"), ("VP", "vp_activity_count"), ("Executive", "executive_activity_count"),
     ("Management/Admin", "mgmt_activity_count"), ("Legal/Procurement", "legal_proc_activity_count"), ("Finance", "finance_activity_count"),
@@ -276,12 +279,12 @@ def deal_table(o):
 
 OPP = None
 opp_frame = None
-if opp is not None:
+if opp is not None and not ONLY_ACTIVITY:
     opp_frame = opp_level_frame(opp, "Opportunity engagement")
 if opp_frame is not None and stages is not None and opp_frame["amount"].isna().all() and has(stages, "opportunity_amount") and has(stages, "opportunity_crm_id"):
     amounts = stages.drop_duplicates("opportunity_crm_id").set_index(stages.drop_duplicates("opportunity_crm_id")["opportunity_crm_id"].astype(str))["opportunity_amount"]
     opp_frame["amount"] = fnum(opp_frame["id"].map(amounts))
-if opp_frame is None and stages is not None:
+if opp_frame is None and stages is not None and not ONLY_ACTIVITY:
     opp_frame = opp_level_frame(stages, "Closed deals by stage")
     if opp_frame is not None:
         notes.append("Deal engagement computed from the closed-deals-by-stage file (no separate opportunity engagement file): win rates by decile and level are exact; cycle times are unavailable.")
@@ -313,13 +316,14 @@ if opp_frame is not None and len(opp_frame) >= 20:
         META["meanWonCap"] = float(won_amt.clip(upper=capw).mean())
     META["transactionalShare"] = round(float(opp_frame["transactional"].mean() * 100), 1) if has_days else None
     META["hasVelocity"] = bool(has_days)
-else:
+elif not ONLY_ACTIVITY:
     notes.append("No opportunity-level data with an engagement score — deal engagement is unavailable.")
 
 # ---------------------------------------------------------------- ST (stages & personas)
 ST = None
-if stages is None:
-    notes.append("No closed-deals-by-stage file — the stage and persona analysis is unavailable.")
+if stages is None or ONLY_ACTIVITY:
+    if not ONLY_ACTIVITY:
+        notes.append("No closed-deals-by-stage file — the stage and persona analysis is unavailable.")
 else:
     s = stages.copy()
     s = s[s["activity_match_stage"].notna() & (s["activity_match_stage"].astype(str).str.lower() != "null")]
@@ -490,19 +494,19 @@ export type DealTable = {
 }
 
 /** Run the prep over the mounted datasets. Minutes, not seconds, on a real extract. */
-export async function runRoiPrep(datasets: CodeDataset[], options: { extraMetrics?: Array<{ key: string; label: string; columns: string[]; format?: string }> } = {}): Promise<RoiFacts> {
+export async function runRoiPrep(datasets: CodeDataset[], options: { extraMetrics?: Array<{ key: string; label: string; columns: string[]; format?: string }>; onlyActivity?: boolean } = {}): Promise<RoiFacts> {
   const { output } = await runFlowCode({
     language: 'python',
     mode: 'all',
     analysis: true,
     datasets,
     code: ROI_PREP_CODE,
-    input: { extraMetrics: options.extraMetrics ?? [] },
+    input: { extraMetrics: options.extraMetrics ?? [], onlyActivity: options.onlyActivity === true },
     timeoutMs: DATASET_TIMEOUT_MAX_MS,
   })
   const facts = output as RoiFacts
   if (!facts || typeof facts !== 'object') throw new Error('The ROI prep returned nothing.')
-  if (!facts.U && !facts.OPP && !facts.ST) {
+  if (!facts.U && !facts.OPP && !facts.ST && !options.onlyActivity) {
     throw new Error(`None of the datasets could be used: ${(facts.notes ?? []).join(' ')}`)
   }
   return facts

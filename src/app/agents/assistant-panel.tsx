@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
 import { Markdown } from '@/components/ui/markdown'
+import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
+import { postStreaming } from '@/lib/client/stream'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { cn } from '@/lib/utils'
 import type { Agent } from '@/lib/types'
@@ -224,6 +226,8 @@ export function AssistantPanel({
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [model, setModel] = useChatModel('assistant')
   const [applyingId, setApplyingId] = useState<string | null>(null)
   // Conversation state: the active session (null = a fresh, not-yet-saved chat)
   // and this agent's history for the current user.
@@ -351,17 +355,17 @@ export function AssistantPanel({
     // session rather than appending to the null-session bucket.
     const targetSessionId = sessionId && sessionId !== 'legacy' ? sessionId : undefined
     try {
-      const response = await fetch(`/api/agents/${targetAgentId}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content, ...(targetSessionId ? { sessionId: targetSessionId } : {}) }),
-        signal: controller.signal,
-      })
-      const data = await response.json().catch(() => ({}))
+      setDraft('')
+      const { ok, data } = await postStreaming<Record<string, any>>(
+        `/api/agents/${targetAgentId}/chat`,
+        { message: content, model, ...(targetSessionId ? { sessionId: targetSessionId } : {}) },
+        (delta) => { if (agentIdRef.current === targetAgentId) setDraft((current) => current + delta) },
+        { signal: controller.signal },
+      )
       // The user switched agents while the request was in flight; this
       // response belongs to another agent's thread, so leave state alone.
       if (agentIdRef.current !== targetAgentId) return
-      if (!response.ok) {
+      if (!ok) {
         toast.error(data.error || 'The assistant is unavailable right now.')
         setMessages((previous) => previous.filter((message) => message.id !== localId))
         setInput(content)
@@ -388,7 +392,7 @@ export function AssistantPanel({
       }
     } finally {
       if (abortRef.current === controller) abortRef.current = null
-      if (agentIdRef.current === targetAgentId) setSending(false)
+      if (agentIdRef.current === targetAgentId) { setSending(false); setDraft('') }
     }
   }
 
@@ -633,16 +637,21 @@ export function AssistantPanel({
                 )}
               </div>
             ))}
-            {sending && (
+            {sending && (draft ? (
+              <div className="mr-8 rounded-lg border bg-gray-50 p-3 text-sm" aria-live="polite"><Markdown>{draft}</Markdown></div>
+            ) : (
               <div className="mr-8 flex items-center gap-2 rounded-lg border bg-gray-50 p-3 text-sm text-gray-500" role="status">
                 <Loader2 className="h-4 w-4 animate-spin" /> Working — a live run can take a few minutes…
               </div>
-            )}
+            ))}
           </div>
         )}
       </div>
 
       <div className="border-t p-4">
+        <div className="mb-2 flex justify-end">
+          <ModelPicker value={model} onChange={setModel} disabled={sending} />
+        </div>
         <div className="flex items-end gap-2">
           <textarea
             ref={composerRef}

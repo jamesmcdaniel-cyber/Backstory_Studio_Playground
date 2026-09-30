@@ -1,5 +1,6 @@
 'use client'
 
+import { CHAT_MODELS } from '@/lib/llm/models'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -435,7 +436,7 @@ const emptyDraft: AgentDraft = {
   title: '',
   description: '',
   instructions: '',
-  model: 'claude-sonnet-5',
+  model: 'claude-sonnet-5-5',
   priority: 'medium',
   integrations: [],
   toolSettings: {},
@@ -460,11 +461,7 @@ const emptyDraft: AgentDraft = {
 // saved with a removed model id (the old Qwen slot) still runs — the runner
 // routes anything non-Claude onto the Claude fallback — it just cannot be
 // picked any more. Claude first (platform default); logos via IntegrationLogo.
-const MODELS = [
-  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', provider: 'anthropic' as const },
-  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', provider: 'anthropic' as const },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', provider: 'anthropic' as const },
-]
+const MODELS = CHAT_MODELS.map((model) => ({ id: model.id, label: `Claude ${model.label}`, provider: 'anthropic' as const }))
 
 function ModelOption({ label }: { label: string }) {
   return (
@@ -1048,7 +1045,8 @@ export function AgentConfigForm({
         <Select value={draft.model} onValueChange={(model) => setDraft({ ...draft, model })}>
           <SelectTrigger aria-label="Agent model"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {MODELS.map((m) => (
+            {/* An agent pinned to a model no longer on the list keeps it, and it stays visible. */}
+            {(draft.model && !MODELS.some((m) => m.id === draft.model) ? [{ id: draft.model, label: `${draft.model} (current)` }, ...MODELS] : MODELS).map((m) => (
               <SelectItem key={m.id} value={m.id}>
                 <ModelOption label={m.label} />
               </SelectItem>

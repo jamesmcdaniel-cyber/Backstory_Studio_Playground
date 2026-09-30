@@ -5,6 +5,7 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 import { listArtifacts, isArtifactKind, createArtifact, ARTIFACT_UPLOAD_MAX_BYTES } from '@/lib/artifacts/service'
 import { htmlTitleOf, looksLikeHtml } from '@/lib/html-detect'
 import { artifactDocumentForUpload } from '@/lib/artifacts/runtime'
+import { createArtifactAgent } from '@/lib/artifacts/artifact-agent'
 import { unsupportedScripts } from '@/lib/artifacts/vendor-scripts'
 
 export const runtime = 'nodejs'
@@ -25,7 +26,8 @@ const uploadSchema = z.object({
   content: z.string().min(1),
   filename: z.string().max(255).optional(),
   title: z.string().trim().max(200).optional(),
-  agentId: z.string().min(1),
+  /** An agent to work on it; omitted (or "new"), a background agent is made for it. */
+  agentId: z.string().min(1).optional(),
 })
 
 // POST /api/artifacts — upload an HTML page (or a React component, or a
@@ -42,12 +44,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const document = artifactDocumentForUpload(content, filename ?? '')
     ?? (looksLikeHtml(content.slice(0, 8_000)) ? { content, kind: /<script\b/i.test(content) ? 'page' as const : 'report' as const } : null)
   if (!document) throw new ApiError('Upload an HTML page, a React component, or a TypeScript, JavaScript, Python or CSS file.', 415, 'UNSUPPORTED_TYPE')
-  const agent = await prisma.agentTask.findFirst({
-    where: { id: agentId, organizationId: auth.organizationId, status: { not: 'DELETED' }, ...agentVisibilityScope(auth.dbUser.id) },
-    select: { id: true },
-  })
-  if (!agent) throw new ApiError('Pick an agent you can use.', 404, 'AGENT_NOT_FOUND')
   const title = parsed.data.title || htmlTitleOf(document.content) || filename?.replace(/\.[a-z0-9]+$/i, '') || 'Uploaded page'
+  // Every artifact has an agent to make its changes: the one picked, or one
+  // made for this page.
+  const agent = agentId && agentId !== 'new'
+    ? await prisma.agentTask.findFirst({
+        where: { id: agentId, organizationId: auth.organizationId, status: { not: 'DELETED' }, ...agentVisibilityScope(auth.dbUser.id) },
+        select: { id: true },
+      })
+    : await createArtifactAgent(auth.organizationId, auth.dbUser.id, title)
+  if (!agent) throw new ApiError('Pick an agent you can use.', 404, 'AGENT_NOT_FOUND')
   const { artifact } = await createArtifact({
     organizationId: auth.organizationId,
     userId: auth.dbUser.id,

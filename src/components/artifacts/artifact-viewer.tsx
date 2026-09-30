@@ -18,6 +18,7 @@ import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 import { ARTIFACT_FRAME_SANDBOX } from './artifact-frame'
 import { AssistantSettingsPanel } from './assistant-settings-panel'
 import { ShareDialog } from './share-dialog'
+import { AttachAgentCard } from './attach-agent-card'
 import { useAuth } from '@/hooks/use-auth'
 
 /**
@@ -344,9 +345,10 @@ export function ArtifactViewer({ id }: { id: string }) {
                 ))}
               </div>
             )}
-            {!artifact.chat.length && (
+            {!artifact.agent && canEdit && <AttachAgentCard artifactId={artifact.id} onAttached={() => void refresh()} />}
+            {!artifact.chat.length && (artifact.agent || !canEdit) && (
               <p className="text-xs text-muted-foreground">
-                {canAsk ? 'Ask about it, tell the assistant what to change, or — for a dashboard — ask for it on another account. Every change is a new version; the old ones are kept.' : 'This artifact has no producing agent to talk to.'}
+                {canAsk ? 'Ask about it, tell the assistant what to change, or — for a dashboard — ask for it on another account. Every change is a new version; the old ones are kept.' : 'This artifact has no agent attached yet.'}
               </p>
             )}
             {artifact.chat.map((m, index) => (

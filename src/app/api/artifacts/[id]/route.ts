@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { archiveArtifact, loadArtifact } from '@/lib/artifacts/service'
 import { artifactPermissions } from '@/lib/artifacts/sharing'
 import { requireEditable, viewerOf } from '@/lib/artifacts/route-access'
+import { attachArtifactAgent } from '@/lib/artifacts/artifact-agent'
 
 export const runtime = 'nodejs'
 
@@ -23,12 +24,23 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   return { success: true, artifact: { ...artifact, permissions: row ? artifactPermissions(viewerOf(auth), row) : null } }
 }, { permission: 'agent.read' })
 
-// PATCH /api/artifacts/:id — archive or restore.
+// PATCH /api/artifacts/:id — archive or unarchive, or set the agent behind
+// it: an existing one ({ agentId }) or a new one made for it ({ createAgent }).
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const id = idOf(request)
-  const parsed = z.object({ archived: z.boolean() }).safeParse(await request.json().catch(() => null))
-  if (!parsed.success) throw new ApiError('Send { archived: boolean }.', 400, 'INVALID_BODY')
+  const parsed = z.object({ archived: z.boolean().optional(), agentId: z.string().min(1).max(64).optional(), createAgent: z.boolean().optional() })
+    .refine((body) => body.archived !== undefined || body.agentId || body.createAgent, 'Send archived, agentId or createAgent.')
+    .safeParse(await request.json().catch(() => null))
+  if (!parsed.success) throw new ApiError(parsed.error.issues[0]?.message ?? 'Send archived, agentId or createAgent.', 400, 'INVALID_BODY')
   await requireEditable(auth, id)
-  await archiveArtifact(auth.organizationId, id, parsed.data.archived)
+  if (parsed.data.archived !== undefined) await archiveArtifact(auth.organizationId, id, parsed.data.archived)
+  if (parsed.data.agentId || parsed.data.createAgent) {
+    try {
+      const agent = await attachArtifactAgent({ organizationId: auth.organizationId, userId: auth.dbUser.id, artifactId: id, agentId: parsed.data.agentId, create: parsed.data.createAgent })
+      return { success: true, agent }
+    } catch (error) {
+      throw new ApiError(error instanceof Error ? error.message : 'The agent could not be attached.', 400, 'AGENT_REJECTED')
+    }
+  }
   return { success: true }
 }, { permission: 'agent.read' })

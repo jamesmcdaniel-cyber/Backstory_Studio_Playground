@@ -30,7 +30,7 @@ import { planesForConnectionIds } from '@/lib/flows/tool-connection-id'
 export { mcpConnectionScope } from '@/features/agents/tool-planes'
 
 export type FlowToolSummary = { name: string; description: string; inputSchema?: unknown; outputSchema?: unknown }
-export type FlowToolCatalogConnection = { id: string; name: string; tools: FlowToolSummary[]; toolsError?: string }
+export type FlowToolCatalogConnection = { id: string; name: string; tools: FlowToolSummary[]; toolsError?: string; provider?: string }
 
 export async function loadFlowToolCatalog(
   organizationId: string,
@@ -62,6 +62,10 @@ export async function loadFlowToolCatalog(
     .map((group) => ({
       id: group.id,
       name: group.name,
+      // The integration behind the connection ("gmail", "slack"): lets a
+      // picker show one row per integration, with its logo, rather than one
+      // per capability.
+      provider: group.provider,
       // Carried to the client so the builder can tell that an HTTP step is
       // really a hand-built call to a server this workspace has connected. Not
       // sensitive: it is the endpoint the user typed to connect it.

@@ -160,7 +160,8 @@ function UploadHtmlDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
       .then((data: { agents?: Array<{ id: string; title?: string; description?: string }> }) => {
         const list = (data.agents ?? []).map((agent) => ({ id: agent.id, title: agent.title || agent.description?.split('\n')[0] || 'Untitled agent' }))
         setAgents(list)
-        if (list.length && !agentId) setAgentId(list[0].id)
+        // No agents yet: one is made for the page.
+        if (!agentId) setAgentId(list.length ? list[0].id : 'new')
       })
       .catch(() => setAgents([]))
   }, [open, agents, agentId])
@@ -212,10 +213,10 @@ function UploadHtmlDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             <label htmlFor="upload-html-agent" className="text-sm font-medium">Agent</label>
             <select id="upload-html-agent" value={agentId} onChange={(event) => setAgentId(event.target.value)} disabled={!agents} className="mt-1.5 h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
               {agents === null && <option value="">Loading agents…</option>}
-              {agents?.length === 0 && <option value="">No agents yet — create one first</option>}
+              {agents !== null && <option value="new">New agent just for this page</option>}
               {agents?.map((agent) => <option key={agent.id} value={agent.id}>{agent.title}</option>)}
             </select>
-            <p className="mt-1 text-xs text-muted-foreground">It edits the page with its own tools, MCPs and integrations.</p>
+            <p className="mt-1 text-xs text-muted-foreground">{agentId === 'new' ? 'A background agent is made for this page. Add integrations to it from the artifact\'s Settings tab.' : 'It edits the page with its own tools, MCPs and integrations.'}</p>
           </div>
           <div>
             <label htmlFor="upload-html-title" className="text-sm font-medium">Title <span className="font-normal text-muted-foreground">(optional)</span></label>

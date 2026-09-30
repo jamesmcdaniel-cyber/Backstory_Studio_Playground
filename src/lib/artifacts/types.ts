@@ -45,6 +45,8 @@ export type ArtifactView = {
   chat: ArtifactChatMessage[]
   /** Whether a scripted (interactive) sandbox is allowed for this kind. */
   interactive: boolean
+  /** An ROI dashboard's build: the run while it works, or why it failed. */
+  build: { status: string; executionId: string | null; error: string | null; account: string } | null
   archivedAt: string | null
   createdAt: string
   updatedAt: string

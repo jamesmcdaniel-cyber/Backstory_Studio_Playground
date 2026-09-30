@@ -29,7 +29,6 @@ import {
   ShieldCheck,
   ShieldUser,
   Trash2,
-  TrendingUp,
   Workflow,
   FileOutput,
 } from 'lucide-react'
@@ -52,7 +51,6 @@ import { resizeImageToDataUrl } from '@/lib/client/image'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { creditUsagePct } from '@/lib/usage/credit-pct'
 import { cn } from '@/lib/utils'
-import { isCustomerEdition } from '@/lib/edition'
 import type { Activity, Agent as AgentType } from '@/lib/types'
 
 type Agent = Pick<AgentType, 'id' | 'title' | 'description' | 'instructions' | 'avatarSeed' | 'folder' | 'visibility'>
@@ -120,11 +118,6 @@ const reviewsNavItem = { name: 'Reviews', href: '/admin/catalogue', icon: Shield
 // Models, and calling it "Users" hid the second one behind a label that denied
 // it existed. The href still lands on People.
 const adminNavItem = { name: 'Admin', href: '/admin/users', icon: ShieldUser }
-
-// Operator-only like Admin, but for anyone who can run agents: the ROI page
-// builds a customer's ROI story from warehouse extracts. The customer edition
-// 404s the route at the edge; here it is simply not drawn.
-const roiNavItem = { name: 'ROI', href: '/roi', icon: TrendingUp }
 
 function planLabel(plan: string) {
   const lower = plan.toLowerCase()
@@ -678,7 +671,6 @@ export function Sidebar() {
           <nav aria-label="Main navigation" className="mb-2 space-y-0.5">
             {[
               ...navigation,
-              ...(!isCustomerEdition() && can('agent.run') ? [roiNavItem] : []),
               ...(can('catalogue.review') ? [reviewsNavItem] : []),
               ...(can('platform.administer') ? [adminNavItem] : []),
             ].map((item) => {

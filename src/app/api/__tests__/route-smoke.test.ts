@@ -253,7 +253,6 @@ if (TEST_DB) {
     { name: 'GET /api/roi/sources', run: async () => (await import('../roi/sources/route')).GET(req('/api/roi/sources')) },
     { name: 'GET /api/roi/analyses', run: async () => (await import('../roi/analyses/route')).GET(req('/api/roi/analyses')) },
     { name: 'GET /api/roi/analyses/[id]', run: async () => (await import('../roi/analyses/[id]/route')).GET(req('/api/roi/analyses/missing')) },
-    { name: 'GET /api/roi/analyses/[id]/report', run: async () => (await import('../roi/analyses/[id]/report/route')).GET(req('/api/roi/analyses/missing/report')) },
     // Dynamic [id] routes — real seeded ids.
     { name: 'GET /api/agents/[id]/knowledge', run: async () => (await import('../agents/[id]/knowledge/route')).GET(req(`/api/agents/${agentId}/knowledge`)) },
     { name: 'GET /api/agents/[id]/memories', run: async () => (await import('../agents/[id]/memories/route')).GET(req(`/api/agents/${agentId}/memories`)) },

@@ -284,6 +284,9 @@ export async function loadArtifact(organizationId: string, id: string): Promise<
     })),
     chat: chatOf(row),
     interactive: isInteractiveKind(row.kind),
+    build: row.kind === 'roi_dashboard'
+      ? await import('@/lib/roi/service').then(({ roiBuildFor }) => roiBuildFor(organizationId, row.id)).then((b) => (b && (b.status !== 'completed' || versions.length === 0) ? { status: b.status, executionId: b.executionId, error: b.error, account: b.account } : null)).catch(() => null)
+      : null,
     archivedAt: row.archivedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

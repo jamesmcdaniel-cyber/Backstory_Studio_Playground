@@ -5,7 +5,7 @@ import { datasetFrameName } from '@/lib/code-analysis/frame-name'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { unwrapHtmlFence } from '@/lib/roi/text'
 import { readStoredFile } from '@/lib/files/storage'
-import { createArtifact } from '@/lib/artifacts/service'
+import { addVersion, createArtifact } from '@/lib/artifacts/service'
 import { ensureRoiAgent } from './agent'
 import { extractRoiNarrative, type RoiNarrative } from './contract'
 import { renderRoiDashboard } from './dashboard'
@@ -89,31 +89,6 @@ export function buildAnalysisPrompt(params: { account: string; timeframe: RoiTim
 
 export type RoiResults = { narrative: RoiNarrative; summary: RoiFactsSummary; factsFileId: string; artifactId?: string }
 
-export function buildFollowUpPrompt(params: { account: string; question: string; results: RoiResults | null; chat: RoiChatMessage[]; datasets: RoiDataset[] }): string {
-  const history = params.chat
-    .filter((message) => message.content && message.status !== 'pending')
-    .slice(-8)
-    .map((message) => `${message.role === 'user' ? 'User' : 'You'}: ${message.content.slice(0, 1_500)}`)
-    .join('\n\n')
-  const summary = params.results ? JSON.stringify(params.results.summary).slice(0, 60_000) : 'The analysis produced no facts summary.'
-  const narrative = params.results ? JSON.stringify(params.results.narrative).slice(0, 12_000) : ''
-  return [
-    `FOLLOW-UP on the finished ROI analysis for "${params.account}". Answer the question below in Markdown; use run_code over the same datasets when the answer needs a number the facts summary does not already hold. Do not call prepare_roi_facts again.`,
-    '',
-    'DATASETS:',
-    datasetsBlock(params.datasets),
-    '',
-    'FACTS SUMMARY (computed by prepare_roi_facts):',
-    summary,
-    '',
-    'THE NARRATIVE ON THE DASHBOARD:',
-    narrative,
-    history ? `\nCONVERSATION SO FAR:\n${history}` : '',
-    '',
-    `QUESTION: ${params.question.trim()}`,
-  ].join('\n')
-}
-
 async function startRun(params: {
   organizationId: string
   userId: string
@@ -182,6 +157,19 @@ export async function createRoiAnalysis(params: {
       status: 'pending',
     },
   })
+  // The artifact is the only ROI surface, so it exists from the start (no
+  // versions yet) and its page follows the run. The first version lands on
+  // it when the run finishes.
+  const artifact = await prisma.artifact.create({
+    data: {
+      organizationId: params.organizationId,
+      userId: params.userId,
+      kind: 'roi_dashboard',
+      title: `ROI analysis · ${row.account}`,
+      agentTaskId: agent.id,
+    },
+  })
+  await prisma.roiAnalysis.update({ where: { id: row.id, organizationId: params.organizationId }, data: { artifactId: artifact.id } })
   const input = buildAnalysisPrompt({ account: row.account, timeframe: params.timeframe, context: row.context, datasets })
   try {
     const executionId = await startRun({
@@ -191,7 +179,7 @@ export async function createRoiAnalysis(params: {
       agentType: agent.agentType,
       title: `ROI analysis · ${row.account}`,
       input,
-      trigger: { type: 'roi_analysis', analysisId: row.id, link: `/roi/${row.id}` },
+      trigger: { type: 'roi_analysis', analysisId: row.id, link: `/artifacts/${artifact.id}` },
     })
     return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: params.organizationId }, data: { executionId, status: 'running' } })
   } catch (error) {
@@ -287,7 +275,20 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
   const reportHtml = renderRoiDashboard(facts, extracted.data, { account: row.account, generatedAt, timeframePreset: timeframe?.preset, view })
   // The dashboard is an artifact like any other report: it gets a home on
   // /artifacts with versions and a conversation, alongside the ROI page.
-  const artifactId = await createArtifact({
+  const roiState = stateJson({
+      analysisId: row.id,
+      account: row.account,
+      timeframePreset: timeframe?.preset ?? 'last6_vs_prior6',
+      factsFileId,
+      datasetIds: datasetIdsOf(row),
+      narrative: extracted.data,
+      view,
+    })
+  const artifactId = row.artifactId
+    ? await addVersion({ artifactId: row.artifactId, organizationId: row.organizationId, content: reportHtml, executionId: row.executionId, request: 'Built from the extracts', createdByUserId: row.userId, state: roiState })
+      .then(() => row.artifactId!)
+      .catch(() => undefined)
+    : await createArtifact({
     organizationId: row.organizationId,
     userId: row.userId,
     kind: 'roi_dashboard',
@@ -333,42 +334,6 @@ async function reconcileChat(row: RoiAnalysis): Promise<RoiAnalysis> {
   return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { chat: jsonValue(chat) } })
 }
 
-export async function askRoiQuestion(params: { organizationId: string; userId: string; id: string; question: string }): Promise<RoiAnalysis> {
-  const row = await prisma.roiAnalysis.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
-  if (!row) throw new Error('Analysis not found.')
-  if (row.status !== 'completed' || !row.agentTaskId) throw new Error('Ask once the analysis has finished.')
-  const question = params.question.trim().slice(0, ROI_QUESTION_MAX_CHARS)
-  if (!question) throw new Error('Type a question first.')
-  const chat = chatOf(row)
-  if (chat.some((message) => message.status === 'pending')) throw new Error('Wait for the current answer before asking another question.')
-  const agent = await prisma.agentTask.findFirst({ where: { id: row.agentTaskId, organizationId: params.organizationId, status: 'ACTIVE' } })
-  if (!agent) throw new Error('The ROI Analyst agent is no longer available.')
-  const datasets = await loadDatasets(params.organizationId, datasetIdsOf(row))
-  const input = buildFollowUpPrompt({
-    account: row.account,
-    question,
-    results: (row.results as RoiResults | null) ?? null,
-    chat,
-    datasets,
-  })
-  const now = new Date().toISOString()
-  const executionId = await startRun({
-    organizationId: params.organizationId,
-    userId: params.userId,
-    agentId: agent.id,
-    agentType: agent.agentType,
-    title: `ROI follow-up · ${row.account}`,
-    input,
-    trigger: { type: 'roi_followup', analysisId: row.id, link: `/roi/${row.id}` },
-  })
-  const nextChat: RoiChatMessage[] = [
-    ...chat,
-    { role: 'user', content: question, createdAt: now },
-    { role: 'agent', content: '', executionId, status: 'pending', createdAt: now },
-  ]
-  return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue(nextChat) } })
-}
-
 export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[] }): RoiAnalysisView {
   return {
     id: row.id,
@@ -380,6 +345,7 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
     error: row.error,
     executionId: row.executionId,
     agentTaskId: row.agentTaskId,
+    artifactId: row.artifactId,
     hasReport: Boolean(row.reportHtml),
     results: (row.results as RoiResults | null) ?? null,
     chat: chatOf(row),
@@ -400,4 +366,23 @@ async function recomputeWithMetrics(row: RoiAnalysis, view: RoiView): Promise<Ro
     if (stored) datasets.push({ name: frameName(doc.filename), filename: doc.filename, bytes: stored.buffer })
   }
   return runRoiPrep(datasets, { extraMetrics: view.extraMetrics })
+}
+
+/**
+ * Called by the executor when an ROI analysis run ends: bring the analysis
+ * (and its artifact's first version) up to date without anyone opening a
+ * page. The page reconciles too — this makes the notification land on a
+ * dashboard that already exists.
+ */
+export async function reconcileRoiAnalysisForExecution(organizationId: string, executionId: string): Promise<void> {
+  const row = await prisma.roiAnalysis.findFirst({ where: { organizationId, executionId }, select: { id: true } })
+  if (row) await loadRoiAnalysis(organizationId, row.id)
+}
+
+/** The build in progress (or the last one that failed) for an artifact still waiting on its dashboard. */
+export async function roiBuildFor(organizationId: string, artifactId: string): Promise<{ analysisId: string; status: string; executionId: string | null; error: string | null; account: string } | null> {
+  const row = await prisma.roiAnalysis.findFirst({ where: { organizationId, artifactId }, orderBy: { createdAt: 'desc' } })
+  if (!row) return null
+  const reconciled = isTerminalRunStatus(row.status) ? row : (await loadRoiAnalysis(organizationId, row.id)) ?? row
+  return { analysisId: reconciled.id, status: reconciled.status, executionId: reconciled.executionId, error: reconciled.error, account: reconciled.account }
 }

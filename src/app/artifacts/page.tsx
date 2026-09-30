@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Bot, ChevronRight, FileOutput, Loader2, Search, Workflow } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { Bot, ChevronRight, FileOutput, Loader2, Search, TrendingUp, Workflow } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { RoiForm } from '@/components/roi/roi-form'
+import { useAuth } from '@/hooks/use-auth'
+import { isCustomerEdition } from '@/lib/edition'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
@@ -16,7 +22,14 @@ import { ARTIFACT_KIND_LABEL, type ArtifactKind, type ArtifactListItem } from '@
 export default function ArtifactsPage() {
   const [items, setItems] = useState<ArtifactListItem[] | null>(null)
   const [query, setQuery] = useState('')
-  const [kind, setKind] = useState<ArtifactKind | 'all'>('all')
+  const searchParams = useSearchParams()
+  const initialKind = searchParams?.get('kind')
+  const [kind, setKind] = useState<ArtifactKind | 'all'>(initialKind === 'report' || initialKind === 'roi_dashboard' || initialKind === 'document' ? initialKind : 'all')
+  const [roiOpen, setRoiOpen] = useState(false)
+  const { can } = useAuth()
+  // Building an ROI analysis is an operator action (warehouse extracts about
+  // a customer): internal edition, and only for people who can run agents.
+  const canBuildRoi = !isCustomerEdition() && can('agent.run')
   const [archived, setArchived] = useState(false)
 
   useEffect(() => {
@@ -40,7 +53,10 @@ export default function ArtifactsPage() {
     <div className="space-y-6">
       <div>
         <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-horizon-700"><FileOutput className="h-3.5 w-3.5" aria-hidden /> Artifacts</div>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">What your agents have produced</h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">What your agents have produced</h1>
+          {canBuildRoi && <Button onClick={() => setRoiOpen(true)}><TrendingUp className="mr-1.5 h-4 w-4" aria-hidden />New ROI analysis</Button>}
+        </div>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Every report, dashboard and document, with its versions. Open one to ask the agent about it or ask for a change — a change makes a new version and keeps the old one.</p>
       </div>
 
@@ -80,7 +96,7 @@ export default function ArtifactsPage() {
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                     {item.agent && <span className="inline-flex items-center gap-1"><Bot className="h-3 w-3" aria-hidden />{item.agent.title}</span>}
                     {item.flow && <span className="inline-flex items-center gap-1"><Workflow className="h-3 w-3" aria-hidden />{item.flow.name}</span>}
-                    <span>{item.versionCount} version{item.versionCount === 1 ? '' : 's'}</span>
+                    <span>{item.versionCount ? `${item.versionCount} version${item.versionCount === 1 ? '' : 's'}` : 'Building…'}</span>
                     <span>updated {relativeTime(item.updatedAt)}</span>
                   </span>
                 </span>
@@ -93,6 +109,15 @@ export default function ArtifactsPage() {
           ))}
         </ul>
       )}
+      <Dialog open={roiOpen} onOpenChange={setRoiOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>New ROI analysis</DialogTitle>
+            <DialogDescription>Pick the account and the time frame. The dashboard is built in the background from the account's extracts and opens here as an artifact you can question and change.</DialogDescription>
+          </DialogHeader>
+          <RoiForm onStarted={() => setRoiOpen(false)} />
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -19,7 +19,7 @@ const KIND_LABEL: Record<string, string> = { activity: 'Activity', usage: 'Usage
  * operator, or by the warehouse flow); nobody picks files here. Submitting
  * starts the run and lands on the analysis page, which follows it live.
  */
-export function RoiForm() {
+export function RoiForm({ onStarted }: { onStarted?: () => void } = {}) {
   const router = useRouter()
   const [sources, setSources] = useState<Source[] | null>(null)
   const [account, setAccount] = useState('')
@@ -56,10 +56,11 @@ export function RoiForm() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ account, timeframe, context }),
       })
-      const data = await response.json().catch(() => ({})) as { analysis?: { id: string }; error?: string }
+      const data = await response.json().catch(() => ({})) as { analysis?: { id: string; artifactId: string | null }; error?: string }
       if (!response.ok || !data.analysis) throw new Error(data.error || 'The analysis could not be started.')
       toast.success('Analysis started — you will be notified when the dashboard is ready.')
-      router.push(`/roi/${data.analysis.id}`)
+      onStarted?.()
+      router.push(data.analysis.artifactId ? `/artifacts/${data.analysis.artifactId}` : '/artifacts')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
       setSubmitting(false)

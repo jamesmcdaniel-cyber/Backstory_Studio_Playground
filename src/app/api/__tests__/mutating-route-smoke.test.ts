@@ -253,7 +253,6 @@ const cases = (): Case[] => [
   { route: 'artifacts/[id]/rerun-flow', method: 'POST', run: async () => (await import('../artifacts/[id]/rerun-flow/route')).POST(rq('/api/artifacts/missing/rerun-flow', 'POST', { message: 'again' })) },
   { route: 'roi/sources', method: 'POST', run: async () => (await import('../roi/sources/route')).POST(rq('/api/roi/sources', 'POST', { documentId: 'missing', account: 'Acme', kind: 'activity' })) },
   { route: 'roi/analyses', method: 'POST', run: async () => (await import('../roi/analyses/route')).POST(rq('/api/roi/analyses', 'POST', { account: 'Acme', timeframe: 'last6_vs_prior6', datasetIds: ['missing'] })) },
-  { route: 'roi/analyses/[id]/chat', method: 'POST', run: async () => (await import('../roi/analyses/[id]/chat/route')).POST(rq('/api/roi/analyses/missing/chat', 'POST', { question: 'Why?' })) },
   { route: 'rag/backfill', method: 'POST', run: async () => (await import('../rag/backfill/route')).POST(rq('/api/rag/backfill', 'POST', {})) },
   { route: 'template-proposals/[id]/accept', method: 'POST', run: async () => (await import('../template-proposals/[id]/accept/route')).POST(rq('/api/template-proposals/missing/accept', 'POST', {})) },
   { route: 'template-proposals/[id]/dismiss', method: 'POST', run: async () => (await import('../template-proposals/[id]/dismiss/route')).POST(rq('/api/template-proposals/missing/dismiss', 'POST', {})) },

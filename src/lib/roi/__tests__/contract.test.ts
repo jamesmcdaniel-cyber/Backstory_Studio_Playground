@@ -4,7 +4,7 @@ import { extractRoiNarrative, type RoiNarrative } from '../contract'
 import { renderRoiDashboard } from '../dashboard'
 import { summarizeFacts, winAvg, popMask, windows } from '../facts'
 import type { RoiFacts } from '../prep'
-import { buildAnalysisPrompt, buildFollowUpPrompt } from '../service'
+import { buildAnalysisPrompt } from '../service'
 
 const narrative: RoiNarrative = {
   headline: 'Engaged deals win twice as often, and Backstory users create that engagement.',
@@ -91,16 +91,12 @@ test('embedded JSON and narrative cannot break out of the page', () => {
   assert.match(html, /<title>Backstory ROI analysis · Acme&lt;\/title&gt;/)
 })
 
-test('prompts name the datasets by frame and document id', () => {
+test('the analysis prompt names the datasets by frame and document id', () => {
   const datasets = [{ documentId: 'doc1', filename: 'Raw Data Extract.csv', frame: 'raw_data_extract', rows: 38259 }]
   const prompt = buildAnalysisPrompt({ account: 'Iron Mountain', timeframe: { preset: 'last6_vs_year_ago' }, context: 'Focus on EMEA.', datasets })
   assert.match(prompt, /documentId doc1, frame "raw_data_extract", 38,259 rows/)
   assert.match(prompt, /same 6 calendar months one year earlier/)
   assert.match(prompt, /Focus on EMEA/)
-  const follow = buildFollowUpPrompt({ account: 'Iron Mountain', question: 'Why did VP meetings drop?', results: { narrative, summary: summarizeFacts(facts), factsFileId: 'f1' }, chat: [], datasets })
-  assert.match(follow, /FOLLOW-UP/)
-  assert.match(follow, /FACTS SUMMARY/)
-  assert.match(follow, /QUESTION: Why did VP meetings drop\?/)
 })
 
 test('an over-long narrative is trimmed rather than rejected', () => {

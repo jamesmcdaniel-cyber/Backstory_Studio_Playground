@@ -21,7 +21,7 @@ import { AskBackstory } from '@/components/assistant/ask-backstory'
 
 // Route prefixes that get the app chrome. Everything else (/, /auth/*, /connect,
 // /privacy, /terms, /auth-code-error) renders bare.
-const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/data-tables', '/approvals', '/settings', '/admin', '/roi', '/artifacts']
+const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/data-tables', '/approvals', '/settings', '/admin', '/artifacts']
 
 // Only the agent HQ (/agents) + the flow builder want an edge-to-edge
 // (fullscreen) content area; the rest — incl. the Librarian assistant home
@@ -48,7 +48,7 @@ export const PAGE_CONTAINER = 'mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-
  * like any contained page; only the measure differs.
  */
 export const WIDE_CONTAINER = 'w-full px-4 py-6 sm:px-6 sm:py-8'
-const WIDE_ROUTES = [/^\/artifacts\/[^/]+$/, /^\/roi(\/[^/]+)?$/]
+const WIDE_ROUTES = [/^\/artifacts\/[^/]+$/]
 
 /** Trailing slashes must not decide which layout a route gets. */
 function normalizePath(input: string) {

@@ -235,6 +235,6 @@ export class ArtifactToolClient {
       view: current?.state.view,
     })
     if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
-    return { started: true, account: match.account, timeframe, link: `/roi/${row.id}`, note: 'Runs in the background, five to fifteen minutes; the user is notified when the dashboard is ready.' }
+    return { started: true, account: match.account, timeframe, link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background, five to fifteen minutes; the user is notified when the dashboard is ready.' }
   }
 }

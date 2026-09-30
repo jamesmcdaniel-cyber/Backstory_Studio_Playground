@@ -1852,6 +1852,13 @@ async function runAgentExecutionInner(
             apiLogger.warn('artifact registration failed', { executionId: execution.id, error: error instanceof Error ? error.message : String(error) })
             return null
           })
+    // An ROI analysis run: render its dashboard now, so the notification
+    // lands on an artifact that already shows it.
+    if ((execution.trigger as { type?: unknown } | null)?.type === 'roi_analysis') {
+      await import('@/lib/roi/service')
+        .then(({ reconcileRoiAnalysisForExecution }) => reconcileRoiAnalysisForExecution(organizationId, execution.id))
+        .catch((error) => apiLogger.warn('roi reconcile failed', { executionId: execution.id, error: error instanceof Error ? error.message : String(error) }))
+    }
     const completionLink = triggerLink ?? artifactLink
     await notify({
       organizationId,

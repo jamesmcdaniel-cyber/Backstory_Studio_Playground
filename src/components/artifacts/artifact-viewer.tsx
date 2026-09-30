@@ -44,7 +44,8 @@ export function ArtifactViewer({ id }: { id: string }) {
   }, [id])
 
   const pending = artifact?.chat.find((m) => m.status === 'pending')
-  const busy = Boolean(pending)
+  const building = Boolean(artifact?.build && !['completed', 'failed', 'blocked', 'cancelled'].includes(artifact.build.status))
+  const busy = Boolean(pending) || building
 
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => (busy ? startVisibleInterval(() => void refresh(), 10_000) : undefined), [busy, refresh])
@@ -155,6 +156,18 @@ export function ArtifactViewer({ id }: { id: string }) {
 
       {pending?.executionId && <RunFeed executionId={pending.executionId} status="running" onStatusChange={() => void refresh()} />}
 
+      {artifact.build && building && artifact.build.executionId && (
+        <RunFeed executionId={artifact.build.executionId} status={artifact.build.status} onStatusChange={() => void refresh()} />
+      )}
+      {artifact.build && ['failed', 'blocked', 'cancelled'].includes(artifact.build.status) && (
+        <div className="rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <p className="font-medium">Building the dashboard for {artifact.build.account} {artifact.build.status === 'cancelled' ? 'was cancelled' : 'did not finish'}.</p>
+          {artifact.build.error && <p className="mt-1">{artifact.build.error}</p>}
+          {artifact.build.executionId && <Link href={`/agents?run=${artifact.build.executionId}`} className="mt-2 inline-block underline">Open the run</Link>}
+        </div>
+      )}
+
+      {artifact.versions.length > 0 && (
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-2">
           {shownVersion && shownVersion.id !== artifact.currentVersionId ? (
@@ -310,6 +323,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           )}
         </aside>
       </div>
+      )}
     </div>
   )
 }

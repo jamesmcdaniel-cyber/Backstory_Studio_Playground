@@ -1717,6 +1717,8 @@ model RoiAnalysis {
   userId         String
   agentTaskId    String?
   executionId    String?  @unique
+  /// The artifact this analysis builds (created when the analysis starts).
+  artifactId     String?
   account        String
   timeframe      Json     @default("{}")
   context        String   @default("") @db.Text
@@ -1738,6 +1740,7 @@ model RoiAnalysis {
 
   @@index([organizationId, createdAt])
   @@index([organizationId, userId])
+  @@index([organizationId, artifactId])
   @@map("roi_analyses")
 }
 

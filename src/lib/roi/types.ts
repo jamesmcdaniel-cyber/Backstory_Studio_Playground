@@ -26,6 +26,7 @@ export type RoiAnalysisView = {
   error: string | null
   executionId: string | null
   agentTaskId: string | null
+  artifactId: string | null
   hasReport: boolean
   results: unknown
   chat: RoiChatMessage[]

@@ -4,6 +4,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { listArtifacts, isArtifactKind, createArtifact, ARTIFACT_UPLOAD_MAX_BYTES } from '@/lib/artifacts/service'
 import { htmlTitleOf, looksLikeHtml } from '@/lib/html-detect'
+import { artifactDocumentForUpload } from '@/lib/artifacts/runtime'
 import { unsupportedScripts } from '@/lib/artifacts/vendor-scripts'
 
 export const runtime = 'nodejs'
@@ -21,13 +22,14 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 }, { permission: 'agent.read' })
 
 const uploadSchema = z.object({
-  content: z.string().min(20),
+  content: z.string().min(1),
   filename: z.string().max(255).optional(),
   title: z.string().trim().max(200).optional(),
   agentId: z.string().min(1),
 })
 
-// POST /api/artifacts — upload an HTML page as an artifact the chosen agent
+// POST /api/artifacts — upload an HTML page (or a React component, or a
+// TypeScript, JavaScript, Python or CSS file) as an artifact the chosen agent
 // works on: version 1 is the file as uploaded; the agent's edits are later
 // versions (or new artifacts, when asked for a copy).
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -37,21 +39,23 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (Buffer.byteLength(content) > ARTIFACT_UPLOAD_MAX_BYTES) {
     throw new ApiError(`Pages can be at most ${Math.round(ARTIFACT_UPLOAD_MAX_BYTES / 1_000_000)} MB.`, 413, 'TOO_LARGE')
   }
-  if (!looksLikeHtml(content.slice(0, 8_000))) throw new ApiError('That file does not look like an HTML page.', 415, 'NOT_HTML')
+  const document = artifactDocumentForUpload(content, filename ?? '')
+    ?? (looksLikeHtml(content.slice(0, 8_000)) ? { content, kind: /<script\b/i.test(content) ? 'page' as const : 'report' as const } : null)
+  if (!document) throw new ApiError('Upload an HTML page, a React component, or a TypeScript, JavaScript, Python or CSS file.', 415, 'UNSUPPORTED_TYPE')
   const agent = await prisma.agentTask.findFirst({
     where: { id: agentId, organizationId: auth.organizationId, status: { not: 'DELETED' }, ...agentVisibilityScope(auth.dbUser.id) },
     select: { id: true },
   })
   if (!agent) throw new ApiError('Pick an agent you can use.', 404, 'AGENT_NOT_FOUND')
-  const title = parsed.data.title || htmlTitleOf(content) || filename?.replace(/\.html?$/i, '') || 'Uploaded page'
+  const title = parsed.data.title || htmlTitleOf(document.content) || filename?.replace(/\.[a-z0-9]+$/i, '') || 'Uploaded page'
   const { artifact } = await createArtifact({
     organizationId: auth.organizationId,
     userId: auth.dbUser.id,
     // A page with scripts runs them (sandboxed, no network); a static one is a report.
-    kind: /<script\b/i.test(content) ? 'page' : 'report',
+    kind: document.kind,
     title,
-    content,
+    content: document.content,
     agentTaskId: agent.id,
   })
-  return { success: true, artifactId: artifact.id, unsupportedScripts: unsupportedScripts(content) }
+  return { success: true, artifactId: artifact.id, unsupportedScripts: unsupportedScripts(document.content) }
 }, { permission: 'agent.write', maxBodyBytes: ARTIFACT_UPLOAD_MAX_BYTES + 200_000 })

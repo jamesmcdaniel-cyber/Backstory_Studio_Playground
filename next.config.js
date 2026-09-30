@@ -19,6 +19,12 @@ const nextConfig = {
         source: '/api/:path*',
         headers: [{ key: 'Cache-Control', value: 'no-store' }],
       },
+      // The Python runtime an artifact page loads. The page runs sandboxed (an
+      // opaque origin), so its fetches and module imports are cross-origin.
+      {
+        source: '/vendor/pyodide/:path*',
+        headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=86400' }],
+      },
       // X-Frame-Options has no allow-list form, so when an operator turns on
       // embedding (EMBED_FRAME_ANCESTORS, read at build/deploy time) it is
       // omitted and CSP frame-ancestors — which carries the actual allow-list,

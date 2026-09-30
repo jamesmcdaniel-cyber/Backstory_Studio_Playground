@@ -71,3 +71,36 @@ test('the libraries a Claude artifact loads from CDNs are served from our copies
   assert.deepEqual(unsupportedScripts(html), [])
   assert.ok(!/https?:\/\//.test(vendorScripts(html)))
 })
+
+test('uploads: HTML stays HTML, a component becomes a React page, other code becomes a runnable code page', async () => {
+  const { artifactDocumentForUpload, codeLanguageOf, hasPythonScript } = await import('../runtime')
+  const banner = '<!-- build notes -->\n<!DOCTYPE html><html><body><script>1</script></body></html>'
+  assert.deepEqual(artifactDocumentForUpload(banner, 'cockpit.html'), { content: banner, kind: 'page' })
+  assert.equal(artifactDocumentForUpload('<!doctype html><html><body><p>x</p></body></html>', 'r.html')?.kind, 'report')
+  assert.match(artifactDocumentForUpload(COMPONENT, 'Dashboard.tsx')!.content, /data-artifact="react"/)
+  for (const [file, lang] of [['analysis.py', 'python'], ['util.ts', 'typescript'], ['main.js', 'javascript'], ['theme.css', 'css']] as const) {
+    assert.equal(codeLanguageOf(file), lang)
+    const page = artifactDocumentForUpload('print(1)\n', file)!.content
+    assert.match(page, new RegExp(`data-lang="${lang}"`))
+    const served = compileArtifactPage(page)
+    assert.match(served, /__source_view/)
+    assert.match(served, /\/vendor\/highlight\.min\.js/)
+    if (lang === 'python') assert.ok(hasPythonScript(page) && served.includes('/vendor/pyodide/pyodide.js'), 'python pages get the Python runtime')
+  }
+  assert.equal(artifactDocumentForUpload('hello', 'notes.docx'), null)
+})
+
+test('in-page TypeScript and library-importing modules compile; plain modules and Python are left to the browser', async () => {
+  const { hasPythonScript } = await import('../runtime')
+  const ts = compileArtifactPage('<html><body><script type="text/typescript">const n: number = 2; document.title = String(n)</script></body></html>')
+  assert.ok(!/: number/.test(ts))
+  const mod = compileArtifactPage('<html><body><script type="module">import * as d3 from "d3"; const x = await Promise.resolve(d3.sum([1]))</script></body></html>')
+  assert.match(mod, /\/vendor\/d3\.min\.js/)
+  assert.match(mod, /async function/)
+  const plain = '<html><body><script type="module">const x = 1</script></body></html>'
+  assert.equal(compileArtifactPage(plain), plain)
+  const py = compileArtifactPage('<html><body><script type="text/python">print(1)</script></body></html>')
+  assert.ok(hasPythonScript('<script type="text/python">print(1)</script>'))
+  assert.match(py, /text\/x-artifact-python/)
+  assert.match(py, /loadPyodide/)
+})

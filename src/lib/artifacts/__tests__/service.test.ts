@@ -82,3 +82,12 @@ test('an ROI dashboard prompt never carries the page, and routes the three inten
   assert.match(prompt, /Sales AI \/ Backstory MCP/)
   assert.match(prompt, /MESSAGE: Show me this for Acme and drop the adoption tab$/)
 })
+
+test('an HTML file that opens with a comment banner is still HTML', async () => {
+  const { looksLikeHtml } = await import('@/lib/html-detect')
+  const banner = '<!-- ====\n Backstory Cockpit - Customer Demo\n' + 'notes '.repeat(200) + '\n==== -->\n<!DOCTYPE html>\n<html lang="en"><head><title>Cockpit</title></head><body></body></html>'
+  assert.equal(looksLikeHtml(banner), true)
+  assert.equal(looksLikeHtml(banner.slice(0, 600)), true, 'a banner longer than the sample is still an HTML file')
+  assert.equal(looksLikeHtml('﻿<!doctype html><html></html>'), true)
+  assert.equal(looksLikeHtml('<!-- note --> just some prose'), false)
+})

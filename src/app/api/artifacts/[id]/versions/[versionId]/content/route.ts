@@ -2,7 +2,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { versionContent, isInteractiveContent } from '@/lib/artifacts/service'
 import { looksLikeHtml } from '@/lib/html-detect'
 import { vendorScripts } from '@/lib/artifacts/vendor-scripts'
-import { compileArtifactPage } from '@/lib/artifacts/runtime'
+import { compileArtifactPage, hasPythonScript } from '@/lib/artifacts/runtime'
 
 export const runtime = 'nodejs'
 
@@ -11,13 +11,23 @@ export const runtime = 'nodejs'
 // inline script and load from our origin — never anything else. Both carry a
 // CSP sandbox, so even opened directly (not in the viewer's sandboxed iframe)
 // the page has an opaque origin: no cookies, no session, no app APIs.
-const STATIC_CSP = "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:"
-const INTERACTIVE_CSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads; default-src 'none'; base-uri 'none'; form-action 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src data: blob:; worker-src 'self' blob:; connect-src 'none'"
+const STATIC_CSP = "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src data: https://fonts.gstatic.com; img-src data: blob:; media-src data: blob:"
+const INTERACTIVE_CSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads; default-src 'none'; base-uri 'none'; form-action 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src data: blob:; worker-src 'self' blob:; connect-src 'none'"
 
 // Links out of a page (a CRM record, a source) open in a new tab rather than
 // inside the frame, where most sites refuse to load. In-page links (#views)
 // and the page's own click handlers are left alone.
 const LINK_SCRIPT = `<script>document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a||e.defaultPrevented)return;var h=a.getAttribute('href')||'';if(/^https?:\\/\\//i.test(h)){e.preventDefault();window.open(h,'_blank','noopener');}});</script>`
+
+/**
+ * A page that runs Python (Pyodide) also needs WebAssembly and to fetch the
+ * Python runtime's files — from our /vendor/pyodide/ and nowhere else.
+ */
+function pythonCsp(origin: string): string {
+  return INTERACTIVE_CSP
+    .replace("script-src 'self' 'unsafe-inline'", "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'")
+    .replace("connect-src 'none'", `connect-src ${origin}/vendor/pyodide/`)
+}
 
 function withLinkScript(html: string): string {
   return /<\/body>/i.test(html) ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, `${LINK_SCRIPT}</body>`) : `${html}${LINK_SCRIPT}`
@@ -50,7 +60,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'private, no-store',
       'x-frame-options': 'SAMEORIGIN',
-      'content-security-policy': interactive ? INTERACTIVE_CSP : STATIC_CSP,
+      'content-security-policy': !interactive ? STATIC_CSP : hasPythonScript(found.content) ? pythonCsp(new URL(request.url).origin) : INTERACTIVE_CSP,
     },
   })
 }, { permission: 'agent.read' })

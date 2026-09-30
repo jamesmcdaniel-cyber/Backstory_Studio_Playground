@@ -45,13 +45,32 @@ export const TAILWIND_SCRIPT = '/vendor/tailwind.browser.js'
 /** The shadcn/ui components a page may import from `@/components/ui/*`. */
 export const ARTIFACT_UI_COMPONENTS = ['card', 'button', 'badge', 'tabs', 'alert', 'input', 'label', 'textarea', 'progress', 'separator', 'table', 'select', 'switch', 'skeleton'] as const
 
-const JSX_SCRIPT = /<script\b([^>]*)\btype\s*=\s*["']text\/(?:babel|jsx|tsx)["']([^>]*)>([\s\S]*?)<\/script>/gi
+// JSX, TypeScript, and inline module scripts that import a library by name.
+const JSX_SCRIPT = /<script\b([^>]*)\btype\s*=\s*["'](text\/(?:babel|jsx|tsx|typescript|ts)|module)["']([^>]*)>([\s\S]*?)<\/script>/gi
+const BARE_IMPORT = /(?:^|[\n;])\s*import\s+(?:[\w*{}\s,]+\s+from\s+)?["'](?![./]|https?:)[^"']+["']/
+// Python: <script type="text/python"> (or py/mpy) and PyScript's <py-script>.
+const PY_SCRIPT = /<script\b([^>]*)\btype\s*=\s*["'](?:text\/(?:x-)?python|py|mpy)["']([^>]*)>([\s\S]*?)<\/script>|<py-script\b([^>]*)>([\s\S]*?)<\/py-script>/gi
+// A code file shown as an artifact: its source, once (see codeArtifactDocument).
+const SOURCE_BLOCK = /<script\b[^>]*\btype\s*=\s*["']text\/x-artifact-source["']([^>]*)>([\s\S]*?)<\/script>/i
 const BABEL_STANDALONE = /<script\b[^>]*\bsrc\s*=\s*["'][^"']*babel[^"']*standalone[^"']*["'][^>]*>\s*<\/script>/gi
 
-/** Whether HTML carries JSX the server must compile. */
+/** Whether HTML carries JSX or TypeScript the server must compile (a module script counts only when it imports a library). */
 export function hasJsxScript(html: string): boolean {
-  JSX_SCRIPT.lastIndex = 0
-  return JSX_SCRIPT.test(html)
+  for (const match of html.matchAll(JSX_SCRIPT)) {
+    if (match[2] !== 'module') return true
+    if (!/\bsrc\s*=/.test(`${match[1]} ${match[3]}`) && BARE_IMPORT.test(match[4])) return true
+  }
+  return false
+}
+
+/** Whether a page runs Python in the browser (its policy then allows WebAssembly and the Python runtime's files). */
+export function hasPythonScript(html: string): boolean {
+  PY_SCRIPT.lastIndex = 0
+  return PY_SCRIPT.test(html) || /data-lang\s*=\s*["']python["']/.test(SOURCE_BLOCK.exec(html)?.[1] ?? '')
+}
+
+function needsRuntime(html: string): boolean {
+  return hasJsxScript(html) || hasPythonScript(html) || SOURCE_BLOCK.test(html)
 }
 
 function escapeHtml(value: string): string {
@@ -210,31 +229,117 @@ function compileError(message: string): string {
   return `<script>window.__artifactError(new Error(${text}))</script>`
 }
 
+function compileBlock(source: string, modules: Set<string>, before = ''): string {
+  try {
+    const { code } = transform(source, { transforms: ['typescript', 'jsx', 'imports'], production: true })
+    for (const name of requiredModules(code)) modules.add(name)
+    // A closing tag inside the code would end the script element early.
+    const safe = code.replace(/<\/script/gi, '<\\/script')
+    // Async, so a module's top-level await works; it runs synchronously up to
+    // the first await, like the script it replaces.
+    return `<script>(async function(){var exports={},module={exports:exports},require=window.__artifactRequire;${before}try{${safe}\n}catch(error){window.__artifactError(error);return}window.__artifactMount(module.exports);})();</script>`
+  } catch (error) {
+    return compileError(error instanceof Error ? error.message : String(error))
+  }
+}
+
+function decodeText(value: string): string {
+  return value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+}
+
+/** Runs each Python block in order with Pyodide; print() output lands under the block, or in the element its data-output names. */
+const PYTHON_RUNNER = String.raw`
+(async function(){
+  var blocks = Array.prototype.slice.call(document.querySelectorAll('script[type="text/x-artifact-python"]'));
+  if (!blocks.length) return;
+  var badge = document.createElement('div');
+  badge.setAttribute('style','position:fixed;right:12px;bottom:12px;z-index:2147483646;background:#0f172a;color:#fff;border-radius:999px;padding:6px 12px;font:12px ui-sans-serif,system-ui,sans-serif;opacity:.9');
+  badge.textContent = 'Starting Python…';
+  document.body.appendChild(badge);
+  try {
+    var py = await window.loadPyodide({ indexURL: '/vendor/pyodide/' });
+    window.pyodide = py;
+    for (var i = 0; i < blocks.length; i++) {
+      var block = blocks[i];
+      var named = block.getAttribute('data-output');
+      var target = named ? document.getElementById(named) : null;
+      if (!target) {
+        target = document.createElement('pre');
+        target.setAttribute('style','background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px 14px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;margin:8px 0');
+        block.parentNode.insertBefore(target, block.nextSibling);
+      }
+      (function(t){ var w = function(line){ t.appendChild(document.createTextNode(line + '\n')); }; py.setStdout({ batched: w }); py.setStderr({ batched: w }); })(target);
+      var code = block.textContent;
+      badge.textContent = 'Running Python…';
+      await py.loadPackagesFromImports(code, { messageCallback: function(){} });
+      var result = await py.runPythonAsync(code);
+      if (result !== undefined && result !== null && !target.textContent) target.textContent = String(result);
+      if (!named && !target.textContent) target.remove();
+    }
+  } catch (error) {
+    window.__artifactError(error);
+  } finally {
+    badge.remove();
+  }
+})();
+`
+
+const CONSOLE_CAPTURE = "var __out=document.getElementById('__console');var __orig=window.console;var __w=function(kind){return function(){var text=Array.prototype.map.call(arguments,function(a){if(typeof a==='string')return a;try{return JSON.stringify(a,null,2)}catch(e){return String(a)}}).join(' ');if(__out){var line=document.createElement('div');line.className='line '+kind;line.textContent=text;__out.appendChild(line)}if(__orig[kind])__orig[kind].apply(__orig,arguments)}};var console=Object.assign({},__orig,{log:__w('log'),info:__w('info'),warn:__w('warn'),error:__w('error'),table:__w('log')});window.console=console;window.addEventListener('error',function(e){console.error(String(e.error||e.message))});"
+
+const SPECIMEN = '<div class="specimen"><h1>Heading one</h1><h2>Heading two</h2><h3>Heading three</h3><p>Body text with <a href="#">a link</a>, <strong>strong</strong> and <em>emphasis</em>.</p><p><button>Button</button> <button class="primary btn btn-primary">Primary</button> <input placeholder="Input"> <select><option>Select</option></select></p><ul><li>List item</li><li>List item</li></ul><blockquote>A quotation.</blockquote><table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><tr><td>Alpha</td><td>1</td></tr><tr><td>Beta</td><td>2</td></tr></tbody></table><div class="card"><h3>Card</h3><p>Content inside a .card.</p></div><code>inline code</code></div>'
+
+/** A code file's source block, expanded: highlighted source, then what the code does. */
+function expandSource(html: string, modules: Set<string>): string {
+  const match = SOURCE_BLOCK.exec(html)
+  if (!match) return html
+  const lang = /data-lang\s*=\s*["']([a-z]+)["']/.exec(match[1])?.[1] ?? 'javascript'
+  const source = match[2].replace(/<\\\/script/gi, '</script')
+  const show = `<script type="text/plain" id="__artifact_source">${match[2]}</script><script>(function(){var v=document.getElementById('__source_view');if(v){v.textContent=document.getElementById('__artifact_source').textContent.replace(/^\\n/,'');if(window.hljs)window.hljs.highlightElement(v);}})();</script>`
+  let run = ''
+  if (lang === 'python') run = `<script type="text/x-artifact-python" data-output="__console">${match[2]}</script>`
+  else if (lang === 'css') {
+    const css = JSON.stringify(source.replace(/(^|[\s,}])(html|body|:root)(?=[\s,{.:#[])/g, '$1.specimen')).replace(/</g, '\\u003c')
+    run = `<script>(function(){var host=document.getElementById('__specimen');if(!host)return;var root=host.attachShadow({mode:'open'});root.innerHTML='<style>'+${css}+'</style>'+${JSON.stringify(SPECIMEN)};})();</script>`
+  } else run = compileBlock(source, modules, CONSOLE_CAPTURE)
+  return html.replace(match[0], `${show}${run}`)
+}
+
 /**
- * Compile a page's JSX blocks for serving. Pages without any are returned
- * as they are. A block that fails to compile becomes an error panel naming
- * the problem — never a blank page.
+ * Compile a page for serving: JSX, TypeScript and library-importing module
+ * scripts become plain script; Python blocks get the in-browser runtime; a
+ * code file's source becomes its view and its output. Pages with none of
+ * these are returned as they are. A block that fails to compile becomes an
+ * error panel naming the problem — never a blank page.
  */
 export function compileArtifactPage(html: string): string {
-  if (!hasJsxScript(html)) return html
+  if (!needsRuntime(html)) return html
   const modules = new Set<string>()
-  const compiled = html.replace(BABEL_STANDALONE, '').replace(JSX_SCRIPT, (_match, _before: string, _after: string, source: string) => {
-    try {
-      const { code } = transform(source, { transforms: ['typescript', 'jsx', 'imports'], production: true })
-      for (const name of requiredModules(code)) modules.add(name)
-      // A closing tag inside the code would end the script element early.
-      const safe = code.replace(/<\/script/gi, '<\\/script')
-      return `<script>(function(){var exports={},module={exports:exports},require=window.__artifactRequire;try{${safe}\n}catch(error){window.__artifactError(error);return}window.__artifactMount(module.exports);})();</script>`
-    } catch (error) {
-      return compileError(error instanceof Error ? error.message : String(error))
-    }
+  const python = hasPythonScript(html)
+  const isCodeFile = SOURCE_BLOCK.test(html)
+  let compiled = html.replace(BABEL_STANDALONE, '')
+  compiled = expandSource(compiled, modules)
+  compiled = compiled.replace(JSX_SCRIPT, (whole: string, before: string, type: string, after: string, source: string) => {
+    // A module that loads from a URL, or imports nothing by name, runs as written.
+    if (type === 'module' && (/\bsrc\s*=/.test(`${before} ${after}`) || !BARE_IMPORT.test(source))) return whole
+    return compileBlock(source, modules)
+  })
+  compiled = compiled.replace(PY_SCRIPT, (_whole: string, before?: string, after?: string, source?: string, pyAttrs?: string, pySource?: string) => {
+    const attrs = `${before ?? ''} ${after ?? ''} ${pyAttrs ?? ''}`.replace(/\btype\s*=\s*["'][^"']*["']/, '').trim()
+    const code = source ?? decodeText(pySource ?? '')
+    return `<script type="text/x-artifact-python" ${attrs}>${code.replace(/<\/script/gi, '<\\/script')}</script>`
   })
   // lucide's bundle looks for React under a lowercase global.
-  const tags = scriptsFor([...modules], compiled).map((src) => `<script src="${src}"></script>${src === REACT ? '<script>window.react=window.React</script>' : ''}`)
+  const jsx = modules.size > 0 || hasJsxScript(html)
+  const tags = (jsx ? scriptsFor([...modules], compiled) : [...modules].flatMap((name) => ARTIFACT_MODULES[name]?.scripts ?? []))
+    .filter((src, index, all) => all.indexOf(src) === index)
+    .map((src) => `<script src="${src}"></script>${src === REACT ? '<script>window.react=window.React</script>' : ''}`)
+  if (isCodeFile) tags.push('<script src="/vendor/highlight.min.js"></script>')
+  if (python) tags.push('<script src="/vendor/pyodide/pyodide.js"></script>')
   const head = `<script>${prelude()}</script>${tags.join('')}`
-  // The runtime and libraries load before the first compiled block runs.
+  // The runtime and libraries load before the first page script runs.
   const firstScript = compiled.search(/<script\b/i)
-  return firstScript >= 0 ? `${compiled.slice(0, firstScript)}${head}${compiled.slice(firstScript)}` : `${head}${compiled}`
+  const withHead = firstScript >= 0 ? `${compiled.slice(0, firstScript)}${head}${compiled.slice(firstScript)}` : `${head}${compiled}`
+  return python ? withHead.replace(/<\/body>(?![\s\S]*<\/body>)/i, `<script>${PYTHON_RUNNER}</script></body>`) : withHead
 }
 
 const FENCE = /^\s*```(?:jsx|tsx|javascript|js|typescript|ts|react)?\s*\n([\s\S]*?)\n```\s*$/i
@@ -282,4 +387,83 @@ ${source.replace(/<\/script/gi, '<\\/script')}
 </script>
 </body>
 </html>`
+}
+
+export type CodeLanguage = 'typescript' | 'javascript' | 'python' | 'css'
+
+const LANGUAGE_LABEL: Record<CodeLanguage, string> = { typescript: 'TypeScript', javascript: 'JavaScript', python: 'Python', css: 'CSS' }
+
+/** The language a code file's name says it is. */
+export function codeLanguageOf(filename: string): CodeLanguage | null {
+  const ext = /\.([a-z0-9]+)$/i.exec(filename)?.[1]?.toLowerCase()
+  if (ext === 'py') return 'python'
+  if (ext === 'ts' || ext === 'tsx' || ext === 'mts' || ext === 'cts') return 'typescript'
+  if (ext === 'js' || ext === 'jsx' || ext === 'mjs' || ext === 'cjs') return 'javascript'
+  if (ext === 'css') return 'css'
+  return null
+}
+
+const HLJS_THEME = ".hljs{color:#24292e;background:#fff}.hljs-doctag,.hljs-keyword,.hljs-meta .hljs-keyword,.hljs-template-tag,.hljs-template-variable,.hljs-type,.hljs-variable.language_{color:#d73a49}.hljs-title,.hljs-title.class_,.hljs-title.class_.inherited__,.hljs-title.function_{color:#6f42c1}.hljs-attr,.hljs-attribute,.hljs-literal,.hljs-meta,.hljs-number,.hljs-operator,.hljs-selector-attr,.hljs-selector-class,.hljs-selector-id,.hljs-variable{color:#005cc5}.hljs-meta .hljs-string,.hljs-regexp,.hljs-string{color:#032f62}.hljs-built_in,.hljs-symbol{color:#e36209}.hljs-code,.hljs-comment,.hljs-formula{color:#6a737d}.hljs-name,.hljs-quote,.hljs-selector-pseudo,.hljs-selector-tag{color:#22863a}.hljs-section{color:#005cc5;font-weight:700}.hljs-addition{color:#22863a;background-color:#f0fff4}.hljs-deletion{color:#b31d28;background-color:#ffeef0}"
+
+/**
+ * A code file as an artifact, like a Claude code artifact that also runs:
+ * the highlighted source beside what it does — the console for TypeScript and
+ * JavaScript, printed output for Python, a styled specimen for CSS. The
+ * source is stored once (the assistant edits it there); the content route
+ * expands it when the page is served.
+ */
+export function codeArtifactDocument(source: string, language: CodeLanguage, filename: string): string {
+  const output = language === 'css'
+    ? '<h2>Preview</h2><div id="__specimen"></div>'
+    : `<h2>${language === 'python' ? 'Output' : 'Console'}</h2><div id="__console" class="console"></div>`
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(filename)}</title>
+<style>
+html,body{margin:0}body{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#0f172a;background:#f8fafc}
+header{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid #e2e8f0;background:#fff}
+header b{font-size:15px}header span{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#475569;background:#f1f5f9;border-radius:999px;padding:3px 9px}
+main{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;padding:16px 20px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+section{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;min-height:200px}
+h2{margin:0;padding:10px 14px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e2e8f0;background:#f8fafc}
+pre{margin:0}pre code{display:block;padding:14px;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto;max-height:calc(100vh - 140px)}
+.console{padding:10px 14px;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;background:#0f172a;color:#e2e8f0;min-height:160px;margin:0}
+.console .line{padding:1px 0}.console .warn{color:#fcd34d}.console .error{color:#fca5a5}
+#__specimen{padding:16px}
+${HLJS_THEME}
+</style>
+</head>
+<body>
+<header><b>${escapeHtml(filename)}</b><span>${LANGUAGE_LABEL[language]}</span></header>
+<main>
+<section><h2>Source</h2><pre><code id="__source_view" class="language-${language}"></code></pre></section>
+<section>${output}</section>
+</main>
+<script type="text/x-artifact-source" data-lang="${language}" data-filename="${escapeHtml(filename)}">
+${source.replace(/<\/script/gi, '<\\/script')}
+</script>
+</body>
+</html>`
+}
+
+/**
+ * What an uploaded file becomes: an HTML page as it is; a React component
+ * (a .jsx/.tsx — or .js/.ts — with a default-exported component) as a React
+ * page; any other TypeScript, JavaScript, Python or CSS file as a code page.
+ */
+export function artifactDocumentForUpload(content: string, filename: string): { content: string; kind: 'page' | 'report' } | null {
+  if (/\.html?$/i.test(filename) || /^\s*<(?:!doctype|html)\b/i.test(content)) {
+    return { content, kind: /<script[\s>]/i.test(content) ? 'page' : 'report' }
+  }
+  const language = codeLanguageOf(filename)
+  if (!language) return null
+  if (language === 'typescript' || language === 'javascript') {
+    const component = reactComponentOf(content)
+    if (component) return { content: reactArtifactDocument(component), kind: 'page' }
+  }
+  return { content: codeArtifactDocument(content, language, filename), kind: 'page' }
 }

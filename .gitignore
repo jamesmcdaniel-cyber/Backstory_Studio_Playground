@@ -26,3 +26,6 @@ src/lib/eval/rag/scorecard.latest.json
 /test-results/
 /playwright-report/
 /blob-report/
+
+# Copied from node_modules/pyodide at build time (scripts/vendor-pyodide.mjs)
+/public/vendor/pyodide/

@@ -3,13 +3,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Bot, FileOutput, Loader2, Search, TrendingUp, Upload, Workflow } from 'lucide-react'
+import { Bot, FileOutput, Loader2, Search, Upload, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RoiForm } from '@/components/roi/roi-form'
 import { useAuth } from '@/hooks/use-auth'
-import { isCustomerEdition } from '@/lib/edition'
 import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
@@ -27,12 +25,8 @@ export default function ArtifactsPage() {
   const searchParams = useSearchParams()
   const initialKind = searchParams?.get('kind')
   const [kind, setKind] = useState<ArtifactKind | 'all'>(initialKind === 'report' || initialKind === 'roi_dashboard' || initialKind === 'document' || initialKind === 'page' ? initialKind : 'all')
-  const [roiOpen, setRoiOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const { can } = useAuth()
-  // Building an ROI analysis is an operator action (warehouse extracts about
-  // a customer): internal edition, and only for people who can run agents.
-  const canBuildRoi = !isCustomerEdition() && can('agent.run')
   const [archived, setArchived] = useState(false)
 
   useEffect(() => {
@@ -59,8 +53,7 @@ export default function ArtifactsPage() {
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">What your agents have produced</h1>
           <div className="flex flex-wrap gap-2">
-            {can('agent.write') && <Button variant="outline" onClick={() => setUploadOpen(true)}><Upload className="mr-1.5 h-4 w-4" aria-hidden />Upload HTML</Button>}
-            {canBuildRoi && <Button onClick={() => setRoiOpen(true)}><TrendingUp className="mr-1.5 h-4 w-4" aria-hidden />New ROI analysis</Button>}
+            {can('agent.write') && <Button variant="outline" onClick={() => setUploadOpen(true)}><Upload className="mr-1.5 h-4 w-4" aria-hidden />Upload</Button>}
           </div>
         </div>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Every report, dashboard and document, with its versions. Open one to ask the agent about it or ask for a change — a change makes a new version and keeps the old one.</p>
@@ -116,15 +109,6 @@ export default function ArtifactsPage() {
         </ul>
       )}
       <UploadHtmlDialog open={uploadOpen} onOpenChange={setUploadOpen} />
-      <Dialog open={roiOpen} onOpenChange={setRoiOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>New ROI analysis</DialogTitle>
-            <DialogDescription>Pick the account and the time frame. The dashboard is built in the background from the account's extracts and opens here as an artifact you can question and change.</DialogDescription>
-          </DialogHeader>
-          <RoiForm onStarted={() => setRoiOpen(false)} />
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
@@ -159,7 +143,7 @@ function UploadHtmlDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!file || !agentId || busy) return
-    if (file.size > 4_000_000) { toast.error('Pages can be at most 4 MB.'); return }
+    if (file.size > 4_000_000) { toast.error('Files can be at most 4 MB.'); return }
     setBusy(true)
     try {
       const content = await file.text()
@@ -190,14 +174,14 @@ function UploadHtmlDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upload an HTML page</DialogTitle>
-          <DialogDescription>It becomes an artifact the agent you pick can work on. Every change is a new version; ask for a copy and it makes a new artifact.</DialogDescription>
+          <DialogTitle>Upload a page or code file</DialogTitle>
+          <DialogDescription>An HTML page, a React component, or a TypeScript, JavaScript, Python or CSS file. It becomes an artifact the agent you pick can work on. Every change is a new version; ask for a copy and it makes a new artifact.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label htmlFor="upload-html-file" className="text-sm font-medium">Page</label>
-            <input id="upload-html-file" type="file" accept=".html,.htm,text/html" className="mt-1.5 block w-full text-sm" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-            <p className="mt-1 text-xs text-muted-foreground">Up to 4 MB. React, Tailwind, Chart.js, Recharts, Plotly, d3, three.js, Mermaid and the other common libraries keep working; the page can't reach the internet.</p>
+            <label htmlFor="upload-html-file" className="text-sm font-medium">File</label>
+            <input id="upload-html-file" type="file" accept=".html,.htm,text/html,.jsx,.tsx,.js,.mjs,.ts,.py,.css" className="mt-1.5 block w-full text-sm" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+            <p className="mt-1 text-xs text-muted-foreground">Up to 4 MB. React, Tailwind, Chart.js, Recharts, Plotly, d3, three.js, Mermaid and the other common libraries keep working, and Python runs in the page (numpy and pandas included); nothing can reach the internet.</p>
           </div>
           <div>
             <label htmlFor="upload-html-agent" className="text-sm font-medium">Agent</label>

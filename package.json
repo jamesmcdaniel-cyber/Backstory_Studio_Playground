@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:all": "concurrently \"npm run dev\" \"npm run worker:dev\"",
-    "build": "EXECUTION_MODE=queue prisma generate && node scripts/vercel-migrate.mjs && EXECUTION_MODE=queue next build && npm run smoke:wasm",
+    "build": "EXECUTION_MODE=queue prisma generate && node scripts/vercel-migrate.mjs && node scripts/vendor-pyodide.mjs && EXECUTION_MODE=queue next build && npm run smoke:wasm",
     "start": "next start",
     "worker:dev": "tsx watch src/lib/workers/runtime.ts",
     "worker:start": "tsx src/lib/workers/runtime.ts",

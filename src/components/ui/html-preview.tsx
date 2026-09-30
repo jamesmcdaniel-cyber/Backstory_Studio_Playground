@@ -26,7 +26,11 @@ const PAIRABLE_TAGS = STRUCTURAL_TAGS.filter((tag) => tag !== '!doctype')
  *     A single unmatched tag (e.g. "Use <br> to break lines") never matches.
  */
 export function looksLikeHtml(value: string): boolean {
-  const trimmed = value.trim()
+  // A document may open with comments (a banner, build notes) before its
+  // doctype; a comment still open at the end of the text is a long banner.
+  const stripped = value.replace(/^\uFEFF/, '').trimStart()
+  if (stripped.startsWith('<!--') && !/^(?:\s*<!--[\s\S]*?-->)+/.test(stripped)) return true
+  const trimmed = stripped.replace(/^(?:\s*<!--[\s\S]*?-->)+/, '').trim()
   if (!trimmed) return false
   if (trimmed.startsWith('<') && LEADING_TAG_PATTERN.test(trimmed)) return true
   return PAIRABLE_TAGS.some((tag) => {

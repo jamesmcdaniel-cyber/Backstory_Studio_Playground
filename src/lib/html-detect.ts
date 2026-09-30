@@ -8,7 +8,12 @@ const PAIRABLE_TAGS = ['html', 'body', 'div', 'section', 'article', 'table', 'ma
 
 /** Tag-first content, or a matched open/close pair of a structural tag. */
 export function looksLikeHtml(value: string): boolean {
-  const trimmed = value.trim()
+  // A document may open with a byte-order mark and comments (a banner, build
+  // notes) before its doctype; they say nothing about what follows. A comment
+  // still open at the end of the sample is a long banner on an HTML file.
+  const stripped = value.replace(/^\uFEFF/, '').trimStart()
+  if (stripped.startsWith('<!--') && !/^(?:\s*<!--[\s\S]*?-->)+/.test(stripped)) return true
+  const trimmed = stripped.replace(/^(?:\s*<!--[\s\S]*?-->)+/, '').trim()
   if (!trimmed) return false
   if (trimmed.startsWith('<') && LEADING_TAG_PATTERN.test(trimmed)) return true
   return PAIRABLE_TAGS.some((tag) => new RegExp(`<${tag}\\b`, 'i').test(trimmed) && new RegExp(`</${tag}\\s*>`, 'i').test(trimmed))

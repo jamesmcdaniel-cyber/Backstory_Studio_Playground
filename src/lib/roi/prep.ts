@@ -90,6 +90,17 @@ else:
             a[c] = np.nan
             notes.append("Activity extract has no " + c + " column; that metric is empty.")
     a["dir_vp_exec"] = a[["director_meeting_count", "vp_meeting_count", "executive_meeting_count"]].sum(axis=1, min_count=1)
+    # Metrics the viewer asked for: a sum of activity-extract columns.
+    money_keys = []
+    for extra in (input.get("extraMetrics") or []):
+        present = [c for c in extra.get("columns", []) if has(a, c)]
+        if not present:
+            notes.append("Added metric " + str(extra.get("label")) + " has none of its columns in the activity extract; skipped.")
+            continue
+        a[extra["key"]] = a[present].apply(fnum).sum(axis=1, min_count=1)
+        METRICS.append((extra["key"], extra["label"]))
+        if extra.get("format") == "currency":
+            money_keys.append(extra["key"])
     # Pipeline cleaning: reps reporting in another currency dwarf everyone
     # else (medians hundreds of times the org's); drop them from pipeline
     # metrics only, then cap rep-months at the 95th percentile of non-zero.
@@ -183,6 +194,8 @@ else:
         "nBottom": n_bottom,
         "hasUsage": has_usage,
         "usageRecords": int(len(usage)) if usage is not None else 0,
+        "moneyKeys": money_keys,
+        "activityColumns": [c for c in cols(activity) if fnum(activity[c]).notna().mean() > 0.5 and c not in ("email", "months")],
     }
 
 # ---------------------------------------------------------------- opportunities
@@ -447,6 +460,8 @@ export type RoiFacts = {
     nBottom: number
     hasUsage: boolean
     usageRecords: number
+    moneyKeys?: string[]
+    activityColumns?: string[]
   } | null
   OPP: Record<string, { excl: DealTable; incl: DealTable }> | null
   ST: {
@@ -475,14 +490,14 @@ export type DealTable = {
 }
 
 /** Run the prep over the mounted datasets. Minutes, not seconds, on a real extract. */
-export async function runRoiPrep(datasets: CodeDataset[]): Promise<RoiFacts> {
+export async function runRoiPrep(datasets: CodeDataset[], options: { extraMetrics?: Array<{ key: string; label: string; columns: string[]; format?: string }> } = {}): Promise<RoiFacts> {
   const { output } = await runFlowCode({
     language: 'python',
     mode: 'all',
     analysis: true,
     datasets,
     code: ROI_PREP_CODE,
-    input: {},
+    input: { extraMetrics: options.extraMetrics ?? [] },
     timeoutMs: DATASET_TIMEOUT_MAX_MS,
   })
   const facts = output as RoiFacts

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ChevronRight, ExternalLink, Loader2, MessageSquare, RotateCcw, TrendingUp } from 'lucide-react'
+import { ChevronRight, ExternalLink, History, Loader2, MessageSquare, RotateCcw, TrendingUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { RoiForm } from '@/components/roi/roi-form'
@@ -37,6 +37,11 @@ export default function RoiPage() {
   }, [])
 
   const latest = analyses?.find((analysis) => analysis.status === 'completed' && analysis.hasReport) ?? null
+  // The dashboard lives on as an artifact: edits made through its assistant
+  // are new versions there, so the page shows the artifact's current version.
+  const artifactId = typeof (latest?.results as { artifactId?: unknown } | null)?.artifactId === 'string' ? (latest!.results as { artifactId: string }).artifactId : null
+  const reportSrc = latest ? (artifactId ? `/api/artifacts/${artifactId}/versions/current/content` : `/api/roi/analyses/${latest.id}/report`) : null
+  const askHref = latest ? (artifactId ? `/artifacts/${artifactId}` : `/roi/${latest.id}`) : null
   const formOpen = showForm || (analyses !== null && !latest)
 
   return (
@@ -53,8 +58,9 @@ export default function RoiPage() {
         </div>
         {latest && (
           <div className="flex items-center gap-2">
-            <Link href={`/roi/${latest.id}`}><Button size="sm"><MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden />Ask the analyst</Button></Link>
-            <a href={`/api/roi/analyses/${latest.id}/report`} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs font-medium hover:bg-muted">Full page <ExternalLink className="h-3 w-3" aria-hidden /></a>
+            <Link href={askHref!}><Button size="sm"><MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden />Ask or change</Button></Link>
+            {artifactId && <Link href={askHref!}><Button variant="outline" size="sm"><History className="mr-1.5 h-3.5 w-3.5" aria-hidden />Versions</Button></Link>}
+            <a href={reportSrc!} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs font-medium hover:bg-muted">Full page <ExternalLink className="h-3 w-3" aria-hidden /></a>
             <Button variant="outline" size="sm" onClick={() => setShowForm((value) => !value)}><RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />{showForm ? 'Hide' : 'New analysis'}</Button>
           </div>
         )}
@@ -64,7 +70,7 @@ export default function RoiPage() {
         <div className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
           <iframe
             title={`ROI dashboard for ${latest.account}`}
-            src={`/api/roi/analyses/${latest.id}/report`}
+            src={reportSrc!}
             sandbox="allow-scripts"
             className="block h-[calc(100vh-200px)] min-h-[720px] w-full"
           />

@@ -12,6 +12,7 @@ import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { cn } from '@/lib/utils'
 import type { RoiAnalysisView } from '@/lib/roi/types'
 import { RunFeed } from '@/components/runs/run-feed'
+import { ArtifactViewer } from '@/components/artifacts/artifact-viewer'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 
 /**
@@ -69,6 +70,11 @@ export function AnalysisView({ id }: { id: string }) {
     return <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm">{error} <Link href="/roi" className="underline">Back to ROI</Link></div>
   }
   if (!analysis) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>
+
+  // A finished analysis is its artifact: the same viewer, versions and
+  // assistant as /artifacts, so there is one conversation per dashboard.
+  const artifactId = typeof (analysis.results as { artifactId?: unknown } | null)?.artifactId === 'string' ? (analysis.results as { artifactId: string }).artifactId : null
+  if (analysis.status === 'completed' && artifactId) return <ArtifactViewer id={artifactId} />
 
   return (
     <div className="space-y-4">

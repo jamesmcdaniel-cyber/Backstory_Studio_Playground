@@ -27,6 +27,7 @@ import { withStaleConnectionRecovery } from '@/lib/nango/connection-recovery'
 import { REPOSITORY_TOOLS, RepositoryToolClient } from '@/lib/knowledge/tools'
 import { CODE_TOOLS, CodeAnalysisToolClient } from '@/lib/code-analysis/tools'
 import { ROI_TOOLS, RoiToolClient } from '@/lib/roi/tools'
+import { ArtifactToolClient, artifactToolsFor } from '@/lib/artifacts/tools'
 import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
 import {
@@ -344,7 +345,14 @@ export async function loadMcpConnectionPlaneGroups(
  */
 export async function loadNativePlaneGroups(
   organizationId: string,
-  options: { providers?: string[]; httpEndpoints?: AgentHttpEndpoint[]; httpUserId?: string; agentId?: string | null } = {},
+  options: {
+    providers?: string[]
+    httpEndpoints?: AgentHttpEndpoint[]
+    httpUserId?: string
+    agentId?: string | null
+    /** Set for a run started from an artifact's chat: binds the artifact plane to it. */
+    artifact?: { artifactId: string; kind: string; executionId: string; request: string | null }
+  } = {},
 ): Promise<ToolPlaneGroup[]> {
   const selected = (descriptor: ConnectorDescriptor) =>
     options.providers ? isSelected(descriptor, options.providers) : true
@@ -468,6 +476,19 @@ export async function loadNativePlaneGroups(
       'backstory://code',
       new CodeAnalysisToolClient(organizationId, options.httpUserId ?? '', options.agentId ?? null),
       CODE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    ))
+  }
+
+  // The artifact a conversation is about. Not selected in setup — present
+  // exactly when the run came from that artifact's chat, and bound to it, so
+  // the model never supplies an artifact id and cannot reach another.
+  if (options.artifact) {
+    const artifactConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'artifact')!
+    groups.push(group(
+      artifactConn,
+      'backstory://artifact',
+      new ArtifactToolClient(organizationId, options.httpUserId ?? '', options.artifact),
+      artifactToolsFor(options.artifact.kind),
     ))
   }
 

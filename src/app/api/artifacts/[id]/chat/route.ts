@@ -6,9 +6,10 @@ import { askArtifact, ARTIFACT_QUESTION_MAX_CHARS } from '@/lib/artifacts/servic
 
 export const runtime = 'nodejs'
 
-// POST /api/artifacts/:id/chat — ask the producing agent about the artifact
-// (mode "ask") or for a change to it (mode "change" → a new version). Either
-// way it is a run; the answer lands when the run finishes.
+// POST /api/artifacts/:id/chat — a message to the artifact's assistant. It
+// decides whether the message is a question, a change (→ a new version) or,
+// for an ROI dashboard, a request for another account. Either way it is a
+// run; the answer lands when the run finishes.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = new URL(request.url).pathname.split('/').at(-2)
   if (!id) throw new ApiError('Artifact id is required.', 400, 'ID_REQUIRED')
@@ -16,7 +17,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (limited) throw new ApiError('Too many messages at once. Try again in a minute.', 429, 'RATE_LIMITED')
   const allowance = await checkDailyRunAllowance('agent', { organizationId: auth.organizationId, userId: auth.dbUser.id, canReview: auth.can('catalogue.review'), email: auth.dbUser.email })
   if (allowance.over) throw new ApiError(limitMessage('agent', allowance.limit), 429, 'DAILY_LIMIT_REACHED')
-  const parsed = z.object({ message: z.string().trim().min(1).max(ARTIFACT_QUESTION_MAX_CHARS), mode: z.enum(['ask', 'change']).default('ask') }).safeParse(await request.json().catch(() => null))
+  const parsed = z.object({ message: z.string().trim().min(1).max(ARTIFACT_QUESTION_MAX_CHARS), mode: z.enum(['auto', 'ask', 'change']).default('auto') }).safeParse(await request.json().catch(() => null))
   if (!parsed.success) throw new ApiError('Type a message first.', 400, 'INVALID_BODY')
   try {
     const artifact = await askArtifact({ organizationId: auth.organizationId, userId: auth.dbUser.id, id, message: parsed.data.message, mode: parsed.data.mode })

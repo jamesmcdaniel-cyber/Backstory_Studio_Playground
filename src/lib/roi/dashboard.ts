@@ -1,5 +1,6 @@
 import type { RoiNarrative } from './contract'
 import type { RoiFacts } from './prep'
+import { EMPTY_VIEW, type RoiView } from './view'
 
 /**
  * The ROI dashboard document — the original analysis's page, made
@@ -18,6 +19,8 @@ export type RoiDashboardOptions = {
   account: string
   generatedAt?: string
   timeframePreset?: string
+  /** What to show and how it is labelled — see ./view.ts. */
+  view?: RoiView
 }
 
 function escapeHtml(value: string): string {
@@ -175,7 +178,7 @@ const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const HAS={U:!!U, usage:!!(U&&U.hasUsage), OPP:!!OPP, ST:!!ST, vel:!!(META&&META.hasVelocity)};
 const MK=U?Object.keys(U.labels):[], LAB=U?U.labels:{}, MON=U?U.months:[], NM=MON.length;
-const isMoney=k=>k.startsWith('pipeline');
+const isMoney=k=>k.startsWith('pipeline')||((U&&U.moneyKeys)||[]).includes(k);
 const fmt=(v,k)=>{if(v==null||isNaN(v))return '–'; if(isMoney(k)){const a=Math.abs(v); if(a>=1e6)return '$'+(v/1e6).toFixed(2)+'M'; if(a>=1e3)return '$'+(v/1e3).toFixed(0)+'K'; return '$'+v.toFixed(0);} return v.toFixed(v<10?2:1);};
 const pct=(a,b)=>(b?((a/b-1)*100):NaN);
 const sp=v=>isNaN(v)?'–':(v>=0?'+':'')+v.toFixed(1)+'%';
@@ -257,7 +260,7 @@ function calc(){
 }
 
 /* ---------- leading indicators ---------- */
-let leadMetric='dir_vp_exec', leadMode=PRESET==='last6_vs_year_ago'?'yoy':PRESET==='last12_vs_prior12'?'y12':PRESET==='last3_vs_prior3'?'q':'pp';
+let leadMetric=MK.includes('dir_vp_exec')?'dir_vp_exec':MK[0], leadMode=PRESET==='last6_vs_year_ago'?'yoy':PRESET==='last12_vs_prior12'?'y12':PRESET==='last3_vs_prior3'?'q':'pp';
 function setupLead(){
   $('#leadMetric').innerHTML=MK.map(k=>'<button type="button" data-k="'+k+'" aria-pressed="'+(k===leadMetric)+'">'+esc(LAB[k])+'</button>').join('');
   $$('#leadMetric button').forEach(b=>b.onclick=()=>{leadMetric=b.dataset.k;$$('#leadMetric button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderLead();});
@@ -421,6 +424,7 @@ function renderPers(){
 /* ---------- plumbing ---------- */
 function segBind(sel,cb){$$(sel+' button').forEach(b=>b.onclick=()=>{$$(sel+' button').forEach(x=>x.setAttribute('aria-pressed',x===b));cb(b.dataset.v);});}
 const TABS={summary:true,lead:HAS.U,adopt:HAS.usage,users:HAS.usage,deal:HAS.OPP,stage:HAS.ST,method:true};
+for(const t of (VIEW.hiddenTabs||[]))TABS[t]=false;
 const R={summary:()=>{},lead:renderLead,adopt:renderAdopt,users:renderUsers,deal:renderDeal,stage:renderStage,method:()=>{}};
 let current='summary';
 function showTab(t){if(!TABS[t])t='summary';current=t;$$('nav.tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));$$('section.panel').forEach(s=>s.classList.toggle('active',s.id==='p-'+t));requestAnimationFrame(()=>R[t]());}
@@ -452,7 +456,29 @@ if(window.Plotly)init(); else window.addEventListener('load',init);
 })();
 `
 
-export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, options: RoiDashboardOptions): string {
+/** The facts as this view shows them: hidden metrics dropped, labels applied. */
+function viewFacts(facts: RoiFacts, view: RoiView): RoiFacts {
+  if (!facts.U) return facts
+  const hidden = new Set(view.hiddenMetrics)
+  const labels: Record<string, string> = {}
+  const matrices: Record<string, Array<Array<number | null>>> = {}
+  for (const [key, label] of Object.entries(facts.U.labels)) {
+    if (hidden.has(key)) continue
+    labels[key] = view.metricLabels[key] ?? label
+    matrices[key] = facts.U.m[key]
+  }
+  // A dashboard with every metric hidden still needs one to draw.
+  if (!Object.keys(labels).length) {
+    const [key, label] = Object.entries(facts.U.labels)[0]
+    labels[key] = label
+    matrices[key] = facts.U.m[key]
+  }
+  return { ...facts, U: { ...facts.U, labels, m: matrices } }
+}
+
+export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, options: RoiDashboardOptions): string {
+  const view = options.view ?? EMPTY_VIEW
+  const facts = viewFacts(rawFacts, view)
   const account = options.account
   const generated = options.generatedAt ? new Date(options.generatedAt) : new Date()
   const generatedLabel = Number.isNaN(generated.getTime()) ? '' : generated.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
@@ -474,7 +500,7 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cardo:wght@400;700&family=Chivo+Mono:wght@400;500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
 <script src="/vendor/plotly.min.js"></script>
-<style>${CSS}</style>
+<style>${CSS}${view.hiddenSections.map((section) => `[data-section="${section.replace(/[^a-zA-Z]/g, '')}"]{display:none!important}`).join('')}</style>
 </head>
 <body>
 <header class="mast">
@@ -490,7 +516,7 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
         <h1>${escapeHtml(narrative.headline)}</h1>
         <p class="lede">${inline(narrative.lede)}</p>
       </div>
-      <figure class="strip-wrap">
+      <figure class="strip-wrap" data-section="hero">
         <div id="heroStrip" role="img" aria-label="Headline chart"></div>
         <figcaption id="heroCap">Win rate by engagement decile, lowest to highest (non-transactional deals, excluding renewals)</figcaption>
       </figure>
@@ -512,12 +538,12 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
 <section class="panel active" id="p-summary"><div class="wrap">
   <h2>The ROI story in ${['two', 'three', 'four'][narrative.findings.length - 2] ?? 'four'} numbers</h2>
   <p class="intro">Each figure is traceable to a view in this dashboard. The chain runs from product usage, to rep behaviour, to deal engagement, to outcomes.</p>
-  <div class="findings" id="findings"></div>
-  <div class="watch">
+  <div class="findings" id="findings" data-section="findings"></div>
+  <div class="watch" data-section="watch">
     <h3>What to watch</h3>
     <ul id="watch"></ul>
   </div>
-  <div class="calc" id="calc">
+  <div class="calc" id="calc" data-section="calculator">
     <div>
       <h3>Model the upside</h3>
       <p class="sub">What happens if a share of today's low-engagement deals were engaged to the medium level? Uses observed win rates for this account; deal value is editable.</p>
@@ -558,11 +584,11 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
     </div>
   </div>
   <div class="dyn" id="leadDyn"></div>
-  <div class="block">
+  <div data-section="leadTrend" class="block">
     <div><h3 id="leadTitle">Monthly trend</h3><p class="sub">Shaded bands mark the baseline (grey) and observation (blue) windows.</p><div class="chart" id="leadTrend"></div></div>
     ${aside('What this shows', notes.lead)}
   </div>
-  <div class="block full">
+  <div data-section="leadTable" class="block full">
     <div><h3>Baseline vs observation, all metrics</h3><p class="sub" id="leadTblSub"></p>
     <div class="tbl-wrap"><table id="leadTbl"></table></div></div>
   </div>
@@ -572,11 +598,11 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
   <h2>High, medium and low adopters</h2>
   <p class="intro" id="adoptIntro"></p>
   <div class="controls"><div class="ctl"><span>Window</span><div class="seg" id="adoptWin"><button aria-pressed="true" data-v="L6">Last 6 months</button><button aria-pressed="false" data-v="L12">Last 12 months</button></div></div></div>
-  <div class="block">
+  <div data-section="adoptIndex" class="block">
     <div><h3>Engagement indexed to low adopters</h3><p class="sub">Low adopters = 100. Bars above 100 mean more activity per rep per month.</p><div class="chart" id="adoptIndex"></div></div>
     ${aside('What this shows', notes.adopt)}
   </div>
-  <div class="block full">
+  <div data-section="adoptTable" class="block full">
     <div><h3>Per-rep monthly averages by tier</h3><p class="sub" id="adoptTblSub"></p>
     <div class="tbl-wrap"><table id="adoptTbl"></table></div></div>
   </div>
@@ -586,15 +612,15 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
   <h2>Backstory users vs non-users</h2>
   <p class="intro" id="usersIntro"></p>
   <div class="controls"><div class="ctl"><span>Window</span><div class="seg" id="usersWin"><button aria-pressed="true" data-v="L6">Last 6 months</button><button aria-pressed="false" data-v="L12">Last 12 months</button></div></div></div>
-  <div class="block">
+  <div data-section="usersLift" class="block">
     <div><h3>How much more users do, per rep per month</h3><p class="sub">Percent difference, users vs non-users.</p><div class="chart" id="usersLift"></div></div>
     ${aside('What this shows', notes.users)}
   </div>
-  <div class="block">
+  <div data-section="usersTrend" class="block">
     <div><h3>The senior-meeting gap over time</h3><p class="sub">Director, VP and executive meetings per rep per month. Users are defined by current usage, so a gap before the usage window shows these reps were already more senior-engaged.</p><div class="chart" id="usersTrend"></div></div>
     ${aside('Reading this fairly', notes.usersTrend)}
   </div>
-  <div class="block full">
+  <div data-section="usersTable" class="block full">
     <div><h3>Per-rep monthly averages</h3><div class="tbl-wrap"><table id="usersTbl"></table></div></div>
   </div>
 </div></section>
@@ -608,11 +634,11 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
     <label class="toggle" id="dealInclWrap"><input type="checkbox" id="dealIncl"> Include transactional deals (closed in 7 days or less)</label>
   </div>
   <div class="dyn" id="dealDyn"></div>
-  <div class="block">
+  <div data-section="dealWin" class="block">
     <div><h3>Win rate</h3><p class="sub">Bars show win rate; hover for deal counts and score range.</p><div class="chart" id="dealWin"></div></div>
     ${aside('What this shows', notes.dealWin)}
   </div>
-  <div class="block" id="dealVelBlock">
+  <div data-section="dealVel" class="block" id="dealVelBlock">
     <div><h3>Deal velocity</h3><p class="sub">Median days from creation to close, for won and lost deals.</p><div class="chart" id="dealVel"></div></div>
     ${aside('What this shows', notes.dealVel)}
   </div>
@@ -621,29 +647,29 @@ export function renderRoiDashboard(facts: RoiFacts, narrative: RoiNarrative, opt
 <section class="panel" id="p-stage"><div class="wrap">
   <h2>Where engagement happens, and who moves the deal</h2>
   <p class="intro" id="stageIntro"></p>
-  <div class="block">
+  <div data-section="stageProf" class="block">
     <div><h3>Engagement by stage at time of activity</h3>
       <div class="controls" style="margin-top:10px"><div class="seg" id="stageView"><button aria-pressed="true" data-v="share">Share of activity</button><button aria-pressed="false" data-v="wl">Activity per deal, won vs lost</button><button aria-pressed="false" data-v="type">Channel mix</button></div></div>
       <div class="chart" id="stageProf"></div></div>
     ${aside('What this shows', notes.stageProf)}
   </div>
-  <div class="block">
+  <div data-section="stageHeat" class="block">
     <div><h3>Persona mix by stage</h3><p class="sub">Share of activities at each stage that include each persona. A single activity can include several.</p><div class="chart tall" id="stageHeat"></div></div>
     ${aside('What this shows', notes.stageHeat)}
   </div>
-  <div class="block">
+  <div data-section="stageSurv" class="block">
     <div><h3>Early engagement and win rate among deals that reached late stage</h3>
       <p class="sub">Only deals with activity in the late stages. Compares those that also had the persona engaged in the early stages with those that didn't.</p>
       <div class="chart tall" id="stageSurv"></div></div>
     ${aside('What this shows', notes.stageSurv)}
   </div>
-  <div class="block">
+  <div data-section="stagePersona" class="block">
     <div><h3>Persona involvement, all pre-decision activity</h3>
       <div class="controls" style="margin-top:10px"><div class="seg" id="persView"><button aria-pressed="true" data-v="wr">Win rate with vs without</button><button aria-pressed="false" data-v="share">Share of won deals</button><button aria-pressed="false" data-v="days">Days to close (won)</button></div></div>
       <div class="chart tall" id="stagePers"></div></div>
     <aside class="note"><h4>What this shows</h4><p id="persNote"></p></aside>
   </div>
-  <div class="block">
+  <div data-section="stageBreadth" class="block">
     <div class="twocol">
       <div><h3>Buying-committee breadth</h3><p class="sub">Number of distinct personas engaged before a decision.</p><div class="chart short" id="stageBreadth"></div></div>
       <div><h3>Early activity intensity</h3><p class="sub">Quintiles of activity logged in the early stages.</p><div class="chart short" id="stageEarlyQ"></div></div>
@@ -693,7 +719,8 @@ const OPP = ${scriptJson(facts.OPP)};
 const ST = ${scriptJson(facts.ST)};
 const META = ${scriptJson(facts.META ?? {})};
 const N = ${scriptJson(narrative)};
-const PRESET = ${scriptJson(options.timeframePreset ?? 'last6_vs_prior6')};
+const PRESET = ${scriptJson(view.defaultComparison ?? options.timeframePreset ?? 'last6_vs_prior6')};
+const VIEW = ${scriptJson({ hiddenTabs: view.hiddenTabs })};
 </script>
 <script>${SCRIPT}</script>
 </body>

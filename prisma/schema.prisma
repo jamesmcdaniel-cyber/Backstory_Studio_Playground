@@ -1728,6 +1728,8 @@ model RoiAnalysis {
   /// dashboard renders and what follow-up questions are answered from.
   results        Json?
   reportHtml     String?  @db.Text
+  /// The view (hidden/added metrics, sections) this analysis renders with.
+  view           Json?
   chat           Json     @default("[]")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -1780,6 +1782,9 @@ model ArtifactVersion {
   /// The change that was asked for, when this version answers one.
   request         String?  @db.Text
   content         String   @db.Text
+  /// The structured state a rendered kind is built from (ROI: facts file,
+  /// narrative, view). Null for kinds stored verbatim.
+  state           Json?
   createdByUserId String?
   createdAt       DateTime @default(now())
 

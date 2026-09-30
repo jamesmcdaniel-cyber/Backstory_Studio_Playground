@@ -155,6 +155,20 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     available: () => true,
   },
   {
+    key: 'Artifact',
+    label: 'This artifact',
+    slug: 'files',
+    kind: 'builtin',
+    // Versioned edits to the one artifact a conversation is about; nothing is
+    // overwritten, so it is not a write plane for the approval gate.
+    isWrite: false,
+    providerId: 'artifact',
+    // Never chosen in agent setup: it rides only on runs started from an
+    // artifact's chat, bound to that artifact (see loadNativePlaneGroups).
+    matches: () => false,
+    available: () => true,
+  },
+  {
     key: 'ROI',
     label: 'ROI analysis',
     slug: 'plotly',

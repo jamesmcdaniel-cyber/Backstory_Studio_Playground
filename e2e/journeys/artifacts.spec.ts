@@ -44,7 +44,7 @@ test('an artifact can be found, read, questioned and revised', async ({ page }) 
     detail = { ...detail, chat: [...detail.chat, { role: 'user', mode: body.mode, content: body.message, createdAt: now }, { role: 'agent', mode: body.mode, content: '', executionId: 'exec-3', status: 'pending', createdAt: now }] }
     await route.fulfill({ json: { success: true, artifact: detail } })
     // The next poll finds the answer (and, for a change, the new version).
-    const answered = body.mode === 'change'
+    const answered = /add|remove|change/i.test(body.message)
       ? { ...detail, currentVersionId: 'v3', versionCount: 3, versions: [{ id: 'v3', number: 3, executionId: 'exec-3', flowRunId: null, request: body.message, createdAt: now, bytes: 500, format: 'html' }, ...detail.versions], chat: detail.chat.map((m) => (m.status === 'pending' ? { ...m, status: 'completed', versionId: 'v3', content: 'Done — a new version is ready.' } : m)) }
       : { ...detail, chat: detail.chat.map((m) => (m.status === 'pending' ? { ...m, status: 'completed', content: 'Win rate rose because **engagement** rose.' } : m)) }
     detail = answered
@@ -59,21 +59,23 @@ test('an artifact can be found, read, questioned and revised', async ({ page }) 
   const frame = page.frameLocator('iframe[title="Q3 pipeline review"]')
   await expect(frame.getByRole('heading', { name: 'Q3 pipeline review, version two' })).toBeVisible()
 
-  // Older versions stay readable.
-  await page.getByLabel('Version').selectOption('v1')
+  // Older versions stay readable, and can be restored.
+  await page.getByRole('tab', { name: /History/ }).click()
+  await page.getByRole('button', { name: 'View' }).first().click()
   await expect(frame.getByRole('heading', { name: 'Q3 pipeline review, version one' })).toBeVisible()
+  await expect(page.getByText('Viewing version 1 of 2')).toBeVisible()
+  await page.getByRole('button', { name: 'Back to current' }).click()
+  await expect(frame.getByRole('heading', { name: 'Q3 pipeline review, version two' })).toBeVisible()
 
-  // Ask a question: pending, then answered.
+  // One input: the assistant decides whether a message is a question or a change.
+  await page.getByRole('tab', { name: /Pipeline analyst/ }).click()
   await page.getByLabel('Message').fill('Why did win rate rise?')
-  await page.getByRole('button', { name: 'Send question' }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('Working on it…')).toBeVisible()
   await expect(page.getByText('Win rate rose because')).toBeVisible({ timeout: 20_000 })
 
-  // Ask for a change: a new version appears and becomes current.
-  await page.getByRole('radio', { name: 'Ask for a change' }).click()
   await page.getByLabel('Message').fill('Add a risks section')
-  await page.getByRole('button', { name: 'Send change request' }).click()
-  await expect(page.getByText('Revising…')).toBeVisible()
+  await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('Done — a new version is ready.')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByLabel('Version')).toContainText('v3')
+  await expect(page.getByRole('tab', { name: 'History (3)' })).toBeVisible()
 })

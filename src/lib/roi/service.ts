@@ -9,7 +9,10 @@ import { createArtifact } from '@/lib/artifacts/service'
 import { ensureRoiAgent } from './agent'
 import { extractRoiNarrative, type RoiNarrative } from './contract'
 import { renderRoiDashboard } from './dashboard'
-import type { RoiFacts } from './prep'
+import { runRoiPrep, type RoiFacts } from './prep'
+import { readView, type RoiView } from './view'
+import { stateJson, storeFacts } from './artifact-state'
+import { datasetFrameName as frameName } from '@/lib/code-analysis/frame-name'
 import { summarizeFacts, type RoiFactsSummary } from './facts'
 import { timeframeInstruction, timeframeLabel, type RoiTimeframe } from './timeframe'
 import { resolveRoiDatasetIds } from './sources'
@@ -157,6 +160,8 @@ export async function createRoiAnalysis(params: {
   timeframe: RoiTimeframe
   context: string
   datasetIds?: string[]
+  /** The view to render with — carried over when a dashboard is rebuilt for another account. */
+  view?: RoiView
 }): Promise<RoiAnalysis> {
   // The account's extracts live in the repository, tagged by account; an
   // explicit list (the API's older shape) still wins when one is given.
@@ -173,6 +178,7 @@ export async function createRoiAnalysis(params: {
       timeframe: jsonValue(params.timeframe),
       context: params.context.trim().slice(0, ROI_CONTEXT_MAX_CHARS),
       datasetIds: jsonValue(datasets.map((dataset) => dataset.documentId)),
+      ...(params.view ? { view: jsonValue(params.view) } : {}),
       status: 'pending',
     },
   })
@@ -254,14 +260,15 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
       data: { status: 'failed', error: `${extracted.error} Open the run for the agent's full output.` },
     })
   }
-  const factsFileId = await factsFileIdFor(row.executionId)
-  const stored = factsFileId ? await readStoredFile(factsFileId, row.organizationId) : null
-  if (!factsFileId || !stored) {
+  const foundFactsFileId = await factsFileIdFor(row.executionId)
+  const stored = foundFactsFileId ? await readStoredFile(foundFactsFileId, row.organizationId) : null
+  if (!foundFactsFileId || !stored) {
     return prisma.roiAnalysis.update({
       where: { id: row.id, organizationId: row.organizationId },
       data: { status: 'failed', error: 'The run finished without computing the facts (prepare_roi_facts did not store a result). Open the run to see what happened.' },
     })
   }
+  let factsFileId: string = foundFactsFileId
   let facts: RoiFacts
   try {
     facts = JSON.parse(stored.buffer.toString('utf8')) as RoiFacts
@@ -270,7 +277,14 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
   }
   const generatedAt = new Date().toISOString()
   const timeframe = row.timeframe as RoiTimeframe | null
-  const reportHtml = renderRoiDashboard(facts, extracted.data, { account: row.account, generatedAt, timeframePreset: timeframe?.preset })
+  // A view carried over from another dashboard may add metrics this run's
+  // prep did not compute; recompute once with them so the page shows them.
+  const view = readView(row.view)
+  if (view.extraMetrics.length && facts.U && view.extraMetrics.some((metric) => !(metric.key in facts.U!.labels))) {
+    facts = await recomputeWithMetrics(row, view).catch(() => facts)
+    factsFileId = await storeFacts(row.organizationId, row.userId, facts).catch(() => factsFileId)
+  }
+  const reportHtml = renderRoiDashboard(facts, extracted.data, { account: row.account, generatedAt, timeframePreset: timeframe?.preset, view })
   // The dashboard is an artifact like any other report: it gets a home on
   // /artifacts with versions and a conversation, alongside the ROI page.
   const artifactId = await createArtifact({
@@ -281,6 +295,15 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
     content: reportHtml,
     agentTaskId: row.agentTaskId,
     executionId: row.executionId,
+    state: stateJson({
+      analysisId: row.id,
+      account: row.account,
+      timeframePreset: timeframe?.preset ?? 'last6_vs_prior6',
+      factsFileId,
+      datasetIds: datasetIdsOf(row),
+      narrative: extracted.data,
+      view,
+    }),
   }).then(({ artifact }) => artifact.id).catch(() => undefined)
   const results: RoiResults = { narrative: extracted.data, summary: summarizeFacts(facts), factsFileId, ...(artifactId ? { artifactId } : {}) }
   return prisma.roiAnalysis.update({
@@ -366,3 +389,15 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
   }
 }
 
+
+/** Recompute an analysis's facts with added metrics (a carried-over view). */
+async function recomputeWithMetrics(row: RoiAnalysis, view: RoiView): Promise<RoiFacts> {
+  const docs = await prisma.knowledgeDocument.findMany({ where: { id: { in: datasetIdsOf(row) }, organizationId: row.organizationId, assetType: 'dataset' }, select: { filename: true, storedFileId: true } })
+  const datasets = []
+  for (const doc of docs) {
+    if (!doc.storedFileId) continue
+    const stored = await readStoredFile(doc.storedFileId, row.organizationId)
+    if (stored) datasets.push({ name: frameName(doc.filename), filename: doc.filename, bytes: stored.buffer })
+  }
+  return runRoiPrep(datasets, { extraMetrics: view.extraMetrics })
+}

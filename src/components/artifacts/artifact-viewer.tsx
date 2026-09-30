@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, ExternalLink, History, Loader2, MessageSquare, PenLine, Workflow } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -25,9 +25,10 @@ export function ArtifactViewer({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null)
   const [versionId, setVersionId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
-  const [mode, setMode] = useState<'ask' | 'change'>('ask')
   const [sending, setSending] = useState(false)
   const [markdown, setMarkdown] = useState<{ versionId: string; text: string } | null>(null)
+  const [panel, setPanel] = useState<'assistant' | 'history'>('assistant')
+  const [restoring, setRestoring] = useState<string | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
@@ -63,12 +64,13 @@ export function ArtifactViewer({ id }: { id: string }) {
     return () => { cancelled = true }
   }, [id, markdownVersionId])
 
-  const send = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (!message.trim() || sending || !artifact) return
+  const send = async (event: React.FormEvent | null, text?: string) => {
+    event?.preventDefault()
+    const outgoing = (text ?? message).trim()
+    if (!outgoing || sending || !artifact) return
     setSending(true)
     try {
-      const response = await fetch(`/api/artifacts/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, mode }) })
+      const response = await fetch(`/api/artifacts/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text ?? message, mode: 'auto' }) })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
       if (!response.ok || !data.artifact) throw new Error(data.error || 'The message could not be sent.')
       setArtifact(data.artifact)
@@ -91,6 +93,22 @@ export function ArtifactViewer({ id }: { id: string }) {
       toast.success(`Running "${artifact.flow.name}" — a new version lands here when it finishes.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const restore = async (target: string) => {
+    setRestoring(target)
+    try {
+      const response = await fetch(`/api/artifacts/${id}/versions/${target}/restore`, { method: 'POST' })
+      const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
+      if (!response.ok || !data.artifact) throw new Error(data.error || 'The version could not be restored.')
+      setArtifact(data.artifact)
+      setVersionId(data.artifact.currentVersionId)
+      toast.success(`Restored — it is now version ${data.artifact.versionCount}, and the previous versions are kept.`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRestoring(null)
     }
   }
 
@@ -139,20 +157,25 @@ export function ArtifactViewer({ id }: { id: string }) {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-2">
-          {artifact.versions.length > 1 && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <History className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
-              <label htmlFor="artifact-version" className="text-muted-foreground">Version</label>
-              <select id="artifact-version" className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={shownVersion?.id ?? ''} onChange={(event) => setVersionId(event.target.value)}>
-                {artifact.versions.map((version) => (
-                  <option key={version.id} value={version.id}>
-                    v{version.number} · {new Date(version.createdAt).toLocaleString()}{version.request ? ` · ${version.request.slice(0, 60)}` : ''}{version.id === artifact.currentVersionId ? ' · current' : ''}
-                  </option>
-                ))}
-              </select>
-              {shownVersion?.executionId && <Link href={`/agents?run=${shownVersion.executionId}`} className="text-muted-foreground hover:text-foreground">Open the run</Link>}
+          {shownVersion && shownVersion.id !== artifact.currentVersionId ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+              <History className="h-3.5 w-3.5" aria-hidden />
+              <span>Viewing version {shownVersion.number} of {artifact.versionCount} · {new Date(shownVersion.createdAt).toLocaleString()}{shownVersion.request ? ` · ${shownVersion.request.slice(0, 80)}` : ''}</span>
+              <span className="ml-auto flex items-center gap-2">
+                <Button size="sm" variant="outline" disabled={restoring !== null} onClick={() => void restore(shownVersion.id)}>
+                  {restoring === shownVersion.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Restore this version
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setVersionId(artifact.currentVersionId)}>Back to current</Button>
+              </span>
             </div>
-          )}
+          ) : artifact.versions.length > 1 ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <History className="h-3.5 w-3.5" aria-hidden />
+              <span>Version {shownVersion?.number} of {artifact.versionCount} (current){shownVersion?.request ? ` · ${shownVersion.request.slice(0, 80)}` : ''}</span>
+              <button type="button" onClick={() => setPanel('history')} className="font-medium text-horizon-700 underline underline-offset-2">History</button>
+              {shownVersion?.executionId && <Link href={`/agents?run=${shownVersion.executionId}`} className="hover:text-foreground">Open the run</Link>}
+            </div>
+          ) : null}
           <div className="overflow-hidden rounded-xl border border-border bg-white">
             {shownMarkdown ? (
               <div className="prose prose-sm max-w-none overflow-y-auto p-6 dark:prose-invert" style={{ maxHeight: 'calc(100vh - 240px)' }}>
@@ -173,11 +196,69 @@ export function ArtifactViewer({ id }: { id: string }) {
         </div>
 
         <aside className="flex min-h-[420px] flex-col rounded-xl border border-border bg-background">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-sm font-medium"><MessageSquare className="h-4 w-4 text-horizon-600" aria-hidden /> {artifact.agent ? artifact.agent.title : 'Conversation'}</div>
+          <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
+            {(['assistant', 'history'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={panel === tab}
+                onClick={() => setPanel(tab)}
+                className={cn('inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium', panel === tab ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}
+              >
+                {tab === 'assistant' ? <MessageSquare className="h-4 w-4 text-horizon-600" aria-hidden /> : <History className="h-4 w-4" aria-hidden />}
+                {tab === 'assistant' ? (artifact.agent ? artifact.agent.title : 'Conversation') : `History (${artifact.versionCount})`}
+              </button>
+            ))}
+          </div>
+          {panel === 'history' ? (
+            <ol className="flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
+              {artifact.versions.map((version) => {
+                const isCurrent = version.id === artifact.currentVersionId
+                const isShown = version.id === shownVersion?.id
+                return (
+                  <li key={version.id} className={cn('px-4 py-3 text-xs', isShown && 'bg-muted/60')}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">Version {version.number}</span>
+                      {isCurrent && <span className="rounded-full bg-horizon-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">Current</span>}
+                    </div>
+                    <p className="mt-0.5 text-muted-foreground">
+                      {new Date(version.createdAt).toLocaleString()}
+                      {version.author ? ` · ${version.author}` : ''}
+                      {' · '}{version.source === 'created' ? 'Created' : version.source === 'restore' ? 'Restored' : version.source === 'flow' ? 'Flow run' : 'Assistant'}
+                    </p>
+                    {version.request && <p className="mt-1 line-clamp-3 text-foreground">{version.request}</p>}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {!isShown && <button type="button" onClick={() => setVersionId(version.id)} className="font-medium text-horizon-700 underline underline-offset-2">View</button>}
+                      {!isCurrent && (
+                        <button type="button" disabled={restoring !== null} onClick={() => void restore(version.id)} className="font-medium text-horizon-700 underline underline-offset-2 disabled:opacity-50">
+                          {restoring === version.id ? 'Restoring…' : 'Restore'}
+                        </button>
+                      )}
+                      {version.executionId && <Link href={`/agents?run=${version.executionId}`} className="text-muted-foreground hover:text-foreground">Run</Link>}
+                    </div>
+                  </li>
+                )
+              })}
+            </ol>
+          ) : (
+            <>
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            {!artifact.chat.length && canAsk && (
+              <div className="flex flex-col gap-1.5">
+                {(artifact.kind === 'roi_dashboard'
+                  ? ['Why is win rate higher for engaged deals?', 'Remove the adoption tiers tab', 'Add accounts touched as a leading indicator', 'Show me this for another account']
+                  : ['Summarise this in three bullets', 'Make it shorter']
+                ).map((suggestion) => (
+                  <button key={suggestion} type="button" disabled={busy || sending} onClick={() => void send(null, suggestion)} className="rounded-lg border border-border px-2.5 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50">
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            )}
             {!artifact.chat.length && (
               <p className="text-xs text-muted-foreground">
-                {canAsk ? 'Ask the agent about this artifact, or switch to “Ask for a change” to get a revised version. Every version is kept.' : 'This artifact has no producing agent to talk to.'}
+                {canAsk ? 'Ask about it, tell the assistant what to change, or — for a dashboard — ask for it on another account. Every change is a new version; the old ones are kept.' : 'This artifact has no producing agent to talk to.'}
               </p>
             )}
             {artifact.chat.map((m, index) => (
@@ -199,19 +280,13 @@ export function ArtifactViewer({ id }: { id: string }) {
           </div>
           {canAsk && (
             <form onSubmit={send} className="border-t border-border p-3">
-              <div role="radiogroup" aria-label="Mode" className="mb-2 flex gap-1.5">
-                {(['ask', 'change'] as const).map((option) => (
-                  <button key={option} type="button" role="radio" aria-checked={mode === option} onClick={() => setMode(option)} className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium', mode === option ? 'border-horizon-600 bg-horizon-600 text-white' : 'border-border hover:bg-muted')}>
-                    {option === 'ask' ? <MessageSquare className="h-3 w-3" aria-hidden /> : <PenLine className="h-3 w-3" aria-hidden />}
-                    {option === 'ask' ? 'Ask' : 'Ask for a change'}
-                  </button>
-                ))}
-                {artifact.flow?.active && (
+              {artifact.flow?.active && (
+                <div className="mb-2 flex">
                   <button type="button" onClick={() => void rerunFlow()} disabled={busy} className="ml-auto inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50" title={`Re-run "${artifact.flow.name}"; a document in its output becomes the next version`}>
                     <Workflow className="h-3 w-3" aria-hidden /> Re-run flow
                   </button>
-                )}
-              </div>
+                </div>
+              )}
               <label htmlFor="artifact-message" className="sr-only">Message</label>
               <div className="flex items-end gap-2">
                 <textarea
@@ -222,14 +297,16 @@ export function ArtifactViewer({ id }: { id: string }) {
                   rows={2}
                   maxLength={2000}
                   disabled={busy}
-                  placeholder={busy ? 'Waiting for the agent…' : mode === 'change' ? 'Add a section on Q3 risks and shorten the summary.' : 'What drove the change in win rate?'}
+                  placeholder={busy ? 'Waiting for the assistant…' : artifact.kind === 'roi_dashboard' ? 'Ask a question, change the dashboard, or run it for another account' : 'Ask a question or describe a change'}
                   className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 />
-                <Button type="submit" size="icon" disabled={!message.trim() || sending || busy} aria-label={mode === 'change' ? 'Send change request' : 'Send question'}>
+                <Button type="submit" size="icon" disabled={!message.trim() || sending || busy} aria-label="Send message">
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <ArrowUp className="h-4 w-4" aria-hidden />}
                 </Button>
               </div>
             </form>
+          )}
+            </>
           )}
         </aside>
       </div>

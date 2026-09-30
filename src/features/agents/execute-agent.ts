@@ -392,6 +392,7 @@ async function loadTools(
   httpEndpoints: AgentHttpEndpoint[] = [],
   toolSettings: AgentToolSettings = {},
   agentId?: string,
+  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null },
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
   // at the end (capDiscoveredTools) so write tools aren't crowded out. Plane
@@ -450,7 +451,7 @@ async function loadTools(
   // tools that replace it must too. 'code' rides along for the same reason:
   // an agent that can read a CSV but not compute over it can only refuse or
   // guess. Both read-only, so no approval-gate impact.
-  for (const group of await loadNativePlaneGroups(organizationId, { providers: [...providers, 'repository', 'code'], httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId })) pushGroup(group)
+  for (const group of await loadNativePlaneGroups(organizationId, { providers: [...providers, 'repository', 'code'], httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId, artifact })) pushGroup(group)
 
   // ---- Nango delivery (outbound writes as the acting user) -----------------
   // Slack/Gmail/Salesforce writes through the org's Nango connections,
@@ -917,7 +918,14 @@ async function runAgentExecutionInner(
     // repos) are enforced below on descriptions + call args; MCP tool toggles
     // are enforced inside loadTools by never loading a disabled tool.
     const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
-    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id)
+    // A run started from an artifact's chat gets that artifact's tools.
+    const artifactContext = await (async () => {
+      const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown }
+      if (trigger.type !== 'artifact' || typeof trigger.artifactId !== 'string') return undefined
+      const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true } })
+      return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null } : undefined
+    })()
+    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext)
     const { bindings, unavailable } = loaded
 
     // Applied AFTER the agent's own tools and any step-granted connections, so

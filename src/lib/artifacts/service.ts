@@ -65,7 +65,7 @@ export function flowIdFromTrigger(trigger: unknown): string | null {
   return str(t.flowId) ?? str(t.parentFlowId)
 }
 
-async function addVersion(params: {
+export async function addVersion(params: {
   artifactId: string
   organizationId: string
   content: string
@@ -73,20 +73,27 @@ async function addVersion(params: {
   flowRunId?: string | null
   request?: string | null
   createdByUserId?: string | null
+  state?: Prisma.InputJsonValue | null
 }): Promise<ArtifactVersion> {
   return prisma.$transaction(async (tx) => {
     const artifact = await tx.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { versionCount: true } })
     if (!artifact) throw new Error('Artifact not found.')
+    // One run, one linked version: a second edit in the same run is still a
+    // version, but only the first carries the run id (the column is unique).
+    const executionTaken = params.executionId
+      ? await tx.artifactVersion.findFirst({ where: { executionId: params.executionId }, select: { id: true } })
+      : null
     const version = await tx.artifactVersion.create({
       data: {
         organizationId: params.organizationId,
         artifactId: params.artifactId,
         number: artifact.versionCount + 1,
-        executionId: params.executionId ?? null,
+        executionId: executionTaken ? null : params.executionId ?? null,
         flowRunId: params.flowRunId ?? null,
         request: params.request ?? null,
         content: params.content.slice(0, ARTIFACT_CONTENT_MAX_CHARS),
         createdByUserId: params.createdByUserId ?? null,
+        ...(params.state ? { state: params.state } : {}),
       },
     })
     await tx.artifact.update({
@@ -108,6 +115,7 @@ export async function createArtifact(params: {
   flowId?: string | null
   executionId?: string | null
   flowRunId?: string | null
+  state?: Prisma.InputJsonValue | null
 }): Promise<{ artifact: Artifact; version: ArtifactVersion }> {
   const artifact = await prisma.artifact.create({
     data: {
@@ -126,6 +134,7 @@ export async function createArtifact(params: {
     executionId: params.executionId,
     flowRunId: params.flowRunId,
     createdByUserId: params.userId,
+    state: params.state ?? null,
   })
   return { artifact: { ...artifact, currentVersionId: version.id, versionCount: 1 }, version }
 }
@@ -149,11 +158,17 @@ export async function registerVersionFromExecution(params: {
   const t = (params.trigger ?? {}) as TriggerShape
   const targetId = str(t.artifactId)
   if (targetId) {
+    // The assistant's tools make versions themselves (revise_artifact,
+    // update_roi_dashboard); the answer is then prose about what changed.
+    const made = await prisma.artifactVersion.findFirst({ where: { executionId: params.executionId, organizationId: params.organizationId }, select: { id: true, artifactId: true } })
+    if (made) return { artifactId: made.artifactId, versionId: made.id, created: false }
     const target = await prisma.artifact.findFirst({ where: { id: targetId, organizationId: params.organizationId }, select: { id: true, kind: true } })
     // A change to a Markdown document comes back as Markdown; a change to an
     // HTML report must come back as HTML (a prose reply is an answer, not a
     // version — the chat shows it as such).
-    const revised = html ?? (target?.kind === 'document' && t.artifactMode === 'change' ? unwrapHtmlFence(params.summary).trim() || null : null)
+    const revised = target?.kind === 'roi_dashboard'
+      ? null // rendered from state; only update_roi_dashboard makes its versions
+      : html ?? (target?.kind === 'document' && (t.artifactMode === 'change' || markdownDocumentOf(params.summary)) ? unwrapHtmlFence(params.summary).trim() || null : null)
     if (target && revised) {
       const version = await addVersion({
         artifactId: target.id,
@@ -242,9 +257,11 @@ export async function loadArtifact(organizationId: string, id: string): Promise<
   const versions = await prisma.artifactVersion.findMany({
     where: { artifactId: id, organizationId },
     orderBy: { number: 'desc' },
-    select: { id: true, number: true, executionId: true, flowRunId: true, request: true, createdAt: true, content: true },
+    select: { id: true, number: true, executionId: true, flowRunId: true, request: true, createdAt: true, content: true, createdByUserId: true },
   })
   const refs = await references(organizationId, [row])
+  const authorIds = [...new Set(versions.map((version) => version.createdByUserId).filter((id): id is string => Boolean(id)))]
+  const authors = new Map((authorIds.length ? await prisma.user.findMany({ where: { id: { in: authorIds }, organizationId }, select: { id: true, name: true, email: true } }) : []).map((user) => [user.id, user.name || user.email || 'A teammate']))
   return {
     id: row.id,
     kind: isArtifactKind(row.kind) ? row.kind : 'report',
@@ -262,6 +279,8 @@ export async function loadArtifact(organizationId: string, id: string): Promise<
       createdAt: version.createdAt.toISOString(),
       bytes: Buffer.byteLength(version.content),
       format: looksLikeHtml(version.content.slice(0, 4_000)) ? 'html' : 'markdown',
+      author: version.createdByUserId ? authors.get(version.createdByUserId) ?? null : null,
+      source: version.executionId ? 'agent' : version.flowRunId ? 'flow' : version.request?.startsWith('Restored version') ? 'restore' : version.number === 1 ? 'created' : 'agent',
     })),
     chat: chatOf(row),
     interactive: isInteractiveKind(row.kind),
@@ -293,13 +312,16 @@ async function reconcileChat(row: Artifact): Promise<Artifact> {
       const text = typeof (run.output as { summary?: unknown } | null)?.summary === 'string' ? String((run.output as { summary: string }).summary) : ''
       if (run.status === 'completed') {
         const version = await prisma.artifactVersion.findFirst({ where: { executionId: message.executionId, organizationId: row.organizationId }, select: { id: true } })
+        // The agent's own words, unless its answer WAS the document (the
+        // pre-tool path), which is the version, not a reply.
+        const reply = htmlDocumentOf(text) ? '' : unwrapHtmlFence(text).trim()
         if (version) {
           message.versionId = version.id
-          message.content = message.mode === 'change' ? 'Done — a new version is ready.' : 'The answer is a new version of the artifact.'
+          message.content = reply || 'Done — a new version is ready.'
         } else if (message.mode === 'change') {
-          message.content = `The agent replied without a revised document:\n\n${unwrapHtmlFence(text).slice(0, 4_000)}`
+          message.content = reply ? `No new version was saved.\n\n${reply.slice(0, 4_000)}` : 'No new version was saved.'
         } else {
-          message.content = unwrapHtmlFence(text) || 'The agent finished without an answer.'
+          message.content = reply || 'The agent finished without an answer.'
         }
         message.status = 'completed'
       } else {
@@ -325,22 +347,38 @@ async function reconcileChat(row: Artifact): Promise<Artifact> {
   return prisma.artifact.update({ where: { id: row.id, organizationId: row.organizationId }, data: { chat: jsonValue(chat) } })
 }
 
-export function buildArtifactPrompt(params: { mode: 'ask' | 'change'; title: string; content: string; message: string; chat: ArtifactChatMessage[] }): string {
+export type ArtifactChatMode = 'auto' | 'ask' | 'change'
+
+const ROI_ASSISTANT_RULES = `You are the assistant for the ROI dashboard this conversation is about. The user can ask you three kinds of thing; decide which each message is:
+1. A QUESTION about the analysis ("why did win rate rise?", "how many reps are users?", "what does the persona chart mean?"). Call get_artifact for the facts summary and narrative and answer in Markdown from them. If the answer needs a number the summary does not hold, compute it with run_code over the same extracts (the repository datasets). Never guess a number.
+2. A CHANGE to the dashboard ("remove the adoption tab", "drop pipeline metrics", "add accounts touched as a metric", "rename VP meetings", "rewrite the headline for a CFO", "default to year-over-year"). Call get_artifact to see the tabs, sections, metrics and activity-extract columns you can use, then call update_roi_dashboard once with every edit the request needs. For a new metric, map the user's words to activity-extract columns (e.g. "accounts touched" → accounts_touched). Tell the user in one or two sentences what changed; mention anything rejected and why.
+3. The SAME DASHBOARD FOR ANOTHER ACCOUNT or time frame ("show me this for Acme", "run it for last 12 months"). Call list_roi_accounts, match the account the user named, then start_roi_analysis. Share the link it returns and say it will be ready in a few minutes. If the account has no extracts loaded, say so and list the accounts that do.
+A message can combine these — handle each part. Never write or return HTML: the page is rendered from what your tools store. Keep replies short.`
+
+const DOCUMENT_ASSISTANT_RULES = (isHtml: boolean) => `You are the assistant for the artifact this conversation is about. Decide what each message is:
+1. A QUESTION about it: answer in Markdown, grounded in the document (and your tools where a fact is missing). Do not return the document.
+2. A CHANGE to it ("remove the risks section", "add a timeline", "make it shorter"): produce the COMPLETE revised document — every section, not only the changed part, keeping everything the request does not touch exactly as it is — ${isHtml ? 'as HTML' : 'as Markdown in the same structure'}, and save it with revise_artifact. Then tell the user in one or two sentences what changed.
+Recompute with your tools only where a change needs new facts.`
+
+export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[] }): string {
   const history = params.chat
     .filter((m) => m.content && m.status !== 'pending')
-    .slice(-6)
+    .slice(-8)
     .map((m) => `${m.role === 'user' ? 'User' : 'You'}: ${m.content.slice(0, 1_200)}`)
     .join('\n\n')
-  const doc = params.content.length > CONTEXT_MAX_CHARS ? `${params.content.slice(0, CONTEXT_MAX_CHARS)}\n<!-- truncated: the document continues -->` : params.content
+  const hint = params.mode === 'change' ? '\n(The user marked this as a change request.)' : params.mode === 'ask' ? '\n(The user marked this as a question.)' : ''
+  if (params.kind === 'roi_dashboard') {
+    // The dashboard page is ~2 MB of rendered HTML; the agent works from the
+    // facts and narrative its tools return, never from the page.
+    return [ROI_ASSISTANT_RULES, '', `ARTIFACT: "${params.title}"`, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
+  }
   const isHtml = looksLikeHtml(params.content.slice(0, 4_000))
-  const head = params.mode === 'change'
-    ? `CHANGE REQUEST for the artifact "${params.title}". Revise the document below as asked and answer with the COMPLETE revised document — every section, not only the changed part — ${isHtml ? 'as one HTML document inside a single \`\`\`html fence' : 'as Markdown, in the same structure'} and nothing else. Keep everything the request does not touch exactly as it is. Recompute with your tools only where the change needs new facts.`
-    : `QUESTION about the artifact "${params.title}". Answer in Markdown, grounded in the document below (and your tools where a fact is missing). Do not return the document.`
-  return [head, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `${params.mode === 'change' ? 'REQUEST' : 'QUESTION'}: ${params.message.trim()}`].join('\n')
+  const doc = params.content.length > CONTEXT_MAX_CHARS ? `${params.content.slice(0, CONTEXT_MAX_CHARS)}\n<!-- truncated: the document continues -->` : params.content
+  return [DOCUMENT_ASSISTANT_RULES(isHtml), '', `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }
 
 /** Ask the producing agent a question, or ask it for a change (a new version). */
-export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: 'ask' | 'change' }): Promise<ArtifactView> {
+export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: ArtifactChatMode }): Promise<ArtifactView> {
   const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
   if (!row) throw new Error('Artifact not found.')
   if (!row.agentTaskId) throw new Error('This artifact has no producing agent to ask.')
@@ -351,15 +389,15 @@ export async function askArtifact(params: { organizationId: string; userId: stri
   const agent = await prisma.agentTask.findFirst({ where: { id: row.agentTaskId, organizationId: params.organizationId, status: 'ACTIVE' } })
   if (!agent) throw new Error('The producing agent is no longer available.')
   const current = row.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: row.currentVersionId, organizationId: params.organizationId }, select: { content: true } }) : null
-  const input = buildArtifactPrompt({ mode: params.mode, title: row.title, content: current?.content ?? '', message, chat })
+  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat })
   const execution = await prisma.agentExecution.create({
     data: {
       agentType: agent.agentType,
       agentTaskId: agent.id,
       status: 'pending',
       input: { prompt: input },
-      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactMode: params.mode, artifactRequest: params.mode === 'change' ? message : null, link: `/artifacts/${row.id}` }),
-      metadata: { title: `${params.mode === 'change' ? 'Change to' : 'Question on'} · ${row.title}` },
+      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message.slice(0, 300), link: `/artifacts/${row.id}` }),
+      metadata: { title: `${params.mode === 'change' ? 'Change to' : params.mode === 'ask' ? 'Question on' : 'Assistant'} · ${row.title}` },
       userId: params.userId,
       organizationId: params.organizationId,
     },
@@ -436,4 +474,25 @@ function findHtml(output: unknown, depth = 0): string | null {
 
 export async function archiveArtifact(organizationId: string, id: string, archived: boolean): Promise<void> {
   await prisma.artifact.update({ where: { id, organizationId }, data: { archivedAt: archived ? new Date() : null } })
+}
+
+/**
+ * Restore an earlier version. History is never rewritten: the restored
+ * content (and, for a rendered kind, its state) becomes a NEW version at the
+ * top, so restoring is itself undoable and the trail shows who went back.
+ */
+export async function restoreVersion(params: { organizationId: string; userId: string; artifactId: string; versionId: string }): Promise<ArtifactVersion> {
+  const artifact = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { id: true, currentVersionId: true } })
+  if (!artifact) throw new Error('Artifact not found.')
+  if (artifact.currentVersionId === params.versionId) throw new Error('That version is already the current one.')
+  const source = await prisma.artifactVersion.findFirst({ where: { id: params.versionId, artifactId: params.artifactId, organizationId: params.organizationId }, select: { number: true, content: true, state: true } })
+  if (!source) throw new Error('Version not found.')
+  return addVersion({
+    artifactId: artifact.id,
+    organizationId: params.organizationId,
+    content: source.content,
+    request: `Restored version ${source.number}`,
+    createdByUserId: params.userId,
+    state: (source.state ?? null) as Prisma.InputJsonValue | null,
+  })
 }

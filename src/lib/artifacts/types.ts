@@ -6,8 +6,8 @@ export type ArtifactKind = 'report' | 'roi_dashboard' | 'document'
 
 export type ArtifactChatMessage = {
   role: 'user' | 'agent'
-  /** 'ask' answers in prose; 'change' asks for a new version. */
-  mode?: 'ask' | 'change'
+  /** 'auto' lets the assistant decide; 'ask' and 'change' are explicit hints. */
+  mode?: 'auto' | 'ask' | 'change'
   content: string
   executionId?: string
   flowRunId?: string
@@ -27,6 +27,10 @@ export type ArtifactVersionView = {
   bytes: number
   /** How the viewer shows it: a sandboxed frame, or rendered Markdown. */
   format: 'html' | 'markdown'
+  /** Who asked for it (the person whose message or click made it). */
+  author: string | null
+  /** How it came to be. */
+  source: 'created' | 'agent' | 'flow' | 'restore'
 }
 
 export type ArtifactView = {

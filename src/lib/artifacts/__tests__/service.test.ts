@@ -28,13 +28,14 @@ test('the producing flow is read from either trigger shape', () => {
 test('a change request demands the whole revised document; a question forbids it', () => {
   const change = buildArtifactPrompt({ mode: 'change', title: 'Q3 review', content: '<html><body>doc</body></html>', message: 'Add a risks section', chat: [] })
   assert.match(change, /COMPLETE revised document/)
-  assert.match(change, /html fence/)
-  assert.match(change, /REQUEST: Add a risks section/)
+  assert.match(change, /as HTML/)
+  assert.match(change, /revise_artifact/)
+  assert.match(change, /MESSAGE: Add a risks section\n\(The user marked this as a change request\.\)/)
   assert.match(change, /<html><body>doc<\/body><\/html>/)
   const ask = buildArtifactPrompt({ mode: 'ask', title: 'Q3 review', content: 'doc', message: 'Why did it drop?', chat: [{ role: 'user', content: 'earlier', createdAt: 'x', status: 'completed' }, { role: 'agent', content: 'answer', createdAt: 'x', status: 'completed' }] })
   assert.match(ask, /Do not return the document/)
   assert.match(ask, /CONVERSATION SO FAR:\nUser: earlier\n\nYou: answer/)
-  assert.match(ask, /QUESTION: Why did it drop\?/)
+  assert.match(ask, /MESSAGE: Why did it drop\?/)
 })
 
 test('a very long document is truncated with a marker, not dropped', () => {
@@ -61,6 +62,16 @@ test('headed Markdown of document length registers; a short reply does not', asy
 
 test('a change to a Markdown document asks for Markdown back', () => {
   const prompt = buildArtifactPrompt({ mode: 'change', title: 'Plan', content: '# Plan\n\nbody', message: 'Add a timeline', chat: [] })
-  assert.match(prompt, /as Markdown, in the same structure/)
-  assert.doesNotMatch(prompt, /html fence/)
+  assert.match(prompt, /as Markdown in the same structure/)
+  assert.doesNotMatch(prompt, /as HTML/)
+})
+
+test('an ROI dashboard prompt never carries the page, and routes the three intents to tools', () => {
+  const prompt = buildArtifactPrompt({ mode: 'auto', kind: 'roi_dashboard', title: 'ROI analysis · Iron Mountain', content: '<html>' + 'x'.repeat(2_000_000) + '</html>', message: 'Show me this for Acme and drop the adoption tab', chat: [] })
+  assert.ok(prompt.length < 5_000)
+  assert.match(prompt, /update_roi_dashboard/)
+  assert.match(prompt, /start_roi_analysis/)
+  assert.match(prompt, /list_roi_accounts/)
+  assert.match(prompt, /Never write or return HTML/)
+  assert.match(prompt, /MESSAGE: Show me this for Acme and drop the adoption tab$/)
 })

@@ -117,7 +117,10 @@ async function retrieveContextUnbounded(
   }
 
   const hitIds = new Set(searchHits.map((h) => h.node.id))
-  const relatedTrimmed = related.filter((n) => !hitIds.has(n.id)).slice(0, maxNodes)
+  // One entry per node: a node reachable along several paths comes back once
+  // per path, and duplicates only crowd real context out of maxNodes.
+  const seen = new Set(hitIds)
+  const relatedTrimmed = related.filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true))).slice(0, maxNodes)
 
   return {
     hits: searchHits.map((h) => ({

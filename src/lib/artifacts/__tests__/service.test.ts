@@ -73,5 +73,7 @@ test('an ROI dashboard prompt never carries the page, and routes the three inten
   assert.match(prompt, /start_roi_analysis/)
   assert.match(prompt, /list_roi_accounts/)
   assert.match(prompt, /Never write or return HTML/)
+  // Live questions go to the sources that powered the artifact, through the agent.
+  assert.match(prompt, /Sales AI \/ Backstory MCP/)
   assert.match(prompt, /MESSAGE: Show me this for Acme and drop the adoption tab$/)
 })

@@ -54,7 +54,7 @@ const ROI_TOOLS = [
     description:
       'Change the ROI dashboard this conversation is about and save the result as a new version (the previous is kept). Pass `operations`, a list of edits: ' +
       'hide_tab/show_tab {tab: lead|adopt|users|deal|stage|method}; hide_section/show_section {section} (sections from get_artifact); ' +
-      'hide_metric/show_metric {metric}; rename_metric {metric, label}; add_metric {metric: {key: lower_snake, label, columns: [activity-extract columns summed per rep per month], format: count|currency}} — adding recomputes the facts, takes a minute or two; remove_added_metric {metric}; ' +
+      'hide_metric/show_metric {metric}; rename_metric {metric, label}; add_metric {metric: {key: lower_snake, label, columns: [activity-extract columns summed per rep per month], format: count|currency}} — adding recomputes the facts before this call returns, so the saved version already shows it; remove_added_metric {metric}; ' +
       'set_default_comparison {preset: last6_vs_prior6|last6_vs_year_ago|last12_vs_prior12|last3_vs_prior3}; set_headline {text}; set_lede {text}; remove_finding {index (0-based)}; upsert_finding {index?, finding: {fig, cap, h, p, tab}}; remove_watch_item {index}; upsert_watch_item {index?, item: {lead, text}}; set_note {note, paragraphs[]}; add_caveat {text}. ' +
       'Every number you write into the narrative must come from the facts summary. Returns what was applied and anything rejected, with the reason.',
     isWrite: false,
@@ -215,7 +215,7 @@ export class ArtifactToolClient {
     const html = renderRoiDashboard(facts, result.narrative, { account: state.account, timeframePreset: state.timeframePreset, view: result.view })
     const summary = typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim().slice(0, 300) : result.applied.join('; ')
     const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, content: html, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId, state: stateJson(state) })
-    return { saved: true, version: version.number, applied: result.applied, ...(rejected.length ? { rejected } : {}), link: `/artifacts/${artifact.id}` }
+    return { saved: true, version: version.number, applied: result.applied, ...(rejected.length ? { rejected } : {}), link: `/artifacts/${artifact.id}`, note: 'Saved: the new version already shows every applied change — nothing is still processing.' }
   }
 
   private async recompute(datasetIds: string[], extraMetrics: Array<{ key: string; label: string; columns: string[]; format?: string }>): Promise<RoiFacts> {

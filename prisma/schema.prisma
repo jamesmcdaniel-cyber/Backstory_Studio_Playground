@@ -1766,6 +1766,18 @@ model Artifact {
   /// The artifact assistant's settings: standing instructions and the extra
   /// connected tools it may use ({ instructions, toolConnectionIds }).
   assistantConfig  Json?
+  /// Sharing. Everyone in the workspace can open an artifact; workspaceAccess
+  /// says whether members whose role can edit may change it ('edit', the
+  /// default) or only view it ('view'). editorIds grant edit to named people
+  /// whatever their role; the creator and admins can always edit.
+  workspaceAccess  String    @default("edit")
+  editorIds        Json      @default("[]")
+  /// Anyone-with-the-link, view only, opt-in. The link's token is stored as a
+  /// digest (lookup) and encrypted (so editors can copy the link again).
+  shareAnonymous       Boolean @default(false)
+  shareTokenDigest     String? @unique
+  shareTokenCiphertext String?
+  anonymousViews       Int     @default(0)
   archivedAt       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt

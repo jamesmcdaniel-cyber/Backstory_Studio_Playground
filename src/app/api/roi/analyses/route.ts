@@ -31,7 +31,7 @@ const bodySchema = z.object({
 // continues on the worker and the page follows it.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const limited = await rateLimit(`roi-run:${auth.organizationId}`, { limit: 10, windowMs: 60_000 })
-  if (limited) throw new ApiError('Too many analyses started at once. Try again in a minute.', 429, 'RATE_LIMITED')
+  if (!limited.ok) throw new ApiError('Too many analyses started at once. Try again in a minute.', 429, 'RATE_LIMITED')
   const allowance = await checkDailyRunAllowance('agent', { organizationId: auth.organizationId, userId: auth.dbUser.id, canReview: auth.can('catalogue.review'), email: auth.dbUser.email })
   if (allowance.over) throw new ApiError(limitMessage('agent', allowance.limit), 429, 'DAILY_LIMIT_REACHED')
   const parsed = bodySchema.safeParse(await request.json().catch(() => null))

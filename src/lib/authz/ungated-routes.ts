@@ -22,6 +22,10 @@ export const UNGATED_ROUTES: readonly string[] = [
   // cannot be used to enumerate client ids, IP rate limiting that fails closed.
   'v1/token',
   'health',                               // public liveness probe
+  // An artifact's public link: the token is the credential (192-bit, digest
+  // lookup, opt-in per artifact, rate limited per client). Serves one page,
+  // sandboxed with no network — never the assistant, history or other artifacts.
+  'share/artifacts/[token]/content',
   // Browsers post CSP violation reports with no credentials, and a violation can
   // fire on a page whose session is what broke. Treated as untrusted anonymous
   // input: rate limited, size capped, never echoed.

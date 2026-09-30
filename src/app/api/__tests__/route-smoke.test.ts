@@ -73,6 +73,7 @@ const mutatingExempt = new Set([
 const readExempt = new Set([
   'health',                         // public readiness probe: no tenant data
   'invitations/lookup',             // public invite preview: token length clamped + fail-closed per-client budget
+  'share/artifacts/[token]/content', // an artifact's public link: 192-bit token (digest lookup, opt-in, revocable), per-client rate limit, one sandboxed page
   'cron/dispatch',                  // CRON_SECRET, fail-closed
   'cron/retention',                 // CRON_SECRET, fail-closed
   'cron/queue-watch',               // CRON_SECRET, fail-closed

@@ -226,6 +226,19 @@ async function main() {
     ),
   ])
 
+  results.push([
+    'artifacts.shareTokenCiphertext',
+    await rotateStringColumns(
+      'artifacts',
+      await systemPrisma.artifact.findMany({
+        where: { shareTokenCiphertext: { not: null } },
+        select: { id: true, shareTokenCiphertext: true },
+      }),
+      ['shareTokenCiphertext'],
+      (id, data) => systemPrisma.artifact.update({ where: { id }, data }),
+    ),
+  ])
+
   const total = results.reduce<Tally>(
     (sum, [, t]) => ({
       scanned: sum.scanned + t.scanned,

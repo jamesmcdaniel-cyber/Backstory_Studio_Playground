@@ -93,8 +93,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Routes that carry an assistant of their own: the agent HQ's Assistant (and
   // the run panel beside it) and the flow builder's Copilot. Both answer the
   // questions the floating launcher answers, with the page's own context, so
-  // the shell does not put a second assistant on top of them.
-  const ownsAssistant = pathname === '/agents' || flowSegments.length === 1
+  // the shell does not put a second assistant on top of them. An artifact's
+  // page has its own assistant too (beside the artifact, where the launcher
+  // would sit over its conversation).
+  const artifactSegments = pathname.startsWith('/artifacts/') ? pathname.slice('/artifacts/'.length).split('/').filter(Boolean) : []
+  const ownsAssistant = pathname === '/agents' || flowSegments.length === 1 || artifactSegments.length === 1
   // Fullscreen workspaces must have stable geometry from their first paint.
   // A translated fullscreen wrapper can temporarily create overflow and makes
   // the route appear to resize after hydration.

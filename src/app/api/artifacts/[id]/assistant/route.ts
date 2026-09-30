@@ -1,5 +1,6 @@
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { assistantConfigSchema, loadAssistantSetup, saveAssistantConfig } from '@/lib/artifacts/assistant-config'
+import { requireEditable } from '@/lib/artifacts/route-access'
 
 export const runtime = 'nodejs'
 
@@ -23,7 +24,9 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const parsed = assistantConfigSchema.safeParse(await request.json().catch(() => null))
   if (!parsed.success) throw new ApiError(parsed.error.issues[0]?.message ?? 'Send instructions and toolConnectionIds.', 400, 'INVALID_BODY')
-  const setup = await saveAssistantConfig(auth.organizationId, auth.dbUser.id, artifactIdOf(request), parsed.data)
+  const id = artifactIdOf(request)
+  await requireEditable(auth, id)
+  const setup = await saveAssistantConfig(auth.organizationId, auth.dbUser.id, id, parsed.data)
   if (!setup) throw new ApiError('Artifact not found.', 404, 'NOT_FOUND')
   return { success: true, ...setup }
-}, { permission: 'agent.write' })
+}, { permission: 'agent.read' })

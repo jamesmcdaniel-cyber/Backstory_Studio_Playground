@@ -9,7 +9,7 @@ import {
 } from '@/lib/security/csp'
 import { rejectsCrossOriginWrite } from '@/lib/security/cross-origin-guard'
 
-const ARTIFACT_CONTENT_PATH = /^\/api\/artifacts\/[^/]+\/versions\/[^/]+\/content$/
+const ARTIFACT_CONTENT_PATH = /^\/api\/(?:artifacts\/[^/]+\/versions\/[^/]+|share\/artifacts\/[^/]+)\/content$/
 
 export async function middleware(request: NextRequest) {
   // Refused at the edge, before any session work: in the customer edition the

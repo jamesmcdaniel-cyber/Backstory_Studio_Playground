@@ -37,3 +37,13 @@ for (const name of fs.readdirSync(dir)) {
   bytes += fs.statSync(path.join(out, name)).size
 }
 console.log(`vendor-pyodide: ${(bytes / 1e6).toFixed(1)} MB into public/vendor/pyodide`)
+
+// Source-map comments make browser devtools fetch a .map the artifact sandbox
+// (connect-src) refuses — console noise on every page. The maps aren't shipped.
+for (const name of fs.readdirSync(out)) {
+  if (!/\.m?js$/.test(name)) continue
+  const file = path.join(out, name)
+  const text = fs.readFileSync(file, 'utf8')
+  const stripped = text.replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, '\n')
+  if (stripped !== text) fs.writeFileSync(file, stripped)
+}

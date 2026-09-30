@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Settings2, Workflow } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, Eye, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Settings2, Share2, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -17,6 +17,7 @@ import { RunFeed } from '@/components/runs/run-feed'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 import { ARTIFACT_FRAME_SANDBOX } from './artifact-frame'
 import { AssistantSettingsPanel } from './assistant-settings-panel'
+import { ShareDialog } from './share-dialog'
 import { useAuth } from '@/hooks/use-auth'
 
 /**
@@ -34,6 +35,7 @@ export function ArtifactViewer({ id }: { id: string }) {
   const [sending, setSending] = useState(false)
   const [markdown, setMarkdown] = useState<{ versionId: string; text: string } | null>(null)
   const [panel, setPanel] = useState<'assistant' | 'history' | 'settings'>('assistant')
+  const [shareOpen, setShareOpen] = useState(false)
   const [model, setModel] = useChatModel('artifact')
   const [restoring, setRestoring] = useState<string | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
@@ -132,9 +134,11 @@ export function ArtifactViewer({ id }: { id: string }) {
   if (!artifact) return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>
 
   const shownVersion = artifact.versions.find((v) => v.id === versionId) ?? artifact.versions[0]
-  const canAsk = Boolean(artifact.agent)
-  // The assistant's settings change what it may do for everyone: agent editors only.
-  const canConfigure = canAsk && can('agent.write')
+  // Edit access is per artifact (owner, named editors, admins, or members when
+  // the workspace may edit); without it the page is read-only.
+  const canEdit = artifact.permissions?.canEdit ?? can('agent.write')
+  const canAsk = Boolean(artifact.agent) && canEdit
+  const canConfigure = canAsk
   const shownMarkdown = shownVersion?.format === 'markdown' ? shownVersion : null
 
   return (
@@ -156,12 +160,19 @@ export function ArtifactViewer({ id }: { id: string }) {
               Open full page <ExternalLink className="h-3 w-3" aria-hidden />
             </a>
           )}
-          <Button variant="outline" size="sm" onClick={() => void archive(!artifact.archivedAt)}>
-            {artifact.archivedAt ? <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-            {artifact.archivedAt ? 'Restore' : 'Archive'}
+          <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+            <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />Share
           </Button>
+          {canEdit && (
+            <Button variant="outline" size="sm" onClick={() => void archive(!artifact.archivedAt)}>
+              {artifact.archivedAt ? <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
+              {artifact.archivedAt ? 'Restore' : 'Archive'}
+            </Button>
+          )}
         </div>
       </div>
+
+      <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />
 
       {pending?.executionId && <RunFeed executionId={pending.executionId} status="running" onStatusChange={() => void refresh()} />}
 
@@ -257,7 +268,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                     {version.request && <p className="mt-1 line-clamp-3 text-foreground">{version.request}</p>}
                     <div className="mt-2 flex flex-wrap gap-2">
                       {!isShown && <button type="button" onClick={() => setVersionId(version.id)} className="font-medium text-horizon-700 underline underline-offset-2">View</button>}
-                      {!isCurrent && (
+                      {!isCurrent && canEdit && (
                         <button type="button" disabled={restoring !== null} onClick={() => void restore(version.id)} className="font-medium text-horizon-700 underline underline-offset-2 disabled:opacity-50">
                           {restoring === version.id ? 'Restoring…' : 'Restore'}
                         </button>
@@ -306,6 +317,9 @@ export function ArtifactViewer({ id }: { id: string }) {
             ))}
             <div ref={chatEnd} />
           </div>
+          {!canEdit && artifact.agent && (
+            <p className="flex items-start gap-2 border-t border-border px-4 py-3 text-xs text-muted-foreground"><Eye className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />You can view this artifact. Its owner or an editor can give you edit access from Share.</p>
+          )}
           {canAsk && (
             <form onSubmit={send} className="border-t border-border p-3">
               {artifact.flow?.active && (

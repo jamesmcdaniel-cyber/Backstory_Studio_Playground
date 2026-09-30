@@ -58,6 +58,10 @@ const CLASSIFIED: Record<string, Classification> = {
   // The anonymous/cross-workspace share link IS the credential, so only its
   // digest is stored; the raw token is returned once, from the mint response.
   'Flow.shareTokenDigest': 'hash',
+  'Artifact.shareTokenDigest': 'hash',
+  // Encrypted so an editor can copy an artifact's public link again; rotated
+  // with the key (scripts/rotate-encryption-key.ts).
+  'Artifact.shareTokenCiphertext': 'encrypted',
 
   // ── Unguessable bearer values ────────────────────────────────────────────
   // Published to the workspace admin who must place it in DNS to prove control.

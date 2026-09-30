@@ -26,6 +26,11 @@ const SRC = path.join(process.cwd(), 'src')
  */
 const READ_EXEMPT: Record<string, string> = {
   'lib/crypto/secrets.ts': 'The decryption primitive itself. Auditing here would recurse.',
+  'lib/artifacts/sharing.ts':
+    'Decrypts an artifact\'s own public-link token only to show the link again to someone who ' +
+    'can already share that artifact. It is not a credential to any system: it opens one ' +
+    'view-only page. Turning the link on, rotating it and turning it off are audited ' +
+    '(artifact.public_link_enabled / _disabled).',
   'lib/audit/stream-delivery.ts':
     'Decrypts the signing secret for ONE outbound audit delivery. Recording that read ' +
     'would recurse: recordCredentialUse writes an audit event, which enqueues a delivery, ' +

@@ -1,5 +1,6 @@
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { loadArtifact, restoreVersion } from '@/lib/artifacts/service'
+import { requireEditable } from '@/lib/artifacts/route-access'
 
 export const runtime = 'nodejs'
 
@@ -10,6 +11,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const versionId = parts.at(-2)
   const id = parts.at(-4)
   if (!id || !versionId) throw new ApiError('Artifact and version ids are required.', 400, 'ID_REQUIRED')
+  await requireEditable(auth, id)
   try {
     await restoreVersion({ organizationId: auth.organizationId, userId: auth.dbUser.id, artifactId: id, versionId })
   } catch (error) {
@@ -17,4 +19,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError(message, /not found/i.test(message) ? 404 : 400, 'RESTORE_REJECTED')
   }
   return { success: true, artifact: await loadArtifact(auth.organizationId, id) }
-}, { permission: 'agent.write' })
+}, { permission: 'agent.read' })

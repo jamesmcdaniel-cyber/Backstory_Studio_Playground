@@ -50,6 +50,8 @@ export type ArtifactView = {
   /** An ROI dashboard's build: the run while it works, or why it failed. */
   build: { status: string; executionId: string | null; error: string | null; account: string } | null
   archivedAt: string | null
+  /** What the person viewing may do (sent by GET /api/artifacts/:id). */
+  permissions?: { canEdit: boolean; canShare: boolean; reason: string } | null
   createdAt: string
   updatedAt: string
 }

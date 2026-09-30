@@ -20,7 +20,7 @@ import {
   type BreakerState,
 } from '@/lib/resilience/breaker-state'
 import { cosineSimilarity, EMBEDDING_DIM } from './embeddings'
-import { nodeVisibleTo, type GraphEdge, type GraphNode, type GraphRagStore, type NodeType, type NodeVisibility, type SearchHit } from './store'
+import { nodeVisibleTo, type GraphEdge, type GraphNode, type GraphRagStore, type NodeType, type NodeVisibility, type SearchHit, scopedNodeId, logicalNodeId } from './store'
 
 const VECTOR_INDEX = 'entity_embedding'
 
@@ -154,7 +154,7 @@ export class Neo4jGraphStore implements GraphRagStore {
            e.ownerUserId = row.ownerUserId, e.visibility = row.visibility`,
       {
         rows: nodes.map((n) => ({
-          id: n.id, organizationId: n.organizationId, type: n.type, text: n.text,
+          id: scopedNodeId(n.organizationId, n.id), organizationId: n.organizationId, type: n.type, text: n.text,
           props: JSON.stringify(n.props ?? {}), embedding: n.embedding, updatedAt: n.updatedAt ?? new Date().toISOString(),
           ownerUserId: n.ownerUserId ?? null, visibility: n.visibility ?? 'shared',
         })),
@@ -169,10 +169,10 @@ export class Neo4jGraphStore implements GraphRagStore {
     await this.guarded(async (driver) => {
       for (const edge of edges) {
         await driver.executeQuery(
-        `MATCH (a:Entity { id: $from }), (b:Entity { id: $to })
+        `MATCH (a:Entity { id: $from, organizationId: $organizationId }), (b:Entity { id: $to, organizationId: $organizationId })
          MERGE (a)-[r:${edge.rel.toUpperCase()}]->(b)
          SET r.organizationId = $organizationId`,
-          { from: edge.from, to: edge.to, organizationId: edge.organizationId },
+          { from: scopedNodeId(edge.organizationId, edge.from), to: scopedNodeId(edge.organizationId, edge.to), organizationId: edge.organizationId },
         )
       }
     })
@@ -244,7 +244,7 @@ export class Neo4jGraphStore implements GraphRagStore {
        WHERE NOT n.id IN $ids
          AND (coalesce(n.visibility, 'shared') <> 'private' OR n.ownerUserId = $viewer)
        RETURN DISTINCT n AS node`,
-      { ids: nodeIds, org: organizationId, viewer: viewerUserId },
+      { ids: nodeIds.map((id) => scopedNodeId(organizationId, id)), org: organizationId, viewer: viewerUserId },
     )
     return records.map((r) => hydrate(r.get('node'))).filter((n): n is GraphNode => n !== null)
     })
@@ -254,7 +254,7 @@ export class Neo4jGraphStore implements GraphRagStore {
     if (ids.length === 0) return
     await this.guarded((driver) => driver.executeQuery(
       'MATCH (e:Entity) WHERE e.organizationId = $org AND e.id IN $ids DETACH DELETE e',
-      { org: organizationId, ids },
+      { org: organizationId, ids: ids.map((id) => scopedNodeId(organizationId, id)) },
     ))
   }
 
@@ -291,7 +291,7 @@ function hydrate(raw: unknown): GraphNode | null {
     parsedProps = {}
   }
   return {
-    id: p.id,
+    id: logicalNodeId(p.id),
     organizationId: p.organizationId,
     type: (p.type as NodeType) ?? 'insight',
     text: typeof p.text === 'string' ? p.text : '',

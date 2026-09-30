@@ -407,7 +407,7 @@ class AgentRunner implements ModelRunner {
 // slot was removed, and with it the second endpoint a spent allowance used to
 // redirect to.
 // ---------------------------------------------------------------------------
-export const DEFAULT_AGENT_MODEL = process.env.AGENT_MODEL?.trim() || 'claude-sonnet-5'
+export const DEFAULT_AGENT_MODEL = process.env.AGENT_MODEL?.trim() || 'claude-sonnet-5-5'
 export const DEFAULT_SUMMARY_MODEL = process.env.SUMMARY_MODEL?.trim() || 'claude-haiku-4-5'
 const FALLBACK_CLAUDE_MODEL = 'claude-opus-4-8'
 const hasAnthropic = () => !!process.env.ANTHROPIC_API_KEY

@@ -105,3 +105,21 @@ export interface GraphRagStore {
   /** For tests/cleanup and org teardown. */
   clear?(organizationId: string): Promise<void>
 }
+
+/**
+ * Graph ids are workspace-scoped at the store. Callers use logical ids
+ * (`account:<peopleai id>`, `run:<id>`); stores persist `<org>::<logical id>`
+ * and hand logical ids back. Two workspaces that index the same People.ai
+ * account get two nodes — before this they shared one, and whichever indexed
+ * last owned it.
+ */
+const SCOPE_SEPARATOR = '::'
+
+export function scopedNodeId(organizationId: string, id: string): string {
+  return id.startsWith(`${organizationId}${SCOPE_SEPARATOR}`) ? id : `${organizationId}${SCOPE_SEPARATOR}${id}`
+}
+
+export function logicalNodeId(id: string): string {
+  const at = id.indexOf(SCOPE_SEPARATOR)
+  return at >= 0 ? id.slice(at + SCOPE_SEPARATOR.length) : id
+}

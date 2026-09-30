@@ -91,20 +91,20 @@ test('commitActivity upserts activity: nodes with correct visibility, entity edg
 
   assert.deepEqual(result.committedIds.sort(), ['evt-org', 'evt-private'])
 
-  const orgNode = (store as any).nodes.get('activity:evt-org')
+  const orgNode = (store as any).nodes.get('org1::activity:evt-org')
   assert.ok(orgNode, 'org-visibility activity node was upserted')
   assert.equal(orgNode.visibility, 'shared')
   assert.equal(orgNode.ownerUserId, null)
   assert.ok(!orgNode.text.includes('recordId')) // no raw payload/JSON dump, plain-English label only
   assert.match(orgNode.text, /salesforce activity: record updated/)
 
-  const privateNode = (store as any).nodes.get('activity:evt-private')
+  const privateNode = (store as any).nodes.get('org1::activity:evt-private')
   assert.ok(privateNode, 'private-visibility activity node was upserted')
   assert.equal(privateNode.visibility, 'private')
   assert.equal(privateNode.ownerUserId, 'user-1')
 
   // Subject ref resolution: Account sobject + recordId → about_account edge + account node.
-  const accountNode = (store as any).nodes.get('account:acct-1')
+  const accountNode = (store as any).nodes.get('org1::account:acct-1')
   assert.ok(accountNode, 'account node was created from the resolved subject ref')
   const edges: Array<{ from: string; to: string; rel: string }> = (store as any).edges
   assert.ok(edges.some((e) => e.from === 'activity:evt-org' && e.to === 'account:acct-1' && e.rel === 'about_account'))

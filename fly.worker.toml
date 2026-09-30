@@ -89,7 +89,7 @@ primary_region = "iad"
   BATCH_WORKER_CONCURRENCY = "2"
   # Per-workspace in-flight ceiling, enforced at dispatch (org-capacity.ts).
   ORG_MAX_INFLIGHT_RUNS = "10"
-  AGENT_MODEL = "claude-opus-4-8"
+  AGENT_MODEL = "claude-sonnet-5-5"
   SUMMARY_MODEL = "claude-haiku-4-5"
 
 # No [[services]] block on purpose: the worker takes no public traffic. The

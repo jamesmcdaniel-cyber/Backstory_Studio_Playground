@@ -9,14 +9,16 @@
  */
 
 import { cosineSimilarity } from './embeddings'
-import { nodeVisibleTo, type GraphEdge, type GraphNode, type GraphRagStore, type SearchHit } from './store'
+import { nodeVisibleTo, scopedNodeId, type GraphEdge, type GraphNode, type GraphRagStore, type SearchHit } from './store'
 
 export class MemoryGraphStore implements GraphRagStore {
+  // Keyed by workspace-scoped id, as the Neo4j store is: the same logical id
+  // in two workspaces is two nodes.
   private nodes = new Map<string, GraphNode>()
   private edges: GraphEdge[] = []
 
   async upsertNodes(nodes: GraphNode[]): Promise<void> {
-    for (const node of nodes) this.nodes.set(node.id, node)
+    for (const node of nodes) this.nodes.set(scopedNodeId(node.organizationId, node.id), node)
   }
 
   async upsertEdges(edges: GraphEdge[]): Promise<void> {
@@ -60,7 +62,7 @@ export class MemoryGraphStore implements GraphRagStore {
     const result: GraphNode[] = []
     for (const id of seen) {
       if (nodeIds.includes(id)) continue // return only the newly-reached neighbors
-      const node = this.nodes.get(id)
+      const node = this.nodes.get(scopedNodeId(organizationId, id))
       // Only return neighbors the viewer may see — a private node owned by
       // another rep is never surfaced, even if reachable by an edge.
       if (node && node.organizationId === organizationId && nodeVisibleTo(node, viewerUserId)) result.push(node)
@@ -72,8 +74,9 @@ export class MemoryGraphStore implements GraphRagStore {
     if (ids.length === 0) return
     const idSet = new Set(ids)
     for (const id of ids) {
-      const node = this.nodes.get(id)
-      if (node && node.organizationId === organizationId) this.nodes.delete(id)
+      const key = scopedNodeId(organizationId, id)
+      const node = this.nodes.get(key)
+      if (node && node.organizationId === organizationId) this.nodes.delete(key)
     }
     this.edges = this.edges.filter(
       (e) => !(e.organizationId === organizationId && (idSet.has(e.from) || idSet.has(e.to))),
@@ -82,10 +85,10 @@ export class MemoryGraphStore implements GraphRagStore {
 
   async deleteByOwner(organizationId: string, ownerUserId: string): Promise<void> {
     const removed = new Set<string>()
-    for (const [id, node] of this.nodes) {
+    for (const [key, node] of this.nodes) {
       if (node.organizationId === organizationId && node.ownerUserId === ownerUserId) {
-        this.nodes.delete(id)
-        removed.add(id)
+        this.nodes.delete(key)
+        removed.add(node.id)
       }
     }
     this.edges = this.edges.filter(

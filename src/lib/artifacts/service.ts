@@ -81,7 +81,7 @@ export async function addVersion(params: {
     // One run, one linked version: a second edit in the same run is still a
     // version, but only the first carries the run id (the column is unique).
     const executionTaken = params.executionId
-      ? await tx.artifactVersion.findFirst({ where: { executionId: params.executionId }, select: { id: true } })
+      ? await tx.artifactVersion.findFirst({ where: { executionId: params.executionId, organizationId: params.organizationId }, select: { id: true } })
       : null
     const version = await tx.artifactVersion.create({
       data: {

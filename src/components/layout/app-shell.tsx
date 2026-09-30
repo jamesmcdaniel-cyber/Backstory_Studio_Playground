@@ -41,6 +41,15 @@ const FULLSCREEN_ROUTES = new Set(['/agents'])
  */
 export const PAGE_CONTAINER = 'mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8'
 
+/**
+ * Document viewers — a dashboard or report the page exists to show — use the
+ * full content width with the same gutters, so the document is not boxed
+ * into a reading column with empty space on either side. They still scroll
+ * like any contained page; only the measure differs.
+ */
+export const WIDE_CONTAINER = 'w-full px-4 py-6 sm:px-6 sm:py-8'
+const WIDE_ROUTES = [/^\/artifacts\/[^/]+$/, /^\/roi(\/[^/]+)?$/]
+
 /** Trailing slashes must not decide which layout a route gets. */
 function normalizePath(input: string) {
   const trimmed = input.replace(/\/+$/, '')
@@ -133,7 +142,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <ErrorBoundary resetKey={pathname}><SetupGate>{children}</SetupGate></ErrorBoundary>
             </motion.div>
           ) : (
-            <motion.div key={pathname} className={`relative ${PAGE_CONTAINER}`} {...routeMotion}>
+            <motion.div key={pathname} className={`relative ${WIDE_ROUTES.some((route) => route.test(pathname)) ? WIDE_CONTAINER : PAGE_CONTAINER}`} {...routeMotion}>
               <ErrorBoundary resetKey={pathname}><SetupGate>{children}</SetupGate></ErrorBoundary>
             </motion.div>
           )}

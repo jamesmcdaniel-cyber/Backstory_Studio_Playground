@@ -137,7 +137,7 @@ export function ArtifactViewer({ id }: { id: string }) {
 
       {pending?.executionId && <RunFeed executionId={pending.executionId} status="running" onStatusChange={() => void refresh()} />}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-2">
           {artifact.versions.length > 1 && (
             <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -164,7 +164,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                 title={artifact.title}
                 src={`/api/artifacts/${id}/versions/${shownVersion.id}/content`}
                 sandbox={artifact.interactive ? 'allow-scripts' : ''}
-                className="block h-[calc(100vh-240px)] min-h-[560px] w-full"
+                className="block h-[calc(100dvh-190px)] min-h-[560px] w-full"
               />
             ) : (
               <p className="p-6 text-sm text-muted-foreground">No content yet.</p>

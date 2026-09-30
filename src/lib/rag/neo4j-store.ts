@@ -181,6 +181,11 @@ export class Neo4jGraphStore implements GraphRagStore {
   async search(organizationId: string, viewerUserId: string | null, queryEmbedding: number[], k: number): Promise<SearchHit[]> {
     if (queryEmbedding.length === 0) return []
     return this.guarded(async (driver) => {
+    // Counts go to Cypher as integers. A JS number crosses the driver as a
+    // float, and current Neo4j rejects a float LIMIT / neighbour count
+    // ("'5000.0' is not a valid value") — which, swallowed by retrieval's
+    // best-effort catch, looked exactly like an empty graph.
+    const { int } = (await import('neo4j-driver')).default
     // Over-fetch from the vector index, then filter to the org + viewer scope
     // and take k. `coalesce(...,'shared')` makes legacy nodes (no visibility
     // property) read as shared, so no migration is needed.
@@ -189,8 +194,12 @@ export class Neo4jGraphStore implements GraphRagStore {
        WHERE node.organizationId = $org
          AND (coalesce(node.visibility, 'shared') <> 'private' OR node.ownerUserId = $viewer)
        RETURN node, score LIMIT $k`,
-      { index: VECTOR_INDEX, fetch: Math.max(k * 4, 20), q: queryEmbedding, org: organizationId, viewer: viewerUserId, k },
-    ).catch(async () => {
+      { index: VECTOR_INDEX, fetch: int(Math.max(Math.trunc(k) * 4, 20)), q: queryEmbedding, org: organizationId, viewer: viewerUserId, k: int(Math.trunc(k)) },
+    ).catch(async (primaryError: unknown) => {
+      apiLogger.warn('neo4j: vector index query failed — falling back to an in-app scan', {
+        organizationId,
+        error: primaryError instanceof Error ? primaryError.message : String(primaryError),
+      })
       // No vector index (e.g. Community edition): fall back to scoring in-app.
       //
       // BOUNDED, deliberately. This pulls whole nodes — embeddings included —
@@ -201,7 +210,7 @@ export class Neo4jGraphStore implements GraphRagStore {
       // degraded mode look healthy.
       const all = await driver.executeQuery(
         'MATCH (e:Entity { organizationId: $org }) RETURN e AS node LIMIT $scanCap',
-        { org: organizationId, scanCap: FALLBACK_SCAN_CAP },
+        { org: organizationId, scanCap: int(Math.trunc(FALLBACK_SCAN_CAP)) },
       )
       if (all.records.length >= FALLBACK_SCAN_CAP) {
         apiLogger.warn('neo4j: vector index unavailable and the fallback scan hit its cap — results are approximate', {

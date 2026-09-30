@@ -26,7 +26,7 @@ export const CHAT_SURFACE_DEFAULTS = {
   copilot: 'claude-sonnet-5-5',
   assistant: 'claude-sonnet-5-5',
   librarian: 'claude-haiku-4-5',
-  artifact: 'claude-sonnet-5-5',
+  artifact: 'claude-opus-5-5',
 } as const
 export type ChatSurface = keyof typeof CHAT_SURFACE_DEFAULTS
 

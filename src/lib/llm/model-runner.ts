@@ -569,6 +569,59 @@ export async function generateHeadline(summary: string, ledger?: LedgerContext):
 }
 
 /**
+ * One long text completion, streamed — for output measured in tens of
+ * thousands of tokens (a rendered artifact), where a non-streamed request
+ * would sit silent for minutes and trip timeouts. The caller composes the
+ * prompt (and owns its fencing); this only carries it, records the cost, and
+ * returns the text. Throws on failure — the caller decides the fallback.
+ */
+export async function generateLongText(opts: {
+  system: string
+  user: string
+  model: string
+  maxTokens: number
+  surface: LlmSurface
+  ledger?: LedgerContext
+  timeoutMs?: number
+}): Promise<{ text: string; stopReason: string | null }> {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not configured')
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: opts.timeoutMs ?? 15 * 60_000, maxRetries: 1 })
+  const model = resolveServedModel({ target: 'claude', model: opts.model })
+  const startedAt = Date.now()
+  const message = await client.messages.stream({
+    model,
+    max_tokens: opts.maxTokens,
+    system: [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content: opts.user }],
+  }).finalMessage()
+  if (opts.ledger) {
+    trackDetached(
+      recordLlmCall({
+        organizationId: opts.ledger.organizationId,
+        userId: opts.ledger.userId ?? null,
+        surface: opts.surface,
+        provider: 'anthropic',
+        model,
+        usage: {
+          inputTokens: message.usage.input_tokens,
+          cacheWriteTokens: message.usage.cache_creation_input_tokens || 0,
+          cacheReadTokens: message.usage.cache_read_input_tokens || 0,
+          outputTokens: message.usage.output_tokens,
+        },
+        latencyMs: Date.now() - startedAt,
+        agentExecutionId: opts.ledger.agentExecutionId,
+        flowRunId: opts.ledger.flowRunId,
+      }),
+    )
+  }
+  const text = message.content
+    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
+  return { text, stopReason: message.stop_reason ?? null }
+}
+
+/**
  * One-shot structured-output completion against a JSON schema, used by the
  * natural-language agent builder and the assistant chat. Tries the preferred
  * provider first and FALLS BACK to the other on availability failures (quota,

@@ -33,6 +33,9 @@ export type LlmSurface =
   // (BUCKET_BY_SURFACE in src/app/api/usage/me/route.ts), which predates any
   // write path actually stamping it.
   | 'run.chat'
+  // The Opus pass that turns a run's deliverable into a complete interactive
+  // artifact (src/features/agents/artifact-renderer.ts).
+  | 'artifact_render'
 
 export type LlmCallInput = {
   organizationId: string

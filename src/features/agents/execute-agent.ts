@@ -4,6 +4,7 @@ import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { registerVersionFromExecution } from '@/lib/artifacts/service'
+import { ARTIFACT_RENDER_MODEL, evidenceFromTranscript, isDeliverable, renderArtifact } from './artifact-renderer'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { apiLogger } from '@/lib/logger'
@@ -1739,7 +1740,40 @@ async function runAgentExecutionInner(
       return await finalizeCancelled(liveBeforeCompletion.status === 'cancelled')
     }
 
-    const summary = finalText || 'Agent reached the maximum number of tool-call turns.'
+    let summary = finalText || 'Agent reached the maximum number of tool-call turns.'
+    // A deliverable is finished by the artifact renderer (Opus): the agent's
+    // turns gather the facts and draft the page; this pass builds the complete
+    // app from the draft and the evidence. Not for a conversation about an
+    // artifact (its tools make the versions), an ROI build (a JSON contract),
+    // or a run whose tool output looked like an injection. Any failure keeps
+    // the draft.
+    const renderTrigger = String((execution.trigger as { type?: unknown } | null)?.type ?? '')
+    if (renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && !injectionTainted && isDeliverable(summary)) {
+      const renderStep = await prisma.workflowStep.create({
+        data: { executionId: execution.id, node: 'artifact.render', status: 'running', input: jsonValue({ model: ARTIFACT_RENDER_MODEL }), startedAt: new Date() },
+      })
+      await recordEvent(execution.id, renderStep.id, 'tool.started', { name: 'artifact.render', args: { model: ARTIFACT_RENDER_MODEL } })
+      broadcastAgentEventTick(execution.id)
+      try {
+        const rendered = await renderArtifact({
+          objective: agent.objective,
+          request: data.input ?? '',
+          draft: summary,
+          evidence: evidenceFromTranscript(transcript),
+          ledger: { organizationId, userId, agentExecutionId: execution.id },
+        })
+        if (rendered) summary = rendered
+        await prisma.workflowStep.update({
+          where: { id: renderStep.id },
+          data: { status: 'succeeded', output: jsonValue({ model: ARTIFACT_RENDER_MODEL, rendered: Boolean(rendered), chars: rendered?.length ?? 0 }), completedAt: new Date() },
+        })
+        await recordEvent(execution.id, renderStep.id, 'tool.completed', { name: 'artifact.render' })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        await prisma.workflowStep.update({ where: { id: renderStep.id }, data: { status: 'failed', error: message.slice(0, 2_000), completedAt: new Date() } }).catch(() => undefined)
+        await recordEvent(execution.id, renderStep.id, 'tool.failed', { name: 'artifact.render', error: message.slice(0, 500) }).catch(() => undefined)
+      }
+    }
     // A run whose DELIVERY integration never resolved did not do what it was
     // asked to do, however good the artifact it produced is. Reporting that as
     // a success is how notifications came to say work had been delivered

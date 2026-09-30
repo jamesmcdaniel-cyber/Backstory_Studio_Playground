@@ -83,7 +83,7 @@ const SRC = path.join(process.cwd(), 'src')
  * guards, which is the one state neither can report on.
  */
 const LLM_CALL =
-  /\b(generateStructured|generateText|runModel|streamText|callModel|createModelRunner|createPinnedRunner|anthropic\.messages|messages\.create)\b/
+  /\b(generateStructured|generateText|generateLongText|runModel|streamText|callModel|createModelRunner|createPinnedRunner|anthropic\.messages|messages\.create)\b/
 
 /**
  * Each alternative inside LLM_CALL, as its own detector.

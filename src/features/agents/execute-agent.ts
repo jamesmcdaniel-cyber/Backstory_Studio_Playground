@@ -1753,7 +1753,13 @@ async function runAgentExecutionInner(
     const unrecovered = unrecoveredToolFailures(toolFailures, toolSuccesses)
     const failedWriteReason = toolFailureBlockReason(unrecovered)
     const degraded = toolFailureWarnings(unrecovered)
-    const blocking = blockingUnavailable(unavailable)
+    // A delivery integration that failed to load blocks a run whose job is to
+    // deliver. A conversation about an artifact (and an ROI build) delivers
+    // nothing unless asked — there, only a write the model actually attempted
+    // and failed (failedWriteReason) marks it; the tool inventory already told
+    // it what did not load, so it can say so if the person asks for delivery.
+    const conversational = ['artifact', 'roi_analysis'].includes(String((execution.trigger as { type?: unknown } | null)?.type ?? ''))
+    const blocking = conversational ? [] : blockingUnavailable(unavailable)
     const blockedReason = blocking.length
       ? `Not delivered — ${blocking.map((entry) => `${entry.name}: ${entry.reason}`).join(' ')}`
       : failedWriteReason

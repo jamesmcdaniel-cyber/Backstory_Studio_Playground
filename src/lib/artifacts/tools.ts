@@ -99,6 +99,23 @@ export function artifactToolsFor(kind: string): ArtifactToolDescriptor[] {
 
 const MAX_DOC_CHARS = 120_000
 
+/**
+ * The activity extract's numeric columns — what add_metric may sum. Facts
+ * computed before the prep recorded them fall back to the extract's stored
+ * profile, which types every column.
+ */
+async function activityColumnsFor(organizationId: string, facts: RoiFacts, datasetIds: string[]): Promise<string[]> {
+  if (facts.U?.activityColumns?.length) return facts.U.activityColumns
+  const docs = await prisma.knowledgeDocument.findMany({ where: { id: { in: datasetIds }, organizationId, assetType: 'dataset' }, select: { sourceMetadata: true } })
+  for (const doc of docs) {
+    const profile = (doc.sourceMetadata as { dataset?: { columns?: Array<{ name: string; type: string }> } } | null)?.dataset
+    const names = profile?.columns?.map((column) => column.name) ?? []
+    if (!names.includes('months') || !names.includes('email')) continue
+    return (profile?.columns ?? []).filter((column) => column.type === 'number').map((column) => column.name)
+  }
+  return []
+}
+
 export class ArtifactToolClient {
   constructor(
     private readonly organizationId: string,
@@ -142,7 +159,7 @@ export class ArtifactToolClient {
         account: current.state.account,
         timeframe: current.state.timeframePreset,
         view: describeView(current.state.view, facts.U?.labels ?? {}),
-        activityColumns: facts.U?.activityColumns ?? [],
+        activityColumns: await activityColumnsFor(this.organizationId, facts, current.state.datasetIds),
         narrative: current.state.narrative,
         facts: summarizeFacts(facts),
       }
@@ -185,7 +202,7 @@ export class ArtifactToolClient {
     const result = applyOperations(
       { view: current.state.view, narrative: current.state.narrative },
       valid,
-      { metricKeys: Object.keys(facts.U?.labels ?? {}), activityColumns: facts.U?.activityColumns ?? [] },
+      { metricKeys: Object.keys(facts.U?.labels ?? {}), activityColumns: await activityColumnsFor(this.organizationId, facts, current.state.datasetIds) },
     )
     const rejected = [...malformed, ...result.rejected]
     if (!result.applied.length) return { saved: false, rejected }

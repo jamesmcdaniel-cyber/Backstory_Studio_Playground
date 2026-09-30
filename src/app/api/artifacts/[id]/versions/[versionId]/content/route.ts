@@ -2,6 +2,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { versionContent, isInteractiveContent } from '@/lib/artifacts/service'
 import { looksLikeHtml } from '@/lib/html-detect'
 import { vendorScripts } from '@/lib/artifacts/vendor-scripts'
+import { compileArtifactPage } from '@/lib/artifacts/runtime'
 
 export const runtime = 'nodejs'
 
@@ -11,7 +12,7 @@ export const runtime = 'nodejs'
 // CSP sandbox, so even opened directly (not in the viewer's sandboxed iframe)
 // the page has an opaque origin: no cookies, no session, no app APIs.
 const STATIC_CSP = "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:"
-const INTERACTIVE_CSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads; default-src 'none'; base-uri 'none'; form-action 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src data: blob:; connect-src 'none'"
+const INTERACTIVE_CSP = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads; default-src 'none'; base-uri 'none'; form-action 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src data: blob:; worker-src 'self' blob:; connect-src 'none'"
 
 // Links out of a page (a CRM record, a source) open in a new tab rather than
 // inside the frame, where most sites refuse to load. In-page links (#views)
@@ -37,7 +38,8 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     return new Response(found.content, { status: 200, headers: { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'private, no-store' } })
   }
   const interactive = isInteractiveContent(found.kind, found.content)
-  const content = interactive ? vendorScripts(found.content) : found.content
+  // Library URLs swap to our copies; JSX (a React artifact) compiles here.
+  const content = interactive ? compileArtifactPage(vendorScripts(found.content)) : found.content
   const page = /<html[\s>]/i.test(content)
     ? content
     : `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${content}</body></html>`

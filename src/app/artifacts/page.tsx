@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Bot, ChevronRight, FileOutput, Loader2, Search, TrendingUp, Upload, Workflow } from 'lucide-react'
+import { Bot, FileOutput, Loader2, Search, TrendingUp, Upload, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { relativeTime } from '@/lib/relative-time'
 import { ARTIFACT_KIND_LABEL, type ArtifactKind, type ArtifactListItem } from '@/lib/artifacts/types'
+import { ArtifactThumbnail } from '@/components/artifacts/artifact-thumbnail'
 
 /**
  * Everything the workspace's agents have produced. Filter by kind or agent,
@@ -25,7 +26,7 @@ export default function ArtifactsPage() {
   const [query, setQuery] = useState('')
   const searchParams = useSearchParams()
   const initialKind = searchParams?.get('kind')
-  const [kind, setKind] = useState<ArtifactKind | 'all'>(initialKind === 'report' || initialKind === 'roi_dashboard' || initialKind === 'document' ? initialKind : 'all')
+  const [kind, setKind] = useState<ArtifactKind | 'all'>(initialKind === 'report' || initialKind === 'roi_dashboard' || initialKind === 'document' || initialKind === 'page' ? initialKind : 'all')
   const [roiOpen, setRoiOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const { can } = useAuth()
@@ -92,22 +93,22 @@ export default function ArtifactsPage() {
           description={items.length ? 'Try another search or kind.' : 'When an agent finishes a run with a report, it appears here automatically.'}
         />
       ) : (
-        <ul className="divide-y divide-border rounded-xl border border-border">
+        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {visible.map((item) => (
             <li key={item.id}>
-              <Link href={`/artifacts/${item.id}`} className="flex items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-muted/50">
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{item.title}</span>
-                  <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                    {item.agent && <span className="inline-flex items-center gap-1"><Bot className="h-3 w-3" aria-hidden />{item.agent.title}</span>}
-                    {item.flow && <span className="inline-flex items-center gap-1"><Workflow className="h-3 w-3" aria-hidden />{item.flow.name}</span>}
-                    <span>{item.versionCount ? `${item.versionCount} version${item.versionCount === 1 ? '' : 's'}` : 'Building…'}</span>
-                    <span>updated {relativeTime(item.updatedAt)}</span>
+              <Link href={`/artifacts/${item.id}`} className="group block overflow-hidden rounded-xl border border-border bg-background transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <ArtifactThumbnail artifactId={item.id} kind={item.kind} title={item.title} ready={item.versionCount > 0} className="border-b border-border" />
+                <span className="flex items-start justify-between gap-3 px-4 py-3 text-sm">
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium group-hover:text-horizon-700">{item.title}</span>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      {item.agent && <span className="inline-flex items-center gap-1"><Bot className="h-3 w-3" aria-hidden />{item.agent.title}</span>}
+                      {item.flow && <span className="inline-flex items-center gap-1"><Workflow className="h-3 w-3" aria-hidden />{item.flow.name}</span>}
+                      <span>{item.versionCount ? `${item.versionCount} version${item.versionCount === 1 ? '' : 's'}` : 'Building…'}</span>
+                      <span>updated {relativeTime(item.updatedAt)}</span>
+                    </span>
                   </span>
-                </span>
-                <span className="flex shrink-0 items-center gap-2">
-                  <Badge variant="secondary">{ARTIFACT_KIND_LABEL[item.kind]}</Badge>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden />
+                  <Badge variant="secondary" className="shrink-0">{ARTIFACT_KIND_LABEL[item.kind]}</Badge>
                 </span>
               </Link>
             </li>
@@ -158,7 +159,7 @@ function UploadHtmlDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!file || !agentId || busy) return
-    if (file.size > 2_000_000) { toast.error('Pages can be at most 2 MB.'); return }
+    if (file.size > 4_000_000) { toast.error('Pages can be at most 4 MB.'); return }
     setBusy(true)
     try {
       const content = await file.text()
@@ -196,7 +197,7 @@ function UploadHtmlDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
           <div>
             <label htmlFor="upload-html-file" className="text-sm font-medium">Page</label>
             <input id="upload-html-file" type="file" accept=".html,.htm,text/html" className="mt-1.5 block w-full text-sm" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-            <p className="mt-1 text-xs text-muted-foreground">Up to 2 MB. Charts from Chart.js or Plotly keep working; the page can't reach the internet.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Up to 4 MB. React, Tailwind, Chart.js, Recharts, Plotly, d3, three.js, Mermaid and the other common libraries keep working; the page can't reach the internet.</p>
           </div>
           <div>
             <label htmlFor="upload-html-agent" className="text-sm font-medium">Agent</label>

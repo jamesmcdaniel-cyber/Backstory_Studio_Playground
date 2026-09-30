@@ -9,6 +9,8 @@ import {
 } from '@/lib/security/csp'
 import { rejectsCrossOriginWrite } from '@/lib/security/cross-origin-guard'
 
+const ARTIFACT_CONTENT_PATH = /^\/api\/artifacts\/[^/]+\/versions\/[^/]+\/content$/
+
 export async function middleware(request: NextRequest) {
   // Refused at the edge, before any session work: in the customer edition the
   // admin surface does not exist. Defence in depth over the layout's notFound()
@@ -44,6 +46,10 @@ export async function middleware(request: NextRequest) {
   requestHeaders.set('Content-Security-Policy', policy)
 
   const response = await updateSession(request, requestHeaders)
+  // An artifact's page is framed by the app and carries its own policy — a
+  // sandbox with no network (see the content route). The app's policy, with
+  // frame-ancestors 'none', would stop it being framed at all once enforced.
+  if (ARTIFACT_CONTENT_PATH.test(request.nextUrl.pathname)) return response
   response.headers.set(headerName, policy)
   // Resolves the policy's `report-to csp` group. Without this header the modern
   // directive names a group the browser has never heard of and silently drops

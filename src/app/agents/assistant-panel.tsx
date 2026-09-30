@@ -10,6 +10,7 @@ import { ArrowRight, Check, Clock, Loader2, MessageSquare, Play, Plus, Send, Set
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { HtmlPreview, looksLikeHtml, unwrapHtmlFence } from '@/components/ui/html-preview'
+import { ArtifactFrame, isInteractiveOutput } from '@/components/artifacts/artifact-frame'
 import { Markdown } from '@/components/ui/markdown'
 import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
 import { postStreaming } from '@/lib/client/stream'
@@ -113,7 +114,10 @@ function proposalRows(proposal: AssistantProposal): Array<{ label: string; value
  * Agent text as the user should see it: a house-format HTML report renders as
  * the report (even if the model fenced it), anything else renders as Markdown.
  */
-function AgentOutput({ text }: { text: string }) {
+function AgentOutput({ text, artifactId, title }: { text: string; artifactId?: string | null; title?: string }) {
+  // An interactive page (its own script, or a React component) runs as its
+  // artifact — the static preview can't run code, by design.
+  if (artifactId && isInteractiveOutput(text)) return <ArtifactFrame artifactId={artifactId} title={title ?? 'Agent output'} />
   const content = unwrapHtmlFence(text)
   return looksLikeHtml(content) ? <HtmlPreview html={content} /> : <Markdown>{content}</Markdown>
 }
@@ -600,7 +604,7 @@ export function AssistantPanel({
                   </span>
                 </div>
                 <div className={cn('text-sm', runOutput.status === 'failed' && 'whitespace-pre-wrap text-red-700')}>
-                  {runOutput.status === 'failed' ? runOutput.text : <AgentOutput text={runOutput.text} />}
+                  {runOutput.status === 'failed' ? runOutput.text : <AgentOutput text={runOutput.text} artifactId={runOutput.artifactId} title={runOutput.title} />}
                 </div>
               </div>
             )}

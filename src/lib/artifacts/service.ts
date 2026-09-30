@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdownTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
+import { reactArtifactDocument, reactComponentOf } from './runtime'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
@@ -60,7 +61,8 @@ export function isInteractiveContent(kind: string, content: string): boolean {
   return isInteractiveKind(kind) || htmlHasScript(content)
 }
 
-export const ARTIFACT_UPLOAD_MAX_BYTES = 2_000_000
+// Just under the platform's 4.5 MB request-body ceiling.
+export const ARTIFACT_UPLOAD_MAX_BYTES = 4_000_000
 
 type TriggerShape = {
   type?: unknown
@@ -172,7 +174,10 @@ export async function registerVersionFromExecution(params: {
   summary: string
   headline?: string | null
 }): Promise<{ artifactId: string; versionId: string; created: boolean } | null> {
-  const html = htmlDocumentOf(params.summary)
+  // An HTML document, or a React component (a Claude-style artifact) served
+  // as a page the content route compiles.
+  const component = htmlDocumentOf(params.summary) ? null : reactComponentOf(params.summary)
+  const html = htmlDocumentOf(params.summary) ?? (component ? reactArtifactDocument(component) : null)
   const t = (params.trigger ?? {}) as TriggerShape
   const targetId = str(t.artifactId)
   if (targetId) {

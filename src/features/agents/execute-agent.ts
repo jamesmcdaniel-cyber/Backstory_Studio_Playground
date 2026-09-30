@@ -1906,7 +1906,7 @@ async function runAgentExecutionInner(
     // trigger, so the queue payload carries nothing extra and a non-Slack run
     // is a no-op.
     void import('@/lib/slack/reply')
-      .then(({ finishSlackMentionForExecution }) => finishSlackMentionForExecution(execution.id, summary))
+      .then(({ finishSlackMentionForExecution }) => finishSlackMentionForExecution(execution.id, summary, artifactLink))
       .catch(() => undefined)
     // Index this run (output + correlated entities) into the graph-RAG store so
     // future agents/assistant answers can draw on what happened here. Fire and

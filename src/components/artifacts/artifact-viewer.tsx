@@ -15,6 +15,7 @@ import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
 import { chatModelLabel } from '@/lib/llm/models'
 import { RunFeed } from '@/components/runs/run-feed'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
+import { ARTIFACT_FRAME_SANDBOX } from './artifact-frame'
 
 /**
  * One artifact: the document in a sandboxed frame, its versions, and the
@@ -205,7 +206,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                 // Opaque origin (never allow-same-origin): the page cannot reach
                 // the app. Whether its scripts run is the server's call — the
                 // content route's CSP blocks them in a script-less document.
-                sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads"
+                sandbox={ARTIFACT_FRAME_SANDBOX}
                 className="block h-[calc(100dvh-190px)] min-h-[560px] w-full"
               />
             ) : (

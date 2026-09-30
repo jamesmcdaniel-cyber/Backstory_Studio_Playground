@@ -19,18 +19,21 @@ const nextConfig = {
         source: '/api/:path*',
         headers: [{ key: 'Cache-Control', value: 'no-store' }],
       },
+      // X-Frame-Options has no allow-list form, so when an operator turns on
+      // embedding (EMBED_FRAME_ANCESTORS, read at build/deploy time) it is
+      // omitted and CSP frame-ancestors — which carries the actual allow-list,
+      // built in src/lib/security/csp.ts — governs alone. Every modern browser
+      // prefers frame-ancestors anyway; sending DENY alongside it would block
+      // embedding in the ones that don't.
+      // Everything but an artifact's page, which the app frames and which
+      // carries its own policy (a sandbox with no network; see the content
+      // route) — DENY here would stop every artifact rendering.
+      ...(process.env.EMBED_FRAME_ANCESTORS?.trim()
+        ? []
+        : [{ source: '/:path((?!api/artifacts/[^/]+/versions/[^/]+/content$).*)', headers: [{ key: 'X-Frame-Options', value: 'DENY' }] }]),
       {
         source: '/:path*',
         headers: [
-          // X-Frame-Options has no allow-list form, so when an operator turns
-          // on embedding (EMBED_FRAME_ANCESTORS, read at build/deploy time) it
-          // is omitted and CSP frame-ancestors — which carries the actual
-          // allow-list, built in src/lib/security/csp.ts — governs alone.
-          // Every modern browser prefers frame-ancestors anyway; sending DENY
-          // alongside it would block embedding in the ones that don't.
-          ...(process.env.EMBED_FRAME_ANCESTORS?.trim()
-            ? []
-            : [{ key: 'X-Frame-Options', value: 'DENY' }]),
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           // microphone=(self): the flows voice huddle needs getUserMedia;

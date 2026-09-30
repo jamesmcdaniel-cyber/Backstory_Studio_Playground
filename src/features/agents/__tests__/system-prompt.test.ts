@@ -65,7 +65,9 @@ describe('buildAgentSystemPrompt', () => {
 
   it('makes the report document the whole final response, even when it was also delivered elsewhere', () => {
     const prompt = buildAgentSystemPrompt('Do the work.', [])
-    assert.ok(/never inside a code fence/i.test(prompt), 'expected the no-code-fence rule')
+    assert.ok(/raw, or in a single ```jsx fence/i.test(prompt), 'expected the one-fence-at-most rule for the component')
+    assert.ok(/INTERACTIVE ARTIFACT/.test(prompt) && /drill-down/i.test(prompt), 'a report deliverable is an app the reader clicks through')
+    assert.ok(/EMAIL VERSION/.test(prompt), 'the emailed report stays static, at full fidelity')
     assert.ok(/never preceded or followed by ANY other text/i.test(prompt), 'expected the no-preamble/no-recap rule')
     assert.ok(/No preamble of any kind/i.test(prompt), 'expected the explicit preamble ban')
     assert.ok(/summary of what was done/i.test(prompt), 'expected the run-narration ban by name')

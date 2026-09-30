@@ -259,7 +259,22 @@ export async function recordSlackAnswer(params: {
  * runtime's call sites stay one-liners and do not depend on which local
  * variable happens to hold the row at that point.
  */
-export async function finishSlackMentionForExecution(executionId: string, text: string): Promise<void> {
+/** Output that became an artifact page (an HTML document or a React component) rather than a message. */
+function isArtifactOutput(output: string): boolean {
+  const trimmed = output.trim()
+  return /^(?:```[a-z]*\s*\n)?\s*<(?:!doctype|html)\b/i.test(trimmed) || (/\bexport\s+default\b/.test(trimmed) && /<[A-Za-z][\w.]*[\s>/]/.test(trimmed))
+}
+
+function artifactReply(output: string, link: string): string {
+  const title = /<title[^>]*>([^<]{1,160})<\/title>/i.exec(output)?.[1] ?? /<h1[^>]*>([^<{]{1,160})</i.exec(output)?.[1]
+  const base = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '')
+  const url = base ? `${base}${link}` : link
+  return `${title?.trim() ? `*${title.trim()}* is ready` : 'Your report is ready'} — <${url}|open it in Backstory>.`
+}
+
+export async function finishSlackMentionForExecution(executionId: string, output: string, artifactLink?: string | null): Promise<void> {
+  // A page or an app doesn't read as a Slack message: link to it instead.
+  const text = artifactLink && isArtifactOutput(output) ? artifactReply(output, artifactLink) : output
   const { systemPrisma } = await import('@/lib/prisma')
   const execution = await systemPrisma.agentExecution.findUnique({
     where: { id: executionId },

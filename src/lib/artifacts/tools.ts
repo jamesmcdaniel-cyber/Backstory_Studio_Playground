@@ -11,7 +11,7 @@ import { applyOperations, describeView, roiOperationSchema } from '@/lib/roi/vie
 import { currentRoiState, readFacts, stateJson, storeFacts } from '@/lib/roi/artifact-state'
 import { listRoiSources } from '@/lib/roi/sources'
 import { isRoiTimeframePreset } from '@/lib/roi/timeframe'
-import { addVersion } from './service'
+import { addVersion, createArtifact } from './service'
 
 /**
  * The artifact plane: what the assistant can do to the artifact a
@@ -29,19 +29,59 @@ export type ArtifactToolContext = { artifactId: string; executionId: string; req
 const GENERIC_TOOLS = [
   {
     name: 'get_artifact',
-    description: 'The artifact this conversation is about: title, kind, versions, and the current content (or, for an ROI dashboard, its facts summary, narrative and editable view). Call it first whenever the request depends on what the artifact currently holds.',
+    description: 'The artifact this conversation is about: title, kind, versions, and the current content (the whole of it when it is small; the start plus its size when large — use find_in_artifact / read_artifact to navigate a large one), or, for an ROI dashboard, its facts summary, narrative and editable view. Call it first whenever the request depends on what the artifact currently holds.',
     isWrite: false,
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'find_in_artifact',
+    description: 'Find text in the current version (case-insensitive). Returns each match with its character offset and the surrounding lines — use it to locate what a change touches in a large page before editing.',
+    isWrite: false,
+    inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'The text to look for.' } }, required: ['text'] },
+  },
+  {
+    name: 'read_artifact',
+    description: 'Read part of the current version by character offset (up to 40,000 characters at a time).',
+    isWrite: false,
+    inputSchema: { type: 'object', properties: { offset: { type: 'integer' }, length: { type: 'integer', description: 'At most 40000.' } }, required: ['offset'] },
+  },
+  {
+    name: 'edit_artifact',
+    description: 'Make targeted changes to a report, document or interactive page and save them as a new version — the right tool for most changes, and the only practical one for a large page. Each edit replaces `find` (an exact snippet copied from the current content, long enough to be unique) with `replace`; set `all: true` to replace every occurrence. Edits apply in order; if any `find` is missing or ambiguous nothing is saved and the reason is returned. Set `saveAsNew: true` (with an optional `title`) to save the result as a NEW artifact instead — when the user asks for a copy, a variant or "a new one" — leaving this artifact unchanged.',
+    isWrite: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        edits: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              find: { type: 'string', description: 'Exact text from the current content.' },
+              replace: { type: 'string', description: 'What it becomes (empty string to delete).' },
+              all: { type: 'boolean', description: 'Replace every occurrence instead of requiring exactly one.' },
+            },
+            required: ['find', 'replace'],
+          },
+        },
+        summary: { type: 'string', description: 'What changed, in one line, for the version history.' },
+        saveAsNew: { type: 'boolean', description: 'Save as a new artifact instead of a new version.' },
+        title: { type: 'string', description: 'Title for the new artifact when saveAsNew is set.' },
+      },
+      required: ['edits', 'summary'],
+    },
+  },
+  {
     name: 'revise_artifact',
-    description: 'Save a revised version of a report or document artifact. Pass the COMPLETE revised content (HTML for an HTML report, Markdown for a document) — every section, not only the changed part — and a one-line summary of what changed. The previous version is kept. Not for ROI dashboards: use update_roi_dashboard.',
+    description: 'Replace the whole content with a rewritten version — only for a full rewrite of a small report or document (prefer edit_artifact for changes). Pass the COMPLETE content in the same format and a one-line summary. Set `saveAsNew: true` (optional `title`) to save it as a new artifact instead. Not for ROI dashboards.',
     isWrite: false,
     inputSchema: {
       type: 'object',
       properties: {
         content: { type: 'string', description: 'The whole revised document.' },
         summary: { type: 'string', description: 'What changed, in one line, for the version history.' },
+        saveAsNew: { type: 'boolean' },
+        title: { type: 'string' },
       },
       required: ['content', 'summary'],
     },
@@ -138,10 +178,13 @@ export type ArtifactToolDescriptor = { name: string; description: string; inputS
 /** The tools for an artifact of this kind. */
 export function artifactToolsFor(kind: string): ArtifactToolDescriptor[] {
   const generic = kind === 'roi_dashboard' ? GENERIC_TOOLS.filter((tool) => tool.name === 'get_artifact') : [...GENERIC_TOOLS]
+
   return [...generic, ...(kind === 'roi_dashboard' ? ROI_TOOLS : [])].map(({ name, description, inputSchema }) => ({ name, description, inputSchema: inputSchema as Record<string, unknown> }))
 }
 
 const MAX_DOC_CHARS = 120_000
+const LARGE_DOC_PREVIEW_CHARS = 20_000
+const READ_WINDOW_MAX = 40_000
 
 /**
  * The activity extract's numeric columns — what add_metric may sum. Facts
@@ -172,6 +215,9 @@ export class ArtifactToolClient {
       switch (name) {
         case 'get_artifact': return await this.getArtifact()
         case 'revise_artifact': return await this.revise(args)
+        case 'edit_artifact': return await this.edit(args)
+        case 'find_in_artifact': return await this.find(args)
+        case 'read_artifact': return await this.read(args)
         case 'update_roi_dashboard': return await this.updateRoi(args)
         case 'list_roi_accounts': return { accounts: (await listRoiSources(this.organizationId)).map((source) => ({ account: source.account, extracts: Object.keys(source.datasets) })) }
         case 'start_roi_analysis': return await this.startRoi(args)
@@ -210,25 +256,90 @@ export class ArtifactToolClient {
     }
     const version = artifact.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { content: true } }) : null
     const content = version?.content ?? ''
-    return { ...base, format: looksLikeHtml(content.slice(0, 4_000)) ? 'html' : 'markdown', content: content.length > MAX_DOC_CHARS ? `${content.slice(0, MAX_DOC_CHARS)}\n<!-- truncated -->` : content, truncated: content.length > MAX_DOC_CHARS }
+    const large = content.length > MAX_DOC_CHARS
+    return {
+      ...base,
+      format: looksLikeHtml(content.slice(0, 4_000)) ? 'html' : 'markdown',
+      size: content.length,
+      content: large ? content.slice(0, LARGE_DOC_PREVIEW_CHARS) : content,
+      ...(large ? { note: `This is the first ${LARGE_DOC_PREVIEW_CHARS.toLocaleString()} of ${content.length.toLocaleString()} characters. Use find_in_artifact to locate what a change touches, read_artifact for a window around it, and edit_artifact to change it.` } : {}),
+    }
   }
 
   private async revise(args: Record<string, unknown>) {
+    const parsed = z.object({ content: z.string().min(20), summary: z.string().min(1).max(300), saveAsNew: z.boolean().optional(), title: z.string().max(200).optional() }).safeParse(args)
+    if (!parsed.success) throw new Error('Pass the whole revised document in `content` and a one-line `summary`.')
+    const { artifact, content: current } = await this.currentContent()
+    const wasHtml = current ? looksLikeHtml(current.slice(0, 4_000)) : true
+    if (wasHtml !== looksLikeHtml(parsed.data.content.slice(0, 4_000))) {
+      throw new Error(`The artifact is ${wasHtml ? 'an HTML page' : 'a Markdown document'}; keep the revision in the same format.`)
+    }
+    // A page too large to read whole is changed with edit_artifact, never retyped.
+    if (current.length > MAX_DOC_CHARS && parsed.data.content.length < current.length * 0.6) {
+      throw new Error('That revision is much shorter than the page, which is too large to rewrite whole. Use edit_artifact for targeted changes.')
+    }
+    return this.save(artifact, parsed.data.content, parsed.data.summary, parsed.data.saveAsNew, parsed.data.title)
+  }
+
+  private async currentContent(): Promise<{ artifact: Awaited<ReturnType<ArtifactToolClient['artifact']>>; content: string }> {
     const artifact = await this.artifact()
     if (artifact.kind === 'roi_dashboard') throw new Error('An ROI dashboard is changed with update_roi_dashboard.')
-    const parsed = z.object({ content: z.string().min(20), summary: z.string().min(1).max(300) }).safeParse(args)
-    if (!parsed.success) throw new Error('Pass the whole revised document in `content` and a one-line `summary`.')
-    const current = artifact.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { content: true } }) : null
-    const wasHtml = current ? looksLikeHtml(current.content.slice(0, 4_000)) : true
-    if (wasHtml !== looksLikeHtml(parsed.data.content.slice(0, 4_000))) {
-      throw new Error(`The artifact is ${wasHtml ? 'an HTML report' : 'a Markdown document'}; keep the revision in the same format.`)
+    const version = artifact.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { content: true } }) : null
+    return { artifact, content: version?.content ?? '' }
+  }
+
+  private async find(args: Record<string, unknown>) {
+    const text = typeof args.text === 'string' ? args.text : ''
+    if (!text.trim()) throw new Error('Pass the text to find.')
+    const { content } = await this.currentContent()
+    const haystack = content.toLowerCase()
+    const needle = text.toLowerCase()
+    const matches: Array<{ offset: number; context: string }> = []
+    for (let at = haystack.indexOf(needle); at >= 0 && matches.length < 20; at = haystack.indexOf(needle, at + needle.length)) {
+      const start = Math.max(0, content.lastIndexOf('\n', Math.max(0, at - 200)))
+      const endBreak = content.indexOf('\n', at + needle.length + 200)
+      matches.push({ offset: at, context: content.slice(start, endBreak < 0 ? Math.min(content.length, at + 600) : endBreak).slice(0, 1_200) })
     }
-    // A truncated read must not become a truncated version.
-    if (current && current.content.length > MAX_DOC_CHARS && parsed.data.content.length < current.content.length * 0.6) {
-      throw new Error('That revision is much shorter than the document, which was too long to read whole. Make a targeted change instead, or say which part to rewrite.')
+    return { size: content.length, matches, ...(matches.length === 20 ? { note: 'Showing the first 20 matches; search for something more specific.' } : {}) }
+  }
+
+  private async read(args: Record<string, unknown>) {
+    const { content } = await this.currentContent()
+    const offset = Math.max(0, Math.min(Number(args.offset) || 0, content.length))
+    const length = Math.max(1, Math.min(Number(args.length) || READ_WINDOW_MAX, READ_WINDOW_MAX))
+    return { size: content.length, offset, text: content.slice(offset, offset + length), nextOffset: offset + length < content.length ? offset + length : null }
+  }
+
+  private async edit(args: Record<string, unknown>) {
+    const parsed = z.object({
+      edits: z.array(z.object({ find: z.string().min(1), replace: z.string(), all: z.boolean().optional() })).min(1).max(100),
+      summary: z.string().min(1).max(300),
+      saveAsNew: z.boolean().optional(),
+      title: z.string().max(200).optional(),
+    }).safeParse(args)
+    if (!parsed.success) throw new Error('Pass `edits` as [{find, replace}] and a one-line `summary`.')
+    const { artifact, content } = await this.currentContent()
+    const applied = applyTextEdits(content, parsed.data.edits)
+    if ('error' in applied) return { saved: false, error: applied.error }
+    return this.save(artifact, applied.content, parsed.data.summary, parsed.data.saveAsNew, parsed.data.title)
+  }
+
+  /** Save content as the artifact's next version, or as a new artifact. */
+  private async save(artifact: Awaited<ReturnType<ArtifactToolClient['artifact']>>, content: string, summary: string, saveAsNew?: boolean, title?: string) {
+    if (saveAsNew) {
+      const { artifact: created } = await createArtifact({
+        organizationId: this.organizationId,
+        userId: this.userId,
+        kind: artifact.kind === 'page' || artifact.kind === 'document' ? artifact.kind : 'report',
+        title: title?.trim() || `${artifact.title} (copy)`,
+        content,
+        agentTaskId: artifact.agentTaskId,
+        flowId: artifact.flowId,
+      })
+      return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
     }
-    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, content: parsed.data.content, executionId: this.context.executionId, request: this.context.request ?? parsed.data.summary, createdByUserId: this.userId })
-    return { saved: true, version: version.number, link: `/artifacts/${artifact.id}` }
+    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, content, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId })
+    return { saved: true, version: version.number, link: `/artifacts/${artifact.id}`, note: 'Saved: the new version is live now.' }
   }
 
   private async updateRoi(args: Record<string, unknown>) {
@@ -322,4 +433,23 @@ export class ArtifactToolClient {
     if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
     return { started: true, account: match.account, timeframe, link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background, five to fifteen minutes; the user is notified when the dashboard is ready.' }
   }
+}
+
+/**
+ * Exact find-and-replace edits, applied in order, all or nothing. A `find`
+ * that is missing, or ambiguous without `all`, rejects the whole set with a
+ * reason the agent can act on — a partial edit of a page is worse than none.
+ */
+export function applyTextEdits(content: string, edits: Array<{ find: string; replace: string; all?: boolean }>): { content: string } | { error: string } {
+  let next = content
+  for (const [index, edit] of edits.entries()) {
+    const first = next.indexOf(edit.find)
+    if (first < 0) return { error: `Edit ${index + 1}: that text was not found in the current content (it must match exactly, including spacing). Use find_in_artifact to copy it.` }
+    if (!edit.all && next.indexOf(edit.find, first + edit.find.length) >= 0) {
+      return { error: `Edit ${index + 1}: that text appears more than once. Include more surrounding text to make it unique, or set all: true.` }
+    }
+    next = edit.all ? next.split(edit.find).join(edit.replace) : next.slice(0, first) + edit.replace + next.slice(first + edit.find.length)
+  }
+  if (next === content) return { error: 'The edits made no change.' }
+  return { content: next }
 }

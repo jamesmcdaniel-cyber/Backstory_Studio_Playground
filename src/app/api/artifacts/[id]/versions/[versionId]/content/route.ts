@@ -1,6 +1,7 @@
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { versionContent, isInteractiveKind } from '@/lib/artifacts/service'
 import { looksLikeHtml } from '@/lib/html-detect'
+import { vendorScripts } from '@/lib/artifacts/vendor-scripts'
 
 export const runtime = 'nodejs'
 
@@ -25,9 +26,10 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     return new Response(found.content, { status: 200, headers: { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'private, no-store' } })
   }
   const interactive = isInteractiveKind(found.kind)
-  const body = /<html[\s>]/i.test(found.content)
-    ? found.content
-    : `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${found.content}</body></html>`
+  const content = interactive ? vendorScripts(found.content) : found.content
+  const body = /<html[\s>]/i.test(content)
+    ? content
+    : `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${content}</body></html>`
   return new Response(body, {
     status: 200,
     headers: {

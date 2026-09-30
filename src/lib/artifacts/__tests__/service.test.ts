@@ -27,9 +27,9 @@ test('the producing flow is read from either trigger shape', () => {
 
 test('a change request demands the whole revised document; a question forbids it', () => {
   const change = buildArtifactPrompt({ mode: 'change', title: 'Q3 review', content: '<html><body>doc</body></html>', message: 'Add a risks section', chat: [] })
-  assert.match(change, /COMPLETE revised document/)
-  assert.match(change, /as HTML/)
-  assert.match(change, /revise_artifact/)
+  assert.match(change, /edit_artifact/)
+  assert.match(change, /It is HTML/)
+  assert.match(change, /saveAsNew: true/)
   assert.match(change, /MESSAGE: Add a risks section\n\(The user marked this as a change request\.\)/)
   assert.match(change, /<html><body>doc<\/body><\/html>/)
   const ask = buildArtifactPrompt({ mode: 'ask', title: 'Q3 review', content: 'doc', message: 'Why did it drop?', chat: [{ role: 'user', content: 'earlier', createdAt: 'x', status: 'completed' }, { role: 'agent', content: 'answer', createdAt: 'x', status: 'completed' }] })
@@ -41,8 +41,8 @@ test('a change request demands the whole revised document; a question forbids it
 test('a very long document is truncated with a marker, not dropped', () => {
   const long = '<div>' + 'x'.repeat(200_000) + '</div>'
   const prompt = buildArtifactPrompt({ mode: 'ask', title: 't', content: long, message: 'q', chat: [] })
-  assert.match(prompt, /truncated: the document continues/)
-  assert.ok(prompt.length < 130_000)
+  assert.match(prompt, /Use find_in_artifact and read_artifact to see the rest/)
+  assert.ok(prompt.length < 30_000)
 })
 
 test('only the ROI dashboard kind runs scripts', () => {
@@ -62,8 +62,8 @@ test('headed Markdown of document length registers; a short reply does not', asy
 
 test('a change to a Markdown document asks for Markdown back', () => {
   const prompt = buildArtifactPrompt({ mode: 'change', title: 'Plan', content: '# Plan\n\nbody', message: 'Add a timeline', chat: [] })
-  assert.match(prompt, /as Markdown in the same structure/)
-  assert.doesNotMatch(prompt, /as HTML/)
+  assert.match(prompt, /It is Markdown: keep its structure/)
+  assert.doesNotMatch(prompt, /It is HTML/)
 })
 
 test('an ROI dashboard prompt never carries the page, and routes the three intents to tools', () => {

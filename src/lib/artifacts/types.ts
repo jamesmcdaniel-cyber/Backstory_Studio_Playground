@@ -2,7 +2,7 @@
  * Wire types for the Artifacts pages — a leaf module the client imports.
  */
 
-export type ArtifactKind = 'report' | 'roi_dashboard' | 'document'
+export type ArtifactKind = 'report' | 'roi_dashboard' | 'document' | 'page'
 
 export type ArtifactChatMessage = {
   role: 'user' | 'agent'
@@ -60,4 +60,5 @@ export const ARTIFACT_KIND_LABEL: Record<ArtifactKind, string> = {
   report: 'Report',
   roi_dashboard: 'ROI dashboard',
   document: 'Document',
+  page: 'Interactive page',
 }

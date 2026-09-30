@@ -247,6 +247,7 @@ const cases = (): Case[] => [
   { route: 'executions/[id]', method: 'DELETE', run: async () => (await import('../executions/[id]/route')).DELETE(rq(`/api/executions/${executionId}`, 'DELETE', {})) },
   { route: 'executions/[id]/reply', method: 'POST', run: async () => (await import('../executions/[id]/reply/route')).POST(rq(`/api/executions/${executionId}/reply`, 'POST', {})) },
   { route: 'files', method: 'POST', run: async () => (await import('../files/route')).POST(rq('/api/files', 'POST', {})) },
+  { route: 'artifacts', method: 'POST', run: async () => (await import('../artifacts/route')).POST(rq('/api/artifacts', 'POST', { content: '<html><body><h1>Page</h1></body></html>', agentId: 'missing' })) },
   { route: 'artifacts/[id]', method: 'PATCH', run: async () => (await import('../artifacts/[id]/route')).PATCH(rq('/api/artifacts/missing', 'PATCH', { archived: true })) },
   { route: 'artifacts/[id]/versions/[versionId]/restore', method: 'POST', run: async () => (await import('../artifacts/[id]/versions/[versionId]/restore/route')).POST(rq('/api/artifacts/missing/versions/missing/restore', 'POST', {})) },
   { route: 'artifacts/[id]/chat', method: 'POST', run: async () => (await import('../artifacts/[id]/chat/route')).POST(rq('/api/artifacts/missing/chat', 'POST', { message: 'Why?', mode: 'ask' })) },

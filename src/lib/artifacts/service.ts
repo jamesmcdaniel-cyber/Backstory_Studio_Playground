@@ -36,13 +36,17 @@ function chatOf(row: Artifact): ArtifactChatMessage[] {
 }
 
 export function isArtifactKind(value: unknown): value is ArtifactKind {
-  return value === 'report' || value === 'roi_dashboard' || value === 'document'
+  return value === 'report' || value === 'roi_dashboard' || value === 'document' || value === 'page'
 }
 
 /** Kinds whose documents carry scripts the viewer should run (own-origin only). */
 export function isInteractiveKind(kind: string): boolean {
-  return kind === 'roi_dashboard'
+  // An ROI dashboard (rendered by the platform) and an interactive page a
+  // person uploaded run their own scripts — sandboxed, with no network.
+  return kind === 'roi_dashboard' || kind === 'page'
 }
+
+export const ARTIFACT_UPLOAD_MAX_BYTES = 2_000_000
 
 type TriggerShape = {
   type?: unknown
@@ -361,8 +365,9 @@ A message can combine these — handle each part. Never write or return HTML: th
 
 const DOCUMENT_ASSISTANT_RULES = (isHtml: boolean) => `You are the assistant for the artifact this conversation is about. Decide what each message is:
 1. A QUESTION about it: answer in Markdown, grounded in the document (and your tools where a fact is missing). Do not return the document.
-2. A CHANGE to it ("remove the risks section", "add a timeline", "make it shorter"): produce the COMPLETE revised document — every section, not only the changed part, keeping everything the request does not touch exactly as it is — ${isHtml ? 'as HTML' : 'as Markdown in the same structure'}, and save it with revise_artifact. Then tell the user in one or two sentences what changed.
-3. A question or change that needs facts the document does not hold: fetch them with the tools you have — the Sales AI / Backstory MCP and the integrations that produced this artifact — and say where each fact came from.
+2. A CHANGE to it ("remove the risks section", "update the Q3 numbers", "make the header blue"): make it with edit_artifact — exact find-and-replace edits of the parts that change, everything else untouched. For a large page, locate the text first with find_in_artifact (and read_artifact for the surroundings) and copy the exact snippet into \`find\`. Use revise_artifact only to rewrite a small document from scratch. ${isHtml ? 'It is HTML: keep it valid, and if it is an interactive page keep its scripts working — chart data usually lives in inline <script> blocks, so a data change is an edit there.' : 'It is Markdown: keep its structure.'} Then tell the user in one or two sentences what changed.
+3. A COPY or VARIANT ("make a version for the EMEA team", "save this as a new one"): make the edits with saveAsNew: true and a fitting title, and share the new artifact's link. The original stays as it is.
+4. A question or change that needs facts the document does not hold: fetch them with the tools you have — the Sales AI / Backstory MCP and the integrations that produced this artifact — and say where each fact came from.
 Recompute with your tools only where a change needs new facts.`
 
 export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[] }): string {
@@ -378,7 +383,10 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
     return [ROI_ASSISTANT_RULES, '', `ARTIFACT: "${params.title}"`, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
   }
   const isHtml = looksLikeHtml(params.content.slice(0, 4_000))
-  const doc = params.content.length > CONTEXT_MAX_CHARS ? `${params.content.slice(0, CONTEXT_MAX_CHARS)}\n<!-- truncated: the document continues -->` : params.content
+  // A large page is not pasted in: the assistant reads it with its tools.
+  const doc = params.content.length > CONTEXT_MAX_CHARS
+    ? `${params.content.slice(0, 20_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. Use find_in_artifact and read_artifact to see the rest. -->`
+    : params.content
   return [DOCUMENT_ASSISTANT_RULES(isHtml), '', `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }
 

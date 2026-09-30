@@ -56,7 +56,7 @@ export type ArtifactView = {
   updatedAt: string
 }
 
-export type ArtifactListItem = Pick<ArtifactView, 'id' | 'kind' | 'title' | 'agent' | 'flow' | 'versionCount' | 'updatedAt' | 'createdAt'>
+export type ArtifactListItem = Pick<ArtifactView, 'id' | 'kind' | 'title' | 'agent' | 'flow' | 'versionCount' | 'updatedAt' | 'createdAt' | 'archivedAt'>
 
 export const ARTIFACT_KIND_LABEL: Record<ArtifactKind, string> = {
   report: 'Report',

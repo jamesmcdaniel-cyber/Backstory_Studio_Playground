@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Bot, FileOutput, Loader2, Search, Upload, Workflow } from 'lucide-react'
+import { ArchiveRestore, Bot, FileOutput, Loader2, Search, Upload, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { relativeTime } from '@/lib/relative-time'
+import { cn } from '@/lib/utils'
 import { ARTIFACT_KIND_LABEL, type ArtifactKind, type ArtifactListItem } from '@/lib/artifacts/types'
 import { ArtifactThumbnail } from '@/components/artifacts/artifact-thumbnail'
 
@@ -28,6 +29,22 @@ export default function ArtifactsPage() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const { can } = useAuth()
   const [archived, setArchived] = useState(false)
+  const [unarchiving, setUnarchiving] = useState<string | null>(null)
+
+  const unarchive = async (artifactId: string) => {
+    setUnarchiving(artifactId)
+    try {
+      const response = await fetch(`/api/artifacts/${artifactId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ archived: false }) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Could not unarchive it.')
+      setItems((current) => current?.map((item) => (item.id === artifactId ? { ...item, archivedAt: null } : item)) ?? current)
+      toast.success('Unarchived — it is back in the list.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setUnarchiving(null)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -73,7 +90,7 @@ export default function ArtifactsPage() {
           ))}
         </div>
         <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-          <input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> Show archived
+          <input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> Show archived{archived && items ? ` (${items.filter((item) => item.archivedAt).length})` : ''}
         </label>
       </div>
 
@@ -88,7 +105,7 @@ export default function ArtifactsPage() {
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {visible.map((item) => (
-            <li key={item.id}>
+            <li key={item.id} className={cn('relative', item.archivedAt && 'opacity-80')}>
               <Link href={`/artifacts/${item.id}`} className="group block overflow-hidden rounded-xl border border-border bg-background transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <ArtifactThumbnail artifactId={item.id} kind={item.kind} title={item.title} ready={item.versionCount > 0} className="border-b border-border" />
                 <span className="flex items-start justify-between gap-3 px-4 py-3 text-sm">
@@ -101,9 +118,17 @@ export default function ArtifactsPage() {
                       <span>updated {relativeTime(item.updatedAt)}</span>
                     </span>
                   </span>
-                  <Badge variant="secondary" className="shrink-0">{ARTIFACT_KIND_LABEL[item.kind]}</Badge>
+                  <span className="flex shrink-0 flex-col items-end gap-1">
+                    <Badge variant="secondary">{ARTIFACT_KIND_LABEL[item.kind]}</Badge>
+                    {item.archivedAt && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">Archived</Badge>}
+                  </span>
                 </span>
               </Link>
+              {item.archivedAt && (
+                <Button size="sm" variant="outline" className="absolute right-3 top-3 bg-white/95 shadow-sm" disabled={unarchiving === item.id} onClick={() => void unarchive(item.id)}>
+                  {unarchiving === item.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Unarchive
+                </Button>
+              )}
             </li>
           ))}
         </ul>

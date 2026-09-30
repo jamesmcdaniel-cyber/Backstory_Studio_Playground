@@ -124,7 +124,12 @@ export function ArtifactViewer({ id }: { id: string }) {
 
   const archive = async (archived: boolean) => {
     const response = await fetch(`/api/artifacts/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ archived }) })
-    if (!response.ok) { toast.error('Could not update the artifact.'); return }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      toast.error(data.error || 'Could not update the artifact.')
+      return
+    }
+    toast.success(archived ? 'Archived — find it under "Show archived" to bring it back.' : 'Unarchived — it is back in the list.')
     await refresh()
   }
 
@@ -166,13 +171,20 @@ export function ArtifactViewer({ id }: { id: string }) {
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => void archive(!artifact.archivedAt)}>
               {artifact.archivedAt ? <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
-              {artifact.archivedAt ? 'Restore' : 'Archive'}
+              {artifact.archivedAt ? 'Unarchive' : 'Archive'}
             </Button>
           )}
         </div>
       </div>
 
       <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />
+
+      {artifact.archivedAt && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
+          <span className="flex items-center gap-2"><Archive className="h-4 w-4" aria-hidden />Archived {relativeTime(artifact.archivedAt)} — it's hidden from the artifacts list.</span>
+          {canEdit && <Button size="sm" variant="outline" className="bg-white" onClick={() => void archive(false)}><ArchiveRestore className="mr-1.5 h-3.5 w-3.5" aria-hidden />Unarchive</Button>}
+        </div>
+      )}
 
       {pending?.executionId && <RunFeed executionId={pending.executionId} status="running" onStatusChange={() => void refresh()} />}
 

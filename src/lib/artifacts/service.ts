@@ -259,6 +259,7 @@ export async function listArtifacts(organizationId: string, options: { kind?: Ar
     versionCount: row.versionCount,
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
+    archivedAt: row.archivedAt?.toISOString() ?? null,
   }))
 }
 

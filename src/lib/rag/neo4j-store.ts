@@ -43,6 +43,10 @@ const DRIVER_TIMEOUTS = {
   maxTransactionRetryTime: 5_000,
 }
 const NEO4J_BREAKER = { threshold: 2, cooldownMs: 60_000 }
+// While the store stays down, each reopening waits twice as long as the last
+// (1, 2, 4 … up to 30 minutes), so a Neo4j that is gone for hours costs one
+// failed probe per window rather than one every minute. A success resets it.
+const NEO4J_MAX_COOLDOWN_MS = 30 * 60_000
 
 export function neo4jConfigured(): boolean {
   return Boolean(process.env.NEO4J_URI && process.env.NEO4J_USERNAME && process.env.NEO4J_PASSWORD)
@@ -76,6 +80,7 @@ type Driver = {
 export class Neo4jGraphStore implements GraphRagStore {
   private driverPromise: Promise<Driver> | null = null
   private breaker: BreakerState = initialBreakerState()
+  private consecutiveOpens = 0
 
   private async driver(): Promise<Driver> {
     if (!this.driverPromise) {
@@ -107,15 +112,21 @@ export class Neo4jGraphStore implements GraphRagStore {
     try {
       const result = await fn(await this.driver())
       this.breaker = breakerOnSuccess(this.breaker)
+      this.consecutiveOpens = 0
       return result
     } catch (error) {
-      this.breaker = breakerOnFailure(this.breaker, Date.now(), NEO4J_BREAKER)
+      const wasOpen = this.breaker.openUntilMs > 0
+      const cooldownMs = Math.min(NEO4J_BREAKER.cooldownMs * 2 ** this.consecutiveOpens, NEO4J_MAX_COOLDOWN_MS)
+      this.breaker = breakerOnFailure(this.breaker, Date.now(), { ...NEO4J_BREAKER, cooldownMs })
+      // Each (re)opening lengthens the next: the first trip, and every failed
+      // half-open probe after it.
+      if (this.breaker.openUntilMs > 0 && (!wasOpen || gate.probe)) this.consecutiveOpens += 1
       if (this.breaker.openUntilMs > 0) {
         // A failed driverPromise would otherwise stay poisoned; dropping it lets
         // the next half-open probe rebuild the connection from scratch.
         this.driverPromise = null
         apiLogger.warn('neo4j: circuit opened — RAG calls refused for cooldown', {
-          cooldownMs: NEO4J_BREAKER.cooldownMs,
+          cooldownMs,
           error: error instanceof Error ? error.message : String(error),
         })
       }

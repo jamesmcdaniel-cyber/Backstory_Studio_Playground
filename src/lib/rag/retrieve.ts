@@ -54,7 +54,31 @@ const truncate = (text: string, max = 500) => (text.length > max ? `${text.slice
  * embeddings aren't configured or the store is empty, so callers can always
  * fold the result in unconditionally.
  */
+/**
+ * How long graph context may hold up the run (or chat) asking for it. It is
+ * supplementary — the answer does not depend on it — so past the budget the
+ * caller proceeds without it rather than waiting out a slow or unreachable
+ * graph store (a dead Neo4j used to cost the first run after each cooldown
+ * 20-40 s). The lookup keeps going in the background and does no harm.
+ */
+export const RAG_BUDGET_MS = Number(process.env.RAG_BUDGET_MS) || 2_500
+
 export async function retrieveContext(
+  store: GraphRagStore,
+  options: RetrieveOptions,
+): Promise<RetrievedContext> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const budget = new Promise<RetrievedContext>((resolve) => {
+    timer = setTimeout(() => resolve({ hits: [], related: [] }), RAG_BUDGET_MS)
+  })
+  try {
+    return await Promise.race([retrieveContextUnbounded(store, options), budget])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function retrieveContextUnbounded(
   store: GraphRagStore,
   options: RetrieveOptions,
 ): Promise<RetrievedContext> {

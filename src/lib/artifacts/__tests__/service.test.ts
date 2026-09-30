@@ -91,3 +91,16 @@ test('an HTML file that opens with a comment banner is still HTML', async () => 
   assert.equal(looksLikeHtml('﻿<!doctype html><html></html>'), true)
   assert.equal(looksLikeHtml('<!-- note --> just some prose'), false)
 })
+
+test('the assistant follows the artifact\'s standing instructions, after the rules they cannot override', async () => {
+  const { readAssistantConfig } = await import('../assistant-settings')
+  assert.deepEqual(readAssistantConfig(null), { instructions: '', toolConnectionIds: [] })
+  assert.deepEqual(readAssistantConfig({ instructions: 'Write for a CFO', toolConnectionIds: ['nango:salesforce', 'mcp-raw-id'] }), { instructions: '', toolConnectionIds: [] }, 'an invalid entry rejects the whole stored value rather than granting part of it')
+  assert.deepEqual(readAssistantConfig({ instructions: 'Write for a CFO', toolConnectionIds: ['nango:salesforce'] }), { instructions: 'Write for a CFO', toolConnectionIds: ['nango:salesforce'] })
+  const prompt = buildArtifactPrompt({ mode: 'auto', title: 'Cockpit', content: '<html><body>x</body></html>', message: 'Tighten the summary', chat: [], instructions: 'Write for a CFO.' })
+  const rules = prompt.indexOf('Decide what each message is')
+  const standing = prompt.indexOf('STANDING INSTRUCTIONS FOR THIS ARTIFACT')
+  assert.ok(rules >= 0 && standing > rules, 'standing instructions come after the rules')
+  assert.ok(prompt.includes('Write for a CFO.'))
+  assert.ok(!buildArtifactPrompt({ mode: 'auto', title: 't', content: 'x', message: 'q', chat: [] }).includes('STANDING INSTRUCTIONS'), 'none set, none shown')
+})

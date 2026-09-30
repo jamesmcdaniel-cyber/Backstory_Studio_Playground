@@ -1763,6 +1763,9 @@ model Artifact {
   currentVersionId String?
   versionCount     Int       @default(0)
   chat             Json      @default("[]")
+  /// The artifact assistant's settings: standing instructions and the extra
+  /// connected tools it may use ({ instructions, toolConnectionIds }).
+  assistantConfig  Json?
   archivedAt       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt

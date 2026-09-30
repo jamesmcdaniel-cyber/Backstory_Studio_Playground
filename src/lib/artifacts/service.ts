@@ -4,6 +4,7 @@ import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdownTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
 import { reactArtifactDocument, reactComponentOf } from './runtime'
+import { readAssistantConfig } from './assistant-settings'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
@@ -393,7 +394,13 @@ const DOCUMENT_ASSISTANT_RULES = (isHtml: boolean) => `You are the assistant for
 5. THE SAME ANALYSIS FOR ANOTHER ACCOUNT — when get_artifact shows an \`analysis\` (the page was built from repository extracts, e.g. an Account 360 ROI dashboard): answer questions from its summary, and for "show me this for Acme" call list_roi_accounts, match the account, then start_roi_analysis; share the link it returns.
 Recompute with your tools only where a change needs new facts.`
 
-export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[] }): string {
+/** The owner's standing instructions, placed after the rules they must not override. */
+function standingInstructions(instructions?: string): string {
+  const text = instructions?.trim()
+  return text ? `\nSTANDING INSTRUCTIONS FOR THIS ARTIFACT (from the people who use it — follow them on every message unless they conflict with the rules above):\n${text}\n` : ''
+}
+
+export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[]; instructions?: string }): string {
   const history = params.chat
     .filter((m) => m.content && m.status !== 'pending')
     .slice(-8)
@@ -403,14 +410,14 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
   if (params.kind === 'roi_dashboard') {
     // The dashboard page is ~2 MB of rendered HTML; the agent works from the
     // facts and narrative its tools return, never from the page.
-    return [ROI_ASSISTANT_RULES, '', `ARTIFACT: "${params.title}"`, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
+    return [ROI_ASSISTANT_RULES, standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
   }
   const isHtml = looksLikeHtml(params.content.slice(0, 4_000))
   // A large page is not pasted in: the assistant reads it with its tools.
   const doc = params.content.length > CONTEXT_MAX_CHARS
     ? `${params.content.slice(0, 20_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. Use find_in_artifact and read_artifact to see the rest. -->`
     : params.content
-  return [DOCUMENT_ASSISTANT_RULES(isHtml), '', `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
+  return [DOCUMENT_ASSISTANT_RULES(isHtml), standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }
 
 /** Ask the producing agent a question, or ask it for a change (a new version). */
@@ -425,7 +432,8 @@ export async function askArtifact(params: { organizationId: string; userId: stri
   const agent = await prisma.agentTask.findFirst({ where: { id: row.agentTaskId, organizationId: params.organizationId, status: 'ACTIVE' } })
   if (!agent) throw new Error('The producing agent is no longer available.')
   const current = row.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: row.currentVersionId, organizationId: params.organizationId }, select: { content: true } }) : null
-  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat })
+  const assistant = readAssistantConfig(row.assistantConfig)
+  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat, instructions: assistant.instructions })
   const execution = await prisma.agentExecution.create({
     data: {
       agentType: agent.agentType,
@@ -439,7 +447,10 @@ export async function askArtifact(params: { organizationId: string; userId: stri
     },
   })
   try {
-    await dispatchAgentExecution({ executionId: execution.id, agentId: agent.id, organizationId: params.organizationId, userId: params.userId, input, ...(params.model ? { stepOverrides: { model: params.model } } : {}) })
+    // The model the person picked, and the connected tools they turned on
+    // for this artifact's assistant (granted for the run like a flow step's).
+    const stepOverrides = { ...(params.model ? { model: params.model } : {}), ...(assistant.toolConnectionIds.length ? { toolConnectionIds: assistant.toolConnectionIds } : {}) }
+    await dispatchAgentExecution({ executionId: execution.id, agentId: agent.id, organizationId: params.organizationId, userId: params.userId, input, ...(Object.keys(stepOverrides).length ? { stepOverrides } : {}) })
   } catch (error) {
     await prisma.agentExecution.update({ where: { id: execution.id, organizationId: params.organizationId }, data: { status: 'failed', error: error instanceof Error ? error.message : String(error), completedAt: new Date() } }).catch(() => undefined)
     throw error

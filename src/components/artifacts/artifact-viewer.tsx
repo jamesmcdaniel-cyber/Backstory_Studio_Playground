@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Workflow } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Settings2, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -16,6 +16,8 @@ import { chatModelLabel } from '@/lib/llm/models'
 import { RunFeed } from '@/components/runs/run-feed'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 import { ARTIFACT_FRAME_SANDBOX } from './artifact-frame'
+import { AssistantSettingsPanel } from './assistant-settings-panel'
+import { useAuth } from '@/hooks/use-auth'
 
 /**
  * One artifact: the document in a sandboxed frame, its versions, and the
@@ -24,13 +26,14 @@ import { ARTIFACT_FRAME_SANDBOX } from './artifact-frame'
  * and visible in the Runs panel like every other run.
  */
 export function ArtifactViewer({ id }: { id: string }) {
+  const { can } = useAuth()
   const [artifact, setArtifact] = useState<ArtifactView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [versionId, setVersionId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [markdown, setMarkdown] = useState<{ versionId: string; text: string } | null>(null)
-  const [panel, setPanel] = useState<'assistant' | 'history'>('assistant')
+  const [panel, setPanel] = useState<'assistant' | 'history' | 'settings'>('assistant')
   const [model, setModel] = useChatModel('artifact')
   const [restoring, setRestoring] = useState<string | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
@@ -130,6 +133,8 @@ export function ArtifactViewer({ id }: { id: string }) {
 
   const shownVersion = artifact.versions.find((v) => v.id === versionId) ?? artifact.versions[0]
   const canAsk = Boolean(artifact.agent)
+  // The assistant's settings change what it may do for everyone: agent editors only.
+  const canConfigure = canAsk && can('agent.write')
   const shownMarkdown = shownVersion?.format === 'markdown' ? shownVersion : null
 
   return (
@@ -217,21 +222,23 @@ export function ArtifactViewer({ id }: { id: string }) {
 
         <aside className="flex min-h-[420px] flex-col rounded-xl border border-border bg-background">
           <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
-            {(['assistant', 'history'] as const).map((tab) => (
+            {(['assistant', 'history', 'settings'] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
                 role="tab"
                 aria-selected={panel === tab}
                 onClick={() => setPanel(tab)}
-                className={cn('inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium', panel === tab ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                className={cn('inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-medium', panel === tab ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}
               >
-                {tab === 'assistant' ? <MessageSquare className="h-4 w-4 text-horizon-600" aria-hidden /> : <History className="h-4 w-4" aria-hidden />}
-                {tab === 'assistant' ? (artifact.agent ? artifact.agent.title : 'Conversation') : `History (${artifact.versionCount})`}
+                {tab === 'assistant' ? <MessageSquare className="h-4 w-4 text-horizon-600" aria-hidden /> : tab === 'history' ? <History className="h-4 w-4" aria-hidden /> : <Settings2 className="h-4 w-4" aria-hidden />}
+                {tab === 'assistant' ? <span className="max-w-[9rem] truncate">{artifact.agent ? artifact.agent.title : 'Conversation'}</span> : tab === 'history' ? `History (${artifact.versionCount})` : <span className="sr-only sm:not-sr-only">Settings</span>}
               </button>
             ))}
           </div>
-          {panel === 'history' ? (
+          {panel === 'settings' ? (
+            <AssistantSettingsPanel artifactId={artifact.id} canEdit={canConfigure} />
+          ) : panel === 'history' ? (
             <ol className="flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
               {artifact.versions.map((version) => {
                 const isCurrent = version.id === artifact.currentVersionId

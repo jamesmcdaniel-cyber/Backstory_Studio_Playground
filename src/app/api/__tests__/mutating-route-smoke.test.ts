@@ -251,6 +251,7 @@ const cases = (): Case[] => [
   { route: 'artifacts/[id]', method: 'PATCH', run: async () => (await import('../artifacts/[id]/route')).PATCH(rq('/api/artifacts/missing', 'PATCH', { archived: true })) },
   { route: 'artifacts/[id]/versions/[versionId]/restore', method: 'POST', run: async () => (await import('../artifacts/[id]/versions/[versionId]/restore/route')).POST(rq('/api/artifacts/missing/versions/missing/restore', 'POST', {})) },
   { route: 'artifacts/[id]/chat', method: 'POST', run: async () => (await import('../artifacts/[id]/chat/route')).POST(rq('/api/artifacts/missing/chat', 'POST', { message: 'Why?', mode: 'ask' })) },
+  { route: 'artifacts/[id]/assistant', method: 'PATCH', run: async () => (await import('../artifacts/[id]/assistant/route')).PATCH(rq('/api/artifacts/missing/assistant', 'PATCH', { instructions: 'Write for a CFO', toolConnectionIds: [] })) },
   { route: 'artifacts/[id]/rerun-flow', method: 'POST', run: async () => (await import('../artifacts/[id]/rerun-flow/route')).POST(rq('/api/artifacts/missing/rerun-flow', 'POST', { message: 'again' })) },
   { route: 'roi/sources', method: 'POST', run: async () => (await import('../roi/sources/route')).POST(rq('/api/roi/sources', 'POST', { documentId: 'missing', account: 'Acme', kind: 'activity' })) },
   { route: 'roi/analyses', method: 'POST', run: async () => (await import('../roi/analyses/route')).POST(rq('/api/roi/analyses', 'POST', { account: 'Acme', timeframe: 'last6_vs_prior6', datasetIds: ['missing'] })) },

@@ -475,7 +475,7 @@ export async function askArtifact(params: { organizationId: string; userId: stri
       agentTaskId: agent.id,
       status: 'pending',
       input: { prompt: input },
-      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message.slice(0, 300), link: `/artifacts/${row.id}` }),
+      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message, artifactToolQuery: message, link: `/artifacts/${row.id}` }),
       metadata: { title: `${params.mode === 'change' ? 'Change to' : params.mode === 'ask' ? 'Question on' : 'Assistant'} · ${row.title}` },
       userId: params.userId,
       organizationId: params.organizationId,

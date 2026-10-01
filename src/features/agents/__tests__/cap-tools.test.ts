@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { capDiscoveredTools, selectDiscoveredTools, type DiscoveredTool } from '../execute-agent'
+import { capDiscoveredTools, selectDiscoveredTools, priorityDiscoveredTools, type DiscoveredTool } from '../execute-agent'
 
 const client = { executeTool: async () => ({}) }
 
@@ -76,4 +76,12 @@ test('requested integration reads survive a large MCP catalog without embeddings
   const selected = capDiscoveredTools(list, 'org1', 'Read GitHub repositories, Salesforce query, n8n workflow tags and Backstory top records; edit artifact.')
   for (const name of [...required, 'artifact_edit_artifact']) assert.ok(selected.bindings.has(name), name)
   assert.equal(selected.tools.length, 64)
+})
+
+test('semantic ranking reserves artifact tools and explicitly requested integration reads', () => {
+  const editor = tool('artifact_edit_artifact', false)
+  editor.binding.provider = 'artifact'
+  const list = [editor, tool('nango_github_list_repositories', false), tool('nango_salesforce_query', false), tool('n8n_list_workflow_tags', false), ...Array.from({ length: 90 }, (_, i) => tool(`unrelated_${i}`, false))]
+  const priority = priorityDiscoveredTools(list, 'GitHub list repositories Salesforce query n8n workflow tags')
+  assert.deepEqual(new Set(priority.map(t => t.name)), new Set(list.slice(0, 4).map(t => t.name)))
 })

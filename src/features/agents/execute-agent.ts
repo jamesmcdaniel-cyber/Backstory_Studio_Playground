@@ -293,6 +293,24 @@ export type DiscoveredTool = {
 const TOOL_CAP = 64
 const WRITE_RESERVE = 16
 
+function requestedToolScore(tool: DiscoveredTool, query = ''): number {
+  const words = new Set(query.slice(0, 2000).toLowerCase().match(/[a-z0-9]+/g) ?? [])
+  const tokens = (tool.name.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .filter(word => word.length > 2 && !['nango', 'mcp', 'get', 'the'].includes(word))
+  const matched = tokens.filter(word => words.has(word)).length
+  // Full tool-name matches beat broad overlap (e.g. dozens of n8n workflow
+  // tools must not outrank the explicitly requested Salesforce query).
+  return matched < 2 ? 0 : 10 * matched / tokens.length + matched
+}
+
+/** Preserve the editing surface and explicit task reads before semantic ranking. */
+export function priorityDiscoveredTools(tools: DiscoveredTool[], query?: string): DiscoveredTool[] {
+  const artifact = tools.filter(tool => tool.binding.provider === 'artifact')
+  const requested = tools.filter(tool => tool.binding.provider !== 'artifact' && !tool.isWrite && requestedToolScore(tool, query) >= 2)
+    .sort((a, b) => requestedToolScore(b, query) - requestedToolScore(a, query))
+  return [...artifact, ...requested].slice(0, 24)
+}
+
 /**
  * Apply the global tool cap with a reserved write-tool budget: keep all write
  * tools (up to WRITE_RESERVE), then fill the rest with reads up to TOOL_CAP,
@@ -318,14 +336,12 @@ export function capDiscoveredTools(discovered: DiscoveredTool[], organizationId:
   // Embeddings are optional. Never let their absence reduce selection to
   // discovery order, which starves later integrations behind large MCP catalogs.
   if (query?.trim()) {
-    const words = new Set(query.slice(0, 2000).toLowerCase().match(/[a-z0-9]+/g) ?? [])
-    const score = (tool: DiscoveredTool) => (tool.name.toLowerCase().match(/[a-z0-9]+/g) ?? [])
-      .filter(word => word.length > 2 && words.has(word)).length
-    reads.sort((a, b) => score(b) - score(a))
+    reads.sort((a, b) => requestedToolScore(b, query) - requestedToolScore(a, query))
   }
 
   const picked: DiscoveredTool[] = [...writes.slice(0, WRITE_RESERVE)]
-  for (const d of reads) { if (picked.length >= TOOL_CAP) break; picked.push(d) }
+  const priorities = priorityDiscoveredTools(reads, query)
+  for (const d of [...priorities, ...reads.filter(tool => !priorities.includes(tool))]) { if (picked.length >= TOOL_CAP) break; picked.push(d) }
   for (const d of writes.slice(WRITE_RESERVE)) { if (picked.length >= TOOL_CAP) break; picked.push(d) }
 
   const dropped = writes.length + reads.length - picked.length
@@ -372,8 +388,9 @@ export async function selectDiscoveredTools(
     const writes = unique.filter((d) => d.isWrite)
     const reads = unique.filter((d) => !d.isWrite)
     const keptWrites = writes.slice(0, WRITE_RESERVE)
-    const budget = Math.max(0, TOOL_CAP - keptWrites.length)
-    const candidates = [...reads, ...writes.slice(WRITE_RESERVE)]
+    const priority = priorityDiscoveredTools(reads, query)
+    const budget = Math.max(0, TOOL_CAP - keptWrites.length - priority.length)
+    const candidates = [...reads.filter(tool => !priority.includes(tool)), ...writes.slice(WRITE_RESERVE)]
 
     const [queryVec, docVecs] = await Promise.all([
       embedQuery(query.slice(0, 2000)),
@@ -385,7 +402,7 @@ export async function selectDiscoveredTools(
       .slice(0, budget)
       .map((r) => r.d)
 
-    const picked = [...keptWrites, ...ranked]
+    const picked = [...keptWrites, ...priority, ...ranked]
     apiLogger.info('loadTools: selected tools by relevance to the objective', {
       organizationId, discovered: unique.length, cap: TOOL_CAP, kept: picked.length, dropped: unique.length - picked.length,
     })
@@ -947,15 +964,15 @@ async function runAgentExecutionInner(
     const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
     // A run started from an artifact's chat gets that artifact's tools.
     const artifactContext = await (async () => {
-      const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown; artifactBaseVersionId?: unknown }
+      const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown; artifactToolQuery?: unknown; artifactBaseVersionId?: unknown }
       if (trigger.type !== 'artifact' || typeof trigger.artifactId !== 'string') return undefined
       const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true } })
-      return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
+      return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, toolQuery: typeof trigger.artifactToolQuery === 'string' ? trigger.artifactToolQuery : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
     })()
     const policy = data.stepOverrides?.toolPolicy
     // Artifact prompts contain extensive source/instructions. Rank against the
     // actual latest request first, not the first 2 KB of that boilerplate.
-    const toolQuery = [artifactContext?.request, data.input, agent.objective].filter(Boolean).join('\n')
+    const toolQuery = artifactContext?.toolQuery || artifactContext?.request || [data.input, agent.objective].filter(Boolean).join('\n')
     const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy)
     const { bindings, unavailable } = loaded
 

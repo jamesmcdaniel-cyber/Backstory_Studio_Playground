@@ -21,7 +21,7 @@ type ExecutionDetail = {
  * toast. Ticks come over the execution's realtime channel; a slow poll
  * covers deployments without one.
  */
-export function RunFeed({ executionId, status, onStatusChange }: { executionId: string; status: string; onStatusChange?: (status: string) => void }) {
+export function RunFeed({ executionId, status, onStatusChange, compact = false }: { executionId: string; status: string; onStatusChange?: (status: string) => void; compact?: boolean }) {
   const [detail, setDetail] = useState<ExecutionDetail | null>(null)
   const live = !isTerminalRunStatus(status)
 
@@ -48,8 +48,8 @@ export function RunFeed({ executionId, status, onStatusChange }: { executionId: 
   const latest = rows[rows.length - 1]
 
   return (
-    <div className="rounded-xl border border-border bg-muted/30 p-4">
-      <div className="flex items-center justify-between gap-2">
+    <div className={`min-w-0 rounded-xl border border-border bg-muted/30 ${compact ? 'p-3' : 'p-4'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-medium">
           {live && <Loader2 className="h-4 w-4 animate-spin text-horizon-600" aria-hidden />}
           {live ? 'The agent is working' : 'Run finished'}
@@ -58,9 +58,9 @@ export function RunFeed({ executionId, status, onStatusChange }: { executionId: 
           Open in Runs <ExternalLink className="h-3 w-3" aria-hidden />
         </Link>
       </div>
-      {live && <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"><TypewriterStatus />{latest && <span>· {feedLabel(latest)}</span>}</div>}
+      {live && <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><TypewriterStatus />{latest && <span className="min-w-0 break-words">· {feedLabel(latest)}</span>}</div>}
       {rows.length > 0 && (
-        <ol className="mt-3 space-y-1.5 border-l border-border pl-3 text-xs text-muted-foreground" aria-live="polite">
+        <ol className={`mt-3 space-y-1.5 border-l border-border pl-3 text-xs text-muted-foreground ${compact ? 'max-h-56 overflow-y-auto break-words pr-1' : ''}`} aria-live="polite">
           {rows.map((item) => (
             <li key={item.key} className="relative">
               <span className="absolute -left-[15px] top-1.5 h-1.5 w-1.5 rounded-full bg-horizon-400" aria-hidden />

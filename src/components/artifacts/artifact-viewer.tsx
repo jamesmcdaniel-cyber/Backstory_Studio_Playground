@@ -221,20 +221,6 @@ export function ArtifactViewer({ id }: { id: string }) {
         </div>
       )}
 
-      {pending?.executionId && <RunFeed executionId={pending.executionId} status="running" onStatusChange={() => void refresh()} />}
-
-      {artifact.build && building && artifact.build.executionId && (
-        <RunFeed executionId={artifact.build.executionId} status={artifact.build.status} onStatusChange={() => void refresh()} />
-      )}
-      {artifact.build && ['failed', 'blocked', 'cancelled'].includes(artifact.build.status) && (
-        <div className="rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-          <p className="font-medium">Building the dashboard for {artifact.build.account} {artifact.build.status === 'cancelled' ? 'was cancelled' : 'did not finish'}.</p>
-          {artifact.build.error && <p className="mt-1">{artifact.build.error}</p>}
-          {artifact.build.executionId && <Link href={`/agents?run=${artifact.build.executionId}`} className="mt-2 inline-block underline">Open the run</Link>}
-        </div>
-      )}
-
-      {artifact.versions.length > 0 && (
       <div
         ref={workspaceRef}
         className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:h-[var(--workspace-h)] xl:grid-cols-[minmax(0,1fr)_340px]"
@@ -333,7 +319,7 @@ export function ArtifactViewer({ id }: { id: string }) {
             </ol>
           ) : (
             <>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+          <div aria-label="Artifact conversation" className="min-h-0 flex-1 space-y-3 overflow-y-auto break-words px-4 py-3">
             {!artifact.chat.length && canAsk && (
               <div className="flex flex-col gap-1.5">
                 {(artifact.kind === 'roi_dashboard'
@@ -356,7 +342,8 @@ export function ArtifactViewer({ id }: { id: string }) {
               <div key={`${m.createdAt}-${index}`} className={cn('text-sm', m.role === 'user' ? 'ml-6 rounded-xl bg-horizon-50 px-3 py-2 dark:bg-horizon-900/40' : '')}>
                 {m.role === 'user' && m.mode === 'change' && <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wider text-horizon-700">Change request</span>}
                 {m.role === 'agent' && m.status === 'pending' ? (
-                  <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {m.mode === 'change' ? 'Revising…' : 'Working on it…'}</div>
+                  m.executionId ? <RunFeed executionId={m.executionId} status="running" compact onStatusChange={refresh} /> :
+                    <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {m.mode === 'change' ? 'Revising…' : 'Working on it…'}</div>
                 ) : m.role === 'agent' ? (
                   <div className={cn(m.status === 'failed' && 'text-destructive')}>
                     <Markdown>{m.content}</Markdown>
@@ -368,6 +355,16 @@ export function ArtifactViewer({ id }: { id: string }) {
                 )}
               </div>
             ))}
+            {artifact.build && building && artifact.build.executionId && artifact.build.executionId !== pending?.executionId && (
+              <RunFeed executionId={artifact.build.executionId} status={artifact.build.status} compact onStatusChange={refresh} />
+            )}
+            {artifact.build && ['failed', 'blocked', 'cancelled'].includes(artifact.build.status) && (
+              <div role="status" className="rounded-lg border border-amber-300/60 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                <p className="font-medium">Building the dashboard for {artifact.build.account} {artifact.build.status === 'cancelled' ? 'was cancelled' : 'did not finish'}.</p>
+                {artifact.build.error && <p className="mt-1">{artifact.build.error}</p>}
+                {artifact.build.executionId && <Link href={`/agents?run=${artifact.build.executionId}`} className="mt-2 inline-block underline">Open the run</Link>}
+              </div>
+            )}
             <div ref={chatEnd} />
           </div>
           {!canEdit && artifact.agent && (
@@ -406,7 +403,6 @@ export function ArtifactViewer({ id }: { id: string }) {
           )}
         </aside>
       </div>
-      )}
     </div>
   )
 }

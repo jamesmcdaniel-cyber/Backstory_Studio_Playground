@@ -1,0 +1,65 @@
+Artifact templates with isolated personal copilots — 2026-10-01
+
+Behavior
+- Existing public links remain view-only unless an editor explicitly enables
+  “Offer as a template with AI Copilot” in Share.
+- Signed-in recipients use the public link to create/open one personal copy
+  per source, workspace and user. A unique constraint makes concurrent requests
+  idempotent, with the agent and initial version in the same transaction.
+- Only published source is exported, including data already embedded in it.
+  Chat, history, private app state, ROI facts, credentials, integrations and
+  source-agent/flow configuration are not copied.
+- Each copy has its own private copilot, versions and app state. Its owner can
+  edit content and restore versions; other users cannot read or edit it.
+- Copilots have bound artifact editing plus inline Python/JavaScript computation.
+  They do not discover workspace integrations or repository documents, delegate,
+  run flows, or save variants elsewhere. Generic execution and forged artifact
+  targets are rejected. The platform model is fixed server-side.
+- Configuration controls are hidden, service APIs reject mutations, and database
+  triggers protect the artifact binding/sharing and copilot runtime definition.
+  The configuration lock survives chat responses and version restores.
+- Revocation stops new copies. Existing independent copies remain available.
+
+Verification
+- Full default suite: 4,119 passed; 100 skipped; zero failures (4,219 total).
+- Separate targeted suite on a fresh local PostgreSQL database, with all Prisma
+  migrations applied: 16 passed; zero skipped/failures. Includes concurrent copy
+  creation, two recipients, cross-workspace export isolation, private context
+  omission, denied configuration mutations through services and direct SQL,
+  restricted tools, forged execution rejection, source protection, revocation,
+  version/state regressions and Viewer-role restore permissions.
+- TypeScript and ESLint passed; production build also checks both.
+- Live synthetic source: cmups7ux50001q7jqodflv1ue.
+- Live copy: 2229d115-6726-49a1-b647-751c2caca76a.
+- Three concurrent live uses returned the same copy.
+- Platform-provider run cmups7wix000dq7jqhf21tp4q completed on claude-opus-5-5.
+  It changed only the personal heading and published copy version 2. The source
+  remained version 1 with its original heading. Assistant/sharing/agent-attach
+  mutation attempts on the copy were rejected.
+- Chrome: public template page displayed the original and the copy CTA. Clicking
+  it opened the signed-in user's independent copy, with AI Copilot and History,
+  no artifact settings tab, model picker or Share control. A second request sent
+  from Chrome completed as cmupsefq00003l804f81ogz6v and published copy version 3,
+  “My live Chrome version”; source version 1 stayed unchanged. Chrome switched
+  to other user work afterward, so the final version-3 frame was checked on the
+  backend, not visually re-inspected in Chrome.
+
+Deploy result
+- URL: https://backstory-studio.vercel.app
+- Target/status: production / READY, verified by inspecting the actual alias.
+- Deployment: dpl_9MHRok5xHKunk821QF6deJNW9DGL
+  https://backstory-studio-1c58ru9ul-backstory.vercel.app
+- Code commit: 3e4de511 (includes 1c9e93b5 and e69342ca).
+- Framework: Next.js 15.5.24; optimized production build, type/lint and WASM
+  production smoke checks completed successfully.
+- Fly worker: deployment-01M3W6S6J5TVSJ56Z891J2HF08; healthy rolling deployment.
+- Migration: 20261002000000_artifact_template_copies applied before exposing UI.
+- Post-deploy observability: /api/health returned HTTP 200. The deployment's
+  error-level query for the previous 15 minutes returned no matching logs.
+  Drains were not audited; no monitoring or hosting-capacity settings changed.
+
+Scope
+This verifies the template-copy feature, not platform-wide production readiness.
+The previously reported sustained-load capacity limit of the isolated Python
+validator is not changed by this release. No existing customer artifact was
+made public or converted into a template by this implementation.

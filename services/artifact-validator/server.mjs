@@ -1,5 +1,6 @@
 import http from 'node:http'
-import { fork } from 'node:child_process'
+import { fork, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { mkdtemp, chown, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -22,7 +23,7 @@ http.createServer(async (req, res) => {
   let release
   try { release = await queue.acquire(cancelled.signal) }
   catch (error) { if (!res.destroyed) { res.setHeader('Retry-After', '3'); reply(res, 429, { errors: [error.message] }) } return }
-  let child, directory, timer
+  let child, directory, timer, uid
   const started = Date.now()
   try {
     const chunks = []; let size = 0
@@ -32,7 +33,7 @@ http.createServer(async (req, res) => {
     const input = JSON.parse(Buffer.concat(chunks).toString())
     if (typeof input.html !== 'string' || !input.html.trim()) throw new Error('HTML is required')
     if (nextUid >= 65534) throw new Error('Validator must restart before UID reuse')
-    const uid = nextUid++
+    uid = nextUid++
     directory = await mkdtemp(join(tmpdir(), 'artifact-validation-'))
     await chown(directory, uid, uid)
     child = fork(new URL('./runner.mjs', import.meta.url), [], {
@@ -56,6 +57,9 @@ http.createServer(async (req, res) => {
   } finally {
     clearTimeout(timer)
     if (child?.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch {} }
+    // Chromium may create its own process group. Kill this job's never-reused
+    // UID as well, including on timeout/crash; no other job shares the UID.
+    if (uid) await promisify(execFile)('/usr/bin/pkill', ['-KILL', '-u', String(uid)], { timeout: 5000 }).catch(() => {})
     if (directory) await rm(directory, { recursive: true, force: true })
     release()
   }

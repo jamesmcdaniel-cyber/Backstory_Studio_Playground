@@ -9,7 +9,7 @@ process.once('message', async ({ html }) => {
   const errors = []
   const record = message => { if (errors.length < 8) errors.push(String(message).slice(0, 500)) }
   const mime = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.css': 'text/css', '.zip': 'application/zip', '.whl': 'application/octet-stream' }
-  let origin
+  let origin, browser
   const server = http.createServer(async (req, res) => {
     const path = new URL(req.url, 'http://localhost').pathname
     res.setHeader('Access-Control-Allow-Origin', '*')
@@ -33,7 +33,7 @@ process.once('message', async ({ html }) => {
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
     origin = `http://127.0.0.1:${server.address().port}`
-    const browser = await chromium.launch({ headless: true, chromiumSandbox: true, args: ['--disable-dev-shm-usage'], timeout: 15000 })
+    browser = await chromium.launch({ headless: true, chromiumSandbox: true, args: ['--disable-dev-shm-usage'], timeout: 15000 })
     // The opaque sandbox already forbids service workers. Playwright's block
     // shim accesses navigator.serviceWorker and itself throws in this frame.
     const context = await browser.newContext({ acceptDownloads: false })
@@ -90,7 +90,6 @@ process.once('message', async ({ html }) => {
     }
     for (const message of await frame.locator('#__artifact_error,[data-backstory-runtime-error]').allTextContents()) record(message)
     process.send({ ok: !errors.length, errors, checks, limits: 'Tests cover declared workflows and synthetic storage, not arbitrary business rules or real integration side effects.' })
-    await browser.close()
   } catch (error) { record(error.message); process.send({ ok: false, errors }) }
-  finally { server.close(); process.disconnect() }
+  finally { await browser?.close().catch(() => {}); server.close(); process.disconnect() }
 })

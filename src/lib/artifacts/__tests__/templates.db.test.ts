@@ -116,4 +116,19 @@ if (!database) {
     const execution = await db.agentExecution.create({ data: { organizationId: recipient.organizationId, userId: recipient.userId, agentTaskId: copilotId, agentType: 'CUSTOM', status: 'pending', input: {}, trigger: { type: 'artifact', artifactId: sourceId } } })
     await assert.rejects(runAgentExecution({ organizationId: recipient.organizationId, userId: recipient.userId, agentId: copilotId, executionId: execution.id, input: 'Modify original' }), /only run from its own template copy/)
   })
+
+  test('restoring through the API keeps owner editing available and settings locked for a Viewer', async () => {
+    const { installTestAuth } = await import('@/lib/server/__tests__/test-auth')
+    const { NextRequest } = await import('next/server')
+    const { POST } = await import('@/app/api/artifacts/[id]/versions/[versionId]/restore/route')
+    installTestAuth({ ...recipient.auth, can: permission => permission === 'agent.read' })
+    const first = await db.artifactVersion.findFirstOrThrow({ where: { organizationId: recipient.organizationId, artifactId: copyId, number: 1 } })
+    const response = await POST(new NextRequest(`https://qa.invalid/api/artifacts/${copyId}/versions/${first.id}/restore`, { method: 'POST' }))
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.equal(payload.artifact.configurationLocked, true)
+    assert.equal(payload.artifact.permissions.canEdit, true)
+    assert.equal(payload.artifact.permissions.canConfigure, false)
+    assert.equal(payload.artifact.permissions.canShare, false)
+  })
 }

@@ -26,7 +26,7 @@ React artifacts import `useArtifactState`, `runPython`, and `cancelPython` from 
 
 ## Verification evidence
 
-The latest full local suite passed 4,098 tests with zero failures and 99 environment-dependent skips. Actual Pyodide execution of the first-party worker code returned mean 20 for values 10, 20, 30, and division by zero returned a Python error. Type checking, lint, production build, and the production WASM asset smoke check passed.
+The latest full local suite passed 4,099 tests with zero failures and 99 environment-dependent skips. Actual Pyodide execution of the first-party worker code returned mean 20 for values 10, 20, 30, and division by zero returned a Python error. Type checking, lint, production build, and the production WASM asset smoke check passed.
 
 Isolated production database checks confirmed three simultaneous saves with unique version numbers; invalid JavaScript and inline Python rejected without changing the current version; stale source and state writes rejected; application data isolated by user; and state preserved across source revisions. The fixture is [Hardened artifact integrity](https://backstory-studio.vercel.app/artifacts/cmup2hexn0001q7jv5avr77dz).
 
@@ -81,4 +81,8 @@ The [isolated n8n parity workflow](https://backstoryai.app.n8n.cloud/workflow/Yy
 
 Backstory soak testing ran three independent flows concurrently every minute for 16 cycles, from 07:05 to 07:20 UTC on October 1. All 48 executions succeeded. Cases covered JavaScript to Python to conditional merge, isolated per-item failure, and concurrent loops with ordered output. Synthetic assertions ran inside the workflows, not merely against HTTP status. No schedules, emails, Slack posts or customer records were changed.
 
-The full local suite passed 4,098 tests with 99 environment-dependent skips. An additional callback regression test covers verified creation/reconnection and confirms that failed handshakes never write credentials. The separate validator remains a single machine; high availability and multi-day endurance are not claimed.
+The final local suite passed 4,099 tests with 99 environment-dependent skips, including the new callback regression test covering verified creation/reconnection and confirming that failed handshakes never write credentials. Three simultaneous validation requests produced one successful validation and two retryable 429 responses, confirming bounded admission. The separate validator remains a single machine; high availability and multi-day endurance are not claimed.
+
+Three more n8n executions, 4216 through 4218, were submitted concurrently; all completed successfully with both assertions passing. Two additional Backstory UI runs of the ordered-loop fixture succeeded, including a run initiated at 360px. At 768px, the builder exposed its compact Actions and Panels menus. On the new production deployment, the 360px artifact side panel fit without horizontal overflow, settings loaded, and Tab/Return triggered the expected Python calculation.
+
+Release verification: commit `1dca72b2` was pushed to main. Vercel deployment `dpl_D28MVPKmnCtfnk9dCa6CkReHzSw1` built successfully in 3 minutes 50 seconds and is Ready; inspection of the primary domain confirmed that deployment. The queue worker image is `deployment-01M3V5CHKGF0FR69JBF81K3W98`, and the validator image is `deployment-01M3V5185JG1M6YDN09MBWGWBD`. Fly deployment health checks passed. Production health returned `ok`, the new worker asset was served, and the SDK fixture, generated tracker and Revenue Lab all passed isolated startup validation after rollout.

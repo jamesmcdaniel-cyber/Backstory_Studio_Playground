@@ -1,0 +1,68 @@
+Runtime, loading and cache hardening — 2026-10-01
+
+STATUS: Implementation deployed, but NOT all P1/P2 findings are closed.
+The isolated validator's sustained-load capacity remains a P1 infrastructure blocker.
+
+Implemented
+- Session cache resets abort/invalidate pending requests and clear mounted consumers.
+  Snapshot consumers also reject responses from a previous session.
+- Artifact refreshes are coalesced, bounded by a timeout, and cancelled on teardown
+  or local mutation. Failed background refreshes retain the visible artifact.
+- Private-state failures retain drafts. Retry reconciles the remote revision,
+  recognizes a committed save whose response was lost (independent of JSON key
+  ordering), and refuses to overwrite conflicting data. Reload/export are available.
+- Artifact polling uses an unchanged metadata check. History is paginated in
+  batches of 20; embedded previews now check for newer versions too.
+- Unsaved drafts defer frame replacement; the parent warns before unloading.
+- Python assets use versioned paths with immutable caching. Legacy URLs revalidate.
+  Startup/package loading is separate from execution deadlines. Progress messages
+  are protocol-negotiated so old, already-open clients remain compatible.
+- Isolated browser validation now has bounded FIFO admission, bounded backoff,
+  explicit interaction assertions, and synthetic saved-state/reload checks.
+  New interactive versions require a declared primary-workflow test.
+  Browser cleanup covers failure paths and all processes of the job-specific UID.
+- Unauthorized proposal polling stops instead of repeatedly generating 403s.
+
+Evidence
+- Full local suite: 4,115 passed, 99 database-dependent skips, 0 failed (4,214 total).
+- Admission queue tests: 2 passed. Typecheck and lint passed.
+- Targeted regressions cover late session responses, optimistic mutation races,
+  failed reads/writes, lost-response retries, conflicting remote saves, and
+  preserving an unsaved frame during a version change.
+- Initial live validator burst: 3/3 Python artifacts passed interaction and
+  synthetic persistence checks. Wrong assertions and missing coverage were rejected.
+- The existing four-integration QA flow succeeded in about 21 seconds and
+  published version 10. Its connected agent published version 11 with the
+  requested footer. The private note retained revision 1 and its original value.
+- Chrome displayed version 11, its saved note, and a real Python result:
+  "Python: 4 / 4 healthy".
+- Live metadata pagination returned older versions [2,1]; the summary API returned
+  401 without authentication. Versioned WASM returned immutable caching; the
+  legacy WASM URL returned max-age=0, must-revalidate.
+- Production alias was verified Ready at deployment dpl_EmVg2fLTaTuBAT5ZXLhUns8HbiGw
+  (https://backstory-studio-ia94ocnev-backstory.vercel.app). App code is fc856aed;
+  bfdbab79 changes only the validator Docker build check. Both Fly services deployed.
+
+Still open — do not report these as passes
+1. P1 sustained validator capacity. Longer runs exhaust shared CPU availability.
+   A three-second /proc/stat sample measured 91.304% CPU steal, 0% idle, and
+   8.696% active time while validation work was waiting. Raising assertion timeouts
+   from 5s to 15s did not resolve this. The retry-aware soak had failures at
+   expectText #result, and flow cmuppxw6z000bq7l9bn6kdtdt failed validation rather
+   than replacing the good artifact. Version 11 and saved data remained intact.
+   Approval has been requested for a fixed performance-CPU validator. No CPU
+   upgrade or additional hosting capacity has been provisioned.
+2. Final live two-tab refresh/unsaved-draft and embedded-preview confirmation.
+   Component regression passed, but external refresh could not complete after
+   the validation failure; Chrome then returned to the user's active work.
+   The QA tab contains an unsaved synthetic draft, not a changed saved note.
+
+Next closure gate
+- With approved compute, resize the existing isolated validator; keep credentials
+  excluded and sandbox enforcement unchanged.
+- Repeat bounded concurrent and sustained Python validation, including negative
+  tests, verify the queue drains and browser processes are reaped, and rerun the
+  connected flow plus agent revision.
+- In available Chrome tabs, confirm automatic clean-viewer refresh and preservation
+  of the synthetic unsaved draft, then remove only that test draft with approval.
+- Do not claim platform-wide production readiness from these targeted tests.

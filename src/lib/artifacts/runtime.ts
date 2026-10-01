@@ -248,18 +248,21 @@ function decodeText(value: string): string {
   return value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
 }
 
-/** Runs each Python block in order with Pyodide; print() output lands under the block, or in the element its data-output names. */
+/** Inline Python uses the same cancellable worker as React; never the UI thread. */
 const PYTHON_RUNNER = String.raw`
 (async function(){
   var blocks = Array.prototype.slice.call(document.querySelectorAll('script[type="text/x-artifact-python"]'));
   if (!blocks.length) return;
+  window.__artifactPythonStartupState = 'running';
   var badge = document.createElement('div');
   badge.setAttribute('style','position:fixed;right:12px;bottom:12px;z-index:2147483646;background:#0f172a;color:#fff;border-radius:999px;padding:6px 12px;font:12px ui-sans-serif,system-ui,sans-serif;opacity:.9');
   badge.textContent = 'Starting Python…';
   document.body.appendChild(badge);
+  var cancel = document.createElement('button');
+  cancel.textContent = 'Cancel Python';
+  cancel.onclick = function(){ window.BackstoryArtifact.cancelPython(); };
+  badge.appendChild(cancel);
   try {
-    var py = await window.loadPyodide({ indexURL: '/vendor/pyodide/' });
-    window.pyodide = py;
     for (var i = 0; i < blocks.length; i++) {
       var block = blocks[i];
       var named = block.getAttribute('data-output');
@@ -269,17 +272,16 @@ const PYTHON_RUNNER = String.raw`
         target.setAttribute('style','background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px 14px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;margin:8px 0');
         block.parentNode.insertBefore(target, block.nextSibling);
       }
-      (function(t){ var w = function(line){ t.appendChild(document.createTextNode(line + '\n')); }; py.setStdout({ batched: w }); py.setStderr({ batched: w }); })(target);
       var code = block.textContent;
-      badge.textContent = 'Running Python…';
-      await py.loadPackagesFromImports(code, { messageCallback: function(){} });
-      var result = await py.runPythonAsync(code);
+      var result = await window.BackstoryArtifact.runPython(code, null, {inlineSession:true,timeoutMs:30000,onOutput:(function(t){return function(text){t.appendChild(document.createTextNode(text));};})(target)});
       if (result !== undefined && result !== null && !target.textContent) target.textContent = String(result);
       if (!named && !target.textContent) target.remove();
     }
   } catch (error) {
     window.__artifactError(error);
+    window.__artifactPythonStartupState = 'error';
   } finally {
+    if (window.__artifactPythonStartupState !== 'error') window.__artifactPythonStartupState = 'complete';
     badge.remove();
   }
 })();
@@ -335,7 +337,6 @@ export function compileArtifactPage(html: string): string {
     .filter((src, index, all) => all.indexOf(src) === index)
     .map((src) => `<script src="${src}"></script>${src === REACT ? '<script>window.react=window.React</script>' : ''}`)
   if (isCodeFile) tags.push('<script src="/vendor/highlight.min.js"></script>')
-  if (python) tags.push('<script src="/vendor/pyodide/pyodide.js"></script>')
   const head = `<script>${prelude()}</script>${tags.join('')}`
   // The runtime and libraries load before the first page script runs.
   const firstScript = compiled.search(/<script\b/i)

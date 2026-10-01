@@ -1,6 +1,6 @@
 # Artifact runtime and agent directive hardening
 
-This audit records the artifact fixes released after the September 30 live QA session. The release adds explicit artifact generation, worker Python, private durable application state, and safer version saves. It does not establish that arbitrary generated websites are production-ready. The final live Chrome retest was blocked by a locked Mac.
+This audit records artifact fixes and live verification from September 30 through October 1. The release adds explicit artifact generation, worker Python, private durable application state, and safer version saves. Live Chrome testing has resumed. These checks do not establish that arbitrary generated websites are production-ready.
 
 ## Using the directive
 
@@ -43,12 +43,12 @@ The producing agent's artifact copilot then made a targeted edit in 10.9 seconds
 
 ## Remaining work and limits
 
-1. Chrome now verifies the generated tracker add/edit validation, reload persistence, source-version persistence, Python parity, filtering and CSV export. Keyboard-only operation, mobile layout, and a second signed-in user's browser isolation remain unverified.
+1. Chrome verifies the generated tracker add/edit validation, reload persistence, source-version persistence, Python parity, filtering and CSV export. Phone-width artifact navigation, copilot edits, history and Python calculations were also exercised. Physical iOS/Android devices and a second signed-in user's browser isolation remain unverified.
 2. A required isolated browser startup gate now rejects startup exceptions, empty rendered artifacts and infinite-loop startup before database publication. It is not a proof of business logic, every interaction, delayed errors or dynamically constructed Python. The single-machine validator rejects excess concurrency with retryable errors; prolonged load and high availability remain unverified.
-3. Legacy inline Python retains main-thread DOM compatibility. New worker computations are cancellable; the legacy DOM path does not have the same termination guarantee.
+3. The compatibility decision is worker-only Python, including inline blocks. DOM-dependent historical source is retained but must be migrated before it can run or be restored successfully. The one current inline-DOM artifact found in the user's non-archived artifact inventory was migrated through its producing agent.
 4. Existing applications must adopt the durable-state hook. Previously lost in-memory edits cannot be recovered or automatically migrated.
-5. The previously observed custom Backstory MCP 401 still requires reconnecting or correcting that connection. Native Backstory access worked in the prior tests. Generic HTTP nodes do not gain arbitrary Nango authentication from this release.
-6. The earlier n8n comparison inspected workflow metadata without executing production workflows. ROI/research live paths and prolonged load/soak coverage remain unverified. No blanket claim that all session findings are closed is made.
+5. Custom Backstory MCP reconnection succeeded after user sign-in: 17 tools were discovered and `top_records` returned successfully. Verified health was repaired, and OAuth callbacks now clear stale error/health metadata after a successful handshake. Generic HTTP nodes do not gain arbitrary Nango authentication from this release.
+6. A manual-only n8n parity workflow now verifies transformation, looping, ordered partial-failure collection and merging without external writes. Backstory passed a 15-minute, 48-execution soak. The original Morning Brief workflow still requires approval to enable MCP access for deeper inspection; customer Slack delivery was not exercised. These bounded tests do not establish all-workflow parity or prolonged production capacity.
 
 ## Live Chrome and isolated validation follow up
 
@@ -68,3 +68,17 @@ Production worker/database checks confirmed that runtime failure leaves the curr
 - Queue worker image: `deployment-01M3TZYSNDHT2DFWCKRMNHGWJE`; both machines passed deployment health checks.
 - Required production settings: `ARTIFACT_VALIDATOR_URL`, sensitive `ARTIFACT_VALIDATOR_TOKEN`, and `ARTIFACT_RUNTIME_PREFLIGHT=required`. Development without configured validation retains syntax checks only.
 - Runtime publication fixture: [Runtime publishing gate](https://backstory-studio.vercel.app/artifacts/cmup43aff0001q7jqmdhzbaqt).
+
+## October 1 closure verification
+
+Inline Python now shares the cancellable worker API with React. Sequential inline blocks retain their Python namespace; ordinary SDK calls keep separate namespaces. Output is bounded to 64 KiB per stream per job and delivered with completion, preventing print floods from overwhelming the UI message queue. Cancel and timeout reset the worker. The startup validator waits for inline Python to finish, so a visible heading cannot hide an unfinished or failed startup computation.
+
+Live isolated validation accepted shared-scope inline Python and compiled React, rejected legacy DOM imports, infinite Python, infinite JavaScript, an uncaught exception and an empty page, then accepted a recovery page. Unauthenticated access remained rejected. Cold inline Python validation took 19.4 seconds; the infinite Python check was rejected after 22.5 seconds. This is startup verification, not coverage of every button or delayed computation.
+
+The [four-language QA artifact](https://backstory-studio.vercel.app/artifacts/cmup126mg0001q7rb215naeik) was migrated to worker Python as version 3. On a 390px Chrome-emulated viewport, JavaScript incremented, TypeScript displayed sum 30, Python returned sum 60 and mean 20 for `10,20,30`, and NaN input was rejected. A mobile copilot edit saved responsive version 4; the same calculations passed at 360px. A separate platform side-panel sizing fix prevents long agent titles from expanding the grid beyond the phone viewport.
+
+The [isolated n8n parity workflow](https://backstoryai.app.n8n.cloud/workflow/YyvMVlEggAc4CBFG) uses only synthetic values, a manual trigger and code/loop/merge nodes. Execution 4215 completed successfully with both assertions passing and zero external writes. n8n used JavaScript for its transform; the corresponding Backstory test also executed Python. This does not claim language-by-language equivalence or validate customer-facing integrations.
+
+Backstory soak testing ran three independent flows concurrently every minute for 16 cycles, from 07:05 to 07:20 UTC on October 1. All 48 executions succeeded. Cases covered JavaScript to Python to conditional merge, isolated per-item failure, and concurrent loops with ordered output. Synthetic assertions ran inside the workflows, not merely against HTTP status. No schedules, emails, Slack posts or customer records were changed.
+
+The full local suite passed 4,098 tests with 99 environment-dependent skips. An additional callback regression test covers verified creation/reconnection and confirms that failed handshakes never write credentials. The separate validator remains a single machine; high availability and multi-day endurance are not claimed.

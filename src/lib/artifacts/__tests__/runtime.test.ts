@@ -85,7 +85,7 @@ test('uploads: HTML stays HTML, a component becomes a React page, other code bec
     const served = compileArtifactPage(page)
     assert.match(served, /__source_view/)
     assert.match(served, /\/vendor\/highlight\.min\.js/)
-    if (lang === 'python') assert.ok(hasPythonScript(page) && served.includes('/vendor/pyodide/pyodide.js'), 'python pages get the Python runtime')
+    if (lang === 'python') assert.ok(hasPythonScript(page) && served.includes('BackstoryArtifact.runPython'), 'python pages use the cancellable worker runtime')
   }
   assert.equal(artifactDocumentForUpload('hello', 'notes.docx'), null)
 })
@@ -102,5 +102,7 @@ test('in-page TypeScript and library-importing modules compile; plain modules an
   const py = compileArtifactPage('<html><body><script type="text/python">print(1)</script></body></html>')
   assert.ok(hasPythonScript('<script type="text/python">print(1)</script>'))
   assert.match(py, /text\/x-artifact-python/)
-  assert.match(py, /loadPyodide/)
+  assert.match(py, /BackstoryArtifact\.runPython/)
+  assert.doesNotMatch(py, /loadPyodide|src="\/vendor\/pyodide\/pyodide.js"/)
+  assert.match(py, /Cancel Python/)
 })

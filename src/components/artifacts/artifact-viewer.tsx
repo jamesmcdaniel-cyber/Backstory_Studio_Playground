@@ -237,7 +237,7 @@ export function ArtifactViewer({ id }: { id: string }) {
       {artifact.versions.length > 0 && (
       <div
         ref={workspaceRef}
-        className="grid gap-4 xl:h-[var(--workspace-h)] xl:grid-cols-[minmax(0,1fr)_340px]"
+        className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:h-[var(--workspace-h)] xl:grid-cols-[minmax(0,1fr)_340px]"
         style={{ '--workspace-h': `${workspaceHeight}px` } as React.CSSProperties}
       >
         <div className="flex h-[var(--workspace-h)] min-h-0 min-w-0 flex-col gap-2 xl:h-full">
@@ -283,7 +283,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           </div>
         </div>
 
-        <aside className="flex h-[640px] min-h-0 flex-col rounded-xl border border-border bg-background xl:h-full">
+        <aside className="flex h-[640px] min-h-0 min-w-0 flex-col rounded-xl border border-border bg-background xl:h-full">
           <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
             {(['assistant', 'history', 'settings'] as const).map((tab) => (
               <button
@@ -292,7 +292,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                 role="tab"
                 aria-selected={panel === tab}
                 onClick={() => setPanel(tab)}
-                className={cn('inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-medium', panel === tab ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                className={cn('inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-medium', tab === 'assistant' ? 'flex-1' : 'shrink-0', panel === tab ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}
               >
                 {tab === 'assistant' ? <MessageSquare className="h-4 w-4 text-horizon-600" aria-hidden /> : tab === 'history' ? <History className="h-4 w-4" aria-hidden /> : <Settings2 className="h-4 w-4" aria-hidden />}
                 {tab === 'assistant' ? <span className="max-w-[9rem] truncate">{artifact.agent ? artifact.agent.title : 'Conversation'}</span> : tab === 'history' ? `History (${artifact.versionCount})` : <span className="sr-only sm:not-sr-only">Settings</span>}

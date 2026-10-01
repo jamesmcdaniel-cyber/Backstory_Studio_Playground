@@ -51,11 +51,11 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       var url=URL.createObjectURL(new Blob([source],{type:'application/javascript'}));
       worker=new Worker(url);URL.revokeObjectURL(url);
       var ownWorker=worker;
-      worker.onmessage=function(e){if(!active || e.data.id!==active.id)return;var job=active;clearTimeout(job.timer);active=null;e.data.error?job.reject(new Error(e.data.error)):job.resolve(e.data.result);pump();};
+      worker.onmessage=function(e){if(worker!==ownWorker || !active || e.data.id!==active.id)return;var job=active;clearTimeout(job.timer);active=null;try{if(job.onOutput)job.onOutput(String(e.data.stdout||'')+String(e.data.stderr||''));e.data.error?job.reject(new Error(e.data.error)):job.resolve(e.data.result);}catch(error){job.reject(error);}pump();};
       worker.onerror=function(e){if(worker!==ownWorker)return;var job=active;if(worker)worker.terminate();worker=null;active=null;if(job){clearTimeout(job.timer);job.reject(new Error(e.message||'Python worker failed'));}pump();};
     }
     active.timer=setTimeout(function(){var job=active;worker.terminate();worker=null;active=null;job.reject(new Error('Python exceeded its execution deadline; the worker was stopped.'));pump();},active.timeout);
-    worker.postMessage({id:active.id,code:active.code,input:active.input,globals:active.globals,origin:__ARTIFACT_ORIGIN__});
+    worker.postMessage({id:active.id,code:active.code,input:active.input,globals:active.globals,inlineSession:active.inlineSession,origin:__ARTIFACT_ORIGIN__});
     } catch(e) {var failed=active;if(worker)worker.terminate();worker=null;active=null;if(failed){clearTimeout(failed.timer);failed.reject(e);}pump();}
   }
   function runPython(code,input,options){
@@ -63,10 +63,11 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       if(typeof code!=='string'||code.length>100000)return reject(new Error('Python code must be at most 100,000 characters.'));
       if(jobs.length>=4)return reject(new Error('Too many queued Python calculations.'));
       var snapshot=JSON.stringify(input===undefined?null:input);
-      if(snapshot.length>1000000)return reject(new Error('Python input exceeds 1 MB.'));
+      if(typeof snapshot!=='string')return reject(new Error('Python input must be JSON-compatible.'));
+      if(snapshot.length>1000000)return reject(new Error('Python input exceeds 1,000,000 characters.'));
       var timeout=options&&options.timeoutMs!==undefined?options.timeoutMs:30000;
       if(typeof timeout!=='number'||!Number.isFinite(timeout))return reject(new Error('Python timeout must be a finite number.'));
-      jobs.push({id:++pythonSeq,code:code,input:JSON.parse(snapshot),globals:JSON.parse(JSON.stringify(globals)),timeout:Math.max(1000,Math.min(60000,timeout)),resolve:resolve,reject:reject});pump();
+      jobs.push({id:++pythonSeq,code:code,input:JSON.parse(snapshot),globals:JSON.parse(JSON.stringify(globals)),inlineSession:!!(options&&options.inlineSession),onOutput:options&&typeof options.onOutput==='function'?options.onOutput:null,timeout:Math.max(1000,Math.min(60000,timeout)),resolve:resolve,reject:reject});pump();
     });
   }
   function cancelPython(){if(worker)worker.terminate();worker=null;if(active){clearTimeout(active.timer);active.reject(new Error('Python cancelled.'));active=null;}jobs.splice(0).forEach(function(j){j.reject(new Error('Python cancelled.'));});}

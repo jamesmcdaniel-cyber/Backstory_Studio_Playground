@@ -50,6 +50,7 @@ process.once('message', async ({ html }) => {
     await page.waitForTimeout(1500)
     const frame = page.frames().find(f => f.url() === origin + '/artifact')
     if (!frame) throw new Error('Artifact frame failed to load')
+    await frame.waitForFunction(() => window.__artifactPythonStartupState !== 'running', null, { timeout: 20000 })
     const text = await frame.locator('body').innerText({ timeout: 2000 })
     if (!text.trim() && !await frame.locator('canvas,svg,img').count()) record('Artifact rendered no visible content')
     for (const message of await frame.locator('#__artifact_error,[data-backstory-runtime-error]').allTextContents()) record(message)

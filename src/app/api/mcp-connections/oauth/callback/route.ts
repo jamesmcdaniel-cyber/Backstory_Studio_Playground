@@ -153,6 +153,9 @@ export async function GET(request: NextRequest) {
           grantedScopes,
           isActive: true,
           lastVerifiedAt: verification.verifiedAt,
+          healthStatus: 'healthy',
+          lastError: null,
+          toolSchemaHash: verification.schemaHash,
         },
       })
       if (updated.count !== 1) throw new Error('Connection to re-authorize was not found')
@@ -182,6 +185,9 @@ export async function GET(request: NextRequest) {
           grantedScopes,
           isActive: true,
           lastVerifiedAt: verification.verifiedAt,
+          healthStatus: 'healthy',
+          lastError: null,
+          toolSchemaHash: verification.schemaHash,
         },
       })
       await recordCredentialGrant({

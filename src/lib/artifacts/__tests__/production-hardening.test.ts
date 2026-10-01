@@ -40,6 +40,8 @@ test('client runtime is valid JavaScript and worker construction failures do not
   await assert.rejects(window.BackstoryArtifact.runPython('1+1'), /Worker blocked/)
   await assert.rejects(window.BackstoryArtifact.runPython('2+2'), /Worker blocked/)
   await assert.rejects(window.BackstoryArtifact.runPython('x'.repeat(100001)), /100,000/)
+  await assert.rejects(window.BackstoryArtifact.runPython('1', () => {}), /JSON-compatible/)
+  await assert.rejects(window.BackstoryArtifact.runPython('1', null, { timeoutMs: NaN }), /finite/)
 })
 
 test('inline Python is compiled but never executed during validation', async () => {
@@ -57,4 +59,12 @@ test('the artifact compute worker executes actual Python and serializes dictiona
   assert.deepEqual(JSON.parse(JSON.stringify(replies[0])), { id: 1, result: { mean: 20 } })
   await self.onmessage({ data: { id: 2, code: '1/0', input: {}, origin: 'https://example.com' } })
   assert.match(replies[1].error, /ZeroDivisionError/)
+  await self.onmessage({ data: { id: 3, code: 'qa_legacy = 21\nprint("inline one")', inlineSession: true, origin: 'https://example.com' } })
+  assert.equal(replies[2].stdout, 'inline one\n')
+  await self.onmessage({ data: { id: 4, code: 'qa_legacy * 2', inlineSession: true, origin: 'https://example.com' } })
+  assert.equal(replies[3].result, 42)
+  await self.onmessage({ data: { id: 5, code: 'qa_legacy', origin: 'https://example.com' } })
+  assert.match(replies[4].error, /NameError/)
+  await self.onmessage({ data: { id: 6, code: 'print("x" * 100000)', origin: 'https://example.com' } })
+  assert.equal(replies[5].stdout.length, 65536)
 })

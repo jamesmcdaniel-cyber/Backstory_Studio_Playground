@@ -4,19 +4,24 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { mkdtemp, chown, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { admission } from './admission.mjs'
 
 const token = process.env.ARTIFACT_VALIDATOR_TOKEN
 if (!token || token.length < 32) throw new Error('Validator authentication is required')
 const digest = value => createHash('sha256').update(value).digest()
-let busy = false, nextUid = 1001
+let nextUid = 1001
+const queue = admission()
 const reply = (res, status, value) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(value)) }
 
 http.createServer(async (req, res) => {
-  if (req.url === '/health' && req.method === 'GET') return reply(res, 200, { status: 'ok', busy, isolation: 'unique-uid-network-namespace', chromiumSandbox: true })
+  if (req.url === '/health' && req.method === 'GET') return reply(res, 200, { status: 'ok', ...queue.stats(), isolation: 'unique-uid-network-namespace', chromiumSandbox: true })
   if (req.url !== '/validate' || req.method !== 'POST') return reply(res, 404, { error: 'Not found' })
   if (!timingSafeEqual(digest(req.headers.authorization || ''), digest(`Bearer ${token}`))) return reply(res, 401, { error: 'Unauthorized' })
-  if (busy) return reply(res, 429, { error: 'Validator busy; retry shortly' })
-  busy = true
+  const cancelled = new AbortController()
+  res.once('close', () => cancelled.abort())
+  let release
+  try { release = await queue.acquire(cancelled.signal) }
+  catch (error) { if (!res.destroyed) { res.setHeader('Retry-After', '3'); reply(res, 429, { errors: [error.message] }) } return }
   let child, directory, timer
   const started = Date.now()
   try {
@@ -52,6 +57,6 @@ http.createServer(async (req, res) => {
     clearTimeout(timer)
     if (child?.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch {} }
     if (directory) await rm(directory, { recursive: true, force: true })
-    busy = false
+    release()
   }
 }).listen(8080, '0.0.0.0')

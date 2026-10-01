@@ -27,3 +27,16 @@ test('state bridge binds the exact opaque frame and trusted artifact/version, ne
     assert.equal(calls.length, 1, 'read-only/history frame never reaches authenticated state API')
   } finally { cleanup(); globalThis.fetch = original }
 })
+
+test('external versions wait for unsaved edits, then switch after successful save', async () => {
+  try {
+    const ui = render(<StatefulArtifactFrame artifactId="fixture" versionId="v1" title="Live fixture" writable />)
+    const frame = ui.getByTitle('Live fixture') as HTMLIFrameElement
+    await act(async () => { window.dispatchEvent(new window.MessageEvent('message', { source: frame.contentWindow, origin: 'null', data: { type: 'backstory:dirty', dirty: true } })) })
+    ui.rerender(<StatefulArtifactFrame artifactId="fixture" versionId="v2" title="Live fixture" writable />)
+    assert.match(frame.src, /v1\/content$/)
+    assert.ok(ui.getByText(/Your unsaved work is still open/))
+    await act(async () => { window.dispatchEvent(new window.MessageEvent('message', { source: frame.contentWindow, origin: 'null', data: { type: 'backstory:dirty', dirty: false } })) })
+    assert.match((ui.getByTitle('Live fixture') as HTMLIFrameElement).src, /v2\/content$/)
+  } finally { cleanup() }
+})

@@ -47,3 +47,10 @@ for (const name of fs.readdirSync(out)) {
   const stripped = text.replace(/\n?\/\/# sourceMappingURL=\S+\s*$/, '\n')
   if (stripped !== text) fs.writeFileSync(file, stripped)
 }
+// Runtime-specific URLs prevent a deploy from mixing cached WASM/stdlib files
+// with a different loader. Keep legacy paths for already-open older artifacts.
+const versioned = path.join(out, require('pyodide/package.json').version)
+fs.mkdirSync(versioned, { recursive: true })
+for (const name of fs.readdirSync(out)) {
+  if (fs.statSync(path.join(out, name)).isFile()) fs.copyFileSync(path.join(out, name), path.join(versioned, name))
+}

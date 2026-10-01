@@ -74,24 +74,37 @@ export function ArtifactViewer({ id }: { id: string }) {
   const [model, setModel] = useChatModel('artifact')
   const [restoring, setRestoring] = useState<string | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
+  const requestRef = useRef<AbortController | null>(null)
+  const artifactRef = useRef(artifact)
+  artifactRef.current = artifact
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   const refresh = useCallback(async () => {
+    if (requestRef.current) return // coalesce timer, visibility and run events
+    const controller = new AbortController()
+    requestRef.current = controller
+    const timer = setTimeout(() => controller.abort(), 20_000)
     try {
-      const response = await fetch(`/api/artifacts/${id}`, { cache: 'no-store' })
-      const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
+      const prior = artifactRef.current
+      const since = prior && !prior.build ? `?since=${encodeURIComponent(prior.updatedAt)}` : ''
+      const response = await fetch(`/api/artifacts/${id}${since}`, { cache: 'no-store', signal: controller.signal })
+      const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string; unchanged?: boolean }
+      if (controller.signal.aborted) return
+      if (response.ok && data.unchanged) { setError(null); return }
       if (!response.ok || !data.artifact) throw new Error(data.error || 'Could not load the artifact.')
-      setArtifact(data.artifact)
+      const next = data.artifact
+      setArtifact(previous => ({ ...next, versions: [...next.versions, ...(previous?.versions.filter(v => !next.versions.some(n => n.id === v.id)) ?? [])], nextVersionBefore: previous && previous.versions.length > 20 ? previous.nextVersionBefore : next.nextVersionBefore }))
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
+      if (requestRef.current === controller) setError(controller.signal.aborted ? 'Refresh timed out. Retrying automatically.' : err instanceof Error ? err.message : String(err))
+    } finally { clearTimeout(timer); if (requestRef.current === controller) requestRef.current = null }
   }, [id])
 
   const pending = artifact?.chat.find((m) => m.status === 'pending')
   const building = Boolean(artifact?.build && !['completed', 'failed', 'blocked', 'cancelled'].includes(artifact.build.status))
   const busy = Boolean(pending) || building
 
-  useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => { artifactRef.current = null; setArtifact(null); setVersionId(null); void refresh(); return () => { requestRef.current?.abort(); requestRef.current = null } }, [refresh])
   // External flows and other tabs can publish even when this viewer is idle.
   // Pause in background tabs and refresh immediately when they become visible.
   useEffect(() => startVisibleInterval(() => void refresh(), busy ? 3_000 : 10_000), [busy, refresh])
@@ -120,6 +133,7 @@ export function ArtifactViewer({ id }: { id: string }) {
       const response = await fetch(`/api/artifacts/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text ?? message, mode: 'auto', model }) })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
       if (!response.ok || !data.artifact) throw new Error(data.error || 'The message could not be sent.')
+      requestRef.current?.abort(); requestRef.current = null
       setArtifact(data.artifact)
       setMessage('')
     } catch (err) {
@@ -135,6 +149,7 @@ export function ArtifactViewer({ id }: { id: string }) {
       const response = await fetch(`/api/artifacts/${id}/rerun-flow`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: message.trim() }) })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
       if (!response.ok || !data.artifact) throw new Error(data.error || 'The flow could not be started.')
+      requestRef.current?.abort(); requestRef.current = null
       setArtifact(data.artifact)
       setMessage('')
       toast.success(`Running "${artifact.flow.name}" — a new version lands here when it finishes.`)
@@ -149,6 +164,7 @@ export function ArtifactViewer({ id }: { id: string }) {
       const response = await fetch(`/api/artifacts/${id}/versions/${target}/restore`, { method: 'POST' })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
       if (!response.ok || !data.artifact) throw new Error(data.error || 'The version could not be restored.')
+      requestRef.current?.abort(); requestRef.current = null
       setArtifact(data.artifact)
       setVersionId(data.artifact.currentVersionId)
       toast.success(`Restored — it is now version ${data.artifact.versionCount}, and the previous versions are kept.`)
@@ -157,6 +173,19 @@ export function ArtifactViewer({ id }: { id: string }) {
     } finally {
       setRestoring(null)
     }
+  }
+
+  const loadHistory = async () => {
+    if (!artifact?.nextVersionBefore || historyLoading) return
+    setHistoryLoading(true)
+    try {
+      const response = await fetch(`/api/artifacts/${id}?before=${artifact.nextVersionBefore}`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) })
+      const data = await response.json()
+      if (!response.ok || !data.artifact) throw new Error(data.error || 'Could not load history.')
+      const page = data.artifact as ArtifactView
+      setArtifact(prior => prior && ({ ...prior, nextVersionBefore: page.nextVersionBefore, versions: [...prior.versions, ...page.versions.filter(v => !prior.versions.some(p => p.id === v.id))] }))
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Could not load history. Retry.') }
+    finally { setHistoryLoading(false) }
   }
 
   const archive = async (archived: boolean) => {
@@ -215,6 +244,7 @@ export function ArtifactViewer({ id }: { id: string }) {
       </div>
 
       <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />
+      {error && <p role="status" className="text-sm text-amber-700">{error} <button onClick={() => void refresh()} className="underline">Retry now</button></p>}
 
       {artifact.archivedAt && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
@@ -255,7 +285,7 @@ export function ArtifactViewer({ id }: { id: string }) {
               </div>
             ) : shownVersion ? (
               <StatefulArtifactFrame
-                key={shownVersion.id}
+                key={id}
                 artifactId={id}
                 versionId={shownVersion.id}
                 writable={canEdit && shownVersion.id === artifact.currentVersionId && !artifact.archivedAt}
@@ -291,6 +321,7 @@ export function ArtifactViewer({ id }: { id: string }) {
             <AssistantSettingsPanel artifactId={artifact.id} canEdit={canConfigure} />
           ) : panel === 'history' ? (
             <ol className="min-h-0 flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
+              {artifact.nextVersionBefore && <li className="p-3"><Button variant="outline" disabled={historyLoading} onClick={() => void loadHistory()}>{historyLoading ? 'Loading…' : 'Load older versions'}</Button></li>}
               {artifact.versions.map((version) => {
                 const isCurrent = version.id === artifact.currentVersionId
                 const isShown = version.id === shownVersion?.id

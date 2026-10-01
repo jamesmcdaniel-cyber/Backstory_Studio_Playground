@@ -90,8 +90,10 @@ async function fetchSnapshot(): Promise<Snapshot> {
   const priorEtag = cached && etag ? etag : null
   const res = await fetch('/api/snapshot', {
     cache: 'no-store',
+    signal: AbortSignal.timeout(20_000),
     headers: priorEtag ? { 'If-None-Match': priorEtag } : undefined,
   })
+  if (startedIn !== epoch) throw new SnapshotError('Session changed during loading. Refresh to continue.', 'SESSION_CHANGED')
 
   if (res.status === 304 && cached) {
     // Unchanged. Refresh the timestamp so the freshness window restarts —
@@ -106,6 +108,7 @@ async function fetchSnapshot(): Promise<Snapshot> {
   }
 
   const body = (await res.json().catch(() => ({}))) as Partial<Snapshot> & { error?: string; code?: string }
+  if (startedIn !== epoch) throw new SnapshotError('Session changed during loading. Refresh to continue.', 'SESSION_CHANGED')
   if (!res.ok) throw new SnapshotError(body.error || `Snapshot failed (${res.status})`, body.code, res.status)
   const entry = { data: body as Snapshot, ts: Date.now() }
   if (startedIn === epoch) {
@@ -127,7 +130,10 @@ async function fetchSnapshot(): Promise<Snapshot> {
 export async function getSnapshot(maxAgeMs: number = DEFAULT_FRESH_MS): Promise<Snapshot> {
   cached ??= readPersisted()
   if (cached && Date.now() - cached.ts < maxAgeMs) return cached.data
-  inflight ??= fetchSnapshot().finally(() => { inflight = null })
+  if (!inflight) {
+    const request = fetchSnapshot().finally(() => { if (inflight === request) inflight = null })
+    inflight = request
+  }
   return inflight
 }
 

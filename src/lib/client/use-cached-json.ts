@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * Stale-while-revalidate JSON fetch with a client cache that survives both
@@ -26,7 +26,9 @@ import { useCallback, useEffect, useState } from 'react'
 
 type Entry = { data: unknown; ts: number }
 const mem = new Map<string, Entry>()
-const inflight = new Map<string, Promise<unknown>>()
+const inflight = new Map<string, { promise: Promise<unknown>; controller: AbortController }>()
+const listeners = new Set<() => void>()
+let epoch = 0
 const LS_PREFIX = 'bs:swr:'
 const MAX_AGE_MS = 24 * 60 * 60 * 1000 // don't paint anything older than a day
 
@@ -54,8 +56,8 @@ function write(url: string, data: unknown): void {
   }
 }
 
-async function fetchJson(url: string): Promise<unknown> {
-  const res = await fetch(url, { cache: 'no-store' })
+async function fetchJson(url: string, signal: AbortSignal): Promise<unknown> {
+  const res = await fetch(url, { cache: 'no-store', signal })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`)
   return body
@@ -66,29 +68,42 @@ export function useCachedJson<T = unknown>(url: string | null) {
   const [data, setData] = useState<T | undefined>(() => (url ? (mem.get(url)?.data as T | undefined) : undefined))
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(() => (url ? !mem.has(url) : false))
+  const active = useRef(url)
+  active.current = url
 
   const refresh = useCallback(async () => {
     if (!url) return
+    const startedIn = epoch
     let pending = inflight.get(url)
     if (!pending) {
-      pending = fetchJson(url)
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(new Error('Request timed out. Please retry.')), 20_000)
+      pending = { controller, promise: fetchJson(url, controller.signal).finally(() => clearTimeout(timer)) }
       inflight.set(url, pending)
     }
+    const valid = () => startedIn === epoch && !pending.controller.signal.aborted && active.current === url
     try {
-      const result = await pending
+      const result = await pending.promise
+      if (!valid()) return
       write(url, result)
       setData(result as T)
       setError(null)
     } catch (caught) {
-      setError(caught)
+      if (startedIn === epoch && active.current === url && (!pending.controller.signal.aborted || pending.controller.signal.reason?.message === 'Request timed out. Please retry.')) setError(caught)
     } finally {
-      inflight.delete(url)
-      setLoading(false)
+      if (inflight.get(url) === pending) inflight.delete(url)
+      if (startedIn === epoch && active.current === url) setLoading(false)
     }
   }, [url])
 
   useEffect(() => {
-    if (!url) return
+    active.current = url
+    setData(url ? mem.get(url)?.data as T | undefined : undefined)
+    setError(null)
+    setLoading(Boolean(url && !mem.has(url)))
+    const reset = () => { setData(undefined); setError(null); setLoading(false) }
+    listeners.add(reset)
+    if (!url) return () => { active.current = null; listeners.delete(reset) }
     // Hydrate from the persisted cache (localStorage) if memory missed — makes a
     // reload/revisit paint the last-seen data instead of a spinner.
     if (!mem.has(url)) {
@@ -100,12 +115,13 @@ export function useCachedJson<T = unknown>(url: string | null) {
       }
     }
     void refresh()
+    return () => { active.current = null; listeners.delete(reset) }
   }, [url, refresh])
 
   // Optimistically overwrite the cached value (e.g. after a local mutation).
   const mutate = useCallback(
     (next: T) => {
-      if (url) write(url, next)
+      if (url) { invalidateCachedJson(url); write(url, next) }
       setData(next)
     },
     [url],
@@ -122,8 +138,11 @@ export function useCachedJson<T = unknown>(url: string | null) {
  * client/cache-owner.ts.
  */
 export function resetCachedJson(): void {
+  epoch++
+  for (const request of inflight.values()) request.controller.abort()
   mem.clear()
   inflight.clear()
+  listeners.forEach(listener => listener())
   if (typeof window === 'undefined') return
   try {
     const stale = Object.keys(window.localStorage).filter((key) => key.startsWith(LS_PREFIX))
@@ -135,6 +154,8 @@ export function resetCachedJson(): void {
 
 /** Drop a URL's cached entry so the next mount/refresh refetches from the server. */
 export function invalidateCachedJson(url: string): void {
+  inflight.get(url)?.controller.abort()
+  inflight.delete(url)
   mem.delete(url)
   if (typeof window === 'undefined') return
   try {

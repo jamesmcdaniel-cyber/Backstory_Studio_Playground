@@ -15,7 +15,7 @@ process.once('message', async ({ html }) => {
     res.setHeader('Access-Control-Allow-Origin', '*')
     if (path === '/') {
       res.setHeader('Content-Type', 'text/html')
-      return res.end(`<!doctype html><body><script>addEventListener('message',e=>{if(e.source!==document.querySelector('iframe').contentWindow||e.origin!=='null')return;const m=e.data;if(m?.type==='backstory:state'){e.source.postMessage({type:'backstory:state-result',id:m.id,...(m.op==='get'?{result:{value:null,revision:0}}:{error:'Preflight is read-only. Do not write state automatically on startup.'})},'*')}})</script><iframe title="Candidate" sandbox="allow-scripts allow-modals allow-downloads" src="/artifact"></iframe></body>`)
+      return res.end(`<!doctype html><body><script>const states=new Map();window.validationInteractions=false;addEventListener('message',e=>{if(e.source!==document.querySelector('iframe').contentWindow||e.origin!=='null')return;const m=e.data;if(m?.type==='backstory:state'){const old=states.get(m.payload.key)||{value:null,revision:0};let result=old,error;if(m.op==='set'){if(!window.validationInteractions)error='Do not write state automatically on startup.';else if(m.payload.revision!==old.revision)error='State revision conflict';else{result={value:m.payload.value,revision:old.revision+1};states.set(m.payload.key,result)}}e.source.postMessage({type:'backstory:state-result',id:m.id,result,error},'*')}})</script><iframe title="Candidate" sandbox="allow-scripts allow-modals allow-downloads" src="/artifact"></iframe></body>`)
     }
     if (path === '/artifact') {
       res.setHeader('Content-Type', 'text/html')
@@ -54,7 +54,42 @@ process.once('message', async ({ html }) => {
     const text = await frame.locator('body').innerText({ timeout: 2000 })
     if (!text.trim() && !await frame.locator('canvas,svg,img').count()) record('Artifact rendered no visible content')
     for (const message of await frame.locator('#__artifact_error,[data-backstory-runtime-error]').allTextContents()) record(message)
-    process.send({ ok: !errors.length, errors, checks: ['sandboxed-browser-startup', 'runtime-assets', 'uncaught-errors', 'visible-content'], limits: 'Startup smoke check only; not proof of every interaction or business rule.' })
+    const checks = ['sandboxed-browser-startup', 'runtime-assets', 'uncaught-errors', 'visible-content']
+    const steps = await frame.evaluate(() => window.__artifactTests ?? [])
+    if (!Array.isArray(steps) || steps.length > 20) throw new Error('__artifactTests must contain at most 20 declarative interaction steps')
+    const controls = await frame.locator('button,input,select,textarea,[role="button"]').count()
+    if (controls && !steps.length) record('Interactive artifacts must declare window.__artifactTests with an action and observable assertion for their primary workflow.')
+    await page.evaluate(() => { window.validationInteractions = true })
+    let actions = 0, assertions = 0
+    for (const step of steps) {
+      if (!step || typeof step.selector !== 'string' || step.selector.length > 300) throw new Error('Each artifact test needs a bounded selector')
+      const target = frame.locator(step.selector)
+      switch (step.action) {
+        case 'click': await target.click({ timeout: 2000 }); actions++; break
+        case 'fill': if (typeof step.value !== 'string' || step.value.length > 1000) throw new Error('Invalid test fill value'); await target.fill(step.value, { timeout: 2000 }); actions++; break
+        case 'select': await target.selectOption(String(step.value).slice(0, 1000), { timeout: 2000 }); actions++; break
+        case 'expectText':
+          if (typeof step.value !== 'string' || !step.value.length) throw new Error('expectText requires non-empty expected text')
+          await frame.waitForFunction(({ selector, value }) => document.querySelector(selector)?.textContent?.includes(value), step, { timeout: 5000 }); assertions++; break
+        case 'expectValue':
+          await frame.waitForFunction(({ selector, value }) => document.querySelector(selector)?.value === value, step, { timeout: 5000 }); assertions++; break
+        default: throw new Error('Unsupported artifact test action: ' + step.action)
+      }
+    }
+    if (steps.length && (!actions || !assertions)) record('Artifact tests need both an action and an observable assertion')
+    if (actions && assertions) checks.push('declared-primary-workflow')
+    // Test the real SDK/bridge protocol using synthetic data only, then reload
+    // the frame to prove the parent-held state survives a source reload.
+    const saved = await frame.evaluate(async () => { const sdk = window.BackstoryArtifact; if (!sdk) return false; await sdk.saveState('validator-probe', { sentinel: 42 }, 0); return (await sdk.loadState('validator-probe')).value.sentinel === 42 })
+    if (!saved) record('Artifact saved-state bridge round-trip failed')
+    else {
+      await frame.goto(origin + '/artifact', { waitUntil: 'load', timeout: 10000 })
+      const persisted = await frame.evaluate(async () => (await window.BackstoryArtifact.loadState('validator-probe')).value.sentinel === 42)
+      if (!persisted) record('Artifact saved state disappeared after reload')
+      else checks.push('synthetic-state-save-and-reload')
+    }
+    for (const message of await frame.locator('#__artifact_error,[data-backstory-runtime-error]').allTextContents()) record(message)
+    process.send({ ok: !errors.length, errors, checks, limits: 'Tests cover declared workflows and synthetic storage, not arbitrary business rules or real integration side effects.' })
     await browser.close()
   } catch (error) { record(error.message); process.send({ ok: false, errors }) }
   finally { server.close(); process.disconnect() }

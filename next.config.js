@@ -23,7 +23,11 @@ const nextConfig = {
       // opaque origin), so its fetches and module imports are cross-origin.
       {
         source: '/vendor/pyodide/:path*',
-        headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=86400' }],
+        headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=0, must-revalidate' }],
+      },
+      {
+        source: `/vendor/pyodide/${require('pyodide/package.json').version}/:path*`,
+        headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
       },
       {
         source: '/vendor/artifact-python-worker.js',

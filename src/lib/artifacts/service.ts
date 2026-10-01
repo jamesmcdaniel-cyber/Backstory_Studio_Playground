@@ -311,13 +311,21 @@ async function references(organizationId: string, rows: Artifact[]) {
 }
 
 /** The artifact with its pending conversation reconciled against the runs. */
-export async function loadArtifact(organizationId: string, id: string): Promise<ArtifactView | null> {
+export async function artifactStatus(organizationId: string, id: string) {
+  const found = await prisma.artifact.findFirst({ where: { id, organizationId } })
+  if (!found) return null
+  const row = await reconcileChat(found)
+  return { id: row.id, currentVersionId: row.currentVersionId, updatedAt: row.updatedAt.toISOString(), archivedAt: row.archivedAt, userId: row.userId, workspaceAccess: row.workspaceAccess, editorIds: row.editorIds }
+}
+
+export async function loadArtifact(organizationId: string, id: string, before?: number): Promise<ArtifactView | null> {
   let row = await prisma.artifact.findFirst({ where: { id, organizationId } })
   if (!row) return null
   row = await reconcileChat(row)
   const versions = await prisma.artifactVersion.findMany({
-    where: { artifactId: id, organizationId },
+    where: { artifactId: id, organizationId, ...(before ? { number: { lt: before } } : {}) },
     orderBy: { number: 'desc' },
+    take: 20,
     select: { id: true, number: true, executionId: true, flowRunId: true, request: true, createdAt: true, content: true, createdByUserId: true },
   })
   const refs = await references(organizationId, [row])
@@ -331,6 +339,7 @@ export async function loadArtifact(organizationId: string, id: string): Promise<
     flow: row.flowId ? refs.flows.get(row.flowId) ?? null : null,
     currentVersionId: row.currentVersionId,
     versionCount: row.versionCount,
+    nextVersionBefore: versions.length === 20 && versions.at(-1)!.number > 1 ? versions.at(-1)!.number : null,
     versions: versions.map((version) => ({
       id: version.id,
       number: version.number,

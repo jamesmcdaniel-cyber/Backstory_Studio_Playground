@@ -3,6 +3,7 @@
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
 import { StatefulArtifactFrame } from './stateful-artifact-frame'
+import { startVisibleInterval } from '@/lib/client/visible-interval'
 export { ARTIFACT_FRAME_SANDBOX } from './stateful-artifact-frame'
 
 /**
@@ -25,21 +26,30 @@ export function ArtifactFrame({ artifactId, title, className }: { artifactId: st
   const [current, setCurrent] = useState<{ artifactId: string; versionId: string; writable: boolean } | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
-    const controller = new AbortController()
+    let controller: AbortController | null = null
+    let disposed = false
     setError('')
-    fetch(`/api/artifacts/${artifactId}`, { cache: 'no-store', signal: controller.signal }).then(async response => {
+    const refresh = () => {
+    if (controller || disposed) return
+    const request = new AbortController()
+    controller = request
+    const timer = setTimeout(() => request.abort(), 20_000)
+    fetch(`/api/artifacts/${artifactId}?summary=1`, { cache: 'no-store', signal: request.signal }).then(async response => {
       if (!response.ok) throw new Error('Artifact could not be loaded.')
       const { artifact } = await response.json()
       if (!artifact?.currentVersionId) throw new Error('Artifact has no current version.')
-      if (!controller.signal.aborted) setCurrent({ artifactId, versionId: artifact.currentVersionId, writable: Boolean(artifact.permissions?.canEdit && !artifact.archivedAt) })
-    }).catch(e => { if (!controller.signal.aborted) setError(e.message) })
-    return () => controller.abort()
+      if (!disposed && !request.signal.aborted) { setError(''); setCurrent({ artifactId, versionId: artifact.currentVersionId, writable: Boolean(artifact.permissions?.canEdit && !artifact.archivedAt) }) }
+    }).catch(e => { if (!disposed) setError(request.signal.aborted ? 'Refresh timed out; retrying automatically.' : e.message) }).finally(() => { clearTimeout(timer); controller = null })
+    }
+    refresh()
+    const stop = startVisibleInterval(refresh, 10_000)
+    return () => { disposed = true; stop(); controller?.abort() }
   }, [artifactId])
-  if (error) return <p role="alert">{error} <a href={`/artifacts/${artifactId}`}>Open artifact</a></p>
+  if (error && !current) return <p role="alert">{error} <a href={`/artifacts/${artifactId}`}>Open artifact</a></p>
   if (!current || current.artifactId !== artifactId) return <p role="status">Loading artifact…</p>
   return (
     <StatefulArtifactFrame
-      key={current.versionId}
+      key={artifactId}
       artifactId={artifactId}
       versionId={current.versionId}
       writable={current.writable}

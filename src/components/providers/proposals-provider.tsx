@@ -55,10 +55,16 @@ export function ProposalsProvider({ children }: { children: React.ReactNode }) {
       return
     }
     let alive = true
+    let inFlight = false
+    let stopped = false
+    polls.current = 0
     const load = async () => {
-      const data = await fetch('/api/template-proposals', { cache: 'no-store' })
-        .then((response) => (response.ok ? response.json() : null))
+      if (inFlight || stopped || document.hidden) return
+      inFlight = true
+      const data = await fetch('/api/template-proposals', { cache: 'no-store', signal: AbortSignal.timeout(15_000) })
+        .then((response) => { if ([401, 403].includes(response.status)) stopped = true; return response.ok ? response.json() : null })
         .catch(() => null)
+      inFlight = false
       if (!alive) return
       if (data?.success) setProposals((data.proposals ?? []).filter((p: ProposalCard) => p.status === 'open'))
       setLoaded(true)

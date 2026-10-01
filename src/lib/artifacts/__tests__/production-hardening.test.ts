@@ -36,7 +36,7 @@ test('client runtime is valid JavaScript and worker construction failures do not
   const code = artifactClientRuntime('https://example.com')
   assert.doesNotThrow(() => new Script(code))
   const window: any = { addEventListener() {}, parent: {} }
-  runInNewContext(code, { window, Map, Set, Promise, setTimeout, clearTimeout, Blob, URL, Worker: class { constructor() { throw new Error('Worker blocked') } } })
+  runInNewContext(code, { window, document: { addEventListener() {} }, Map, Set, Promise, setTimeout, clearTimeout, Blob, URL, Worker: class { constructor() { throw new Error('Worker blocked') } } })
   await assert.rejects(window.BackstoryArtifact.runPython('1+1'), /Worker blocked/)
   await assert.rejects(window.BackstoryArtifact.runPython('2+2'), /Worker blocked/)
   await assert.rejects(window.BackstoryArtifact.runPython('x'.repeat(100001)), /100,000/)
@@ -51,7 +51,7 @@ test('inline Python is compiled but never executed during validation', async () 
 
 test('the artifact compute worker executes actual Python and serializes dictionaries', async () => {
   const replies: any[] = []
-  const self: any = { postMessage: (value: unknown) => replies.push(value) }
+  const self: any = { postMessage: (value: any) => { if (!value.phase) replies.push(value) } }
   runInNewContext(readFileSync('public/vendor/artifact-python-worker.js', 'utf8'), {
     self, importScripts() {}, loadPyodide: () => loadPyodide({ stdout() {}, stderr() {} }),
   })

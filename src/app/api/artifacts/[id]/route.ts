@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { prisma } from '@/lib/prisma'
-import { archiveArtifact, loadArtifact } from '@/lib/artifacts/service'
+import { archiveArtifact, artifactStatus, loadArtifact } from '@/lib/artifacts/service'
 import { artifactPermissions } from '@/lib/artifacts/sharing'
 import { requireEditable, viewerOf } from '@/lib/artifacts/route-access'
 import { attachArtifactAgent } from '@/lib/artifacts/artifact-agent'
@@ -17,7 +17,17 @@ function idOf(request: Request): string {
 // GET /api/artifacts/:id — the artifact, its versions and conversation (pending answers reconciled).
 export const GET = withAuthenticatedApi(async (request, auth) => {
   const id = idOf(request)
-  const artifact = await loadArtifact(auth.organizationId, id)
+  const query = new URL(request.url).searchParams
+  if (query.has('since') || query.get('summary') === '1') {
+    const status = await artifactStatus(auth.organizationId, id)
+    if (!status) throw new ApiError('Artifact not found.', 404, 'NOT_FOUND')
+    const { userId, workspaceAccess, editorIds, ...summary } = status
+    const permissions = artifactPermissions(viewerOf(auth), { userId, workspaceAccess, editorIds })
+    if (query.get('summary') === '1') return { success: true, artifact: { ...summary, permissions } }
+    if (query.get('since') === status.updatedAt) return { success: true, unchanged: true }
+  }
+  const before = Number(query.get('before'))
+  const artifact = await loadArtifact(auth.organizationId, id, Number.isSafeInteger(before) && before > 0 ? before : undefined)
   if (!artifact) throw new ApiError('Artifact not found.', 404, 'NOT_FOUND')
   const row = await prisma.artifact.findFirst({ where: { id, organizationId: auth.organizationId }, select: { userId: true, workspaceAccess: true, editorIds: true } })
   // What this person may do with it: the viewer hides what they can't.

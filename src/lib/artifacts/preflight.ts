@@ -11,13 +11,14 @@ export async function validateArtifactRuntime(content: string): Promise<void> {
   if (url.protocol !== 'https:') throw new Error('Artifact validator requires HTTPS.')
   const { artifactPageResponse } = await import('./serve')
   const html = await artifactPageResponse({ content, kind: 'page' }, 'http://artifact-runtime.invalid').text()
-  const deadline = Date.now() + 45_000
+  const deadline = Date.now() + 100_000
+  let retries = 0
   for (;;) {
     let response: Response
     try {
       response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ html }), signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), redirect: 'error' })
     } catch { throw new Error('Artifact browser validation could not finish. Retry shortly; the current version was not changed.') }
-    if (response.status === 429 && Date.now() + 2000 < deadline) { await new Promise(resolve => setTimeout(resolve, 500)); continue }
+    if (response.status === 429 && Date.now() + 5000 < deadline) { await new Promise(resolve => setTimeout(resolve, Math.min(5000, 1000 * 2 ** retries++) + Math.random() * 250)); continue }
     const result = await response.json().catch(() => null) as { ok?: boolean; errors?: string[] } | null
     if (!response.ok || result?.ok !== true) {
       const detail = Array.isArray(result?.errors) ? result.errors.slice(0, 3).map(value => String(value).slice(0, 500)).join('; ') : 'Validation service unavailable or busy.'

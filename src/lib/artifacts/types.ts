@@ -44,6 +44,7 @@ export type ArtifactView = {
   currentVersionId: string | null
   versionCount: number
   versions: ArtifactVersionView[]
+  nextVersionBefore?: number | null
   chat: ArtifactChatMessage[]
   /** Whether a scripted (interactive) sandbox is allowed for this kind. */
   interactive: boolean

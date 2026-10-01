@@ -69,6 +69,17 @@ if (TEST_DB) {
     await assert.rejects(writeAppState(scope, 2, 'x'.repeat(256001), next.id), /256 KB/)
   })
 
+  test('late agent and flow results cannot replace the version they did not read', async () => {
+    const { ArtifactToolClient } = await import('../tools')
+    const { artifact, version } = await service.createArtifact({ organizationId: seeded.organizationId, userId: seeded.userId, kind: 'page', title: 'Stale result guard', content: '<html><body>Initial</body></html>' })
+    const next = await service.addVersion({ organizationId: seeded.organizationId, artifactId: artifact.id, content: '<html><body>Newer</body></html>' })
+    await assert.rejects(service.registerVersionFromFlowRun({ organizationId: seeded.organizationId, flowRunId: 'stale-test-flow', trigger: { artifactId: artifact.id, artifactBaseVersionId: version.id }, output: '<html><body>Stale flow</body></html>' }), /changed while editing/)
+    const tools = new ArtifactToolClient(seeded.organizationId, seeded.userId, { artifactId: artifact.id, executionId: 'stale-test-agent', request: null, expectedVersionId: version.id })
+    const result = await tools.executeTool('', 'revise_artifact', { content: '<html><body>Stale agent</body></html>', summary: 'stale' }) as { error: string }
+    assert.match(result.error, /changed since this request started/)
+    assert.equal((await service.loadArtifact(seeded.organizationId, artifact.id))?.currentVersionId, next.id)
+  })
+
   test('restoring makes an old version current as a new version, state included, history kept', async () => {
     const state = { roi: { note: 'the state behind v1' } }
     const { artifact, version: first } = await service.createArtifact({ organizationId: seeded.organizationId, userId: seeded.userId, kind: 'report', title: 'Plan', content: '<html><body><h1>one</h1></body></html>', state })

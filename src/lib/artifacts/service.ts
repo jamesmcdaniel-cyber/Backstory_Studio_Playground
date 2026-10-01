@@ -7,6 +7,7 @@ import { reactArtifactDocument, reactComponentOf } from './runtime'
 import { readAssistantConfig } from './assistant-settings'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { validateArtifactContent, validateArtifactPython } from './validate-content'
+import { validateArtifactRuntime } from './preflight'
 import { ARTIFACT_CAPABILITIES } from './capabilities'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
@@ -78,6 +79,7 @@ type TriggerShape = {
   artifactId?: unknown
   artifactMode?: unknown
   artifactRequest?: unknown
+  artifactBaseVersionId?: unknown
   flowId?: unknown
   parentFlowId?: unknown
   flowRunId?: unknown
@@ -107,6 +109,7 @@ export async function addVersion(params: {
 }): Promise<ArtifactVersion> {
   validateArtifactContent(params.content)
   await validateArtifactPython(params.content)
+  await validateArtifactRuntime(params.content)
   return prisma.$transaction(async (tx) => {
     // Atomic increment takes the row lock before reading the next number.
     // Competing saves serialize; a stale editing base fails without publishing.
@@ -158,7 +161,9 @@ export async function createArtifact(params: {
 }): Promise<{ artifact: Artifact; version: ArtifactVersion }> {
   validateArtifactContent(params.content)
   await validateArtifactPython(params.content)
-  const artifact = await prisma.artifact.create({
+  await validateArtifactRuntime(params.content)
+  return prisma.$transaction(async tx => {
+  const artifact = await tx.artifact.create({
     data: {
       organizationId: params.organizationId,
       userId: params.userId ?? null,
@@ -166,18 +171,22 @@ export async function createArtifact(params: {
       title: params.title.replace(/\s+/g, ' ').trim().slice(0, 200) || 'Untitled artifact',
       agentTaskId: params.agentTaskId ?? null,
       flowId: params.flowId ?? null,
+      versionCount: 1,
     },
   })
-  const version = await addVersion({
+  const version = await tx.artifactVersion.create({ data: {
     artifactId: artifact.id,
     organizationId: params.organizationId,
     content: params.content,
     executionId: params.executionId,
     flowRunId: params.flowRunId,
-    createdByUserId: params.userId,
-    state: params.state ?? null,
-  })
+    createdByUserId: params.userId ?? null,
+    number: 1,
+    ...(params.state ? { state: params.state } : {}),
+  } })
+  await tx.artifact.update({ where: { id: artifact.id, organizationId: params.organizationId }, data: { currentVersionId: version.id } })
   return { artifact: { ...artifact, currentVersionId: version.id, versionCount: 1 }, version }
+  })
 }
 
 /**
@@ -220,6 +229,7 @@ export async function registerVersionFromExecution(params: {
         executionId: params.executionId,
         request: str(t.artifactRequest),
         createdByUserId: params.userId,
+        ...(typeof t.artifactBaseVersionId === 'string' ? { expectedVersionId: t.artifactBaseVersionId } : {}),
       })
       await markChatVersion(params.organizationId, target.id, params.executionId, version.id)
       return { artifactId: target.id, versionId: version.id, created: false }
@@ -460,7 +470,7 @@ export async function askArtifact(params: { organizationId: string; userId: stri
       agentTaskId: agent.id,
       status: 'pending',
       input: { prompt: input },
-      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message.slice(0, 300), link: `/artifacts/${row.id}` }),
+      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message.slice(0, 300), link: `/artifacts/${row.id}` }),
       metadata: { title: `${params.mode === 'change' ? 'Change to' : params.mode === 'ask' ? 'Question on' : 'Assistant'} · ${row.title}` },
       userId: params.userId,
       organizationId: params.organizationId,
@@ -500,7 +510,7 @@ export async function rerunArtifactFlow(params: { organizationId: string; userId
     userId: params.userId,
     usePublished: true,
     input: { artifactId: row.id, artifactTitle: row.title, request: message },
-    trigger: { type: 'manual', artifactId: row.id, artifactRequest: message } as never,
+    trigger: { type: 'manual', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactRequest: message } as never,
   })
   const now = new Date().toISOString()
   const next: ArtifactChatMessage[] = [
@@ -521,7 +531,7 @@ export async function registerVersionFromFlowRun(params: { organizationId: strin
   if (!html) return null
   const target = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId: params.organizationId }, select: { id: true } })
   if (!target) return null
-  const version = await addVersion({ artifactId, organizationId: params.organizationId, content: html, flowRunId: params.flowRunId, request: str(t.artifactRequest) })
+  const version = await addVersion({ artifactId, organizationId: params.organizationId, content: html, flowRunId: params.flowRunId, request: str(t.artifactRequest), ...(typeof t.artifactBaseVersionId === 'string' ? { expectedVersionId: t.artifactBaseVersionId } : {}) })
   return version.id
 }
 

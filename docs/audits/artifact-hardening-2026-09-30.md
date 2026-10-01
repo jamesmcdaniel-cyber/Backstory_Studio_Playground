@@ -26,7 +26,7 @@ React artifacts import `useArtifactState`, `runPython`, and `cancelPython` from 
 
 ## Verification evidence
 
-The full local suite passed 4,096 tests with zero failures and 99 environment-dependent skips. A subsequent targeted six-test suite also passed, including actual Pyodide execution of the first-party worker code: values 10, 20, 30 returned mean 20, and division by zero returned a Python error. Type checking, lint, production build, and the production WASM asset smoke check passed. These are not browser execution results.
+The latest full local suite passed 4,098 tests with zero failures and 99 environment-dependent skips. Actual Pyodide execution of the first-party worker code returned mean 20 for values 10, 20, 30, and division by zero returned a Python error. Type checking, lint, production build, and the production WASM asset smoke check passed.
 
 Isolated production database checks confirmed three simultaneous saves with unique version numbers; invalid JavaScript and inline Python rejected without changing the current version; stale source and state writes rejected; application data isolated by user; and state preserved across source revisions. The fixture is [Hardened artifact integrity](https://backstory-studio.vercel.app/artifacts/cmup2hexn0001q7jv5avr77dz).
 
@@ -43,9 +43,28 @@ The producing agent's artifact copilot then made a targeted edit in 10.9 seconds
 
 ## Remaining work and limits
 
-1. Unlock Chrome and test the new generated tracker end to end: add/edit, reload persistence, version-change persistence, Python parity, cancellation/deadline recovery, CSV export, keyboard operation, mobile viewport, and a second user's isolation. Browser CSP and worker loading remain unverified in this release.
-2. Syntax validation is not semantic/runtime validation. Valid JavaScript that throws, bad application logic, event-handler bugs, and dynamically constructed Python may still be saved. A browser-tested candidate/promotion lifecycle remains a separate hardening task.
+1. Chrome now verifies the generated tracker add/edit validation, reload persistence, source-version persistence, Python parity, filtering and CSV export. Keyboard-only operation, mobile layout, and a second signed-in user's browser isolation remain unverified.
+2. A required isolated browser startup gate now rejects startup exceptions, empty rendered artifacts and infinite-loop startup before database publication. It is not a proof of business logic, every interaction, delayed errors or dynamically constructed Python. The single-machine validator rejects excess concurrency with retryable errors; prolonged load and high availability remain unverified.
 3. Legacy inline Python retains main-thread DOM compatibility. New worker computations are cancellable; the legacy DOM path does not have the same termination guarantee.
 4. Existing applications must adopt the durable-state hook. Previously lost in-memory edits cannot be recovered or automatically migrated.
 5. The previously observed custom Backstory MCP 401 still requires reconnecting or correcting that connection. Native Backstory access worked in the prior tests. Generic HTTP nodes do not gain arbitrary Nango authentication from this release.
 6. The earlier n8n comparison inspected workflow metadata without executing production workflows. ROI/research live paths and prolonged load/soak coverage remain unverified. No blanket claim that all session findings are closed is made.
+
+## Live Chrome and isolated validation follow up
+
+The SDK fixture retained counter 1 across a reload and a source revision. Python and NumPy both returned mean 20. A runaway Python task hit its deadline without freezing the browser; another calculation then succeeded. Explicit cancellation also stopped a running task, followed by a successful mean calculation.
+
+The generated tracker rejected probability 101, accepted changing deal A to 150 at 50 percent, and retained total 650 and weighted 155 after reload. Adding synthetic QA-D at 50 and 20 percent produced four records, total 700 and weighted 165. A live copilot edit fixed CSV exporting all records despite a filter: version 3 retained all four saved records and exported only the visible QA-D row, with an explicit one-row count.
+
+The existing Revenue Operations Lab was upgraded through its producing agent to durable state and the worker Python API. Chrome showed an actual Python 3.14.2 parity result matching JavaScript: 12 records, total 565,000 and weighted 332,950. Previously lost session data was not recovered.
+
+With explicit hosting-cost approval, `backstory-artifact-validator` was provisioned on Fly as a separate 1 GB machine. It contains first-party runtime assets and a scoped validator token, but no database, integration or model-provider credentials. Each job uses a distinct unprivileged UID, an isolated mount/network namespace with only loopback, and Chromium's sandbox. Jobs receive no inherited secrets, cannot reach external networks, and are killed as a process group at the deadline. The Fly control socket is hidden. Unauthenticated validation requests returned 401.
+
+Live tests accepted the same compiled React/state runtime used by production, rejected an uncaught exception and an empty artifact, timed out an infinite JavaScript loop, and accepted the next working artifact. Cold compiled React validation took 16.2 seconds; warm simple checks took about 2.5 seconds. These are observed examples, not latency guarantees. The validator adds startup validation latency to executable saves.
+
+Production worker/database checks confirmed that runtime failure leaves the current version unchanged, failed creation leaves no orphan artifact, and stale agent/flow results cannot overwrite a newer source revision. New artifacts and their first version are created in one transaction. Agent and flow edit requests now carry the source version they started from.
+
+- Validator image: `deployment-01M3TZSYY3529K9163DRABSW65`; machine `2870231c6373e8`.
+- Queue worker image: `deployment-01M3TZYSNDHT2DFWCKRMNHGWJE`; both machines passed deployment health checks.
+- Required production settings: `ARTIFACT_VALIDATOR_URL`, sensitive `ARTIFACT_VALIDATOR_TOKEN`, and `ARTIFACT_RUNTIME_PREFLIGHT=required`. Development without configured validation retains syntax checks only.
+- Runtime publication fixture: [Runtime publishing gate](https://backstory-studio.vercel.app/artifacts/cmup43aff0001q7jqmdhzbaqt).

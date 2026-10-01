@@ -1,0 +1,14 @@
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 util-linux && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY services/artifact-validator/package*.json ./
+RUN npm ci --omit=dev
+COPY public/vendor ./public/vendor
+COPY scripts/vendor-pyodide.mjs ./scripts/vendor-pyodide.mjs
+RUN node scripts/vendor-pyodide.mjs
+COPY services/artifact-validator/*.mjs ./
+COPY services/artifact-validator/*.sh ./
+RUN chmod 755 /app/entrypoint.sh /app/run-isolated.sh
+EXPOSE 8080
+CMD ["/app/entrypoint.sh"]

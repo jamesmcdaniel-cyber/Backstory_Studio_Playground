@@ -26,7 +26,7 @@ import { addVersion, createArtifact } from './service'
  * picking the previous version.
  */
 
-export type ArtifactToolContext = { artifactId: string; executionId: string; request: string | null }
+export type ArtifactToolContext = { artifactId: string; executionId: string; request: string | null; expectedVersionId?: string }
 
 const GENERIC_TOOLS = [
   {
@@ -248,6 +248,7 @@ export class ArtifactToolClient {
   private async artifact() {
     const artifact = await prisma.artifact.findFirst({ where: { id: this.context.artifactId, organizationId: this.organizationId } })
     if (!artifact) throw new Error('The artifact no longer exists.')
+    if (this.context.expectedVersionId && artifact.currentVersionId !== this.context.expectedVersionId) throw new Error('Artifact changed since this request started. Reload and retry the change; nothing was saved.')
     return artifact
   }
 
@@ -379,6 +380,7 @@ export class ArtifactToolClient {
       return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
     }
     const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId })
+    this.context.expectedVersionId = version.id
     return { saved: true, version: version.number, link: `/artifacts/${artifact.id}`, note: 'Saved: the new version is live now.' }
   }
 
@@ -420,7 +422,8 @@ export class ArtifactToolClient {
     const state = { ...current.state, factsFileId, narrative: result.narrative, view: result.view }
     const html = renderRoiDashboard(facts, result.narrative, { account: state.account, timeframePreset: state.timeframePreset, view: result.view })
     const summary = typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim().slice(0, 300) : result.applied.join('; ')
-    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, content: html, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId, state: stateJson(state) })
+    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content: html, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId, state: stateJson(state) })
+    this.context.expectedVersionId = version.id
     return { saved: true, version: version.number, applied: result.applied, ...(rejected.length ? { rejected } : {}), link: `/artifacts/${artifact.id}`, note: 'Saved: the new version already shows every applied change — nothing is still processing.' }
   }
 

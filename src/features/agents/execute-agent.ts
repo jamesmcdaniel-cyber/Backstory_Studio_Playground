@@ -398,7 +398,7 @@ async function loadTools(
   httpEndpoints: AgentHttpEndpoint[] = [],
   toolSettings: AgentToolSettings = {},
   agentId?: string,
-  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null },
+  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string },
   policy?: ToolPolicy,
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
@@ -940,10 +940,10 @@ async function runAgentExecutionInner(
     const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
     // A run started from an artifact's chat gets that artifact's tools.
     const artifactContext = await (async () => {
-      const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown }
+      const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown; artifactBaseVersionId?: unknown }
       if (trigger.type !== 'artifact' || typeof trigger.artifactId !== 'string') return undefined
       const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true } })
-      return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null } : undefined
+      return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
     })()
     const policy = data.stepOverrides?.toolPolicy
     const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy)

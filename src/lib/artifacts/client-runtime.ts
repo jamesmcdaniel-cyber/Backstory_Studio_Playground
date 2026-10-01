@@ -1,7 +1,7 @@
 /** Runs only in the opaque-origin artifact frame, never in the app window. */
 export const ARTIFACT_CLIENT_RUNTIME = String.raw`
 (function(){
-  window.__artifactError=window.__artifactError||function(e){var node=document.createElement('div');node.setAttribute('role','alert');node.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;background:#fff1f2;color:#9f1239;padding:12px;z-index:2147483647';node.textContent=String(e.message||e);(document.body||document.documentElement).appendChild(node);};
+  window.__artifactError=window.__artifactError||function(e){var node=document.createElement('div');node.setAttribute('role','alert');node.setAttribute('data-backstory-runtime-error','');node.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;background:#fff1f2;color:#9f1239;padding:12px;z-index:2147483647';node.textContent=String(e.message||e);(document.body||document.documentElement).appendChild(node);};
   var pending = new Map(), seq = 0;
   window.addEventListener('message', function(e){
     if(e.source !== window.parent || !e.data || e.data.type !== 'backstory:state-result') return;
@@ -39,7 +39,7 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       s.value=next;s.writes++;s.saving=true;s.emit();
       s.chain=s.chain.then(function(){if(s.error)return;return request('set',{key:key,value:next,revision:s.revision}).then(function(r){s.revision=r.revision;});}).catch(function(e){s.error=e.message;window.__artifactError(e);}).finally(function(){s.writes--;s.saving=s.writes>0;s.emit();});
     }
-    return [s.value,set,{ready:s.ready,saving:s.saving,error:s.error}];
+    return [s.value,R.useCallback(set,[s,key]),{ready:s.ready,saving:s.saving,error:s.error}];
   }
   var worker=null, active=null, jobs=[], globals={}, pythonSeq=0;
   function pump(){
@@ -50,8 +50,9 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       var source="importScripts("+JSON.stringify(__ARTIFACT_ORIGIN__+'/vendor/artifact-python-worker.js')+");";
       var url=URL.createObjectURL(new Blob([source],{type:'application/javascript'}));
       worker=new Worker(url);URL.revokeObjectURL(url);
+      var ownWorker=worker;
       worker.onmessage=function(e){if(!active || e.data.id!==active.id)return;var job=active;clearTimeout(job.timer);active=null;e.data.error?job.reject(new Error(e.data.error)):job.resolve(e.data.result);pump();};
-      worker.onerror=function(e){var job=active;if(worker)worker.terminate();worker=null;active=null;if(job){clearTimeout(job.timer);job.reject(new Error(e.message||'Python worker failed'));}pump();};
+      worker.onerror=function(e){if(worker!==ownWorker)return;var job=active;if(worker)worker.terminate();worker=null;active=null;if(job){clearTimeout(job.timer);job.reject(new Error(e.message||'Python worker failed'));}pump();};
     }
     active.timer=setTimeout(function(){var job=active;worker.terminate();worker=null;active=null;job.reject(new Error('Python exceeded its execution deadline; the worker was stopped.'));pump();},active.timeout);
     worker.postMessage({id:active.id,code:active.code,input:active.input,globals:active.globals,origin:__ARTIFACT_ORIGIN__});
@@ -61,7 +62,11 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
     return new Promise(function(resolve,reject){
       if(typeof code!=='string'||code.length>100000)return reject(new Error('Python code must be at most 100,000 characters.'));
       if(jobs.length>=4)return reject(new Error('Too many queued Python calculations.'));
-      jobs.push({id:++pythonSeq,code:code,input:input,globals:JSON.parse(JSON.stringify(globals)),timeout:Math.max(1000,Math.min(60000,options&&options.timeoutMs||30000)),resolve:resolve,reject:reject});pump();
+      var snapshot=JSON.stringify(input===undefined?null:input);
+      if(snapshot.length>1000000)return reject(new Error('Python input exceeds 1 MB.'));
+      var timeout=options&&options.timeoutMs!==undefined?options.timeoutMs:30000;
+      if(typeof timeout!=='number'||!Number.isFinite(timeout))return reject(new Error('Python timeout must be a finite number.'));
+      jobs.push({id:++pythonSeq,code:code,input:JSON.parse(snapshot),globals:JSON.parse(JSON.stringify(globals)),timeout:Math.max(1000,Math.min(60000,timeout)),resolve:resolve,reject:reject});pump();
     });
   }
   function cancelPython(){if(worker)worker.terminate();worker=null;if(active){clearTimeout(active.timer);active.reject(new Error('Python cancelled.'));active=null;}jobs.splice(0).forEach(function(j){j.reject(new Error('Python cancelled.'));});}

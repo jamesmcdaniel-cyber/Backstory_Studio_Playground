@@ -1,0 +1,6 @@
+{
+  "name": "backstory-artifact-validator",
+  "private": true,
+  "type": "module",
+  "dependencies": { "playwright": "1.62.1", "pyodide": "314.0.3" }
+}

@@ -351,7 +351,7 @@ export async function loadNativePlaneGroups(
     httpUserId?: string
     agentId?: string | null
     /** Set for a run started from an artifact's chat: binds the artifact plane to it. */
-    artifact?: { artifactId: string; kind: string; executionId: string; request: string | null }
+    artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string }
   } = {},
 ): Promise<ToolPlaneGroup[]> {
   const selected = (descriptor: ConnectorDescriptor) =>

@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { ApiError } from '@/lib/server/api-handler'
 import { loadFlowToolCatalog } from '@/lib/flows/tool-catalog'
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
@@ -43,8 +44,9 @@ function slugOf(name: string): string {
 
 /** The settings and the tool options for an artifact's assistant, for the person viewing it. */
 export async function loadAssistantSetup(organizationId: string, userId: string, artifactId: string): Promise<AssistantSetup | null> {
-  const artifact = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId }, select: { agentTaskId: true, assistantConfig: true } })
+  const artifact = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId }, select: { agentTaskId: true, assistantConfig: true, templateSourceId: true } })
   if (!artifact) return null
+  if (artifact.templateSourceId) throw new ApiError('Template copy configuration is locked.', 403, 'CONFIGURATION_LOCKED')
   const config = readAssistantConfig(artifact.assistantConfig)
   const agent = artifact.agentTaskId
     ? await prisma.agentTask.findFirst({ where: { id: artifact.agentTaskId, organizationId }, select: { id: true, description: true, metadata: true } })

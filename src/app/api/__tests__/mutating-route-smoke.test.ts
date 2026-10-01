@@ -248,6 +248,7 @@ const cases = (): Case[] => [
   { route: 'executions/[id]/reply', method: 'POST', run: async () => (await import('../executions/[id]/reply/route')).POST(rq(`/api/executions/${executionId}/reply`, 'POST', {})) },
   { route: 'files', method: 'POST', run: async () => (await import('../files/route')).POST(rq('/api/files', 'POST', {})) },
   { route: 'artifacts', method: 'POST', run: async () => (await import('../artifacts/route')).POST(rq('/api/artifacts', 'POST', { content: '<html><body><h1>Page</h1></body></html>', agentId: 'missing' })) },
+  { route: 'share/artifacts/[token]/copy', method: 'POST', run: async () => (await import('../share/artifacts/[token]/copy/route')).POST(rq('/api/share/artifacts/missing/copy', 'POST', {})) },
   { route: 'artifacts/[id]', method: 'PATCH', run: async () => (await import('../artifacts/[id]/route')).PATCH(rq('/api/artifacts/missing', 'PATCH', { archived: true })) },
   { route: 'artifacts/[id]/state', method: 'PUT', run: async () => (await import('../artifacts/[id]/state/route')).PUT(rq('/api/artifacts/missing/state', 'PUT', { key: 'records-v1', revision: 0, value: [], versionId: 'missing' })) },
   { route: 'artifacts/[id]/versions/[versionId]/restore', method: 'POST', run: async () => (await import('../artifacts/[id]/versions/[versionId]/restore/route')).POST(rq('/api/artifacts/missing/versions/missing/restore', 'POST', {})) },

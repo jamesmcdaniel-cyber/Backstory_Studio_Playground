@@ -52,7 +52,7 @@ export type ArtifactView = {
   build: { status: string; executionId: string | null; error: string | null; account: string } | null
   archivedAt: string | null
   /** What the person viewing may do (sent by GET /api/artifacts/:id). */
-  permissions?: { canEdit: boolean; canShare: boolean; reason: string } | null
+  permissions?: { canEdit: boolean; canShare: boolean; canConfigure?: boolean; reason: string } | null
   createdAt: string
   updatedAt: string
 }

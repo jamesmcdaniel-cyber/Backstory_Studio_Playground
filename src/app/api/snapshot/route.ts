@@ -82,6 +82,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const [agents, workspaceFolders, activities, executionCount, budget, organization, notifications, unread] = await Promise.all([
     prisma.agentTask.findMany({
       where: {
+        artifactTemplateCopyId: null,
         organizationId: auth.organizationId,
         status: { not: 'DELETED' },
         ...agentVisibilityScope(auth.dbUser.id),

@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { agentVisibilityScope } from '@/lib/server/visibility'
+import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { deleteStoredFile } from '@/lib/files/storage'
 import { KnowledgeDocumentVersionConflictError, replaceKnowledgeDocumentContent } from '@/lib/knowledge/ingest'

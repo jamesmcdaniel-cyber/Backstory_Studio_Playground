@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
-import { agentVisibilityScope } from '@/lib/server/visibility'
+import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
 import { listArtifacts, isArtifactKind, createArtifact, ARTIFACT_UPLOAD_MAX_BYTES } from '@/lib/artifacts/service'
 import { htmlTitleOf, looksLikeHtml } from '@/lib/html-detect'
 import { artifactDocumentForUpload } from '@/lib/artifacts/runtime'
@@ -15,6 +15,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const params = request.nextUrl.searchParams
   const kind = params.get('kind')
   const artifacts = await listArtifacts(auth.organizationId, {
+    userId: auth.dbUser.id,
     kind: isArtifactKind(kind) ? kind : undefined,
     agentTaskId: params.get('agentId')?.slice(0, 100) || undefined,
     includeArchived: params.get('archived') === 'true',

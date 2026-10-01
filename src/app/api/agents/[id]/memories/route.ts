@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
-import { agentVisibilityScope } from '@/lib/server/visibility'
+import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
 
 export const runtime = 'nodejs'
 

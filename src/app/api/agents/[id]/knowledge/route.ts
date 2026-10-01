@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
-import { agentVisibilityScope } from '@/lib/server/visibility'
+import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
 import { ingestKnowledgeFile, ingestKnowledgeDataset, UnsupportedFileError } from '@/lib/knowledge/ingest'
 import { STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
 import {

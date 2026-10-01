@@ -646,6 +646,8 @@ model AgentTeammate {
 
 model AgentTask {
   id              String    @id @default(cuid())
+  /// Internal, immutable copilot for one personal artifact template copy.
+  artifactTemplateCopyId String? @unique
   type            String    @default("agent")
   priority        String    @default("MEDIUM")
   agentType       String    @default("CUSTOM")
@@ -1753,6 +1755,9 @@ model RoiAnalysis {
 /// version tied to the run that made it; asking for a change adds a version.
 model Artifact {
   id               String    @id @default(cuid())
+  /// Immutable provenance, not a relation: copies survive source removal.
+  templateSourceId String?
+  shareTemplate Boolean @default(false)
   organizationId   String    @db.Uuid
   userId           String?
   /// report | roi_dashboard | document
@@ -1790,6 +1795,7 @@ model Artifact {
   @@index([organizationId, updatedAt])
   @@index([organizationId, agentTaskId])
   @@index([organizationId, kind])
+  @@unique([organizationId, userId, templateSourceId])
   @@map("artifacts")
 }
 

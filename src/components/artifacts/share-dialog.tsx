@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 
 type Person = { id: string; name: string | null; email: string | null }
 type Sharing = {
+  shareTemplate: boolean
   workspaceAccess: 'edit' | 'view'
   owner: Person | null
   editors: Person[]
@@ -182,6 +183,13 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
                 </button>
               </div>
               <p className="text-xs text-muted-foreground">No sign-in needed. They see the current version only — no assistant, history or anything else in the workspace. The data on it leaves the workspace, so share with care.</p>
+              {sharing.link.enabled && <div className="space-y-2 rounded-lg border border-border p-3">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input type="checkbox" checked={sharing.shareTemplate} disabled={!canShare || busy} onChange={event => void update({ shareTemplate: event.target.checked })} />
+                  Offer as a template with AI Copilot
+                </label>
+                <p className="text-xs text-muted-foreground">Signed-in recipients can save their own editable copy of the published source, including data embedded in it. Their copilot edits only their copy. Configuration is locked; your integrations, private app state and history are not copied. Turning this off stops new copies, but does not remove existing copies.</p>
+              </div>}
               {sharing.link.enabled && sharing.link.url && (
                 <div className="flex items-center gap-2">
                   <Input readOnly value={sharing.link.url} aria-label="Public link" className="font-mono text-xs" onFocus={(event) => event.currentTarget.select()} />

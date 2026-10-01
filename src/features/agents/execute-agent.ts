@@ -4,6 +4,8 @@ import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { registerVersionFromExecution } from '@/lib/artifacts/service'
+import { ArtifactToolClient, artifactToolsFor } from '@/lib/artifacts/tools'
+import { CODE_TOOLS, CodeAnalysisToolClient } from '@/lib/code-analysis/tools'
 import { ARTIFACT_RENDER_MODEL, evidenceFromTranscript, isDeliverable, needsArtifactRender, renderArtifact } from './artifact-renderer'
 import { requestsArtifact } from '@/lib/artifacts/directive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
@@ -415,7 +417,7 @@ export async function selectDiscoveredTools(
   }
 }
 
-async function loadTools(
+export async function loadTools(
   organizationId: string,
   providers: string[],
   ownerUserId?: string | null,
@@ -423,7 +425,7 @@ async function loadTools(
   httpEndpoints: AgentHttpEndpoint[] = [],
   toolSettings: AgentToolSettings = {},
   agentId?: string,
-  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string },
+  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean },
   policy?: ToolPolicy,
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
@@ -431,6 +433,25 @@ async function loadTools(
   // discovery/binding lives in ./tool-planes, shared with the flow tool catalog
   // and the flow tool-step executor.
   const discovered: DiscoveredTool[] = []
+  if (artifact?.templateCopy) {
+    // No connector discovery or credential lookup occurs for personal copies.
+    // The code sandbox can compute on inline data, never repository files.
+    const planes = [
+      { provider: 'artifact', tools: artifactToolsFor('report').map(tool => {
+        const schema = tool.inputSchema as { properties?: Record<string, unknown> }
+        return { ...tool, description: tool.description.replace(/ Set `saveAsNew: true`[\s\S]*$/, ''), inputSchema: { ...tool.inputSchema, properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== 'saveAsNew' && key !== 'title')) } }
+      }), client: new ArtifactToolClient(organizationId, ownerUserId ?? '', artifact) },
+      { provider: 'code', tools: CODE_TOOLS.map(tool => ({ ...tool,
+        description: 'Run sandboxed Python or JavaScript on inline data. Write a function body ending with return. Input data is available as input.data (JavaScript) or input["data"] (Python). No repository documents, network, files or integrations are available.',
+        inputSchema: { ...tool.inputSchema, properties: Object.fromEntries(Object.entries(tool.inputSchema.properties).filter(([key]) => key !== 'documentIds')) },
+      })), client: new CodeAnalysisToolClient(organizationId, ownerUserId ?? '', null, async () => [], async () => null) },
+    ]
+    for (const plane of planes) for (const tool of plane.tools) discovered.push({
+      name: toolName(plane.provider, tool.name), description: tool.description, inputSchema: tool.inputSchema,
+      isWrite: false, binding: { provider: plane.provider, serverUrl: `backstory://${plane.provider}`, toolName: tool.name, isWrite: false, client: plane.client },
+    })
+    return { ...materializeTools(discovered), unavailable: [], policyRemoved: [] }
+  }
   // Planes that produced no usable client. Kept so the run can report WHICH
   // attached tool is unavailable and why, instead of behaving as though the
   // agent had nothing attached at all.
@@ -671,6 +692,16 @@ async function runAgentExecutionInner(
     where: { id: agentId, organizationId, status: 'ACTIVE' },
   })
   if (!agentRow) throw new Error('Agent not found or inactive')
+  const templateCopy = Boolean(agentRow.artifactTemplateCopyId)
+  if (templateCopy) {
+    // A hidden copilot is not a general-purpose agent. Alternate APIs, flows,
+    // schedules and forged job overrides cannot broaden its authority.
+    const queued = data.executionId ? await prisma.agentExecution.findFirst({ where: { id: data.executionId, organizationId, agentTaskId: agentId, userId } }) : null
+    const trigger = queued?.trigger as { type?: string; artifactId?: string } | null
+    const copy = await prisma.artifact.findFirst({ where: { id: agentRow.artifactTemplateCopyId!, organizationId, userId, agentTaskId: agentId, templateSourceId: { not: null } }, select: { id: true } })
+    if (agentRow.userId !== userId || !copy || trigger?.type !== 'artifact' || trigger.artifactId !== copy.id) throw new Error('This copilot can only run from its own template copy.')
+    data = { ...data, stepOverrides: undefined }
+  }
   // A published agent runs its PUBLISHED definition, so editing it does not
   // change what the next scheduled run does. Overlaid at the one point the row
   // is loaded: everything downstream reads the same fields it always did.
@@ -966,8 +997,9 @@ async function runAgentExecutionInner(
     const artifactContext = await (async () => {
       const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown; artifactToolQuery?: unknown; artifactBaseVersionId?: unknown }
       if (trigger.type !== 'artifact' || typeof trigger.artifactId !== 'string') return undefined
-      const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true } })
-      return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, toolQuery: typeof trigger.artifactToolQuery === 'string' ? trigger.artifactToolQuery : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
+      const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, agentTaskId: true } })
+      if (target?.templateSourceId && (!templateCopy || target.userId !== userId || target.agentTaskId !== agent.id)) throw new Error('Template copy access denied.')
+      return target ? { artifactId: target.id, kind: target.kind, templateCopy, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, toolQuery: typeof trigger.artifactToolQuery === 'string' ? trigger.artifactToolQuery : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
     })()
     const policy = data.stepOverrides?.toolPolicy
     // Artifact prompts contain extensive source/instructions. Rank against the
@@ -1257,7 +1289,7 @@ async function runAgentExecutionInner(
     // and gave a long document no way to be read in order. Best-effort —
     // never blocks a run.
     try {
-      const entries = await loadManifestEntries({ organizationId, agentId: agent.id })
+      const entries = templateCopy ? [] : await loadManifestEntries({ organizationId, agentId: agent.id })
       const manifest = renderRepositoryManifest(entries)
       if (manifest) {
         retrievedBlocks.push(manifest)
@@ -2003,7 +2035,7 @@ async function runAgentExecutionInner(
     // Chained before graph indexing enrichment is NOT needed — indexExecution
     // already ran; reflection memories are graph-indexed via their own path in
     // plan 2. Fire-and-forget: never blocks or fails the run.
-    void reflectAndRemember({
+    if (!templateCopy) void reflectAndRemember({
       organizationId,
       agentId: agent.id,
       executionId: execution.id,

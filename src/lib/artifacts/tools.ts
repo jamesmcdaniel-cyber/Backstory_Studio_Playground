@@ -26,7 +26,7 @@ import { addVersion, createArtifact } from './service'
  * picking the previous version.
  */
 
-export type ArtifactToolContext = { artifactId: string; executionId: string; request: string | null; expectedVersionId?: string }
+export type ArtifactToolContext = { artifactId: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean }
 
 const GENERIC_TOOLS = [
   {
@@ -228,6 +228,9 @@ export class ArtifactToolClient {
 
   async executeTool(_serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
     try {
+      if (this.context.templateCopy && (!GENERIC_TOOLS.some(tool => tool.name === name) || args.saveAsNew)) {
+        throw new Error('This copilot can only read and revise your template copy.')
+      }
       switch (name) {
         case 'get_artifact': return await this.getArtifact()
         case 'revise_artifact': return await this.revise(args)
@@ -248,6 +251,7 @@ export class ArtifactToolClient {
   private async artifact() {
     const artifact = await prisma.artifact.findFirst({ where: { id: this.context.artifactId, organizationId: this.organizationId } })
     if (!artifact) throw new Error('The artifact no longer exists.')
+    if (artifact.templateSourceId && artifact.userId !== this.userId) throw new Error('Artifact not found.')
     if (this.context.expectedVersionId && artifact.currentVersionId !== this.context.expectedVersionId) throw new Error('Artifact changed since this request started. Reload and retry the change; nothing was saved.')
     return artifact
   }
@@ -367,6 +371,7 @@ export class ArtifactToolClient {
 
   /** Save content as the artifact's next version, or as a new artifact. */
   private async save(artifact: Awaited<ReturnType<ArtifactToolClient['artifact']>>, content: string, summary: string, saveAsNew?: boolean, title?: string) {
+    if (artifact.templateSourceId && saveAsNew) throw new Error('This copilot can only save versions of your template copy.')
     if (saveAsNew) {
       const { artifact: created } = await createArtifact({
         organizationId: this.organizationId,

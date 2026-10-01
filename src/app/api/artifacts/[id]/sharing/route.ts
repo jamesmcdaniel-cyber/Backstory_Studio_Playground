@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { ArtifactAccessError, loadSharing, updateSharing } from '@/lib/artifacts/sharing'
-import { viewerOf } from '@/lib/artifacts/route-access'
+import { requireReadable, viewerOf } from '@/lib/artifacts/route-access'
 
 export const runtime = 'nodejs'
 
@@ -18,12 +18,14 @@ function originOf(request: Request): string {
 // GET /api/artifacts/:id/sharing — who can edit, workspace access, and the
 // public link (its URL only for people who can share).
 export const GET = withAuthenticatedApi(async (request, auth) => {
+  await requireReadable(auth, artifactIdOf(request))
   const sharing = await loadSharing(auth.organizationId, artifactIdOf(request), viewerOf(auth), originOf(request))
   if (!sharing) throw new ApiError('Artifact not found.', 404, 'NOT_FOUND')
   return { success: true, ...sharing }
 }, { permission: 'agent.read' })
 
 const patchSchema = z.object({
+  shareTemplate: z.boolean().optional(),
   workspaceAccess: z.enum(['edit', 'view']).optional(),
   editorIds: z.array(z.string().min(1).max(64)).max(200).optional(),
   link: z.enum(['enable', 'disable', 'rotate']).optional(),

@@ -13,6 +13,11 @@ export function agentVisibilityScope(userId: string) {
   return { OR: [{ visibility: { not: 'private' } }, { userId }] }
 }
 
+/** Internal template copilots are operated only through their artifact. */
+export function configurableAgentScope(userId: string) {
+  return { artifactTemplateCopyId: null, ...agentVisibilityScope(userId) }
+}
+
 /**
  * Execution rows: runs belonging to a private agent are visible only to that
  * agent's owner. Runs with no linked agent (e.g. template runs) are never

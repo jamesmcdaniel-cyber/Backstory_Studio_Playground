@@ -6,6 +6,7 @@ import { rateLimit } from '@/lib/ratelimit'
 import { recordAudit } from '@/lib/audit'
 import { notify } from '@/lib/notifications/service'
 import type { Permission } from '@/lib/authz/permissions'
+import { templateCopyPermissions } from './template-policy'
 
 /**
  * Who can see and change an artifact, and its public link.
@@ -26,7 +27,7 @@ import type { Permission } from '@/lib/authz/permissions'
 
 export type ArtifactViewer = { userId: string; can: (permission: Permission) => boolean }
 export type WorkspaceAccess = 'edit' | 'view'
-export type ArtifactPermissions = { canEdit: boolean; canShare: boolean; reason: 'owner' | 'admin' | 'editor' | 'workspace' | 'view_only' }
+export type ArtifactPermissions = { canEdit: boolean; canShare: boolean; canConfigure?: boolean; reason: 'owner' | 'admin' | 'editor' | 'workspace' | 'view_only' }
 
 export class ArtifactAccessError extends Error {
   constructor(message: string, readonly status: 403 | 404) {
@@ -38,7 +39,8 @@ export function editorIdsOf(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : []
 }
 
-export function artifactPermissions(viewer: ArtifactViewer, artifact: Pick<Artifact, 'userId' | 'workspaceAccess' | 'editorIds'>): ArtifactPermissions {
+export function artifactPermissions(viewer: ArtifactViewer, artifact: Pick<Artifact, 'userId' | 'workspaceAccess' | 'editorIds'> & { templateSourceId?: string | null }): ArtifactPermissions {
+  if (artifact.templateSourceId) return templateCopyPermissions(artifact.userId, viewer.userId)
   const grant = (reason: ArtifactPermissions['reason']): ArtifactPermissions => ({ canEdit: true, canShare: true, reason })
   if (artifact.userId && artifact.userId === viewer.userId) return grant('owner')
   if (viewer.can('org.manage')) return grant('admin')
@@ -68,6 +70,7 @@ export function publicArtifactUrl(origin: string, token: string): string {
 type Person = { id: string; name: string | null; email: string | null }
 
 export type ArtifactSharing = {
+  shareTemplate: boolean
   workspaceAccess: WorkspaceAccess
   owner: Person | null
   editors: Person[]
@@ -100,6 +103,7 @@ export async function loadSharing(organizationId: string, artifactId: string, vi
   const permissions = artifactPermissions(viewer, artifact)
   const [owner] = await people(organizationId, artifact.userId ? [artifact.userId] : [])
   return {
+    shareTemplate: artifact.shareTemplate,
     workspaceAccess: artifact.workspaceAccess === 'view' ? 'view' : 'edit',
     owner: owner ?? null,
     editors: await people(organizationId, editorIdsOf(artifact.editorIds)),
@@ -109,12 +113,14 @@ export async function loadSharing(organizationId: string, artifactId: string, vi
   }
 }
 
-export type SharingPatch = { workspaceAccess?: WorkspaceAccess; editorIds?: string[]; link?: 'enable' | 'disable' | 'rotate' }
+export type SharingPatch = { workspaceAccess?: WorkspaceAccess; editorIds?: string[]; link?: 'enable' | 'disable' | 'rotate'; shareTemplate?: boolean }
 
 /** Change who can edit, or the public link. Newly added editors are notified; every change is audited. */
 export async function updateSharing(organizationId: string, artifactId: string, viewer: ArtifactViewer, origin: string, patch: SharingPatch): Promise<ArtifactSharing> {
   const artifact = await requireArtifactEdit(organizationId, artifactId, viewer)
+  if (artifact.templateSourceId) throw new ArtifactAccessError('Template copy configuration is locked.', 403)
   const data: Prisma.ArtifactUpdateInput = {}
+  if (patch.shareTemplate !== undefined) data.shareTemplate = patch.shareTemplate
   let freshToken: string | undefined
   let added: string[] = []
 
@@ -174,7 +180,7 @@ export async function updateSharing(organizationId: string, artifactId: string, 
   return sharing
 }
 
-export type PublicArtifact = { id: string; organizationId: string; title: string; kind: string; updatedAt: Date; currentVersionId: string | null }
+export type PublicArtifact = { id: string; organizationId: string; title: string; kind: string; updatedAt: Date; currentVersionId: string | null; shareTemplate: boolean }
 export type PublicArtifactResult = { status: 'ok'; artifact: PublicArtifact } | { status: 'not_found' } | { status: 'rate_limited' }
 
 const ANON_LIMIT = { limit: 60, windowMs: 60_000 }
@@ -192,7 +198,7 @@ export async function resolvePublicArtifact(token: string, options: { clientKey:
   // on — an artifact nobody shared is unreachable, and nothing else is queryable.
   const artifact = await systemPrisma.artifact.findFirst({
     where: { shareTokenDigest: hashToken(token), shareAnonymous: true, archivedAt: null },
-    select: { id: true, organizationId: true, title: true, kind: true, updatedAt: true, currentVersionId: true },
+    select: { id: true, organizationId: true, title: true, kind: true, updatedAt: true, currentVersionId: true, shareTemplate: true },
   })
   if (!artifact) return { status: 'not_found' }
   if (options.countView) {

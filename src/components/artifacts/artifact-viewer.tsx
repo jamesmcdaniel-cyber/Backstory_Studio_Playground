@@ -209,7 +209,8 @@ export function ArtifactViewer({ id }: { id: string }) {
   // the workspace may edit); without it the page is read-only.
   const canEdit = artifact.permissions?.canEdit ?? can('agent.write')
   const canAsk = Boolean(artifact.agent) && canEdit
-  const canConfigure = canAsk
+  const configurationLocked = artifact.permissions?.canConfigure === false
+  const canConfigure = canAsk && !configurationLocked
   const shownMarkdown = shownVersion?.format === 'markdown' ? shownVersion : null
 
   return (
@@ -220,7 +221,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">{artifact.title}</h1>
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
             <span>{ARTIFACT_KIND_LABEL[artifact.kind]}</span>
-            {artifact.agent && <Link href={`/agents?agent=${artifact.agent.id}`} className="inline-flex items-center gap-1 hover:text-foreground"><Bot className="h-3.5 w-3.5" aria-hidden />{artifact.agent.title}</Link>}
+            {artifact.agent && (configurationLocked ? <span>Personal copy · AI Copilot · settings locked</span> : <Link href={`/agents?agent=${artifact.agent.id}`} className="inline-flex items-center gap-1 hover:text-foreground"><Bot className="h-3.5 w-3.5" aria-hidden />{artifact.agent.title}</Link>)}
             {artifact.flow && <Link href={`/flows/${artifact.flow.id}`} className="inline-flex items-center gap-1 hover:text-foreground"><Workflow className="h-3.5 w-3.5" aria-hidden />{artifact.flow.name}</Link>}
             <span>{artifact.versionCount} version{artifact.versionCount === 1 ? '' : 's'} · updated {relativeTime(artifact.updatedAt)}</span>
           </p>
@@ -231,9 +232,9 @@ export function ArtifactViewer({ id }: { id: string }) {
               Open full page <ExternalLink className="h-3 w-3" aria-hidden />
             </a>
           )}
-          <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+          {!configurationLocked && <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
             <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />Share
-          </Button>
+          </Button>}
           {canEdit && (
             <Button variant="outline" size="sm" onClick={() => void archive(!artifact.archivedAt)}>
               {artifact.archivedAt ? <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}
@@ -243,7 +244,7 @@ export function ArtifactViewer({ id }: { id: string }) {
         </div>
       </div>
 
-      <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />
+      {!configurationLocked && <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />}
       {error && <p role="status" className="text-sm text-amber-700">{error} <button onClick={() => void refresh()} className="underline">Retry now</button></p>}
 
       {artifact.archivedAt && (
@@ -303,7 +304,7 @@ export function ArtifactViewer({ id }: { id: string }) {
 
         <aside className="flex h-[640px] min-h-0 min-w-0 flex-col rounded-xl border border-border bg-background xl:h-full">
           <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
-            {(['assistant', 'history', 'settings'] as const).map((tab) => (
+            {(['assistant', 'history', 'settings'] as const).filter(tab => tab !== 'settings' || !configurationLocked).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -317,7 +318,7 @@ export function ArtifactViewer({ id }: { id: string }) {
               </button>
             ))}
           </div>
-          {panel === 'settings' ? (
+          {panel === 'settings' && !configurationLocked ? (
             <AssistantSettingsPanel artifactId={artifact.id} canEdit={canConfigure} />
           ) : panel === 'history' ? (
             <ol className="min-h-0 flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
@@ -412,7 +413,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                   </button>
                 </div>
               )}
-              <div className="mb-2 flex justify-end"><ModelPicker value={model} onChange={setModel} disabled={busy} /></div>
+              {!configurationLocked && <div className="mb-2 flex justify-end"><ModelPicker value={model} onChange={setModel} disabled={busy} /></div>}
               <label htmlFor="artifact-message" className="sr-only">Message</label>
               <div className="flex items-end gap-2">
                 <textarea

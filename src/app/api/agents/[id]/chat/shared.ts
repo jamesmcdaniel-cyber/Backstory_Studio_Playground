@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { ApiError } from '@/lib/server/api-handler'
 import type { AuthContext } from '@/lib/server/auth'
-import { agentVisibilityScope } from '@/lib/server/visibility'
+import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
 
 /**
  * Shared helpers for the agent-scoped assistant chat routes (`/chat` and

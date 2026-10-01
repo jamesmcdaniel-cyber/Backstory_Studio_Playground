@@ -9,6 +9,7 @@ import { readAgentMetadata } from '@/lib/agents/metadata'
 import { validateArtifactContent, validateArtifactPython } from './validate-content'
 import { validateArtifactRuntime } from './preflight'
 import { ARTIFACT_CAPABILITIES } from './capabilities'
+import { TEMPLATE_COPILOT_MODEL } from './template-policy'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
 /**
@@ -219,7 +220,8 @@ export async function registerVersionFromExecution(params: {
     // update_roi_dashboard); the answer is then prose about what changed.
     const made = await prisma.artifactVersion.findFirst({ where: { executionId: params.executionId, organizationId: params.organizationId }, select: { id: true, artifactId: true } })
     if (made) return { artifactId: made.artifactId, versionId: made.id, created: false }
-    const target = await prisma.artifact.findFirst({ where: { id: targetId, organizationId: params.organizationId }, select: { id: true, kind: true } })
+    const target = await prisma.artifact.findFirst({ where: { id: targetId, organizationId: params.organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, agentTaskId: true } })
+    if (target?.templateSourceId && (target.userId !== params.userId || target.agentTaskId !== params.agentTaskId)) throw new Error('Template copy access denied.')
     // A change to a Markdown document comes back as Markdown; a change to an
     // HTML report must come back as HTML (a prose reply is an answer, not a
     // version — the chat shows it as such).
@@ -272,13 +274,14 @@ async function markChatVersion(organizationId: string, artifactId: string, execu
   await prisma.artifact.update({ where: { id: artifactId, organizationId }, data: { chat: jsonValue(chat) } })
 }
 
-export async function listArtifacts(organizationId: string, options: { kind?: ArtifactKind; agentTaskId?: string; includeArchived?: boolean } = {}): Promise<ArtifactListItem[]> {
+export async function listArtifacts(organizationId: string, options: { userId?: string; kind?: ArtifactKind; agentTaskId?: string; includeArchived?: boolean } = {}): Promise<ArtifactListItem[]> {
   const rows = await prisma.artifact.findMany({
     where: {
       organizationId,
       ...(options.kind ? { kind: options.kind } : {}),
       ...(options.agentTaskId ? { agentTaskId: options.agentTaskId } : {}),
       ...(options.includeArchived ? {} : { archivedAt: null }),
+      OR: [{ templateSourceId: null }, ...(options.userId ? [{ userId: options.userId }] : [])],
     },
     orderBy: { updatedAt: 'desc' },
     take: 200,
@@ -315,7 +318,7 @@ export async function artifactStatus(organizationId: string, id: string) {
   const found = await prisma.artifact.findFirst({ where: { id, organizationId } })
   if (!found) return null
   const row = await reconcileChat(found)
-  return { id: row.id, currentVersionId: row.currentVersionId, updatedAt: row.updatedAt.toISOString(), archivedAt: row.archivedAt, userId: row.userId, workspaceAccess: row.workspaceAccess, editorIds: row.editorIds }
+  return { id: row.id, currentVersionId: row.currentVersionId, updatedAt: row.updatedAt.toISOString(), archivedAt: row.archivedAt, userId: row.userId, workspaceAccess: row.workspaceAccess, editorIds: row.editorIds, templateSourceId: row.templateSourceId }
 }
 
 export async function loadArtifact(organizationId: string, id: string, before?: number): Promise<ArtifactView | null> {
@@ -469,6 +472,11 @@ export async function askArtifact(params: { organizationId: string; userId: stri
   const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
   if (!row) throw new Error('Artifact not found.')
   if (!row.agentTaskId) throw new Error('This artifact has no producing agent to ask.')
+  if (row.templateSourceId) {
+    if (row.userId !== params.userId) throw new Error('Artifact not found.')
+    // The browser's general model preference is not a configuration grant.
+    params = { ...params, model: TEMPLATE_COPILOT_MODEL }
+  }
   const message = params.message.trim().slice(0, ARTIFACT_QUESTION_MAX_CHARS)
   if (!message) throw new Error('Type a message first.')
   const chat = chatOf(row)
@@ -549,8 +557,9 @@ export async function prepareFlowArtifactVersion(params: { organizationId: strin
   if (!artifactId) return null
   const html = findHtml(params.output)
   if (!html) throw new Error('Artifact publication failed: the flow output did not contain a document. No version was saved.')
-  const target = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId: params.organizationId }, select: { id: true } })
+  const target = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId: params.organizationId }, select: { id: true, templateSourceId: true } })
   if (!target) throw new Error('Artifact publication failed: the artifact is no longer available.')
+  if (target.templateSourceId) throw new Error('Template copies cannot be changed by flows.')
   validateArtifactContent(html)
   await validateArtifactPython(html)
   await validateArtifactRuntime(html)

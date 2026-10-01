@@ -5,6 +5,7 @@ import { resolvePublicArtifact } from '@/lib/artifacts/sharing'
 import { looksLikeHtml } from '@/lib/html-detect'
 import { Markdown } from '@/components/ui/markdown'
 import { ARTIFACT_FRAME_SANDBOX } from '@/components/artifacts/artifact-frame'
+import { UseTemplateButton } from '@/components/artifacts/use-template-button'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { robots: { index: false, follow: false } }
@@ -44,12 +45,12 @@ export default async function PublicArtifactPage({ params }: { params: Promise<{
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-sm">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-sm">
         <div className="min-w-0">
           <p className="truncate font-semibold">{artifact.title}</p>
           <p className="text-xs text-muted-foreground">Shared from Backstory · updated {artifact.updatedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
         </div>
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground"><Eye className="h-3.5 w-3.5" aria-hidden /> View only</span>
+        {artifact.shareTemplate ? <UseTemplateButton token={token} /> : <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground"><Eye className="h-3.5 w-3.5" aria-hidden /> View only</span>}
       </header>
       {isPage ? (
         <iframe

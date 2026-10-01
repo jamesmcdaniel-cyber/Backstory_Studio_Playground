@@ -1,7 +1,7 @@
 import type { AgentTask } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { provisionAgentFromConfig } from '@/lib/templates/instantiate'
-import { agentVisibilityScope } from '@/lib/server/visibility'
+import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
 
 /**
  * Every artifact has an agent behind it — the one its assistant runs as. An
@@ -39,8 +39,9 @@ export async function createArtifactAgent(organizationId: string, userId: string
 
 /** Attach an agent to an artifact: an existing one this person can use, or a new one made for it. */
 export async function attachArtifactAgent(params: { organizationId: string; userId: string; artifactId: string; agentId?: string | null; create?: boolean }): Promise<{ id: string; title: string }> {
-  const artifact = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { title: true } })
+  const artifact = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { title: true, templateSourceId: true } })
   if (!artifact) throw new Error('Artifact not found.')
+  if (artifact.templateSourceId) throw new Error('Template copy configuration is locked.')
   let agent: Pick<AgentTask, 'id' | 'description' | 'metadata'> | null = null
   if (params.create) {
     agent = await createArtifactAgent(params.organizationId, params.userId, artifact.title)

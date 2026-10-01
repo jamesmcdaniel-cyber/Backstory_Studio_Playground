@@ -1,5 +1,5 @@
 import type { Artifact, ArtifactVersion, Prisma } from '@prisma/client'
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdownTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
@@ -96,7 +96,7 @@ export function flowIdFromTrigger(trigger: unknown): string | null {
   return str(t.flowId) ?? str(t.parentFlowId)
 }
 
-export async function addVersion(params: {
+type AddVersionParams = {
   artifactId: string
   organizationId: string
   content: string
@@ -106,11 +106,17 @@ export async function addVersion(params: {
   createdByUserId?: string | null
   state?: Prisma.InputJsonValue | null
   expectedVersionId?: string | null
-}): Promise<ArtifactVersion> {
+}
+
+export async function addVersion(params: AddVersionParams): Promise<ArtifactVersion> {
   validateArtifactContent(params.content)
   await validateArtifactPython(params.content)
   await validateArtifactRuntime(params.content)
-  return prisma.$transaction(async (tx) => {
+  return tenantTransaction(params.organizationId, tx => insertValidatedVersion(tx, params))
+}
+
+/** Database-only publication. Callers must finish validation before opening a transaction. */
+async function insertValidatedVersion(tx: Prisma.TransactionClient, params: AddVersionParams): Promise<ArtifactVersion> {
     // Atomic increment takes the row lock before reading the next number.
     // Competing saves serialize; a stale editing base fails without publishing.
     const claimed = await tx.artifact.updateMany({
@@ -143,7 +149,6 @@ export async function addVersion(params: {
       data: { currentVersionId: version.id, archivedAt: null },
     })
     return version
-  })
 }
 
 /** Create an artifact with its first version. */
@@ -524,15 +529,28 @@ export async function rerunArtifactFlow(params: { organizationId: string; userId
 
 /** Called by the flow finalizer: a succeeded run started for an artifact whose output holds a document adds a version. */
 export async function registerVersionFromFlowRun(params: { organizationId: string; flowRunId: string; trigger: unknown; output: unknown }): Promise<string | null> {
+  const publish = await prepareFlowArtifactVersion(params)
+  return publish ? tenantTransaction(params.organizationId, publish) : null
+}
+
+/** Validate off-transaction; publish atomically with the flow terminal state and outbox. */
+export async function prepareFlowArtifactVersion(params: { organizationId: string; flowRunId: string; trigger: unknown; output: unknown }): Promise<((tx: Prisma.TransactionClient) => Promise<string>) | null> {
   const t = (params.trigger ?? {}) as TriggerShape & { artifactRequest?: unknown }
   const artifactId = str(t.artifactId)
   if (!artifactId) return null
   const html = findHtml(params.output)
-  if (!html) return null
+  if (!html) throw new Error('Artifact publication failed: the flow output did not contain a document. No version was saved.')
   const target = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId: params.organizationId }, select: { id: true } })
-  if (!target) return null
-  const version = await addVersion({ artifactId, organizationId: params.organizationId, content: html, flowRunId: params.flowRunId, request: str(t.artifactRequest), ...(typeof t.artifactBaseVersionId === 'string' ? { expectedVersionId: t.artifactBaseVersionId } : {}) })
-  return version.id
+  if (!target) throw new Error('Artifact publication failed: the artifact is no longer available.')
+  validateArtifactContent(html)
+  await validateArtifactPython(html)
+  await validateArtifactRuntime(html)
+  return async tx => {
+    const existing = await tx.artifactVersion.findFirst({ where: { organizationId: params.organizationId, flowRunId: params.flowRunId }, select: { id: true } })
+    if (existing) return existing.id
+    const version = await insertValidatedVersion(tx, { artifactId, organizationId: params.organizationId, content: html, flowRunId: params.flowRunId, request: str(t.artifactRequest), ...(typeof t.artifactBaseVersionId === 'string' ? { expectedVersionId: t.artifactBaseVersionId } : {}) })
+    return version.id
+  }
 }
 
 /** The first HTML document inside a flow's output — a string, or a string field of an object. */

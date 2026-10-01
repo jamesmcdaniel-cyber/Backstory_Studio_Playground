@@ -92,7 +92,9 @@ export function ArtifactViewer({ id }: { id: string }) {
   const busy = Boolean(pending) || building
 
   useEffect(() => { void refresh() }, [refresh])
-  useEffect(() => (busy ? startVisibleInterval(() => void refresh(), 10_000) : undefined), [busy, refresh])
+  // External flows and other tabs can publish even when this viewer is idle.
+  // Pause in background tabs and refresh immediately when they become visible.
+  useEffect(() => startVisibleInterval(() => void refresh(), busy ? 3_000 : 10_000), [busy, refresh])
   useAgentExecStream(pending?.executionId, () => void refresh(), Boolean(pending?.executionId))
   useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'nearest' }) }, [artifact?.chat.length, pending])
   // A new version arriving moves the viewer to it.

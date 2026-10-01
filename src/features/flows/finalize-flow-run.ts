@@ -1,4 +1,4 @@
-import { registerVersionFromFlowRun } from '@/lib/artifacts/service'
+import { prepareFlowArtifactVersion } from '@/lib/artifacts/service'
 import { Prisma } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
@@ -72,7 +72,7 @@ export async function finalizeFlowRun(
 ): Promise<{ status: string; output: unknown }> {
   const { job, flow, run, graph, flowSettings, result, pending } = ctx
   await Promise.all(pending) // ensure all container-step rows are written
-  const status = result.status === 'succeeded' ? 'succeeded' : result.status === 'waiting' ? 'waiting' : 'failed'
+  let status = result.status === 'succeeded' ? 'succeeded' : result.status === 'waiting' ? 'waiting' : 'failed'
   // Output node parity: when a flow declared named outputs, callers receive the
   // named object; otherwise the implicit last-step output stands (back-compat —
   // a flow with no output node behaves EXACTLY as before). This effective output
@@ -84,17 +84,31 @@ export async function finalizeFlowRun(
   const effectiveOutput = hasNamedOutputs ? result.namedOutputs : result.output
   // A failed run persists WHY it failed (e.g. the step-timeout message) — the
   // runs API surfaces FlowRun.error, so it must never stay null on failure.
-  const runError = status === 'failed' ? truncateWithMarker(result.error ?? 'The flow failed.', 300) : null
+  let runError = status === 'failed' ? truncateWithMarker(result.error ?? 'The flow failed.', 300) : null
+  let publish: Awaited<ReturnType<typeof prepareFlowArtifactVersion>> = null
+  const publicationFailed = (error: unknown) => {
+    status = 'failed'
+    runError = truncateWithMarker(`Artifact publication failed: ${error instanceof Error ? error.message : String(error)}`, 300)
+  }
+  if (status === 'succeeded' && job.trigger?.artifactId) {
+    try {
+      publish = await prepareFlowArtifactVersion({ organizationId: job.organizationId, flowRunId: run.id, trigger: job.trigger, output: effectiveOutput })
+    } catch (error) { publicationFailed(error) }
+  }
   // A `wait` step that paused on a timer records when the run should resume, so
   // the cron scan can wake it. Any other waiting state (human reply, approval,
   // open-ended webhook callback) and every terminal state clear resumeAt.
   const resumeAt = status === 'waiting' && result.waiting?.resumeAt ? new Date(result.waiting.resumeAt) : null
   const manualRun = String(job.trigger?.type ?? 'manual') === 'manual'
-  const retainTerminalData = status === 'waiting' || (
+  const retainTerminalData = () => status === 'waiting' || (
     (!manualRun || flowSettings.saveManualRuns) &&
     (status === 'succeeded' ? flowSettings.saveSuccessfulRuns : flowSettings.saveFailedRuns)
   )
-  await tenantTransaction(job.organizationId, async (tx) => {
+  let publicationError: unknown
+  const persist = () => tenantTransaction(job.organizationId, async (tx) => {
+    if (publish) {
+      try { await publish(tx) } catch (error) { publicationError = error; throw error }
+    }
     // "Degraded" = succeeded but with fine print: a step that carried engine
     // warnings, or one that failed while the run continued (on-error
     // continue). Computed once here from the FULL persisted step set — never
@@ -107,13 +121,6 @@ export async function finalizeFlowRun(
       where: { id: run.id, organizationId: job.organizationId },
       data: { status, output: jsonValue(effectiveOutput), error: runError, finishedAt: status === 'waiting' ? null : new Date(), resumeAt, degraded },
     })
-    // A run started from an artifact page ("re-run the flow") adds a version
-    // when its output holds a document. Outside the transaction's own tables
-    // but inside its scope: a registered version with no finished run would
-    // be worse than a finished run with no version, and this order prevents it.
-    if (status === 'succeeded' && (job.trigger as { artifactId?: unknown } | undefined)?.artifactId) {
-      await registerVersionFromFlowRun({ organizationId: job.organizationId, flowRunId: run.id, trigger: job.trigger, output: effectiveOutput }).catch(() => null)
-    }
     // Commit the terminal state and its downstream signal atomically. The
     // outbox worker handles delivery/retry after commit, so a process crash can
     // no longer leave a completed run without its chained flows.
@@ -138,7 +145,7 @@ export async function finalizeFlowRun(
     // Keep the run's status/timing/audit identity even when data retention is
     // disabled, but remove payloads and step-level progress after dispatching
     // the outbox event. Waiting runs always retain state because resume needs it.
-    if (!retainTerminalData) {
+    if (!retainTerminalData()) {
       await tx.flowRunStep.deleteMany({ where: { flowRunId: run.id } })
       await tx.flowRun.update({
         where: { id: run.id, organizationId: job.organizationId },
@@ -148,6 +155,14 @@ export async function finalizeFlowRun(
       await tx.flowRunStep.deleteMany({ where: { flowRunId: run.id } })
     }
   })
+  try { await persist() } catch (error) {
+    if (!publicationError) throw error
+    // The failed publication transaction rolled back in full. Persist its
+    // explicit failure and failure signal in a fresh, short transaction.
+    publicationFailed(publicationError)
+    publish = null
+    await persist()
+  }
   // Final realtime nudge on the terminal/waiting status, so the builder settles
   // immediately instead of on the next poll.
   trackDetached(broadcastFlowRunTick(run.id, { status }))

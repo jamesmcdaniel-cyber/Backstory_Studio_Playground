@@ -22,3 +22,10 @@ test('artifact run feeds stay inside the copilot, never above the preview worksp
   assert.doesNotMatch(source, /artifact\.versions\.length > 0 &&/, 'initial builds with no saved version still show the copilot')
   assert.match(source, /onStatusChange=\{refresh\}/, 'stable refresh callback avoids re-subscribing on every parent render')
 })
+
+test('idle artifact viewers poll for external publication and keep stable iframe identity', () => {
+  const source = readFileSync('src/components/artifacts/artifact-viewer.tsx', 'utf8')
+  assert.match(source, /useEffect\(\(\) => startVisibleInterval\(/)
+  assert.doesNotMatch(source, /busy \? startVisibleInterval/)
+  assert.match(source, /\[artifact\?\.currentVersionId\]/)
+})

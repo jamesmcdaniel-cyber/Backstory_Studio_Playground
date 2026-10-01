@@ -68,3 +68,12 @@ test('selectDiscoveredTools under the cap keeps all tools (no embedding call)', 
   const selected = await selectDiscoveredTools(list, 'org1', 'anything')
   assert.equal(selected.tools.length, 2)
 })
+
+test('requested integration reads survive a large MCP catalog without embeddings', async () => {
+  const reads = Array.from({ length: 90 }, (_, i) => tool(`unrelated_catalog_${i}`, false))
+  const required = ['nango_github_list_repositories', 'nango_salesforce_query', 'n8n_list_workflow_tags', 'backstory_top_records']
+  const list = [...reads, ...required.map(name => tool(name, false)), tool('artifact_edit_artifact', true)]
+  const selected = capDiscoveredTools(list, 'org1', 'Read GitHub repositories, Salesforce query, n8n workflow tags and Backstory top records; edit artifact.')
+  for (const name of [...required, 'artifact_edit_artifact']) assert.ok(selected.bindings.has(name), name)
+  assert.equal(selected.tools.length, 64)
+})

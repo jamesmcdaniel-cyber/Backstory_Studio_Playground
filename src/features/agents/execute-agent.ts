@@ -310,11 +310,19 @@ function materializeTools(picked: DiscoveredTool[]): { tools: ToolDefinition[]; 
   return { tools, bindings }
 }
 
-export function capDiscoveredTools(discovered: DiscoveredTool[], organizationId: string): { tools: ToolDefinition[]; bindings: Map<string, ToolBinding> } {
+export function capDiscoveredTools(discovered: DiscoveredTool[], organizationId: string, query?: string): { tools: ToolDefinition[]; bindings: Map<string, ToolBinding> } {
   const seen = new Set<string>()
   const dedupe = (list: DiscoveredTool[]) => list.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)))
   const writes = dedupe(discovered.filter((d) => d.isWrite))
   const reads = dedupe(discovered.filter((d) => !d.isWrite))
+  // Embeddings are optional. Never let their absence reduce selection to
+  // discovery order, which starves later integrations behind large MCP catalogs.
+  if (query?.trim()) {
+    const words = new Set(query.slice(0, 2000).toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    const score = (tool: DiscoveredTool) => (tool.name.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+      .filter(word => word.length > 2 && words.has(word)).length
+    reads.sort((a, b) => score(b) - score(a))
+  }
 
   const picked: DiscoveredTool[] = [...writes.slice(0, WRITE_RESERVE)]
   for (const d of reads) { if (picked.length >= TOOL_CAP) break; picked.push(d) }
@@ -357,7 +365,7 @@ export async function selectDiscoveredTools(
   const unique = discovered.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)))
 
   if (unique.length <= TOOL_CAP || !query?.trim() || !embeddingsConfigured()) {
-    return capDiscoveredTools(discovered, organizationId)
+    return capDiscoveredTools(discovered, organizationId, query)
   }
 
   try {
@@ -386,7 +394,7 @@ export async function selectDiscoveredTools(
     apiLogger.warn('loadTools: relevance selection failed, using deterministic cap', {
       organizationId, error: error instanceof Error ? error.message : String(error),
     })
-    return capDiscoveredTools(discovered, organizationId)
+    return capDiscoveredTools(discovered, organizationId, query)
   }
 }
 
@@ -931,7 +939,6 @@ async function runAgentExecutionInner(
       if ((plane === 'native' || plane === 'nango') && ref && !providers.includes(ref)) providers.push(ref)
     }
     const skillIds = Array.isArray(agentMetadata.skills) ? agentMetadata.skills.map(String) : []
-    const toolQuery = [agent.objective, data.input].filter(Boolean).join('\n')
     // Configured API endpoints (agent setup → HTTP API) become named tools.
     const httpEndpoints = parseAgentHttpEndpoints(agentMetadata.httpEndpoints)
     // Per-tool scopes (agent setup → chip gear). Resource scopes (channels,
@@ -946,6 +953,9 @@ async function runAgentExecutionInner(
       return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
     })()
     const policy = data.stepOverrides?.toolPolicy
+    // Artifact prompts contain extensive source/instructions. Rank against the
+    // actual latest request first, not the first 2 KB of that boilerplate.
+    const toolQuery = [artifactContext?.request, data.input, agent.objective].filter(Boolean).join('\n')
     const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy)
     const { bindings, unavailable } = loaded
 

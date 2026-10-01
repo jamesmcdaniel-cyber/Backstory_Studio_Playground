@@ -275,7 +275,7 @@ export default function TemplateDetails() {
           <div className="space-y-4">
             <Skeleton className="h-9 w-2/3 rounded-lg" />
             <Skeleton className="h-5 w-full rounded" />
-            <div className="grid gap-5 lg:grid-cols-2">
+            <div className="grid gap-5">
               <Skeleton className="h-72 rounded-xl" />
               <Skeleton className="h-72 rounded-xl" />
             </div>

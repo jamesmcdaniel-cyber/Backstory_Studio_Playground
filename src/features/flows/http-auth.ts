@@ -532,11 +532,11 @@ export function usableConnectionToken(
   return undefined
 }
 
-export async function resolveHttpConnectionToken(params: {
+export async function resolveHttpConnectionCredential(params: {
   connectionId: string
   organizationId: string
   userId?: string
-}): Promise<string> {
+}): Promise<ResolvedHttpCredential> {
   const { plane, ref } = parseFlowToolConnectionId(params.connectionId)
   if (plane !== 'mcp') throw new Error(HTTP_CONNECTION_UNAVAILABLE)
 
@@ -548,5 +548,7 @@ export async function resolveHttpConnectionToken(params: {
   const fresh = await ensureFreshConnectionToken(connection)
   const token = usableConnectionToken(mcpConfigFromConnection(fresh))
   if (!token) throw new Error(HTTP_CONNECTION_UNAVAILABLE)
-  return token
+  // Use the same host-bound path as generic credentials, including every
+  // pagination request. A connected MCP token is not an arbitrary-host token.
+  return { name: fresh.name, authType: 'bearer', allowedHost: new URL(fresh.serverUrl).hostname.toLowerCase(), config: { token } }
 }

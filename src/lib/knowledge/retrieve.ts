@@ -22,6 +22,21 @@ export type KnowledgeHit = {
  */
 export const KEYWORD_ADMISSION_SCORE = 0.5
 
+function contentKey(content: string): string {
+  return content.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+/** Prevent the same passage uploaded under multiple scopes from being weighted twice. */
+export function dedupeHitsByContent(hits: KnowledgeHit[]): KnowledgeHit[] {
+  const seen = new Set<string>()
+  return hits.filter((hit) => {
+    const key = contentKey(hit.content)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 /**
  * Combine the two retrieval paths without pretending their scores are
  * comparable — cosine similarity and term overlap are different scales, so
@@ -29,13 +44,13 @@ export const KEYWORD_ADMISSION_SCORE = 0.5
  * hits only fill what is left, and only when they clear the admission score.
  */
 export function mergeHits(vectorHits: KnowledgeHit[], keywordHits: KnowledgeHit[], k: number): KnowledgeHit[] {
-  const out = vectorHits.slice(0, k)
+  const out = dedupeHitsByContent(vectorHits).slice(0, k)
   if (out.length >= k) return out
-  const seen = new Set(out.map((hit) => `${hit.documentId ?? ''}:${hit.content}`))
+  const seen = new Set(out.map((hit) => contentKey(hit.content)))
   for (const hit of keywordHits) {
     if (out.length >= k) break
     if (hit.score < KEYWORD_ADMISSION_SCORE) continue
-    const key = `${hit.documentId ?? ''}:${hit.content}`
+    const key = contentKey(hit.content)
     if (seen.has(key)) continue
     seen.add(key)
     out.push(hit)
@@ -123,10 +138,10 @@ export async function retrieveKnowledge(params: {
             AND d."status" = 'ready'
             AND c."embeddingVec" IS NOT NULL
           ORDER BY distance ASC
-          LIMIT ${k}
+          LIMIT ${Math.max(k * 4, k)}
         `
       })
-      const vectorHits = applyRelevanceFloor(
+      const vectorHits = dedupeHitsByContent(applyRelevanceFloor(
         rows.map((row) => ({
           content: row.content,
           filename: row.filename,
@@ -135,7 +150,7 @@ export async function retrieveKnowledge(params: {
           matchedBy: 'vector' as const,
         })),
         params.minScore,
-      )
+      ))
       if (vectorHits.length >= k) return vectorHits
 
       // Supplementary pass. The query above requires `embeddingVec IS NOT
@@ -198,7 +213,7 @@ export async function retrieveKnowledge(params: {
       matchedBy: 'keyword' as const,
     }))
     scored.sort((a, b) => b.score - a.score)
-    return applyRelevanceFloor(scored.filter((s) => s.score > 0).slice(0, k), params.minScore)
+    return applyRelevanceFloor(dedupeHitsByContent(scored.filter((s) => s.score > 0)).slice(0, k), params.minScore)
   } catch {
     return []
   }

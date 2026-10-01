@@ -5,6 +5,13 @@ import { validateFlowGraph } from '../validate'
 import { emptyGraph, flowNodeSchema } from '../graph'
 import { insertNodeAfter } from '../mutate'
 
+test('subflow inputs preserve objects, arrays, numbers, booleans and null', () => {
+  const input = { value: 7, items: [1, 2], enabled: false, zero: 0, nullable: null }
+  assert.deepEqual(subflowChildInput(undefined, input), input)
+  assert.deepEqual(subflowChildInput({ ...input, blank: ' ', unset: undefined }, ''), input)
+  assert.equal(subflowChildInput(undefined, null), null)
+})
+
 test('subflowGuard blocks blank, self, and too-deep dispatches', () => {
   assert.match(subflowGuard({ flowId: '  ', selfFlowId: 'f1', depth: 0 }) ?? '', /no flow selected/i)
   assert.match(subflowGuard({ flowId: 'f1', selfFlowId: 'f1', depth: 0 }) ?? '', /cannot run itself/i)

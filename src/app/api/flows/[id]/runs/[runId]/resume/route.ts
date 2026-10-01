@@ -95,7 +95,9 @@ export async function POST(request: NextRequest) {
   const accepted = await tenantTransaction(run.organizationId, async (tx) => {
     const consumed = await tx.flowRun.updateMany({
       where: { id: run.id, organizationId: run.organizationId, status: 'waiting', resumeTokenHash },
-      data: { resumeTokenHash: null },
+      // Acceptance wins over the timeout even if outbox delivery is delayed.
+      // An already-queued timer carries expectedResumeAt and becomes stale.
+      data: { resumeTokenHash: null, resumeAt: null },
     })
     if (consumed.count !== 1) return false
     await tx.outboxEvent.create({

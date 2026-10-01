@@ -61,7 +61,13 @@ export function httpDownloadFilename(contentDisposition: string | null, url: str
 }
 
 export function jsonValue(value: unknown) {
-  return JSON.parse(JSON.stringify(value ?? null))
+  // Callback capabilities are handed off in memory, never retained in run
+  // history. Cover nested payloads and JSON-in-string fields as well.
+  const serialized = JSON.stringify(value ?? null).replace(
+    /(\/api\/flows\/[^/?"\\\s]+\/runs\/[^/?"\\\s]+\/resume\?token=)[^&"\\\s]+/g,
+    '$1[redacted]',
+  )
+  return JSON.parse(serialized)
 }
 
 /**

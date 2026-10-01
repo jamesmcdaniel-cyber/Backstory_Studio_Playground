@@ -3,6 +3,47 @@ import assert from 'node:assert/strict'
 import { interpretFlow, type RunAgentFn, type RunActionFn } from '../interpret'
 import type { FlowGraph } from '@/lib/flows/graph'
 
+test('expired webhook waits fail without executing downstream; empty JSON callbacks succeed', async () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'w', type: 'wait', data: { mode: 'webhook', timeoutMinutes: 1 } },
+      { id: 'after', type: 'agent', data: { agentId: 'a', input: 'continue' } },
+    ],
+    edges: [{ id: 'a', source: 'trigger', target: 'w' }, { id: 'b', source: 'w', target: 'after' }],
+  }
+  let calls = 0
+  const runAgent: RunAgentFn = async () => { calls++; return { output: 'ok' } }
+  const expired = await interpretFlow(graph, '', { runAgent, resumeNodeId: 'w', resumeReply: '' })
+  assert.equal(expired.status, 'failed')
+  assert.match(expired.error ?? '', /timed out/)
+  assert.equal(calls, 0)
+  const callback = await interpretFlow(graph, '', { runAgent, resumeNodeId: 'w', resumeReply: '{}' })
+  assert.equal(callback.status, 'succeeded')
+  assert.equal(calls, 1)
+})
+
+test('subflow templates preserve typed whole input and mapped fields', async () => {
+  const input = { value: 7, items: [1, 2], enabled: false }
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'trigger', type: 'trigger', data: {} },
+      { id: 'child', type: 'subflow', data: { flowId: 'child', input: '{{trigger.input}}', inputs: { value: '{{trigger.input.value}}', items: '{{trigger.input.items}}', enabled: '{{trigger.input.enabled}}' } } },
+    ],
+    edges: [{ id: 'a', source: 'trigger', target: 'child' }],
+  }
+  const result = await interpretFlow(graph, input, {
+    runAgent: async () => ({ output: '' }),
+    runAction: async (node) => {
+      assert.deepEqual(node.config.input, input)
+      assert.deepEqual(node.config.inputs, input)
+      return { output: { doubled: (node.config.input as typeof input).value * 2 } }
+    },
+  })
+  assert.equal(result.status, 'succeeded')
+  assert.deepEqual(result.output, { doubled: 14 })
+})
+
 // A runAgent stub that echoes a canned output per agentId (default: echoes input).
 const stub =
   (map: Record<string, unknown>): RunAgentFn =>

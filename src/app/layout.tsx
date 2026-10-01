@@ -3,6 +3,7 @@ import localFont from 'next/font/local'
 import { Anonymous_Pro } from 'next/font/google'
 import { ClientProviders } from '@/components/providers/client-providers'
 import { AppShell } from '@/components/layout/app-shell'
+import { SkipLink } from '@/components/layout/skip-link'
 import './globals.css'
 
 // PRIMARY DISPLAY/BODY — KMR Waldenburg (proprietary, self-hosted). Arimo is the
@@ -58,12 +59,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className={`${waldenburg.variable} ${anonymousPro.variable}`}>
       <body>
-        <a
-          href="#main-content"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:border focus:border-graphite-200 focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-graphite-900 focus:shadow-3 focus:outline-none focus:ring-2 focus:ring-ring"
-        >
-          Skip to main content
-        </a>
+        <SkipLink />
         <ClientProviders>
           <AppShell>{children}</AppShell>
         </ClientProviders>

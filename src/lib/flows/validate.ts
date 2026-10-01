@@ -5,6 +5,7 @@ import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { matchBrandHint, type ToolBrand } from '@/lib/flows/tool-presentation'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
 import { nodeVersionProblem } from '@/lib/flows/node-versions'
+import { toolArgumentIssues } from '@/lib/flows/tool-argument-validation'
 
 export type FlowValidationIssue = {
   level: 'error' | 'warning'
@@ -474,6 +475,12 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       }
       validateJsonObjectField(issues, node.data.args, `${nodeLabel(node)} arguments must be a JSON object.`, node.id)
       const selectedTool = toolsByConnection.get(node.data.connectionId)?.get(node.data.toolName)
+      const staticArgs = parseObjectJson(node.data.args)
+      if (staticArgs && selectedTool?.inputSchema) {
+        for (const message of toolArgumentIssues(staticArgs, selectedTool.inputSchema)) {
+          add(issues, 'error', 'TOOL_ARGUMENT_SCHEMA', `${nodeLabel(node)}: ${message}`, node.id)
+        }
+      }
       const requiredArgs = requiredToolArgs(selectedTool?.inputSchema)
       if (requiredArgs.length) {
         const parsedArgs = parseObjectJson(node.data.args)
@@ -515,7 +522,7 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       // reusing a connected integration or with a stored credential. When the
       // URL points at a provider we recognize, the message says whether that
       // integration is already connected on the platform or still needs to be.
-      if (!node.data.connectionId && !node.data.credentialId && !node.data.credentialResolverId) {
+      if (node.data.authMode !== 'public' && !node.data.connectionId && !node.data.credentialId && !node.data.credentialResolverId) {
         const brand = httpUrlBrand(node.data.url)
         const connected =
           brand && (context.toolCatalog ?? []).some((connection) => matchBrandHint(connection.name ?? '')?.key === brand.key)
@@ -527,7 +534,7 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
         add(issues, 'error', 'HTTP_NO_AUTH', message, node.id)
       }
       const authBindings = [node.data.connectionId, node.data.credentialId, node.data.credentialResolverId].filter(Boolean)
-      if (authBindings.length > 1) {
+      if (authBindings.length > 1 || (node.data.authMode === 'public' && authBindings.length > 0)) {
         add(issues, 'error', 'AMBIGUOUS_HTTP_AUTH', `${nodeLabel(node)} has multiple authentication methods selected — keep one connection, credential, or per-user resolver.`, node.id)
       }
       if (node.data.connectionId && parseFlowToolConnectionId(node.data.connectionId).plane !== 'mcp') {

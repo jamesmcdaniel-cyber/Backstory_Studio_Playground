@@ -101,10 +101,11 @@ test('the MFA challenge stays reachable — it is where a gated account is sent'
   assert.equal(location(signedIn.response), null, 'signed-in /auth/mfa must not bounce to the dashboard')
 })
 
-test('invite and share links are readable signed out', async () => {
-  for (const path of ['/invite/abc123', '/share/flow/tok-1']) {
+test('invite, share, and hosted-form links are readable signed out', async () => {
+  for (const path of ['/invite/abc123', '/share/flow/tok-1', '/forms/form-1']) {
     const { response } = await withAnon(path)
     assert.equal(location(response), null, `${path} must stay anonymous-readable`)
+    assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0, must-revalidate')
   }
 })
 

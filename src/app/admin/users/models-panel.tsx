@@ -557,21 +557,29 @@ export function ModelsPanel({ days }: { days: number }) {
         )}
       </section>
 
-      <p className="text-sm text-muted-foreground">
+      <div className="space-y-2 text-sm text-muted-foreground">
+        <p>
         &quot;Runs touched&quot; counts a run once for every model that served part of it, so a run split across two
         models is counted under both — the column can add up to more than the number of distinct runs in the
         window. Per-run cost divides this model&apos;s cost by the runs it touched, not by all runs in the window.
+        </p>
+        <p>
         Success and turns attribute each run to the model that actually served most of its calls — a run that asked
         for one model and was served by another (fallback) counts under the model that did the work. Success rate
         only counts runs that finished (succeeded or failed); runs still in flight or cancelled are excluded from
         both, so succeeded plus failed can be less than runs touched.
+        </p>
+        <p>
         Latency columns cover only calls made since per-call timing was recorded — of the {shownCalls.toLocaleString()}{' '}
         calls in the table above, {shownTimedCalls.toLocaleString()} carry a latency measurement — so a window
-        reaching further back than that shows fewer timed calls than total calls. Everyone outside the operator tier
-        is held to {report?.limits.frontierClaudeRunsPerDay ?? '—'} frontier-Claude runs and{' '}
-        {report?.limits.claudeRunsPerDay ?? '—'} Claude runs a day. The ceilings are currently dormant: they
-        redirected spent allowances to a second model endpoint, and no second endpoint is configured.
-      </p>
+        reaching further back than that shows fewer timed calls than total calls.
+        </p>
+        <p>
+          Daily ceilings for non-operators: {report?.limits.frontierClaudeRunsPerDay ?? '—'} frontier-Claude runs and{' '}
+          {report?.limits.claudeRunsPerDay ?? '—'} Claude runs. These ceilings are currently dormant because no
+          fallback model endpoint is configured.
+        </p>
+      </div>
     </div>
   )
 }

@@ -1,6 +1,9 @@
 'use client'
 
 import { cn } from '@/lib/utils'
+import { useEffect, useState } from 'react'
+import { StatefulArtifactFrame } from './stateful-artifact-frame'
+export { ARTIFACT_FRAME_SANDBOX } from './stateful-artifact-frame'
 
 /**
  * The sandbox every artifact page runs in: scripts yes (tabs, views, charts),
@@ -8,7 +11,6 @@ import { cn } from '@/lib/utils'
  * app, its cookies or its APIs. The content route's CSP carries the same
  * sandbox and decides whether scripts run at all.
  */
-export const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads'
 
 /** Whether agent output is an interactive page (its own script, or a React component) rather than a static report. */
 export function isInteractiveOutput(text: string): boolean {
@@ -20,12 +22,28 @@ export function isInteractiveOutput(text: string): boolean {
 
 /** An artifact's current version, live: the same page /artifacts shows, clickable in place. */
 export function ArtifactFrame({ artifactId, title, className }: { artifactId: string; title: string; className?: string }) {
+  const [current, setCurrent] = useState<{ artifactId: string; versionId: string; writable: boolean } | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const controller = new AbortController()
+    setError('')
+    fetch(`/api/artifacts/${artifactId}`, { cache: 'no-store', signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error('Artifact could not be loaded.')
+      const { artifact } = await response.json()
+      if (!artifact?.currentVersionId) throw new Error('Artifact has no current version.')
+      if (!controller.signal.aborted) setCurrent({ artifactId, versionId: artifact.currentVersionId, writable: Boolean(artifact.permissions?.canEdit && !artifact.archivedAt) })
+    }).catch(e => { if (!controller.signal.aborted) setError(e.message) })
+    return () => controller.abort()
+  }, [artifactId])
+  if (error) return <p role="alert">{error} <a href={`/artifacts/${artifactId}`}>Open artifact</a></p>
+  if (!current || current.artifactId !== artifactId) return <p role="status">Loading artifact…</p>
   return (
-    <iframe
+    <StatefulArtifactFrame
+      key={current.versionId}
+      artifactId={artifactId}
+      versionId={current.versionId}
+      writable={current.writable}
       title={title}
-      src={`/api/artifacts/${artifactId}/versions/current/content`}
-      sandbox={ARTIFACT_FRAME_SANDBOX}
-      loading="lazy"
       className={cn('block h-[640px] w-full rounded-lg border border-border bg-white', className)}
     />
   )

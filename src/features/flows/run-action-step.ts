@@ -2,11 +2,11 @@ import { prisma } from '@/lib/prisma'
 import { classifyRetry, flowActionRetries, flowActionTimeoutMs, runWithRetries, shouldRetryAfterTimeout, type RetryEvidenceError } from './action-reliability'
 import { parseStructuredAgentOutput, structuredResponseInstruction } from './agent-response'
 import { runFlowCode } from './code-runner'
-import { prepareHttpRequest, redactHttpStepInput, responseOutput, withBearerAuthorization, type FlowHttpOutput } from './http'
+import { prepareHttpRequest, redactHttpStepInput, responseOutput, type FlowHttpOutput } from './http'
 import {
   fetchWithHttpCredential,
   markCredentialResult,
-  resolveHttpConnectionToken,
+  resolveHttpConnectionCredential,
   resolveHttpCredential,
   type ResolvedHttpCredential,
 } from './http-auth'
@@ -47,6 +47,7 @@ import { readResponseBytesLimited } from '@/lib/net/response-body'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { blockedCallMessage, inspectToolArgs, recordToolCallGuardEvent } from '@/lib/security/tool-call-guard'
 import { ApiError } from '@/lib/server/api-handler'
+import { describeUpstreamFailure } from '@/lib/upstream-error'
 import { aiEgressRefusal, recordPiiEgress } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { downgradeNotice } from '@/lib/usage/model-tiers'
@@ -512,8 +513,8 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
           }
         }
         const childInput = subflowChildInput(
-          node.config.inputs as Record<string, string> | undefined,
-          typeof node.config.input === 'string' ? node.config.input : undefined,
+          node.config.inputs as Record<string, unknown> | undefined,
+          node.config.input,
         )
         const retries = flowActionRetries(node.config.retries)
         const retryDelayMs = typeof node.config.retryDelayMs === 'number' ? node.config.retryDelayMs : undefined
@@ -670,12 +671,11 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
         // persisted step input/output or logs.
         const httpConnectionId = typeof node.config.connectionId === 'string' ? node.config.connectionId.trim() : ''
         if (!httpCredential && httpConnectionId) {
-          const token = await resolveHttpConnectionToken({
+          httpCredential = await resolveHttpConnectionCredential({
             connectionId: httpConnectionId,
             organizationId: job.organizationId,
             userId: job.userId,
           })
-          request.init.headers = withBearerAuthorization(request.init.headers as Record<string, string>, token)
         }
 
         // File UPLOAD: a form-data field whose value is a file reference is sent
@@ -878,7 +878,9 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
       // (the bug this restructure closed for 'ai').
       throw new Error('Unsupported flow action kind')
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      // Axios/Nango puts the actionable provider response in response.data;
+      // Error.message alone is commonly only "status code 400".
+      const message = describeUpstreamFailure(error)
       // A retry budget exhausted by runWithRetries attaches its full attempt
       // trail to the thrown error (see RetryEvidenceError) — surface it as
       // step warnings so every failed attempt stays visible, not only the

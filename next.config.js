@@ -25,6 +25,10 @@ const nextConfig = {
         source: '/vendor/pyodide/:path*',
         headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=86400' }],
       },
+      {
+        source: '/vendor/artifact-python-worker.js',
+        headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=0, must-revalidate' }],
+      },
       // X-Frame-Options has no allow-list form, so when an operator turns on
       // embedding (EMBED_FRAME_ANCESTORS, read at build/deploy time) it is
       // omitted and CSP frame-ancestors — which carries the actual allow-list,

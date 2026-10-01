@@ -24,6 +24,31 @@ export interface Cache {
   incrBy(key: string, amount: number, ttlMs: number): Promise<number>
 }
 
+const BIGINT_TAG = '$backstoryCacheBigInt'
+
+/** JSON wire format that preserves Prisma BigInt fields instead of throwing. */
+export function cacheStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, entry) =>
+    typeof entry === 'bigint' ? { [BIGINT_TAG]: entry.toString() } : entry,
+  )
+}
+
+export function cacheParse<T>(raw: string): T {
+  return JSON.parse(raw, (_key, entry) => {
+    if (
+      entry &&
+      typeof entry === 'object' &&
+      !Array.isArray(entry) &&
+      Object.keys(entry).length === 1 &&
+      typeof (entry as Record<string, unknown>)[BIGINT_TAG] === 'string' &&
+      /^-?\d+$/.test((entry as Record<string, string>)[BIGINT_TAG])
+    ) {
+      return BigInt((entry as Record<string, string>)[BIGINT_TAG])
+    }
+    return entry
+  }) as T
+}
+
 // Bounds the in-memory fallback so a long-lived process can't grow unbounded.
 const MAX_MEMORY_ENTRIES = 5000
 
@@ -88,10 +113,10 @@ function createUpstashRestCache(url: string, token: string): Cache {
   return {
     async get<T>(key: string): Promise<T | null> {
       const raw = await run(['GET', key])
-      return typeof raw === 'string' ? (JSON.parse(raw) as T) : null
+      return typeof raw === 'string' ? cacheParse<T>(raw) : null
     },
     async set<T>(key: string, value: T, ttlMs: number): Promise<void> {
-      await run(['SET', key, JSON.stringify(value), 'PX', Math.max(1, Math.floor(ttlMs))])
+      await run(['SET', key, cacheStringify(value), 'PX', Math.max(1, Math.floor(ttlMs))])
     },
     async del(key: string): Promise<void> {
       await run(['DEL', key])
@@ -117,10 +142,10 @@ function createRedisCache(url: string): Cache {
   return {
     async get<T>(key: string): Promise<T | null> {
       const raw = await redis.get(key)
-      return raw ? (JSON.parse(raw) as T) : null
+      return raw ? cacheParse<T>(raw) : null
     },
     async set<T>(key: string, value: T, ttlMs: number): Promise<void> {
-      await redis.set(key, JSON.stringify(value), 'PX', Math.max(1, Math.floor(ttlMs)))
+      await redis.set(key, cacheStringify(value), 'PX', Math.max(1, Math.floor(ttlMs)))
     },
     async del(key: string): Promise<void> {
       await redis.del(key)

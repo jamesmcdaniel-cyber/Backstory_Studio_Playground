@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { keywordScore, renderKnowledge } from '../retrieve'
+import { dedupeHitsByContent, keywordScore, mergeHits, renderKnowledge } from '../retrieve'
 
 test('keywordScore reflects query-term overlap', () => {
   assert.equal(keywordScore('pricing tiers enterprise', 'Our enterprise pricing has three tiers'), 1)
@@ -26,4 +26,25 @@ test('a hit with no documentId still renders rather than emitting a broken handl
   const block = renderKnowledge([{ content: 'x', filename: 'pricing.md', score: 0.9 }])
   assert.ok(block.includes('pricing.md'))
   assert.equal(block.includes('[doc:undefined'), false)
+})
+
+test('duplicate passages uploaded under different document scopes are retrieved once', () => {
+  const hits = dedupeHitsByContent([
+    { content: ' Acme renewal is due Friday. ', filename: 'org.md', documentId: 'org', score: 0.95 },
+    { content: 'acme  renewal is due friday.', filename: 'agent.md', documentId: 'agent', score: 0.9 },
+    { content: 'Different evidence', filename: 'agent.md', documentId: 'agent', score: 0.8 },
+  ])
+  assert.deepEqual(hits.map((hit) => hit.documentId), ['org', 'agent'])
+})
+
+test('mergeHits does not re-add a duplicate passage from keyword fallback', () => {
+  const hits = mergeHits(
+    [{ content: 'Renewal due Friday', filename: 'indexed.md', documentId: 'a', score: 0.9 }],
+    [
+      { content: ' renewal due friday ', filename: 'fallback.md', documentId: 'b', score: 1 },
+      { content: 'Champion left the account', filename: 'fallback.md', documentId: 'b', score: 1 },
+    ],
+    3,
+  )
+  assert.deepEqual(hits.map((hit) => hit.content), ['Renewal due Friday', 'Champion left the account'])
 })

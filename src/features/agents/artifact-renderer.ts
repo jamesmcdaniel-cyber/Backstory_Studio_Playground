@@ -4,6 +4,8 @@ import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { UNTRUSTED_DATA_RULE, fenceUntrusted } from '@/lib/security/prompt'
 import { htmlDocumentOf } from '@/lib/html-detect'
 import { compileArtifactPage, reactArtifactDocument, reactComponentOf } from '@/lib/artifacts/runtime'
+import { validateArtifactContent } from '@/lib/artifacts/validate-content'
+import { ARTIFACT_CAPABILITIES } from '@/lib/artifacts/capabilities'
 
 /**
  * The artifact renderer: the pass that turns a run's deliverable into a
@@ -38,7 +40,7 @@ DATA DISCIPLINE: use ALL of the data in the draft and the evidence — every ent
 
 DESIGN: clean, modern and dense with information, like a well-made analytics product. Tailwind utilities; slate neutrals with ONE accent color (take the draft's accent if it has one, else #447C93); a serif display face for the title is welcome (font-serif) and tabular figures for numbers (font-mono tabular-nums); cards with subtle borders; generous spacing; responsive to narrow widths; lucide-react icons, never emoji. Charts with recharts: labelled axes, formatted ticks ($1.2M, 45%), tooltips, legends when more than one series, consistent colors per entity.
 
-TECHNICAL: ONE module, \`export default function App()\`, React hooks for all state (no URL changes, no router). Reuse small components (a KPI tile, a card, a sortable table, a chart wrapper) rather than repeating markup; aim for a module of roughly 1,000–1,800 lines. Imports you may use — nothing else loads: react, recharts, lucide-react, @/components/ui/card | button | badge | tabs | alert | input | label | textarea | progress | separator | table | select | switch | skeleton, d3, lodash, papaparse, mathjs, xlsx, chart.js, mermaid, marked. The sandbox has no network and no storage: no fetch/XHR/WebSocket, no localStorage/sessionStorage, no external images or fonts. Keep it one file, but complete — length is expected.
+TECHNICAL: ONE module, \`export default function App()\`, React hooks for navigation (no URL changes, no router). Reuse small components. Implement the requested features without a line-count target. Supported imports: react, recharts, lucide-react, @backstory/artifact, @/components/ui/card | button | badge | tabs | alert | input | label | textarea | progress | separator | table | select | switch | skeleton, d3, lodash, papaparse, mathjs, xlsx, chart.js, mermaid, marked. Use the artifact SDK below for durable application state and worker Python. No arbitrary network, fetch/XHR/WebSocket, localStorage/sessionStorage, or external images/fonts.
 
 OUTPUT: the component source only, raw — no prose before or after, no explanation. If the draft is a static HTML report, its content is your material; the output is still the React app.`
 
@@ -77,9 +79,21 @@ export function isDeliverable(summary: string): boolean {
   return Boolean(htmlDocumentOf(summary) || reactComponentOf(summary))
 }
 
+/** Avoid a second multi-minute model rewrite of an already substantial app.
+ * Validation is still mandatory. HTML/Python must not be converted to React. */
+export function needsArtifactRender(draft: string): boolean {
+  if (!isDeliverable(draft)) return false
+  try {
+    validateArtifactContent(draft)
+    if (/<script\b[^>]*type=["'](?:text\/python|py)/i.test(draft)) return false
+    if (draft.length >= 4_000 && /\b(?:onClick|addEventListener|onclick|onChange)\b/.test(draft)) return false
+  } catch { return true }
+  return true
+}
+
 export function buildArtifactRenderPrompt(params: { objective: string; request: string; draft: string; evidence: string }): { system: string; user: string } {
   return {
-    system: [ARTIFACT_RENDER_SPEC, UNTRUSTED_DATA_RULE, GUARDRAIL_RULE].join('\n\n'),
+    system: [ARTIFACT_RENDER_SPEC, ARTIFACT_CAPABILITIES, 'Preserve every requested capability. No arbitrary length target; implement the required features concisely.', UNTRUSTED_DATA_RULE, GUARDRAIL_RULE].join('\n\n'),
     user: [
       fenceUntrusted('what the agent was asked to do', `${params.objective}\n\n${params.request}`.slice(0, 8_000)),
       fenceUntrusted('the agent\'s draft deliverable', params.draft.slice(0, DRAFT_MAX_CHARS)),

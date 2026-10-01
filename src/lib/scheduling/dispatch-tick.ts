@@ -721,7 +721,7 @@ export async function runDispatchTick(
         where: { status: 'waiting', resumeAt: { not: null, lte: now } },
         orderBy: { resumeAt: 'asc' },
         take: MAX_FLOWS_PER_TICK,
-        select: { id: true, flowId: true, organizationId: true, userId: true },
+        select: { id: true, flowId: true, organizationId: true, userId: true, resumeAt: true },
       })
       const waitOwners = await resolveRunOwners(dueWaits)
       for (const run of dueWaits) {
@@ -736,6 +736,7 @@ export async function runDispatchTick(
             input: {},
             flowRunId: run.id,
             reply: '',
+            expectedResumeAt: run.resumeAt!.toISOString(),
           })
           resumedWaitIds.push(run.id)
         } catch (error) {

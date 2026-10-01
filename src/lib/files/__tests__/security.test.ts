@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assertNotExecutable, detectFileMime, FileRejectedError, scanFileBuffer, verifyFileMime } from '../security'
+import { assertNotExecutable, detectFileMime, directUploadNeedsWholeFile, FileRejectedError, scanFileBuffer, verifyFileMime } from '../security'
 
 test('file MIME detection trusts magic bytes over browser labels', () => {
   assert.equal(detectFileMime(Buffer.from('%PDF-1.7\n'), 'application/octet-stream', 'report.bin'), 'application/pdf')
@@ -39,4 +39,11 @@ test('with no scanner configured, uploads pass the built-in checks — productio
     if (saved.required === undefined) delete process.env.FILE_SCAN_REQUIRED; else process.env.FILE_SCAN_REQUIRED = saved.required
     ;(process.env as Record<string, string | undefined>).NODE_ENV = saved.env
   }
+})
+
+test('direct uploads download the whole object whenever scanning is configured or required', () => {
+  assert.equal(directUploadNeedsWholeFile(undefined, undefined), false)
+  assert.equal(directUploadNeedsWholeFile(undefined, 'false'), false)
+  assert.equal(directUploadNeedsWholeFile('https://scanner.example.test', undefined), true)
+  assert.equal(directUploadNeedsWholeFile(undefined, 'true'), true)
 })

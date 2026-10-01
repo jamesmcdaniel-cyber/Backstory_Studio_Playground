@@ -97,6 +97,7 @@ const PRELUDE = String.raw`
   window.addEventListener('unhandledrejection', function(e){ window.__artifactError(e.reason); });
   var ui = null;
   window.__artifactRequire = function(name){
+    if(name === '@backstory/artifact') return window.BackstoryArtifact;
     if (MODULES[name]) {
       var value = window[MODULES[name]];
       if (value === undefined) throw new Error('The library "' + name + '" did not load.');

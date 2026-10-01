@@ -91,12 +91,11 @@ export function HttpStepFields({
   const [curlDialogOpen, setCurlDialogOpen] = useState(false)
   const [reverifyingCredential, setReverifyingCredential] = useState(false)
 
-  // HTTP auth: a two-way selector (Predefined / Generic) — zero-auth requests
-  // are not offered; every HTTP step authenticates. The mode is derived from
+  // Public endpoints require an explicit selection. The mode is derived from
   // what the node already binds, with a local override so a user can pick
   // "Generic" and see the auth-type sub-select before a credential exists.
   // Reset when the selected node changes.
-  const [httpAuthMode, setHttpAuthMode] = useState<'predefined' | 'generic' | 'perUser'>('generic')
+  const [httpAuthMode, setHttpAuthMode] = useState<'predefined' | 'generic' | 'perUser' | 'public'>('generic')
   // Predefined credentials reuse connected integrations. Only MCP-plane
   // connections carry a token the HTTP executor can inject, so filter to those.
   const predefinedConnections = useMemo(
@@ -130,7 +129,7 @@ export function HttpStepFields({
     // reuse a connected integration when one exists, otherwise set up a
     // credential for the host.
     setHttpAuthMode(
-      node.data.connectionId ? 'predefined'
+      node.data.authMode === 'public' ? 'public' : node.data.connectionId ? 'predefined'
         : node.data.credentialResolverId ? 'perUser'
         : node.data.credentialId ? 'generic'
           : predefinedConnections.length ? 'predefined' : 'generic',
@@ -222,12 +221,13 @@ export function HttpStepFields({
             className={fieldClass}
             value={httpAuthMode}
             onChange={(event) => {
-              const mode = event.target.value as 'predefined' | 'generic' | 'perUser'
+              const mode = event.target.value as typeof httpAuthMode
               setHttpAuthMode(mode)
               onChange({
                 ...node,
                 data: {
                   ...node.data,
+                  authMode: mode === 'public' ? 'public' : undefined,
                   connectionId: mode === 'predefined' ? node.data.connectionId : undefined,
                   credentialId: mode === 'generic' ? node.data.credentialId : undefined,
                   credentialResolverId: mode === 'perUser' ? node.data.credentialResolverId : undefined,
@@ -238,9 +238,12 @@ export function HttpStepFields({
             <option value="predefined">Connected server (MCP)</option>
             <option value="generic">My credential</option>
             <option value="perUser">Each runner’s credential</option>
+            <option value="public">Public endpoint (no credential)</option>
           </select>
           <p className="mt-1 text-xs text-muted-foreground">
-            {httpAuthMode === 'predefined'
+            {httpAuthMode === 'public'
+              ? 'Send without a stored credential. Use only for public endpoints; private-network destinations remain blocked.'
+              : httpAuthMode === 'predefined'
               ? 'Reuse a connected MCP server’s token for authentication.'
               : httpAuthMode === 'perUser'
                 ? 'Resolve the executing person’s explicit credential binding at run time.'

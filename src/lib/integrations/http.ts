@@ -19,7 +19,7 @@ import { prisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { fetchPublicUrl } from '@/lib/net/ssrf'
 import { readResponseTextLimited } from '@/lib/net/response-body'
-import { applyHttpCredential, resolveHttpCredential, resolveHttpConnectionToken } from '@/features/flows/http-auth'
+import { applyHttpCredential, resolveHttpCredential, resolveHttpConnectionCredential } from '@/features/flows/http-auth'
 import {
   endpointToolDefinition,
   endpointToolName,
@@ -135,20 +135,19 @@ export class HttpToolClient {
         : undefined
 
     let boundCredential: Awaited<ReturnType<typeof resolveHttpCredential>> | null = null
-    let bearerToken: string | undefined
     if (endpoint.credentialId && this.organizationId) {
       boundCredential = await resolveHttpCredential(endpoint.credentialId, this.organizationId, {
         actorUserId: this.userId ?? null,
         consumer: 'agent.http_endpoint',
       })
     } else if (endpoint.connectionId && this.organizationId) {
-      bearerToken = await resolveHttpConnectionToken({
+      boundCredential = await resolveHttpConnectionCredential({
         connectionId: endpoint.connectionId,
         organizationId: this.organizationId,
         userId: this.userId,
       })
     }
-    return this.performRequest({ url: url.toString(), method: endpoint.method, headers, body, boundCredential, bearerToken })
+    return this.performRequest({ url: url.toString(), method: endpoint.method, headers, body, boundCredential })
   }
 
   private async performRequest(params: {

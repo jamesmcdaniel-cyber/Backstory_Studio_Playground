@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto'
-import type { Job } from 'bullmq'
+import { DelayedError, type Job } from 'bullmq'
+import { acquireFlowSlot } from '@/lib/flows/concurrency'
+import { AGENT_RUN_MAX_DURATION_SECONDS } from '@/lib/agents/timeouts'
 import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma } from '@/lib/prisma'
 import { hashToken } from '@/lib/crypto/secrets'
@@ -53,6 +55,8 @@ export type FlowExecutionJob = {
    * misrouted to whichever iteration happened to be recorded last.
    */
   replyStepKey?: string
+  /** Scheduler capability: only resume the exact persisted timer occurrence. */
+  expectedResumeAt?: string
   // Scheduled/triggered runs execute the PUBLISHED graph; a manual builder run
   // executes the working draft so you can test before publishing.
   usePublished?: boolean
@@ -319,7 +323,18 @@ export async function runFlowExecution(
       'backstory.flow.trigger': job.trigger?.type ?? 'manual',
       'backstory.flow.run_id': job.preparedRunId ?? job.flowRunId,
     },
-    () => ambientOrganization.run(job.organizationId, () => runFlowExecutionInner(job)),
+    () => ambientOrganization.run(job.organizationId, async () => {
+      const flow = await prisma.flow.findFirst({ where: { id: job.flowId, organizationId: job.organizationId }, select: { settings: true } })
+      if (!flow) throw new Error('Flow not found')
+      const limit = parseFlowSettings(flow.settings).concurrencyLimit
+      const release = limit ? await acquireFlowSlot(job.organizationId, job.flowId, limit) : undefined
+      if (release === null) throw new ApiError('This flow is at its concurrency limit; waiting for an execution slot.', 429, 'FLOW_CONCURRENCY_LIMIT')
+      try {
+        return await runFlowExecutionInner(job)
+      } finally {
+        await release?.().catch(error => apiLogger.error('flow slot release failed; lease will expire', { flowId: job.flowId, error: String(error) }))
+      }
+    }),
   )
 }
 
@@ -334,23 +349,6 @@ async function runFlowExecutionInner(
   // flowRunId but no reply, so it never collides with the resume path above.
   const patching = Boolean(job.flowRunId && job.resumeFrom && !resuming)
   const prepared = Boolean(job.preparedRunId) && !resuming && !patching
-  if (!resuming && !patching && flowSettings.concurrencyLimit) {
-    const alreadyRunning = await prisma.flowRun.count({
-      where: {
-        flowId: flow.id,
-        organizationId: job.organizationId,
-        status: 'running',
-        ...(job.preparedRunId ? { id: { not: job.preparedRunId } } : {}),
-      },
-    })
-    if (alreadyRunning >= flowSettings.concurrencyLimit) {
-      throw new ApiError(
-        `This flow already has ${alreadyRunning} running execution${alreadyRunning === 1 ? '' : 's'} (limit ${flowSettings.concurrencyLimit}).`,
-        429,
-        'FLOW_CONCURRENCY_LIMIT',
-      )
-    }
-  }
 
   // Resume: atomically claim the run — only a genuinely `waiting` run may be
   // resumed. A concurrent resume (e.g. the reply route and the approvals
@@ -364,9 +362,10 @@ async function runFlowExecutionInner(
   let replaySource: Awaited<ReturnType<typeof prisma.flowRun.findFirst>> = null
   if (resuming) {
     const claimed = await prisma.flowRun.updateMany({
-      where: { id: job.flowRunId, organizationId: job.organizationId, status: 'waiting' },
-      data: { status: 'running', startedAt: new Date() },
+      where: { id: job.flowRunId, organizationId: job.organizationId, status: 'waiting', ...(job.expectedResumeAt ? { resumeAt: new Date(job.expectedResumeAt) } : {}) },
+      data: { status: 'running', lastActiveAt: new Date(), resumeAt: null },
     })
+    if (claimed.count === 0 && job.expectedResumeAt) return { flowRunId: job.flowRunId!, status: 'skipped', output: null }
     if (claimed.count === 0) throw new ApiError('This run is not waiting for input', 409, 'FLOW_RUN_NOT_WAITING')
   }
   // Patch claim: only a FAILED run may be patched and resumed. Rewriting a
@@ -376,7 +375,7 @@ async function runFlowExecutionInner(
   if (patching) {
     const claimed = await prisma.flowRun.updateMany({
       where: { id: job.flowRunId, organizationId: job.organizationId, status: 'failed' },
-      data: { status: 'running', error: null, finishedAt: null, startedAt: new Date() },
+      data: { status: 'running', error: null, finishedAt: null, lastActiveAt: new Date() },
     })
     if (claimed.count === 0) {
       throw new ApiError(
@@ -429,16 +428,14 @@ async function runFlowExecutionInner(
       if (existingRun.status !== 'running') {
         return { flowRunId: existingRun.id, status: existingRun.status, output: existingRun.output }
       }
-      // First pickup of this prepared row: startFlowExecution set startedAt at
-      // ROW CREATION, before dispatch — in queue mode that is before the queue
-      // wait, not before execution. Refresh it here, exactly as the resume/patch
-      // claims above do, so the persisted duration measures execution only.
+      // Track pickup separately; run history retains its original start and
+      // includes queue/wait time rather than silently rewriting chronology.
       const adoptedAt = new Date()
       await prisma.flowRun.updateMany({
         where: { id: existingRun.id, organizationId: job.organizationId, status: 'running' },
-        data: { startedAt: adoptedAt },
+        data: { lastActiveAt: adoptedAt },
       })
-      existingRun = { ...existingRun, startedAt: adoptedAt }
+      existingRun = { ...existingRun, lastActiveAt: adoptedAt }
     }
     if (!resuming) replaySource = await loadReplaySource(job)
     const resolvedGraph = await resolveValidatedGraph(job, flow, existingRun, replaySource)
@@ -776,7 +773,8 @@ async function runFlowExecutionInner(
       ...(job.stopAfterNodeId ? { stopAfterNodeId: job.stopAfterNodeId } : {}),
       ...(job.stopBeforeNodeId ? { stopBeforeNodeId: job.stopBeforeNodeId } : {}),
     })
-    if (flowSettings.timeoutSeconds) {
+    const executionTimeoutSeconds = Math.min(flowSettings.timeoutSeconds || AGENT_RUN_MAX_DURATION_SECONDS, AGENT_RUN_MAX_DURATION_SECONDS)
+    {
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         result = await Promise.race([
@@ -788,16 +786,14 @@ async function runFlowExecutionInner(
                 status: 'failed',
                 steps: [],
                 output: null,
-                error: `Flow exceeded its ${flowSettings.timeoutSeconds}-second execution timeout.`,
+                error: `Flow exceeded its ${executionTimeoutSeconds}-second execution timeout.`,
               })
-            }, flowSettings.timeoutSeconds! * 1000)
+            }, executionTimeoutSeconds * 1000)
           }),
         ])
       } finally {
         if (timer) clearTimeout(timer)
       }
-    } else {
-      result = await interpretation
     }
   } catch (error) {
     if (error instanceof FlowCancelledError) {
@@ -932,5 +928,15 @@ export async function startFlowExecution(
 
 /** BullMQ job handler — the worker calls this for each dequeued flow job. */
 export async function executeFlowJob(job: Job<FlowExecutionJob>): Promise<{ flowRunId: string; status: string; output: unknown }> {
-  return withExtractedTraceContext(job.data.traceContext, () => runFlowExecution(job.data))
+  try {
+    const runId = job.data.preparedRunId ?? job.data.flowRunId
+    if (runId) await prisma.flowRun.updateMany({ where: { id: runId, organizationId: job.data.organizationId, status: { in: ['running', 'waiting'] } }, data: { lastActiveAt: new Date() } })
+    return await withExtractedTraceContext(job.data.traceContext, () => runFlowExecution(job.data))
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== 'FLOW_CONCURRENCY_LIMIT') throw error
+    // Admission is not execution failure. BullMQ's delayed sentinel does not
+    // consume attempts or trigger the failed-job/dead-letter handler.
+    await job.moveToDelayed(Date.now() + 2_000, job.token)
+    throw new DelayedError()
+  }
 }

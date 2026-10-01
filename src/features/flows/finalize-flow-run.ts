@@ -10,6 +10,8 @@ import { truncateWithMarker } from '@/lib/flows/truncate'
 import { parseFlowSettings } from '@/lib/flows/settings'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { jsonValue } from './run-step-persistence'
+import { createQueue, QUEUE_NAMES } from '@/lib/queue/config'
+import { inlineExecution } from '@/lib/queue/execution-mode'
 import type { FlowExecutionJob } from './execute-flow'
 import type { interpretFlow } from './interpret'
 
@@ -149,6 +151,26 @@ export async function finalizeFlowRun(
   // Final realtime nudge on the terminal/waiting status, so the builder settles
   // immediately instead of on the next poll.
   trackDetached(broadcastFlowRunTick(run.id, { status }))
+  if (resumeAt && !inlineExecution) {
+    // Precise durable wakeup. The minute scanner remains crash recovery if
+    // enqueue fails after the database commit. Both carry the same occurrence
+    // guard, so a stale timer cannot answer a later pause or replay a callback.
+    const queue = createQueue(QUEUE_NAMES.FLOW_EXECUTION)
+    try {
+      await queue.add('execute-flow', {
+        flowId: flow.id, organizationId: job.organizationId, userId: job.userId,
+        flowRunId: run.id, reply: '', replyStepKey: result.waiting?.nodeId,
+        expectedResumeAt: resumeAt.toISOString(),
+      } satisfies FlowExecutionJob, {
+        jobId: `${run.id}-timer-${resumeAt.getTime()}`, attempts: 1,
+        delay: Math.max(0, resumeAt.getTime() - Date.now()),
+      })
+    } catch (error) {
+      apiLogger.error('flow timer enqueue failed; scanner will recover', { flowRunId: run.id, error: error instanceof Error ? error.message : String(error) })
+    } finally {
+      await queue.close().catch(() => undefined)
+    }
+  }
   // A humanReview ("Request information") pause has no adapter: its waiting
   // FlowRunStep row was persisted by the interpreter's onStep path (the
   // outcome carries `{ waiting: { kind: 'input', question } }`), so the only

@@ -1,5 +1,6 @@
 'use client'
 
+import React from 'react'
 import { Settings2 } from 'lucide-react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { cn } from '@/lib/utils'
@@ -11,7 +12,7 @@ import { cn } from '@/lib/utils'
  * additional volume known only via an agent's own counter, with no
  * completed/failed split available -- see `@/lib/agents/roster`.
  */
-export type CardStats = { runs: number; completed: number; failed: number; approximateRuns: number }
+export type CardStats = { runs: number; completed: number; failed: number; blocked: number; approximateRuns: number }
 
 /**
  * One tile on the agents roster. The same card serves a solo agent and a
@@ -44,7 +45,7 @@ export function RosterCard({
   onConfigure: () => void
   configureLabel: string
 }) {
-  const finished = stats.completed + stats.failed
+  const finished = stats.completed + stats.failed + stats.blocked
   // Success rate is measured-only: an agent whose runs are known solely via
   // its counter (approximateRuns) never enters completed/failed, so it never
   // dilutes or inflates this rate.

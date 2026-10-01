@@ -818,6 +818,13 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // becomes the step's output and the walk proceeds.
       if (opts.resumeNodeId === stepKey) {
         const reply = opts.resumeReply
+        // Only the scheduler sends an empty reply. Callback bodies (including
+        // an empty object) are JSON-encoded by the callback route.
+        if (node.data.mode === 'webhook' && (reply === undefined || reply === '')) {
+          const error = 'Webhook wait timed out before a callback was received.'
+          emit({ nodeId: node.id, status: 'failed', error })
+          return { kind: 'fail', error }
+        }
         const output = reply !== undefined && reply !== '' ? asStructured(reply) : { resumed: true }
         ctx.step[node.id] = { output }
         emit({ nodeId: node.id, status: 'succeeded', output })
@@ -1221,9 +1228,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       // interpreter dispatches ONCE — depth guards, retries, and timeouts are
       // the adapter's job.
       const resolvedInputs = node.data.inputs
-        ? Object.fromEntries(Object.entries(node.data.inputs).map(([key, value]) => [key, resolveTemplate(value, ctx, onMissingToken)]))
+        ? Object.fromEntries(Object.entries(node.data.inputs).map(([key, value]) => [key, resolveTemplateValue(value, ctx, onMissingToken)]))
         : undefined
-      const resolvedInput = typeof node.data.input === 'string' && node.data.input.trim() ? resolveTemplate(node.data.input, ctx, onMissingToken) : node.data.input
+      const resolvedInput = typeof node.data.input === 'string' && node.data.input.trim() ? resolveTemplateValue(node.data.input, ctx, onMissingToken) : node.data.input
       const config: Record<string, unknown> = { ...node.data, inputs: resolvedInputs, input: resolvedInput }
       const broken = missingTokenFailure(config)
       if (broken) return broken

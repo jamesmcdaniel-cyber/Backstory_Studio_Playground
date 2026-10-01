@@ -4,6 +4,7 @@ import { readAgentMetadata } from '@/lib/agents/metadata'
 import { retrieveContext, renderContext } from '@/lib/rag/retrieve'
 import { getGraphRagStore } from '@/lib/rag/get-store'
 import { loadPeopleAiPlaneGroup } from '@/features/agents/tool-planes'
+import { withinBudget } from '@/lib/async-budget'
 
 /**
  * Server-side context assembly for the agent-scoped assistant chat. Pulls the
@@ -92,6 +93,12 @@ async function correlatedContext(agent: AgentTask, question: string, viewerUserI
 }
 
 export async function buildAssistantContext(agent: AgentTask, question = '', viewerUserId: string | null = null): Promise<AssistantContext> {
+  // Start optional external context alongside DB reads; don't add a second
+  // waterfall or block configuration/debugging answers on a remote outage.
+  const extraContext = Promise.all([
+    withinBudget(correlatedContext(agent, question, viewerUserId), 2000, ''),
+    withinBudget(loadPeopleAiPlaneGroup(agent.organizationId, viewerUserId), 2000, null),
+  ])
   const executions = await prisma.agentExecution.findMany({
     where: { agentTaskId: agent.id, organizationId: agent.organizationId },
     omit: { transcript: true },
@@ -133,10 +140,7 @@ export async function buildAssistantContext(agent: AgentTask, question = '', vie
   })
 
   const agentMetadata = readAgentMetadata(agent.metadata)
-  const [correlated, peopleAiGroup] = await Promise.all([
-    correlatedContext(agent, question, viewerUserId),
-    loadPeopleAiPlaneGroup(agent.organizationId, viewerUserId),
-  ])
+  const [correlated, peopleAiGroup] = await extraContext
 
   return {
     agent: {

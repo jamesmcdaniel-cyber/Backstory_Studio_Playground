@@ -72,7 +72,10 @@ export async function updateSession(request: NextRequest, requestHeaders?: Heade
   // a sanitized projection, and bouncing it to /auth/login would defeat the
   // entire point of an anonymous link.
   const isPublic =
-    publicPages.has(pathname) || pathname.startsWith('/invite/') || pathname.startsWith('/share/')
+    publicPages.has(pathname) ||
+    pathname.startsWith('/invite/') ||
+    pathname.startsWith('/share/') ||
+    pathname.startsWith('/forms/')
 
   // Production is SSO/invite-only: password signup is disabled unless
   // explicitly allowed (AUTH_ALLOW_PASSWORD=true keeps it for dev). The

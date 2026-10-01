@@ -147,11 +147,13 @@ export function withAuthenticatedApi(
 
       const auth = await requireAuthContext(options)
       authContext = auth
-      // Presence, recorded once per user per window and never awaited. Placed
+      // Presence, recorded once per user per window. Await the best-effort
+      // writer so serverless runtimes cannot freeze it after the response.
+      // Placed
       // before the permission gate deliberately: a 403 still proves the account
       // was here, and "last seen" that silently skipped denied requests would
       // under-report exactly the accounts an admin most wants to look at.
-      recordPresence(auth.userId)
+      await recordPresence(auth.userId)
       // The gate runs BEFORE the handler, so a rejected call has no side effects.
       if (options?.permission && !auth.can(options.permission)) {
         throw new PermissionDeniedError(options.permission)

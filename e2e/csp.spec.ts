@@ -51,8 +51,17 @@ test('the policy is nonce-based, per-response, and has no unsafe script sources'
   // cookie — the exact attack this policy exists to stop.
   expect(scriptSrc).not.toContain("'unsafe-inline'")
 
-  // Clickjacking + injection hardening carried over from the previous static policy.
-  expect(policy).toContain("frame-ancestors 'none'")
+  // Clickjacking hardening may be either deny-all or a narrowly configured
+  // embedding allow-list (for example Salesforce). Pin the safe shape instead
+  // of assuming production can never opt into an approved parent.
+  const frameAncestors = policy!.split(';').map((d) => d.trim()).find((d) => d.startsWith('frame-ancestors'))
+  expect(frameAncestors).toBeTruthy()
+  if (frameAncestors !== "frame-ancestors 'none'") {
+    expect(frameAncestors).toContain("'self'")
+    for (const source of frameAncestors!.split(/\s+/).slice(1)) {
+      expect(source === "'self'" || /^https:\/\/(?:\*\.)?[A-Za-z0-9.-]+(?::\d+)?$/.test(source)).toBeTruthy()
+    }
+  }
   expect(policy).toContain("base-uri 'self'")
   expect(policy).toContain("object-src 'none'")
 

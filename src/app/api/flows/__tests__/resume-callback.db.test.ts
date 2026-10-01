@@ -25,6 +25,7 @@ if (TEST_DB) {
       data: {
         flowId,
         status: 'waiting',
+        resumeAt: new Date(Date.now() + 60_000),
         organizationId: seeded.organizationId,
         userId: seeded.userId,
         ...(token ? { resumeTokenHash: hashToken(token) } : {}),
@@ -113,6 +114,7 @@ if (TEST_DB) {
       where: { id: run.id, organizationId: seeded.organizationId },
     })
     assert.equal(consumed.resumeTokenHash, null, 'the token must be consumed on delivery')
+    assert.equal(consumed.resumeAt, null, 'acceptance invalidates any queued timeout before outbox delivery')
     const handoff = await prisma.outboxEvent.findFirst({
       where: { organizationId: seeded.organizationId, topic: 'flow.resume', aggregateId: run.id },
     })

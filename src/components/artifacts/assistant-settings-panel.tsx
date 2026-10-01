@@ -95,7 +95,7 @@ export function AssistantSettingsPanel({ artifactId, canEdit }: { artifactId: st
               const on = tool.ids.some((id) => enabled.has(id))
               return (
                 <li key={tool.key}>
-                  <label htmlFor={`assistant-tool-${tool.key}`} aria-label={`Let the assistant use ${tool.name}`} className={cn('flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm', on ? 'border-horizon-300 bg-horizon-50' : 'border-border hover:bg-muted/50', !canEdit && 'cursor-not-allowed opacity-60')}>
+                  <label htmlFor={`assistant-tool-${tool.key}`} className={cn('flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm', on ? 'border-horizon-300 bg-horizon-50' : 'border-border hover:bg-muted/50', !canEdit && 'cursor-not-allowed opacity-60')}>
                     <span className="flex min-w-0 items-center gap-2.5">
                       {icon(tool)}
                       <span className="min-w-0">
@@ -103,7 +103,7 @@ export function AssistantSettingsPanel({ artifactId, canEdit }: { artifactId: st
                         <span className="block text-xs text-muted-foreground">{tool.tools} tool{tool.tools === 1 ? '' : 's'}</span>
                       </span>
                     </span>
-                    <input id={`assistant-tool-${tool.key}`} type="checkbox" checked={on} disabled={!canEdit} onChange={() => toggle(tool)} className="h-4 w-4 accent-horizon-600" />
+                    <input id={`assistant-tool-${tool.key}`} aria-label={`Let the assistant use ${tool.name}`} type="checkbox" checked={on} disabled={!canEdit} onChange={() => toggle(tool)} className="h-4 w-4 accent-horizon-600" />
                   </label>
                 </li>
               )

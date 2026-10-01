@@ -263,6 +263,8 @@ const httpNode = z.object({
   id: z.string(),
   type: z.literal('http'),
   data: z.object({
+    /** Explicit opt-in for a public endpoint; legacy unbound requests still fail validation. */
+    authMode: z.literal('public').optional(),
     label: z.string().optional(),
     note: z.string().optional(),
     // Two mutually exclusive auth bindings, surfaced as n8n's Authentication

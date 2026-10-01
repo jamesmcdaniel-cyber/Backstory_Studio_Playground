@@ -15,7 +15,7 @@ import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
 import { chatModelLabel } from '@/lib/llm/models'
 import { RunFeed } from '@/components/runs/run-feed'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
-import { ARTIFACT_FRAME_SANDBOX } from './artifact-frame'
+import { StatefulArtifactFrame } from './stateful-artifact-frame'
 import { AssistantSettingsPanel } from './assistant-settings-panel'
 import { ShareDialog } from './share-dialog'
 import { AttachAgentCard } from './attach-agent-card'
@@ -266,14 +266,15 @@ export function ArtifactViewer({ id }: { id: string }) {
                 {markdown?.versionId === shownMarkdown.id ? <Markdown>{markdown.text}</Markdown> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>}
               </div>
             ) : shownVersion ? (
-              <iframe
+              <StatefulArtifactFrame
                 key={shownVersion.id}
+                artifactId={id}
+                versionId={shownVersion.id}
+                writable={canEdit && shownVersion.id === artifact.currentVersionId && !artifact.archivedAt}
                 title={artifact.title}
-                src={`/api/artifacts/${id}/versions/${shownVersion.id}/content`}
                 // Opaque origin (never allow-same-origin): the page cannot reach
                 // the app. Whether its scripts run is the server's call — the
                 // content route's CSP blocks them in a script-less document.
-                sandbox={ARTIFACT_FRAME_SANDBOX}
                 className="block h-full w-full"
               />
             ) : (

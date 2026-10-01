@@ -1,7 +1,8 @@
 import { isInteractiveContent } from './service'
 import { looksLikeHtml } from '@/lib/html-detect'
 import { vendorScripts } from './vendor-scripts'
-import { compileArtifactPage, hasPythonScript } from './runtime'
+import { compileArtifactPage, hasPythonScript, reactComponentOf, reactArtifactDocument } from './runtime'
+import { artifactClientRuntime } from './client-runtime'
 
 /**
  * Serving an artifact version as a page: the one place its policy is decided,
@@ -41,6 +42,10 @@ function withLinkScript(html: string): string {
  * the policy matched to what the page needs.
  */
 export function artifactPageResponse(found: { content: string; kind: string }, origin: string): Response {
+  // Compatibility for existing versions registered as raw JSX. Preserve the
+  // stored source/history while serving through the same isolated runtime.
+  const component = reactComponentOf(found.content)
+  if (component) found = { kind: 'page', content: reactArtifactDocument(component) }
   // A Markdown document is not a page: the viewer renders it itself.
   if (!looksLikeHtml(found.content.slice(0, 4_000))) {
     return new Response(found.content, { status: 200, headers: { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'private, no-store' } })
@@ -51,14 +56,16 @@ export function artifactPageResponse(found: { content: string; kind: string }, o
   const page = /<html[\s>]/i.test(content)
     ? content
     : `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${content}</body></html>`
-  const body = interactive ? withLinkScript(page) : page
+  const runtimeTag = `<script>${artifactClientRuntime(origin)}</script>`
+  const withRuntime = page.replace(/<head([^>]*)>/i, `<head$1>${runtimeTag}`)
+  const body = interactive ? withLinkScript(withRuntime === page ? runtimeTag + page : withRuntime) : page
   return new Response(body, {
     status: 200,
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'private, no-store',
       'x-frame-options': 'SAMEORIGIN',
-      'content-security-policy': !interactive ? STATIC_CSP : hasPythonScript(found.content) ? pythonCsp(origin) : INTERACTIVE_CSP,
+      'content-security-policy': !interactive ? STATIC_CSP : hasPythonScript(found.content) || /\b(?:runPython|pyodide)\b/.test(found.content) ? pythonCsp(origin) : INTERACTIVE_CSP,
     },
   })
 }

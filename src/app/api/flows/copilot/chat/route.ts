@@ -15,6 +15,7 @@ import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
 import { resolveChatModel } from '@/lib/llm/models'
 import { createJsonStringFieldReader } from '@/lib/llm/stream-text'
 import { eventStream, wantsEventStream, type StreamSend } from '@/lib/server/sse'
+import { isDiagnosisOnly } from '@/lib/flows/diagnostic-intent'
 
 // Anthropic strict structured outputs can't express free-form objects (a
 // {type:'object'} with no declared properties — see strictifySchema and the
@@ -80,8 +81,6 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const { messages, graph: rawGraph, external, model: requestedModel } = requestSchema.parse(await request.json())
   const model = resolveChatModel(requestedModel, 'copilot')
   const streaming = wantsEventStream(request)
-  // Gate before any model spend: provider, per-user rate limit, monthly ceiling.
-  await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `flow-copilot-chat:${auth.dbUser.id}`, limit: 20 })
   const { roster, toolCatalog, httpCredentials, contextBlock, graphRules } = await buildCopilotGrounding(auth.organizationId, auth.dbUser.id, {
     structureOnly: external === true,
   })
@@ -97,11 +96,19 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   }
   // The copilot sees what the checker sees: current issues ride along with the
   // graph so it can offer (and apply) fixes instead of editing blind.
-  const currentIssues = graph.nodes.length > 1 ? validateFlowGraph(graph, validationContext).issues : []
+  const currentIssues = validateFlowGraph(graph, validationContext).issues
   const issueLines = currentIssues
     .slice(0, 20)
     .map((issue) => `- [${issue.level}] ${issue.code}${issue.nodeId ? ` at node ${issue.nodeId}` : ''}: ${issue.message}`)
 
+  if (isDiagnosisOnly(messages.at(-1)?.content ?? '')) {
+    const message = issueLines.length ? `The checker found these issues:\n${issueLines.join('\n')}\n\nThese are configuration checks, not a live execution test.` : 'The checker found no configuration blockers. Runtime credentials, provider responses, and output correctness still require a test run.'
+    const result = { success: true, message, ops: [], needsAttention: currentIssues.map(issue => ({ nodeId: issue.nodeId, message: issue.message })), model: 'deterministic-checker' }
+    return streaming ? eventStream(async send => { send.delta(message); return result }) : result
+  }
+
+  // Configuration-only diagnosis does not spend model tokens or need a model budget.
+  await assertAiCallAllowed({ organizationId: auth.organizationId, rateKey: `flow-copilot-chat:${auth.dbUser.id}`, limit: 20 })
   const system = [graphRules, '', OPS_CONTRACT, '', contextBlock, '', UNTRUSTED_DATA_RULE, '', GUARDRAIL_RULE].join('\n')
   const transcript = messages.map((entry) => `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}`).join('\n\n')
   const user = [

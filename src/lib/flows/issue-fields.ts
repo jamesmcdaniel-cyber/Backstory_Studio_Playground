@@ -56,6 +56,7 @@ export const FIELD_BY_CODE: Record<string, string> = {
   MISSING_TOOL: 'toolName',
   UNKNOWN_TOOL: 'toolName',
   MISSING_TOOL_ARG: 'toolArgs',
+  TOOL_ARGUMENT_SCHEMA: 'toolArgs',
   PER_ITEM_STATIC_ARGS: 'toolArgs',
   SQL_TOKEN_IN_LITERAL: 'toolArgs',
 

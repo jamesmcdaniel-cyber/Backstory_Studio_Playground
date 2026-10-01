@@ -5,10 +5,21 @@ import {
   gmailSendEmail,
   salesforceCreateRecord,
   DELIVERY_TOOLS,
+  nangoBreakerFailure,
   type NangoProxyArgs,
 } from '../delivery'
 
 const connection = { connectionId: 'conn-1', providerConfigKey: 'slack', scope: 'user' as const }
+
+test('request-shape 4xx responses do not poison the integration circuit breaker', () => {
+  assert.equal(nangoBreakerFailure({ response: { status: 400 } }), false)
+  assert.equal(nangoBreakerFailure({ status: 404 }), false)
+  assert.equal(nangoBreakerFailure({ statusCode: 422 }), false)
+  assert.equal(nangoBreakerFailure({ response: { status: 401 } }), true)
+  assert.equal(nangoBreakerFailure({ response: { status: 429 } }), true)
+  assert.equal(nangoBreakerFailure({ response: { status: 503 } }), true)
+  assert.equal(nangoBreakerFailure(new Error('socket hang up')), true)
+})
 
 function recordingProxy() {
   const calls: NangoProxyArgs[] = []

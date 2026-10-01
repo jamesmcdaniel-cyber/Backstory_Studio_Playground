@@ -93,6 +93,7 @@ model Organization {
   roiAnalyses                    RoiAnalysis[]
   artifacts                      Artifact[]
   artifactVersions               ArtifactVersion[]
+  artifactAppStates              ArtifactAppState[]
   customSignals                  CustomSignal[]
   pushSubscriptions              PushSubscription[]
   knowledgeDocuments             KnowledgeDocument[]
@@ -1784,11 +1785,27 @@ model Artifact {
 
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   versions     ArtifactVersion[]
+  appStates    ArtifactAppState[]
 
   @@index([organizationId, updatedAt])
   @@index([organizationId, agentTaskId])
   @@index([organizationId, kind])
   @@map("artifacts")
+}
+
+model ArtifactAppState {
+  id             String @id @default(cuid())
+  organizationId String @db.Uuid
+  artifactId     String
+  userId         String
+  key            String
+  value          Json
+  revision       Int @default(1)
+  updatedAt      DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, artifactId, userId, key])
+  @@map("artifact_app_states")
 }
 
 model ArtifactVersion {
@@ -1992,6 +2009,8 @@ model FlowRun {
   // up incompatible live configuration.
   executionManifest Json?
   startedAt         DateTime  @default(now())
+  /// Most recent resume/admission activity; startedAt stays immutable for history.
+  lastActiveAt      DateTime?
   finishedAt        DateTime?
   /// The scheduled occurrence this run belongs to (see dueOccurrence). Null for
   /// interactive, signal, webhook, subflow, and poll runs — the unique index

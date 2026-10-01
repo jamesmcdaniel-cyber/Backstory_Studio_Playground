@@ -257,7 +257,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                     <>
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                       <span className="text-emerald-700">
-                        Verified {new Date(conn.lastVerifiedAt).toLocaleString()}
+                        Last verified {new Date(conn.lastVerifiedAt).toLocaleString()}
                       </span>
                     </>
                   ) : (
@@ -272,7 +272,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                   {conn.provider ? (
                     <>
                       {conn.isActive ? (
-                        <Badge variant="good" className="text-xs">Active</Badge>
+                        <Badge variant="good" className="text-xs">Enabled</Badge>
                       ) : (
                         <Badge variant="warn" className="text-xs">Needs authorization</Badge>
                       )}
@@ -301,7 +301,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                           aria-label={conn.isActive ? 'Disable server' : 'Enable server'}
                         />
                         {conn.isActive ? (
-                          <Badge variant="good" className="text-xs">Active</Badge>
+                          <Badge variant="good" className="text-xs">Enabled</Badge>
                         ) : (
                           <Badge variant="secondary" className="text-xs">Inactive</Badge>
                         )}

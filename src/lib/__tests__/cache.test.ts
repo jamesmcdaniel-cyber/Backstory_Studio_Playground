@@ -1,6 +1,6 @@
 import { test, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { cached, cacheGet, cacheSet, cacheDelete, cacheConfigured } from '../cache'
+import { cached, cacheGet, cacheSet, cacheDelete, cacheConfigured, cacheParse, cacheStringify } from '../cache'
 
 // No REDIS_URL in tests → the in-memory backend is exercised. The cache is a
 // process singleton, so each test uses distinct keys to stay independent.
@@ -46,4 +46,23 @@ test('cached() does NOT cache null (negatives re-run)', async () => {
   await cached('t5:key', 60_000, fetcher)
   await cached('t5:key', 60_000, fetcher)
   assert.equal(calls, 2)
+})
+
+test('the shared-cache wire format round-trips Prisma BigInt fields', () => {
+  const row = {
+    id: 'org-1',
+    storageBytes: 9_007_199_254_740_993n,
+    nested: { values: [1n, '1'] },
+  }
+  const encoded = cacheStringify(row)
+  assert.doesNotThrow(() => JSON.parse(encoded))
+  assert.deepEqual(cacheParse(encoded), row)
+})
+
+test('ordinary strings and objects that only resemble the BigInt tag stay ordinary', () => {
+  const value = {
+    storageBytes: '123',
+    metadata: { $backstoryCacheBigInt: '456', another: true },
+  }
+  assert.deepEqual(cacheParse(cacheStringify(value)), value)
 })

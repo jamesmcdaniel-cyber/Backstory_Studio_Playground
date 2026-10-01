@@ -1,6 +1,18 @@
 /** A file the platform refuses to store; the message is safe to show the uploader. */
 export class FileRejectedError extends Error {}
 
+/**
+ * Direct uploads may range-read only when scanning is optional and no scanner
+ * exists. Required-but-unconfigured scanning must still read the whole object
+ * so scanFileBuffer can reject it through the fail-closed policy.
+ */
+export function directUploadNeedsWholeFile(
+  scannerUrl = process.env.FILE_SCAN_URL,
+  scanRequired = process.env.FILE_SCAN_REQUIRED,
+): boolean {
+  return Boolean(scannerUrl) || scanRequired === 'true'
+}
+
 const TEXT_MIME = /^text\//i
 
 function startsWith(buffer: Buffer, bytes: number[]): boolean {

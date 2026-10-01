@@ -2386,7 +2386,7 @@ function FlowBuilder() {
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={running} onSelect={() => void run()}>
+              <DropdownMenuItem disabled={running || !validation.ok || Boolean(viewingVersion)} onSelect={() => void run()}>
                 <Play className="h-4 w-4" /> Run flow
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -2552,7 +2552,12 @@ function FlowBuilder() {
                 Revert
               </Button>
             )}
-            <Button size="sm" onClick={run} disabled={running}>
+            <Button
+              size="sm"
+              onClick={run}
+              disabled={running || !validation.ok || Boolean(viewingVersion)}
+              title={!validation.ok ? `${validation.errors.length} checker error${validation.errors.length === 1 ? '' : 's'} must be fixed before this flow can run` : undefined}
+            >
               {running ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />} Run
             </Button>
           </div>

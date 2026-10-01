@@ -80,7 +80,7 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
   const cutoff = new Date(now.getTime() - STUCK_FLOW_RUN_TIMEOUT_MS)
   // systemPrisma: global reaper sweep — runs across all orgs by design (invoked from CRON_SECRET-gated dispatch).
   const stuck = await systemPrisma.flowRun.findMany({
-    where: { status: 'running', startedAt: { lt: cutoff } },
+    where: { status: 'running', startedAt: { lt: cutoff }, OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }] },
     select: { id: true, startedAt: true },
     take: REAP_BATCH_LIMIT,
   })
@@ -109,7 +109,7 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
     // callback form instead.
     const reapedThisRun = await systemPrisma.$transaction(async (tx) => {
       const claimed = await tx.flowRun.updateMany({
-        where: { id: run.id, status: 'running' },
+        where: { id: run.id, status: 'running', OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }] },
         data: { status: 'failed', error: message, finishedAt: now },
       })
       if (claimed.count === 0) return false // diverted away from `running` since the initial read
@@ -138,7 +138,7 @@ export async function reapNeverPickedUpRuns(now = new Date(), onAfterRead?: () =
   const cutoff = new Date(now.getTime() - NEVER_PICKED_UP_TIMEOUT_MS)
   // systemPrisma: global reaper sweep — runs across all orgs by design (invoked from CRON_SECRET-gated dispatch).
   const stranded = await systemPrisma.flowRun.findMany({
-    where: { status: 'running', startedAt: { lt: cutoff }, steps: { none: {} } },
+    where: { status: 'running', startedAt: { lt: cutoff }, OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }], steps: { none: {} } },
     select: { id: true },
     take: REAP_BATCH_LIMIT,
   })
@@ -148,7 +148,7 @@ export async function reapNeverPickedUpRuns(now = new Date(), onAfterRead?: () =
   // picked up (or that settled) between read and write is spared. No step
   // cleanup needed — matching runs have no steps by definition.
   const reaped = await systemPrisma.flowRun.updateMany({
-    where: { id: { in: stranded.map((run) => run.id) }, status: 'running', steps: { none: {} } },
+    where: { id: { in: stranded.map((run) => run.id) }, status: 'running', OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }], steps: { none: {} } },
     data: { status: 'failed', error: NEVER_PICKED_UP_ERROR, finishedAt: now },
   })
   return reaped.count

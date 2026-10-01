@@ -378,7 +378,7 @@ export class ArtifactToolClient {
       })
       return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
     }
-    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, content, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId })
+    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId })
     return { saved: true, version: version.number, link: `/artifacts/${artifact.id}`, note: 'Saved: the new version is live now.' }
   }
 

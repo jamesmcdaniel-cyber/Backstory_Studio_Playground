@@ -18,12 +18,10 @@ if (TEST_DB) {
 
   let prisma: any
   let seeded: any
-  let recordPresence: (userId: string, now?: Date) => void
+  let recordPresence: (userId: string, now?: Date) => Promise<void>
   let resetPresenceCache: () => void
   let PRESENCE_WINDOW_MS: number
 
-  /** The write is fire-and-forget, so settle it before asserting. */
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 150))
   const readSeen = async (id: string) =>
     (await prisma.user.findFirst({ where: { id }, select: { lastSeenAt: true } }))?.lastSeenAt ?? null
 
@@ -41,8 +39,7 @@ if (TEST_DB) {
     assert.equal(await readSeen(seeded.userId), null, 'fixture should start unseen')
 
     const now = new Date()
-    recordPresence(seeded.userId, now)
-    await settle()
+    await recordPresence(seeded.userId, now)
 
     const seen = await readSeen(seeded.userId)
     assert.ok(seen, 'lastSeenAt should be written')
@@ -52,15 +49,13 @@ if (TEST_DB) {
   test('a second request inside the window does not move the timestamp', async () => {
     resetPresenceCache()
     const first = new Date()
-    recordPresence(seeded.userId, first)
-    await settle()
+    await recordPresence(seeded.userId, first)
     const afterFirst = await readSeen(seeded.userId)
 
     // Bypass the in-process throttle to prove the DATABASE predicate also holds
     // — this is what a second serverless instance would do.
     resetPresenceCache()
-    recordPresence(seeded.userId, new Date(first.getTime() + 1000))
-    await settle()
+    await recordPresence(seeded.userId, new Date(first.getTime() + 1000))
 
     assert.equal((await readSeen(seeded.userId))!.getTime(), afterFirst!.getTime())
   })
@@ -68,14 +63,12 @@ if (TEST_DB) {
   test('a request past the window moves it forward', async () => {
     resetPresenceCache()
     const first = new Date()
-    recordPresence(seeded.userId, first)
-    await settle()
+    await recordPresence(seeded.userId, first)
     const afterFirst = await readSeen(seeded.userId)
 
     resetPresenceCache()
     const later = new Date(first.getTime() + PRESENCE_WINDOW_MS + 1000)
-    recordPresence(seeded.userId, later)
-    await settle()
+    await recordPresence(seeded.userId, later)
 
     assert.ok((await readSeen(seeded.userId))!.getTime() > afterFirst!.getTime())
   })
@@ -84,7 +77,6 @@ if (TEST_DB) {
     resetPresenceCache()
     // updateMany on a missing row matches nothing; update() would throw P2025
     // and, being unawaited, surface as an unhandled rejection.
-    recordPresence('user-that-does-not-exist')
-    await settle()
+    await recordPresence('user-that-does-not-exist')
   })
 }

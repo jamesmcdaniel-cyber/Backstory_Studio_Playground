@@ -47,6 +47,19 @@ const DATASET_MOUNT = '/datasets'
 const MAX_LOG_ENTRIES = 200
 let pyodidePromise: Promise<PyodideAPI> | undefined
 let pythonQueue: Promise<void> = Promise.resolve()
+
+/** Compile only: artifact source must never execute in the application process. */
+export async function validatePythonSyntax(source: string): Promise<void> {
+  if (source.length > 100_000) throw new Error('An inline Python block exceeds 100,000 characters.')
+  const check = pythonQueue.catch(() => undefined).then(async () => {
+    const py = await getPyodide()
+    const scope = py.toPy({ source })
+    try { py.runPython('compile(source, "artifact.py", "exec")\nNone', { globals: scope }) }
+    finally { scope.destroy() }
+  })
+  pythonQueue = check.catch(() => undefined)
+  await check
+}
 // Word 0 is Pyodide's signal slot; word 1 is our durable deadline marker
 // (Pyodide clears the signal word after consuming it).
 const pythonInterruptBuffer = new Int32Array(new SharedArrayBuffer(8))

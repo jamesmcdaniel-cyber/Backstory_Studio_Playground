@@ -43,8 +43,13 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       ])
     : [[], [], []]
 
+  const versions = ids.length ? await prisma.artifactVersion.findMany({
+    where: { organizationId: auth.organizationId, executionId: { in: ids } },
+    select: { executionId: true, artifactId: true },
+    orderBy: { createdAt: 'desc' },
+  }) : []
   const items = executions.map((execution) => ({
-    execution,
+    execution: { ...execution, artifactId: versions.find(version => version.executionId === execution.id)?.artifactId ?? null },
     steps: steps.filter((step) => step.executionId === execution.id),
     events: events.filter((event) => event.executionId === execution.id),
     messages: messages.filter((message) => message.executionId === execution.id),

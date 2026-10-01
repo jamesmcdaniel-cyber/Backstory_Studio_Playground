@@ -3,6 +3,13 @@ import assert from 'node:assert/strict'
 import { capDiscoveredTools, selectDiscoveredTools, type DiscoveredTool } from '../execute-agent'
 
 const client = { executeTool: async () => ({}) }
+
+test('allowlisted tools survive a large catalog before the global cap', async () => {
+  const list = Array.from({ length: 100 }, (_, i) => tool(`tool_${i}`, false))
+  const selected = await selectDiscoveredTools(list, 'org1', undefined, { mode: 'allowlist', allowedTools: ['tool_99'] })
+  assert.deepEqual(selected.tools.map(t => t.name), ['tool_99'])
+  assert.equal(selected.bindings.size, 1)
+})
 function tool(name: string, isWrite: boolean): DiscoveredTool {
   return {
     name,

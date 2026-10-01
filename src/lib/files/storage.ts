@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { prisma, tenantTransaction } from '@/lib/prisma'
-import { assertNotExecutable, FileRejectedError, scanFileBuffer, verifyFileMime } from '@/lib/files/security'
+import { assertNotExecutable, directUploadNeedsWholeFile, FileRejectedError, scanFileBuffer, verifyFileMime } from '@/lib/files/security'
 
 /**
  * Original-file storage for uploads (run-form file inputs and future step
@@ -255,10 +255,14 @@ export async function finalizeUpload(params: {
   if (actualSize > ceiling) return reject(`Files can be at most ${Math.round(ceiling / 1_000_000)} MB.`)
   if (actualSize <= 0) return reject('The uploaded file is empty.')
 
-  const scannerConfigured = Boolean(process.env.FILE_SCAN_URL)
+  const needsWholeFile = directUploadNeedsWholeFile()
   let head: Buffer
   let whole: Buffer | null = null
-  if (scannerConfigured) {
+  // A required scanner must fail closed. Downloading the complete object here
+  // deliberately hands the decision to scanFileBuffer(), whose missing-URL
+  // branch rejects when FILE_SCAN_REQUIRED=true. The old range-read branch
+  // skipped scanFileBuffer entirely and could mark an unscanned object ready.
+  if (needsWholeFile) {
     const downloaded = await bucket.download(storagePath)
     if (downloaded.error || !downloaded.data) return reject('The upload could not be read back.')
     whole = Buffer.from(await downloaded.data.arrayBuffer())

@@ -6,6 +6,8 @@ import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdow
 import { reactArtifactDocument, reactComponentOf } from './runtime'
 import { readAssistantConfig } from './assistant-settings'
 import { readAgentMetadata } from '@/lib/agents/metadata'
+import { validateArtifactContent, validateArtifactPython } from './validate-content'
+import { ARTIFACT_CAPABILITIES } from './capabilities'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
 /**
@@ -27,7 +29,7 @@ import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView 
 export const ARTIFACT_QUESTION_MAX_CHARS = 2_000
 export const ARTIFACT_CONTENT_MAX_CHARS = 2_000_000
 /** How much of the current document a change/ask run is shown. */
-const CONTEXT_MAX_CHARS = 120_000
+const CONTEXT_MAX_CHARS = 24_000
 
 function jsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue
@@ -53,13 +55,19 @@ export function htmlHasScript(content: string): boolean {
   return /<script[\s>]/i.test(content)
 }
 
+/** JSX contains paired HTML tags; recognize the module before generic HTML. */
+export function executionArtifactDocument(summary: string): string | null {
+  const component = reactComponentOf(summary)
+  return component ? reactArtifactDocument(component) : htmlDocumentOf(summary)
+}
+
 /**
  * A version runs its scripts when its kind is interactive or its HTML has
  * any: a report an agent wrote with tabs and views is a page, whatever it
  * was registered as. Scripts run sandboxed (opaque origin, no network).
  */
 export function isInteractiveContent(kind: string, content: string): boolean {
-  return isInteractiveKind(kind) || htmlHasScript(content)
+  return isInteractiveKind(kind) || htmlHasScript(content) || Boolean(reactComponentOf(content))
 }
 
 // Just under the platform's 4.5 MB request-body ceiling.
@@ -95,8 +103,18 @@ export async function addVersion(params: {
   request?: string | null
   createdByUserId?: string | null
   state?: Prisma.InputJsonValue | null
+  expectedVersionId?: string | null
 }): Promise<ArtifactVersion> {
+  validateArtifactContent(params.content)
+  await validateArtifactPython(params.content)
   return prisma.$transaction(async (tx) => {
+    // Atomic increment takes the row lock before reading the next number.
+    // Competing saves serialize; a stale editing base fails without publishing.
+    const claimed = await tx.artifact.updateMany({
+      where: { id: params.artifactId, organizationId: params.organizationId, ...(params.expectedVersionId !== undefined ? { currentVersionId: params.expectedVersionId } : {}) },
+      data: { versionCount: { increment: 1 } },
+    })
+    if (!claimed.count) throw new Error('Artifact changed while editing, or is no longer available. Reload the current version and retry; nothing was saved.')
     const artifact = await tx.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { versionCount: true } })
     if (!artifact) throw new Error('Artifact not found.')
     // One run, one linked version: a second edit in the same run is still a
@@ -108,18 +126,18 @@ export async function addVersion(params: {
       data: {
         organizationId: params.organizationId,
         artifactId: params.artifactId,
-        number: artifact.versionCount + 1,
+        number: artifact.versionCount,
         executionId: executionTaken ? null : params.executionId ?? null,
         flowRunId: params.flowRunId ?? null,
         request: params.request ?? null,
-        content: params.content.slice(0, ARTIFACT_CONTENT_MAX_CHARS),
+        content: params.content,
         createdByUserId: params.createdByUserId ?? null,
         ...(params.state ? { state: params.state } : {}),
       },
     })
     await tx.artifact.update({
       where: { id: params.artifactId, organizationId: params.organizationId },
-      data: { currentVersionId: version.id, versionCount: artifact.versionCount + 1, archivedAt: null },
+      data: { currentVersionId: version.id, archivedAt: null },
     })
     return version
   })
@@ -138,6 +156,8 @@ export async function createArtifact(params: {
   flowRunId?: string | null
   state?: Prisma.InputJsonValue | null
 }): Promise<{ artifact: Artifact; version: ArtifactVersion }> {
+  validateArtifactContent(params.content)
+  await validateArtifactPython(params.content)
   const artifact = await prisma.artifact.create({
     data: {
       organizationId: params.organizationId,
@@ -177,8 +197,7 @@ export async function registerVersionFromExecution(params: {
 }): Promise<{ artifactId: string; versionId: string; created: boolean } | null> {
   // An HTML document, or a React component (a Claude-style artifact) served
   // as a page the content route compiles.
-  const component = htmlDocumentOf(params.summary) ? null : reactComponentOf(params.summary)
-  const html = htmlDocumentOf(params.summary) ?? (component ? reactArtifactDocument(component) : null)
+  const html = executionArtifactDocument(params.summary)
   const t = (params.trigger ?? {}) as TriggerShape
   const targetId = str(t.artifactId)
   if (targetId) {
@@ -305,7 +324,7 @@ export async function loadArtifact(organizationId: string, id: string): Promise<
       request: version.request,
       createdAt: version.createdAt.toISOString(),
       bytes: Buffer.byteLength(version.content),
-      format: looksLikeHtml(version.content.slice(0, 4_000)) ? 'html' : 'markdown',
+      format: reactComponentOf(version.content) || looksLikeHtml(version.content.slice(0, 4_000)) ? 'html' : 'markdown',
       author: version.createdByUserId ? authors.get(version.createdByUserId) ?? null : null,
       source: version.executionId ? 'agent' : version.flowRunId ? 'flow' : version.request?.startsWith('Restored version') ? 'restore' : version.number === 1 ? 'created' : 'agent',
     })),
@@ -416,9 +435,9 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
   const isHtml = looksLikeHtml(params.content.slice(0, 4_000))
   // A large page is not pasted in: the assistant reads it with its tools.
   const doc = params.content.length > CONTEXT_MAX_CHARS
-    ? `${params.content.slice(0, 20_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. Use find_in_artifact and read_artifact to see the rest. -->`
+    ? `${params.content.slice(0, 4_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. Use find_in_artifact and read_artifact to see the rest. -->`
     : params.content
-  return [DOCUMENT_ASSISTANT_RULES(isHtml), standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
+  return [DOCUMENT_ASSISTANT_RULES(isHtml), ARTIFACT_CAPABILITIES, 'Work directly on the requested edit. Batch independent lookups and edits; do not draft a long plan or rebuild unaffected sections. Reply in two sentences after the save.', standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }
 
 /** Ask the producing agent a question, or ask it for a change (a new version). */

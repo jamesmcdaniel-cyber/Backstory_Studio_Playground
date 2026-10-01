@@ -57,16 +57,17 @@ export function resetPresenceCache(): void {
 }
 
 /**
- * Mark a user as seen now. Fire-and-forget by contract: presence is telemetry,
- * so it must never add latency to, or fail, the request that triggered it.
+ * Mark a user as seen now. The write is awaited by the request so serverless
+ * runtimes cannot freeze it after the response is sent. Failures remain
+ * best-effort telemetry and never fail the triggering request.
  */
-export function recordPresence(userId: string, now: Date = new Date()): void {
+export async function recordPresence(userId: string, now: Date = new Date()): Promise<void> {
   if (!shouldRecordPresence(userId, now.getTime())) return
   const cutoff = new Date(now.getTime() - PRESENCE_WINDOW_MS)
   // updateMany, not update: the staleness predicate belongs in the WHERE so the
   // database enforces the window across instances, and a missing row (deleted
   // mid-request) is a no-op rather than a thrown P2025.
-  void prisma.user
+  await prisma.user
     .updateMany({
       where: { id: userId, OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: cutoff } }] },
       data: { lastSeenAt: now },

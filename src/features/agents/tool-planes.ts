@@ -747,6 +747,22 @@ export async function resolveFlowToolExecutor(params: {
   }
 
   if (plane === 'native') {
+    if (ref === 'repository' || ref === 'roi' || ref === 'adapters') {
+      const descriptor = BUILTIN_CONNECTORS.find((c) => c.providerId === ref)!
+      if (!descriptor.available()) throw new Error(`${descriptor.label} is not available for this workspace.`)
+      const client = ref === 'repository'
+        ? new RepositoryToolClient(organizationId, userId)
+        : ref === 'roi'
+          ? new RoiToolClient(organizationId, userId)
+          : new AdapterToolClient()
+      return { provider: ref, isWrite: descriptor.isWrite, execute: (name, args) => client.executeTool('', name, args) }
+    }
+    if (ref === 'research') {
+      const key = await getResearchApiKey(organizationId)
+      if (!key) throw new Error('Web research is not configured for this workspace.')
+      const client = new ResearchToolClient(key.apiKey)
+      return { provider: ref, isWrite: false, execute: (name, args) => client.executeTool(BRAVE_SEARCH_ENDPOINT, name, args) }
+    }
     if (ref === 'granola') {
       const granolaKey = await getGranolaApiKey(organizationId)
       if (!granolaKey) throw new Error('Granola is not configured for this workspace.')
@@ -801,7 +817,13 @@ export async function resolveFlowToolExecutor(params: {
       isWrite: providerTool.isWrite,
       execute: (name, args) => {
         if (name !== providerTool.name) throw new Error(`Tool "${name}" is not available on this connection.`)
-        return providerTool.run(connection, args)
+        return withStaleConnectionRecovery({
+          organizationId,
+          providerConfigKeys: PROVIDER_CONFIG_KEYS[providerTool.provider] ?? [providerTool.provider],
+          userId,
+          connection,
+          call: (resolved) => providerTool.run(resolved, args),
+        })
       },
     }
   }
@@ -815,7 +837,13 @@ export async function resolveFlowToolExecutor(params: {
     isWrite: true,
     execute: (name, args) => {
       if (name !== spec.name) throw new Error(`Tool "${name}" is not available on this connection.`)
-      return spec.run(connection, args)
+      return withStaleConnectionRecovery({
+        organizationId,
+        providerConfigKeys: DELIVERY_PROVIDERS[spec.capability],
+        userId,
+        connection,
+        call: (resolved) => spec.run(resolved, args),
+      })
     },
   }
 }

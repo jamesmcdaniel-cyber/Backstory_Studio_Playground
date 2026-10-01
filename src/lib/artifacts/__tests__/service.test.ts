@@ -1,7 +1,25 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { htmlDocumentOf, htmlTitleOf, looksLikeHtml } from '@/lib/html-detect'
-import { buildArtifactPrompt, flowIdFromTrigger, isInteractiveContent, isInteractiveKind } from '../service'
+import { buildArtifactPrompt, executionArtifactDocument, flowIdFromTrigger, isInteractiveContent, isInteractiveKind } from '../service'
+import { artifactPageResponse } from '../serve'
+
+test('legacy raw JSX is compiled in an opaque-origin sandbox, not served as HTML text', async () => {
+  const response = artifactPageResponse({ kind: 'report', content: 'export default function App(){return <div><h1>QA</h1></div>}' }, 'https://example.com')
+  assert.match(response.headers.get('content-type') ?? '', /text\/html/)
+  assert.match(response.headers.get('content-security-policy') ?? '', /sandbox allow-scripts/)
+  assert.doesNotMatch(response.headers.get('content-security-policy') ?? '', /allow-same-origin/)
+  assert.match(await response.text(), /React\.createElement/)
+})
+
+test('React modules with paired HTML tags register as executable artifact documents', () => {
+  const source = 'import React from "react"; export default function App(){return <div><h1>QA</h1><p>Evidence</p></div>}'
+  const content = executionArtifactDocument(source)
+  assert.match(content ?? '', /<!doctype html>/i)
+  assert.match(content ?? '', /type="text\/babel"|type="text\/jsx"/)
+  assert.ok(isInteractiveContent('report', content!))
+  assert.ok(isInteractiveContent('report', source), 'older raw-JSX versions remain interactive')
+})
 
 test('an HTML answer is detected whether fenced or bare; prose is not', () => {
   const doc = '<!doctype html><html><head><title>Q3 pipeline review</title></head><body><h1>Q3</h1></body></html>'

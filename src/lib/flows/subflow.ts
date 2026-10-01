@@ -27,10 +27,10 @@ export function subflowGuard(input: { flowId: string; selfFlowId: string; depth:
  * dropped so the child's own defaults (WS11 input defaults) can fill them.
  */
 export function subflowChildInput(
-  inputs: Record<string, string> | undefined,
-  fallback: string | undefined,
+  inputs: Record<string, unknown> | undefined,
+  fallback: unknown,
 ): unknown {
-  const entries = Object.entries(inputs ?? {}).filter(([, value]) => value.trim() !== '')
+  const entries = Object.entries(inputs ?? {}).filter(([, value]) => value !== undefined && (typeof value !== 'string' || value.trim() !== ''))
   if (entries.length) return Object.fromEntries(entries)
-  return fallback ?? ''
+  return fallback === undefined ? '' : fallback
 }

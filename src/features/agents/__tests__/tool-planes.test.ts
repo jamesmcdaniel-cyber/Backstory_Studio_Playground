@@ -12,6 +12,15 @@ import {
 import { BUILTIN_CONNECTORS } from '@/lib/connectors/registry'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 
+test('native flow executors cover credential-free catalog integrations', async () => {
+  for (const ref of ['repository', 'roi', 'adapters', 'code', 'data_tables']) {
+    if (!BUILTIN_CONNECTORS.find(c => c.providerId === ref)!.available()) continue
+    const executor = await resolveFlowToolExecutor({ organizationId: 'org-qa', userId: 'user-qa', plane: 'native', ref, toolName: 'read' })
+    assert.equal(executor.provider, ref)
+    assert.equal(typeof executor.execute, 'function')
+  }
+})
+
 /**
  * Tool-plane routing and its permission boundaries.
  *

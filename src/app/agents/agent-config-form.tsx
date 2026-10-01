@@ -1024,6 +1024,10 @@ export function AgentConfigForm({
       <div>
         <Label htmlFor="agent-instructions">Instructions</Label>
         <Textarea id="agent-instructions" rows={8} value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} />
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Button type="button" variant="outline" size="sm" onClick={() => setDraft({ ...draft, instructions: /(?:^|\s)@\s?artifact\b/i.test(draft.instructions) ? draft.instructions : `@artifact\n${draft.instructions}` })}>@artifact</Button>
+          <span>Build a full interactive app: HTML/CSS, JavaScript/TypeScript, Python computations and private saved state. The result stays linked to this agent.</span>
+        </div>
       </div>
       <div>
         <Label htmlFor="agent-goal">Larger goal (optional)</Label>

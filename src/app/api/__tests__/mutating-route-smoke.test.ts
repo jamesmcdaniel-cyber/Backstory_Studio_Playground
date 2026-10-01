@@ -249,6 +249,7 @@ const cases = (): Case[] => [
   { route: 'files', method: 'POST', run: async () => (await import('../files/route')).POST(rq('/api/files', 'POST', {})) },
   { route: 'artifacts', method: 'POST', run: async () => (await import('../artifacts/route')).POST(rq('/api/artifacts', 'POST', { content: '<html><body><h1>Page</h1></body></html>', agentId: 'missing' })) },
   { route: 'artifacts/[id]', method: 'PATCH', run: async () => (await import('../artifacts/[id]/route')).PATCH(rq('/api/artifacts/missing', 'PATCH', { archived: true })) },
+  { route: 'artifacts/[id]/state', method: 'PUT', run: async () => (await import('../artifacts/[id]/state/route')).PUT(rq('/api/artifacts/missing/state', 'PUT', { key: 'records-v1', revision: 0, value: [], versionId: 'missing' })) },
   { route: 'artifacts/[id]/versions/[versionId]/restore', method: 'POST', run: async () => (await import('../artifacts/[id]/versions/[versionId]/restore/route')).POST(rq('/api/artifacts/missing/versions/missing/restore', 'POST', {})) },
   { route: 'artifacts/[id]/chat', method: 'POST', run: async () => (await import('../artifacts/[id]/chat/route')).POST(rq('/api/artifacts/missing/chat', 'POST', { message: 'Why?', mode: 'ask' })) },
   { route: 'artifacts/[id]/sharing', method: 'PATCH', run: async () => (await import('../artifacts/[id]/sharing/route')).PATCH(rq('/api/artifacts/missing/sharing', 'PATCH', { workspaceAccess: 'view' })) },

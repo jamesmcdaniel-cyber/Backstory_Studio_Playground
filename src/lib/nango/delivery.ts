@@ -18,6 +18,7 @@ import { getNangoClient, nangoConfigured } from './client'
 import { cacheGet, cacheSet } from '@/lib/cache'
 import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
 import { withBreaker } from '@/lib/resilience/circuit-breaker'
+import { describeUpstreamFailure } from '@/lib/upstream-error'
 
 export interface DeliveryConnection {
   connectionId: string
@@ -60,6 +61,14 @@ export interface NangoProxyArgs {
 }
 
 export type NangoProxy = (args: NangoProxyArgs) => Promise<{ data: unknown }>
+
+/** Only dependency/credential failures should count toward the circuit breaker. */
+export function nangoBreakerFailure(error: unknown): boolean {
+  const shaped = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } }
+  const status = shaped?.response?.status ?? shaped?.status ?? shaped?.statusCode
+  if (typeof status !== 'number') return true
+  return status === 401 || status === 403 || status === 429 || status >= 500
+}
 
 /**
  * Race a promise against a deadline. Nango's ProxyConfiguration exposes no
@@ -115,11 +124,7 @@ export function defaultProxy(): NangoProxy {
         // channel id, a malformed payload — not about the provider's health.
         // Counting those would let one misconfigured flow step take down an
         // integration for the whole workspace.
-        isFailure: (error) => {
-          const status = (error as { status?: unknown })?.status
-          if (typeof status !== 'number') return true
-          return status === 401 || status === 403 || status === 429 || status >= 500
-        },
+        isFailure: nangoBreakerFailure,
       },
     )
   }
@@ -159,7 +164,7 @@ export async function resolveNangoConnection(
   } catch (error) {
     apiLogger.warn('nango: mirror resync on resolution miss failed', {
       organizationId,
-      error: error instanceof Error ? error.message : String(error),
+      error: describeUpstreamFailure(error),
     })
     return null
   }

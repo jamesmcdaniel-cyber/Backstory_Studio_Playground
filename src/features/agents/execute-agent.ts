@@ -4,7 +4,8 @@ import { ambientOrganization } from '@/lib/tenant-database-context'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { registerVersionFromExecution } from '@/lib/artifacts/service'
-import { ARTIFACT_RENDER_MODEL, evidenceFromTranscript, isDeliverable, renderArtifact } from './artifact-renderer'
+import { ARTIFACT_RENDER_MODEL, evidenceFromTranscript, isDeliverable, needsArtifactRender, renderArtifact } from './artifact-renderer'
+import { requestsArtifact } from '@/lib/artifacts/directive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { apiLogger } from '@/lib/logger'
@@ -347,7 +348,11 @@ export async function selectDiscoveredTools(
   discovered: DiscoveredTool[],
   organizationId: string,
   query?: string,
+  policy?: ToolPolicy,
 ): Promise<{ tools: ToolDefinition[]; bindings: Map<string, ToolBinding> }> {
+  // Narrow BEFORE budgeting. Otherwise disallowed tools consume the cap and
+  // crowd out the exact read tools an allowlisted task needs.
+  discovered = applyToolPolicy(discovered, policy, tool => tool.name).tools
   const seen = new Set<string>()
   const unique = discovered.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)))
 
@@ -394,6 +399,7 @@ async function loadTools(
   toolSettings: AgentToolSettings = {},
   agentId?: string,
   artifact?: { artifactId: string; kind: string; executionId: string; request: string | null },
+  policy?: ToolPolicy,
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
   // at the end (capDiscoveredTools) so write tools aren't crowded out. Plane
@@ -413,7 +419,9 @@ async function loadTools(
       return
     }
     const prefix = options.namePrefix ?? group.provider
-    const tools = options.cap ? group.tools.slice(0, options.cap) : group.tools
+    // Budget once, globally, after policy/relevance selection. MCP tools late
+    // in discovery order are not less capable than the first twenty.
+    const tools = group.tools
     for (const tool of tools) {
       discovered.push({
         name: toolName(prefix, tool.name),
@@ -435,7 +443,13 @@ async function loadTools(
   // and the agent's integrations — plus the artifact's own tools, so a
   // question the artifact cannot answer is answered from the live sources
   // that powered it. An ROI dashboard also gets the ROI plane (its prep).
-  const peopleAiGroup = await loadPeopleAiPlaneGroup(organizationId, ownerUserId)
+  const nativeProviders = artifact?.kind === 'roi_dashboard' ? [...providers, 'repository', 'code', 'roi'] : [...providers, 'repository', 'code']
+  const [peopleAiGroup, mcpGroups, nativeGroups, nangoGroups] = await Promise.all([
+    loadPeopleAiPlaneGroup(organizationId, ownerUserId),
+    loadMcpConnectionPlaneGroups(organizationId, ownerUserId),
+    loadNativePlaneGroups(organizationId, { providers: nativeProviders, httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId, artifact }),
+    loadNangoPlaneGroups(organizationId, ownerUserId, { providers }),
+  ])
   if (peopleAiGroup) pushGroup(peopleAiGroup, { cap: 20 })
 
   // ---- Per-org MCP connections (all active connections, any authType) ------
@@ -444,7 +458,6 @@ async function loadTools(
   // Per-agent tool toggles (agent setup → MCP chip gear) filter HERE, before
   // the per-group cap and the global 64-tool cap, so a disabled tool never
   // exists for the run — no description, no cap slot, nothing to call.
-  const mcpGroups = await loadMcpConnectionPlaneGroups(organizationId, ownerUserId)
   for (const group of mcpGroups) {
     const allowed = mcpAllowedToolNames(toolSettings, group.id)
     pushGroup(allowed ? { ...group, tools: group.tools.filter((tool) => allowed.has(tool.name)) } : group, { cap: 20 })
@@ -457,28 +470,28 @@ async function loadTools(
   // tools that replace it must too. 'code' rides along for the same reason:
   // an agent that can read a CSV but not compute over it can only refuse or
   // guess. Both read-only, so no approval-gate impact.
-  const nativeProviders = artifact?.kind === 'roi_dashboard' ? [...providers, 'repository', 'code', 'roi'] : [...providers, 'repository', 'code']
-  for (const group of await loadNativePlaneGroups(organizationId, { providers: nativeProviders, httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId, artifact })) pushGroup(group)
+  for (const group of nativeGroups) pushGroup(group)
 
   // ---- Nango delivery (outbound writes as the acting user) -----------------
   // Slack/Gmail/Salesforce writes through the org's Nango connections,
   // preferring the agent owner's own connection so messages arrive as the rep.
   // Gated per capability on both a matching providers entry and a resolvable
   // connection. Failures never abort the run.
-  for (const group of await loadNangoPlaneGroups(organizationId, ownerUserId, { providers })) {
+  for (const group of nangoGroups) {
     pushGroup(group, { namePrefix: 'nango' })
   }
 
   // Select which tools to expose: over the cap, rank by relevance to the
   // objective (best-effort, embeddings-gated) with a reserved write budget;
   // otherwise the deterministic cap. Delivery tools aren't crowded out either way.
-  const selected = await selectDiscoveredTools(discovered, organizationId, query)
+  const policyRemoved = applyToolPolicy(discovered, policy, tool => tool.name).removed
+  const selected = await selectDiscoveredTools(discovered, organizationId, query, policy)
   if (unavailable.length) {
     apiLogger.warn('loadTools: attached integrations produced no usable tools', {
       organizationId, unavailable: unavailable.map((entry) => entry.name), loaded: selected.tools.length,
     })
   }
-  return { ...selected, unavailable }
+  return { ...selected, unavailable, policyRemoved }
 }
 
 /** An integration attached to the agent that produced no usable client. */
@@ -932,7 +945,8 @@ async function runAgentExecutionInner(
       const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true } })
       return target ? { artifactId: target.id, kind: target.kind, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null } : undefined
     })()
-    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext)
+    const policy = data.stepOverrides?.toolPolicy
+    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy)
     const { bindings, unavailable } = loaded
 
     // Applied AFTER the agent's own tools and any step-granted connections, so
@@ -940,10 +954,9 @@ async function runAgentExecutionInner(
     // cannot escalate through it. Least privilege is the control that still
     // holds when the model is talked into something, which is why this exists
     // alongside the untrusted-data fencing rather than instead of it.
-    const policy = data.stepOverrides?.toolPolicy
     const policed = applyToolPolicy(loaded.tools, policy, (tool) => tool.name)
     const tools = policed.tools
-    const policyNote = describeToolPolicy(policed, policy?.mode ?? 'inherit')
+    const policyNote = describeToolPolicy({ tools, removed: [...loaded.policyRemoved, ...policed.removed] }, policy?.mode ?? 'inherit')
     if (policyNote) {
       // Surfaced, not silent: an agent that mysteriously lacks a tool gets
       // reported as a broken integration and debugged for an hour.
@@ -951,7 +964,7 @@ async function runAgentExecutionInner(
         organizationId,
         agentId: agent.id,
         mode: policy?.mode,
-        withheld: policed.removed.length,
+        withheld: loaded.policyRemoved.length + policed.removed.length,
       })
     }
     for (const tool of tools) {
@@ -968,7 +981,7 @@ async function runAgentExecutionInner(
           .findMany({ where: { id: { in: skillIds }, isActive: true }, select: { id: true, name: true, instructions: true } })
           .catch(() => [])
       : []
-    let system = buildAgentSystemPrompt(agent.objective, skillIds, communitySkills)
+    let system = buildAgentSystemPrompt(agent.objective, skillIds, communitySkills, data.input ?? '')
 
     // What personal data is about to cross to the model provider, recorded per
     // category before the first turn. The task input is the user/tenant-data
@@ -985,7 +998,7 @@ async function runAgentExecutionInner(
     // complex tasks are told to plan before acting.
     const goalBlock = goalSection((agent as { goal?: string | null }).goal)
     if (goalBlock) system += `\n\n${goalBlock}`
-    const strategize = shouldStrategize({ objective: agent.objective, metadata: agentMetadata, toolCount: tools.length })
+    const strategize = !artifactContext && shouldStrategize({ objective: agent.objective, metadata: agentMetadata, toolCount: tools.length })
     if (strategize) system += `\n\n${strategizeSection()}`
 
     // Multi-agent handoff: an opted-in agent can delegate to other agents via a
@@ -1181,7 +1194,7 @@ async function runAgentExecutionInner(
         signalRef?.accountId ? `account:${signalRef.accountId}` : null,
         signalRef?.opportunityId ? `opp:${signalRef.opportunityId}` : null,
       ].filter((id): id is string => Boolean(id))
-      const ragContext = await retrieveContext(getGraphRagStore(), {
+      const ragContext = !artifactContext ? await retrieveContext(getGraphRagStore(), {
         organizationId,
         // Scope correlated context to this rep: shared org data + their own
         // private nodes, never another rep's private book.
@@ -1190,7 +1203,7 @@ async function runAgentExecutionInner(
         seedNodeIds,
         minScore: CONTEXT_RELEVANCE_FLOOR,
         ...(strategize ? { topK: STRATEGIZE_RETRIEVAL.topK, hops: STRATEGIZE_RETRIEVAL.hops } : {}),
-      })
+      }) : { hits: [], related: [] }
       const rendered = renderContext(ragContext)
       if (rendered) {
         retrievedBlocks.push(rendered)
@@ -1748,7 +1761,10 @@ async function runAgentExecutionInner(
     // or a run whose tool output looked like an injection. Any failure keeps
     // the draft.
     const renderTrigger = String((execution.trigger as { type?: unknown } | null)?.type ?? '')
-    if (renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && !injectionTainted && isDeliverable(summary)) {
+    if (renderTrigger !== 'artifact' && requestsArtifact(agent.objective, data.input) && !isDeliverable(summary)) {
+      throw new Error('@artifact was requested, but the agent did not produce an executable artifact. Review the run and retry; no completed app is claimed.')
+    }
+    if (renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && !injectionTainted && needsArtifactRender(summary)) {
       const renderStep = await prisma.workflowStep.create({
         data: { executionId: execution.id, node: 'artifact.render', status: 'running', input: jsonValue({ model: ARTIFACT_RENDER_MODEL }), startedAt: new Date() },
       })
@@ -1842,6 +1858,20 @@ async function runAgentExecutionInner(
     await prisma.executionMessage.create({
       data: { executionId: execution.id, role: 'agent', content: summary },
     })
+    // Register before publishing terminal status: consumers stop polling a
+    // completed execution, so its artifact must already be addressable.
+    const artifactLink = blockedReason
+      ? null
+      : await registerVersionFromExecution({
+          organizationId, userId, executionId: execution.id,
+          agentTaskId: agent.id, agentTitle: agentMetadata.title || agent.description,
+          trigger: execution.trigger, summary, headline,
+        })
+          .then((registered) => registered ? `/artifacts/${registered.artifactId}` : null)
+          .catch((error) => {
+            apiLogger.warn('artifact registration failed', { executionId: execution.id, error: error instanceof Error ? error.message : String(error) })
+            return null
+          })
     // systemPrisma: id-keyed terminal writes on worker job data; execution/agent
     // ids were validated against this tenant when they were loaded/created above.
     await systemPrisma.$transaction([
@@ -1886,23 +1916,6 @@ async function runAgentExecutionInner(
     // artifact this run was asked to change) so it has a home of its own, and
     // land the completion notification there unless the run's origin already
     // named a page. Never fatal — a run that finished has finished.
-    const artifactLink = blockedReason
-      ? null
-      : await registerVersionFromExecution({
-          organizationId,
-          userId,
-          executionId: execution.id,
-          agentTaskId: agent.id,
-          agentTitle: agentMetadata.title || agent.description,
-          trigger: execution.trigger,
-          summary,
-          headline,
-        })
-          .then((registered) => (registered ? `/artifacts/${registered.artifactId}` : null))
-          .catch((error) => {
-            apiLogger.warn('artifact registration failed', { executionId: execution.id, error: error instanceof Error ? error.message : String(error) })
-            return null
-          })
     // An ROI analysis run: render its dashboard now, so the notification
     // lands on an artifact that already shows it.
     if ((execution.trigger as { type?: unknown } | null)?.type === 'roi_analysis') {

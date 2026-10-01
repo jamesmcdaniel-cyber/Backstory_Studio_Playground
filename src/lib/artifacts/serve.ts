@@ -3,6 +3,7 @@ import { looksLikeHtml } from '@/lib/html-detect'
 import { vendorScripts } from './vendor-scripts'
 import { compileArtifactPage, hasPythonScript, reactComponentOf, reactArtifactDocument } from './runtime'
 import { artifactClientRuntime } from './client-runtime'
+import { ARTIFACT_DESIGN_CSS } from './design-system'
 
 /**
  * Serving an artifact version as a page: the one place its policy is decided,
@@ -56,7 +57,7 @@ export function artifactPageResponse(found: { content: string; kind: string }, o
   const page = /<html[\s>]/i.test(content)
     ? content
     : `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${content}</body></html>`
-  const runtimeTag = `<script>${artifactClientRuntime(origin)}</script>`
+  const runtimeTag = `<style data-backstory-design-system="1">${ARTIFACT_DESIGN_CSS}</style><script>${artifactClientRuntime(origin)}</script>`
   const withRuntime = page.replace(/<head([^>]*)>/i, `<head$1>${runtimeTag}`)
   const body = interactive ? withLinkScript(withRuntime === page ? runtimeTag + page : withRuntime) : page
   return new Response(body, {

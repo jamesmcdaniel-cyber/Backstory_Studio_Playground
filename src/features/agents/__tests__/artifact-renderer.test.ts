@@ -6,8 +6,8 @@ test('artifacts are rendered on Opus 5.5 by default', () => {
   assert.equal(ARTIFACT_RENDER_MODEL, process.env.ARTIFACT_RENDER_MODEL?.trim() || 'claude-opus-5-5')
 })
 
-test('the spec asks for the ROI-page bar: thesis, story in numbers, tabs, interpretation, drill-down, method', () => {
-  for (const part of ['thesis sentence', 'The story in numbers', 'Tabs across the top', 'What this shows', 'Drill-down', 'Method & sources', 'Never invent a number']) {
+test('the spec requires task-specific working surfaces, evidence and interaction instead of a fixed report template', () => {
+  for (const part of ['primary working surface', 'entity inspector', 'durable records', 'sources, as-of dates and data gaps', 'Never invent a number', 'opt-in offline UI kit']) {
     assert.ok(ARTIFACT_RENDER_SPEC.includes(part), part)
   }
 })

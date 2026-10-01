@@ -3,9 +3,10 @@ let runtime;
 let inlineScope;
 self.onmessage = async ({ data }) => {
   let stdout = '', stderr = '';
+  const phase = value => { if (data.protocol === 2) self.postMessage({ id: data.id, phase: value }); };
   try {
     if (!runtime) {
-      self.postMessage({ id: data.id, phase: 'loading-runtime' });
+      phase('loading-runtime');
       const base = data.origin + '/vendor/pyodide/' + (data.runtimeVersion && /^[\d.]+$/.test(data.runtimeVersion) ? data.runtimeVersion + '/' : '');
       importScripts(base + 'pyodide.js');
       runtime = await loadPyodide({ indexURL: base, stdout: () => {}, stderr: () => {} });
@@ -18,9 +19,9 @@ self.onmessage = async ({ data }) => {
     const input = runtime.toPy(data.input === undefined ? null : data.input);
     try {
       scope.set('input', input);
-      self.postMessage({ id: data.id, phase: 'loading-packages' });
+      phase('loading-packages');
       await runtime.loadPackagesFromImports(data.code, { messageCallback: () => {} });
-      self.postMessage({ id: data.id, phase: 'executing' });
+      phase('executing');
       const value = await runtime.runPythonAsync(data.code, { globals: scope });
       try {
         const js = value && typeof value.toJs === 'function' ? value.toJs({ dict_converter: Object.fromEntries }) : value;

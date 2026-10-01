@@ -82,7 +82,7 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       worker.onerror=function(e){if(worker!==ownWorker)return;var job=active;if(worker)worker.terminate();worker=null;active=null;if(job){clearTimeout(job.timer);job.reject(new Error(e.message||'Python worker failed'));}pump();};
     }
     active.timer=setTimeout(stopTimedOut,90000);
-    worker.postMessage({id:active.id,code:active.code,input:active.input,globals:active.globals,inlineSession:active.inlineSession,origin:__ARTIFACT_ORIGIN__,runtimeVersion:__PYTHON_VERSION__});
+    worker.postMessage({id:active.id,code:active.code,input:active.input,globals:active.globals,inlineSession:active.inlineSession,origin:__ARTIFACT_ORIGIN__,runtimeVersion:__PYTHON_VERSION__,protocol:2});
     } catch(e) {var failed=active;if(worker)worker.terminate();worker=null;active=null;if(failed){clearTimeout(failed.timer);failed.reject(e);}pump();}
   }
   function stopTimedOut(){var job=active;if(!job)return;worker.terminate();worker=null;active=null;job.reject(new Error('Python startup or execution timed out. Retry the calculation to restart the runtime.'));pump();}

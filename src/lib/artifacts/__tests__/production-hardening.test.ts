@@ -51,13 +51,16 @@ test('inline Python is compiled but never executed during validation', async () 
 
 test('the artifact compute worker executes actual Python and serializes dictionaries', async () => {
   const replies: any[] = []
-  const self: any = { postMessage: (value: any) => { if (!value.phase) replies.push(value) } }
+  const phases: string[] = []
+  const self: any = { postMessage: (value: any) => { if (!value.phase) replies.push(value); else phases.push(value.phase) } }
   runInNewContext(readFileSync('public/vendor/artifact-python-worker.js', 'utf8'), {
     self, importScripts() {}, loadPyodide: () => loadPyodide({ stdout() {}, stderr() {} }),
   })
-  await self.onmessage({ data: { id: 1, code: '{"mean": sum(input["values"])/len(input["values"])}', input: { values: [10, 20, 30] }, origin: 'https://example.com' } })
+  await self.onmessage({ data: { id: 1, protocol: 2, code: '{"mean": sum(input["values"])/len(input["values"])}', input: { values: [10, 20, 30] }, origin: 'https://example.com' } })
+  assert.deepEqual(phases, ['loading-runtime', 'loading-packages', 'executing'])
   assert.deepEqual(JSON.parse(JSON.stringify(replies[0])), { id: 1, result: { mean: 20 } })
   await self.onmessage({ data: { id: 2, code: '1/0', input: {}, origin: 'https://example.com' } })
+  assert.equal(phases.length, 3, 'legacy clients receive only their final result, never protocol-v2 progress')
   assert.match(replies[1].error, /ZeroDivisionError/)
   await self.onmessage({ data: { id: 3, code: 'qa_legacy = 21\nprint("inline one")', inlineSession: true, origin: 'https://example.com' } })
   assert.equal(replies[2].stdout, 'inline one\n')

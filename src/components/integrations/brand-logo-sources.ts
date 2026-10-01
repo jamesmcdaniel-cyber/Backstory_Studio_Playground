@@ -25,7 +25,9 @@ const AUTH_QUALIFIER = /-(?:user-)?(?:oauth2?|api-?key|basic|bearer|pat|token|jw
 
 /** The brand behind a config key: "gong-oauth" → "gong". */
 export function brandSlug(slug: string): string {
-  let base = slug.toLowerCase().trim()
+  // Tool-connection ids carry their plane ("nango:gmail", "native:granola"):
+  // the brand is what follows it.
+  let base = slug.toLowerCase().trim().replace(/^(?:nango|native|mcp|people_ai|composio):/, '')
   for (let previous = ''; base !== previous; ) {
     previous = base
     base = base.replace(AUTH_QUALIFIER, '')
@@ -125,9 +127,16 @@ function localLogo(brand: string): string | undefined {
  * advances on load error, so a dead source never leaves a broken image — and
  * only a provider that fails every source shows an initial tile.
  */
+/**
+ * Built-in capabilities, not brands: no logo service has one, so asking only
+ * produces 404s. They render the neutral fallback instead.
+ */
+const GENERIC_SLUGS = new Set(['http', 'http-api', 'httpapi', 'code', 'repository', 'data-tables', 'data_tables', 'datatables', 'adapters', 'roi', 'artifact', 'email', 'webhook', 'webhooks', 'files'])
+
 export function logoSources({ src, slug }: { src?: string | null; slug?: string | null }): string[] {
-  const key = (slug || '').toLowerCase().trim()
+  const key = (slug || '').toLowerCase().trim().replace(/^(?:nango|native|mcp|people_ai|composio):/, '')
   const brand = key ? brandSlug(key) : ''
+  if (GENERIC_SLUGS.has(brand)) return src ? [src] : []
   const sources: string[] = []
 
   const local = brand ? localLogo(brand) : undefined

@@ -32,3 +32,12 @@ test('logoSources always offers a real logo before the initial tile', () => {
   // Nothing to go on: the caller renders the initial tile.
   assert.deepEqual(logoSources({ slug: null }), [])
 })
+
+test('a tool-connection id resolves to its brand, and built-ins ask no logo service', async () => {
+  const { logoSources, brandSlug } = await import('../brand-logo-sources')
+  assert.equal(brandSlug('nango:gmail'), 'gmail')
+  assert.ok(logoSources({ slug: 'nango:gmail' }).some((url) => url.endsWith('/gmail')), 'nango:gmail → the Gmail icon, not "nangogmail"')
+  assert.ok(!logoSources({ slug: 'nango:slack' }).some((url) => url.includes('nango')))
+  assert.deepEqual(logoSources({ slug: 'http' }), [], 'no 404s for a built-in')
+  assert.deepEqual(logoSources({ slug: 'native:data_tables' }), [])
+})

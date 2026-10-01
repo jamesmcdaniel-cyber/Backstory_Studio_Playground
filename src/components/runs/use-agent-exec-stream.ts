@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { subscribeTicks } from '@/lib/client/realtime'
 import { agentExecChannel } from '@/lib/flows/run-stream'
 
 /** Realtime ticks for an agent execution (`agent-exec:<id>`): every event the
@@ -12,16 +12,7 @@ export function useAgentExecStream(executionId: string | null | undefined, onTic
   cb.current = onTick
   useEffect(() => {
     if (!enabled || !executionId) return
-    let supabase: ReturnType<typeof createClient>
-    try {
-      supabase = createClient()
-    } catch {
-      return
-    }
-    const channel = supabase.channel(agentExecChannel(executionId))
-    channel.on('broadcast', { event: 'tick' }, () => cb.current()).subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    // Shared: the artifact page and the run feed inside it follow the same run.
+    return subscribeTicks(agentExecChannel(executionId), () => cb.current())
   }, [executionId, enabled])
 }

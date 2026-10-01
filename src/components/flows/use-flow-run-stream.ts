@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { subscribeTicks } from '@/lib/client/realtime'
 import { flowRunChannel } from '@/lib/flows/run-stream'
 
 /**
@@ -15,16 +15,6 @@ export function useFlowRunStream(runId: string | null | undefined, onTick: () =>
   cb.current = onTick
   useEffect(() => {
     if (!enabled || !runId) return
-    let supabase: ReturnType<typeof createClient>
-    try {
-      supabase = createClient()
-    } catch {
-      return // no Supabase configured — poll fallback drives updates
-    }
-    const channel = supabase.channel(flowRunChannel(runId))
-    channel.on('broadcast', { event: 'tick' }, () => cb.current()).subscribe()
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    return subscribeTicks(flowRunChannel(runId), () => cb.current())
   }, [runId, enabled])
 }

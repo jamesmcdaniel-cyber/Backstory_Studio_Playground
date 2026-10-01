@@ -11,8 +11,7 @@ import { Markdown } from '@/components/ui/markdown'
 import { HtmlPreview, looksLikeHtml } from '@/components/ui/html-preview'
 import { detectArtifact, type FlowArtifact } from '@/lib/flows/artifact-preview'
 import { StructuredValueView } from '@/components/flows/structured-value-view'
-import type { RealtimeChannel } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/client'
+import { subscribeTicks } from '@/lib/client/realtime'
 import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { agentExecChannel } from '@/lib/flows/run-stream'
 import { STATUS_TEXT as SHARED_STATUS_TEXT } from '@/lib/flows/node-presentation'
@@ -215,20 +214,13 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
       if (debounce) return
       debounce = setTimeout(() => { debounce = null; load() }, 300)
     }
-    let supabase: ReturnType<typeof createClient> | null = null
-    let channel: RealtimeChannel | null = null
-    try {
-      supabase = createClient()
-      channel = supabase.channel(agentExecChannel(executionId))
-      channel.on('broadcast', { event: 'tick' }, nudge).subscribe()
-    } catch {
-      // No Supabase — the poll fallback covers it.
-    }
+    // Shared subscription: another surface may follow the same run.
+    const unsubscribe = subscribeTicks(agentExecChannel(executionId), nudge)
     return () => {
       cancelled = true
       stopPolling()
       if (debounce) clearTimeout(debounce)
-      if (supabase && channel) void supabase.removeChannel(channel)
+      unsubscribe()
     }
   }, [executionId, active, waiting])
   return rows

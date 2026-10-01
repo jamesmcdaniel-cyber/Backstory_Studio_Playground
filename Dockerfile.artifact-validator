@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/playwright:v1.62.1-noble
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends iproute2 util-linux procps && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 util-linux && rm -rf /var/lib/apt/lists/*
+RUN test -x /usr/bin/pkill
 WORKDIR /app
 COPY services/artifact-validator/package*.json ./
 RUN npm ci --omit=dev

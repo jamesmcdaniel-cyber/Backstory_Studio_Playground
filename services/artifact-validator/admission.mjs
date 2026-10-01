@@ -1,5 +1,5 @@
 /** Bounded FIFO admission. Queued requests hold no browser or uploaded body. */
-export function admission({ capacity = 1, limit = 3, timeoutMs = 60000 } = {}) {
+export function admission({ capacity = 1, limit = 2, timeoutMs = 90000 } = {}) {
   let active = 0
   const waiting = []
   function release() { active--; waiting.shift()?.grant() }

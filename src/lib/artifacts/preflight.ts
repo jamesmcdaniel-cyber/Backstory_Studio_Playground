@@ -11,7 +11,7 @@ export async function validateArtifactRuntime(content: string): Promise<void> {
   if (url.protocol !== 'https:') throw new Error('Artifact validator requires HTTPS.')
   const { artifactPageResponse } = await import('./serve')
   const html = await artifactPageResponse({ content, kind: 'page' }, 'http://artifact-runtime.invalid').text()
-  const deadline = Date.now() + 100_000
+  const deadline = Date.now() + 150_000
   let retries = 0
   for (;;) {
     let response: Response

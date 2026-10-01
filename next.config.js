@@ -26,6 +26,8 @@ const nextConfig = {
         headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=0, must-revalidate' }],
       },
       {
+        // CommonJS Next config reads the installed runtime version at build time.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         source: `/vendor/pyodide/${require('pyodide/package.json').version}/:path*`,
         headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }, { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
       },

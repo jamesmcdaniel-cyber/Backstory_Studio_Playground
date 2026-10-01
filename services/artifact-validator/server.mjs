@@ -44,7 +44,7 @@ http.createServer(async (req, res) => {
     let stderr = ''
     child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-1500) })
     const result = await new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error('Artifact startup exceeded the 30 second deadline')), 30_000)
+      timer = setTimeout(() => reject(new Error('Artifact validation exceeded the 45 second deadline')), 45_000)
       child.once('message', resolve)
       child.once('error', reject)
       child.once('exit', () => reject(new Error('Browser validator exited before reporting a result. ' + stderr)))

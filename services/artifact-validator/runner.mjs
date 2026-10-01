@@ -61,20 +61,20 @@ process.once('message', async ({ html }) => {
     if (controls && !steps.length) record('Interactive artifacts must declare window.__artifactTests with an action and observable assertion for their primary workflow.')
     await page.evaluate(() => { window.validationInteractions = true })
     let actions = 0, assertions = 0
-    for (const step of steps) {
+    for (const [index, step] of steps.entries()) {
       if (!step || typeof step.selector !== 'string' || step.selector.length > 300) throw new Error('Each artifact test needs a bounded selector')
       const target = frame.locator(step.selector)
-      switch (step.action) {
+      try { switch (step.action) {
         case 'click': await target.click({ timeout: 2000 }); actions++; break
         case 'fill': if (typeof step.value !== 'string' || step.value.length > 1000) throw new Error('Invalid test fill value'); await target.fill(step.value, { timeout: 2000 }); actions++; break
         case 'select': await target.selectOption(String(step.value).slice(0, 1000), { timeout: 2000 }); actions++; break
         case 'expectText':
           if (typeof step.value !== 'string' || !step.value.length) throw new Error('expectText requires non-empty expected text')
-          await frame.waitForFunction(({ selector, value }) => document.querySelector(selector)?.textContent?.includes(value), step, { timeout: 5000 }); assertions++; break
+          await frame.waitForFunction(({ selector, value }) => document.querySelector(selector)?.textContent?.includes(value), step, { timeout: 15000 }); assertions++; break
         case 'expectValue':
-          await frame.waitForFunction(({ selector, value }) => document.querySelector(selector)?.value === value, step, { timeout: 5000 }); assertions++; break
+          await frame.waitForFunction(({ selector, value }) => document.querySelector(selector)?.value === value, step, { timeout: 15000 }); assertions++; break
         default: throw new Error('Unsupported artifact test action: ' + step.action)
-      }
+      } } catch (error) { throw new Error(`Artifact check ${index + 1} (${step.action} ${step.selector}) failed: ${error.message}`) }
     }
     if (steps.length && (!actions || !assertions)) record('Artifact tests need both an action and an observable assertion')
     if (actions && assertions) checks.push('declared-primary-workflow')

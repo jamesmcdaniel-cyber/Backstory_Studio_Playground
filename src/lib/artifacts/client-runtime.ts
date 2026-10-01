@@ -1,4 +1,4 @@
-import { version as pythonVersion } from 'pyodide/package.json'
+import pythonPackage from 'pyodide/package.json'
 /** Runs only in the opaque-origin artifact frame, never in the app window. */
 export const ARTIFACT_CLIENT_RUNTIME = String.raw`
 (function(){
@@ -20,6 +20,7 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
     });
   }
   var slots = new Map();
+  function canonical(value){return JSON.stringify(value,function(key,v){if(!v||typeof v!=='object'||Array.isArray(v))return v;var sorted={};Object.keys(v).sort().forEach(function(k){sorted[k]=v[k];});return sorted;});}
   var manualDirty=false;
   function signalDirty(){window.parent.postMessage({type:'backstory:dirty',dirty:manualDirty||Array.from(slots.values()).some(function(s){return s.saving||s.dirty;})},'*');}
   document.addEventListener('input',function(){manualDirty=true;signalDirty();});
@@ -39,7 +40,7 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       await s.chain;
       var result=await request('get',{key:key});
       if(!s.ready||discard){if(result.revision)s.value=result.value;s.revision=result.revision;s.ready=true;s.dirty=false;}
-      else if(JSON.stringify(result.value)===JSON.stringify(s.value)){s.revision=result.revision;s.dirty=false;}
+      else if(canonical(result.value)===canonical(s.value)){s.revision=result.revision;s.dirty=false;}
       else {
         if(result.revision!==s.revision)throw new Error('Another save changed this data. Export your draft, then reload saved data before merging.');
         var saved=await request('set',{key:key,value:s.value,revision:result.revision});s.revision=saved.revision;s.dirty=false;
@@ -107,5 +108,5 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
 `
 
 export function artifactClientRuntime(origin: string): string {
-  return ARTIFACT_CLIENT_RUNTIME.replaceAll('__ARTIFACT_ORIGIN__', JSON.stringify(origin).replace(/</g, '\\u003c')).replaceAll('__PYTHON_VERSION__', JSON.stringify(pythonVersion))
+  return ARTIFACT_CLIENT_RUNTIME.replaceAll('__ARTIFACT_ORIGIN__', JSON.stringify(origin).replace(/</g, '\\u003c')).replaceAll('__PYTHON_VERSION__', JSON.stringify(pythonPackage.version))
 }

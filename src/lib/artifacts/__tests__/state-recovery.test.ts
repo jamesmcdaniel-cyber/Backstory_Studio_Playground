@@ -6,7 +6,7 @@ import { artifactClientRuntime } from '../client-runtime'
 
 function fixture() {
   let listener: (event: any) => void
-  let saved = { value: { count: 0 }, revision: 1 }
+  let saved: { value: Record<string, unknown>; revision: number } = { value: { count: 0 }, revision: 1 }
   let failRead = false, failWrite = false, loseResponse = false
   const writes: any[] = []
   const parent = { postMessage(message: any) {
@@ -17,7 +17,7 @@ function fixture() {
       writes.push(message.payload)
       if (failWrite) error = 'offline write'
       else if (message.payload.revision !== saved.revision) error = 'revision conflict'
-      else { saved = { value: message.payload.value, revision: saved.revision + 1 }; if (loseResponse) error = 'response lost' }
+      else { saved = { value: Object.fromEntries(Object.entries(message.payload.value).sort(([a], [b]) => a.localeCompare(b))), revision: saved.revision + 1 }; if (loseResponse) error = 'response lost' }
     }
     queueMicrotask(() => listener({ source: parent, data: { type: 'backstory:state-result', id: message.id, result: saved, error } }))
   } }
@@ -40,7 +40,7 @@ test('transient save keeps draft and retries; lost response does not duplicate w
   assert.equal(f.state()[0].count, 2); assert.equal(f.state()[2].dirty, true)
   f.offlineWrite(false); await f.state()[2].retry()
   assert.equal(f.state()[2].error, null); assert.equal(f.state()[2].dirty, false)
-  f.lostResponse(true); f.state()[1]({ count: 3 }); await flush()
+  f.lostResponse(true); f.state()[1]({ z: 4, count: 3 }); await flush()
   const count = f.writes.length
   await f.state()[2].retry()
   assert.equal(f.writes.length, count); assert.equal(f.state()[2].error, null)

@@ -335,6 +335,7 @@ export async function loadArtifact(organizationId: string, id: string, before?: 
   const authorIds = [...new Set(versions.map((version) => version.createdByUserId).filter((id): id is string => Boolean(id)))]
   const authors = new Map((authorIds.length ? await prisma.user.findMany({ where: { id: { in: authorIds }, organizationId }, select: { id: true, name: true, email: true } }) : []).map((user) => [user.id, user.name || user.email || 'A teammate']))
   return {
+    configurationLocked: Boolean(row.templateSourceId),
     id: row.id,
     kind: isArtifactKind(row.kind) ? row.kind : 'report',
     title: row.title,

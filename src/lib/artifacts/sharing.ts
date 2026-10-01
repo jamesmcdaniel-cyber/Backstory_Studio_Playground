@@ -159,6 +159,7 @@ export async function updateSharing(organizationId: string, artifactId: string, 
     resourceType: 'artifact',
     resourceId: artifactId,
     detail: {
+      ...(patch.shareTemplate !== undefined ? { shareTemplate: patch.shareTemplate } : {}),
       ...(patch.workspaceAccess ? { workspaceAccess: patch.workspaceAccess } : {}),
       ...(patch.editorIds ? { editors: editorIdsOf(updated.editorIds).length, added: added.length } : {}),
       ...(patch.link ? { link: patch.link } : {}),

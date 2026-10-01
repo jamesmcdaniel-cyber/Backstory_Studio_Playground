@@ -209,7 +209,7 @@ export function ArtifactViewer({ id }: { id: string }) {
   // the workspace may edit); without it the page is read-only.
   const canEdit = artifact.permissions?.canEdit ?? can('agent.write')
   const canAsk = Boolean(artifact.agent) && canEdit
-  const configurationLocked = artifact.permissions?.canConfigure === false
+  const configurationLocked = artifact.configurationLocked === true || artifact.permissions?.canConfigure === false
   const canConfigure = canAsk && !configurationLocked
   const shownMarkdown = shownVersion?.format === 'markdown' ? shownVersion : null
 

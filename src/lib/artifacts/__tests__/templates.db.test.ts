@@ -54,6 +54,8 @@ if (!database) {
     assert.equal(copy.versions[0].state, null)
     assert.equal(copy.versions[0].executionId, null)
     assert.equal(copy.appStates.length, 0)
+    const { loadArtifact } = await import('../service')
+    assert.equal((await loadArtifact(recipient.organizationId, copyId))?.configurationLocked, true, 'chat and restore payloads retain the settings lock even without permission metadata')
     assert.equal(await db.agentTask.count({ where: { organizationId: recipient.organizationId, artifactTemplateCopyId: copyId } }), 1)
     const agent = await db.agentTask.findFirstOrThrow({ where: { id: copilotId, organizationId: recipient.organizationId } })
     assert.equal(agent.visibility, 'private')

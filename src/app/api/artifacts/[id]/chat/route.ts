@@ -4,7 +4,8 @@ import { rateLimit } from '@/lib/ratelimit'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
 import { askArtifact, ARTIFACT_QUESTION_MAX_CHARS } from '@/lib/artifacts/service'
 import { resolveChatModel } from '@/lib/llm/models'
-import { requireEditable } from '@/lib/artifacts/route-access'
+import { requireEditable, viewerOf } from '@/lib/artifacts/route-access'
+import { artifactPermissions } from '@/lib/artifacts/sharing'
 
 export const runtime = 'nodejs'
 
@@ -16,7 +17,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = new URL(request.url).pathname.split('/').at(-2)
   if (!id) throw new ApiError('Artifact id is required.', 400, 'ID_REQUIRED')
   // The assistant changes the artifact: edit access, per artifact, not role.
-  await requireEditable(auth, id)
+  const editable = await requireEditable(auth, id)
   const limited = await rateLimit(`artifact-chat:${auth.organizationId}`, { limit: 20, windowMs: 60_000 })
   if (!limited.ok) throw new ApiError('Too many messages at once. Try again in a minute.', 429, 'RATE_LIMITED')
   const allowance = await checkDailyRunAllowance('agent', { organizationId: auth.organizationId, userId: auth.dbUser.id, canReview: auth.can('catalogue.review'), email: auth.dbUser.email })
@@ -25,7 +26,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!parsed.success) throw new ApiError('Type a message first.', 400, 'INVALID_BODY')
   try {
     const artifact = await askArtifact({ organizationId: auth.organizationId, userId: auth.dbUser.id, id, message: parsed.data.message, mode: parsed.data.mode, model: resolveChatModel(parsed.data.model, 'artifact') })
-    return { success: true, artifact }
+    return { success: true, artifact: { ...artifact, permissions: artifactPermissions(viewerOf(auth), editable) } }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'The message could not be sent.'
     throw new ApiError(message, message === 'Artifact not found.' ? 404 : 400, 'MESSAGE_REJECTED')

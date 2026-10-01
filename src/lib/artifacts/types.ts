@@ -36,6 +36,8 @@ export type ArtifactVersionView = {
 }
 
 export type ArtifactView = {
+  /** Server-owned lock, included in chat/restore responses as well as GET. */
+  configurationLocked?: boolean
   id: string
   kind: ArtifactKind
   title: string

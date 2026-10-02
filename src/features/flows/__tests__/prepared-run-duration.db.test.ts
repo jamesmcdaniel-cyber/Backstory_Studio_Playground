@@ -42,10 +42,12 @@ if (TEST_DB) {
     ids.flow = flow.id
   })
 
-  test('an adopted prepared run refreshes startedAt to adoption time, not row-creation time', async () => {
+  test('an adopted prepared run keeps its original start and stamps the pickup on lastActiveAt', async () => {
     // Simulate startFlowExecution having created the row well before this
-    // process picks it up off the queue — the queue-wait window we must NOT
-    // count as execution duration.
+    // process picks it up off the queue. Run history keeps that original start
+    // (chronology is never rewritten); the pickup lands on lastActiveAt, which
+    // is the clock reapStuckFlowRuns reads — so a long queue wait neither
+    // looks like a fresh start nor gets the run reaped the moment it is adopted.
     const rowCreatedAt = new Date(Date.now() - 5 * 60_000)
     const run = await prisma.flowRun.create({
       data: {
@@ -59,7 +61,7 @@ if (TEST_DB) {
       },
     })
 
-    const adoptionStartedAt = new Date()
+    const adoptedFrom = new Date()
     const result = await runFlowExecution({
       flowId: ids.flow,
       organizationId: ids.org,
@@ -69,13 +71,10 @@ if (TEST_DB) {
     assert.equal(result.status, 'succeeded')
 
     const reloaded = await prisma.flowRun.findFirst({ where: { id: run.id, organizationId: ids.org } })
+    assert.equal(reloaded.startedAt.getTime(), rowCreatedAt.getTime(), 'the stored start must not be rewritten by adoption')
     assert.ok(
-      reloaded.startedAt.getTime() >= adoptionStartedAt.getTime(),
-      `expected persisted startedAt (${reloaded.startedAt.toISOString()}) >= adoption time (${adoptionStartedAt.toISOString()})`,
-    )
-    assert.ok(
-      reloaded.startedAt.getTime() > rowCreatedAt.getTime(),
-      'persisted startedAt must move past the row-creation timestamp, not remain the queue-wait start',
+      reloaded.lastActiveAt && reloaded.lastActiveAt.getTime() >= adoptedFrom.getTime(),
+      `expected lastActiveAt (${reloaded.lastActiveAt?.toISOString()}) >= adoption time (${adoptedFrom.toISOString()})`,
     )
   })
 }

@@ -355,7 +355,7 @@ async function runFlowExecutionInner(
   // route racing), a run the reaper already terminalized, or a duplicate
   // reply delivery all lose cleanly here instead of re-interpreting an
   // already-moving or already-dead run. Mirrors execute-agent.ts's
-  // waiting_* -> running atomic claim. Refresh startedAt so reapStuckFlowRuns
+  // waiting_* -> running atomic claim. Stamp lastActiveAt so reapStuckFlowRuns
   // does not mark the run failed the moment it is legitimately resumed after
   // a long approval pause.
   let existingRun: Awaited<ReturnType<typeof prisma.flowRun.findFirst>> = null

@@ -65,20 +65,23 @@ if (TEST_DB) {
     // graph) since the run paused.
     await prisma.flow.update({ where: { id: ids.flow, organizationId: ids.org }, data: { graph: currentGraph, publishedGraph: currentGraph } })
 
-    // Capture the stale startedAt before resume so we can verify it was refreshed.
+    // Capture the stored clocks before resume: the start must survive it, and
+    // the activity clock must move.
     const before = await prisma.flowRun.findUnique({ where: { id: run.id, organizationId: ids.org } })
     assert.ok(before?.startedAt)
-    const staleStartedAt = before.startedAt
+    const originalStartedAt = before.startedAt
+    const resumedFrom = new Date()
 
     const result = await runFlowExecution({ flowId: ids.flow, organizationId: ids.org, userId: ids.user, flowRunId: run.id, reply: 'go' })
     assert.equal(result.flowRunId, run.id)
 
     const claimed = await prisma.flowRun.findUnique({ where: { id: run.id, organizationId: ids.org } })
     assert.notEqual(claimed.status, 'waiting')
-    // Resume claim must refresh startedAt so reapStuckFlowRuns does not mark
-    // the run failed the instant it resumes after a long approval pause.
-    assert.ok(claimed?.startedAt)
-    assert.ok(claimed.startedAt > staleStartedAt, 'startedAt must be refreshed on resume')
+    // The resume claim stamps lastActiveAt — the clock reapStuckFlowRuns reads —
+    // so the run is not marked failed the instant it resumes after a long
+    // approval pause. Its original start stays as run history.
+    assert.equal(claimed.startedAt.getTime(), originalStartedAt.getTime(), 'the stored start must not be rewritten by a resume')
+    assert.ok(claimed.lastActiveAt && claimed.lastActiveAt.getTime() >= resumedFrom.getTime(), 'lastActiveAt must be refreshed on resume')
 
     const steps: any[] = await prisma.flowRunStep.findMany({ where: { flowRunId: run.id } })
     assert.ok(steps.some((step) => step.nodeId === 'legacy'), 'the snapshot\'s step node must have actually executed')

@@ -67,6 +67,22 @@ export async function useArtifactTemplate(token: string, organizationId: string,
 }
 
 /**
+ * The signed-in visitor's existing copy of a template link, if they have made
+ * one. Never creates: just opening a link must not make a copy, but coming
+ * back to it must show the copy they already changed.
+ */
+export async function findArtifactTemplateCopy(token: string, organizationId: string, userId: string): Promise<{ id: string } | null> {
+  if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return null
+  // systemPrisma: same opted-in public-token lookup as useArtifactTemplate.
+  const source = await systemPrisma.artifact.findFirst({
+    where: { shareTokenDigest: hashToken(token), shareAnonymous: true, shareTemplate: true, archivedAt: null, templateSourceId: null },
+    select: { id: true },
+  })
+  if (!source) return null
+  return prisma.artifact.findFirst({ where: { organizationId, userId, templateSourceId: source.id }, select: { id: true } })
+}
+
+/**
  * The guest copilot: a public template link used by someone with no account.
  *
  * The sender opted in twice (anyone-with-the-link, and "offer as a template"),

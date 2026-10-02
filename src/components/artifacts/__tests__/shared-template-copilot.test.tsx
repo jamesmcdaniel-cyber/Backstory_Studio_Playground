@@ -33,13 +33,15 @@ test('viewing a template never creates a copy; an explicit click POSTs and failu
   const net = stubFetch(() => Response.json({ error: 'Template no longer shared' }, { status: 404 }))
   try {
     const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
-    assert.equal(net.calls.length, 0)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    // Loading only LOOKS for a copy they already have (a read); nothing is made.
+    assert.deepEqual(net.calls.map(({ url, method }) => ({ url, method })), [{ url: '/api/share/artifacts/test-token/copy', method: undefined }])
     assert.ok(ui.getByText('original'))
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
-    assert.deepEqual(net.calls.map(({ url, method }) => ({ url, method })), [{ url: '/api/share/artifacts/test-token/copy', method: 'POST' }])
+    assert.deepEqual(net.calls.slice(1).map(({ url, method }) => ({ url, method })), [{ url: '/api/share/artifacts/test-token/copy', method: 'POST' }])
     assert.match(ui.getByRole('alert').textContent ?? '', /Template no longer shared/)
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Try again' })) })
-    assert.equal(net.calls.length, 2)
+    assert.equal(net.calls.length, 3)
   } finally { cleanup(); net.restore() }
 })
 
@@ -51,9 +53,10 @@ test('a visitor with no account is never sent to sign in: the copilot opens a gu
   })
   try {
     const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
-    // Exactly these two requests: the guest copy opens here, with no trip to sign in.
-    assert.deepEqual(net.calls.map(({ url, method, body }) => ({ url, method, body })), [
+    // Exactly these two requests after the load-time lookup: the guest copy opens here, with no trip to sign in.
+    assert.deepEqual(net.calls.slice(1).map(({ url, method, body }) => ({ url, method, body })), [
       { url: '/api/share/artifacts/test-token/copy', method: 'POST', body: undefined },
       { url: '/api/share/artifacts/test-token/copilot', method: 'POST', body: '{"action":"open"}' },
     ])
@@ -71,12 +74,26 @@ test('a visitor with no account is never sent to sign in: the copilot opens a gu
 })
 
 test('a returning visitor sees the copy they already changed, with the panel closed', async () => {
-  const net = stubFetch(() => Response.json({ success: true, copilot: guest([], 'gv3') }))
+  const net = stubFetch((call) => call.url.endsWith('/copy') ? Response.json({ error: 'Unauthorized' }, { status: 401 }) : Response.json({ success: true, copilot: guest([], 'gv3') }))
   try {
     const ui = render(<SharedTemplateCopilot token="test-token" returning><p>original</p></SharedTemplateCopilot>)
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
-    assert.deepEqual(net.calls.map(({ url, method }) => ({ url, method })), [{ url: '/api/share/artifacts/test-token/copilot', method: undefined }])
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    assert.deepEqual(net.calls.map(({ url, method }) => ({ url, method })), [{ url: '/api/share/artifacts/test-token/copy', method: undefined }, { url: '/api/share/artifacts/test-token/copilot', method: undefined }])
     assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/share/artifacts/test-token/copilot/content?copy=guest-copy&v=gv3')
+    assert.equal(ui.queryByRole('dialog'), null)
+  } finally { cleanup(); net.restore() }
+})
+
+test('someone signed in who comes back sees their copy’s latest version without opening the copilot', async () => {
+  const net = stubFetch((call) => call.url.endsWith('/copy') ? Response.json({ success: true, artifactId: 'copy-1' }) : Response.json({ success: true, artifact: copy([], 3) }))
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    assert.ok(net.calls.every((call) => call.method !== 'POST'), 'looking for the copy never creates one')
+    assert.equal(ui.queryByText('original'), null)
+    assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/artifacts/copy-1/versions/v3/content')
     assert.equal(ui.queryByRole('dialog'), null)
   } finally { cleanup(); net.restore() }
 })
@@ -128,6 +145,7 @@ test('the page reloads once, when the copilot has finished — not at every save
   const asked = [{ role: 'user', content: 'Rework it', createdAt: 'a' }]
   let polls = 0
   const net = stubFetch((call) => {
+    if (call.url.endsWith('/copy')) return Response.json({ error: 'Unauthorized' }, { status: 401 })
     if (call.method === 'POST') return Response.json({ success: true, copilot: guest([...asked, { role: 'agent', content: '', status: 'pending', createdAt: 'a' }], 'gv3') })
     polls += 1
     // First read: the visitor's edited copy. Later reads: the run saving again, then finishing.
@@ -137,6 +155,7 @@ test('the page reloads once, when the copilot has finished — not at every save
   const frame = (ui: ReturnType<typeof render>) => ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1]
   try {
     const ui = render(<SharedTemplateCopilot token="test-token" returning><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
     assert.equal(frame(ui), 'gv2')
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })

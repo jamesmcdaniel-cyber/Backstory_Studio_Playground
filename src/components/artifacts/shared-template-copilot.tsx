@@ -106,15 +106,32 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       if (resume) window.sessionStorage.removeItem(RESUME_KEY)
     } catch { /* storage blocked */ }
     if (resume) { setOpen(true); void openCopy(true); return }
-    if (!returning) return
-    // A returning visitor sees the copy they already changed, panel closed.
+    // Someone coming back sees the copy they already changed — its latest
+    // version, panel closed — without having to open the copilot first.
+    // Looking never creates a copy; only opening the copilot does.
     let cancelled = false
-    fetch(guestUrl, { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: { copilot?: GuestCopilotView | null } | null) => { if (!cancelled && data?.copilot) setCopy((current) => current ?? { kind: 'guest', view: data.copilot! }) })
-      .catch(() => undefined)
+    void (async () => {
+      try {
+        // Signed in: their own copy, if they have made one.
+        const member = await fetch(`/api/share/artifacts/${encodeURIComponent(token)}/copy`, { cache: 'no-store' })
+        if (member.ok) {
+          const data = await member.json().catch(() => ({})) as { artifactId?: string | null }
+          if (cancelled || typeof data.artifactId !== 'string' || copyRef.current) return
+          const next: Copy = { kind: 'member', id: data.artifactId, artifact: null }
+          copyRef.current = next
+          setCopy(next)
+          await refresh()
+          return
+        }
+        // No account: the guest copy this browser's cookie opens.
+        if (!returning) return
+        const guest = await fetch(guestUrl, { cache: 'no-store' })
+        const data = guest.ok ? await guest.json() as { copilot?: GuestCopilotView | null } : null
+        if (!cancelled && data?.copilot) setCopy((current) => current ?? { kind: 'guest', view: data.copilot! })
+      } catch { /* the original stays on screen */ }
+    })()
     return () => { cancelled = true }
-  }, [token, returning, guestUrl, openCopy])
+  }, [token, returning, guestUrl, openCopy, refresh])
 
   const toggle = () => {
     const next = !open

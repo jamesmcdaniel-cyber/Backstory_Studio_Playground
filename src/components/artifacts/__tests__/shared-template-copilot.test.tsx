@@ -85,6 +85,37 @@ test('a returning visitor sees the copy they already changed, with the panel clo
   } finally { cleanup(); net.restore() }
 })
 
+test('a visitor can look back through their copy’s versions and restore one, without an account', async () => {
+  const history = (latest: number) => Array.from({ length: latest }, (_, index) => ({ id: `gv${latest - index}`, number: latest - index, request: latest - index === 1 ? null : `Change ${latest - index}`, createdAt: '2026-10-02T00:00:00Z', source: latest - index === 1 ? 'created' : 'agent' }))
+  const net = stubFetch((call) => {
+    if (call.url.endsWith('/copy')) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    if (call.method === 'POST' && JSON.parse(call.body ?? '{}').action === 'restore') return Response.json({ success: true, copilot: { ...guest([], 'gv4'), versions: history(4) } })
+    return Response.json({ success: true, copilot: { ...guest([], 'gv3'), versions: history(3) } })
+  })
+  const frame = (ui: ReturnType<typeof render>) => ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1]
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token" returning><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    assert.equal(frame(ui), 'gv3')
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    await act(async () => { fireEvent.click(ui.getByRole('tab', { name: /History \(3\)/ })) })
+    const rows = ui.getByRole('list', { name: 'Version history' }).querySelectorAll('li')
+    assert.equal(rows.length, 3)
+    // Looking at an older version is only a view: the latest is one click back.
+    await act(async () => { fireEvent.click(rows[1].querySelector('button')!) })
+    assert.equal(frame(ui), 'gv2')
+    assert.match(ui.getByRole('status').textContent ?? '', /Viewing version 2/)
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Back to latest' })) })
+    assert.equal(frame(ui), 'gv3')
+    // Restoring puts it back as a new version on top; the history is kept.
+    await act(async () => { fireEvent.click(ui.getAllByRole('button', { name: 'Restore' })[0]) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'restore', versionId: 'gv2' })
+    assert.equal(frame(ui), 'gv4')
+    assert.ok(ui.getByRole('tab', { name: /History \(4\)/ }))
+  } finally { cleanup(); net.restore() }
+})
+
 test('someone signed in who comes back sees their copy’s latest version without opening the copilot', async () => {
   const net = stubFetch((call) => call.url.endsWith('/copy') ? Response.json({ success: true, artifactId: 'copy-1' }) : Response.json({ success: true, artifact: copy([], 3) }))
   try {

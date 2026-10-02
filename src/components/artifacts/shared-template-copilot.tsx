@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, Loader2, Sparkles, X } from 'lucide-react'
+import { ArrowUp, History, Loader2, MessageSquare, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { indentOnTab } from '@/components/ui/textarea'
@@ -154,6 +154,14 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   // visitor at every save.
   const [versionId, setVersionId] = useState<string | null>(null)
   useEffect(() => { setVersionId((shown) => (!busy || shown === null ? latestVersionId : shown)) }, [busy, latestVersionId])
+  // Version history: the copy's versions, newest first. Looking at an older
+  // one is a view (`viewId`); the page otherwise follows the latest.
+  const [tab, setTab] = useState<'chat' | 'history'>('chat')
+  const [viewId, setViewId] = useState<string | null>(null)
+  const [restoring, setRestoring] = useState<string | null>(null)
+  const versions = (copy?.kind === 'guest' ? copy.view.versions : artifact?.versions) ?? []
+  const viewed = viewId ? versions.find((version) => version.id === viewId) ?? null : null
+  const shownId = viewed && viewed.id !== latestVersionId ? viewed.id : versionId
   // The copilot paused on a question: it is asked and answered right here.
   const awaiting = pending?.question ?? null
   const hasCopy = Boolean(copy)
@@ -170,9 +178,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
   // Where the copy's current version is served from. A guest copy is framed
   // from the public route; a member's goes through the app's stateful frame.
-  const guestContentUrl = copy?.kind === 'guest' && versionId ? `${guestUrl}/content?copy=${encodeURIComponent(copy.view.copyId)}&v=${encodeURIComponent(versionId)}` : null
-  const memberMarkdown = artifact?.versions.find((v) => v.id === versionId)?.format === 'markdown'
-  const markdownUrl = copy?.kind === 'guest' ? (isPage ? null : guestContentUrl) : memberMarkdown && copy && versionId ? `/api/artifacts/${copy.id}/versions/${versionId}/content` : null
+  const guestContentUrl = copy?.kind === 'guest' && shownId ? `${guestUrl}/content?copy=${encodeURIComponent(copy.view.copyId)}&v=${encodeURIComponent(shownId)}` : null
+  const memberMarkdown = artifact?.versions.find((v) => v.id === shownId)?.format === 'markdown'
+  const markdownUrl = copy?.kind === 'guest' ? (isPage ? null : guestContentUrl) : memberMarkdown && copy && shownId ? `/api/artifacts/${copy.id}/versions/${shownId}/content` : null
   useEffect(() => {
     if (!markdownUrl) return
     let cancelled = false
@@ -199,22 +207,43 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       else if (copy.kind === 'guest' && response.ok && data.copilot) setCopy({ kind: 'guest', view: data.copilot })
       else throw new Error(data.error || 'The message could not be sent.')
       setMessage('')
+      setViewId(null) // a new request works on, and shows, the latest version
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The message could not be sent.')
     } finally { setSending(false) }
   }
 
+  // Put an earlier version back: it becomes a new version on top, so nothing
+  // in the history is lost.
+  const restore = async (target: string) => {
+    if (!copy || restoring || busy) return
+    setRestoring(target)
+    setError('')
+    try {
+      const response = copy.kind === 'member'
+        ? await fetch(`/api/artifacts/${encodeURIComponent(copy.id)}/versions/${encodeURIComponent(target)}/restore`, { method: 'POST' })
+        : await fetch(guestUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'restore', versionId: target }) })
+      const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; copilot?: GuestCopilotView; error?: string }
+      if (copy.kind === 'member' && response.ok && data.artifact) setCopy({ kind: 'member', id: copy.id, artifact: data.artifact })
+      else if (copy.kind === 'guest' && response.ok && data.copilot) setCopy({ kind: 'guest', view: data.copilot })
+      else throw new Error(data.error || 'The version could not be restored.')
+      setViewId(null)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The version could not be restored.')
+    } finally { setRestoring(null) }
+  }
+
   return (
     <>
-      {copy && loaded && versionId && edited ? (
+      {copy && loaded && shownId && edited ? (
         markdownUrl ? (
           <div className="prose prose-sm mx-auto w-full max-w-3xl p-6 dark:prose-invert">
             {markdown?.url === markdownUrl ? <Markdown>{markdown.text}</Markdown> : <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</p>}
           </div>
         ) : copy.kind === 'guest' ? (
-          <iframe key={versionId} title={title} src={guestContentUrl!} sandbox={ARTIFACT_FRAME_SANDBOX} className="block h-dvh w-full border-0" />
+          <iframe key={shownId} title={title} src={guestContentUrl!} sandbox={ARTIFACT_FRAME_SANDBOX} className="block h-dvh w-full border-0" />
         ) : (
-          <StatefulArtifactFrame key={copy.id} artifactId={copy.id} versionId={versionId} writable={canAsk} title={title} className="h-dvh w-full" />
+          <StatefulArtifactFrame key={copy.id} artifactId={copy.id} versionId={shownId} writable={canAsk && shownId === latestVersionId} title={title} className="h-dvh w-full" />
         )
       ) : children}
 
@@ -237,6 +266,53 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
             </button>
           </header>
 
+          {/* History appears once there is one: an untouched copy has a single version. */}
+          {versions.length > 1 && (
+            <div role="tablist" aria-label="Copilot views" className="flex border-b border-graphite-200 text-xs font-medium">
+              {(['chat', 'history'] as const).map((option) => (
+                <button key={option} type="button" role="tab" aria-selected={tab === option} onClick={() => setTab(option)} className={cn('-mb-px inline-flex flex-1 items-center justify-center gap-1.5 border-b-2 px-3 py-2', tab === option ? 'border-horizon-600 text-graphite-900' : 'border-transparent text-fg-muted hover:text-graphite-900')}>
+                  {option === 'chat' ? <MessageSquare className="h-3.5 w-3.5" aria-hidden /> : <History className="h-3.5 w-3.5" aria-hidden />}
+                  {option === 'chat' ? 'Chat' : `History (${copy?.kind === 'member' ? artifact?.versionCount ?? versions.length : versions[0].number})`}
+                </button>
+              ))}
+            </div>
+          )}
+          {viewed && shownId === viewed.id && (
+            <p role="status" className="flex items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+              <span>Viewing version {viewed.number} — not the latest.</span>
+              <button type="button" onClick={() => setViewId(null)} className="font-medium underline underline-offset-2">Back to latest</button>
+            </p>
+          )}
+
+          {tab === 'history' && versions.length > 1 ? (
+            <ol aria-label="Version history" className="min-h-0 flex-1 divide-y divide-graphite-200 overflow-y-auto">
+              {versions.map((version) => {
+                const isCurrent = version.id === latestVersionId
+                const isShown = version.id === shownId
+                return (
+                  <li key={version.id} className={cn('px-4 py-3 text-xs', isShown && 'bg-graphite-50')}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-graphite-900">Version {version.number}</span>
+                      {isCurrent && <span className="rounded-full bg-horizon-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">Current</span>}
+                    </div>
+                    <p className="mt-0.5 text-fg-muted">
+                      {new Date(version.createdAt).toLocaleString()}{' · '}{version.source === 'created' ? 'As shared' : version.source === 'restore' ? 'Restored' : 'Copilot'}
+                    </p>
+                    {version.request && version.source !== 'created' && <p className="mt-1 line-clamp-3 text-graphite-900">{version.request}</p>}
+                    <div className="mt-2 flex flex-wrap gap-3">
+                      {!isShown && <button type="button" onClick={() => setViewId(isCurrent ? null : version.id)} className="font-medium text-horizon-700 underline underline-offset-2">View</button>}
+                      {!isCurrent && canAsk && (
+                        <button type="button" disabled={restoring !== null || busy} onClick={() => void restore(version.id)} className="font-medium text-horizon-700 underline underline-offset-2 disabled:opacity-50">
+                          {restoring === version.id ? 'Restoring…' : 'Restore'}
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+              {error && <li role="alert" className="px-4 py-3 text-sm text-destructive">{error}</li>}
+            </ol>
+          ) : (
           <div aria-label="Copilot conversation" className="min-h-0 flex-1 space-y-3 overflow-y-auto break-words px-4 py-3">
             {opening && <p className="flex items-center gap-2 text-sm text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Opening the copilot…</p>}
             {loaded && !chat.length && (
@@ -270,8 +346,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
             )}
             <div ref={chatEnd} />
           </div>
+          )}
 
-          {loaded && canAsk && (
+          {loaded && canAsk && !(tab === 'history' && versions.length > 1) && (
             <form onSubmit={send} className="border-t border-graphite-200 p-3">
               <label htmlFor="template-copilot-message" className="sr-only">Message</label>
               <div className="flex items-end gap-2">

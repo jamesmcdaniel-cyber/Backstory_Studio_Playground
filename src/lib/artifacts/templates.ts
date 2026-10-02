@@ -125,11 +125,20 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
   const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, versionCount: true, chat: true } })
   if (!row) throw new ApiError('Template not available.', 404, 'NOT_FOUND')
   const chat = (Array.isArray(row.chat) ? row.chat : []) as unknown as ArtifactChatMessage[]
+  const versions = await prisma.artifactVersion.findMany({ where: { artifactId: row.id, organizationId }, orderBy: { number: 'desc' }, take: 20, select: { id: true, number: true, request: true, createdAt: true, executionId: true } })
   return {
     copyId: row.id,
     title: row.title,
     versionId: row.currentVersionId,
     edited: row.versionCount > 1,
+    // No run ids or authors: a guest's history is what changed and when.
+    versions: versions.map((version) => ({
+      id: version.id,
+      number: version.number,
+      request: version.number === 1 ? null : version.request,
+      createdAt: version.createdAt.toISOString(),
+      source: version.request?.startsWith('Restored version') ? 'restore' as const : version.number === 1 ? 'created' as const : 'agent' as const,
+    })),
     chat: chat.map((m) => ({
       role: m.role,
       // A failed run's error is the workspace's business, not the visitor's.
@@ -239,6 +248,29 @@ export async function replyGuestCopy(token: string, guestToken: string | null | 
     throw new ApiError(/^(The assistant is not waiting|Type a message first)/.test(text) ? text.replace('assistant', 'copilot') : 'The copilot is unavailable right now. Please try again.', 400, 'MESSAGE_REJECTED', error)
   }
   return guestView(source.organizationId, copy.id)
+}
+
+/** A visitor puts an earlier version of their copy back, as a new version on top (history is kept). */
+export async function restoreGuestCopy(token: string, guestToken: string | null | undefined, versionId: string): Promise<GuestCopilotView> {
+  const source = await publicTemplate(token)
+  const copy = await findGuestCopy(source, guestDigestOf(guestToken))
+  if (!copy?.agentTaskId) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
+  const organizationId = source.organizationId
+  const [row, agent] = await Promise.all([
+    prisma.artifact.findFirst({ where: { id: copy.id, organizationId }, select: { chat: true } }),
+    prisma.agentTask.findFirst({ where: { id: copy.agentTaskId, organizationId, artifactTemplateCopyId: copy.id }, select: { userId: true } }),
+  ])
+  if (Array.isArray(row?.chat) && (row.chat as unknown as ArtifactChatMessage[]).some((m) => m.status === 'pending')) throw new ApiError('Wait for the copilot to finish before restoring a version.', 409, 'COPILOT_BUSY')
+  // Recorded against the host, who the copy's copilot also runs as.
+  if (!agent?.userId) throw new ApiError('The copilot is no longer available on this template.', 409, 'COPILOT_UNAVAILABLE')
+  const { restoreVersion } = await import('./service')
+  try {
+    await restoreVersion({ organizationId, userId: agent.userId, artifactId: copy.id, versionId })
+  } catch (error) {
+    const text = error instanceof Error ? error.message : ''
+    throw new ApiError(/^(That version is already|Version not found)/.test(text) ? text : 'The version could not be restored. Please try again.', 400, 'RESTORE_REJECTED', error)
+  }
+  return guestView(organizationId, copy.id)
 }
 
 /** One version of a guest copy as a page. The copy's id is a 122-bit random value only its visitor was given. */

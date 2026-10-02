@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp } from '@/lib/security/events'
 import { ARTIFACT_QUESTION_MAX_CHARS } from '@/lib/artifacts/service'
-import { askGuestCopy, loadGuestCopy, openGuestCopy, replyGuestCopy } from '@/lib/artifacts/templates'
+import { askGuestCopy, loadGuestCopy, openGuestCopy, replyGuestCopy, restoreGuestCopy } from '@/lib/artifacts/templates'
 import { GUEST_COOKIE } from '@/lib/artifacts/types'
 import { readRequestJsonLimited } from '@/lib/server/request-body'
 
@@ -44,10 +44,11 @@ const Body = z.discriminatedUnion('action', [
   z.object({ action: z.literal('open') }),
   z.object({ action: z.literal('ask'), message: z.string().trim().min(1).max(ARTIFACT_QUESTION_MAX_CHARS) }),
   z.object({ action: z.literal('reply'), message: z.string().trim().min(1).max(ARTIFACT_QUESTION_MAX_CHARS) }),
+  z.object({ action: z.literal('restore'), versionId: z.string().min(1).max(64) }),
 ])
 
 // POST — open the copilot (the copy is made on first use), send it a message,
-// or answer the question it paused on.
+// answer the question it paused on, or restore an earlier version of the copy.
 export async function POST(request: NextRequest) {
   // Anonymous ingress: the body is read against a byte ceiling, never whole.
   const parsed = Body.safeParse(await readRequestJsonLimited(request, 16_384).catch(() => null))
@@ -64,6 +65,11 @@ export async function POST(request: NextRequest) {
       const blocked = await limited(request, 'reply', 12, 60_000)
       if (blocked) return blocked
       return NextResponse.json({ success: true, copilot: await replyGuestCopy(tokenOf(request), guestToken, parsed.data.message) })
+    }
+    if (parsed.data.action === 'restore') {
+      const blocked = await limited(request, 'restore', 12, 60_000)
+      if (blocked) return blocked
+      return NextResponse.json({ success: true, copilot: await restoreGuestCopy(tokenOf(request), guestToken, parsed.data.versionId) })
     }
     const blocked = await limited(request, 'open', 20, 10 * 60_000)
     if (blocked) return blocked

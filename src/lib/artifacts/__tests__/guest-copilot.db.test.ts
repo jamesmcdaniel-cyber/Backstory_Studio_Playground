@@ -119,6 +119,27 @@ if (!database) {
     assert.match(await page.text(), /Visitor version/)
   })
 
+  test('a visitor sees their copy’s versions and can restore one; history is kept and nobody else can', async () => {
+    const before = (await (await call('GET')).json()).copilot
+    assert.deepEqual(before.versions.map((v: any) => [v.number, v.source]), [[2, 'agent'], [1, 'created']])
+    assert.equal(before.versions[0].id, before.versionId)
+    assert.equal(before.versions.some((v: any) => 'executionId' in v || 'author' in v), false, 'no run ids or names for a visitor')
+    const first = before.versions[1].id
+
+    assert.equal((await call('POST', { action: 'restore', versionId: first }, '')).status, 404, 'no cookie, no copy to restore')
+    const restored = await call('POST', { action: 'restore', versionId: first })
+    assert.equal(restored.status, 200)
+    const view = (await restored.json()).copilot
+    assert.deepEqual(view.versions.map((v: any) => [v.number, v.source]), [[3, 'restore'], [2, 'agent'], [1, 'created']])
+    const page = await contentRoute.GET(new NextRequest(`${base}/content?copy=${copyId}&v=${view.versionId}`))
+    assert.match(await page.text(), /Template original/)
+    assert.equal((await call('POST', { action: 'restore', versionId: view.versionId })).status, 400, 'the current version is not restorable onto itself')
+    assert.equal((await call('POST', { action: 'restore', versionId: 'not-a-version' })).status, 400)
+    // The earlier edit is still there to view.
+    const earlier = await contentRoute.GET(new NextRequest(`${base}/content?copy=${copyId}&v=${before.versionId}`))
+    assert.match(await earlier.text(), /Visitor version/)
+  })
+
   test('a message starts a run as the host, marked guest; it never spends the host’s own allowance and is capped per visitor', async () => {
     const asked = await call('POST', { action: 'ask', message: 'Make the heading blue' })
     // The stubbed dispatcher refuses the job; the visitor sees no internals.

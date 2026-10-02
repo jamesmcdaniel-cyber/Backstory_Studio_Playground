@@ -84,5 +84,7 @@ export type GuestCopilotView = {
   versionId: string | null
   /** Whether the copilot has changed the copy yet; until then it is the original. */
   edited: boolean
+  /** The copy's recent versions, newest first — the visitor's own history. */
+  versions: Array<Pick<ArtifactVersionView, 'id' | 'number' | 'request' | 'createdAt' | 'source'>>
   chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'question'>>
 }

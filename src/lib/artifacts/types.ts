@@ -78,7 +78,7 @@ export const ARTIFACT_KIND_LABEL: Record<ArtifactKind, string> = {
 export const GUEST_COOKIE = 'bs_guest'
 
 /** A server the person using a shared-template copy connected for its copilot. Never carries a secret. */
-export type CopilotMcpServerView = { id: string; name: string; serverUrl: string; authType: 'none' | 'api_key' | 'oauth2'; toolCount: number }
+export type CopilotMcpServerView = { id: string; name: string; description?: string; serverUrl: string; authType: 'none' | 'api_key' | 'oauth2'; toolCount: number }
 
 /** What a visitor sees of their guest copy: no run ids, models or raw run errors. */
 export type GuestCopilotView = {

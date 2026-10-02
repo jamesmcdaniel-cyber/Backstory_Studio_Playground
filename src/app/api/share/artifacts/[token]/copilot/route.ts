@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
 import { clientIp } from '@/lib/security/events'
 import { ARTIFACT_QUESTION_MAX_CHARS } from '@/lib/artifacts/service'
-import { askGuestCopy, changeGuestCopyMcp, loadGuestCopy, openGuestCopy, replyGuestCopy, restoreGuestCopy } from '@/lib/artifacts/templates'
+import { askGuestCopy, changeGuestCopyMcp, testGuestCopyMcp, loadGuestCopy, openGuestCopy, replyGuestCopy, restoreGuestCopy } from '@/lib/artifacts/templates'
 import { copilotMcpInputSchema } from '@/lib/artifacts/copilot-mcp'
 import { GUEST_COOKIE } from '@/lib/artifacts/types'
 import { readRequestJsonLimited } from '@/lib/server/request-body'
@@ -47,6 +47,7 @@ const Body = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reply'), message: z.string().trim().min(1).max(ARTIFACT_QUESTION_MAX_CHARS) }),
   z.object({ action: z.literal('restore'), versionId: z.string().min(1).max(64) }),
   z.object({ action: z.literal('mcp_add'), server: copilotMcpInputSchema }),
+  z.object({ action: z.literal('mcp_test'), server: copilotMcpInputSchema }),
   z.object({ action: z.literal('mcp_remove'), serverId: z.string().min(1).max(64) }),
 ])
 
@@ -73,6 +74,11 @@ export async function POST(request: NextRequest) {
       const blocked = await limited(request, 'restore', 12, 60_000)
       if (blocked) return blocked
       return NextResponse.json({ success: true, copilot: await restoreGuestCopy(tokenOf(request), guestToken, parsed.data.versionId) })
+    }
+    if (parsed.data.action === 'mcp_test') {
+      const blocked = await limited(request, 'mcp', 6, 60_000)
+      if (blocked) return blocked
+      return NextResponse.json({ success: true, test: await testGuestCopyMcp(tokenOf(request), guestToken, parsed.data.server) })
     }
     if (parsed.data.action === 'mcp_add' || parsed.data.action === 'mcp_remove') {
       // Connecting calls out to the visitor's server to verify it: kept slow.

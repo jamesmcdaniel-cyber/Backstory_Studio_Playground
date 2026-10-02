@@ -9,6 +9,7 @@ import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { cn } from '@/lib/utils'
 import type { ArtifactChatMessage, ArtifactView, CopilotMcpServerView, GuestCopilotView } from '@/lib/artifacts/types'
 import { RunFeed } from '@/components/runs/run-feed'
+import { McpConnectionDialog, draftAuthPayload, type McpAuthMode, type McpConnectionDraft } from '@/app/connections/mcp-connection-dialog'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 import { ARTIFACT_FRAME_SANDBOX, StatefulArtifactFrame } from './stateful-artifact-frame'
 
@@ -253,7 +254,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
   // Connect or disconnect one of the person's own MCP servers. Resolves to an
   // error message, or null when it worked.
-  const changeServers = async (change: { add: McpServerDraft } | { remove: string }): Promise<string | null> => {
+  const changeServers = async (change: { add: Record<string, unknown> } | { remove: string }): Promise<string | null> => {
     if (!copy) return 'Open the copilot again to continue.'
     try {
       const response = copy.kind === 'member'
@@ -266,6 +267,20 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       return null
     } catch {
       return 'That did not work. Please try again.'
+    }
+  }
+
+  // "Test connection": ask the server for its tools with what was entered; nothing is stored.
+  const testServer = async (server: Record<string, unknown>): Promise<{ ok: true; toolCount: number; toolNames: string[] } | { ok: false; error: string }> => {
+    if (!copy) return { ok: false, error: 'Open the copilot again to continue.' }
+    try {
+      const response = copy.kind === 'member'
+        ? await fetch(`/api/artifacts/${encodeURIComponent(copy.id)}/copilot-mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...server, test: true }) })
+        : await fetch(guestUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'mcp_test', server }) })
+      const data = await response.json().catch(() => ({})) as { test?: { toolCount: number; toolNames: string[] }; error?: string }
+      return response.ok && data.test ? { ok: true, ...data.test } : { ok: false, error: data.error || 'Connection failed' }
+    } catch {
+      return { ok: false, error: 'Network error — check the server URL' }
     }
   }
 
@@ -322,7 +337,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
           )}
 
           {tab === 'settings' && loaded && canAsk ? (
-            <CopilotSettings servers={servers} loading={copy?.kind === 'member' && memberServers === null} busy={busy} onChange={changeServers} />
+            <CopilotSettings servers={servers} loading={copy?.kind === 'member' && memberServers === null} busy={busy} onChange={changeServers} onTest={testServer} />
           ) : tab === 'history' ? (
             <ol aria-label="Version history" className="min-h-0 flex-1 divide-y divide-graphite-200 overflow-y-auto">
               {versions.map((version) => {
@@ -433,41 +448,43 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   )
 }
 
-type McpServerDraft = { serverUrl: string; name?: string; authType: 'none' | 'api_key' | 'oauth2'; apiKey?: string; headerName?: string; clientId?: string; clientSecret?: string; tokenUrl?: string; scopes?: string }
+const AUTH_LABEL: Record<CopilotMcpServerView['authType'], string> = { none: 'No sign-in', api_key: 'Access token', oauth2: 'Client credentials' }
+// No 'sso': an OAuth redirect needs a signed-in session to come back to, and
+// the person here brings a credential they already hold.
+const COPILOT_AUTH_MODES: McpAuthMode[] = ['none', 'api_key', 'client_credentials']
 
-const AUTH_LABEL: Record<McpServerDraft['authType'], string> = { none: 'No sign-in', api_key: 'API key or token', oauth2: 'Client credentials' }
-const FIELD = 'mt-1 block h-9 w-full rounded-md border border-graphite-200 bg-white px-2.5 text-sm text-graphite-900 placeholder:text-fg-muted focus:border-horizon-400 focus:outline-none focus:ring-2 focus:ring-horizon-100'
+/** The dialog's draft as the copilot endpoints take it. */
+const serverPayload = (draft: McpConnectionDraft): Record<string, unknown> => ({
+  serverUrl: draft.serverUrl.trim(),
+  ...(draft.name.trim() ? { name: draft.name.trim() } : {}),
+  ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
+  ...draftAuthPayload(draft),
+})
 
 /**
- * The copilot's settings: the person's own MCP servers. Connecting one makes
- * it the copilot's data source for their copy — in place of the demo data the
+ * The copilot's settings: the person's own MCP servers, added through the
+ * same dialog the platform's MCP Servers page uses. Connecting one makes it
+ * the copilot's data source for their copy — in place of the demo data the
  * link came with — using a credential they already hold for that server.
  */
-function CopilotSettings({ servers, loading, busy, onChange }: { servers: CopilotMcpServerView[]; loading: boolean; busy: boolean; onChange: (change: { add: McpServerDraft } | { remove: string }) => Promise<string | null> }) {
-  const [draft, setDraft] = useState<McpServerDraft>({ serverUrl: '', authType: 'api_key' })
-  const [working, setWorking] = useState<string | null>(null)
+function CopilotSettings({ servers, loading, busy, onChange, onTest }: {
+  servers: CopilotMcpServerView[]
+  loading: boolean
+  busy: boolean
+  onChange: (change: { add: Record<string, unknown> } | { remove: string }) => Promise<string | null>
+  onTest: (server: Record<string, unknown>) => Promise<{ ok: true; toolCount: number; toolNames: string[] } | { ok: false; error: string }>
+}) {
+  const [adding, setAdding] = useState(false)
+  const [removing, setRemoving] = useState<string | null>(null)
   const [problem, setProblem] = useState('')
-  const set = (patch: Partial<McpServerDraft>) => setDraft((current) => ({ ...current, ...patch }))
-
-  const connect = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (working || !draft.serverUrl.trim()) return
-    setWorking('add')
-    setProblem('')
-    const clean = Object.fromEntries(Object.entries({ ...draft, serverUrl: draft.serverUrl.trim() }).filter(([, value]) => value !== '' && value !== undefined)) as McpServerDraft
-    const failed = await onChange({ add: clean })
-    if (failed) setProblem(failed)
-    else setDraft({ serverUrl: '', authType: draft.authType })
-    setWorking(null)
-  }
 
   const remove = async (id: string) => {
-    if (working) return
-    setWorking(id)
+    if (removing) return
+    setRemoving(id)
     setProblem('')
     const failed = await onChange({ remove: id })
     if (failed) setProblem(failed)
-    setWorking(null)
+    setRemoving(null)
   }
 
   return (
@@ -487,11 +504,12 @@ function CopilotSettings({ servers, loading, busy, onChange }: { servers: Copilo
             <li key={server.id} className="flex items-center justify-between gap-2 rounded-lg border border-graphite-200 px-3 py-2">
               <span className="min-w-0">
                 <span className="block truncate font-medium text-graphite-900">{server.name}</span>
+                {server.description && <span className="block truncate text-xs text-fg-muted">{server.description}</span>}
                 <span className="block truncate text-xs text-fg-muted">{server.serverUrl}</span>
                 <span className="block text-xs text-fg-muted">{AUTH_LABEL[server.authType]} · {server.toolCount} tool{server.toolCount === 1 ? '' : 's'}</span>
               </span>
-              <button type="button" disabled={working !== null || busy} onClick={() => void remove(server.id)} aria-label={`Remove ${server.name}`} className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-graphite-100 hover:text-destructive disabled:opacity-50">
-                {working === server.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Trash2 className="h-4 w-4" aria-hidden />}
+              <button type="button" disabled={removing !== null || busy} onClick={() => void remove(server.id)} aria-label={`Remove ${server.name}`} className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-graphite-100 hover:text-destructive disabled:opacity-50">
+                {removing === server.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Trash2 className="h-4 w-4" aria-hidden />}
               </button>
             </li>
           ))}
@@ -499,50 +517,23 @@ function CopilotSettings({ servers, loading, busy, onChange }: { servers: Copilo
       ) : (
         <p className="rounded-lg border border-dashed border-graphite-200 px-3 py-2 text-xs text-fg-muted">No server connected — the copilot is using the demo data this link came with.</p>
       )}
+      {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
 
       {!loading && servers.length < 3 && (
-        <form onSubmit={connect} className="space-y-3 border-t border-graphite-200 pt-3">
-          <p className="font-medium text-graphite-900">Connect a server</p>
-          <label className="block text-xs font-medium text-graphite-900">Server address
-            <input type="url" required value={draft.serverUrl} onChange={(event) => set({ serverUrl: event.target.value })} placeholder="https://mcp.example.com/mcp" className={FIELD} />
-          </label>
-          <label className="block text-xs font-medium text-graphite-900">Name <span className="font-normal text-fg-muted">(optional)</span>
-            <input type="text" maxLength={80} value={draft.name ?? ''} onChange={(event) => set({ name: event.target.value })} placeholder="Taken from the address when left empty" className={FIELD} />
-          </label>
-          <label className="block text-xs font-medium text-graphite-900">How it signs in
-            <select value={draft.authType} onChange={(event) => set({ authType: event.target.value as McpServerDraft['authType'] })} className={FIELD}>
-              {(['api_key', 'oauth2', 'none'] as const).map((option) => <option key={option} value={option}>{AUTH_LABEL[option]}</option>)}
-            </select>
-          </label>
-          {draft.authType === 'api_key' && <>
-            <label className="block text-xs font-medium text-graphite-900">API key or token
-              <input type="password" autoComplete="off" required value={draft.apiKey ?? ''} onChange={(event) => set({ apiKey: event.target.value })} className={FIELD} />
-            </label>
-            <label className="block text-xs font-medium text-graphite-900">Header <span className="font-normal text-fg-muted">(optional)</span>
-              <input type="text" value={draft.headerName ?? ''} onChange={(event) => set({ headerName: event.target.value })} placeholder="Authorization" className={FIELD} />
-            </label>
-          </>}
-          {draft.authType === 'oauth2' && <>
-            <label className="block text-xs font-medium text-graphite-900">Client ID
-              <input type="text" autoComplete="off" required value={draft.clientId ?? ''} onChange={(event) => set({ clientId: event.target.value })} className={FIELD} />
-            </label>
-            <label className="block text-xs font-medium text-graphite-900">Client secret
-              <input type="password" autoComplete="off" required value={draft.clientSecret ?? ''} onChange={(event) => set({ clientSecret: event.target.value })} className={FIELD} />
-            </label>
-            <label className="block text-xs font-medium text-graphite-900">Token address
-              <input type="url" required value={draft.tokenUrl ?? ''} onChange={(event) => set({ tokenUrl: event.target.value })} placeholder="https://auth.example.com/oauth/token" className={FIELD} />
-            </label>
-            <label className="block text-xs font-medium text-graphite-900">Scopes <span className="font-normal text-fg-muted">(optional)</span>
-              <input type="text" value={draft.scopes ?? ''} onChange={(event) => set({ scopes: event.target.value })} className={FIELD} />
-            </label>
-          </>}
-          {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
-          <Button type="submit" size="sm" disabled={working !== null || !draft.serverUrl.trim()}>
-            {working === 'add' ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />Checking the server…</> : <><Plug className="mr-1.5 h-3.5 w-3.5" aria-hidden />Connect</>}
-          </Button>
-        </form>
+        <Button type="button" size="sm" variant="outline" onClick={() => setAdding(true)}><Plug className="mr-1.5 h-3.5 w-3.5" aria-hidden />Add MCP server</Button>
       )}
-      {(loading || servers.length >= 3) && problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
+
+      <McpConnectionDialog
+        open={adding}
+        onOpenChange={setAdding}
+        authModes={COPILOT_AUTH_MODES}
+        showSaveErrors
+        onTest={(draft) => onTest(serverPayload(draft))}
+        onSave={async (draft) => {
+          const failed = await onChange({ add: serverPayload(draft) })
+          if (failed) throw new Error(failed)
+        }}
+      />
     </div>
   )
 }

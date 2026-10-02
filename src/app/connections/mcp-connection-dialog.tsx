@@ -127,6 +127,8 @@ const emptyDraft: McpConnectionDraft = {
   scopes: '',
 }
 
+const ALL_AUTH_MODES: McpAuthMode[] = ['none', 'api_key', 'client_credentials', 'sso']
+
 /** Which mode an existing connection maps back to when opened for editing. */
 function modeForConnection(auth: SerializedConnection['auth']): McpAuthMode {
   if (auth.authType === 'api_key') return 'api_key'
@@ -151,6 +153,9 @@ export function McpConnectionDialog({
   editingConnection,
   initialName,
   returnTo = '/integrations?tab=servers',
+  authModes = ALL_AUTH_MODES,
+  onTest,
+  showSaveErrors = false,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -160,6 +165,16 @@ export function McpConnectionDialog({
   initialName?: string
   /** Where the SSO redirect chain lands back — must be wherever this dialog is mounted. */
   returnTo?: string
+  /**
+   * The sign-in modes offered. A host with no signed-in session to carry an
+   * OAuth redirect (the copilot on a shared link) leaves out 'sso'; the OAuth
+   * probe that would auto-select it is then skipped too.
+   */
+  authModes?: McpAuthMode[]
+  /** Replaces the workspace's test endpoint, for a host that verifies somewhere else. */
+  onTest?: (draft: McpConnectionDraft) => Promise<{ ok: true; toolCount: number; toolNames: string[] } | { ok: false; error: string }>
+  /** Show a failed save inside the dialog — for a host page with no toasts of its own. */
+  showSaveErrors?: boolean
 }) {
   const [draft, setDraft] = useState<McpConnectionDraft>(emptyDraft)
   const [saving, setSaving] = useState(false)
@@ -208,7 +223,7 @@ export function McpConnectionDialog({
   // themselves — it won't override an explicit choice.
   const probeForOAuth = async () => {
     const url = draft.serverUrl.trim()
-    if (!url || draft.authMode !== 'none') return
+    if (!url || draft.authMode !== 'none' || !authModes.includes('sso')) return
     try {
       void new URL(url)
     } catch {
@@ -274,6 +289,11 @@ export function McpConnectionDialog({
   const testConnection = async () => {
     setTestResult({ status: 'testing' })
     try {
+      if (onTest) {
+        const result = await onTest(draft)
+        setTestResult(result.ok ? { status: 'ok', toolCount: result.toolCount, toolNames: result.toolNames } : { status: 'error', message: result.error })
+        return
+      }
       // The test endpoint gets plaintext credentials and persists nothing;
       // blank secrets on edit are resolved from the stored connection.
       const payload: Record<string, unknown> = {
@@ -303,12 +323,13 @@ export function McpConnectionDialog({
     try {
       await onSave(draft)
       onOpenChange(false)
+    } catch (error) {
+      if (!showSaveErrors) throw error
+      setTestResult({ status: 'error', message: error instanceof Error ? error.message : 'The server could not be saved.' })
     } finally {
       setSaving(false)
     }
   }
-
-  const authModes: McpAuthMode[] = ['none', 'api_key', 'client_credentials', 'sso']
 
   const modeLabels: Record<McpAuthMode, string> = {
     none: 'None',

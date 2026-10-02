@@ -31,6 +31,7 @@ const TOOLS_PER_SERVER = 20
 const storedServerSchema = z.object({
   id: z.string().min(1).max(64),
   name: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
   serverUrl: z.string().url().max(2_000),
   authType: z.enum(['none', 'api_key', 'oauth2']),
   authConfig: z.record(z.unknown()).default({}),
@@ -43,11 +44,13 @@ type StoredServer = z.infer<typeof storedServerSchema>
 export const copilotMcpInputSchema = z.object({
   serverUrl: z.string().trim().url().max(2_000),
   name: z.string().trim().max(80).optional(),
+  description: z.string().trim().max(500).optional(),
   authType: z.enum(['none', 'api_key', 'oauth2']).default('none'),
   // api_key: a key or bearer token, and the header it travels in.
   apiKey: z.string().max(4_000).optional(),
   headerName: z.string().trim().max(100).optional(),
-  // oauth2: client credentials.
+  // oauth2: client credentials. The token address is discovered from the
+  // server when left out, as on the workspace's own connections.
   clientId: z.string().trim().max(500).optional(),
   clientSecret: z.string().max(4_000).optional(),
   tokenUrl: z.string().trim().url().max(2_000).optional(),
@@ -66,7 +69,7 @@ export function readCopilotMcpServers(stored: unknown): StoredServer[] {
 
 /** What is shown back: where it points and how it signs in — never a secret. */
 export function copilotMcpViews(stored: unknown): CopilotMcpServerView[] {
-  return readCopilotMcpServers(stored).map((server) => ({ id: server.id, name: server.name, serverUrl: server.serverUrl, authType: server.authType, toolCount: server.toolCount }))
+  return readCopilotMcpServers(stored).map((server) => ({ id: server.id, name: server.name, ...(server.description ? { description: server.description } : {}), serverUrl: server.serverUrl, authType: server.authType, toolCount: server.toolCount }))
 }
 
 async function requirePublic(url: string, field: string) {
@@ -90,6 +93,43 @@ async function saveServers(organizationId: string, artifactId: string, servers: 
 }
 
 /**
+ * Check what was entered and ask the server for its tools with it. Nothing is
+ * stored: the address must be a public https one, the credential must be there
+ * for the chosen sign-in, and the server must answer.
+ */
+async function verifyInput(input: CopilotMcpInput) {
+  if (new URL(input.serverUrl).protocol !== 'https:') throw new ApiError('The server address must start with https://.', 400, 'INVALID_URL')
+  await requirePublic(input.serverUrl, 'Server address')
+  if (input.authType === 'api_key' && !input.apiKey?.trim()) throw new ApiError('Enter the access token for this server.', 400, 'CREDENTIAL_REQUIRED')
+  if (input.authType === 'oauth2') {
+    if (!input.clientId || !input.clientSecret?.trim()) throw new ApiError('Enter the client ID and client secret for this server.', 400, 'CREDENTIAL_REQUIRED')
+    if (input.tokenUrl) await requirePublic(input.tokenUrl, 'Token address')
+  }
+  const authConfig = buildAuthConfig({
+    authType: input.authType,
+    apiKey: input.apiKey?.trim(),
+    headerName: input.headerName || undefined,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret?.trim(),
+    tokenUrl: input.tokenUrl || undefined,
+    scopes: input.scopes || undefined,
+    ...(input.authType === 'oauth2' ? { flow: 'client_credentials' as const } : {}),
+  })
+  try {
+    return { authConfig, verification: await verifyStoredMcpConnection({ serverUrl: input.serverUrl, authType: input.authType, authConfig }) }
+  } catch (error) {
+    throw new ApiError(`The server could not be reached with those details: ${safeMcpVerificationError(error)}`, 422, 'CONNECTION_VERIFICATION_FAILED')
+  }
+}
+
+/** "Test connection": the tools the server answers with, for a copy the caller has shown is theirs. Stores nothing. */
+export async function testCopilotMcpServer(organizationId: string, artifactId: string, input: CopilotMcpInput): Promise<{ toolCount: number; toolNames: string[] }> {
+  await copyRow(organizationId, artifactId)
+  const { verification } = await verifyInput(input)
+  return { toolCount: verification.toolCount, toolNames: verification.toolNames }
+}
+
+/**
  * Connect a server to a copy. The caller has already shown the copy is theirs
  * (its owner, or the visitor whose cookie opens it). The address must be a
  * public https one and the server must answer with its tools before anything
@@ -99,32 +139,10 @@ export async function addCopilotMcpServer(organizationId: string, artifactId: st
   const row = await copyRow(organizationId, artifactId)
   const servers = readCopilotMcpServers(row.copilotMcpServers)
   if (servers.length >= COPILOT_MCP_MAX) throw new ApiError(`A copy can have up to ${COPILOT_MCP_MAX} servers. Remove one first.`, 400, 'MCP_LIMIT_REACHED')
-  const url = new URL(input.serverUrl)
-  if (url.protocol !== 'https:') throw new ApiError('The server address must start with https://.', 400, 'INVALID_URL')
   if (servers.some((server) => server.serverUrl === input.serverUrl)) throw new ApiError('That server is already connected.', 400, 'MCP_DUPLICATE')
-  await requirePublic(input.serverUrl, 'Server address')
-  if (input.authType === 'api_key' && !input.apiKey?.trim()) throw new ApiError('Enter the API key or token for this server.', 400, 'CREDENTIAL_REQUIRED')
-  if (input.authType === 'oauth2') {
-    if (!input.clientId || !input.clientSecret?.trim() || !input.tokenUrl) throw new ApiError('Enter the client ID, client secret and token address for this server.', 400, 'CREDENTIAL_REQUIRED')
-    await requirePublic(input.tokenUrl, 'Token address')
-  }
-  const authConfig = buildAuthConfig({
-    authType: input.authType,
-    apiKey: input.apiKey?.trim(),
-    headerName: input.headerName || undefined,
-    clientId: input.clientId,
-    clientSecret: input.clientSecret?.trim(),
-    tokenUrl: input.tokenUrl,
-    scopes: input.scopes || undefined,
-    ...(input.authType === 'oauth2' ? { flow: 'client_credentials' as const } : {}),
-  })
-  let toolCount = 0
-  try {
-    toolCount = (await verifyStoredMcpConnection({ serverUrl: input.serverUrl, authType: input.authType, authConfig })).toolCount
-  } catch (error) {
-    throw new ApiError(`The server could not be reached with those details: ${safeMcpVerificationError(error)}`, 422, 'CONNECTION_VERIFICATION_FAILED')
-  }
-  const server: StoredServer = { id: randomUUID(), name: input.name || url.hostname, serverUrl: input.serverUrl, authType: input.authType, authConfig, toolCount, addedAt: new Date().toISOString() }
+  const { authConfig, verification } = await verifyInput(input)
+  const toolCount = verification.toolCount
+  const server: StoredServer = { id: randomUUID(), name: input.name || new URL(input.serverUrl).hostname, ...(input.description ? { description: input.description } : {}), serverUrl: input.serverUrl, authType: input.authType, authConfig, toolCount, addedAt: new Date().toISOString() }
   await saveServers(organizationId, artifactId, [...servers, server])
   return copilotMcpViews([...servers, server])
 }

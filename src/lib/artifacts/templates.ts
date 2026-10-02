@@ -6,7 +6,7 @@ import { ApiError } from '@/lib/server/api-handler'
 import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
 import { startOfUtcDay } from '@/lib/usage/free-tier-limits'
 import type { ArtifactChatMessage, GuestCopilotView } from './types'
-import { addCopilotMcpServer, copilotMcpViews, removeCopilotMcpServer, type CopilotMcpInput } from './copilot-mcp'
+import { addCopilotMcpServer, copilotMcpViews, removeCopilotMcpServer, testCopilotMcpServer, type CopilotMcpInput } from './copilot-mcp'
 
 /** Explicit bearer-token export of published source only, into the caller's tenant. */
 export async function useArtifactTemplate(token: string, organizationId: string, userId: string) {
@@ -287,6 +287,14 @@ export async function changeGuestCopyMcp(token: string, guestToken: string | nul
   if ('add' in change) await addCopilotMcpServer(source.organizationId, copy.id, change.add)
   else await removeCopilotMcpServer(source.organizationId, copy.id, change.remove)
   return guestView(source.organizationId, copy.id)
+}
+
+/** A visitor tests a server before connecting it: its tools, nothing stored. */
+export async function testGuestCopyMcp(token: string, guestToken: string | null | undefined, input: CopilotMcpInput): Promise<{ toolCount: number; toolNames: string[] }> {
+  const source = await publicTemplate(token)
+  const copy = await findGuestCopy(source, guestDigestOf(guestToken))
+  if (!copy) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
+  return testCopilotMcpServer(source.organizationId, copy.id, input)
 }
 
 /** One version of a guest copy as a page. The copy's id is a 122-bit random value only its visitor was given. */

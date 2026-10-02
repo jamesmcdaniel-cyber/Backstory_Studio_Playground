@@ -135,11 +135,12 @@ test('a copy the server already resolved is on screen from the first paint — t
   } finally { cleanup(); net.restore() }
 })
 
-test('the copilot’s Settings connect a visitor’s own MCP server with their own credential, and remove it', async () => {
-  const connected = [{ id: 'srv-1', name: 'mcp.example.com', serverUrl: 'https://mcp.example.com/mcp', authType: 'api_key', toolCount: 4 }]
+test('the copilot’s Settings add a visitor’s own MCP server through the platform’s dialog, test it first, and remove it', async () => {
+  const connected = [{ id: 'srv-1', name: 'My CRM', serverUrl: 'https://mcp.example.com/mcp', authType: 'api_key', toolCount: 4 }]
   const net = stubFetch((call) => {
     if (call.url.endsWith('/copy')) return Response.json({ error: 'Unauthorized' }, { status: 401 })
     const action = call.method === 'POST' ? JSON.parse(call.body ?? '{}').action : null
+    if (action === 'mcp_test') return Response.json({ success: true, test: { toolCount: 4, toolNames: ['find_account'] } })
     if (action === 'mcp_add') return Response.json({ success: true, copilot: { ...guest(), mcpServers: connected } })
     return Response.json({ success: true, copilot: { ...guest(), mcpServers: [] } })
   })
@@ -149,13 +150,24 @@ test('the copilot’s Settings connect a visitor’s own MCP server with their o
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
     await act(async () => { fireEvent.click(ui.getByRole('tab', { name: 'Settings' })) })
     assert.ok(ui.getByText(/using the demo data this link came with/))
-    await act(async () => { fireEvent.change(ui.getByLabelText('Server address'), { target: { value: 'https://mcp.example.com/mcp' } }) })
-    await act(async () => { fireEvent.change(ui.getByLabelText('API key or token'), { target: { value: 'my-token' } }) })
-    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Connect' })) })
-    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'mcp_add', server: { serverUrl: 'https://mcp.example.com/mcp', authType: 'api_key', apiKey: 'my-token' } })
-    assert.ok(ui.getByText('API key or token · 4 tools'))
-    assert.equal((ui.getByLabelText('API key or token') as HTMLInputElement).value, '', 'the credential is not kept on screen')
-    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Remove mcp.example.com' })) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Add MCP server' })) })
+    // The same dialog as the platform's MCP Servers page — minus the OAuth
+    // redirect, which needs a signed-in session to come back to.
+    assert.ok(ui.getByRole('heading', { name: 'Model Context Protocol' }))
+    assert.deepEqual(ui.getAllByRole('radio').map((radio) => (radio as HTMLInputElement).value), ['none', 'api_key', 'client_credentials'])
+    await act(async () => { fireEvent.change(ui.getByPlaceholderText('e.g. Backstory MCP'), { target: { value: 'My CRM' } }) })
+    await act(async () => { fireEvent.change(ui.getByPlaceholderText('Streamable endpoint'), { target: { value: 'https://mcp.example.com/mcp' } }) })
+    await act(async () => { fireEvent.click(ui.getByRole('radio', { name: 'Access token' })) })
+    await act(async () => { fireEvent.change(ui.getByPlaceholderText('Paste your access token'), { target: { value: 'my-token' } }) })
+    const server = { serverUrl: 'https://mcp.example.com/mcp', name: 'My CRM', authType: 'api_key', apiKey: 'my-token' }
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Test connection' })) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'mcp_test', server })
+    assert.ok(ui.getByText(/4 tools/))
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Verify & create' })) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'mcp_add', server })
+    assert.equal(ui.queryByRole('heading', { name: 'Model Context Protocol' }), null, 'the dialog closes once the server is saved')
+    assert.ok(ui.getByText('Access token · 4 tools'))
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Remove My CRM' })) })
     assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'mcp_remove', serverId: 'srv-1' })
     assert.ok(ui.getByText(/using the demo data this link came with/))
   } finally { cleanup(); net.restore() }

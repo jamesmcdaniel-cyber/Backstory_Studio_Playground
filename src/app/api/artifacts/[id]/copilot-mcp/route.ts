@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { requireEditable } from '@/lib/artifacts/route-access'
-import { addCopilotMcpServer, copilotMcpInputSchema, listCopilotMcpServers, removeCopilotMcpServer } from '@/lib/artifacts/copilot-mcp'
+import { addCopilotMcpServer, copilotMcpInputSchema, listCopilotMcpServers, removeCopilotMcpServer, testCopilotMcpServer } from '@/lib/artifacts/copilot-mcp'
 import { rateLimit } from '@/lib/ratelimit'
 import type { AuthContext } from '@/lib/server/auth'
 
@@ -28,8 +28,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = await copyId(request, auth)
   const limited = await rateLimit(`copilot-mcp:${auth.organizationId}:${auth.dbUser.id}`, { limit: 10, windowMs: 60_000 })
   if (!limited.ok) throw new ApiError('Please wait a minute before trying again.', 429, 'RATE_LIMITED')
-  const input = copilotMcpInputSchema.safeParse(await request.json().catch(() => null))
+  const body = await request.json().catch(() => null) as { test?: unknown } | null
+  const input = copilotMcpInputSchema.safeParse(body)
   if (!input.success) throw new ApiError('Enter a valid server address.', 400, 'INVALID_BODY')
+  // { test: true }: "Test connection" — the server's tools, nothing stored.
+  if (body?.test === true) return { success: true, test: await testCopilotMcpServer(auth.organizationId, id, input.data) }
   return { success: true, servers: await addCopilotMcpServer(auth.organizationId, id, input.data) }
 }, { permission: 'agent.read' })
 

@@ -1,11 +1,10 @@
 import { headers } from 'next/headers'
-import { Eye } from 'lucide-react'
 import { systemPrisma } from '@/lib/prisma'
 import { resolvePublicArtifact } from '@/lib/artifacts/sharing'
 import { looksLikeHtml } from '@/lib/html-detect'
 import { Markdown } from '@/components/ui/markdown'
 import { ARTIFACT_FRAME_SANDBOX } from '@/components/artifacts/artifact-frame'
-import { UseTemplateButton } from '@/components/artifacts/use-template-button'
+import { SharedTemplateCopilot } from '@/components/artifacts/shared-template-copilot'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { robots: { index: false, follow: false } }
@@ -14,7 +13,8 @@ export const metadata = { robots: { index: false, follow: false } }
  * An artifact's public link: its current version, live and view-only, for
  * someone with no account. The page is framed from the public content route
  * (same sandbox as the app); a Markdown document renders here. Nothing else
- * of the workspace is reachable from it.
+ * of the workspace is reachable from it. A link offered as a template also
+ * carries the copilot, which works on the signed-in visitor's own copy.
  */
 function Notice({ title, body }: { title: string; body: string }) {
   return (
@@ -43,28 +43,25 @@ export default async function PublicArtifactPage({ params }: { params: Promise<{
   if (!version) return <Notice title="Nothing to show yet" body="This artifact has no content yet." />
   const isPage = looksLikeHtml(version.content.slice(0, 4_000))
 
+  // No chrome of ours: the artifact is the page. A template adds only the
+  // copilot launcher, which opens the visitor's own copy in place.
+  const original = isPage ? (
+    <iframe
+      title={artifact.title}
+      src={`/api/share/artifacts/${token}/content`}
+      sandbox={ARTIFACT_FRAME_SANDBOX}
+      className="block h-dvh w-full border-0"
+    />
+  ) : (
+    <div className="prose prose-sm mx-auto w-full max-w-3xl p-6 dark:prose-invert">
+      <Markdown>{version.content}</Markdown>
+    </div>
+  )
+
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-sm">
-        <div className="min-w-0">
-          <p className="truncate font-semibold">{artifact.title}</p>
-          <p className="text-xs text-muted-foreground">Shared from Backstory · updated {artifact.updatedAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
-        </div>
-        {artifact.shareTemplate ? <UseTemplateButton token={token} /> : <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground"><Eye className="h-3.5 w-3.5" aria-hidden /> View only</span>}
-      </header>
-      {isPage ? (
-        <iframe
-          title={artifact.title}
-          src={`/api/share/artifacts/${token}/content`}
-          sandbox={ARTIFACT_FRAME_SANDBOX}
-          className="block w-full flex-1 border-0"
-          style={{ minHeight: 'calc(100dvh - 56px)' }}
-        />
-      ) : (
-        <main className="prose prose-sm mx-auto w-full max-w-3xl p-6 dark:prose-invert">
-          <Markdown>{version.content}</Markdown>
-        </main>
-      )}
+    <div className="min-h-dvh bg-background">
+      <h1 className="sr-only">{artifact.title}</h1>
+      {artifact.shareTemplate ? <SharedTemplateCopilot token={token}>{original}</SharedTemplateCopilot> : original}
     </div>
   )
 }

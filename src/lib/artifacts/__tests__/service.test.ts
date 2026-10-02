@@ -59,8 +59,39 @@ test('a change request demands the whole revised document; a question forbids it
 test('a very long document is truncated with a marker, not dropped', () => {
   const long = '<div>' + 'x'.repeat(200_000) + '</div>'
   const prompt = buildArtifactPrompt({ mode: 'ask', title: 't', content: long, message: 'q', chat: [] })
-  assert.match(prompt, /Use find_in_artifact and read_artifact to see the rest/)
+  assert.match(prompt, /find_in_artifact \(every term you need in one call\) and read_artifact to see the rest/)
   assert.ok(prompt.length < 30_000)
+})
+
+test('a page that fits is given whole, so the assistant edits without searching for it first', () => {
+  const page = `<html><body><h1>Cockpit</h1>${'<p>row</p>'.repeat(9_000)}<p id="needle">ARR at risk</p></body></html>`
+  assert.ok(page.length > 24_000 && page.length < 120_000)
+  const prompt = buildArtifactPrompt({ mode: 'change', title: 'Cockpit', content: page, message: 'Rename ARR at risk', chat: [] })
+  assert.ok(prompt.includes('<p id="needle">ARR at risk</p>'), 'the end of the page is in the prompt, not behind a tool call')
+  assert.equal(prompt.includes('MAP OF THE DOCUMENT'), false)
+  assert.match(prompt, /do not search for what you can already see/)
+})
+
+test('a page too large to give whole comes with a map of where things are', async () => {
+  const { artifactOutline } = await import('../outline')
+  const page = [
+    '<html><head><style>body{margin:0}</style></head><body>',
+    '<h1>Sales leadership overview</h1>', 'x'.repeat(60_000),
+    '<section id="managers"><h2>Regional managers</h2>', 'y'.repeat(60_000), '</section>',
+    '<script>\nconst MANAGERS = [{ name: "Jessica Alvarez" }]\nfunction renderManagers() {}\n</script></body></html>',
+  ].join('')
+  const outline = artifactOutline(page)
+  const at = (label: string) => Number(new RegExp(`@(\\d+) ${label}`).exec(outline)?.[1])
+  assert.equal(at('h1 "Sales leadership overview"'), page.indexOf('<h1>'))
+  assert.equal(at('<section #managers>'), page.indexOf('<section id="managers">'))
+  assert.equal(at('js MANAGERS'), page.indexOf('const MANAGERS'))
+  assert.match(outline, /<script> [\d,]+ chars/)
+  const prompt = buildArtifactPrompt({ mode: 'change', title: 'Cockpit', content: page, message: 'Use different managers', chat: [] })
+  assert.match(prompt, /MAP OF THE DOCUMENT/)
+  assert.ok(prompt.includes(`@${page.indexOf('const MANAGERS')} js MANAGERS`), 'the assistant can read the data block directly by offset')
+  assert.ok(prompt.length < 30_000)
+  // Bounded however busy the page is.
+  assert.ok(artifactOutline('<div id="a"></div>'.repeat(5_000)).split('\n').length <= 70)
 })
 
 test('a page runs its scripts whatever it was registered as; a script-less report does not', () => {

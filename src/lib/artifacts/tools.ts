@@ -37,9 +37,9 @@ const GENERIC_TOOLS = [
   },
   {
     name: 'find_in_artifact',
-    description: 'Find text in the current version (case-insensitive). Returns each match with its character offset and the surrounding lines — use it to locate what a change touches in a large page before editing.',
+    description: 'Find text in the current version (case-insensitive). Returns each match with its character offset and the surrounding lines — use it to locate what a change touches in a large page before editing. Pass EVERY term you need in `texts` in one call rather than calling once per term.',
     isWrite: false,
-    inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'The text to look for.' } }, required: ['text'] },
+    inputSchema: { type: 'object', properties: { texts: { type: 'array', items: { type: 'string' }, description: 'Up to 12 terms to look for, all answered in this one call.' }, text: { type: 'string', description: 'A single term (use `texts` for several).' } } },
   },
   {
     name: 'read_artifact',
@@ -335,18 +335,25 @@ export class ArtifactToolClient {
   }
 
   private async find(args: Record<string, unknown>) {
-    const text = typeof args.text === 'string' ? args.text : ''
-    if (!text.trim()) throw new Error('Pass the text to find.')
+    // Several terms in one call: each lookup used to cost a model round trip.
+    const terms = [...new Set([...(Array.isArray(args.texts) ? args.texts : []), args.text].filter((term): term is string => typeof term === 'string' && Boolean(term.trim())))].slice(0, 12)
+    if (!terms.length) throw new Error('Pass the text to find.')
     const { content } = await this.currentContent()
     const haystack = content.toLowerCase()
-    const needle = text.toLowerCase()
-    const matches: Array<{ offset: number; context: string }> = []
-    for (let at = haystack.indexOf(needle); at >= 0 && matches.length < 20; at = haystack.indexOf(needle, at + needle.length)) {
-      const start = Math.max(0, content.lastIndexOf('\n', Math.max(0, at - 200)))
-      const endBreak = content.indexOf('\n', at + needle.length + 200)
-      matches.push({ offset: at, context: content.slice(start, endBreak < 0 ? Math.min(content.length, at + 600) : endBreak).slice(0, 1_200) })
+    // One term keeps its 20 matches; several share the budget so the answer stays readable.
+    const limit = terms.length === 1 ? 20 : 6
+    const search = (text: string) => {
+      const needle = text.toLowerCase()
+      const matches: Array<{ offset: number; context: string }> = []
+      for (let at = haystack.indexOf(needle); at >= 0 && matches.length < limit; at = haystack.indexOf(needle, at + needle.length)) {
+        const start = Math.max(0, content.lastIndexOf('\n', Math.max(0, at - 200)))
+        const endBreak = content.indexOf('\n', at + needle.length + 200)
+        matches.push({ offset: at, context: content.slice(start, endBreak < 0 ? Math.min(content.length, at + 600) : endBreak).slice(0, terms.length === 1 ? 1_200 : 700) })
+      }
+      return { matches, ...(matches.length === limit ? { note: `Showing the first ${limit} matches; search for something more specific.` } : {}) }
     }
-    return { size: content.length, matches, ...(matches.length === 20 ? { note: 'Showing the first 20 matches; search for something more specific.' } : {}) }
+    if (terms.length === 1) return { size: content.length, ...search(terms[0]) }
+    return { size: content.length, results: terms.map((text) => ({ text, ...search(text) })) }
   }
 
   private async read(args: Record<string, unknown>) {

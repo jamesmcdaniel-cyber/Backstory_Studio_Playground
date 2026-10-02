@@ -92,6 +92,11 @@ if (!database) {
     const client = new ArtifactToolClient(recipient.organizationId, recipient.userId, { artifactId: copyId, executionId: 'template-qa-edit', request: 'Update heading', templateCopy: true })
     const result = await client.executeTool('', 'edit_artifact', { edits: [{ find: 'Template original', replace: 'My personal version' }], summary: 'Personal heading' }) as { saved?: boolean; error?: string }
     assert.equal(result.saved, true, result.error)
+    // Several lookups are one tool call, not one model turn each.
+    const found = await client.executeTool('', 'find_in_artifact', { texts: ['personal version', '<body>', 'not there'] }) as { results: Array<{ text: string; matches: unknown[] }> }
+    assert.deepEqual(found.results.map(r => [r.text, r.matches.length]), [['personal version', 1], ['<body>', 1], ['not there', 0]])
+    const single = await client.executeTool('', 'find_in_artifact', { text: 'personal version' }) as { matches: unknown[] }
+    assert.equal(single.matches.length, 1, 'the single-term form answers as before')
     const source = await db.artifact.findFirstOrThrow({ where: { organizationId: sourceOrg.organizationId, id: sourceId }, include: { versions: true } })
     assert.equal(source.versionCount, 1)
     assert.equal(source.versions[0].content, content)

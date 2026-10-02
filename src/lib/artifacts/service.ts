@@ -1,3 +1,4 @@
+import { artifactOutline } from './outline'
 import type { Artifact, ArtifactVersion, Prisma } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
@@ -31,7 +32,10 @@ import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView 
 export const ARTIFACT_QUESTION_MAX_CHARS = 2_000
 export const ARTIFACT_CONTENT_MAX_CHARS = 2_000_000
 /** How much of the current document a change/ask run is shown. */
-const CONTEXT_MAX_CHARS = 24_000
+// A page up to this size is given to the assistant whole, so it edits without
+// first searching for what it was already handed. (Prompt caching makes the
+// repeat turns cheap; the search turns it replaces were each a model round trip.)
+const CONTEXT_MAX_CHARS = 120_000
 
 function jsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue
@@ -451,7 +455,7 @@ A message can combine these — handle each part. Never write or return HTML: th
 
 const DOCUMENT_ASSISTANT_RULES = (isHtml: boolean) => `You are the assistant for the artifact this conversation is about. Decide what each message is:
 1. A QUESTION about it: answer in Markdown, grounded in the document (and your tools where a fact is missing). Do not return the document.
-2. A CHANGE to it ("remove the risks section", "update the Q3 numbers", "make the header blue"): make it with edit_artifact — exact find-and-replace edits of the parts that change, everything else untouched. For a large page, locate the text first with find_in_artifact (and read_artifact for the surroundings) and copy the exact snippet into \`find\`. Use revise_artifact only to rewrite a small document from scratch. ${isHtml ? 'It is HTML: keep it valid, and if it is an interactive page keep its scripts working — chart data usually lives in inline <script> blocks, so a data change is an edit there.' : 'It is Markdown: keep its structure.'} Then tell the user in one or two sentences what changed.
+2. A CHANGE to it ("remove the risks section", "update the Q3 numbers", "make the header blue"): make it with edit_artifact — exact find-and-replace edits of the parts that change, everything else untouched. When the whole document is given below, edit from it directly — do not search for what you can already see. For a page too large to be given whole, use its map to read the part you need (read_artifact), look up anything else with ONE find_in_artifact call carrying every term, and copy the exact snippet into \`find\`. Use revise_artifact only to rewrite a small document from scratch. ${isHtml ? 'It is HTML: keep it valid, and if it is an interactive page keep its scripts working — chart data usually lives in inline <script> blocks, so a data change is an edit there.' : 'It is Markdown: keep its structure.'} Then tell the user in one or two sentences what changed.
 3. A COPY or VARIANT ("make a version for the EMEA team", "save this as a new one"): make the edits with saveAsNew: true and a fitting title, and share the new artifact's link. The original stays as it is.
 4. A question or change that needs facts the document does not hold: fetch them with the tools you have — the Sales AI / Backstory MCP and the integrations that produced this artifact — and say where each fact came from.
 5. THE SAME ANALYSIS FOR ANOTHER ACCOUNT — when get_artifact shows an \`analysis\` (the page was built from repository extracts, e.g. an Account 360 ROI dashboard): answer questions from its summary, and for "show me this for Acme" call list_roi_accounts, match the account, then start_roi_analysis; share the link it returns.
@@ -476,9 +480,11 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
     return [ROI_ASSISTANT_RULES, standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
   }
   const isHtml = looksLikeHtml(params.content.slice(0, 4_000))
-  // A large page is not pasted in: the assistant reads it with its tools.
+  // A larger page is not pasted in: the assistant gets its start and a map of
+  // it by character offset, and reads the parts a request touches.
+  const outline = params.content.length > CONTEXT_MAX_CHARS ? artifactOutline(params.content) : ''
   const doc = params.content.length > CONTEXT_MAX_CHARS
-    ? `${params.content.slice(0, 4_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. Use find_in_artifact and read_artifact to see the rest. -->`
+    ? `${params.content.slice(0, 4_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. -->${outline ? `\n\nMAP OF THE DOCUMENT (@character offset, what is there). Go straight to the part you need with read_artifact at that offset; use find_in_artifact — with EVERY term you need in one call — only for text the map does not locate:\n${outline}` : '\nUse find_in_artifact (every term you need in one call) and read_artifact to see the rest.'}`
     : params.content
   return [DOCUMENT_ASSISTANT_RULES(isHtml), ARTIFACT_CAPABILITIES, 'Work directly on the requested edit. Batch independent lookups and edits; do not draft a long plan or rebuild unaffected sections. Reply in two sentences after the save.', standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }

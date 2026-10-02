@@ -6,11 +6,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 export default async function AuthCodeErrorPage({
   searchParams,
 }: {
-  searchParams: Promise<{ reason?: string | string[] }>
+  searchParams: Promise<{ reason?: string | string[]; detail?: string | string[] }>
 }) {
   const params = await searchParams
   const reason = Array.isArray(params.reason) ? params.reason[0] : params.reason
   const domainRejected = reason === 'domain'
+  // The sign-in service's own code for what went wrong, set by the callback.
+  const rawDetail = Array.isArray(params.detail) ? params.detail[0] : params.detail
+  const detail = rawDetail && /^[a-z0-9_]{1,64}$/.test(rawDetail) ? rawDetail : null
+  const explanation = !detail ? null
+    : /saml|sso/.test(detail) ? 'Company single sign-on is not available on the sign-in service right now.'
+    : /pkce|verifier|flow_state/.test(detail) ? 'This sign-in was started in a different browser, tab or window — or took too long. Start again from here.'
+    : /access_denied/.test(detail) ? 'The identity provider declined this sign-in.'
+    : /missing_auth_code/.test(detail) ? 'The sign-in link was incomplete. Start again from the sign-in page.'
+    : null
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -36,7 +45,7 @@ export default async function AuthCodeErrorPage({
                 Sign in with a <strong>@people.ai</strong> or <strong>@backstory.ai</strong> Google account.
               </p>
             ) : (
-              <>
+              explanation ? <p className="text-gray-600">{explanation}</p> : <>
                 <p className="mb-2">This could be due to:</p>
                 <ul className="list-disc list-inside space-y-1 text-gray-600">
                   <li>Redirect URI mismatch in Supabase configuration</li>
@@ -45,6 +54,7 @@ export default async function AuthCodeErrorPage({
                 </ul>
               </>
             )}
+            {detail && <p className="mt-3 font-mono text-xs text-gray-500">Reference: {detail}</p>}
           </div>
           
           <div className="space-y-3">

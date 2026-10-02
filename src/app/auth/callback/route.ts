@@ -16,10 +16,19 @@ export async function GET(request: NextRequest) {
     ? await supabase.auth.exchangeCodeForSession(code)
     : tokenHash && type
       ? await supabase.auth.verifyOtp({ token_hash: tokenHash, type: type as any })
-      : { error: new Error('Missing auth code') }
+      : { error: Object.assign(new Error('Missing auth code'), { code: 'missing_auth_code' }) }
 
   if (result.error) {
-    return NextResponse.redirect(new URL('/auth/auth-code-error', request.url))
+    // Say WHY on the error page. The identity provider's own refusal arrives
+    // here as ?error/&error_code (no code at all), and a failed exchange has a
+    // code of its own; dropping both left every failure looking identical.
+    const params = request.nextUrl.searchParams
+    const raw = params.get('error_code') || params.get('error') || (result.error as { code?: string }).code || result.error.name || ''
+    const detail = raw.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 64)
+    console.error('auth callback failed', { detail, description: params.get('error_description')?.slice(0, 300) ?? result.error.message })
+    const errorUrl = new URL('/auth/auth-code-error', request.url)
+    if (detail) errorUrl.searchParams.set('detail', detail)
+    return NextResponse.redirect(errorUrl)
   }
 
   // Google can suggest a hosted domain but that query parameter is not an

@@ -1,6 +1,7 @@
 'use client'
 
-import { getSnapshot } from './snapshot'
+import { getSnapshot, peekSnapshot, seedSnapshotAgent } from './snapshot'
+import type { Agent } from '@/lib/types'
 
 /** The fields a template contributes to a brand-new agent. */
 export type AgentTemplateSource = {
@@ -52,15 +53,14 @@ export function agentHref(agentId: string): string {
  * a create that still pushed there dropped people on the Assistant with no sign
  * of the agent it had just built.
  *
- * The forced snapshot refresh is load-bearing, not hygiene. Agent HQ hydrates
- * from the shared snapshot cache and silently drops an ?agent= deep link naming
- * an agent that cache doesn't hold yet, so a copy warmed seconds ago would land
- * the user on some other agent.
+ * Agent HQ reads the shared snapshot immediately. Seed the returned agent into
+ * the matching workspace before navigating, or await a refresh on a cold cache.
  */
 export async function createAgentFromTemplate(
   template: AgentTemplateSource,
   destination?: TemplateDestination,
 ): Promise<CreateFromTemplateResult> {
+  const organizationId = peekSnapshot()?.activeOrganizationId
   // A template is a JOB, not a person: it goes onto an avatar's roster. Naming
   // a new teammate creates them first, so the agent is never briefly homeless.
   let teammateId = destination?.teammateId ?? null
@@ -100,13 +100,17 @@ export async function createAgentFromTemplate(
         : { type: 'manual', timezone: 'UTC', isActive: false },
     }),
   })
-  const data = (await response.json().catch(() => ({}))) as { agent?: { id?: unknown }; error?: string }
+  const data = (await response.json().catch(() => ({}))) as { agent?: Partial<Agent>; error?: string }
   if (!response.ok) {
     return { ok: false, error: data.error || 'Could not create the agent. Please try again.' }
   }
   const agentId = typeof data.agent?.id === 'string' ? data.agent.id : null
-  // Awaited: the destination reads this cache on mount, so it has to hold the
-  // new agent before we navigate. A failed refresh only costs the deep link.
-  await getSnapshot(0).catch(() => undefined)
+  // Seed before navigation; refresh the rest of the roster in the background.
+  const complete = data.agent && typeof data.agent.id === 'string' && typeof data.agent.title === 'string' && typeof data.agent.instructions === 'string' && Array.isArray(data.agent.integrations) && Array.isArray(data.agent.skills)
+  if (complete && seedSnapshotAgent(data.agent as Agent, organizationId)) {
+    void getSnapshot(0).catch(() => undefined)
+  } else {
+    await getSnapshot(0).catch(() => undefined)
+  }
   return { ok: true, href: agentId ? agentHref(agentId) : '/agents' }
 }

@@ -20,6 +20,7 @@
 import { prisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { cacheGet, cacheSet } from '@/lib/cache'
+import { singleFlight } from '@/lib/single-flight'
 import { BackstoryMcpClient, backstoryMcpConfigured } from '@/lib/mcp/backstory-mcp'
 import { getPeopleAiClientForUser, getPeopleAiServiceClient } from '@/lib/peopleai/client'
 import { DELIVERY_TOOLS, DELIVERY_PROVIDERS, nangoConfigured, resolveDeliveryConnection, resolveNangoConnection, type DeliveryCapability, type DeliveryConnection } from '@/lib/nango/delivery'
@@ -124,18 +125,20 @@ export function shareableMcpConnectionScope(organizationId: string) {
 // round-trips) on EVERY run. Cache the discovery per server URL so a warm run
 // skips the network entirely; busted on connection create/update.
 const TOOL_DISCOVERY_TTL_MS = 10 * 60 * 1000
+const discoverOnce = singleFlight<unknown[]>()
 // Keyed by org too: MCP servers can gate tools/list by identity, so one org's
 // discovery must not pin another's tool set on a shared serverUrl.
 export const toolDiscoveryCacheKey = (organizationId: string, serverUrl: string) => `mcptools:${organizationId}:${serverUrl}`
 export async function cachedToolDiscovery<T>(organizationId: string, serverUrl: string, fetchTools: () => Promise<T[]>): Promise<T[]> {
   const key = toolDiscoveryCacheKey(organizationId, serverUrl)
-  const hit = await cacheGet<T[]>(key)
-  if (hit && hit.length > 0) return hit
-  const fresh = await fetchTools()
-  // Never cache an empty result — a transient empty/errored discovery must not
-  // pin "no tools" for the whole TTL and silently disable the integration.
-  if (fresh.length > 0) await cacheSet(key, fresh, TOOL_DISCOVERY_TTL_MS)
-  return fresh
+  return discoverOnce(key, async () => {
+    const hit = await cacheGet<T[]>(key)
+    if (hit && hit.length > 0) return hit
+    const fresh = await fetchTools()
+    // No negative caching; failed discovery is retryable on the next request.
+    if (fresh.length > 0) await cacheSet(key, fresh, TOOL_DISCOVERY_TTL_MS)
+    return fresh
+  }) as Promise<T[]>
 }
 
 const EMPTY_SCHEMA = { type: 'object', properties: {} }

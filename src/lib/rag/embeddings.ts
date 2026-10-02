@@ -12,6 +12,7 @@
 
 import { createHash } from 'node:crypto'
 import { cacheGet, cacheSet } from '@/lib/cache'
+import { mapConcurrent } from '@/lib/map-concurrent'
 
 const VOYAGE_URL = 'https://api.voyageai.com/v1/embeddings'
 // voyage-3 family: 1024-dim general-purpose embeddings; `voyage-3` is the
@@ -37,6 +38,8 @@ export interface EmbedOptions {
   inputType?: 'document' | 'query'
   fetchImpl?: typeof fetch
   model?: string
+  /** Total provider budget, including retries and Retry-After. */
+  timeoutMs?: number
   /**
    * Optional cost attribution. Only genuine network calls are recorded — a
    * cache hit costs nothing, so it writes no ledger row.
@@ -65,7 +68,7 @@ export async function embedTexts(texts: string[], options: EmbedOptions = {}): P
 
   // Tests inject a fetch and don't want cache interference or real backoff.
   if (options.fetchImpl) {
-    return fetchEmbeddings(texts, { apiKey, model, inputType, fetchImpl: options.fetchImpl, maxAttempts: 1, ledger: options.ledger })
+    return fetchEmbeddings(texts, { apiKey, model, inputType, fetchImpl: options.fetchImpl, maxAttempts: 1, ledger: options.ledger, timeoutMs: options.timeoutMs })
   }
 
   const keyOf = (text: string) => `emb:${model}:${inputType}:${sha256(text)}`
@@ -73,19 +76,20 @@ export async function embedTexts(texts: string[], options: EmbedOptions = {}): P
   const missTexts: string[] = []
   const missIndexes: number[] = []
 
+  const hits = await mapConcurrent(texts, 8, text => cacheGet<number[]>(keyOf(text)))
   for (let i = 0; i < texts.length; i++) {
-    const hit = await cacheGet<number[]>(keyOf(texts[i]))
+    const hit = hits[i]
     if (hit && hit.length > 0) out[i] = hit
     else { missTexts.push(texts[i]); missIndexes.push(i) }
   }
 
   if (missTexts.length > 0) {
-    const fetched = await fetchEmbeddings(missTexts, { apiKey, model, inputType, fetchImpl: fetch, maxAttempts: 6, ledger: options.ledger })
-    for (let j = 0; j < missTexts.length; j++) {
+    const fetched = await fetchEmbeddings(missTexts, { apiKey, model, inputType, fetchImpl: fetch, maxAttempts: 6, ledger: options.ledger, timeoutMs: options.timeoutMs })
+    await mapConcurrent(missTexts, 8, async (text, j) => {
       const vector = fetched[j] ?? []
       out[missIndexes[j]] = vector
-      if (vector.length > 0) await cacheSet(keyOf(missTexts[j]), vector, EMBED_CACHE_TTL_MS)
-    }
+      if (vector.length > 0) await cacheSet(keyOf(text), vector, EMBED_CACHE_TTL_MS)
+    })
   }
 
   for (let i = 0; i < out.length; i++) if (!out[i]) out[i] = []
@@ -98,6 +102,7 @@ interface FetchEmbedOptions {
   inputType: 'document' | 'query'
   fetchImpl: typeof fetch
   maxAttempts: number
+  timeoutMs?: number
   ledger?: { organizationId: string }
 }
 
@@ -109,12 +114,14 @@ interface FetchEmbedOptions {
  */
 async function fetchEmbeddings(texts: string[], opts: FetchEmbedOptions): Promise<number[][]> {
   let response: Response | undefined
+  const deadline = Date.now() + Math.max(1, opts.timeoutMs ?? (opts.inputType === 'query' ? 8_000 : 30_000))
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+    if (Date.now() >= deadline) throw new Error('Embedding provider deadline exceeded')
     response = await opts.fetchImpl(VOYAGE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
       body: JSON.stringify({ model: opts.model, input: texts, input_type: opts.inputType }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
     })
     if (response.ok) break
     const retryable = response.status === 429 || response.status >= 500
@@ -123,6 +130,9 @@ async function fetchEmbeddings(texts: string[], opts: FetchEmbedOptions): Promis
     const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
       ? retryAfter * 1000
       : Math.min(1000 * 2 ** (attempt - 1), 20_000) // 1s,2s,4s,8s,16s,20s
+    // Do not park an interactive request for a provider's unbounded retry delay.
+    if (Date.now() + waitMs >= deadline) break
+    await response.body?.cancel()
     await sleep(waitMs)
   }
 

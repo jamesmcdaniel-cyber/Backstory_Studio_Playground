@@ -788,15 +788,15 @@ export function RunPanel({
                 <StepRow
                   key={`${step.nodeId}-${i}`}
                   step={step}
-                  label={labelForNode(step.nodeId)}
+                  label={step.nodeId === '__artifact_publication__' ? 'Validate and publish artifact' : labelForNode(step.nodeId)}
                   toolName={toolNameForNode?.(step.nodeId.split('#')[0]) ?? null}
                   onRerunFrom={
-                    onRerunFrom && (selected.status === 'succeeded' || selected.status === 'failed')
+                    step.nodeId !== '__artifact_publication__' && onRerunFrom && (selected.status === 'succeeded' || selected.status === 'failed')
                       ? () => onRerunFrom(selected.id, step.nodeId.split('#')[0])
                       : undefined
                   }
                   onForkWithEdits={
-                    onForkWithEdits && (selected.status === 'succeeded' || selected.status === 'failed')
+                    step.nodeId !== '__artifact_publication__' && onForkWithEdits && (selected.status === 'succeeded' || selected.status === 'failed')
                       ? () =>
                           onForkWithEdits(
                             selected.id,

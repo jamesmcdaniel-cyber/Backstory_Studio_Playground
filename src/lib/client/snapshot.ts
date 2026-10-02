@@ -59,6 +59,7 @@ let etag: string | null = null
 // that response from re-poisoning the cache it was evicted from. Its own
 // awaiters still get their data — it just never becomes the shared copy.
 let epoch = 0
+let mutationRevision = 0
 
 function readPersisted(): { data: Snapshot; ts: number } | null {
   if (typeof window === 'undefined') return null
@@ -84,6 +85,7 @@ function persist(entry: { data: Snapshot; ts: number }) {
 
 async function fetchSnapshot(): Promise<Snapshot> {
   const startedIn = epoch
+  const startedRevision = mutationRevision
   // Only offer the validator when there is a body it belongs to. An
   // If-None-Match with no corresponding `cached` entry would earn a 304 that
   // this function then has nothing to return.
@@ -94,6 +96,7 @@ async function fetchSnapshot(): Promise<Snapshot> {
     headers: priorEtag ? { 'If-None-Match': priorEtag } : undefined,
   })
   if (startedIn !== epoch) throw new SnapshotError('Session changed during loading. Refresh to continue.', 'SESSION_CHANGED')
+  if (startedRevision !== mutationRevision && cached) return cached.data
 
   if (res.status === 304 && cached) {
     // Unchanged. Refresh the timestamp so the freshness window restarts —
@@ -109,6 +112,7 @@ async function fetchSnapshot(): Promise<Snapshot> {
 
   const body = (await res.json().catch(() => ({}))) as Partial<Snapshot> & { error?: string; code?: string }
   if (startedIn !== epoch) throw new SnapshotError('Session changed during loading. Refresh to continue.', 'SESSION_CHANGED')
+  if (startedRevision !== mutationRevision && cached) return cached.data
   if (!res.ok) throw new SnapshotError(body.error || `Snapshot failed (${res.status})`, body.code, res.status)
   const entry = { data: body as Snapshot, ts: Date.now() }
   if (startedIn === epoch) {
@@ -141,6 +145,18 @@ export async function getSnapshot(maxAgeMs: number = DEFAULT_FRESH_MS): Promise<
 export function peekSnapshot(): Snapshot | null {
   cached ??= readPersisted()
   return cached?.data ?? null
+}
+
+/** Seed a confirmed create response, never an optimistic guess or another org. */
+export function seedSnapshotAgent(agent: Agent, expectedOrganizationId: string | null | undefined): boolean {
+  cached ??= readPersisted()
+  if (!cached || !expectedOrganizationId || cached.data.activeOrganizationId !== expectedOrganizationId) return false
+  mutationRevision += 1
+  inflight = null // a pre-mutation request must not satisfy the next refresh
+  etag = null
+  cached = { data: { ...cached.data, agents: [agent, ...cached.data.agents.filter(entry => entry.id !== agent.id)] }, ts: Date.now() }
+  persist(cached)
+  return true
 }
 
 /**

@@ -49,7 +49,7 @@ function harness(overrides: Partial<WorkerRuntimeDeps> = {}) {
         isRunning: () => worker.running,
         on: (event, listener) => {
           if (event === 'failed') worker.failedListeners.push(listener as (job: any, error: Error) => void)
-          else worker.stalledListeners.push(listener as (jobId: string) => void)
+          else if (event === 'stalled') worker.stalledListeners.push(listener as (jobId: string) => void)
         },
         close: async () => { worker.closed = true },
       }

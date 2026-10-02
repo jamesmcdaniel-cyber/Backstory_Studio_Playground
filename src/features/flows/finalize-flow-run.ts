@@ -86,11 +86,21 @@ export async function finalizeFlowRun(
   // runs API surfaces FlowRun.error, so it must never stay null on failure.
   let runError = status === 'failed' ? truncateWithMarker(result.error ?? 'The flow failed.', 300) : null
   let publish: Awaited<ReturnType<typeof prepareFlowArtifactVersion>> = null
+  let publicationStepId: string | null = null
   const publicationFailed = (error: unknown) => {
     status = 'failed'
     runError = truncateWithMarker(`Artifact publication failed: ${error instanceof Error ? error.message : String(error)}`, 300)
   }
   if (status === 'succeeded' && job.trigger?.artifactId) {
+    // Publication is real work, not an invisible pause after the graph ends.
+    // A deterministic id makes crash/resume update the same diagnostic stage.
+    publicationStepId = `${run.id}:artifact-publication`
+    await prisma.flowRunStep.upsert({
+      where: { id: publicationStepId },
+      create: { id: publicationStepId, flowRunId: run.id, nodeId: '__artifact_publication__', order: graph.nodes.length + 1, status: 'running', startedAt: new Date() },
+      update: { status: 'running', finishedAt: null, error: null },
+    })
+    trackDetached(broadcastFlowRunTick(run.id, { nodeId: '__artifact_publication__', status: 'running' }))
     try {
       publish = await prepareFlowArtifactVersion({ organizationId: job.organizationId, flowRunId: run.id, trigger: job.trigger, output: effectiveOutput })
     } catch (error) { publicationFailed(error) }
@@ -108,6 +118,9 @@ export async function finalizeFlowRun(
   const persist = () => tenantTransaction(job.organizationId, async (tx) => {
     if (publish) {
       try { await publish(tx) } catch (error) { publicationError = error; throw error }
+    }
+    if (publicationStepId) {
+      await tx.flowRunStep.update({ where: { id: publicationStepId }, data: { status: status === 'succeeded' ? 'succeeded' : 'failed', finishedAt: new Date(), error: runError } })
     }
     // "Degraded" = succeeded but with fine print: a step that carried engine
     // warnings, or one that failed while the run continued (on-error

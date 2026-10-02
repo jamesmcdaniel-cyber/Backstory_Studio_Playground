@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { landOnAcceptedProposal } from '@/lib/client/apply-proposal'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { proposalPersona } from '@/lib/templates/proposal-persona'
+import { useOptionalProposals } from '@/components/providers/proposals-context'
 import { ProposalPreview, proposalHeadline, proposalSubline, type ProposalCard } from './proposal-shared'
 
 export type { ProposalCard } from './proposal-shared'
@@ -33,17 +34,26 @@ export function ProposalInbox({
    *  persistent surfaces like the dashboard). */
   title?: string
 }) {
-  const [proposals, setProposals] = useState<ProposalCard[]>([])
-  const [loaded, setLoaded] = useState(false)
-  const [busyId, setBusyId] = useState<string | null>(null)
+  const shared = useOptionalProposals()
+  const [localProposals, setProposals] = useState<ProposalCard[]>([])
+  const [localLoaded, setLoaded] = useState(false)
+  const [localBusyId, setBusyId] = useState<string | null>(null)
+  const proposals = shared?.proposals ?? localProposals
+  const loaded = shared?.loaded ?? localLoaded
+  const busyId = shared?.busyId ?? localBusyId
   const polls = useRef(0)
 
   useEffect(() => {
+    if (shared) return // the app shell already owns this subscription
     let alive = true
+    let inFlight = false
     const load = async () => {
-      const data = await fetch('/api/template-proposals', { cache: 'no-store' })
+      if (inFlight || document.hidden) return
+      inFlight = true
+      const data = await fetch('/api/template-proposals', { cache: 'no-store', signal: AbortSignal.timeout(15_000) })
         .then((response) => (response.ok ? response.json() : null))
         .catch(() => null)
+      inFlight = false
       if (!alive) return
       if (data?.success) setProposals((data.proposals ?? []).filter((p: ProposalCard) => p.status === 'open'))
       setLoaded(true)
@@ -61,12 +71,13 @@ export function ProposalInbox({
       alive = false
       window.clearInterval(timer)
     }
-  }, [])
+  }, [shared])
 
   const remove = (id: string) => setProposals((prev) => prev.filter((proposal) => proposal.id !== id))
   const restore = (proposal: ProposalCard) => setProposals((prev) => (prev.some((p) => p.id === proposal.id) ? prev : [proposal, ...prev]))
 
   const accept = async (proposal: ProposalCard) => {
+    if (shared) return shared.accept(proposal)
     setBusyId(proposal.id)
     remove(proposal.id)
     try {
@@ -84,6 +95,7 @@ export function ProposalInbox({
   }
 
   const dismiss = async (proposal: ProposalCard) => {
+    if (shared) return shared.dismiss(proposal)
     setBusyId(proposal.id)
     remove(proposal.id)
     try {

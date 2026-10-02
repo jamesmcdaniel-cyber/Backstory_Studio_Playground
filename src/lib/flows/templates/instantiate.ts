@@ -79,10 +79,10 @@ async function provisionMissingBuiltinAgents(
     .map((binding) => binding.match.agentName?.trim())
     .filter((name): name is string => Boolean(name)))]
 
-  for (const name of wanted) {
-    if (existing.has(name.toLowerCase())) continue
+  const provision = async (name: string) => {
+    if (existing.has(name.toLowerCase())) return
     const template = builtInTemplates.find((entry) => entry.name.trim().toLowerCase() === name.toLowerCase())
-    if (!template) continue
+    if (!template) return
     const { agent } = await provisionAgentFromConfig(
       organizationId,
       userId,
@@ -96,6 +96,11 @@ async function provisionMissingBuiltinAgents(
     )
     context.agents.push({ id: agent.id, name: template.name })
     existing.add(template.name.trim().toLowerCase())
+  }
+  // Independent dependencies need not form a request waterfall. Bound the
+  // fan-out so a large template cannot exhaust the serverless DB pool.
+  for (let offset = 0; offset < wanted.length; offset += 3) {
+    await Promise.all(wanted.slice(offset, offset + 3).map(provision))
   }
 }
 
@@ -111,7 +116,10 @@ export async function instantiateFlowTemplate(
   userId: string,
   template: Pick<SerializedFlowTemplate, 'name' | 'description' | 'graph' | 'notes' | 'bindings' | 'integrations'> & { icon?: string },
 ): Promise<InstantiatedFlowTemplate> {
-  const context = await loadBindingContext(organizationId, userId)
+  const [context, missing] = await Promise.all([
+    loadBindingContext(organizationId, userId),
+    missingIntegrations(organizationId, userId, template.integrations),
+  ])
   await provisionMissingBuiltinAgents(organizationId, userId, template.bindings as FlowTemplateBinding[], context)
   const resolutions = resolveBindings(template.bindings as FlowTemplateBinding[], context)
   const graph = applyBindings(template.graph, resolutions)
@@ -121,7 +129,6 @@ export async function instantiateFlowTemplate(
     toolCatalog: context.toolCatalog,
     requireRunnable: graph.nodes.length > 1,
   })
-  const missing = await missingIntegrations(organizationId, userId, template.integrations)
   const setup = buildSetupChecklist(resolutions, (template.notes as FlowTemplateNotes) ?? null, missing)
 
   const trigger = triggerFromGraph(graph)

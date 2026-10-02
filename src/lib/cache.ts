@@ -105,7 +105,7 @@ function createUpstashRestCache(url: string, token: string): Cache {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(command),
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(750),
     })
     if (!res.ok) throw new Error(`Upstash REST ${res.status}`)
     return (await res.json() as { result?: unknown }).result ?? null
@@ -132,7 +132,7 @@ function createUpstashRestCache(url: string, token: string): Cache {
 function createRedisCache(url: string): Cache {
   // Fail fast (best-effort): one retry, no ready-check, lazy connect so an
   // unreachable Redis degrades to source-of-truth reads instead of hanging.
-  const redis = new Redis(url, { maxRetriesPerRequest: 1, enableReadyCheck: false, lazyConnect: true })
+  const redis = new Redis(url, { maxRetriesPerRequest: 1, enableReadyCheck: false, lazyConnect: true, commandTimeout: 750, connectTimeout: 750, enableOfflineQueue: false })
   let warned = false
   redis.on('error', (error: Error) => {
     if (warned) return
@@ -161,6 +161,34 @@ function createRedisCache(url: string): Cache {
 
 let instance: Cache | null = null
 
+/** Failed reads bypass Redis briefly. Deletes ALWAYS reach the backend so
+ * recovery cannot resurrect entries whose invalidation was silently skipped. */
+export function withReadCircuit(backend: Cache, now = Date.now): Cache {
+  let blockedUntil = 0
+  let probing = false
+  return {
+    ...backend,
+    async get<T>(key: string): Promise<T | null> {
+      if (now() < blockedUntil || probing) return null
+      const recovering = blockedUntil !== 0
+      if (recovering) probing = true
+      try {
+        const value = await backend.get<T>(key)
+        blockedUntil = 0
+        return value
+      } catch (error) {
+        blockedUntil = now() + 15_000
+        throw error
+      } finally { if (recovering) probing = false }
+    },
+    async set<T>(key: string, value: T, ttlMs: number): Promise<void> {
+      // Cache fills may be omitted, unlike invalidation or atomic counters.
+      if (now() < blockedUntil) return
+      await backend.set(key, value, ttlMs)
+    },
+  }
+}
+
 export function getCache(): Cache {
   if (instance) return instance
   // Prefer Upstash REST (serverless-native), then an ioredis TCP URL, then a
@@ -168,8 +196,8 @@ export function getCache(): Cache {
   const upstashUrl = process.env.UPSTASH_REDIS_REST_URL
   const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN
   const redisUrl = process.env.REDIS_URL
-  if (upstashUrl && upstashToken) instance = createUpstashRestCache(upstashUrl, upstashToken)
-  else if (redisUrl) instance = createRedisCache(redisUrl)
+  if (upstashUrl && upstashToken) instance = withReadCircuit(createUpstashRestCache(upstashUrl, upstashToken))
+  else if (redisUrl) instance = withReadCircuit(createRedisCache(redisUrl))
   else instance = createMemoryCache()
   return instance
 }

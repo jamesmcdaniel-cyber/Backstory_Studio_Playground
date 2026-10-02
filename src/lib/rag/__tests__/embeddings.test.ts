@@ -68,3 +68,18 @@ test('cosineSimilarity: identical=1, orthogonal=0, empty=0', () => {
   assert.equal(cosineSimilarity([], [1]), 0)
   assert.ok(cosineSimilarity([1, 1], [1, 0]) > 0.7 && cosineSimilarity([1, 1], [1, 0]) < 0.72)
 })
+
+test('embedding calls carry a bounded provider deadline', async () => {
+  process.env.VOYAGE_API_KEY = 'pa-test'
+  const fetchImpl = (async (_url, init) => {
+    assert.ok(init?.signal)
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 500)
+      init.signal!.addEventListener('abort', () => { clearTimeout(timer); reject(Error('deadline')) }, { once: true })
+    })
+    return new Response('{}')
+  }) as typeof fetch
+  const start = Date.now()
+  await assert.rejects(embedTexts(['bounded'], { fetchImpl, timeoutMs: 20 }), /deadline/)
+  assert.ok(Date.now() - start < 450)
+})

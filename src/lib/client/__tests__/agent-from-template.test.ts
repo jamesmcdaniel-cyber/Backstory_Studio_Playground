@@ -2,7 +2,7 @@ import '@/test-support/jsdom-env'
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { agentHref, createAgentFromTemplate } from '../agent-from-template'
-import { resetSnapshotCache } from '../snapshot'
+import { getSnapshot, peekSnapshot, resetSnapshotCache } from '../snapshot'
 
 /**
  * The invariant: connecting a template to an agent lands the user ON the agent
@@ -126,4 +126,19 @@ test('a create that answers without an id still lands in Agent HQ, not the home 
 
   assert.equal(result.ok, true)
   assert.equal(result.ok && result.href, '/agents')
+})
+
+test('a complete create response navigates without waiting for workspace revalidation', async () => {
+  const agent = { ...TEMPLATE, id: 'created', title: TEMPLATE.name }
+  globalThis.fetch = async () => Response.json({ agents: [], activeOrganizationId: 'org-a' })
+  await getSnapshot(0)
+  let finishRefresh!: (r: Response) => void
+  globalThis.fetch = (async (url: unknown) => String(url) === '/api/agents'
+    ? Response.json({ success: true, agent })
+    : new Promise<Response>(resolve => { finishRefresh = resolve })) as typeof fetch
+  const result = await createAgentFromTemplate(TEMPLATE)
+  assert.equal(result.ok && result.href, agentHref('created'))
+  assert.equal(peekSnapshot()?.agents[0].id, 'created')
+  finishRefresh(Response.json({ agents: [agent], activeOrganizationId: 'org-a' }))
+  await getSnapshot(0)
 })

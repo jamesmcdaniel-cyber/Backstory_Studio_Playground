@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ARTIFACT_RENDER_MODEL, ARTIFACT_RENDER_SPEC, buildArtifactRenderPrompt, evidenceFromTranscript, isDeliverable } from '../artifact-renderer'
+import { ARTIFACT_RENDER_MODEL, ARTIFACT_RENDER_SPEC, buildArtifactRenderPrompt, evidenceFromTranscript, isDeliverable, needsArtifactRender } from '../artifact-renderer'
 
 test('artifacts are rendered on Opus 5.5 by default', () => {
   assert.equal(ARTIFACT_RENDER_MODEL, process.env.ARTIFACT_RENDER_MODEL?.trim() || 'claude-opus-5-5')
@@ -31,4 +31,11 @@ test('only a deliverable is rendered — prose and Markdown answers are not', ()
   assert.equal(isDeliverable('<!doctype html><html><body><h1>Report</h1></body></html>'), true)
   assert.equal(isDeliverable('export default function App() { return <div>x</div> }'), true)
   assert.equal(isDeliverable('Here are the three reps to coach this week: Ana, Bo and Cy.'), false)
+})
+
+test('working concise applications do not pay for a second whole-app generation', () => {
+  assert.equal(needsArtifactRender('export default function App() { return <button onClick={() => alert("ok")}>Run</button> }'), false)
+  assert.equal(needsArtifactRender('<!doctype html><html><body><button onclick="this.textContent=\'Done\'">Run</button></body></html>'), false)
+  assert.equal(needsArtifactRender('export default function App() { return <div>'), true)
+  assert.equal(needsArtifactRender('<!doctype html><html><body><h1>Draft report</h1></body></html>'), true)
 })

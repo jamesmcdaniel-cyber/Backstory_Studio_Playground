@@ -193,7 +193,7 @@ export function buildWorkerSpecs(
 /** The subset of a BullMQ Worker this runtime drives. */
 export interface WorkerHandle {
   isRunning: () => boolean
-  on: (event: 'failed' | 'stalled', listener: (...args: any[]) => void) => unknown
+  on: (event: 'failed' | 'stalled' | 'active' | 'completed', listener: (...args: any[]) => void) => unknown
   close: () => Promise<unknown>
 }
 
@@ -275,6 +275,14 @@ class WorkerRuntime {
     this.workers.forEach((worker, index) => {
       const spec = this.workerSpecs[index]
       worker.on('failed', spec.onFailed)
+      // Queue age includes intentional delays/retries; log them separately
+      // rather than presenting the whole interval as scheduler latency.
+      worker.on('active', (job) => {
+        this.server.log.info({ queue: spec.queue, jobId: job.id, queueAgeMs: Math.max(0, (job.processedOn ?? Date.now()) - job.timestamp), scheduledDelayMs: job.opts?.delay ?? 0, attemptsMade: job.attemptsMade }, 'Worker job started')
+      })
+      worker.on('completed', (job) => {
+        this.server.log.info({ queue: spec.queue, jobId: job.id, executionMs: Math.max(0, (job.finishedOn ?? Date.now()) - (job.processedOn ?? Date.now())) }, 'Worker job completed')
+      })
       worker.on('stalled', (jobId: string) => {
         const error = new Error(`BullMQ job stalled on ${spec.queue}: ${jobId}`)
         this.server.log.error({ queue: spec.queue, jobId }, 'Worker job stalled')

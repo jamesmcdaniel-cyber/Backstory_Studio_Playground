@@ -37,7 +37,9 @@ async function embeddingsFor(
     return { vectors: null, error: 'No embedding provider is configured for this deployment.' }
   }
   try {
-    return { vectors: await embedTexts(chunks, { inputType: 'document' }), error: null }
+    // Persist keyword-searchable chunks promptly if the provider is slow. The
+    // durable re-embed sweep retries missing vectors; no upload is discarded.
+    return { vectors: await embedTexts(chunks, { inputType: 'document', timeoutMs: 8_000 }), error: null }
   } catch (error) {
     // Retrieval degrades to the per-document keyword pass rather than failing
     // the upload — but the reason is persisted so the document can say why it

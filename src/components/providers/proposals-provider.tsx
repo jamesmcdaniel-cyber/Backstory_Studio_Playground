@@ -1,6 +1,7 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { ProposalsContext as Context, type ProposalsContextValue } from './proposals-context'
 import { toast } from 'sonner'
 import { useSupabase } from './supabase-provider'
 import { ProposalDetailDialog } from '@/components/onboarding/proposal-detail-dialog'
@@ -9,20 +10,7 @@ import type { ProposalCard } from '@/components/onboarding/proposal-shared'
 import { isCustomerEdition } from '@/lib/edition'
 
 /** Poll cadence + budget while generation may still be landing proposals. */
-const POLL_MS = 5_000
-const POLL_BUDGET = 24 // ~2 minutes, then it goes static until the next remount
-
-type ProposalsContextValue = {
-  proposals: ProposalCard[]
-  loaded: boolean
-  busyId: string | null
-  accept: (proposal: ProposalCard) => Promise<void>
-  dismiss: (proposal: ProposalCard) => Promise<void>
-  /** Open the shared detail popup for a proposal. */
-  openDetail: (proposal: ProposalCard) => void
-}
-
-const Context = createContext<ProposalsContextValue | null>(null)
+const POLL_MS = 30_000
 
 /**
  * Single source of truth for AI recommendation proposals, shared by every
@@ -36,7 +24,6 @@ export function ProposalsProvider({ children }: { children: React.ReactNode }) {
   const [loaded, setLoaded] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [detail, setDetail] = useState<ProposalCard | null>(null)
-  const polls = useRef(0)
 
   useEffect(() => {
     // The customer edition has no AI proposals. The provider stays MOUNTED and
@@ -51,13 +38,11 @@ export function ProposalsProvider({ children }: { children: React.ReactNode }) {
     if (!user) {
       setProposals([])
       setLoaded(false)
-      polls.current = 0
       return
     }
     let alive = true
     let inFlight = false
     let stopped = false
-    polls.current = 0
     const load = async () => {
       if (inFlight || stopped || document.hidden) return
       inFlight = true
@@ -71,16 +56,15 @@ export function ProposalsProvider({ children }: { children: React.ReactNode }) {
     }
     void load()
     const timer = window.setInterval(() => {
-      polls.current += 1
-      if (polls.current > POLL_BUDGET) {
-        window.clearInterval(timer)
-        return
-      }
       void load()
     }, POLL_MS)
+    // Catch up on return without a permanent two-minute polling cutoff.
+    const visible = () => { if (!document.hidden) void load() }
+    document.addEventListener('visibilitychange', visible)
     return () => {
       alive = false
       window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', visible)
     }
   }, [user])
 

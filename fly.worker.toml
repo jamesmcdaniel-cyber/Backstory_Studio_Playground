@@ -10,7 +10,7 @@
 # DATABASE_URL is NOT Vercel's string: this is a long-lived process running
 # six BullMQ workers: three interactive queues at AGENT_WORKER_CONCURRENCY and
 # three batch queues at BATCH_WORKER_CONCURRENCY. With defaults below that is
-# 21 job slots plus two infrastructure connections; use the transaction pooler
+# 18 job slots plus two infrastructure connections; use the transaction pooler
 # with ?pgbouncer=true&connection_limit=25 (Vercel's connection_limit=1 would
 # queue all jobs behind one connection → Prisma P2024).
 #
@@ -83,10 +83,10 @@ primary_region = "iad"
   # again.
   # Per-worker, PER-QUEUE interactive concurrency. This all-pool app starts
   # three interactive queues at this value and three batch queues at
-  # BATCH_WORKER_CONCURRENCY (default 2). Boot derives pool demand from those
+  # BATCH_WORKER_CONCURRENCY (1 here). Boot derives pool demand from those
   # exact specs; it is not a fixed queue multiplier.
   AGENT_WORKER_CONCURRENCY = "5"
-  BATCH_WORKER_CONCURRENCY = "2"
+  BATCH_WORKER_CONCURRENCY = "1"
   # Per-workspace in-flight ceiling, enforced at dispatch (org-capacity.ts).
   ORG_MAX_INFLIGHT_RUNS = "10"
   AGENT_MODEL = "claude-sonnet-5-5"
@@ -111,12 +111,12 @@ primary_region = "iad"
   #
   # CAPACITY MATH, because the two ceilings here are easy to breach silently:
   #
-#   slots      = (3 interactive x 5) + (3 batch x 2)
-#              = 21 in-flight jobs per machine
+#   slots      = (3 interactive x 5) + (3 batch x 1)
+#              = 18 in-flight jobs per machine + 2 DB reserve = 20 connections
   #   fleet      = slots x machine count
   #   ORG_MAX_INFLIGHT_RUNS = 10 caps any ONE workspace's share of that fleet.
   #
-# At 3 machines the fleet is 63 slots, so SEVEN busy workspaces saturate the
+# At 3 machines the fleet is 54 slots, so SIX busy workspaces can saturate the
   # whole platform. That is the number to size against — not the user count.
   #
   # And every slot is a database connection: DATABASE_URL's connection_limit

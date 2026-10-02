@@ -114,6 +114,7 @@ export function withAuthenticatedApi(
   },
 ) {
   return async (request: NextRequest, context?: unknown): Promise<Response> => {
+    const requestStarted = performance.now()
     // Held outside the try so the catch can attribute a 403 to the account that
     // earned it. A 401 never reaches this — there is no identity to record.
     let authContext: AuthContext | null = null
@@ -191,11 +192,21 @@ export function withAuthenticatedApi(
       // queries. A hint about WHICH tenant, not a grant: the permission gate
       // above already decided the caller may be here, and PostgreSQL's policy
       // is still what enforces.
+      const handlerStarted = performance.now()
       const result = await ambientOrganization.run(auth.organizationId, () =>
         handler(handlerRequest, auth, context),
       )
 
-      return result instanceof Response ? result : NextResponse.json(result)
+      const response = result instanceof Response
+        ? new Response(result.body, { status: result.status, statusText: result.statusText, headers: result.headers })
+        : NextResponse.json(result)
+      // Response-ready timing, not streaming completion/first-token time.
+      // No identity or request contents are exposed in these browser metrics.
+      response.headers.append('Server-Timing', `api_gate;dur=${(handlerStarted - requestStarted).toFixed(1)}, handler_ready;dur=${(performance.now() - handlerStarted).toFixed(1)}`)
+      if (performance.now() - requestStarted >= 1_000) {
+        apiLogger.info('Slow API response ready', { path: request.nextUrl.pathname, status: response.status, gateMs: Math.round(handlerStarted - requestStarted), handlerReadyMs: Math.round(performance.now() - handlerStarted) })
+      }
+      return response
     } catch (error) {
       if (error instanceof AuthContextError) {
         // 401 is anonymous by definition; 403 always has an identity behind it,

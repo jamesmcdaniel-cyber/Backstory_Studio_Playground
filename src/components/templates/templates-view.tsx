@@ -111,8 +111,10 @@ export function TemplatesView() {
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [skills, setSkills] = useState<SkillItem[]>([])
   const [agents, setAgents] = useState<AgentItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [loadState, setLoadState] = useState({ templates: true, skills: true })
+  const [loadErrors, setLoadErrors] = useState<{ templates: string | null; skills: string | null }>({ templates: null, skills: null })
+  const loading = loadState[activeTab]
+  const error = loadErrors[activeTab]
   // One search box filters whichever tab is active (name/description/category/tags).
   const [search, setSearch] = useState(() => searchParams.get('q') || '')
   // Card grids cap at 9 per page; each tab pages independently.
@@ -286,31 +288,25 @@ export function TemplatesView() {
 
   useEffect(() => {
     let cancelled = false
-    const load = async () => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
+    const load = async (kind: 'templates' | 'skills' | 'agents', url: string) => {
       try {
-        const [templatesRes, skillsRes, agentsRes] = await Promise.all([
-          fetch('/api/agent-templates', { cache: 'no-store' }),
-          fetch('/api/skills', { cache: 'no-store' }),
-          fetch('/api/agents', { cache: 'no-store' }),
-        ])
-        if (!templatesRes.ok) throw new Error(`Templates fetch failed: status ${templatesRes.status}`)
-        const [templatesData, skillsData, agentsData] = await Promise.all([
-          templatesRes.json(),
-          skillsRes.ok ? skillsRes.json() : { success: false, skills: [] },
-          agentsRes.ok ? agentsRes.json() : { success: false, agents: [] },
-        ])
+        const response = await fetch(url, { cache: 'no-store', signal: controller.signal })
+        if (!response.ok) throw new Error(`Could not load ${kind} (${response.status}).`)
+        const data = await response.json()
         if (cancelled) return
-        setTemplates(templatesData.templates || [])
-        setSkills(skillsData.success ? skillsData.skills : [])
-        setAgents(agentsData.success ? agentsData.agents : [])
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load templates')
+        if (kind === 'templates') setTemplates(data.templates || [])
+        if (kind === 'skills') setSkills(data.skills || [])
+        if (kind === 'agents') setAgents(data.agents || [])
+      } catch (e) {
+        if (!cancelled && kind !== 'agents') setLoadErrors(previous => ({ ...previous, [kind]: controller.signal.aborted ? 'Loading timed out. Reload to retry.' : e instanceof Error ? e.message : 'Loading failed.' }))
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && kind !== 'agents') setLoadState(previous => ({ ...previous, [kind]: false }))
       }
     }
-    load()
-    return () => { cancelled = true }
+    void Promise.all([load('templates', '/api/agent-templates'), load('skills', '/api/skills'), load('agents', '/api/agents')]).finally(() => clearTimeout(timeout))
+    return () => { cancelled = true; clearTimeout(timeout); controller.abort() }
   }, [])
 
   // Close dropdown when clicking outside
@@ -403,6 +399,10 @@ export function TemplatesView() {
       <>
         <div className="space-y-6">
           <PageHeader eyebrow="Workspace" title="Library" />
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setActiveTab('templates')}>Templates</Button>
+            <Button variant="outline" onClick={() => setActiveTab('skills')}>Skills</Button>
+          </div>
           {loading && (
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               <Skeleton className="h-56 rounded-xl" />

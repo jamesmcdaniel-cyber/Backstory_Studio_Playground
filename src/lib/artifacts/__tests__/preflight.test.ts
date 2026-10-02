@@ -26,6 +26,12 @@ test('runtime preflight fails closed, accepts explicit passes, and preserves val
     assert.equal(posted, true)
     globalThis.fetch = async () => Response.json({ ok: true, checks: ['startup'] })
     await validateArtifactRuntime(source)
+    let validations = 0
+    globalThis.fetch = async () => { validations++; await new Promise(resolve => setTimeout(resolve, 10)); return Response.json({ ok: true }) }
+    await Promise.all(Array.from({ length: 8 }, () => validateArtifactRuntime(source)))
+    assert.equal(validations, 1, 'identical overlapping candidates share validation')
+    await validateArtifactRuntime(source)
+    assert.equal(validations, 2, 'a past success never skips a new validation')
     globalThis.fetch = async () => Response.json({ success: true })
     await assert.rejects(validateArtifactRuntime(source), /failed browser startup validation/)
     globalThis.fetch = async () => { throw new Error('network unavailable') }

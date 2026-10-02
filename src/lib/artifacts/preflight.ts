@@ -1,5 +1,16 @@
+import { createHash } from 'node:crypto'
+import { singleFlight } from '@/lib/single-flight'
+
+const validateOnce = singleFlight<void>()
+
+/** Only overlapping identical validations share work. Never cache a past pass. */
+export function validateArtifactRuntime(content: string): Promise<void> {
+  const key = createHash('sha256').update(JSON.stringify([content, process.env.ARTIFACT_VALIDATOR_URL, process.env.ARTIFACT_VALIDATOR_TOKEN, process.env.ARTIFACT_RUNTIME_PREFLIGHT])).digest('hex')
+  return validateOnce(key, () => validateRuntime(content))
+}
+
 /** Browser startup gate. No generated code executes in the API or agent worker. */
-export async function validateArtifactRuntime(content: string): Promise<void> {
+async function validateRuntime(content: string): Promise<void> {
   if (!/<script\b|<py-script\b|\bexport\s+default\b|\bon\w+\s*=/i.test(content)) return
   const endpoint = process.env.ARTIFACT_VALIDATOR_URL
   const token = process.env.ARTIFACT_VALIDATOR_TOKEN

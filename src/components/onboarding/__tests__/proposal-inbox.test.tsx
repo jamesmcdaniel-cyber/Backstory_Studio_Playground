@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import React from 'react'
 import { render, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { ProposalInbox } from '../proposal-inbox'
+import { ProposalsContext } from '@/components/providers/proposals-context'
 
 const proposal = (over: Record<string, unknown> = {}) => ({
   id: 'p1',
@@ -12,6 +13,14 @@ const proposal = (over: Record<string, unknown> = {}) => ({
   kind: 'agent_template',
   status: 'open',
   ...over,
+})
+
+test('an inbox inside the shared provider never starts a second fetch or poll', async () => {
+  const stub = stubFetch({})
+  try {
+    render(<ProposalsContext.Provider value={{ proposals: [], loaded: true, busyId: null, accept: async () => {}, dismiss: async () => {}, openDetail: () => {} }}><ProposalInbox generating={false} /></ProposalsContext.Provider>)
+    assert.deepEqual(stub.calls, [])
+  } finally { cleanup(); stub.restore() }
 })
 
 function stubFetch(routes: Record<string, (init?: RequestInit) => unknown>) {

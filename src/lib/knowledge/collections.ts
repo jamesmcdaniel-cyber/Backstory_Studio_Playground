@@ -6,7 +6,7 @@
  * is a label, and deleting a label must not destroy what it labelled.
  */
 
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { assertRepositoryAgentScope } from './repository'
 
 export class CollectionNotFoundError extends Error {}
@@ -80,19 +80,23 @@ export async function setDocumentCollections(params: {
     where: { organizationId: params.organizationId, id: { in: params.collectionIds } },
     select: { id: true },
   })
-  await prisma.$transaction([
-    prisma.knowledgeDocumentCollection.deleteMany({
+  // One tenant transaction with the two statements awaited in order. The
+  // array form of $transaction is not safe here: with RLS on, each guarded
+  // query is routed into its own transaction, so "delete then insert" could
+  // land as "insert then delete" and leave the document with no collections.
+  await tenantTransaction(params.organizationId, async (tx) => {
+    await tx.knowledgeDocumentCollection.deleteMany({
       where: { documentId: params.documentId, organizationId: params.organizationId },
-    }),
-    prisma.knowledgeDocumentCollection.createMany({
+    })
+    await tx.knowledgeDocumentCollection.createMany({
       data: valid.map((collection) => ({
         documentId: params.documentId,
         collectionId: collection.id,
         organizationId: params.organizationId,
       })),
       skipDuplicates: true,
-    }),
-  ])
+    })
+  })
   return valid.map((collection) => collection.id)
 }
 
@@ -114,19 +118,20 @@ export async function setAgentCollections(params: {
     where: { organizationId: params.organizationId, id: { in: params.collectionIds } },
     select: { id: true },
   })
-  await prisma.$transaction([
-    prisma.agentKnowledgeCollection.deleteMany({
+  // Ordered inside one tenant transaction — see setDocumentCollections.
+  await tenantTransaction(params.organizationId, async (tx) => {
+    await tx.agentKnowledgeCollection.deleteMany({
       where: { agentId: params.agentId, organizationId: params.organizationId },
-    }),
-    prisma.agentKnowledgeCollection.createMany({
+    })
+    await tx.agentKnowledgeCollection.createMany({
       data: valid.map((collection) => ({
         agentId: params.agentId,
         collectionId: collection.id,
         organizationId: params.organizationId,
       })),
       skipDuplicates: true,
-    }),
-  ])
+    })
+  })
   return valid.map((collection) => collection.id)
 }
 

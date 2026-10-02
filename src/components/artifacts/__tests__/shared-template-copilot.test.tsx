@@ -116,6 +116,25 @@ test('a visitor can look back through their copy’s versions and restore one, w
   } finally { cleanup(); net.restore() }
 })
 
+test('a copy the server already resolved is on screen from the first paint — the original never flashes, and nothing is looked up', async () => {
+  const net = stubFetch(() => Response.json({ error: 'unexpected' }, { status: 500 }))
+  try {
+    const asGuest = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest([], 'gv3'), versions: [] } as never }}><p>original</p></SharedTemplateCopilot>)
+    // Synchronously, before any effect or fetch: this is what the server sends.
+    assert.equal(asGuest.queryByText('original'), null)
+    assert.equal(asGuest.container.querySelector('iframe')?.getAttribute('src'), '/api/share/artifacts/test-token/copilot/content?copy=guest-copy&v=gv3')
+    cleanup()
+    const asMember = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'member', id: 'copy-1', artifact: copy([], 3) as never }}><p>original</p></SharedTemplateCopilot>)
+    assert.equal(asMember.queryByText('original'), null)
+    cleanup()
+    // No copy yet: the original, and still no lookup — the server already looked.
+    const none = render(<SharedTemplateCopilot token="test-token" initialCopy={null}><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    assert.ok(none.getByText('original'))
+    assert.equal(net.calls.filter((call) => !call.url.includes('/state') && !call.url.includes('/versions/')).length, 0)
+  } finally { cleanup(); net.restore() }
+})
+
 test('someone signed in who comes back sees their copy’s latest version without opening the copilot', async () => {
   const net = stubFetch((call) => call.url.endsWith('/copy') ? Response.json({ success: true, artifactId: 'copy-1' }) : Response.json({ success: true, artifact: copy([], 3) }))
   try {

@@ -21,9 +21,10 @@ const RESUME_KEY = 'backstory:template-copilot'
  * workspace (the app's artifact APIs); anyone else gets a guest copy held by
  * the sender's workspace, reached only through this link's public endpoints.
  */
-type Copy =
+export type TemplateCopy =
   | { kind: 'member'; id: string; artifact: ArtifactView | null }
   | { kind: 'guest'; view: GuestCopilotView }
+type Copy = TemplateCopy
 
 /**
  * A shared template's public page with its copilot in place: the launcher sits
@@ -34,9 +35,9 @@ type Copy =
  * becomes editable. `children` is the original, which is what an unedited copy
  * is; the frame moves to the copy only once the copilot has changed it.
  */
-export function SharedTemplateCopilot({ token, isPage = true, returning = false, children }: { token: string; isPage?: boolean; returning?: boolean; children: ReactNode }) {
+export function SharedTemplateCopilot({ token, isPage = true, returning = false, initialCopy, children }: { token: string; isPage?: boolean; returning?: boolean; /** The visitor's existing copy as the server resolved it (null: none) — the page then paints their latest version first, with no flash of the original. Left out, the copy is looked up after load. */ initialCopy?: TemplateCopy | null; children: ReactNode }) {
   const [open, setOpen] = useState(false)
-  const [copy, setCopy] = useState<Copy | null>(null)
+  const [copy, setCopy] = useState<Copy | null>(initialCopy ?? null)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -106,6 +107,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       if (resume) window.sessionStorage.removeItem(RESUME_KEY)
     } catch { /* storage blocked */ }
     if (resume) { setOpen(true); void openCopy(true); return }
+    if (initialCopy !== undefined) return // the server already looked
     // Someone coming back sees the copy they already changed — its latest
     // version, panel closed — without having to open the copilot first.
     // Looking never creates a copy; only opening the copilot does.
@@ -131,7 +133,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       } catch { /* the original stays on screen */ }
     })()
     return () => { cancelled = true }
-  }, [token, returning, guestUrl, openCopy, refresh])
+  }, [token, returning, initialCopy, guestUrl, openCopy, refresh])
 
   const toggle = () => {
     const next = !open
@@ -152,7 +154,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   // The page moves to a new version ONCE, when the copilot has finished: a run
   // that saves several times on the way would otherwise reload it under the
   // visitor at every save.
-  const [versionId, setVersionId] = useState<string | null>(null)
+  const [versionId, setVersionId] = useState<string | null>(latestVersionId)
   useEffect(() => { setVersionId((shown) => (!busy || shown === null ? latestVersionId : shown)) }, [busy, latestVersionId])
   // Version history: the copy's versions, newest first. Looking at an older
   // one is a view (`viewId`); the page otherwise follows the latest.

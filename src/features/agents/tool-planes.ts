@@ -584,11 +584,13 @@ export async function loadNativePlaneGroups(
 export async function loadNangoPlaneGroups(
   organizationId: string,
   ownerUserId?: string | null,
-  options: { providers?: string[] } = {},
+  options: { providers?: string[]; connectionIds?: string[] } = {},
 ): Promise<ToolPlaneGroup[]> {
   if (!nangoConfigured()) return []
   const groups: ToolPlaneGroup[] = []
+  const wanted = options.connectionIds ? new Set(options.connectionIds) : null
   for (const spec of DELIVERY_TOOLS) {
+    if (wanted && !wanted.has(formatFlowToolConnectionId('nango', spec.capability))) continue
     const connector = nangoConnector(spec.capability)
     if (!connector) continue
     if (options.providers && !isSelected(connector, options.providers)) continue
@@ -651,6 +653,7 @@ export async function loadNangoPlaneGroups(
   // many tools and repeating the same reason for each would bury the signal.
   const reportedUnavailable = new Set<string>()
   for (const tool of NANGO_PROVIDER_TOOLS) {
+    if (wanted && !wanted.has(formatFlowToolConnectionId('nango', tool.name))) continue
     if (options.providers && !options.providers.some((p) => p === `nango:${tool.provider}` || p.toLowerCase() === tool.provider)) continue
     try {
       if (!connByProvider.has(tool.provider)) {

@@ -62,12 +62,12 @@ export async function loadRunValidationContext(
   scope: RunValidationScope,
 ): Promise<RunValidationContext> {
   const { connectionIds, credentialIds, credentialResolverIds } = referencedIds(graph)
+  const agentIds = [...new Set(graph.nodes.flatMap(node => node.type === 'agent' ? [node.data.agentId] : []))]
   const [agents, toolCatalog, httpCredentials, credentialResolvers] = await Promise.all([
-    prisma.agentTask.findMany({
-      where: { organizationId: scope.organizationId, status: 'ACTIVE', ...agentVisibilityScope(scope.userId) },
+    agentIds.length ? prisma.agentTask.findMany({
+      where: { organizationId: scope.organizationId, id: { in: agentIds }, status: 'ACTIVE', ...agentVisibilityScope(scope.userId) },
       select: { id: true, description: true, updatedAt: true },
-      take: 500,
-    }),
+    }) : Promise.resolve([]),
     connectionIds.length
       ? loadFlowToolCatalog(scope.organizationId, {
           userId: scope.userId,

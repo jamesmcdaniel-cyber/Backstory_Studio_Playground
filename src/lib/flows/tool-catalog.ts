@@ -25,7 +25,7 @@ import {
   loadPeopleAiPlaneGroup,
   type ToolPlaneGroup,
 } from '@/features/agents/tool-planes'
-import { planesForConnectionIds } from '@/lib/flows/tool-connection-id'
+import { planesForConnectionIds, parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 
 export { mcpConnectionScope } from '@/features/agents/tool-planes'
 
@@ -49,8 +49,8 @@ export async function loadFlowToolCatalog(
           take: options.takeConnections ?? 25,
         }).catch(() => [] as ToolPlaneGroup[])
       : [],
-    wantPlane('native') ? loadNativePlaneGroups(organizationId).catch(() => [] as ToolPlaneGroup[]) : [],
-    wantPlane('nango') ? loadNangoPlaneGroups(organizationId, options.userId).catch(() => [] as ToolPlaneGroup[]) : [],
+    wantPlane('native') ? loadNativePlaneGroups(organizationId, wanted ? { providers: options.connectionIds!.map(parseFlowToolConnectionId).filter(id => id.plane === 'native').map(id => id.ref) } : {}).catch(() => [] as ToolPlaneGroup[]) : [],
+    wantPlane('nango') ? loadNangoPlaneGroups(organizationId, options.userId, wanted ? { connectionIds: options.connectionIds } : {}).catch(() => [] as ToolPlaneGroup[]) : [],
   ])
 
   // MCP rows stay first so existing pickers/graphs see a stable ordering, then

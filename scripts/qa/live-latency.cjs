@@ -38,6 +38,8 @@ async function main() {
           await new Promise(resolve => setTimeout(resolve, 500))
         }
       }
+      const interval = Math.min(10_000, Math.max(0, Number(process.env.QA_INTERVAL_MS) || 0))
+      if (interval && round < rounds - 1) await new Promise(resolve => setTimeout(resolve, interval))
     }
   })
   const candidates = [

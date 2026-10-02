@@ -158,6 +158,20 @@ function toolLabel(step: ProcessToolStep): string {
   }
 }
 
+// Steps every assistant reply takes just to see the page it is answering
+// about, or to hear the user's answer — not work worth narrating.
+const ROUTINE_TOOLS = new Set(['ask_user', ...['get_artifact', 'read_artifact', 'find_in_artifact'].flatMap((name) => [`artifact.${name}`, `artifact_${name}`])])
+
+/**
+ * Whether a run has done anything a reader would want narrated: a call out to
+ * a data source, an integration or code, or an edit. Recalling memory,
+ * thinking and reading the page being asked about are what every reply does,
+ * so a quick question stays a quick answer instead of a run log.
+ */
+export function hasAgentWork(items: TimelineItem[]): boolean {
+  return items.some((item) => item.kind === 'tool' && !ROUTINE_TOOLS.has(item.step.node))
+}
+
 export function feedLabel(item: TimelineItem): string {
   switch (item.kind) {
     case 'thinking':

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { ExternalLink, Loader2 } from 'lucide-react'
-import { buildProcessTimeline, feedLabel, type ProcessEvent, type ProcessToolStep } from '@/lib/agents/process-feed'
+import { buildProcessTimeline, feedLabel, hasAgentWork, type ProcessEvent, type ProcessToolStep } from '@/lib/agents/process-feed'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { TypewriterStatus } from '@/components/ui/typewriter-status'
@@ -21,7 +21,7 @@ type ExecutionDetail = {
  * toast. Ticks come over the execution's realtime channel; a slow poll
  * covers deployments without one.
  */
-export function RunFeed({ executionId, status, onStatusChange, compact = false, runsLink = true }: { executionId: string; status: string; onStatusChange?: (status: string) => void; compact?: boolean; /** Off where the reader may not own the agent behind the run (a shared artifact): the Runs panel would have nothing to show them. */ runsLink?: boolean }) {
+export function RunFeed({ executionId, status, onStatusChange, compact = false, runsLink = true, quietUntilWork = false }: { executionId: string; status: string; onStatusChange?: (status: string) => void; compact?: boolean; /** For a chat reply: stay a one-line "thinking" indicator until the run calls a data source, runs code or makes an edit, so a quick question is not answered with a run log. */ quietUntilWork?: boolean; /** Off where the reader may not own the agent behind the run (a shared artifact): the Runs panel would have nothing to show them. */ runsLink?: boolean }) {
   const [detail, setDetail] = useState<ExecutionDetail | null>(null)
   const live = !isTerminalRunStatus(status)
 
@@ -46,6 +46,10 @@ export function RunFeed({ executionId, status, onStatusChange, compact = false, 
   const items = detail ? buildProcessTimeline(detail.events, detail.steps).items : []
   const rows = items.slice(-12)
   const latest = rows[rows.length - 1]
+
+  if (quietUntilWork && live && !hasAgentWork(items)) {
+    return <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /><TypewriterStatus /></div>
+  }
 
   return (
     <div className={`min-w-0 rounded-xl border border-border bg-muted/30 ${compact ? 'p-3' : 'p-4'}`}>

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildProcessTimeline, feedLabel, type TimelineItem } from '../process-feed'
+import { buildProcessTimeline, feedLabel, hasAgentWork, type TimelineItem } from '../process-feed'
 
 function toolItem(node: string, status = 'succeeded'): TimelineItem {
   return { key: 'k', ts: 0, kind: 'tool', step: { id: 's', node, status } }
@@ -40,4 +40,16 @@ test('knowledge events land on the timeline with their cited documents', () => {
   assert.equal(knowledge.length, 2)
   assert.match((knowledge[0] as { summary: string }).summary, /Offered 3/)
   assert.deepEqual((knowledge[1] as { documents: unknown }).documents, [{ id: 'd1', filename: 'journey.md' }])
+})
+
+test('a reply that only recalls memory and reads its own page is not agent work', () => {
+  const memory: TimelineItem = { key: 'm', ts: 0, kind: 'memory', summary: 'Recalled 1 memory from previous runs.' }
+  assert.equal(hasAgentWork([memory, toolItem('artifact.read_artifact'), toolItem('artifact.get_artifact'), toolItem('ask_user')]), false)
+  assert.equal(hasAgentWork([]), false)
+})
+
+test('querying a data source, running code or editing the page is agent work', () => {
+  assert.equal(hasAgentWork([toolItem('artifact.read_artifact'), toolItem('backstory.find_account', 'running')]), true)
+  assert.equal(hasAgentWork([toolItem('artifact.edit_artifact', 'running')]), true)
+  assert.equal(hasAgentWork([toolItem('code.run_code')]), true)
 })

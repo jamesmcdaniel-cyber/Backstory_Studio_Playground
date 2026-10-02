@@ -389,7 +389,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                     <Markdown>{m.question}</Markdown>
                   </div>
                 ) : m.role === 'agent' && m.status === 'pending' ? (
-                  m.executionId ? <RunFeed executionId={m.executionId} status="running" compact onStatusChange={refresh} /> :
+                  m.executionId ? <RunFeed executionId={m.executionId} status="running" compact quietUntilWork onStatusChange={refresh} /> :
                     <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {m.mode === 'change' ? 'Revising…' : 'Working on it…'}</div>
                 ) : m.role === 'agent' ? (
                   <div className={cn(m.status === 'failed' && 'text-destructive')}>

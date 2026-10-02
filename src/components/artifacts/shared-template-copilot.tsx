@@ -236,7 +236,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
                   </div>
                 ) : m.role === 'agent' && m.status === 'pending' ? (
                   // The run feed reads the app's run APIs, which a guest has no session for.
-                  m.executionId && copy?.kind === 'member' ? <RunFeed executionId={m.executionId} status="running" compact runsLink={ownsAgent} onStatusChange={() => void refresh()} /> :
+                  m.executionId && copy?.kind === 'member' ? <RunFeed executionId={m.executionId} status="running" compact quietUntilWork runsLink={ownsAgent} onStatusChange={() => void refresh()} /> :
                     <div className="flex items-center gap-2 text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Working on it…</div>
                 ) : m.role === 'agent' ? (
                   <div className={cn(m.status === 'failed' && 'text-destructive')}><Markdown>{m.content}</Markdown></div>

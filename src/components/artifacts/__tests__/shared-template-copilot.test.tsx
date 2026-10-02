@@ -110,12 +110,14 @@ test('“Open in Runs” is offered only to the person who owns the copy’s age
     const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
     const link = ui.container.querySelector('a[href^="/agents?run="]')
     cleanup(); net.restore()
     return link
   }
   const member = (permissions: object) => (call: Call) => call.url.endsWith('/copy') ? Response.json({ success: true, artifactId: 'copy-1' })
-    : call.url.startsWith('/api/workflows') ? Response.json({ items: [] })
+    // The run log (and its link) shows once the run does real work — here, a data lookup.
+    : call.url.startsWith('/api/workflows') ? Response.json({ items: [{ execution: { id: 'run-1', status: 'running' }, steps: [{ id: 's1', node: 'backstory.find_account', status: 'running' }], events: [] }] })
     : Response.json({ success: true, artifact: { ...copy(pendingChat), permissions } })
   assert.ok(await open(member({ canEdit: true, canShare: false, reason: 'owner' })), 'the copy’s owner can open its run')
   assert.equal(await open(member({ canEdit: false, canShare: false, reason: 'view_only' })), null)

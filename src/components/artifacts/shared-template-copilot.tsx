@@ -124,7 +124,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
   const artifact = copy?.kind === 'member' ? copy.artifact : null
   const loaded = copy?.kind === 'guest' || Boolean(artifact)
-  const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
+  const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId' | 'question'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
   const versionId = copy?.kind === 'guest' ? copy.view.versionId : artifact?.currentVersionId ?? null
   const title = copy?.kind === 'guest' ? copy.view.title : artifact?.title ?? ''
   // An untouched copy IS the original: keep the page the visitor is already
@@ -132,13 +132,15 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const edited = copy?.kind === 'guest' ? copy.view.edited : (artifact?.versionCount ?? 1) > 1
   const pending = chat.find((m) => m.status === 'pending')
   const busy = Boolean(pending)
+  // The copilot paused on a question: it is asked and answered right here.
+  const awaiting = pending?.question ?? null
   const hasCopy = Boolean(copy)
   const canAsk = copy?.kind === 'guest' || (Boolean(artifact?.agent) && artifact?.permissions?.canEdit !== false && !artifact?.archivedAt)
 
   useEffect(() => (hasCopy && busy ? startVisibleInterval(() => void refresh(), 3_000) : undefined), [hasCopy, busy, refresh])
   useAgentExecStream(pending?.executionId, () => void refresh(), copy?.kind === 'member' && Boolean(pending?.executionId))
   useEffect(() => { if (open) chatEnd.current?.scrollIntoView({ block: 'nearest' }) }, [open, chat.length, pending])
-  useEffect(() => { if (open && loaded) inputRef.current?.focus() }, [open, loaded])
+  useEffect(() => { if (open && loaded) inputRef.current?.focus() }, [open, loaded, awaiting])
 
   // Where the copy's current version is served from. A guest copy is framed
   // from the public route; a member's goes through the app's stateful frame.
@@ -158,13 +160,14 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const send = async (event: React.FormEvent | null) => {
     event?.preventDefault()
     const outgoing = message.trim()
-    if (!outgoing || sending || busy || !copy) return
+    if (!outgoing || sending || (busy && !awaiting) || !copy) return
     setSending(true)
     setError('')
     try {
+      // While the copilot waits on its question, what is typed is the answer.
       const response = copy.kind === 'member'
-        ? await fetch(`/api/artifacts/${encodeURIComponent(copy.id)}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: outgoing, mode: 'auto' }) })
-        : await fetch(guestUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'ask', message: outgoing }) })
+        ? await fetch(`/api/artifacts/${encodeURIComponent(copy.id)}/${awaiting ? 'reply' : 'chat'}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(awaiting ? { message: outgoing } : { message: outgoing, mode: 'auto' }) })
+        : await fetch(guestUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: awaiting ? 'reply' : 'ask', message: outgoing }) })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; copilot?: GuestCopilotView; error?: string }
       if (copy.kind === 'member' && response.ok && data.artifact) setCopy({ kind: 'member', id: copy.id, artifact: data.artifact })
       else if (copy.kind === 'guest' && response.ok && data.copilot) setCopy({ kind: 'guest', view: data.copilot })
@@ -217,7 +220,12 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
             )}
             {chat.map((m, index) => (
               <div key={`${m.createdAt}-${index}`} className={cn('text-sm', m.role === 'user' && 'ml-6 rounded-xl bg-horizon-50 px-3 py-2')}>
-                {m.role === 'agent' && m.status === 'pending' ? (
+                {m.role === 'agent' && m.status === 'pending' && m.question ? (
+                  <div role="status" className="rounded-xl border border-horizon-200 bg-horizon-50/60 px-3 py-2">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-horizon-700">The copilot needs an answer</p>
+                    <Markdown>{m.question}</Markdown>
+                  </div>
+                ) : m.role === 'agent' && m.status === 'pending' ? (
                   // The run feed reads the app's run APIs, which a guest has no session for.
                   m.executionId && copy?.kind === 'member' ? <RunFeed executionId={m.executionId} status="running" compact onStatusChange={() => void refresh()} /> :
                     <div className="flex items-center gap-2 text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Working on it…</div>
@@ -249,11 +257,11 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
                   onKeyDown={(event) => { indentOnTab(event); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(event) } }}
                   rows={2}
                   maxLength={2000}
-                  disabled={busy}
-                  placeholder={busy ? 'Waiting for the copilot…' : 'Ask a question or describe a change'}
+                  disabled={busy && !awaiting}
+                  placeholder={awaiting ? 'Type your answer' : busy ? 'Waiting for the copilot…' : 'Ask a question or describe a change'}
                   className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 />
-                <Button type="submit" size="icon" disabled={!message.trim() || sending || busy} aria-label="Send message">
+                <Button type="submit" size="icon" disabled={!message.trim() || sending || (busy && !awaiting)} aria-label={awaiting ? 'Send answer' : 'Send message'}>
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <ArrowUp className="h-4 w-4" aria-hidden />}
                 </Button>
               </div>

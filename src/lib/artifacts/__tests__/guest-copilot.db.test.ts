@@ -137,6 +137,37 @@ if (!database) {
     assert.equal((await call('POST', { action: 'ask', message: 'x' }, '')).status, 404, 'no cookie, no copy to talk to')
   })
 
+  test('a question the copilot pauses on is asked and answered in the visitor’s own conversation', async () => {
+    const copy = await db.artifact.findFirstOrThrow({ where: { id: copyId, organizationId: host.organizationId } })
+    const run = await db.agentExecution.create({ data: {
+      organizationId: host.organizationId, userId: host.userId, agentTaskId: copy.agentTaskId!, agentType: 'CUSTOM', status: 'waiting_for_input', input: {},
+      trigger: { type: 'artifact', artifactId: copyId, guest: true, guestTemplateId: sourceId },
+      metadata: { pendingQuestion: { toolCallId: 'ask-1', question: 'Which accounts should I use?', stepId: 's', collectedResults: [] } },
+    } })
+    await db.artifact.update({ where: { id: copyId, organizationId: host.organizationId }, data: { chat: [
+      { role: 'user', content: 'Use different demo accounts', createdAt: 'a' },
+      { role: 'agent', content: '', executionId: run.id, status: 'pending', createdAt: 'a' },
+    ] } })
+
+    const asked = (await (await call('GET')).json()).copilot
+    assert.equal(asked.chat.at(-1).status, 'pending')
+    assert.equal(asked.chat.at(-1).question, 'Which accounts should I use?')
+    assert.equal(asked.chat.at(-1).executionId, undefined, 'still no run ids for a visitor')
+
+    assert.equal((await call('POST', { action: 'reply', message: 'x' }, '')).status, 404, 'only the visitor who owns the copy can answer')
+    const answered = await call('POST', { action: 'reply', message: 'EMEA enterprise accounts' })
+    assert.equal(answered.status, 200)
+    const chat = (await answered.json()).copilot.chat
+    assert.deepEqual(chat.slice(0, 3).map((m: any) => [m.role, m.content]), [
+      ['user', 'Use different demo accounts'],
+      ['agent', 'Which accounts should I use?'],
+      ['user', 'EMEA enterprise accounts'],
+    ])
+    assert.equal(chat.some((m: any) => m.question), false, 'an answered question is not asked again')
+    assert.equal(await db.executionMessage.count({ where: { executionId: run.id, role: 'user', content: 'EMEA enterprise accounts' } }), 1)
+    assert.equal((await call('POST', { action: 'reply', message: 'again' })).status, 400, 'nothing is waiting any more')
+  })
+
   test('turning the offer off closes the copilot and the copy’s page for visitors', async () => {
     const view = (await (await call('GET')).json()).copilot
     await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareTemplate: false } })

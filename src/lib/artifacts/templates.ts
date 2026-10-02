@@ -118,6 +118,7 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
       content: m.role === 'agent' && m.status === 'failed' ? 'The copilot could not finish that. Please try again.' : m.content,
       status: m.status,
       createdAt: m.createdAt,
+      ...(m.question ? { question: m.question } : {}),
     })),
   }
 }
@@ -204,6 +205,22 @@ export async function askGuestCopy(token: string, guestToken: string | null | un
     throw new ApiError(/^(Wait for the current answer|Type a message first)/.test(text) ? text : 'The copilot is unavailable right now. Please try again.', 400, 'MESSAGE_REJECTED', error)
   }
   return guestView(organizationId, copy.id)
+}
+
+/** A visitor's answer to the question their copilot paused on. */
+export async function replyGuestCopy(token: string, guestToken: string | null | undefined, message: string): Promise<GuestCopilotView> {
+  const source = await publicTemplate(token)
+  const guestDigest = guestDigestOf(guestToken)
+  const copy = await findGuestCopy(source, guestDigest)
+  if (!copy || !guestDigest) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
+  const { replyToArtifactQuestion } = await import('./service')
+  try {
+    await replyToArtifactQuestion({ organizationId: source.organizationId, id: copy.id, message, guestDigest })
+  } catch (error) {
+    const text = error instanceof Error ? error.message : ''
+    throw new ApiError(/^(The assistant is not waiting|Type a message first)/.test(text) ? text.replace('assistant', 'copilot') : 'The copilot is unavailable right now. Please try again.', 400, 'MESSAGE_REJECTED', error)
+  }
+  return guestView(source.organizationId, copy.id)
 }
 
 /** One version of a guest copy as a page. The copy's id is a 122-bit random value only its visitor was given. */

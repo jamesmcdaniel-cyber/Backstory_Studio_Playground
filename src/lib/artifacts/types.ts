@@ -14,6 +14,12 @@ export type ArtifactChatMessage = {
   /** Set on an agent message once its run produced a version. */
   versionId?: string
   status?: 'pending' | 'completed' | 'failed'
+  /** Set on a pending agent message while its run is paused on a question for
+   *  the person; answering it (the artifact's reply route) resumes the run. */
+  question?: string
+  /** The question already answered on this message (its tool-call id), so it
+   *  is not asked again while the resume is still being picked up. */
+  answeredQuestionId?: string
   /** The model that answered, when one was picked. */
   model?: string
   createdAt: string
@@ -78,5 +84,5 @@ export type GuestCopilotView = {
   versionId: string | null
   /** Whether the copilot has changed the copy yet; until then it is the original. */
   edited: boolean
-  chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt'>>
+  chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'question'>>
 }

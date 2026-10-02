@@ -384,8 +384,23 @@ async function reconcileChat(row: Artifact): Promise<Artifact> {
   let changed = false
   for (const message of pending) {
     if (message.executionId) {
-      const run = await prisma.agentExecution.findFirst({ where: { id: message.executionId, organizationId: row.organizationId }, select: { status: true, output: true, error: true } })
-      if (!run || !isTerminalRunStatus(run.status)) continue
+      const run = await prisma.agentExecution.findFirst({ where: { id: message.executionId, organizationId: row.organizationId }, select: { status: true, output: true, error: true, metadata: true } })
+      if (run && !isTerminalRunStatus(run.status)) {
+        // A run paused on a question surfaces it on its message, so it is
+        // asked — and answered — in the conversation that started the run.
+        const pendingQuestion = (run.metadata as { pendingQuestion?: { question?: unknown; toolCallId?: unknown } } | null)?.pendingQuestion
+        // Not one already answered here and waiting for its resume to be picked up.
+        const open = run.status === 'waiting_for_input' && !(message.answeredQuestionId && message.answeredQuestionId === str(pendingQuestion?.toolCallId))
+        const asked = open ? str(pendingQuestion?.question) || 'The assistant needs your input to continue.' : undefined
+        if (message.question !== asked) {
+          if (asked) message.question = asked
+          else delete message.question
+          changed = true
+        }
+        continue
+      }
+      if (!run) continue
+      delete message.question
       changed = true
       const text = typeof (run.output as { summary?: unknown } | null)?.summary === 'string' ? String((run.output as { summary: string }).summary) : ''
       if (run.status === 'completed') {
@@ -522,6 +537,53 @@ export async function askArtifact(params: { organizationId: string; userId: stri
     { role: 'agent', mode: params.mode, content: '', executionId: execution.id, status: 'pending', createdAt: now, ...(params.model ? { model: params.model } : {}) },
   ]
   await prisma.artifact.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue(next) } })
+  return (await loadArtifact(params.organizationId, row.id))!
+}
+
+/**
+ * Answer the question an artifact's assistant paused on. Authorised by the
+ * artifact (the caller has already shown they may change it), not by who owns
+ * the agent: whoever is in the conversation can answer it. The run resumes as
+ * the person it was already running as.
+ */
+export async function replyToArtifactQuestion(params: { organizationId: string; id: string; message: string; guestDigest?: string }): Promise<ArtifactView> {
+  const found = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
+  if (!found) throw new Error('Artifact not found.')
+  if (found.guestDigest || params.guestDigest) {
+    if (!found.templateSourceId || found.userId !== null || !found.guestDigest || found.guestDigest !== params.guestDigest) throw new Error('Artifact not found.')
+  }
+  const answer = params.message.trim().slice(0, ARTIFACT_QUESTION_MAX_CHARS)
+  if (!answer) throw new Error('Type a message first.')
+  const row = await reconcileChat(found)
+  const chat = chatOf(row)
+  const index = chat.findIndex((m) => m.role === 'agent' && m.status === 'pending' && m.executionId && m.question)
+  const waiting = chat[index]
+  if (!waiting?.executionId) throw new Error('The assistant is not waiting for an answer.')
+  // Only a run still paused on this artifact's question is answered. (Two
+  // answers racing both reach the resume; its waiting -> running claim is
+  // atomic, so the run continues once.)
+  const execution = await prisma.agentExecution.findFirst({ where: { id: waiting.executionId, organizationId: params.organizationId, status: 'waiting_for_input', agentTaskId: row.agentTaskId ?? undefined } })
+  const trigger = execution?.trigger as { type?: string; artifactId?: string } | null
+  if (!execution?.agentTaskId || trigger?.type !== 'artifact' || trigger.artifactId !== row.id) throw new Error('The assistant is not waiting for an answer.')
+  await prisma.executionMessage.create({ data: { executionId: execution.id, role: 'user', content: answer } })
+  // The exchange becomes part of the conversation: the question as the
+  // assistant's message, the answer as the person's, then the run carries on.
+  const now = new Date().toISOString()
+  const { question, ...resumed } = waiting
+  const next: ArtifactChatMessage[] = [
+    ...chat.slice(0, index),
+    { role: 'agent', content: question!, status: 'completed', createdAt: waiting.createdAt },
+    { role: 'user', content: answer, createdAt: now },
+    { ...resumed, createdAt: now, answeredQuestionId: str((execution.metadata as { pendingQuestion?: { toolCallId?: unknown } } | null)?.pendingQuestion?.toolCallId) ?? undefined },
+    ...chat.slice(index + 1),
+  ]
+  await prisma.artifact.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue(next) } })
+  const { resumeAgentExecution } = await import('@/features/agents/execute-agent')
+  try {
+    await resumeAgentExecution({ executionId: execution.id, agentId: execution.agentTaskId, organizationId: params.organizationId, userId: execution.userId, reply: answer })
+  } catch (error) {
+    await prisma.agentExecution.updateMany({ where: { id: execution.id, organizationId: params.organizationId, status: { in: ['waiting_for_input', 'running'] } }, data: { status: 'failed', error: error instanceof Error ? error.message : String(error), completedAt: new Date() } }).catch(() => undefined)
+  }
   return (await loadArtifact(params.organizationId, row.id))!
 }
 

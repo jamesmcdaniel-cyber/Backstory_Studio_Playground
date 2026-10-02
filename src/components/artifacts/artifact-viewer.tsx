@@ -103,6 +103,9 @@ export function ArtifactViewer({ id }: { id: string }) {
   const pending = artifact?.chat.find((m) => m.status === 'pending')
   const building = Boolean(artifact?.build && !['completed', 'failed', 'blocked', 'cancelled'].includes(artifact.build.status))
   const busy = Boolean(pending) || building
+  // The assistant paused on a question: it is asked and answered in this
+  // conversation, not in the Runs panel.
+  const awaiting = pending?.question ?? null
 
   useEffect(() => { artifactRef.current = null; setArtifact(null); setVersionId(null); void refresh(); return () => { requestRef.current?.abort(); requestRef.current = null } }, [refresh])
   // External flows and other tabs can publish even when this viewer is idle.
@@ -130,7 +133,10 @@ export function ArtifactViewer({ id }: { id: string }) {
     if (!outgoing || sending || !artifact) return
     setSending(true)
     try {
-      const response = await fetch(`/api/artifacts/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text ?? message, mode: 'auto', model }) })
+      // While the assistant waits on its question, what is typed is the answer.
+      const response = awaiting
+        ? await fetch(`/api/artifacts/${id}/reply`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: outgoing }) })
+        : await fetch(`/api/artifacts/${id}/chat`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text ?? message, mode: 'auto', model }) })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; error?: string }
       if (!response.ok || !data.artifact) throw new Error(data.error || 'The message could not be sent.')
       requestRef.current?.abort(); requestRef.current = null
@@ -375,7 +381,12 @@ export function ArtifactViewer({ id }: { id: string }) {
             {artifact.chat.map((m, index) => (
               <div key={`${m.createdAt}-${index}`} className={cn('text-sm', m.role === 'user' ? 'ml-6 rounded-xl bg-horizon-50 px-3 py-2 dark:bg-horizon-900/40' : '')}>
                 {m.role === 'user' && m.mode === 'change' && <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wider text-horizon-700">Change request</span>}
-                {m.role === 'agent' && m.status === 'pending' ? (
+                {m.role === 'agent' && m.status === 'pending' && m.question ? (
+                  <div role="status" className="rounded-xl border border-horizon-200 bg-horizon-50/60 px-3 py-2 dark:bg-horizon-900/30">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-horizon-700">The assistant needs an answer</p>
+                    <Markdown>{m.question}</Markdown>
+                  </div>
+                ) : m.role === 'agent' && m.status === 'pending' ? (
                   m.executionId ? <RunFeed executionId={m.executionId} status="running" compact onStatusChange={refresh} /> :
                     <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {m.mode === 'change' ? 'Revising…' : 'Working on it…'}</div>
                 ) : m.role === 'agent' ? (
@@ -423,11 +434,11 @@ export function ArtifactViewer({ id }: { id: string }) {
                   onKeyDown={(event) => { indentOnTab(event); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(event) } }}
                   rows={2}
                   maxLength={2000}
-                  disabled={busy}
-                  placeholder={busy ? 'Waiting for the assistant…' : artifact.kind === 'roi_dashboard' ? 'Ask a question, change the dashboard, or run it for another account' : 'Ask a question or describe a change'}
+                  disabled={busy && !awaiting}
+                  placeholder={awaiting ? 'Type your answer' : busy ? 'Waiting for the assistant…' : artifact.kind === 'roi_dashboard' ? 'Ask a question, change the dashboard, or run it for another account' : 'Ask a question or describe a change'}
                   className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 />
-                <Button type="submit" size="icon" disabled={!message.trim() || sending || busy} aria-label="Send message">
+                <Button type="submit" size="icon" disabled={!message.trim() || sending || (busy && !awaiting)} aria-label={awaiting ? 'Send answer' : 'Send message'}>
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <ArrowUp className="h-4 w-4" aria-hidden />}
                 </Button>
               </div>

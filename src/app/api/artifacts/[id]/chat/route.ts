@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
-import { askArtifact, ARTIFACT_QUESTION_MAX_CHARS } from '@/lib/artifacts/service'
+import { askArtifact, ARTIFACT_QUESTION_MAX_CHARS, clearArtifactChat, loadArtifact } from '@/lib/artifacts/service'
 import { resolveChatModel } from '@/lib/llm/models'
 import { requireEditable, viewerOf } from '@/lib/artifacts/route-access'
 import { artifactPermissions } from '@/lib/artifacts/sharing'
@@ -31,4 +31,20 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     const message = error instanceof Error ? error.message : 'The message could not be sent.'
     throw new ApiError(message, message === 'Artifact not found.' ? 404 : 400, 'MESSAGE_REJECTED')
   }
+}, { permission: 'agent.read' })
+
+// DELETE /api/artifacts/:id/chat — start a new chat: the conversation is
+// cleared, the artifact and its versions are untouched.
+export const DELETE = withAuthenticatedApi(async (request, auth) => {
+  const id = new URL(request.url).pathname.split('/').at(-2)
+  if (!id) throw new ApiError('Artifact id is required.', 400, 'ID_REQUIRED')
+  const editable = await requireEditable(auth, id)
+  try {
+    await clearArtifactChat({ organizationId: auth.organizationId, id })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'A new chat could not be started.'
+    throw new ApiError(message, message === 'Artifact not found.' ? 404 : 409, 'CHAT_BUSY')
+  }
+  const artifact = await loadArtifact(auth.organizationId, id)
+  return { success: true, artifact: artifact ? { ...artifact, permissions: artifactPermissions(viewerOf(auth), editable) } : null }
 }, { permission: 'agent.read' })

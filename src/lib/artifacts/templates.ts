@@ -289,6 +289,23 @@ export async function changeGuestCopyMcp(token: string, guestToken: string | nul
   return guestView(source.organizationId, copy.id)
 }
 
+/** A visitor starts a new chat with their copy's copilot: the conversation is cleared, the copy and its versions stay. */
+export async function clearGuestCopyChat(token: string, guestToken: string | null | undefined): Promise<GuestCopilotView> {
+  const source = await publicTemplate(token)
+  const copy = await findGuestCopy(source, guestDigestOf(guestToken))
+  if (!copy) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
+  // Settle a finished run's answer first, so "pending" means still working.
+  await guestView(source.organizationId, copy.id)
+  const { clearArtifactChat } = await import('./service')
+  try {
+    await clearArtifactChat({ organizationId: source.organizationId, id: copy.id })
+  } catch (error) {
+    const text = error instanceof Error ? error.message : ''
+    throw new ApiError(/^Wait for the current answer/.test(text) ? text : 'A new chat could not be started. Please try again.', 409, 'CHAT_BUSY', error)
+  }
+  return guestView(source.organizationId, copy.id)
+}
+
 /** A visitor tests a server before connecting it: its tools, nothing stored. */
 export async function testGuestCopyMcp(token: string, guestToken: string | null | undefined, input: CopilotMcpInput): Promise<{ toolCount: number; toolNames: string[] }> {
   const source = await publicTemplate(token)

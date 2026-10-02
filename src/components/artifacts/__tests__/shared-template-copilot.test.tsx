@@ -173,6 +173,26 @@ test('the copilot’s Settings add a visitor’s own MCP server through the plat
   } finally { cleanup(); net.restore() }
 })
 
+test('New chat clears the conversation and keeps the page on its latest version', async () => {
+  const talked = [{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b' }]
+  const net = stubFetch((call) => {
+    if (call.url.endsWith('/copy')) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    if (call.method === 'POST' && JSON.parse(call.body ?? '{}').action === 'new_chat') return Response.json({ success: true, copilot: guest([], 'gv2') })
+    return Response.json({ success: true, copilot: guest(talked, 'gv2') })
+  })
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    assert.ok(ui.getByText('Done — it is blue.'))
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'New chat' })) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'new_chat' })
+    assert.equal(ui.queryByText('Done — it is blue.'), null)
+    assert.equal(ui.queryByRole('button', { name: 'New chat' }), null, 'nothing to clear in an empty chat')
+    assert.equal(ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1], 'gv2', 'the page is untouched')
+  } finally { cleanup(); net.restore() }
+})
+
 test('someone signed in who comes back sees their copy’s latest version without opening the copilot', async () => {
   const net = stubFetch((call) => call.url.endsWith('/copy') ? Response.json({ success: true, artifactId: 'copy-1' }) : Response.json({ success: true, artifact: copy([], 3) }))
   try {

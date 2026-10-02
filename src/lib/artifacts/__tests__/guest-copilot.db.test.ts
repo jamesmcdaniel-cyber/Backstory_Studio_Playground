@@ -192,6 +192,22 @@ if (!database) {
     assert.equal((await call('POST', { action: 'reply', message: 'again' })).status, 400, 'nothing is waiting any more')
   })
 
+  test('a visitor starts a new chat: the conversation is cleared, the copy and its versions are not', async () => {
+    const before = (await (await call('GET')).json()).copilot
+    assert.ok(before.chat.length > 0)
+    assert.equal((await call('POST', { action: 'new_chat' }, '')).status, 404, 'only the visitor who owns the copy')
+    const cleared = await call('POST', { action: 'new_chat' })
+    assert.equal(cleared.status, 200)
+    const view = (await cleared.json()).copilot
+    assert.deepEqual(view.chat, [])
+    assert.equal(view.versionId, before.versionId)
+    assert.equal(view.versions.length, before.versions.length)
+    // Never mid-run: the answer in flight would have nowhere to land.
+    await db.artifact.update({ where: { id: copyId, organizationId: host.organizationId }, data: { chat: [{ role: 'user', content: 'x', createdAt: 'a' }, { role: 'agent', content: '', status: 'pending', createdAt: 'a' }] } })
+    assert.equal((await call('POST', { action: 'new_chat' })).status, 409)
+    await db.artifact.update({ where: { id: copyId, organizationId: host.organizationId }, data: { chat: [] } })
+  })
+
   test('only an MCP server its owner marked shareable is in a copilot’s reach; the mark is the owner’s alone to set', async () => {
     const { installTestAuth } = await import('@/lib/server/__tests__/test-auth')
     const { PATCH } = await import('@/app/api/mcp-connections/route')

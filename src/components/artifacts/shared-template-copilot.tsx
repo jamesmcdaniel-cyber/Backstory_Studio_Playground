@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, History, Loader2, MessageSquare, Plug, Settings2, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowUp, History, Loader2, MessageSquare, Plug, Settings2, Sparkles, SquarePen, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { indentOnTab } from '@/components/ui/textarea'
@@ -232,6 +232,28 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
     } finally { setSending(false) }
   }
 
+  // Start a new chat: the conversation is cleared; the page and its version
+  // history stay as they are.
+  const [clearing, setClearing] = useState(false)
+  const newChat = async () => {
+    if (!copy || clearing || busy || !chat.length) return
+    setClearing(true)
+    setError('')
+    try {
+      const response = copy.kind === 'member'
+        ? await fetch(`/api/artifacts/${encodeURIComponent(copy.id)}/chat`, { method: 'DELETE' })
+        : await fetch(guestUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'new_chat' }) })
+      const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; copilot?: GuestCopilotView; error?: string }
+      if (copy.kind === 'member' && response.ok && data.artifact) setCopy({ kind: 'member', id: copy.id, artifact: data.artifact })
+      else if (copy.kind === 'guest' && response.ok && data.copilot) setCopy({ kind: 'guest', view: data.copilot })
+      else throw new Error(data.error || 'A new chat could not be started.')
+      setMessage('')
+      setTab('chat')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'A new chat could not be started.')
+    } finally { setClearing(false) }
+  }
+
   // Put an earlier version back: it becomes a new version on top, so nothing
   // in the history is lost.
   const restore = async (target: string) => {
@@ -314,6 +336,11 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
               <p className="truncate text-sm font-semibold text-graphite-900">AI Copilot</p>
               <p className="truncate font-mono text-[10px] uppercase tracking-[0.14em] text-fg-muted">Edits stay on your view of this page</p>
             </div>
+            {loaded && canAsk && chat.length > 0 && (
+              <button type="button" onClick={() => void newChat()} disabled={busy || clearing} title={busy ? 'Wait for the copilot to finish' : 'Start a new chat — the page and its versions are kept'} className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:bg-graphite-100 hover:text-graphite-900 disabled:opacity-50">
+                {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <SquarePen className="h-3.5 w-3.5" aria-hidden />}New chat
+              </button>
+            )}
             <button type="button" onClick={() => setOpen(false)} className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-graphite-100 hover:text-graphite-900" aria-label="Close AI Copilot">
               <X className="h-4 w-4" aria-hidden />
             </button>

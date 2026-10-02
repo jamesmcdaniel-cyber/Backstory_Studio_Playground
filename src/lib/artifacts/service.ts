@@ -495,6 +495,18 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
   return [DOCUMENT_ASSISTANT_RULES(isHtml, params.templateCopy), ARTIFACT_CAPABILITIES, 'Work directly on the requested edit. Batch independent lookups and edits; do not draft a long plan or rebuild unaffected sections. Reply in two sentences after the save.', standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }
 
+/**
+ * Start a new chat: the conversation is cleared, the artifact and every
+ * version of it stay exactly as they are. Refused while the assistant is still
+ * working, so a run in flight never loses the message its answer belongs to.
+ */
+export async function clearArtifactChat(params: { organizationId: string; id: string }): Promise<void> {
+  const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
+  if (!row) throw new Error('Artifact not found.')
+  if (chatOf(row).some((m) => m.status === 'pending')) throw new Error('Wait for the current answer before starting a new chat.')
+  await prisma.artifact.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue([]) } })
+}
+
 /** Ask the producing agent a question, or ask it for a change (a new version). */
 export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: ArtifactChatMode; model?: string; guestDigest?: string }): Promise<ArtifactView> {
   const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })

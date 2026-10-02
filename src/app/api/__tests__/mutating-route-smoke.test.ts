@@ -254,6 +254,7 @@ const cases = (): Case[] => [
   { route: 'artifacts/[id]/state', method: 'PUT', run: async () => (await import('../artifacts/[id]/state/route')).PUT(rq('/api/artifacts/missing/state', 'PUT', { key: 'records-v1', revision: 0, value: [], versionId: 'missing' })) },
   { route: 'artifacts/[id]/versions/[versionId]/restore', method: 'POST', run: async () => (await import('../artifacts/[id]/versions/[versionId]/restore/route')).POST(rq('/api/artifacts/missing/versions/missing/restore', 'POST', {})) },
   { route: 'artifacts/[id]/chat', method: 'POST', run: async () => (await import('../artifacts/[id]/chat/route')).POST(rq('/api/artifacts/missing/chat', 'POST', { message: 'Why?', mode: 'ask' })) },
+  { route: 'artifacts/[id]/chat', method: 'DELETE', run: async () => (await import('../artifacts/[id]/chat/route')).DELETE(rq('/api/artifacts/missing/chat', 'DELETE', {})) },
   { route: 'artifacts/[id]/reply', method: 'POST', run: async () => (await import('../artifacts/[id]/reply/route')).POST(rq('/api/artifacts/missing/reply', 'POST', { message: 'The second option' })) },
   { route: 'artifacts/[id]/sharing', method: 'PATCH', run: async () => (await import('../artifacts/[id]/sharing/route')).PATCH(rq('/api/artifacts/missing/sharing', 'PATCH', { workspaceAccess: 'view' })) },
   { route: 'artifacts/[id]/assistant', method: 'PATCH', run: async () => (await import('../artifacts/[id]/assistant/route')).PATCH(rq('/api/artifacts/missing/assistant', 'PATCH', { instructions: 'Write for a CFO', toolConnectionIds: [] })) },

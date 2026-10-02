@@ -62,8 +62,8 @@ export const APP_SURFACES: AppSurface[] = [
   {
     id: 'repository',
     title: 'Repository',
-    href: '/data-tables',
-    purpose: 'uploaded files and connected content agents can retrieve, plus typed data tables for reference data, queues and cross-run state',
+    href: '/artifacts?tab=files',
+    purpose: 'the Files tab of Artifacts — uploaded files and connected content agents can retrieve; the Structured tables tab beside it holds typed data tables for reference data, queues and cross-run state',
     permission: 'flow.read',
   },
   {

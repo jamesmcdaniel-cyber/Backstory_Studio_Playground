@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArchiveRestore, Bot, FileOutput, Loader2, Search, Upload, Workflow } from 'lucide-react'
+import { ArchiveRestore, Bot, FileOutput, Files, Loader2, Search, TableProperties, Upload, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -15,10 +15,21 @@ import { relativeTime } from '@/lib/relative-time'
 import { cn } from '@/lib/utils'
 import { ARTIFACT_KIND_LABEL, type ArtifactKind, type ArtifactListItem } from '@/lib/artifacts/types'
 import { ArtifactThumbnail } from '@/components/artifacts/artifact-thumbnail'
+import { ContentRepository } from '@/components/repository/content-repository'
+import { StructuredTables } from '@/components/repository/structured-tables'
+
+type ArtifactsTab = 'artifacts' | 'files' | 'tables'
+
+const TABS: Array<{ id: ArtifactsTab; label: string; icon: typeof FileOutput; title: string; description: string }> = [
+  { id: 'artifacts', label: 'Artifacts', icon: FileOutput, title: 'What your agents have produced', description: 'Every report, dashboard and document, with its versions. Open one to ask the agent about it or ask for a change — a change makes a new version and keeps the old one.' },
+  { id: 'files', label: 'Files', icon: Files, title: 'What your agents can draw on', description: 'Upload files, pull content from connected sources, and control exactly what agents can retrieve.' },
+  { id: 'tables', label: 'Structured tables', icon: TableProperties, title: 'What your agents keep track of', description: 'Typed reference data, queues, checkpoints, and cross-run workflow state.' },
+]
 
 /**
- * Everything the workspace's agents have produced. Filter by kind or agent,
- * open one to read it, ask about it, or ask for a change.
+ * Everything the workspace's agents have produced, and (the Repository, folded
+ * in as tabs) the files and tables they work from. Filter artifacts by kind or
+ * agent, open one to read it, ask about it, or ask for a change.
  */
 export default function ArtifactsPage() {
   const [items, setItems] = useState<ArtifactListItem[] | null>(null)
@@ -28,6 +39,13 @@ export default function ArtifactsPage() {
   const [kind, setKind] = useState<ArtifactKind | 'all'>(initialKind === 'report' || initialKind === 'roi_dashboard' || initialKind === 'document' || initialKind === 'page' ? initialKind : 'all')
   const [uploadOpen, setUploadOpen] = useState(false)
   const { can } = useAuth()
+  const router = useRouter()
+  // The tab lives in the URL (?tab=files) so links — a run's citation, the
+  // old /data-tables route — land on the right one.
+  const tabParam = searchParams?.get('tab')
+  const tab: ArtifactsTab = tabParam === 'files' || tabParam === 'tables' ? tabParam : 'artifacts'
+  const active = TABS.find((candidate) => candidate.id === tab) ?? TABS[0]
+  const repositoryWritable = can('flow.write')
   const [archived, setArchived] = useState(false)
   const [unarchiving, setUnarchiving] = useState<string | null>(null)
 
@@ -68,14 +86,26 @@ export default function ArtifactsPage() {
       <div>
         <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-horizon-700"><FileOutput className="h-3.5 w-3.5" aria-hidden /> Artifacts</div>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">What your agents have produced</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{active.title}</h1>
           <div className="flex flex-wrap gap-2">
-            {can('agent.write') && <Button variant="outline" onClick={() => setUploadOpen(true)}><Upload className="mr-1.5 h-4 w-4" aria-hidden />Upload</Button>}
+            {tab === 'artifacts' && can('agent.write') && <Button variant="outline" onClick={() => setUploadOpen(true)}><Upload className="mr-1.5 h-4 w-4" aria-hidden />Upload</Button>}
           </div>
         </div>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Every report, dashboard and document, with its versions. Open one to ask the agent about it or ask for a change — a change makes a new version and keeps the old one.</p>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{active.description}</p>
       </div>
 
+      <div className="inline-flex rounded-lg border bg-muted/40 p-1" role="tablist" aria-label="Artifacts views">
+        {TABS.map((option) => (
+          <button key={option.id} type="button" role="tab" aria-selected={tab === option.id} onClick={() => router.replace(option.id === 'artifacts' ? '/artifacts' : `/artifacts?tab=${option.id}`, { scroll: false })} className={cn('inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors', tab === option.id ? 'bg-background text-foreground shadow-1' : 'text-muted-foreground hover:text-foreground')}>
+            <option.icon className="h-4 w-4" aria-hidden />{option.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'files' && <ContentRepository writable={repositoryWritable} />}
+      {tab === 'tables' && <StructuredTables writable={repositoryWritable} />}
+
+      {tab === 'artifacts' && <>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
@@ -133,6 +163,7 @@ export default function ArtifactsPage() {
           ))}
         </ul>
       )}
+      </>}
       <UploadHtmlDialog open={uploadOpen} onOpenChange={setUploadOpen} />
     </div>
   )

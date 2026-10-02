@@ -130,7 +130,7 @@ export function KnowledgePanel({ agentId }: { agentId: string }) {
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className="eyebrow">Knowledge</p>
         <div className="flex gap-2">
-          <Button asChild type="button" variant="ghost" size="sm"><Link href="/data-tables">Open repository</Link></Button>
+          <Button asChild type="button" variant="ghost" size="sm"><Link href="/artifacts?tab=files">Open files</Link></Button>
           <Button type="button" variant="outline" size="sm" onClick={() => inputRef.current?.click()} disabled={uploading}>
             {uploading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1.5 h-3.5 w-3.5" />}
             Upload files

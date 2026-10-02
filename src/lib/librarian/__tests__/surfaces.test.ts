@@ -61,6 +61,14 @@ describe('surfaceForPath', () => {
     assert.equal(surfaceForPath('/settings?tab=somethingnew')?.id, 'settings-account')
   })
 
+  it('reads the Files tab of Artifacts as the Repository, and bare Artifacts as itself', () => {
+    // The Repository folded into Artifacts as a tab; it stays its own surface
+    // so "where do I upload a file" still gets a link that lands on it.
+    assert.equal(surfaceForPath('/artifacts?tab=files')?.id, 'repository')
+    assert.equal(surfaceForPath('/artifacts')?.id, 'artifacts')
+    assert.equal(surfaceForPath('/artifacts/abc123')?.id, 'artifacts')
+  })
+
   it('attributes a deeper route to its section', () => {
     assert.equal(surfaceForPath('/flows/abc123')?.id, 'flows')
     assert.equal(surfaceForPath('/flows/abc123/activity')?.id, 'flows')

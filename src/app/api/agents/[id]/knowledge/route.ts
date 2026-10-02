@@ -39,7 +39,7 @@ function serializeDoc(doc: { id: string; filename: string; mimeType: string; siz
     chunkCount: doc._count?.chunks ?? 0,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
-    repositoryUrl: '/data-tables',
+    repositoryUrl: '/artifacts?tab=files',
   }
 }
 

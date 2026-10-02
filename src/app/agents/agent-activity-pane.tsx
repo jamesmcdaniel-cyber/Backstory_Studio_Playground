@@ -366,7 +366,7 @@ function KnowledgeCard({ summary, documents }: { summary: string; documents: Arr
       {documents.length > 0 && (
         <p className="mt-1 flex flex-wrap gap-2">
           {documents.map((doc) => (
-            <Link key={doc.id} href={`/data-tables?doc=${encodeURIComponent(doc.id)}`} className="text-xs text-horizon-700 underline underline-offset-2 hover:text-horizon-800">
+            <Link key={doc.id} href={`/artifacts?tab=files&doc=${encodeURIComponent(doc.id)}`} className="text-xs text-horizon-700 underline underline-offset-2 hover:text-horizon-800">
               {doc.filename}
             </Link>
           ))}

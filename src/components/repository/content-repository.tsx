@@ -163,7 +163,7 @@ export function ContentRepository({ writable }: { writable: boolean }) {
   const [deleteTarget, setDeleteTarget] = useState<RepositoryAsset | null>(null)
   const requestSequence = useRef(0)
 
-  // Deep link from a run's citation: /data-tables?doc=<id> opens that
+  // Deep link from a run's citation: /artifacts?tab=files&doc=<id> opens that
   // document's editor once, then clears the parameter so refreshes and
   // back-navigation do not re-open it. window.location (not useSearchParams)
   // keeps this component Suspense-free.

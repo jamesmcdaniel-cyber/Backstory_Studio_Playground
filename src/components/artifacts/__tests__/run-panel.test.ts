@@ -27,5 +27,7 @@ test('idle artifact viewers poll for external publication and keep stable iframe
   const source = readFileSync('src/components/artifacts/artifact-viewer.tsx', 'utf8')
   assert.match(source, /useEffect\(\(\) => startVisibleInterval\(/)
   assert.doesNotMatch(source, /busy \? startVisibleInterval/)
-  assert.match(source, /\[artifact\?\.currentVersionId\]/)
+  // The viewer follows the current version — once the assistant has finished,
+  // so a run that saves several times reloads the page a single time.
+  assert.match(source, /\[artifact\?\.currentVersionId, assistantWorking\]/)
 })

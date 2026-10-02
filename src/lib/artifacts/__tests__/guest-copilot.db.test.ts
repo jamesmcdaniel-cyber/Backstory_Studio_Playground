@@ -62,6 +62,7 @@ if (!database) {
     const view = (await opened.json()).copilot
     copyId = view.copyId
     assert.deepEqual(view.chat, [])
+    assert.equal(view.edited, false, 'an untouched copy is still the original')
 
     const copy = await db.artifact.findFirstOrThrow({ where: { id: copyId, organizationId: host.organizationId }, include: { versions: true } })
     assert.equal(copy.userId, null)
@@ -110,6 +111,7 @@ if (!database) {
     assert.equal(source.versionCount, 1)
     assert.equal(source.versions[0].content, content)
     const view = (await (await call('GET')).json()).copilot
+    assert.equal(view.edited, true)
     const page = await contentRoute.GET(new NextRequest(`${base}/content?copy=${copyId}&v=${view.versionId}`))
     assert.match(await page.text(), /Visitor version/)
   })

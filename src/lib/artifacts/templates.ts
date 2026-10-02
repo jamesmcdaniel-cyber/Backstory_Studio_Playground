@@ -104,13 +104,14 @@ async function findGuestCopy(source: TemplateSource, digest: string | null) {
 async function guestView(organizationId: string, copyId: string): Promise<GuestCopilotView> {
   const { artifactStatus } = await import('./service')
   await artifactStatus(organizationId, copyId) // settles a finished run's answer into the chat
-  const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, chat: true } })
+  const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, versionCount: true, chat: true } })
   if (!row) throw new ApiError('Template not available.', 404, 'NOT_FOUND')
   const chat = (Array.isArray(row.chat) ? row.chat : []) as unknown as ArtifactChatMessage[]
   return {
     copyId: row.id,
     title: row.title,
     versionId: row.currentVersionId,
+    edited: row.versionCount > 1,
     chat: chat.map((m) => ({
       role: m.role,
       // A failed run's error is the workspace's business, not the visitor's.

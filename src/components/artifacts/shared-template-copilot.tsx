@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, ExternalLink, Loader2, Sparkles, X } from 'lucide-react'
+import { ArrowUp, Loader2, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { indentOnTab } from '@/components/ui/textarea'
@@ -28,10 +28,11 @@ type Copy =
 /**
  * A shared template's public page with its copilot in place: the launcher sits
  * where Ask Backstory sits in the app, and the conversation opens over the
- * page — no account, no trip into the platform. Opening it makes (or finds)
- * the visitor's own copy; from then on the page shows that copy, so every
- * change the copilot makes lands in front of them. `children` is the
- * original, shown until a copy exists.
+ * page — no account, no trip into the platform, no second page or window for
+ * "their copy". Opening it makes (or finds) the visitor's own copy behind the
+ * scenes and changes nothing on screen: the page they are looking at simply
+ * becomes editable. `children` is the original, which is what an unedited copy
+ * is; the frame moves to the copy only once the copilot has changed it.
  */
 export function SharedTemplateCopilot({ token, isPage = true, returning = false, children }: { token: string; isPage?: boolean; returning?: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(false)
@@ -56,15 +57,15 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       const response = await fetch(current.kind === 'member' ? `/api/artifacts/${encodeURIComponent(current.id)}` : guestUrl, { cache: 'no-store', signal: AbortSignal.timeout(20_000) })
       const data = await response.json().catch(() => ({})) as { artifact?: ArtifactView; copilot?: GuestCopilotView | null; error?: string }
       if (current.kind === 'member') {
-        if (!response.ok || !data.artifact) throw new Error(data.error || 'Could not load your copy.')
+        if (!response.ok || !data.artifact) throw new Error(data.error || 'Could not load the copilot.')
         setCopy({ kind: 'member', id: current.id, artifact: data.artifact })
       } else {
-        if (!response.ok || !data.copilot) throw new Error(data.error || 'Could not load your copy.')
+        if (!response.ok || !data.copilot) throw new Error(data.error || 'Could not load the copilot.')
         setCopy({ kind: 'guest', view: data.copilot })
       }
       setError('')
     } catch (caught) {
-      setError(caught instanceof Error && caught.name !== 'TimeoutError' ? caught.message : 'Could not load your copy.')
+      setError(caught instanceof Error && caught.name !== 'TimeoutError' ? caught.message : 'Could not load the copilot.')
     } finally { loading.current = false }
   }, [guestUrl])
 
@@ -126,6 +127,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
   const versionId = copy?.kind === 'guest' ? copy.view.versionId : artifact?.currentVersionId ?? null
   const title = copy?.kind === 'guest' ? copy.view.title : artifact?.title ?? ''
+  // An untouched copy IS the original: keep the page the visitor is already
+  // looking at (and whatever they did in it) until there is a change to show.
+  const edited = copy?.kind === 'guest' ? copy.view.edited : (artifact?.versionCount ?? 1) > 1
   const pending = chat.find((m) => m.status === 'pending')
   const busy = Boolean(pending)
   const hasCopy = Boolean(copy)
@@ -173,7 +177,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
   return (
     <>
-      {copy && loaded && versionId ? (
+      {copy && loaded && versionId && edited ? (
         markdownUrl ? (
           <div className="prose prose-sm mx-auto w-full max-w-3xl p-6 dark:prose-invert">
             {markdown?.url === markdownUrl ? <Markdown>{markdown.text}</Markdown> : <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</p>}
@@ -197,23 +201,18 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-horizon-50 text-horizon-600"><Sparkles className="h-4 w-4" aria-hidden /></span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-graphite-900">AI Copilot</p>
-              <p className="truncate font-mono text-[10px] uppercase tracking-[0.14em] text-fg-muted">Your own copy</p>
+              <p className="truncate font-mono text-[10px] uppercase tracking-[0.14em] text-fg-muted">Edits stay on your view of this page</p>
             </div>
-            {copy?.kind === 'member' && (
-              <a href={`/artifacts/${encodeURIComponent(copy.id)}`} className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-graphite-100 hover:text-graphite-900" aria-label="Open your copy in Backstory" title="Open in Backstory">
-                <ExternalLink className="h-4 w-4" aria-hidden />
-              </a>
-            )}
             <button type="button" onClick={() => setOpen(false)} className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-graphite-100 hover:text-graphite-900" aria-label="Close AI Copilot">
               <X className="h-4 w-4" aria-hidden />
             </button>
           </header>
 
           <div aria-label="Copilot conversation" className="min-h-0 flex-1 space-y-3 overflow-y-auto break-words px-4 py-3">
-            {opening && <p className="flex items-center gap-2 text-sm text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Opening your copy…</p>}
+            {opening && <p className="flex items-center gap-2 text-sm text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Opening the copilot…</p>}
             {loaded && !chat.length && (
               <p className="text-sm text-fg-muted">
-                {canAsk ? 'Ask a question about this page or describe a change. You’re working in your own copy — the original stays unchanged.' : 'This copy can’t be changed right now.'}
+                {canAsk ? 'Ask a question about this page or describe a change. Your changes appear right here and only for you — the original stays as it was shared.' : 'This copy can’t be changed right now.'}
               </p>
             )}
             {chat.map((m, index) => (

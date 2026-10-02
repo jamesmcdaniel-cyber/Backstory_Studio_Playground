@@ -21,13 +21,13 @@ function stubFetch(handler: (call: Call) => Response) {
   return { calls, restore: () => { globalThis.fetch = original } }
 }
 
-const copy = (chat: unknown[] = []) => ({
+const copy = (chat: unknown[] = [], version = 1) => ({
   id: 'copy-1', kind: 'page', title: 'Cockpit · my copy', agent: { id: 'agent-1', title: 'AI Copilot' }, flow: null,
-  currentVersionId: 'v1', versionCount: 1, versions: [{ id: 'v1', number: 1, format: 'html' }], chat,
+  currentVersionId: `v${version}`, versionCount: version, versions: [{ id: `v${version}`, number: version, format: 'html' }], chat,
   interactive: true, build: null, archivedAt: null, permissions: { canEdit: true, canShare: false, canConfigure: false, reason: 'owner' },
   configurationLocked: true, createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z',
 })
-const guest = (chat: unknown[] = [], versionId = 'gv1') => ({ copyId: 'guest-copy', title: 'Cockpit · visitor copy', versionId, chat })
+const guest = (chat: unknown[] = [], versionId = 'gv1') => ({ copyId: 'guest-copy', title: 'Cockpit · visitor copy', versionId, edited: versionId !== 'gv1', chat })
 
 test('viewing a template never creates a copy; an explicit click POSTs and failures are recoverable', async () => {
   const net = stubFetch(() => Response.json({ error: 'Template no longer shared' }, { status: 404 }))
@@ -57,14 +57,16 @@ test('a visitor with no account is never sent to sign in: the copilot opens a gu
       { url: '/api/share/artifacts/test-token/copy', method: 'POST', body: undefined },
       { url: '/api/share/artifacts/test-token/copilot', method: 'POST', body: '{"action":"open"}' },
     ])
-    assert.equal(ui.queryByText('original'), null)
-    assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/share/artifacts/test-token/copilot/content?copy=guest-copy&v=gv1')
-    assert.equal(ui.queryByLabelText('Open your copy in Backstory'), null, 'a guest has no workspace to open it in')
+    // Opening the copilot changes nothing on screen: no second page for "the copy".
+    assert.ok(ui.getByText('original'))
+    assert.equal(ui.container.querySelector('iframe'), null)
+    assert.equal(ui.container.querySelector('a[href^="/artifacts/"]'), null, 'nothing links out to a separate copy page')
     await act(async () => { fireEvent.change(ui.getByRole('textbox', { name: 'Message' }), { target: { value: 'Make it blue' } }) })
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Send message' })) })
     assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'ask', message: 'Make it blue' })
     assert.ok(ui.getByText('Done — it is blue.'))
-    assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/share/artifacts/test-token/copilot/content?copy=guest-copy&v=gv2', 'the page moves to the new version')
+    assert.equal(ui.queryByText('original'), null)
+    assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/share/artifacts/test-token/copilot/content?copy=guest-copy&v=gv2', 'the change appears in place')
   } finally { cleanup(); net.restore() }
 })
 
@@ -82,20 +84,21 @@ test('a returning visitor sees the copy they already changed, with the panel clo
 test('someone signed in works in a copy in their own workspace, without leaving the shared page', async () => {
   const net = stubFetch((call) => {
     if (call.url.endsWith('/copy')) return Response.json({ success: true, artifactId: 'copy-1' })
-    if (call.url.endsWith('/chat')) return Response.json({ success: true, artifact: copy([{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b' }]) })
+    if (call.url.endsWith('/chat')) return Response.json({ success: true, artifact: copy([{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b' }], 2) })
     return Response.json({ success: true, artifact: copy() })
   })
   try {
     const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
     assert.ok(ui.getByRole('dialog', { name: 'AI Copilot' }))
-    assert.equal(ui.queryByText('original'), null)
-    assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/artifacts/copy-1/versions/v1/content')
+    assert.ok(ui.getByText('original'), 'the page stays as it is until there is a change to show')
+    assert.equal(ui.container.querySelector('a[href^="/artifacts/"]'), null, 'nothing links out to a separate copy page')
     await act(async () => { fireEvent.change(ui.getByRole('textbox', { name: 'Message' }), { target: { value: 'Make it blue' } }) })
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Send message' })) })
     const chat = net.calls.find((call) => call.url === '/api/artifacts/copy-1/chat')
     assert.equal(chat?.method, 'POST')
     assert.deepEqual(JSON.parse(chat?.body ?? '{}'), { message: 'Make it blue', mode: 'auto' })
     assert.ok(ui.getByText('Done — it is blue.'))
+    assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/artifacts/copy-1/versions/v2/content', 'the change appears in place')
   } finally { cleanup(); net.restore() }
 })

@@ -76,5 +76,7 @@ export type GuestCopilotView = {
   copyId: string
   title: string
   versionId: string | null
+  /** Whether the copilot has changed the copy yet; until then it is the original. */
+  edited: boolean
   chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt'>>
 }

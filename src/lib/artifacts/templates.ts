@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma, systemPrisma, tenantTransaction } from '@/lib/prisma'
 import { hashToken } from '@/lib/crypto/secrets'
 import { ApiError } from '@/lib/server/api-handler'
+import { liveShareLinkWhere } from './sharing'
 import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
 import { startOfUtcDay } from '@/lib/usage/free-tier-limits'
 import type { ArtifactChatMessage, GuestCopilotView } from './types'
@@ -14,7 +15,7 @@ export async function useArtifactTemplate(token: string, organizationId: string,
   // systemPrisma: cross-tenant access is restricted to this opted-in public
   // token. Never fetch source agent/config/chat/app state or private history.
   const source = await systemPrisma.artifact.findFirst({
-    where: { shareTokenDigest: hashToken(token), shareAnonymous: true, shareTemplate: true, archivedAt: null, templateSourceId: null },
+    where: { ...liveShareLinkWhere(token), shareTemplate: true, templateSourceId: null },
     select: { id: true, organizationId: true, currentVersionId: true, title: true, kind: true },
   })
   if (!source?.currentVersionId) throw new ApiError('Template not available.', 404, 'NOT_FOUND')
@@ -24,7 +25,7 @@ export async function useArtifactTemplate(token: string, organizationId: string,
   const version = await systemPrisma.artifactVersion.findFirst({
     where: {
       id: source.currentVersionId, artifactId: source.id, organizationId: source.organizationId,
-      artifact: { shareTokenDigest: hashToken(token), shareAnonymous: true, shareTemplate: true, archivedAt: null, currentVersionId: source.currentVersionId },
+      artifact: { ...liveShareLinkWhere(token), shareTemplate: true, currentVersionId: source.currentVersionId },
     },
     select: { content: true },
   })
@@ -76,7 +77,7 @@ export async function findArtifactTemplateCopy(token: string, organizationId: st
   if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return null
   // systemPrisma: same opted-in public-token lookup as useArtifactTemplate.
   const source = await systemPrisma.artifact.findFirst({
-    where: { shareTokenDigest: hashToken(token), shareAnonymous: true, shareTemplate: true, archivedAt: null, templateSourceId: null },
+    where: { ...liveShareLinkWhere(token), shareTemplate: true, templateSourceId: null },
     select: { id: true },
   })
   if (!source) return null
@@ -104,7 +105,7 @@ async function publicTemplate(token: string): Promise<TemplateSource> {
   // systemPrisma: an anonymous visitor has no organization; the lookup is the
   // unique digest of the link's 192-bit token, and only while it is offered.
   const source = await systemPrisma.artifact.findFirst({
-    where: { shareTokenDigest: hashToken(token), shareAnonymous: true, shareTemplate: true, archivedAt: null, templateSourceId: null },
+    where: { ...liveShareLinkWhere(token), shareTemplate: true, templateSourceId: null },
     select: { id: true, organizationId: true, userId: true, currentVersionId: true, title: true, kind: true },
   })
   if (!source?.currentVersionId) throw new ApiError('Template not available.', 404, 'NOT_FOUND')

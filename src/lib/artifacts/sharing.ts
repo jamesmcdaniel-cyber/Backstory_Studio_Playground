@@ -35,6 +35,9 @@ export class ArtifactAccessError extends Error {
   }
 }
 
+/** A sharing change that cannot be made as asked (a past expiry, say) — the caller's to fix. */
+export class SharingInputError extends Error {}
+
 export function editorIdsOf(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : []
 }
@@ -74,7 +77,7 @@ export type ArtifactSharing = {
   workspaceAccess: WorkspaceAccess
   owner: Person | null
   editors: Person[]
-  link: { enabled: boolean; url: string | null; views: number }
+  link: { enabled: boolean; url: string | null; views: number; /** When the link stops working (ISO); null = never. */ expiresAt: string | null; /** On, but past its expiry: visitors are told it has expired. */ expired: boolean }
   /** The MCP servers a copilot on this link can query: those the workspace marked shareable, and nothing else. */
   copilotSources: string[]
   permissions: ArtifactPermissions
@@ -86,8 +89,28 @@ async function people(organizationId: string, ids: string[]): Promise<Person[]> 
   return ids.map((id) => rows.find((row) => row.id === id)).filter((row): row is Person => Boolean(row))
 }
 
+/** A link's expiry has passed. A link with no expiry never does. */
+export function shareLinkExpired(expiresAt: Date | null | undefined, now = new Date()): boolean {
+  return Boolean(expiresAt && expiresAt.getTime() <= now.getTime())
+}
+
+/**
+ * The lookup every public path uses for a link's token: the link is on, the
+ * artifact is not archived, and its expiry (if it has one) has not passed.
+ */
+export function liveShareLinkWhere(token: string) {
+  return { shareTokenDigest: hashToken(token), shareAnonymous: true, archivedAt: null, OR: [{ shareExpiresAt: null }, { shareExpiresAt: { gt: new Date() } }] }
+}
+
+/** How far ahead a link's expiry can be set. */
+const SHARE_EXPIRY_MAX_MS = 5 * 365 * 24 * 60 * 60 * 1000
+
+function expiryOf(artifact: Artifact): Pick<ArtifactSharing['link'], 'expiresAt' | 'expired'> {
+  return { expiresAt: artifact.shareExpiresAt?.toISOString() ?? null, expired: artifact.shareAnonymous && shareLinkExpired(artifact.shareExpiresAt) }
+}
+
 function linkOf(artifact: Artifact, origin: string, freshToken?: string): ArtifactSharing['link'] {
-  if (!artifact.shareAnonymous) return { enabled: false, url: null, views: artifact.anonymousViews }
+  if (!artifact.shareAnonymous) return { enabled: false, url: null, views: artifact.anonymousViews, expiresAt: null, expired: false }
   let token = freshToken ?? null
   if (!token && artifact.shareTokenCiphertext) {
     try {
@@ -96,7 +119,7 @@ function linkOf(artifact: Artifact, origin: string, freshToken?: string): Artifa
       token = null
     }
   }
-  return { enabled: true, url: token ? publicArtifactUrl(origin, token) : null, views: artifact.anonymousViews }
+  return { enabled: true, url: token ? publicArtifactUrl(origin, token) : null, views: artifact.anonymousViews, ...expiryOf(artifact) }
 }
 
 export async function loadSharing(organizationId: string, artifactId: string, viewer: ArtifactViewer, origin: string): Promise<ArtifactSharing | null> {
@@ -112,12 +135,12 @@ export async function loadSharing(organizationId: string, artifactId: string, vi
     owner: owner ?? null,
     editors: await people(organizationId, editorIdsOf(artifact.editorIds)),
     // Only people who can share see the public link itself.
-    link: permissions.canShare ? linkOf(artifact, origin) : { enabled: artifact.shareAnonymous, url: null, views: artifact.anonymousViews },
+    link: permissions.canShare ? linkOf(artifact, origin) : { enabled: artifact.shareAnonymous, url: null, views: artifact.anonymousViews, ...expiryOf(artifact) },
     permissions,
   }
 }
 
-export type SharingPatch = { workspaceAccess?: WorkspaceAccess; editorIds?: string[]; link?: 'enable' | 'disable' | 'rotate'; shareTemplate?: boolean }
+export type SharingPatch = { workspaceAccess?: WorkspaceAccess; editorIds?: string[]; link?: 'enable' | 'disable' | 'rotate'; shareTemplate?: boolean; /** When the public link stops working (ISO); null = never. */ linkExpiresAt?: string | null }
 
 /** Change who can edit, or the public link. Newly added editors are notified; every change is audited. */
 export async function updateSharing(organizationId: string, artifactId: string, viewer: ArtifactViewer, origin: string, patch: SharingPatch): Promise<ArtifactSharing> {
@@ -152,6 +175,17 @@ export async function updateSharing(organizationId: string, artifactId: string, 
     data.shareAnonymous = false
     data.shareTokenDigest = null
     data.shareTokenCiphertext = null
+    data.shareExpiresAt = null // a link turned back on later starts with no expiry
+  }
+  if (patch.linkExpiresAt !== undefined && patch.link !== 'disable') {
+    if (patch.linkExpiresAt === null) {
+      data.shareExpiresAt = null
+    } else {
+      const when = new Date(patch.linkExpiresAt)
+      if (Number.isNaN(when.getTime()) || when.getTime() <= Date.now()) throw new SharingInputError('Pick an expiry in the future.')
+      if (when.getTime() > Date.now() + SHARE_EXPIRY_MAX_MS) throw new SharingInputError('An expiry can be at most five years away.')
+      data.shareExpiresAt = when
+    }
   }
 
   const updated = await prisma.artifact.update({ where: { id: artifactId, organizationId }, data })
@@ -167,6 +201,7 @@ export async function updateSharing(organizationId: string, artifactId: string, 
       ...(patch.workspaceAccess ? { workspaceAccess: patch.workspaceAccess } : {}),
       ...(patch.editorIds ? { editors: editorIdsOf(updated.editorIds).length, added: added.length } : {}),
       ...(patch.link ? { link: patch.link } : {}),
+      ...(patch.linkExpiresAt !== undefined ? { linkExpiresAt: updated.shareExpiresAt?.toISOString() ?? null } : {}),
     },
   })
 
@@ -181,18 +216,20 @@ export async function updateSharing(organizationId: string, artifactId: string, 
   const sharing = await loadSharing(organizationId, artifactId, viewer, origin)
   if (!sharing) throw new ArtifactAccessError('Artifact not found.', 404)
   // A link minted without encryption can only be shown now.
-  if (freshToken && !sharing.link.url) sharing.link = { enabled: true, url: publicArtifactUrl(origin, freshToken), views: updated.anonymousViews }
+  if (freshToken && !sharing.link.url) sharing.link = { ...sharing.link, enabled: true, url: publicArtifactUrl(origin, freshToken), views: updated.anonymousViews }
   return sharing
 }
 
 export type PublicArtifact = { id: string; organizationId: string; title: string; kind: string; updatedAt: Date; currentVersionId: string | null; shareTemplate: boolean }
-export type PublicArtifactResult = { status: 'ok'; artifact: PublicArtifact } | { status: 'not_found' } | { status: 'rate_limited' }
+export type PublicArtifactResult = { status: 'ok'; artifact: PublicArtifact } | { status: 'not_found' } | { status: 'expired' } | { status: 'rate_limited' }
 
 const ANON_LIMIT = { limit: 60, windowMs: 60_000 }
 
 /**
  * The only path that serves an artifact to someone with no session. Keyed on
- * the digest of what the visitor presented, and only while the link is on.
+ * the digest of what the visitor presented, and only while the link is on and
+ * has not passed the expiry its sharer set (told apart, so the visitor can be
+ * told the link expired rather than that it never existed).
  */
 export async function resolvePublicArtifact(token: string, options: { clientKey: string; countView?: boolean }): Promise<PublicArtifactResult> {
   if (!token || token.length < 16) return { status: 'not_found' }
@@ -203,9 +240,10 @@ export async function resolvePublicArtifact(token: string, options: { clientKey:
   // on — an artifact nobody shared is unreachable, and nothing else is queryable.
   const artifact = await systemPrisma.artifact.findFirst({
     where: { shareTokenDigest: hashToken(token), shareAnonymous: true, archivedAt: null },
-    select: { id: true, organizationId: true, title: true, kind: true, updatedAt: true, currentVersionId: true, shareTemplate: true },
+    select: { id: true, organizationId: true, title: true, kind: true, updatedAt: true, currentVersionId: true, shareTemplate: true, shareExpiresAt: true },
   })
   if (!artifact) return { status: 'not_found' }
+  if (shareLinkExpired(artifact.shareExpiresAt)) return { status: 'expired' }
   if (options.countView) {
     await systemPrisma.artifact.update({ where: { id: artifact.id }, data: { anonymousViews: { increment: 1 } } }).catch(() => undefined)
   }

@@ -2,7 +2,7 @@
 
 import { GUEST_COPILOT_LIMITS } from '@/lib/artifacts/template-policy'
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Copy, Globe, Link2, Loader2, RefreshCw, Users, X } from 'lucide-react'
+import { Check, Clock, Copy, Globe, Link2, Loader2, RefreshCw, Users, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -16,7 +16,7 @@ type Sharing = {
   workspaceAccess: 'edit' | 'view'
   owner: Person | null
   editors: Person[]
-  link: { enabled: boolean; url: string | null; views: number }
+  link: { enabled: boolean; url: string | null; views: number; expiresAt?: string | null; expired?: boolean }
   permissions: { canEdit: boolean; canShare: boolean; reason: string }
 }
 
@@ -209,6 +209,7 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
                   )}
                 </div>
               )}
+              {sharing.link.enabled && <LinkExpiry expiresAt={sharing.link.expiresAt ?? null} expired={Boolean(sharing.link.expired)} canShare={canShare} busy={busy} onChange={(when) => void update({ linkExpiresAt: when }, when ? `The link stops working on ${formatExpiry(when)}.` : 'The link no longer expires.')} />}
               {sharing.link.enabled && <p className="text-xs text-muted-foreground">{sharing.link.views.toLocaleString()} view{sharing.link.views === 1 ? '' : 's'} so far.</p>}
             </section>
 
@@ -217,5 +218,65 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+const formatExpiry = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+
+const EXPIRY_PRESETS = [{ label: 'In 1 day', days: 1 }, { label: 'In 7 days', days: 7 }, { label: 'In 30 days', days: 30 }, { label: 'In 90 days', days: 90 }]
+
+/**
+ * When the public link stops working. The sender picks "never", a preset from
+ * now, or a date (the link then works through the end of that day); an
+ * expired link says so and is turned back on by picking a new expiry.
+ */
+function LinkExpiry({ expiresAt, expired, canShare, busy, onChange }: { expiresAt: string | null; expired: boolean; canShare: boolean; busy: boolean; onChange: (expiresAt: string | null) => void }) {
+  const [picking, setPicking] = useState(false)
+  const today = new Date().toLocaleDateString('en-CA') // yyyy-mm-dd in local time
+  const status = expiresAt ? (expired ? `Expired ${formatExpiry(expiresAt)}` : `Expires ${formatExpiry(expiresAt)}`) : 'Never expires'
+
+  if (!canShare) return <p className={cn('flex items-center gap-1.5 text-xs', expired ? 'text-amber-700' : 'text-muted-foreground')}><Clock className="h-3.5 w-3.5" aria-hidden />{status}</p>
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="share-link-expiry" className="flex items-center gap-1.5 text-xs font-medium"><Clock className="h-3.5 w-3.5" aria-hidden />Link expiry</label>
+        <select
+          id="share-link-expiry"
+          disabled={busy}
+          value={picking ? 'date' : expiresAt ? 'current' : 'never'}
+          onChange={(event) => {
+            const choice = event.target.value
+            setPicking(choice === 'date')
+            if (choice === 'never') onChange(null)
+            else if (choice.startsWith('days:')) onChange(new Date(Date.now() + Number(choice.slice(5)) * 86_400_000).toISOString())
+          }}
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        >
+          <option value="never">Never expires</option>
+          {expiresAt && <option value="current">{status}</option>}
+          {EXPIRY_PRESETS.map((preset) => <option key={preset.days} value={`days:${preset.days}`}>{preset.label}</option>)}
+          <option value="date">On a date…</option>
+        </select>
+        {picking && (
+          <input
+            type="date"
+            aria-label="Expiry date"
+            min={today}
+            disabled={busy}
+            onChange={(event) => {
+              if (!event.target.value) return
+              // Through the end of the chosen day, in the sender's own time zone.
+              const when = new Date(`${event.target.value}T23:59:59`)
+              if (Number.isNaN(when.getTime()) || when.getTime() <= Date.now()) return
+              setPicking(false)
+              onChange(when.toISOString())
+            }}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+          />
+        )}
+      </div>
+      {expired && <p role="status" className="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">This link has expired — people who open it are told so. Pick a new expiry, or “Never expires”, to turn it back on.</p>}
+    </div>
   )
 }

@@ -1791,6 +1791,8 @@ model Artifact {
   editorIds        Json      @default("[]")
   /// Anyone-with-the-link, view only, opt-in. The link's token is stored as a
   /// digest (lookup) and encrypted (so editors can copy the link again).
+  /// When the public link stops working; null = never. Set by the sharer.
+  shareExpiresAt       DateTime?
   shareAnonymous       Boolean @default(false)
   shareTokenDigest     String? @unique
   shareTokenCiphertext String?

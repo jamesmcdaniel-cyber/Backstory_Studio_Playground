@@ -67,6 +67,7 @@ export default async function PublicArtifactPage({ params }: { params: Promise<{
   const clientKey = headerList.get('x-forwarded-for')?.split(',')[0]?.trim() || headerList.get('x-real-ip') || 'unknown'
   const result = await resolvePublicArtifact(token, { clientKey, countView: true })
   if (result.status === 'rate_limited') return <Notice title="Too many requests" body="Give it a minute and try the link again." />
+  if (result.status === 'expired') return <Notice title="This link has expired" body="Whoever shared it set it to stop working after a certain date. Ask them for a new link." />
   if (result.status === 'not_found') return <Notice title="This link isn’t available" body="It may have been turned off or replaced. Ask whoever sent it for a new one." />
 
   const { artifact } = result

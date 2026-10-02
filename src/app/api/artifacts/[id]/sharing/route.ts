@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
-import { ArtifactAccessError, loadSharing, updateSharing } from '@/lib/artifacts/sharing'
+import { ArtifactAccessError, loadSharing, SharingInputError, updateSharing } from '@/lib/artifacts/sharing'
 import { requireReadable, viewerOf } from '@/lib/artifacts/route-access'
 
 export const runtime = 'nodejs'
@@ -29,6 +29,8 @@ const patchSchema = z.object({
   workspaceAccess: z.enum(['edit', 'view']).optional(),
   editorIds: z.array(z.string().min(1).max(64)).max(200).optional(),
   link: z.enum(['enable', 'disable', 'rotate']).optional(),
+  // When the public link stops working; null = never.
+  linkExpiresAt: z.string().datetime().nullable().optional(),
 })
 
 // PATCH /api/artifacts/:id/sharing — change workspace access, the editors, or
@@ -41,6 +43,7 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     return { success: true, ...sharing }
   } catch (error) {
     if (error instanceof ArtifactAccessError) throw new ApiError(error.message, error.status, error.status === 404 ? 'NOT_FOUND' : 'VIEW_ONLY')
+    if (error instanceof SharingInputError) throw new ApiError(error.message, 400, 'INVALID_EXPIRY')
     throw error
   }
 }, { permission: 'agent.read' })

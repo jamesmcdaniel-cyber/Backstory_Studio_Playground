@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const token = request.nextUrl.pathname.split('/').at(-2) ?? ''
   const result = await resolvePublicArtifact(token, { clientKey: clientIp(request) ?? 'unknown' })
   if (result.status === 'rate_limited') return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
-  if (result.status === 'not_found' || !result.artifact.currentVersionId) return NextResponse.json({ error: 'This link is not available.' }, { status: 404 })
+  if (result.status !== 'ok' || !result.artifact.currentVersionId) return NextResponse.json({ error: 'This link is not available.' }, { status: 404 })
   // systemPrisma: resolved above from the link, which carries the organization.
   const version = await systemPrisma.artifactVersion.findFirst({
     where: { id: result.artifact.currentVersionId, organizationId: result.artifact.organizationId },

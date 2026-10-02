@@ -272,6 +272,17 @@ if (!database) {
     assert.equal(await loadCopilotMcpGroups(host.organizationId, copyId), null)
   })
 
+  test('an expired link closes the copilot and the copy’s page too, until the sender extends it', async () => {
+    const view = (await (await call('GET')).json()).copilot
+    await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareExpiresAt: new Date(Date.now() - 1_000) } })
+    assert.equal((await call('GET')).status, 404)
+    assert.equal((await call('POST', { action: 'ask', message: 'Still there?' })).status, 404)
+    assert.equal((await contentRoute.GET(new NextRequest(`${base}/content?copy=${copyId}&v=${view.versionId}`))).status, 404)
+    await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareExpiresAt: new Date(Date.now() + 86_400_000) } })
+    assert.equal((await call('GET')).status, 200, 'extended: the visitor’s copy is where they left it')
+    await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareExpiresAt: null } })
+  })
+
   test('turning the offer off closes the copilot and the copy’s page for visitors', async () => {
     const view = (await (await call('GET')).json()).copilot
     await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareTemplate: false } })

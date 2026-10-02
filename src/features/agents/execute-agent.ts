@@ -646,6 +646,9 @@ function transcriptSummaryForReflection(transcript: unknown): string {
   }
 }
 
+/** Tool-call turns an artifact assistant may take on one message. */
+export const ARTIFACT_ASSISTANT_MAX_TURNS = 50
+
 /**
  * Resume a suspended run (ask_user reply or approval decision) — inline in dev,
  * enqueued on the worker in prod. Shared by the reply route and the approval
@@ -1369,7 +1372,10 @@ async function runAgentExecutionInner(
 
     // Clamp: metadata is user-writable, and an unbounded maxTurns (e.g. 100000)
     // would let a single run grind against only the token cap.
-    const maxTurns = Math.min(Math.max(1, Number(agentMetadata.maxTurns) || Number(process.env.AGENT_MAX_TURNS) || 16), 64)
+    // An artifact's assistant gets more room by default: one request to rework
+    // a large page is many reads and edits, and stopping at 16 left the change
+    // half-made with nothing saved.
+    const maxTurns = Math.min(Math.max(1, Number(agentMetadata.maxTurns) || Number(process.env.AGENT_MAX_TURNS) || (artifactContext ? ARTIFACT_ASSISTANT_MAX_TURNS : 16)), 64)
     // Per-run token backstop against a pathological loop (independent of the
     // monthly ceiling). Generous by default; tune via AGENT_MAX_RUN_TOKENS.
     const perRunTokenCap = Number(process.env.AGENT_MAX_RUN_TOKENS) || 2_000_000
@@ -1831,7 +1837,9 @@ async function runAgentExecutionInner(
       return await finalizeCancelled(liveBeforeCompletion.status === 'cancelled')
     }
 
-    let summary = finalText || 'Agent reached the maximum number of tool-call turns.'
+    let summary = finalText || (artifactContext
+      ? 'I ran out of steps before finishing this. Anything already saved is kept — send “continue” and I will pick up where I left off.'
+      : 'Agent reached the maximum number of tool-call turns.')
     // A deliverable is finished by the artifact renderer (Opus): the agent's
     // turns gather the facts and draft the page; this pass builds the complete
     // app from the draft and the evidence. Not for a conversation about an

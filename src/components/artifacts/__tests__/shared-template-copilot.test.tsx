@@ -121,3 +121,28 @@ test('“Open in Runs” is offered only to the person who owns the copy’s age
   assert.equal(await open(member({ canEdit: false, canShare: false, reason: 'view_only' })), null)
   assert.equal(await open((call) => call.url.endsWith('/copy') ? Response.json({ error: 'Unauthorized' }, { status: 401 }) : Response.json({ success: true, copilot: guest(pendingChat) })), null, 'an anonymous visitor never sees it')
 })
+
+test('the page reloads once, when the copilot has finished — not at every save along the way', async () => {
+  const asked = [{ role: 'user', content: 'Rework it', createdAt: 'a' }]
+  let polls = 0
+  const net = stubFetch((call) => {
+    if (call.method === 'POST') return Response.json({ success: true, copilot: guest([...asked, { role: 'agent', content: '', status: 'pending', createdAt: 'a' }], 'gv3') })
+    polls += 1
+    // First read: the visitor's edited copy. Later reads: the run saving again, then finishing.
+    if (polls === 1) return Response.json({ success: true, copilot: guest([], 'gv2') })
+    return Response.json({ success: true, copilot: guest([...asked, { role: 'agent', content: 'Done.', status: 'completed', createdAt: 'b' }], 'gv5') })
+  })
+  const frame = (ui: ReturnType<typeof render>) => ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1]
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token" returning><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    assert.equal(frame(ui), 'gv2')
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    await act(async () => { fireEvent.change(ui.getByRole('textbox', { name: 'Message' }), { target: { value: 'Rework it' } }) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Send message' })) })
+    assert.equal(frame(ui), 'gv2', 'a version saved mid-run does not reload the page')
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 3_300)) })
+    assert.ok(ui.getByText('Done.'))
+    assert.equal(frame(ui), 'gv5', 'the finished result appears, in one step')
+  } finally { cleanup(); net.restore() }
+})

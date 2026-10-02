@@ -125,13 +125,18 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const artifact = copy?.kind === 'member' ? copy.artifact : null
   const loaded = copy?.kind === 'guest' || Boolean(artifact)
   const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId' | 'question'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
-  const versionId = copy?.kind === 'guest' ? copy.view.versionId : artifact?.currentVersionId ?? null
+  const latestVersionId = copy?.kind === 'guest' ? copy.view.versionId : artifact?.currentVersionId ?? null
   const title = copy?.kind === 'guest' ? copy.view.title : artifact?.title ?? ''
   // An untouched copy IS the original: keep the page the visitor is already
   // looking at (and whatever they did in it) until there is a change to show.
   const edited = copy?.kind === 'guest' ? copy.view.edited : (artifact?.versionCount ?? 1) > 1
   const pending = chat.find((m) => m.status === 'pending')
   const busy = Boolean(pending)
+  // The page moves to a new version ONCE, when the copilot has finished: a run
+  // that saves several times on the way would otherwise reload it under the
+  // visitor at every save.
+  const [versionId, setVersionId] = useState<string | null>(null)
+  useEffect(() => { setVersionId((shown) => (!busy || shown === null ? latestVersionId : shown)) }, [busy, latestVersionId])
   // The copilot paused on a question: it is asked and answered right here.
   const awaiting = pending?.question ?? null
   const hasCopy = Boolean(copy)

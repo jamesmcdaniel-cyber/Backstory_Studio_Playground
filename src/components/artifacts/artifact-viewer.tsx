@@ -113,8 +113,10 @@ export function ArtifactViewer({ id }: { id: string }) {
   useEffect(() => startVisibleInterval(() => void refresh(), busy ? 3_000 : 10_000), [busy, refresh])
   useAgentExecStream(pending?.executionId, () => void refresh(), Boolean(pending?.executionId))
   useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'nearest' }) }, [artifact?.chat.length, pending])
-  // A new version arriving moves the viewer to it.
-  useEffect(() => { if (artifact?.currentVersionId) setVersionId(artifact.currentVersionId) }, [artifact?.currentVersionId])
+  // A new version arriving moves the viewer to it — once the assistant has
+  // finished, not at every save along the way, so the page reloads one time.
+  const assistantWorking = Boolean(pending)
+  useEffect(() => { const current = artifact?.currentVersionId; if (current) setVersionId((shown) => (!assistantWorking || shown === null ? current : shown)) }, [artifact?.currentVersionId, assistantWorking])
   // Markdown versions are rendered here rather than framed; fetch the text when the shown version changes.
   const markdownVersionId = artifact?.versions.find((v) => v.id === (versionId ?? artifact.currentVersionId))?.format === 'markdown' ? (versionId ?? artifact?.currentVersionId ?? null) : null
   useEffect(() => {

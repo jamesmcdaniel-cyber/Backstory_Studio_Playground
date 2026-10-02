@@ -8,6 +8,14 @@ import { validateArtifactContent, validateArtifactPython } from '../validate-con
 import { artifactClientRuntime } from '../client-runtime'
 import { needsArtifactRender } from '@/features/agents/artifact-renderer'
 
+test('validator permits viewer-compatible form events but forbids external submission', () => {
+  const runner = readFileSync('services/artifact-validator/runner.mjs', 'utf8')
+  assert.match(runner, /sandbox="[^"]*allow-forms/)
+  assert.match(runner, /sandbox allow-scripts allow-forms/)
+  assert.match(runner, /form-action 'none'/)
+  assert.doesNotMatch(runner, /allow-same-origin/)
+})
+
 test('@artifact recognizes explicit instruction directives, not email or partial words', () => {
   for (const text of ['@artifact Build a calculator', 'Please build @ artifact', '\n@ARTIFACT\n', 'Build this with @artifact.']) assert.equal(requestsArtifact(text), true)
   for (const text of ['jane@artifact.com', '@artifacts', 'ordinary report']) assert.equal(requestsArtifact(text), false)

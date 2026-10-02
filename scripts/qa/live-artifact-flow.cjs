@@ -42,7 +42,7 @@ async function main() {
       }
     }
     console.log(JSON.stringify({ results: report }))
-    if (report.some(r => r.status !== 'succeeded' || !r.markerPresent || r.versionCount !== 1)) process.exitCode = 1
+    if (report.some(r => r.status !== 'succeeded' || !r.markerPresent || r.versionCount !== 1 || !r.sources || r.sources.some(source => source.status !== 'ok'))) process.exitCode = 1
   })
 }
 main().then(() => process.exit(process.exitCode || 0)).catch(error => { console.error(error.message); process.exit(1) })

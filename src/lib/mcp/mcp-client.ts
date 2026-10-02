@@ -15,6 +15,7 @@ import { decryptSecret } from '@/lib/crypto/secrets'
 import { TokenRefreshError, refreshAccessToken } from '@/lib/mcp/oauth-authcode'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
+import { fetchMcpControlRequest } from './control-request'
 
 // ---------------------------------------------------------------------------
 // Runtime config (constructor argument — secrets already decrypted)
@@ -342,7 +343,7 @@ export class McpClient {
     const sessionId = this.sessionIds.get(serverUrl)
     if (sessionId) headers['Mcp-Session-Id'] = sessionId
 
-    const response = await fetch(serverUrl, {
+    const response = await fetchMcpControlRequest(serverUrl, method, {
       method: 'POST',
       headers,
       body: JSON.stringify({

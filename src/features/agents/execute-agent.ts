@@ -1,6 +1,7 @@
 import type { Job } from 'bullmq'
 import { createHash } from 'node:crypto'
 import { ambientOrganization } from '@/lib/tenant-database-context'
+import { publishAgentDeliverable } from './artifact-publication'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { registerVersionFromExecution } from '@/lib/artifacts/service'
@@ -1968,15 +1969,15 @@ async function runAgentExecutionInner(
     // completed execution, so its artifact must already be addressable.
     const artifactLink = blockedReason
       ? null
-      : await registerVersionFromExecution({
+      : await publishAgentDeliverable(renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && isDeliverable(summary), () => registerVersionFromExecution({
           organizationId, userId, executionId: execution.id,
           agentTaskId: agent.id, agentTitle: agentMetadata.title || agent.description,
           trigger: execution.trigger, summary, headline,
-        })
+        }))
           .then((registered) => registered ? `/artifacts/${registered.artifactId}` : null)
           .catch((error) => {
             apiLogger.warn('artifact registration failed', { executionId: execution.id, error: error instanceof Error ? error.message : String(error) })
-            return null
+            throw error
           })
     // systemPrisma: id-keyed terminal writes on worker job data; execution/agent
     // ids were validated against this tenant when they were loaded/created above.

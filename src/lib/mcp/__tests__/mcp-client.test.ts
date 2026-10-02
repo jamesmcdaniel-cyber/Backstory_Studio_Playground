@@ -316,11 +316,10 @@ test('executeTool passes the arguments through and returns the raw result', asyn
   }
 })
 
-test('a failed handshake is not remembered as ready', async () => {
-  let failNext = true
+test('a failed handshake is not remembered as ready after exhausting bounded retries', async () => {
+  let failures = 3
   const { calls, restore } = stubFetch((call) => {
-    if (call.body?.method === 'initialize' && failNext) {
-      failNext = false
+    if (call.body?.method === 'initialize' && failures-- > 0) {
       return new Response('down', { status: 502 })
     }
     if (call.body?.method === 'initialize') return rpcOk({})
@@ -332,7 +331,7 @@ test('a failed handshake is not remembered as ready', async () => {
     await assert.rejects(() => client.getServerTools(SERVER), /502/)
     const tools = await client.getServerTools(SERVER)
     assert.deepEqual(tools.map((t) => t.name), ['recovered'])
-    assert.equal(calls.filter((c) => c.body?.method === 'initialize').length, 2)
+    assert.equal(calls.filter((c) => c.body?.method === 'initialize').length, 4)
   } finally {
     restore()
   }

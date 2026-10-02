@@ -43,15 +43,17 @@ async function main() {
     }
   })
   const candidates = [
+    ['react-form', 'import React from "react"; export default function App(){const [v,setV]=React.useState("100");const [result,setResult]=React.useState("");return <form onSubmit={e=>{e.preventDefault();setResult(v)}}><input id="amount" value={v} onChange={e=>setV(e.target.value)}/><button id="save" type="submit">Save</button><p id="result">{result}</p></form>};window.__artifactTests=[{action:"fill",selector:"#amount",value:"150"},{action:"click",selector:"#save"},{action:"expectText",selector:"#result",value:"150"}];'],
     ['javascript', '<html><body><h1>QA JavaScript</h1><button id="go" onclick="document.querySelector(\'#result\').textContent=\'42\'">Calculate</button><p id="result">Ready</p><script>window.__artifactTests=[{action:"click",selector:"#go"},{action:"expectText",selector:"#result",value:"42"}]</script></body></html>'],
     ['typescript', 'import React from "react"; export default function App(){const [n,setN]=React.useState<number>(0);return <main><h1>QA TypeScript</h1><button id="go" onClick={()=>setN(42)}>Calculate</button><p id="result">{n}</p></main>}; window.__artifactTests=[{action:"click",selector:"#go"},{action:"expectText",selector:"#result",value:"42"}];'],
     ['python', '<html><body><h1>QA Python</h1><button id="go">Calculate</button><p id="result">Ready</p><script>document.querySelector("#go").onclick=async()=>{const n=await BackstoryArtifact.runPython("sum(input[\\"values\\"])",{values:[20,22]});document.querySelector("#result").textContent=String(n)};window.__artifactTests=[{action:"click",selector:"#go"},{action:"expectText",selector:"#result",value:"42"}]</script></body></html>'],
   ]
-  await Promise.all(candidates.map(async ([kind, content]) => {
+  // Avoid manufacturing validator overload: its configured admission is three.
+  for (const [kind, content] of candidates) {
     const start = Date.now()
     try { await validateArtifactRuntime(content); report.validators.push({ kind, ok: true, ms: Date.now() - start }) }
     catch (error) { report.validators.push({ kind, ok: false, ms: Date.now() - start, error: error.message }) }
-  }))
+  }
   console.log(JSON.stringify(report))
   if (report.flows.some(run => run.status !== 'succeeded') || report.validators.some(run => !run.ok)) process.exitCode = 1
 }

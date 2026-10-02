@@ -15,11 +15,13 @@ process.once('message', async ({ html }) => {
     res.setHeader('Access-Control-Allow-Origin', '*')
     if (path === '/') {
       res.setHeader('Content-Type', 'text/html')
-      return res.end(`<!doctype html><body><script>const states=new Map();window.validationInteractions=false;addEventListener('message',e=>{if(e.source!==document.querySelector('iframe').contentWindow||e.origin!=='null')return;const m=e.data;if(m?.type==='backstory:state'){const old=states.get(m.payload.key)||{value:null,revision:0};let result=old,error;if(m.op==='set'){if(!window.validationInteractions)error='Do not write state automatically on startup.';else if(m.payload.revision!==old.revision)error='State revision conflict';else{result={value:m.payload.value,revision:old.revision+1};states.set(m.payload.key,result)}}e.source.postMessage({type:'backstory:state-result',id:m.id,result,error},'*')}})</script><iframe title="Candidate" sandbox="allow-scripts allow-modals allow-downloads" src="/artifact"></iframe></body>`)
+      return res.end(`<!doctype html><body><script>const states=new Map();window.validationInteractions=false;addEventListener('message',e=>{if(e.source!==document.querySelector('iframe').contentWindow||e.origin!=='null')return;const m=e.data;if(m?.type==='backstory:state'){const old=states.get(m.payload.key)||{value:null,revision:0};let result=old,error;if(m.op==='set'){if(!window.validationInteractions)error='Do not write state automatically on startup.';else if(m.payload.revision!==old.revision)error='State revision conflict';else{result={value:m.payload.value,revision:old.revision+1};states.set(m.payload.key,result)}}e.source.postMessage({type:'backstory:state-result',id:m.id,result,error},'*')}})</script><iframe title="Candidate" sandbox="allow-scripts allow-forms allow-modals allow-downloads" src="/artifact"></iframe></body>`)
     }
     if (path === '/artifact') {
       res.setHeader('Content-Type', 'text/html')
-      res.setHeader('Content-Security-Policy', `sandbox allow-scripts allow-modals allow-downloads; default-src 'none'; base-uri 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; worker-src 'self' blob:; connect-src ${origin}/vendor/pyodide/`)
+      // Match the viewer's DOM submit events. form-action still forbids actual
+      // submissions; the opaque origin and isolated network remain unchanged.
+      res.setHeader('Content-Security-Policy', `sandbox allow-scripts allow-forms allow-modals allow-downloads; default-src 'none'; base-uri 'none'; form-action 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; worker-src 'self' blob:; connect-src ${origin}/vendor/pyodide/`)
       return res.end(html.replaceAll('http://artifact-runtime.invalid', origin))
     }
     if (path.startsWith('/vendor/')) {

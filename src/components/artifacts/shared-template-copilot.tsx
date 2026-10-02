@@ -1,13 +1,13 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, History, Loader2, MessageSquare, Sparkles, X } from 'lucide-react'
+import { ArrowUp, History, Loader2, MessageSquare, Plug, Settings2, Sparkles, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { indentOnTab } from '@/components/ui/textarea'
 import { startVisibleInterval } from '@/lib/client/visible-interval'
 import { cn } from '@/lib/utils'
-import type { ArtifactChatMessage, ArtifactView, GuestCopilotView } from '@/lib/artifacts/types'
+import type { ArtifactChatMessage, ArtifactView, CopilotMcpServerView, GuestCopilotView } from '@/lib/artifacts/types'
 import { RunFeed } from '@/components/runs/run-feed'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
 import { ARTIFACT_FRAME_SANDBOX, StatefulArtifactFrame } from './stateful-artifact-frame'
@@ -158,12 +158,28 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   useEffect(() => { setVersionId((shown) => (!busy || shown === null ? latestVersionId : shown)) }, [busy, latestVersionId])
   // Version history: the copy's versions, newest first. Looking at an older
   // one is a view (`viewId`); the page otherwise follows the latest.
-  const [tab, setTab] = useState<'chat' | 'history'>('chat')
+  const [chosenTab, setTab] = useState<'chat' | 'history' | 'settings'>('chat')
   const [viewId, setViewId] = useState<string | null>(null)
   const [restoring, setRestoring] = useState<string | null>(null)
   const versions = (copy?.kind === 'guest' ? copy.view.versions : artifact?.versions) ?? []
   const viewed = viewId ? versions.find((version) => version.id === viewId) ?? null : null
   const shownId = viewed && viewed.id !== latestVersionId ? viewed.id : versionId
+  // History appears once there is one: an untouched copy has a single version.
+  const tab = chosenTab === 'history' && versions.length <= 1 ? 'chat' : chosenTab
+  // Settings: MCP servers the person connected themselves. A guest's arrive
+  // with their copy; a member's are read when the tab is first opened.
+  const [memberServers, setMemberServers] = useState<CopilotMcpServerView[] | null>(null)
+  const servers = copy?.kind === 'guest' ? copy.view.mcpServers ?? [] : memberServers ?? []
+  const memberCopyId = copy?.kind === 'member' ? copy.id : null
+  useEffect(() => {
+    if (tab !== 'settings' || !memberCopyId || memberServers) return
+    let cancelled = false
+    fetch(`/api/artifacts/${encodeURIComponent(memberCopyId)}/copilot-mcp`, { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { servers?: CopilotMcpServerView[] } | null) => { if (!cancelled) setMemberServers(data?.servers ?? []) })
+      .catch(() => { if (!cancelled) setMemberServers([]) })
+    return () => { cancelled = true }
+  }, [tab, memberCopyId, memberServers])
   // The copilot paused on a question: it is asked and answered right here.
   const awaiting = pending?.question ?? null
   const hasCopy = Boolean(copy)
@@ -235,6 +251,24 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
     } finally { setRestoring(null) }
   }
 
+  // Connect or disconnect one of the person's own MCP servers. Resolves to an
+  // error message, or null when it worked.
+  const changeServers = async (change: { add: McpServerDraft } | { remove: string }): Promise<string | null> => {
+    if (!copy) return 'Open the copilot again to continue.'
+    try {
+      const response = copy.kind === 'member'
+        ? await fetch(`/api/artifacts/${encodeURIComponent(copy.id)}/copilot-mcp`, { method: 'add' in change ? 'POST' : 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify('add' in change ? change.add : { serverId: change.remove }) })
+        : await fetch(guestUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify('add' in change ? { action: 'mcp_add', server: change.add } : { action: 'mcp_remove', serverId: change.remove }) })
+      const data = await response.json().catch(() => ({})) as { servers?: CopilotMcpServerView[]; copilot?: GuestCopilotView; error?: string }
+      if (copy.kind === 'member' && response.ok && data.servers) setMemberServers(data.servers)
+      else if (copy.kind === 'guest' && response.ok && data.copilot) setCopy({ kind: 'guest', view: data.copilot })
+      else return data.error || 'That did not work. Please try again.'
+      return null
+    } catch {
+      return 'That did not work. Please try again.'
+    }
+  }
+
   return (
     <>
       {copy && loaded && shownId && edited ? (
@@ -270,13 +304,12 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
             </button>
           </header>
 
-          {/* History appears once there is one: an untouched copy has a single version. */}
-          {versions.length > 1 && (
+          {loaded && (
             <div role="tablist" aria-label="Copilot views" className="flex border-b border-graphite-200 text-xs font-medium">
-              {(['chat', 'history'] as const).map((option) => (
+              {(['chat', 'history', 'settings'] as const).filter((option) => (option !== 'history' || versions.length > 1) && (option !== 'settings' || canAsk)).map((option) => (
                 <button key={option} type="button" role="tab" aria-selected={tab === option} onClick={() => setTab(option)} className={cn('-mb-px inline-flex flex-1 items-center justify-center gap-1.5 border-b-2 px-3 py-2', tab === option ? 'border-horizon-600 text-graphite-900' : 'border-transparent text-fg-muted hover:text-graphite-900')}>
-                  {option === 'chat' ? <MessageSquare className="h-3.5 w-3.5" aria-hidden /> : <History className="h-3.5 w-3.5" aria-hidden />}
-                  {option === 'chat' ? 'Chat' : `History (${copy?.kind === 'member' ? artifact?.versionCount ?? versions.length : versions[0].number})`}
+                  {option === 'chat' ? <MessageSquare className="h-3.5 w-3.5" aria-hidden /> : option === 'history' ? <History className="h-3.5 w-3.5" aria-hidden /> : <Settings2 className="h-3.5 w-3.5" aria-hidden />}
+                  {option === 'chat' ? 'Chat' : option === 'history' ? `History (${copy?.kind === 'member' ? artifact?.versionCount ?? versions.length : versions[0].number})` : 'Settings'}
                 </button>
               ))}
             </div>
@@ -288,7 +321,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
             </p>
           )}
 
-          {tab === 'history' && versions.length > 1 ? (
+          {tab === 'settings' && loaded && canAsk ? (
+            <CopilotSettings servers={servers} loading={copy?.kind === 'member' && memberServers === null} busy={busy} onChange={changeServers} />
+          ) : tab === 'history' ? (
             <ol aria-label="Version history" className="min-h-0 flex-1 divide-y divide-graphite-200 overflow-y-auto">
               {versions.map((version) => {
                 const isCurrent = version.id === latestVersionId
@@ -352,7 +387,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
           </div>
           )}
 
-          {loaded && canAsk && !(tab === 'history' && versions.length > 1) && (
+          {loaded && canAsk && tab === 'chat' && (
             <form onSubmit={send} className="border-t border-graphite-200 p-3">
               <label htmlFor="template-copilot-message" className="sr-only">Message</label>
               <div className="flex items-end gap-2">
@@ -395,5 +430,119 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
         <span className="hidden sm:inline">{open ? 'Close' : 'AI Copilot'}</span>
       </button>
     </>
+  )
+}
+
+type McpServerDraft = { serverUrl: string; name?: string; authType: 'none' | 'api_key' | 'oauth2'; apiKey?: string; headerName?: string; clientId?: string; clientSecret?: string; tokenUrl?: string; scopes?: string }
+
+const AUTH_LABEL: Record<McpServerDraft['authType'], string> = { none: 'No sign-in', api_key: 'API key or token', oauth2: 'Client credentials' }
+const FIELD = 'mt-1 block h-9 w-full rounded-md border border-graphite-200 bg-white px-2.5 text-sm text-graphite-900 placeholder:text-fg-muted focus:border-horizon-400 focus:outline-none focus:ring-2 focus:ring-horizon-100'
+
+/**
+ * The copilot's settings: the person's own MCP servers. Connecting one makes
+ * it the copilot's data source for their copy — in place of the demo data the
+ * link came with — using a credential they already hold for that server.
+ */
+function CopilotSettings({ servers, loading, busy, onChange }: { servers: CopilotMcpServerView[]; loading: boolean; busy: boolean; onChange: (change: { add: McpServerDraft } | { remove: string }) => Promise<string | null> }) {
+  const [draft, setDraft] = useState<McpServerDraft>({ serverUrl: '', authType: 'api_key' })
+  const [working, setWorking] = useState<string | null>(null)
+  const [problem, setProblem] = useState('')
+  const set = (patch: Partial<McpServerDraft>) => setDraft((current) => ({ ...current, ...patch }))
+
+  const connect = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (working || !draft.serverUrl.trim()) return
+    setWorking('add')
+    setProblem('')
+    const clean = Object.fromEntries(Object.entries({ ...draft, serverUrl: draft.serverUrl.trim() }).filter(([, value]) => value !== '' && value !== undefined)) as McpServerDraft
+    const failed = await onChange({ add: clean })
+    if (failed) setProblem(failed)
+    else setDraft({ serverUrl: '', authType: draft.authType })
+    setWorking(null)
+  }
+
+  const remove = async (id: string) => {
+    if (working) return
+    setWorking(id)
+    setProblem('')
+    const failed = await onChange({ remove: id })
+    if (failed) setProblem(failed)
+    setWorking(null)
+  }
+
+  return (
+    <div aria-label="Copilot settings" className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3 text-sm">
+      <div>
+        <p className="flex items-center gap-1.5 font-semibold text-graphite-900"><Plug className="h-4 w-4 text-horizon-600" aria-hidden /> Your data</p>
+        <p className="mt-1 text-xs text-fg-muted">
+          Connect your own MCP server and the copilot uses it — instead of the demo data — when it changes this page. Your credential is encrypted, used only for your copy, and never shown again.
+        </p>
+      </div>
+
+      {loading ? (
+        <p className="flex items-center gap-2 text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Loading…</p>
+      ) : servers.length > 0 ? (
+        <ul aria-label="Connected servers" className="space-y-2">
+          {servers.map((server) => (
+            <li key={server.id} className="flex items-center justify-between gap-2 rounded-lg border border-graphite-200 px-3 py-2">
+              <span className="min-w-0">
+                <span className="block truncate font-medium text-graphite-900">{server.name}</span>
+                <span className="block truncate text-xs text-fg-muted">{server.serverUrl}</span>
+                <span className="block text-xs text-fg-muted">{AUTH_LABEL[server.authType]} · {server.toolCount} tool{server.toolCount === 1 ? '' : 's'}</span>
+              </span>
+              <button type="button" disabled={working !== null || busy} onClick={() => void remove(server.id)} aria-label={`Remove ${server.name}`} className="rounded-md p-1.5 text-fg-muted transition-colors hover:bg-graphite-100 hover:text-destructive disabled:opacity-50">
+                {working === server.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Trash2 className="h-4 w-4" aria-hidden />}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-lg border border-dashed border-graphite-200 px-3 py-2 text-xs text-fg-muted">No server connected — the copilot is using the demo data this link came with.</p>
+      )}
+
+      {!loading && servers.length < 3 && (
+        <form onSubmit={connect} className="space-y-3 border-t border-graphite-200 pt-3">
+          <p className="font-medium text-graphite-900">Connect a server</p>
+          <label className="block text-xs font-medium text-graphite-900">Server address
+            <input type="url" required value={draft.serverUrl} onChange={(event) => set({ serverUrl: event.target.value })} placeholder="https://mcp.example.com/mcp" className={FIELD} />
+          </label>
+          <label className="block text-xs font-medium text-graphite-900">Name <span className="font-normal text-fg-muted">(optional)</span>
+            <input type="text" maxLength={80} value={draft.name ?? ''} onChange={(event) => set({ name: event.target.value })} placeholder="Taken from the address when left empty" className={FIELD} />
+          </label>
+          <label className="block text-xs font-medium text-graphite-900">How it signs in
+            <select value={draft.authType} onChange={(event) => set({ authType: event.target.value as McpServerDraft['authType'] })} className={FIELD}>
+              {(['api_key', 'oauth2', 'none'] as const).map((option) => <option key={option} value={option}>{AUTH_LABEL[option]}</option>)}
+            </select>
+          </label>
+          {draft.authType === 'api_key' && <>
+            <label className="block text-xs font-medium text-graphite-900">API key or token
+              <input type="password" autoComplete="off" required value={draft.apiKey ?? ''} onChange={(event) => set({ apiKey: event.target.value })} className={FIELD} />
+            </label>
+            <label className="block text-xs font-medium text-graphite-900">Header <span className="font-normal text-fg-muted">(optional)</span>
+              <input type="text" value={draft.headerName ?? ''} onChange={(event) => set({ headerName: event.target.value })} placeholder="Authorization" className={FIELD} />
+            </label>
+          </>}
+          {draft.authType === 'oauth2' && <>
+            <label className="block text-xs font-medium text-graphite-900">Client ID
+              <input type="text" autoComplete="off" required value={draft.clientId ?? ''} onChange={(event) => set({ clientId: event.target.value })} className={FIELD} />
+            </label>
+            <label className="block text-xs font-medium text-graphite-900">Client secret
+              <input type="password" autoComplete="off" required value={draft.clientSecret ?? ''} onChange={(event) => set({ clientSecret: event.target.value })} className={FIELD} />
+            </label>
+            <label className="block text-xs font-medium text-graphite-900">Token address
+              <input type="url" required value={draft.tokenUrl ?? ''} onChange={(event) => set({ tokenUrl: event.target.value })} placeholder="https://auth.example.com/oauth/token" className={FIELD} />
+            </label>
+            <label className="block text-xs font-medium text-graphite-900">Scopes <span className="font-normal text-fg-muted">(optional)</span>
+              <input type="text" value={draft.scopes ?? ''} onChange={(event) => set({ scopes: event.target.value })} className={FIELD} />
+            </label>
+          </>}
+          {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
+          <Button type="submit" size="sm" disabled={working !== null || !draft.serverUrl.trim()}>
+            {working === 'add' ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />Checking the server…</> : <><Plug className="mr-1.5 h-3.5 w-3.5" aria-hidden />Connect</>}
+          </Button>
+        </form>
+      )}
+      {(loading || servers.length >= 3) && problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
+    </div>
   )
 }

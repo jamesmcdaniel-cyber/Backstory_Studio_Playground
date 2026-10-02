@@ -135,6 +135,32 @@ test('a copy the server already resolved is on screen from the first paint — t
   } finally { cleanup(); net.restore() }
 })
 
+test('the copilot’s Settings connect a visitor’s own MCP server with their own credential, and remove it', async () => {
+  const connected = [{ id: 'srv-1', name: 'mcp.example.com', serverUrl: 'https://mcp.example.com/mcp', authType: 'api_key', toolCount: 4 }]
+  const net = stubFetch((call) => {
+    if (call.url.endsWith('/copy')) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    const action = call.method === 'POST' ? JSON.parse(call.body ?? '{}').action : null
+    if (action === 'mcp_add') return Response.json({ success: true, copilot: { ...guest(), mcpServers: connected } })
+    return Response.json({ success: true, copilot: { ...guest(), mcpServers: [] } })
+  })
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    await act(async () => { fireEvent.click(ui.getByRole('tab', { name: 'Settings' })) })
+    assert.ok(ui.getByText(/using the demo data this link came with/))
+    await act(async () => { fireEvent.change(ui.getByLabelText('Server address'), { target: { value: 'https://mcp.example.com/mcp' } }) })
+    await act(async () => { fireEvent.change(ui.getByLabelText('API key or token'), { target: { value: 'my-token' } }) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Connect' })) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'mcp_add', server: { serverUrl: 'https://mcp.example.com/mcp', authType: 'api_key', apiKey: 'my-token' } })
+    assert.ok(ui.getByText('API key or token · 4 tools'))
+    assert.equal((ui.getByLabelText('API key or token') as HTMLInputElement).value, '', 'the credential is not kept on screen')
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Remove mcp.example.com' })) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'mcp_remove', serverId: 'srv-1' })
+    assert.ok(ui.getByText(/using the demo data this link came with/))
+  } finally { cleanup(); net.restore() }
+})
+
 test('someone signed in who comes back sees their copy’s latest version without opening the copilot', async () => {
   const net = stubFetch((call) => call.url.endsWith('/copy') ? Response.json({ success: true, artifactId: 'copy-1' }) : Response.json({ success: true, artifact: copy([], 3) }))
   try {

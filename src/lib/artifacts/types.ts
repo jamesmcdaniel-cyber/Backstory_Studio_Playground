@@ -77,6 +77,9 @@ export const ARTIFACT_KIND_LABEL: Record<ArtifactKind, string> = {
 /** The cookie holding an anonymous visitor's token for their guest copies. */
 export const GUEST_COOKIE = 'bs_guest'
 
+/** A server the person using a shared-template copy connected for its copilot. Never carries a secret. */
+export type CopilotMcpServerView = { id: string; name: string; serverUrl: string; authType: 'none' | 'api_key' | 'oauth2'; toolCount: number }
+
 /** What a visitor sees of their guest copy: no run ids, models or raw run errors. */
 export type GuestCopilotView = {
   copyId: string
@@ -84,6 +87,8 @@ export type GuestCopilotView = {
   versionId: string | null
   /** Whether the copilot has changed the copy yet; until then it is the original. */
   edited: boolean
+  /** MCP servers the visitor connected themselves; once any exist the copilot uses only these. */
+  mcpServers: CopilotMcpServerView[]
   /** The copy's recent versions, newest first — the visitor's own history. */
   versions: Array<Pick<ArtifactVersionView, 'id' | 'number' | 'request' | 'createdAt' | 'source'>>
   chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'question'>>

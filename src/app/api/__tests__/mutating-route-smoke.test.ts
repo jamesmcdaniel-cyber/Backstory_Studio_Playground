@@ -257,6 +257,8 @@ const cases = (): Case[] => [
   { route: 'artifacts/[id]/reply', method: 'POST', run: async () => (await import('../artifacts/[id]/reply/route')).POST(rq('/api/artifacts/missing/reply', 'POST', { message: 'The second option' })) },
   { route: 'artifacts/[id]/sharing', method: 'PATCH', run: async () => (await import('../artifacts/[id]/sharing/route')).PATCH(rq('/api/artifacts/missing/sharing', 'PATCH', { workspaceAccess: 'view' })) },
   { route: 'artifacts/[id]/assistant', method: 'PATCH', run: async () => (await import('../artifacts/[id]/assistant/route')).PATCH(rq('/api/artifacts/missing/assistant', 'PATCH', { instructions: 'Write for a CFO', toolConnectionIds: [] })) },
+  { route: 'artifacts/[id]/copilot-mcp', method: 'POST', run: async () => (await import('../artifacts/[id]/copilot-mcp/route')).POST(rq('/api/artifacts/missing/copilot-mcp', 'POST', { serverUrl: 'https://mcp.example.com/mcp', authType: 'none' })) },
+  { route: 'artifacts/[id]/copilot-mcp', method: 'DELETE', run: async () => (await import('../artifacts/[id]/copilot-mcp/route')).DELETE(rq('/api/artifacts/missing/copilot-mcp', 'DELETE', { serverId: 'missing' })) },
   { route: 'artifacts/[id]/rerun-flow', method: 'POST', run: async () => (await import('../artifacts/[id]/rerun-flow/route')).POST(rq('/api/artifacts/missing/rerun-flow', 'POST', { message: 'again' })) },
   { route: 'roi/sources', method: 'POST', run: async () => (await import('../roi/sources/route')).POST(rq('/api/roi/sources', 'POST', { documentId: 'missing', account: 'Acme', kind: 'activity' })) },
   { route: 'roi/analyses', method: 'POST', run: async () => (await import('../roi/analyses/route')).POST(rq('/api/roi/analyses', 'POST', { account: 'Acme', timeframe: 'last6_vs_prior6', datasetIds: ['missing'] })) },

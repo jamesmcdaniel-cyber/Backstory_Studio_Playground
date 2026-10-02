@@ -31,6 +31,8 @@ const EXEMPT: Record<string, string> = {
     'Defines attachTokenPersistence and the mcpClientForStoredConnection factory.',
   'src/lib/mcp/verify-connection.ts':
     'verifyStoredMcpConnection verifies a DRAFT whose credentials came in on the request — there is no stored row to write back to. Stored rows go through verifyLiveMcpConnection.',
+  'src/lib/artifacts/copilot-mcp.ts':
+    'A shared-template copy\'s own servers are stored on the artifact, not as connection rows, and only as none / api_key / client-credentials — no refresh token exists to rotate, so there is nothing to persist.',
   'src/features/flows/http-auth.ts':
     'Reads an already-refreshed bearer for an HTTP step. Calls ensureFreshConnectionToken and constructs no client, so no refresh can happen here.',
 }

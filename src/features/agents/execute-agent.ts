@@ -23,6 +23,7 @@ import { indexExecution } from '@/lib/rag/indexer'
 import {
   loadPeopleAiPlaneGroup,
   loadMcpConnectionPlaneGroups,
+  mcpConnectionSlug,
   loadNativePlaneGroups,
   loadNangoPlaneGroups,
   toolName,
@@ -38,6 +39,7 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
 import { TEMPLATE_COPILOT_INSTRUCTIONS, templateCopyRunsAs } from '@/lib/artifacts/template-policy'
+import { loadCopilotMcpGroups } from '@/lib/artifacts/copilot-mcp'
 import { downgradeNotice } from '@/lib/usage/model-tiers'
 import { buildAgentSystemPrompt } from './system-prompt'
 import {
@@ -455,6 +457,24 @@ export async function loadTools(
     // (demo data, by its owner's say-so). Nobody's live Backstory connection,
     // no service identity, no other MCP server and no integration loads here —
     // for a signed-in person's copy and an anonymous visitor's alike.
+    //
+    // Unless the person using the copy connected servers of their own: then
+    // those are the copilot's ONLY data (their credentials, their data) and
+    // the demo servers are not loaded at all — the two never share a page.
+    const own = await loadCopilotMcpGroups(organizationId, artifact.artifactId).catch((error) => {
+      apiLogger.warn('loadTools: a template copy\'s own MCP servers could not be loaded', { organizationId, error: error instanceof Error ? error.message : String(error) })
+      return null
+    })
+    if (own) {
+      for (const group of own) {
+        const provider = mcpConnectionSlug(group.name) || 'mcp'
+        for (const tool of group.tools) discovered.push({
+          name: toolName(provider, tool.name), description: tool.description, inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
+          isWrite: false, binding: { provider, serverUrl: group.serverUrl, toolName: tool.name, isWrite: false, client: group.client },
+        })
+      }
+      return { ...materializeTools(discovered), unavailable: [], policyRemoved: [] }
+    }
     const shareable = await loadMcpConnectionPlaneGroups(organizationId, ownerUserId, { shareableOnly: true, take: 5 }).catch((error) => {
       apiLogger.warn('loadTools: shareable MCP servers could not be loaded for a template copilot', { organizationId, error: error instanceof Error ? error.message : String(error) })
       return []

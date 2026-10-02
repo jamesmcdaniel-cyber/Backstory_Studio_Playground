@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/server/api-handler'
 import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
 import { startOfUtcDay } from '@/lib/usage/free-tier-limits'
 import type { ArtifactChatMessage, GuestCopilotView } from './types'
+import { addCopilotMcpServer, copilotMcpViews, removeCopilotMcpServer, type CopilotMcpInput } from './copilot-mcp'
 
 /** Explicit bearer-token export of published source only, into the caller's tenant. */
 export async function useArtifactTemplate(token: string, organizationId: string, userId: string) {
@@ -122,7 +123,7 @@ async function findGuestCopy(source: TemplateSource, digest: string | null) {
 async function guestView(organizationId: string, copyId: string): Promise<GuestCopilotView> {
   const { artifactStatus } = await import('./service')
   await artifactStatus(organizationId, copyId) // settles a finished run's answer into the chat
-  const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, versionCount: true, chat: true } })
+  const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, versionCount: true, chat: true, copilotMcpServers: true } })
   if (!row) throw new ApiError('Template not available.', 404, 'NOT_FOUND')
   const chat = (Array.isArray(row.chat) ? row.chat : []) as unknown as ArtifactChatMessage[]
   const versions = await prisma.artifactVersion.findMany({ where: { artifactId: row.id, organizationId }, orderBy: { number: 'desc' }, take: 20, select: { id: true, number: true, request: true, createdAt: true, executionId: true } })
@@ -131,6 +132,7 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
     title: row.title,
     versionId: row.currentVersionId,
     edited: row.versionCount > 1,
+    mcpServers: copilotMcpViews(row.copilotMcpServers),
     // No run ids or authors: a guest's history is what changed and when.
     versions: versions.map((version) => ({
       id: version.id,
@@ -271,6 +273,20 @@ export async function restoreGuestCopy(token: string, guestToken: string | null 
     throw new ApiError(/^(That version is already|Version not found)/.test(text) ? text : 'The version could not be restored. Please try again.', 400, 'RESTORE_REJECTED', error)
   }
   return guestView(organizationId, copy.id)
+}
+
+/**
+ * A visitor connects (or disconnects) their own MCP server for their copy's
+ * copilot. The copy is found by the link's token and the visitor's cookie, as
+ * everywhere else; the server and its credential are stored on that copy alone.
+ */
+export async function changeGuestCopyMcp(token: string, guestToken: string | null | undefined, change: { add: CopilotMcpInput } | { remove: string }): Promise<GuestCopilotView> {
+  const source = await publicTemplate(token)
+  const copy = await findGuestCopy(source, guestDigestOf(guestToken))
+  if (!copy) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
+  if ('add' in change) await addCopilotMcpServer(source.organizationId, copy.id, change.add)
+  else await removeCopilotMcpServer(source.organizationId, copy.id, change.remove)
+  return guestView(source.organizationId, copy.id)
 }
 
 /** One version of a guest copy as a page. The copy's id is a 122-bit random value only its visitor was given. */

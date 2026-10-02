@@ -253,6 +253,8 @@ if (TEST_DB) {
     { name: 'GET /api/workflows/executions', run: async () => (await import('../workflows/executions/route')).GET(req('/api/workflows/executions')) },
     { name: 'GET /api/artifacts', run: async () => (await import('../artifacts/route')).GET(req('/api/artifacts')) },
     { name: 'GET /api/artifacts/[id]', run: async () => (await import('../artifacts/[id]/route')).GET(req('/api/artifacts/missing')) },
+    { name: 'GET /api/artifacts/[id]/copilot-mcp', run: async () => (await import('../artifacts/[id]/copilot-mcp/route')).GET(req('/api/artifacts/missing/copilot-mcp')) },
+    { name: 'GET /api/share/artifacts/[token]/copy', run: async () => (await import('../share/artifacts/[token]/copy/route')).GET(req('/api/share/artifacts/missing/copy')) },
     { name: 'GET /api/artifacts/[id]/versions/[versionId]/content', run: async () => (await import('../artifacts/[id]/versions/[versionId]/content/route')).GET(req('/api/artifacts/missing/versions/current/content')) },
     { name: 'GET /api/artifacts/[id]/assistant', run: async () => (await import('../artifacts/[id]/assistant/route')).GET(req('/api/artifacts/missing/assistant')) },
     { name: 'GET /api/artifacts/[id]/sharing', run: async () => (await import('../artifacts/[id]/sharing/route')).GET(req('/api/artifacts/missing/sharing')) },

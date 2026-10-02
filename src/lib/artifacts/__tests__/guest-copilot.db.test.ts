@@ -217,6 +217,40 @@ if (!database) {
     assert.deepEqual(await reach(), [])
   })
 
+  test('a visitor connects their own MCP server: stored on their copy alone, secret never shown, and it replaces the demo data', async () => {
+    const { buildAuthConfig } = await import('@/lib/crypto/secrets')
+    const { loadCopilotMcpGroups } = await import('../copilot-mcp')
+    const add = (server: object, withCookie = cookie) => call('POST', { action: 'mcp_add', server }, withCookie)
+    assert.equal((await add({ serverUrl: 'https://mcp.example.com/mcp', authType: 'none' }, '')).status, 404, 'no cookie, no copy to configure')
+    assert.equal((await add({ serverUrl: 'http://mcp.example.com/mcp', authType: 'none' })).status, 400, 'https only')
+    assert.equal((await add({ serverUrl: 'https://127.0.0.1/mcp', authType: 'none' })).status, 400, 'never an internal address')
+    assert.equal((await add({ serverUrl: 'https://mcp.example.com/mcp', authType: 'api_key' })).status, 400, 'a key is required when it signs in with one')
+    assert.equal(await loadCopilotMcpGroups(host.organizationId, copyId), null, 'nothing connected: the copilot stays on the demo servers')
+    const connections = await db.mcpConnection.count({ where: { organizationId: host.organizationId } })
+
+    // A connected server, as a verified add would have stored it.
+    const stored = { id: 'srv-1', name: 'My CRM', serverUrl: 'https://mcp.invalid.test/mcp', authType: 'api_key', authConfig: buildAuthConfig({ authType: 'api_key', apiKey: 'visitor-secret-token' }), toolCount: 4, addedAt: new Date().toISOString() }
+    await db.artifact.update({ where: { id: copyId, organizationId: host.organizationId }, data: { copilotMcpServers: [stored] } })
+    const raw = JSON.stringify((await db.artifact.findFirstOrThrow({ where: { id: copyId, organizationId: host.organizationId } })).copilotMcpServers)
+    assert.equal(raw.includes('visitor-secret-token'), false, 'the credential is encrypted at rest')
+    const shown = await (await call('GET')).text()
+    assert.deepEqual(JSON.parse(shown).copilot.mcpServers, [{ id: 'srv-1', name: 'My CRM', serverUrl: 'https://mcp.invalid.test/mcp', authType: 'api_key', toolCount: 4 }])
+    assert.equal(/visitor-secret-token|authConfig|enc:/.test(shown), false, 'nothing of the credential is sent back')
+
+    // Their server is now the copilot's only data source — even while it is
+    // unreachable, the run does not quietly go back to demo data.
+    const groups = await loadCopilotMcpGroups(host.organizationId, copyId)
+    assert.deepEqual(groups?.map((group) => [group.name, group.tools.length]), [['My CRM', 0]])
+    assert.equal(await loadCopilotMcpGroups(host.organizationId, sourceId), null, 'the original template never has visitor servers')
+    assert.equal(await db.mcpConnection.count({ where: { organizationId: host.organizationId } }), connections, 'nothing lands among the workspace’s own connections')
+
+    assert.equal((await call('POST', { action: 'mcp_remove', serverId: 'srv-1' }, '')).status, 404)
+    const removed = await call('POST', { action: 'mcp_remove', serverId: 'srv-1' })
+    assert.equal(removed.status, 200)
+    assert.deepEqual((await removed.json()).copilot.mcpServers, [])
+    assert.equal(await loadCopilotMcpGroups(host.organizationId, copyId), null)
+  })
+
   test('turning the offer off closes the copilot and the copy’s page for visitors', async () => {
     const view = (await (await call('GET')).json()).copilot
     await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareTemplate: false } })

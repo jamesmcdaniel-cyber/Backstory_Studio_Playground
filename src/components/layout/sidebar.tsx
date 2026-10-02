@@ -52,7 +52,7 @@ import { creditUsagePct } from '@/lib/usage/credit-pct'
 import { cn } from '@/lib/utils'
 import type { Activity, Agent as AgentType } from '@/lib/types'
 
-type Agent = Pick<AgentType, 'id' | 'title' | 'description' | 'instructions' | 'avatarSeed' | 'folder' | 'visibility'>
+type Agent = Pick<AgentType, 'id' | 'title' | 'description' | 'instructions' | 'avatarSeed' | 'folder' | 'visibility' | 'madeForArtifact'>
 
 type Organization = { id: string; name: string; slug: string; plan: string; logoUrl?: string | null }
 type WorkspaceFolder = { id: string; name: string }
@@ -331,7 +331,10 @@ export function Sidebar() {
   }
 
   const sections = useMemo(() => {
-    const shared = agents.filter((agent) => agent.visibility !== 'private')
+    // An artifact's own agent is operated from that artifact; this list is
+    // the agents people made.
+    const listed = agents.filter((agent) => !agent.madeForArtifact)
+    const shared = listed.filter((agent) => agent.visibility !== 'private')
     const folders = new Map<string, Agent[]>()
     const explicitByName = new Map(workspaceFolders.map((folder) => [folder.name.toLocaleLowerCase(), folder]))
     folders.set('General', [])
@@ -347,7 +350,7 @@ export function Sidebar() {
       workspace: [...folders.entries()]
         .map(([name, folderAgents]) => ({ name, agents: folderAgents, folder: explicitByName.get(name.toLocaleLowerCase()) ?? null }))
         .sort((a, b) => a.name === 'General' ? -1 : b.name === 'General' ? 1 : a.name.localeCompare(b.name)),
-      private: agents.filter((agent) => agent.visibility === 'private'),
+      private: listed.filter((agent) => agent.visibility === 'private'),
     }
   }, [agents, workspaceFolders])
 
@@ -777,18 +780,25 @@ export function Sidebar() {
               )
             })}
 
-            <div
+            <button
               className={cn(
-                'flex items-center gap-1.5 rounded-lg px-2 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-fg-muted',
+                'mt-2 flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-graphite-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 dragOver === 'private' && 'bg-horizon-50',
               )}
+              aria-expanded={!folderCollapsed.private}
+              onClick={() => setFolderCollapsed((current) => ({ ...current, private: !current.private }))}
               {...dropProps('private', { folder: null, visibility: 'private' })}
             >
-              <Lock className="h-3 w-3" /> Private
-            </div>
-            {sections.private.length > 0
-              ? <div className="ml-3 border-l pl-1">{sections.private.map(renderAgent)}</div>
-              : <p className="px-2 py-1 text-xs text-fg-muted">Drag agents here to make them private.</p>}
+              {folderCollapsed.private ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              <Lock className="h-3 w-3" />
+              <span className="flex-1 text-left">Private</span>
+              <span className="text-xs font-normal normal-case tracking-normal">{sections.private.length}</span>
+            </button>
+            {!folderCollapsed.private && (
+              sections.private.length > 0
+                ? <div className="ml-3 border-l pl-1">{sections.private.map(renderAgent)}</div>
+                : <p className="px-2 py-1 text-xs text-fg-muted">Drag agents here to make them private.</p>
+            )}
           </div>
         </div>
 

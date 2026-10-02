@@ -3,12 +3,16 @@ import { parseAgentToolSettings } from '@/lib/connectors/tool-quick-config'
 import { parseAgentHttpEndpoints } from '@/lib/integrations/http-endpoints'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 
+/** Stamped on the background agent made for an artifact that arrived without one. */
+export const ARTIFACT_AGENT_TEMPLATE_ID = 'builtin:artifact-editor'
+
 /**
  * The wire shape for an agent, shared by /api/agents and /api/snapshot so the
  * two lists are always interchangeable on the client.
  */
 export function serializeAgent(agent: {
   id: string
+  artifactTemplateCopyId?: string | null
   description: string
   objective: string
   goal: string | null
@@ -49,6 +53,9 @@ export function serializeAgent(agent: {
     folder: agent.folder || null,
     teammateId: agent.teammateId || null,
     visibility: agent.visibility || 'shared',
+    // Made for one artifact (its editor, or a template copy's copilot) rather
+    // than by a person: reachable from that artifact, kept out of agent lists.
+    madeForArtifact: Boolean(agent.artifactTemplateCopyId) || (metadata as { templateId?: unknown }).templateId === ARTIFACT_AGENT_TEMPLATE_ID,
     status: agent.status.toLowerCase(),
     priority: agent.priority.toLowerCase(),
     schedule: agent.schedule,

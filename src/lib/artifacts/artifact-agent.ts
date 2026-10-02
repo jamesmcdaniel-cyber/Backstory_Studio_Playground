@@ -2,6 +2,7 @@ import type { AgentTask } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { provisionAgentFromConfig } from '@/lib/templates/instantiate'
 import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
+import { ARTIFACT_AGENT_TEMPLATE_ID } from '@/lib/agents/serialize'
 
 /**
  * Every artifact has an agent behind it — the one its assistant runs as. An
@@ -11,7 +12,7 @@ import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/vis
  * artifact's Settings tab, like any other.
  */
 
-export const ARTIFACT_AGENT_TEMPLATE_ID = 'builtin:artifact-editor'
+export { ARTIFACT_AGENT_TEMPLATE_ID }
 
 const INSTRUCTIONS = (title: string) => `You maintain the artifact "${title}" — a page people read and click through. You work only through the conversation on that artifact.
 

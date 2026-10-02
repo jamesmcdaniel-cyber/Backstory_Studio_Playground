@@ -21,6 +21,8 @@ export type Agent = {
   teammateId: string | null
   folder: string | null
   visibility: 'shared' | 'private'
+  /** Made automatically for one artifact (its editor or copilot), not by a person. */
+  madeForArtifact?: boolean
   status: string
   priority: string
   schedule: { type: string; isActive: boolean }

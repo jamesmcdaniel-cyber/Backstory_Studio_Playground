@@ -227,7 +227,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">{artifact.title}</h1>
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
             <span>{ARTIFACT_KIND_LABEL[artifact.kind]}</span>
-            {artifact.agent && (configurationLocked ? <span>Personal copy · AI Copilot · settings locked</span> : <Link href={`/agents?agent=${artifact.agent.id}`} className="inline-flex items-center gap-1 hover:text-foreground"><Bot className="h-3.5 w-3.5" aria-hidden />{artifact.agent.title}</Link>)}
+            {artifact.agent && (configurationLocked ? <span className="inline-flex items-center gap-1">Personal copy · <Link href={`/agents?agent=${artifact.agent.id}`} className="inline-flex items-center gap-1 hover:text-foreground"><Bot className="h-3.5 w-3.5" aria-hidden />{artifact.agent.title}</Link> · settings locked</span> : <Link href={`/agents?agent=${artifact.agent.id}`} className="inline-flex items-center gap-1 hover:text-foreground"><Bot className="h-3.5 w-3.5" aria-hidden />{artifact.agent.title}</Link>)}
             {artifact.flow && <Link href={`/flows/${artifact.flow.id}`} className="inline-flex items-center gap-1 hover:text-foreground"><Workflow className="h-3.5 w-3.5" aria-hidden />{artifact.flow.name}</Link>}
             <span>{artifact.versionCount} version{artifact.versionCount === 1 ? '' : 's'} · updated {relativeTime(artifact.updatedAt)}</span>
           </p>

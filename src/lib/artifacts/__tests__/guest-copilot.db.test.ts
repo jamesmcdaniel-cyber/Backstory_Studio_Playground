@@ -74,6 +74,9 @@ if (!database) {
     assert.equal(agent.artifactTemplateCopyId, copyId)
     assert.equal(agent.userId, host.userId, 'the copilot runs as the template’s owner')
     assert.equal(agent.visibility, 'private')
+    assert.deepEqual((agent.metadata as any).integrations, [], 'no data access for a visitor’s copilot')
+    const { listableAgentScope } = await import('@/lib/server/visibility')
+    assert.equal(await db.agentTask.count({ where: { id: agent.id, organizationId: host.organizationId, ...listableAgentScope(host.userId) } }), 0, 'never listed among the sender’s agents')
 
     assert.equal((await (await call('POST', { action: 'open' })).json()).copilot.copyId, copyId, 'the same visitor gets the same copy')
     assert.equal((await (await call('GET')).json()).copilot.copyId, copyId)

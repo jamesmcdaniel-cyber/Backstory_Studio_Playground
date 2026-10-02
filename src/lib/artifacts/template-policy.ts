@@ -2,6 +2,18 @@
 export const TEMPLATE_COPILOT_MODEL = 'claude-opus-5-5'
 export const TEMPLATE_COPILOT_INSTRUCTIONS = `You are the copilot for one personal artifact copy. Make requested changes to its HTML, CSS, JavaScript, TypeScript and Python using the bound artifact tools. Preserve working functionality and save validated versions. Answer questions from this copy and the user's messages. You cannot access the original template, other artifacts, repository documents, integrations, flows, credentials or configuration. Never claim to change settings or connect tools. Do not save variants as other artifacts. Use sandboxed code for computations on inline data only.`
 
+/**
+ * The copilot of a signed-in person's own copy. Same bound editing as above,
+ * plus read access to THEIR Backstory (Sales AI) data through their own
+ * connection — the copy lives in their workspace, so the data it can reach is
+ * already theirs. A guest's copilot never gets this: it runs as the sender, and
+ * the sender's data is not the visitor's to query.
+ */
+export const MEMBER_COPILOT_INSTRUCTIONS = `You are the copilot for one personal artifact copy. Make requested changes to its HTML, CSS, JavaScript, TypeScript and Python using the bound artifact tools. Preserve working functionality and save validated versions. Answer questions from this copy, the user's messages and — when a request needs facts the page does not hold (accounts, opportunities, people, activity) — the user's own Backstory data through the Backstory tools, saying where each fact came from. Never invent numbers; when the user asks for demo or sample data, make it plainly fictional. You cannot access the original template, other artifacts, repository documents, other integrations, flows, credentials or configuration. Never claim to change settings or connect tools. Do not save variants as other artifacts. Use sandboxed code for computations on inline data only.`
+
+/** The agent type of a guest copy's copilot: never listed among anyone's agents. */
+export const GUEST_COPILOT_AGENT_TYPE = 'guest_copilot'
+
 export function templateCopyPermissions(ownerId: string | null, viewerId: string) {
   return { canEdit: ownerId === viewerId, canShare: false, canConfigure: false, reason: ownerId === viewerId ? 'owner' as const : 'view_only' as const }
 }

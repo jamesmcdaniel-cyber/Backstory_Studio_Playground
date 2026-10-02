@@ -426,7 +426,7 @@ export async function loadTools(
   httpEndpoints: AgentHttpEndpoint[] = [],
   toolSettings: AgentToolSettings = {},
   agentId?: string,
-  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean },
+  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean; guestCopy?: boolean },
   policy?: ToolPolicy,
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
@@ -451,6 +451,17 @@ export async function loadTools(
       name: toolName(plane.provider, tool.name), description: tool.description, inputSchema: tool.inputSchema,
       isWrite: false, binding: { provider: plane.provider, serverUrl: `backstory://${plane.provider}`, toolName: tool.name, isWrite: false, client: plane.client },
     })
+    // A personal copy's copilot also reads its OWNER's Backstory (Sales AI)
+    // data, through their own connection: the copy is theirs, in their
+    // workspace. Read-only, and never for a guest copy — that copilot runs as
+    // the sender, whose data is not an anonymous visitor's to query.
+    if (!artifact.guestCopy) {
+      const backstory = await loadPeopleAiPlaneGroup(organizationId, ownerUserId)
+      if (backstory?.client) for (const tool of backstory.tools.slice(0, 20)) discovered.push({
+        name: toolName(backstory.provider, tool.name), description: tool.description, inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
+        isWrite: false, binding: { provider: backstory.provider, serverUrl: backstory.serverUrl, toolName: tool.name, isWrite: false, client: backstory.client },
+      })
+    }
     return { ...materializeTools(discovered), unavailable: [], policyRemoved: [] }
   }
   // Planes that produced no usable client. Kept so the run can report WHICH
@@ -1001,7 +1012,7 @@ async function runAgentExecutionInner(
       if (trigger.type !== 'artifact' || typeof trigger.artifactId !== 'string') return undefined
       const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, guestDigest: true, agentTaskId: true } })
       if (target?.templateSourceId && (!templateCopy || !templateCopyRunsAs(target, userId) || target.agentTaskId !== agent.id)) throw new Error('Template copy access denied.')
-      return target ? { artifactId: target.id, kind: target.kind, templateCopy, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, toolQuery: typeof trigger.artifactToolQuery === 'string' ? trigger.artifactToolQuery : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
+      return target ? { artifactId: target.id, kind: target.kind, templateCopy, ...(templateCopy ? { guestCopy: Boolean(target.guestDigest) } : {}), executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, toolQuery: typeof trigger.artifactToolQuery === 'string' ? trigger.artifactToolQuery : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
     })()
     const policy = data.stepOverrides?.toolPolicy
     // Artifact prompts contain extensive source/instructions. Rank against the

@@ -26,7 +26,7 @@ import { addVersion, createArtifact } from './service'
  * picking the previous version.
  */
 
-export type ArtifactToolContext = { artifactId: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean }
+export type ArtifactToolContext = { artifactId: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean; guestCopy?: boolean }
 
 const GENERIC_TOOLS = [
   {

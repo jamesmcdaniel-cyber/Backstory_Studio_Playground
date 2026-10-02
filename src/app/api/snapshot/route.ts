@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
-import { agentVisibilityScope, executionVisibilityScope } from '@/lib/server/visibility'
+import { executionVisibilityScope, listableAgentScope } from '@/lib/server/visibility'
 import { visibleNotificationScope } from '@/lib/notifications/scope'
 import { serializeAgent } from '@/lib/agents/serialize'
 import { checkMonthlyTokenBudget, isUsageExemptEmail } from '@/lib/usage/budget'
@@ -82,10 +82,9 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const [agents, workspaceFolders, activities, executionCount, budget, organization, notifications, unread] = await Promise.all([
     prisma.agentTask.findMany({
       where: {
-        artifactTemplateCopyId: null,
         organizationId: auth.organizationId,
         status: { not: 'DELETED' },
-        ...agentVisibilityScope(auth.dbUser.id),
+        ...listableAgentScope(auth.dbUser.id),
       },
       orderBy: { updatedAt: 'desc' },
       take: 300,

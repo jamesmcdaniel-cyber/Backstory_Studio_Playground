@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import type { AuthContext } from '@/lib/server/auth'
-import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
+import { configurableAgentScope as agentVisibilityScope, listableAgentScope } from '@/lib/server/visibility'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { roleLabelInputsChanged } from '@/lib/agents/role-label'
 import { serializeAgent } from '@/lib/agents/serialize'
@@ -174,7 +174,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     where: {
       organizationId: auth.organizationId,
       status: { not: 'DELETED' },
-      ...agentVisibilityScope(auth.dbUser.id),
+      ...listableAgentScope(auth.dbUser.id),
     },
     orderBy: { updatedAt: 'desc' },
     // Bounded: this list is polled by the sidebar + dashboard; an org with a

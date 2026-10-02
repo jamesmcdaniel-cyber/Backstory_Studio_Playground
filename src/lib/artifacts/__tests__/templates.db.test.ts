@@ -59,6 +59,12 @@ if (!database) {
     assert.equal(await db.agentTask.count({ where: { organizationId: recipient.organizationId, artifactTemplateCopyId: copyId } }), 1)
     const agent = await db.agentTask.findFirstOrThrow({ where: { id: copilotId, organizationId: recipient.organizationId } })
     assert.equal(agent.visibility, 'private')
+    assert.equal(agent.type, 'agent')
+    assert.deepEqual((agent.metadata as any).integrations, ['Backstory'], 'the copy’s agent shows its owner’s Backstory data as attached')
+    assert.match(agent.objective, /own Backstory data/)
+    const { listableAgentScope } = await import('@/lib/server/visibility')
+    assert.equal(await db.agentTask.count({ where: { id: copilotId, organizationId: recipient.organizationId, ...listableAgentScope(recipient.userId) } }), 1, 'listed among its owner’s agents, so its runs link somewhere')
+    assert.equal(await db.agentTask.count({ where: { id: copilotId, organizationId: recipient.organizationId, ...listableAgentScope('someone-else') } }), 0)
     assert.equal(await db.agentConnector.count({ where: { organizationId: recipient.organizationId, agentTaskId: copilotId } }), 0)
   })
 

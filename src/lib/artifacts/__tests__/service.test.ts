@@ -51,6 +51,13 @@ test('a shared-template copy is told to change itself in place, never to save a 
   assert.match(copy, /keep its layout, design, sections and working features/)
 })
 
+test('a visitor’s copilot is told how many changes are left today, and not to edit when there are none', () => {
+  const base = { mode: 'auto' as const, title: 'Rep cockpit', content: '<html><body>doc</body></html>', message: 'Make it blue', chat: [], templateCopy: true }
+  assert.match(buildArtifactPrompt({ ...base, changesLeft: 2 }), /CHANGES LEFT TODAY: 2\./)
+  assert.match(buildArtifactPrompt({ ...base, changesLeft: 0 }), /CHANGES LEFT TODAY: 0\. Do not edit the page/)
+  assert.doesNotMatch(buildArtifactPrompt(base), /CHANGES LEFT TODAY/)
+})
+
 test('a change request demands the whole revised document; a question forbids it', () => {
   const change = buildArtifactPrompt({ mode: 'change', title: 'Q3 review', content: '<html><body>doc</body></html>', message: 'Add a risks section', chat: [] })
   assert.match(change, /edit_artifact/)

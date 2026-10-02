@@ -10,7 +10,8 @@ import { readAgentMetadata } from '@/lib/agents/metadata'
 import { validateArtifactContent, validateArtifactPython } from './validate-content'
 import { validateArtifactRuntime } from './preflight'
 import { ARTIFACT_CAPABILITIES } from './capabilities'
-import { TEMPLATE_COPILOT_MODEL, templateCopyRunsAs } from './template-policy'
+import { GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_MODEL, templateCopyRunsAs } from './template-policy'
+import { guestChangesToday } from './guest-limits'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
 /**
@@ -473,7 +474,7 @@ function standingInstructions(instructions?: string): string {
   return text ? `\nSTANDING INSTRUCTIONS FOR THIS ARTIFACT (from the people who use it — follow them on every message unless they conflict with the rules above):\n${text}\n` : ''
 }
 
-export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[]; instructions?: string; templateCopy?: boolean }): string {
+export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[]; instructions?: string; templateCopy?: boolean; /** An anonymous visitor's copy: changes still allowed today. */ changesLeft?: number }): string {
   const history = params.chat
     .filter((m) => m.content && m.status !== 'pending')
     .slice(-8)
@@ -492,7 +493,10 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
   const doc = params.content.length > CONTEXT_MAX_CHARS
     ? `${params.content.slice(0, 4_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. -->${outline ? `\n\nMAP OF THE DOCUMENT (@character offset, what is there). Go straight to the part you need with read_artifact at that offset; use find_in_artifact — with EVERY term you need in one call — only for text the map does not locate:\n${outline}` : '\nUse find_in_artifact (every term you need in one call) and read_artifact to see the rest.'}`
     : params.content
-  return [DOCUMENT_ASSISTANT_RULES(isHtml, params.templateCopy), ARTIFACT_CAPABILITIES, 'Work directly on the requested edit. Batch independent lookups and edits; do not draft a long plan or rebuild unaffected sections. Reply in two sentences after the save.', standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
+  const allowance = params.changesLeft === undefined ? '' : params.changesLeft > 0
+    ? `\nCHANGES LEFT TODAY: ${params.changesLeft}. Each message that changes the page uses one, so make everything a request asks for in one go.`
+    : '\nCHANGES LEFT TODAY: 0. Do not edit the page — a save will be refused. Answer questions as usual; if this message asks for a change, say today\'s changes are used up and it can be made tomorrow, or straight away in their own workspace if they sign in.'
+  return [DOCUMENT_ASSISTANT_RULES(isHtml, params.templateCopy), allowance, ARTIFACT_CAPABILITIES, 'Work directly on the requested edit. Batch independent lookups and edits; do not draft a long plan or rebuild unaffected sections. Reply in two sentences after the save.', standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }
 
 /**
@@ -530,7 +534,9 @@ export async function askArtifact(params: { organizationId: string; userId: stri
   if (!agent) throw new Error('The producing agent is no longer available.')
   const current = row.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: row.currentVersionId, organizationId: params.organizationId }, select: { content: true } }) : null
   const assistant = readAssistantConfig(row.assistantConfig)
-  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat, instructions: assistant.instructions, templateCopy: Boolean(row.templateSourceId) })
+  // A visitor's copy takes a fixed number of changes a day; the copilot is told how many are left.
+  const changesLeft = row.guestDigest ? Math.max(0, GUEST_COPILOT_LIMITS.changesPerVisitor - await guestChangesToday(params.organizationId, row.id)) : undefined
+  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat, instructions: assistant.instructions, templateCopy: Boolean(row.templateSourceId), ...(changesLeft !== undefined ? { changesLeft } : {}) })
   const execution = await prisma.agentExecution.create({
     data: {
       agentType: agent.agentType,

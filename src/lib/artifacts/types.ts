@@ -87,6 +87,8 @@ export type GuestCopilotView = {
   versionId: string | null
   /** Whether the copilot has changed the copy yet; until then it is the original. */
   edited: boolean
+  /** Today's allowance: queries sent and changes made, against the visitor limits. */
+  usage: { queries: { used: number; limit: number }; changes: { used: number; limit: number } }
   /** MCP servers the visitor connected themselves; once any exist the copilot uses only these. */
   mcpServers: CopilotMcpServerView[]
   /** The copy's recent versions, newest first — the visitor's own history. */

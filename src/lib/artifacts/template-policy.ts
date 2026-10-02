@@ -22,8 +22,10 @@ export function templateCopyPermissions(ownerId: string | null, viewerId: string
  * link can spend. Per UTC day.
  */
 export const GUEST_COPILOT_LIMITS = {
-  /** Messages one visitor may send to their copy. */
-  messagesPerVisitor: 10,
+  /** Queries — messages — one visitor may send to their copy. */
+  messagesPerVisitor: 5,
+  /** Changes one visitor's copilot may make to their copy: runs that save a version. */
+  changesPerVisitor: 3,
   /** Messages all visitors together may send through one template link. */
   messagesPerTemplate: 100,
   /** New guest copies one template link may create. */

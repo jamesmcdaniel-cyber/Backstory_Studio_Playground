@@ -449,6 +449,18 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
                   {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <ArrowUp className="h-4 w-4" aria-hidden />}
                 </Button>
               </div>
+              {/* A visitor's daily allowance on a shared link, so a limit is never a surprise. */}
+              {copy?.kind === 'guest' && copy.view.usage && (() => {
+                const questions = Math.max(0, copy.view.usage.queries.limit - copy.view.usage.queries.used)
+                const changes = Math.max(0, copy.view.usage.changes.limit - copy.view.usage.changes.used)
+                return (
+                  <p className={cn('mt-1.5 text-[11px]', questions === 0 || changes === 0 ? 'text-amber-700' : 'text-fg-muted')}>
+                    {questions === 0
+                      ? `Today’s ${copy.view.usage.queries.limit} questions are used — more tomorrow.`
+                      : `${questions} of ${copy.view.usage.queries.limit} questions and ${changes} of ${copy.view.usage.changes.limit} changes left today.`}
+                  </p>
+                )
+              })()}
             </form>
           )}
         </div>

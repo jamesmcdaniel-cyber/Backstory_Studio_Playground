@@ -26,6 +26,9 @@ import { addVersion, createArtifact } from './service'
  * picking the previous version.
  */
 
+import { guestChangesToday } from './guest-limits'
+import { GUEST_COPILOT_LIMITS } from './template-policy'
+
 export type ArtifactToolContext = { artifactId: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean; guestCopy?: boolean }
 
 const GENERIC_TOOLS = [
@@ -391,6 +394,11 @@ export class ArtifactToolClient {
         flowId: artifact.flowId,
       })
       return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
+    }
+    // An anonymous visitor's copy takes a fixed number of changes a day. A run
+    // that already saved may keep saving: the cap counts runs, not saves.
+    if (this.context.guestCopy && await guestChangesToday(this.organizationId, artifact.id, this.context.executionId) >= GUEST_COPILOT_LIMITS.changesPerVisitor) {
+      throw new Error(`This copy has had its ${GUEST_COPILOT_LIMITS.changesPerVisitor} changes for today, so nothing was saved. Tell the user changes are available again tomorrow (or straight away in their own workspace if they sign in); questions can still be answered.`)
     }
     const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId })
     this.context.expectedVersionId = version.id

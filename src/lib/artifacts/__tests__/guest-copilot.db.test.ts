@@ -140,6 +140,25 @@ if (!database) {
     assert.match(await earlier.text(), /Visitor version/)
   })
 
+  test('a visitor’s copilot may change the copy three times a day: runs are counted, not saves, and restores are free', async () => {
+    const { ArtifactToolClient } = await import('../tools')
+    const edit = (executionId: string, find: string, replace: string) =>
+      new ArtifactToolClient(host.organizationId, host.userId, { artifactId: copyId, executionId, request: 'Update heading', templateCopy: true, guestCopy: true })
+        .executeTool('', 'edit_artifact', { edits: [{ find, replace }], summary: 'Heading' }) as Promise<{ saved?: boolean; error?: string }>
+    // One change was made earlier today (and one restore, which does not count).
+    assert.deepEqual((await (await call('GET')).json()).copilot.usage.changes, { used: 1, limit: 3 })
+    assert.equal((await edit('guest-qa-two', 'Template original', 'Change two')).saved, true)
+    assert.equal((await edit('guest-qa-three', 'Change two', 'Change three')).saved, true)
+    assert.equal((await edit('guest-qa-three', 'Change three', 'Change three, refined')).saved, true, 'a run that already saved may save again')
+    const refused = await edit('guest-qa-four', 'Change three, refined', 'Change four')
+    assert.equal(refused.saved, undefined)
+    assert.match(refused.error ?? '', /3 changes for today/)
+    const view = (await (await call('GET')).json()).copilot
+    assert.deepEqual(view.usage.changes, { used: 3, limit: 3 })
+    const page = await contentRoute.GET(new NextRequest(`${base}/content?copy=${copyId}&v=${view.versionId}`))
+    assert.match(await page.text(), /Change three, refined/)
+  })
+
   test('a message starts a run as the host, marked guest; it never spends the host’s own allowance and is capped per visitor', async () => {
     const asked = await call('POST', { action: 'ask', message: 'Make the heading blue' })
     // The stubbed dispatcher refuses the job; the visitor sees no internals.

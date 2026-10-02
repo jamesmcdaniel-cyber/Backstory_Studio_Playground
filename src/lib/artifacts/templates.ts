@@ -4,6 +4,7 @@ import { prisma, systemPrisma, tenantTransaction } from '@/lib/prisma'
 import { hashToken } from '@/lib/crypto/secrets'
 import { ApiError } from '@/lib/server/api-handler'
 import { liveShareLinkWhere } from './sharing'
+import { guestUsage } from './guest-limits'
 import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
 import { startOfUtcDay } from '@/lib/usage/free-tier-limits'
 import type { ArtifactChatMessage, GuestCopilotView } from './types'
@@ -124,7 +125,7 @@ async function findGuestCopy(source: TemplateSource, digest: string | null) {
 async function guestView(organizationId: string, copyId: string): Promise<GuestCopilotView> {
   const { artifactStatus } = await import('./service')
   await artifactStatus(organizationId, copyId) // settles a finished run's answer into the chat
-  const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, versionCount: true, chat: true, copilotMcpServers: true } })
+  const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, versionCount: true, chat: true, copilotMcpServers: true, agentTaskId: true } })
   if (!row) throw new ApiError('Template not available.', 404, 'NOT_FOUND')
   const chat = (Array.isArray(row.chat) ? row.chat : []) as unknown as ArtifactChatMessage[]
   const versions = await prisma.artifactVersion.findMany({ where: { artifactId: row.id, organizationId }, orderBy: { number: 'desc' }, take: 20, select: { id: true, number: true, request: true, createdAt: true, executionId: true } })
@@ -133,6 +134,7 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
     title: row.title,
     versionId: row.currentVersionId,
     edited: row.versionCount > 1,
+    usage: await guestUsage(organizationId, row.id, row.agentTaskId),
     mcpServers: copilotMcpViews(row.copilotMcpServers),
     // No run ids or authors: a guest's history is what changed and when.
     versions: versions.map((version) => ({
@@ -224,7 +226,7 @@ export async function askGuestCopy(token: string, guestToken: string | null | un
     prisma.agentExecution.count({ where: { organizationId, agentTaskId: copy.agentTaskId, startedAt: since } }),
     prisma.agentExecution.count({ where: { organizationId, startedAt: since, trigger: { path: ['guestTemplateId'], equals: source.id } } }),
   ])
-  if (mine >= GUEST_COPILOT_LIMITS.messagesPerVisitor) throw new ApiError('You have reached today’s limit for this copilot. Come back tomorrow, or sign in to keep going in your own workspace.', 429, 'GUEST_LIMIT_REACHED')
+  if (mine >= GUEST_COPILOT_LIMITS.messagesPerVisitor) throw new ApiError(`You have used today’s ${GUEST_COPILOT_LIMITS.messagesPerVisitor} questions for this copilot. Come back tomorrow, or sign in to keep going in your own workspace.`, 429, 'GUEST_LIMIT_REACHED')
   if (all >= GUEST_COPILOT_LIMITS.messagesPerTemplate) throw new ApiError('This template’s copilot is busy today. Try again tomorrow, or sign in to use your own copy.', 429, 'GUEST_LIMIT_REACHED')
   const { askArtifact } = await import('./service')
   try {

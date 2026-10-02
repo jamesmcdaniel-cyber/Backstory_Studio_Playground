@@ -35,6 +35,12 @@ WORKER_PID=$!
 
 fail() {
   echo "worker smoke FAILED: $1"
+  # In CI, say why on the job itself: the reason and the end of the worker log
+  # as an annotation, so a failure is readable without opening the raw log.
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    TAIL="$(tail -n 25 "$LOG" | cut -c1-300 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+    echo "::error title=Worker smoke failed::$1%0A$TAIL"
+  fi
   echo "----- worker log -----"
   cat "$LOG"
   echo "----------------------"

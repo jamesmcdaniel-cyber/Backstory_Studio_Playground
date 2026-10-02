@@ -251,7 +251,8 @@ export class ArtifactToolClient {
   private async artifact() {
     const artifact = await prisma.artifact.findFirst({ where: { id: this.context.artifactId, organizationId: this.organizationId } })
     if (!artifact) throw new Error('The artifact no longer exists.')
-    if (artifact.templateSourceId && artifact.userId !== this.userId) throw new Error('Artifact not found.')
+    // A guest copy (no owner) is reachable only from its own copilot's run.
+    if (artifact.templateSourceId && !(artifact.userId ? artifact.userId === this.userId : this.context.templateCopy && artifact.guestDigest)) throw new Error('Artifact not found.')
     if (this.context.expectedVersionId && artifact.currentVersionId !== this.context.expectedVersionId) throw new Error('Artifact changed since this request started. Reload and retry the change; nothing was saved.')
     return artifact
   }

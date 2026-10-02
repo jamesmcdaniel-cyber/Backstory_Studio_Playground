@@ -37,6 +37,7 @@ import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrati
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
+import { templateCopyRunsAs } from '@/lib/artifacts/template-policy'
 import { downgradeNotice } from '@/lib/usage/model-tiers'
 import { buildAgentSystemPrompt } from './system-prompt'
 import {
@@ -698,7 +699,8 @@ async function runAgentExecutionInner(
     // schedules and forged job overrides cannot broaden its authority.
     const queued = data.executionId ? await prisma.agentExecution.findFirst({ where: { id: data.executionId, organizationId, agentTaskId: agentId, userId } }) : null
     const trigger = queued?.trigger as { type?: string; artifactId?: string } | null
-    const copy = await prisma.artifact.findFirst({ where: { id: agentRow.artifactTemplateCopyId!, organizationId, userId, agentTaskId: agentId, templateSourceId: { not: null } }, select: { id: true } })
+    // A guest copy has no owner: its copilot runs as the host it was made under.
+    const copy = await prisma.artifact.findFirst({ where: { id: agentRow.artifactTemplateCopyId!, organizationId, agentTaskId: agentId, templateSourceId: { not: null }, OR: [{ userId }, { userId: null, guestDigest: { not: null } }] }, select: { id: true } })
     if (agentRow.userId !== userId || !copy || trigger?.type !== 'artifact' || trigger.artifactId !== copy.id) throw new Error('This copilot can only run from its own template copy.')
     data = { ...data, stepOverrides: undefined }
   }
@@ -997,8 +999,8 @@ async function runAgentExecutionInner(
     const artifactContext = await (async () => {
       const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown; artifactToolQuery?: unknown; artifactBaseVersionId?: unknown }
       if (trigger.type !== 'artifact' || typeof trigger.artifactId !== 'string') return undefined
-      const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, agentTaskId: true } })
-      if (target?.templateSourceId && (!templateCopy || target.userId !== userId || target.agentTaskId !== agent.id)) throw new Error('Template copy access denied.')
+      const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, guestDigest: true, agentTaskId: true } })
+      if (target?.templateSourceId && (!templateCopy || !templateCopyRunsAs(target, userId) || target.agentTaskId !== agent.id)) throw new Error('Template copy access denied.')
       return target ? { artifactId: target.id, kind: target.kind, templateCopy, executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, toolQuery: typeof trigger.artifactToolQuery === 'string' ? trigger.artifactToolQuery : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
     })()
     const policy = data.stepOverrides?.toolPolicy

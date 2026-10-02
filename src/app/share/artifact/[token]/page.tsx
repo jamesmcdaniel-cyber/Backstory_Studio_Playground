@@ -1,9 +1,10 @@
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { systemPrisma } from '@/lib/prisma'
 import { resolvePublicArtifact } from '@/lib/artifacts/sharing'
 import { looksLikeHtml } from '@/lib/html-detect'
 import { Markdown } from '@/components/ui/markdown'
 import { ARTIFACT_FRAME_SANDBOX } from '@/components/artifacts/artifact-frame'
+import { GUEST_COOKIE } from '@/lib/artifacts/types'
 import { SharedTemplateCopilot } from '@/components/artifacts/shared-template-copilot'
 
 export const dynamic = 'force-dynamic'
@@ -14,7 +15,8 @@ export const metadata = { robots: { index: false, follow: false } }
  * someone with no account. The page is framed from the public content route
  * (same sandbox as the app); a Markdown document renders here. Nothing else
  * of the workspace is reachable from it. A link offered as a template also
- * carries the copilot, which works on the signed-in visitor's own copy.
+ * carries the copilot, which works on the visitor's own copy — no account
+ * needed.
  */
 function Notice({ title, body }: { title: string; body: string }) {
   return (
@@ -43,6 +45,9 @@ export default async function PublicArtifactPage({ params }: { params: Promise<{
   if (!version) return <Notice title="Nothing to show yet" body="This artifact has no content yet." />
   const isPage = looksLikeHtml(version.content.slice(0, 4_000))
 
+  // A visitor who has used a copilot before may have a copy of this one.
+  const returning = artifact.shareTemplate && (await cookies()).has(GUEST_COOKIE)
+
   // No chrome of ours: the artifact is the page. A template adds only the
   // copilot launcher, which opens the visitor's own copy in place.
   const original = isPage ? (
@@ -61,7 +66,7 @@ export default async function PublicArtifactPage({ params }: { params: Promise<{
   return (
     <div className="min-h-dvh bg-background">
       <h1 className="sr-only">{artifact.title}</h1>
-      {artifact.shareTemplate ? <SharedTemplateCopilot token={token}>{original}</SharedTemplateCopilot> : original}
+      {artifact.shareTemplate ? <SharedTemplateCopilot token={token} isPage={isPage} returning={returning}>{original}</SharedTemplateCopilot> : original}
     </div>
   )
 }

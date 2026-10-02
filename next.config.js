@@ -46,7 +46,7 @@ const nextConfig = {
       // route) — DENY here would stop every artifact rendering.
       ...(process.env.EMBED_FRAME_ANCESTORS?.trim()
         ? []
-        : [{ source: '/:path((?!api/artifacts/[^/]+/versions/[^/]+/content$|api/share/artifacts/[^/]+/content$).*)', headers: [{ key: 'X-Frame-Options', value: 'DENY' }] }]),
+        : [{ source: '/:path((?!api/artifacts/[^/]+/versions/[^/]+/content$|api/share/artifacts/[^/]+(?:/copilot)?/content$).*)', headers: [{ key: 'X-Frame-Options', value: 'DENY' }] }]),
       {
         source: '/:path*',
         headers: [

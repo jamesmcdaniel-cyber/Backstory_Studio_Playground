@@ -67,3 +67,14 @@ export const ARTIFACT_KIND_LABEL: Record<ArtifactKind, string> = {
   document: 'Document',
   page: 'Interactive page',
 }
+
+/** The cookie holding an anonymous visitor's token for their guest copies. */
+export const GUEST_COOKIE = 'bs_guest'
+
+/** What a visitor sees of their guest copy: no run ids, models or raw run errors. */
+export type GuestCopilotView = {
+  copyId: string
+  title: string
+  versionId: string | null
+  chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt'>>
+}

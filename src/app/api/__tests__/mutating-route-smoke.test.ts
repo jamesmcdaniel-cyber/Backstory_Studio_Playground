@@ -336,6 +336,7 @@ test('cron/dispatch and cron/retention refuse a wrong secret', { skip: !TEST_DB 
  * a src/lib/privacy/delete.ts that no test imported at all.
  */
 const SKIPS: Record<string, string> = {
+  'share/artifacts/[token]/copilot:POST': 'covered by src/lib/artifacts/__tests__/guest-copilot.db.test.ts — a public route (no session to install); open and ask are driven there through POST with the visitor cookie',
   'slack/commands:POST': 'covered by src/app/api/slack/commands/__tests__/route.db.test.ts — the handler needs a real HMAC over the exact raw body, which the shared JSON smoke fixture cannot produce',
   'demo/enter:POST': 'covered by src/lib/demo/__tests__/session.db.test.ts — enter clones a whole workspace, which the smoke fixture is not shaped for',
   'demo/exit:POST': 'covered by src/lib/demo/__tests__/session.db.test.ts — exit tears down the demo org created there',

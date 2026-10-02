@@ -1757,6 +1757,10 @@ model Artifact {
   id               String    @id @default(cuid())
   /// Immutable provenance, not a relation: copies survive source removal.
   templateSourceId String?
+  /// A guest copy: made by an anonymous visitor of a public template link, in
+  /// the sharer's workspace, with no owner. The digest of the visitor's
+  /// cookie token is the only thing that opens it.
+  guestDigest      String?
   shareTemplate Boolean @default(false)
   organizationId   String    @db.Uuid
   userId           String?
@@ -1796,6 +1800,7 @@ model Artifact {
   @@index([organizationId, agentTaskId])
   @@index([organizationId, kind])
   @@unique([organizationId, userId, templateSourceId])
+  @@unique([templateSourceId, guestDigest])
   @@map("artifacts")
 }
 

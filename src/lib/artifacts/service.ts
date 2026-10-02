@@ -9,7 +9,7 @@ import { readAgentMetadata } from '@/lib/agents/metadata'
 import { validateArtifactContent, validateArtifactPython } from './validate-content'
 import { validateArtifactRuntime } from './preflight'
 import { ARTIFACT_CAPABILITIES } from './capabilities'
-import { TEMPLATE_COPILOT_MODEL } from './template-policy'
+import { TEMPLATE_COPILOT_MODEL, templateCopyRunsAs } from './template-policy'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
 /**
@@ -220,8 +220,8 @@ export async function registerVersionFromExecution(params: {
     // update_roi_dashboard); the answer is then prose about what changed.
     const made = await prisma.artifactVersion.findFirst({ where: { executionId: params.executionId, organizationId: params.organizationId }, select: { id: true, artifactId: true } })
     if (made) return { artifactId: made.artifactId, versionId: made.id, created: false }
-    const target = await prisma.artifact.findFirst({ where: { id: targetId, organizationId: params.organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, agentTaskId: true } })
-    if (target?.templateSourceId && (target.userId !== params.userId || target.agentTaskId !== params.agentTaskId)) throw new Error('Template copy access denied.')
+    const target = await prisma.artifact.findFirst({ where: { id: targetId, organizationId: params.organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, guestDigest: true, agentTaskId: true } })
+    if (target?.templateSourceId && (!templateCopyRunsAs(target, params.userId) || target.agentTaskId !== params.agentTaskId)) throw new Error('Template copy access denied.')
     // A change to a Markdown document comes back as Markdown; a change to an
     // HTML report must come back as HTML (a prose reply is an answer, not a
     // version — the chat shows it as such).
@@ -469,12 +469,17 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
 }
 
 /** Ask the producing agent a question, or ask it for a change (a new version). */
-export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: ArtifactChatMode; model?: string }): Promise<ArtifactView> {
+export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: ArtifactChatMode; model?: string; guestDigest?: string }): Promise<ArtifactView> {
   const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
   if (!row) throw new Error('Artifact not found.')
   if (!row.agentTaskId) throw new Error('This artifact has no producing agent to ask.')
+  // A guest copy answers only to the visitor whose token made it (the public
+  // copilot route); a signed-in caller never reaches one.
+  if (row.guestDigest || params.guestDigest) {
+    if (!row.templateSourceId || row.userId !== null || !row.guestDigest || row.guestDigest !== params.guestDigest) throw new Error('Artifact not found.')
+  }
   if (row.templateSourceId) {
-    if (row.userId !== params.userId) throw new Error('Artifact not found.')
+    if (!row.guestDigest && row.userId !== params.userId) throw new Error('Artifact not found.')
     // The browser's general model preference is not a configuration grant.
     params = { ...params, model: TEMPLATE_COPILOT_MODEL }
   }
@@ -493,8 +498,10 @@ export async function askArtifact(params: { organizationId: string; userId: stri
       agentTaskId: agent.id,
       status: 'pending',
       input: { prompt: input },
-      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message, artifactToolQuery: message, link: `/artifacts/${row.id}` }),
-      metadata: { title: `${params.mode === 'change' ? 'Change to' : params.mode === 'ask' ? 'Question on' : 'Assistant'} · ${row.title}` },
+      // A guest run is marked so it is capped per link, never against the
+      // host's own daily allowance; it links to the template the host can open.
+      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message, artifactToolQuery: message, ...(row.guestDigest ? { guest: true, guestTemplateId: row.templateSourceId, link: `/artifacts/${row.templateSourceId}` } : { link: `/artifacts/${row.id}` }) }),
+      metadata: { title: `${row.guestDigest ? 'Visitor copilot' : params.mode === 'change' ? 'Change to' : params.mode === 'ask' ? 'Question on' : 'Assistant'} · ${row.title}` },
       userId: params.userId,
       organizationId: params.organizationId,
     },

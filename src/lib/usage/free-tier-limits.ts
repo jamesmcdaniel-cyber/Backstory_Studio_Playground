@@ -104,9 +104,13 @@ export async function checkDailyRunAllowance(
   })
   const since = runWindowStart(actor?.runAllowanceResetAt)
   const where = { organizationId: args.organizationId, userId: args.userId, startedAt: { gte: since } }
+  // Runs anonymous visitors start on this person's public template links run
+  // as them but are not theirs to spend: those are capped per link
+  // (GUEST_COPILOT_LIMITS). Counted and subtracted — a JSON `NOT` would also
+  // drop every run whose trigger has no such key.
   const used =
     kind === 'agent'
-      ? await prisma.agentExecution.count({ where })
+      ? (await prisma.agentExecution.count({ where })) - (await prisma.agentExecution.count({ where: { ...where, trigger: { path: ['guest'], equals: true } } }))
       : await prisma.flowRun.count({ where })
 
   return { over: used >= limit, used, limit }

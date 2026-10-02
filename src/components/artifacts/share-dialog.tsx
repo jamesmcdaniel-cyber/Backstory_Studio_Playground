@@ -1,5 +1,6 @@
 'use client'
 
+import { GUEST_COPILOT_LIMITS } from '@/lib/artifacts/template-policy'
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Copy, Globe, Link2, Loader2, RefreshCw, Users, X } from 'lucide-react'
 import { toast } from 'sonner'
@@ -188,7 +189,7 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
                   <input type="checkbox" checked={sharing.shareTemplate} disabled={!canShare || busy} onChange={event => void update({ shareTemplate: event.target.checked })} />
                   Offer as a template with AI Copilot
                 </label>
-                <p className="text-xs text-muted-foreground">Signed-in recipients can save their own editable copy of the published source, including data embedded in it. Their copilot edits only their copy. Configuration is locked; your integrations, private app state and history are not copied. Turning this off stops new copies, but does not remove existing copies.</p>
+                <p className="text-xs text-muted-foreground">Anyone with the link can open the AI Copilot on it — no sign-in — and change their own copy of the published source, including data embedded in it. The original never changes. Visitors without an account work in a hidden copy in this workspace: their copilot runs count toward this workspace’s usage, up to {GUEST_COPILOT_LIMITS.messagesPerVisitor} messages a visitor and {GUEST_COPILOT_LIMITS.messagesPerTemplate} a day per link. Signed-in recipients get a copy in their own workspace. Configuration is locked; your integrations, private app state and history are not copied. Turning this off stops the copilot for visitors and new copies; signed-in recipients keep theirs.</p>
               </div>}
               {sharing.link.enabled && sharing.link.url && (
                 <div className="flex items-center gap-2">

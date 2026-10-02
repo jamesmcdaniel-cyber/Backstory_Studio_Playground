@@ -49,6 +49,7 @@ const mutatingExempt = new Set([
   'slack/commands',      // Slack slash-command signature (same per-workspace signing secret, HMAC-SHA256 v0)
   'flows/[id]/trigger',  // per-flow webhook secret (constant-time)
   'forms/[id]/submit',   // public hosted form: published-form gate, per-flow/IP rate limit, bounded typed fields
+  'share/artifacts/[token]/copilot', // a public template's copilot for a visitor with no account: the link's 192-bit token (opt-in twice, revocable) + the visitor's own httpOnly token; locked template copilot only, capped per client, per visitor and per link
   'agents/[id]/trigger', // per-agent trigger secret (constant-time)
   'cron/dispatch',       // CRON_SECRET, fail-closed
   'cron/retention',      // CRON_SECRET, fail-closed
@@ -74,6 +75,8 @@ const readExempt = new Set([
   'health',                         // public readiness probe: no tenant data
   'invitations/lookup',             // public invite preview: token length clamped + fail-closed per-client budget
   'share/artifacts/[token]/content', // an artifact's public link: 192-bit token (digest lookup, opt-in, revocable), per-client rate limit, one sandboxed page
+  'share/artifacts/[token]/copilot', // the visitor's own guest copy and conversation: link token + httpOnly visitor token, run ids and errors stripped
+  'share/artifacts/[token]/copilot/content', // one version of a guest copy: link token + the copy's random id, same sandboxed page response
   'cron/dispatch',                  // CRON_SECRET, fail-closed
   'cron/retention',                 // CRON_SECRET, fail-closed
   'cron/queue-watch',               // CRON_SECRET, fail-closed

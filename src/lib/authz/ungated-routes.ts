@@ -26,6 +26,16 @@ export const UNGATED_ROUTES: readonly string[] = [
   // lookup, opt-in per artifact, rate limited per client). Serves one page,
   // sandboxed with no network — never the assistant, history or other artifacts.
   'share/artifacts/[token]/content',
+  // A public template's copilot for a visitor with no account. The sender
+  // opted in twice (anyone-with-the-link, offer as a template). The link token
+  // names the template; the visitor's own httpOnly token (digest stored) names
+  // their copy — an ownerless, locked template copy in the sender's workspace,
+  // whose copilot has no integrations, repository or other artifacts. Rate
+  // limited per client and capped per visitor and per link per day.
+  'share/artifacts/[token]/copilot',
+  // One version of such a copy, by link token + the copy's random id; the same
+  // sandboxed, network-less page response as every artifact.
+  'share/artifacts/[token]/copilot/content',
   // Browsers post CSP violation reports with no credentials, and a violation can
   // fire on a page whose session is what broke. Treated as untrusted anonymous
   // input: rate limited, size capped, never echoed.

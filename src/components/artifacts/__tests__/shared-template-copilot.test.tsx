@@ -102,3 +102,22 @@ test('someone signed in works in a copy in their own workspace, without leaving 
     assert.equal(ui.container.querySelector('iframe')?.getAttribute('src'), '/api/artifacts/copy-1/versions/v2/content', 'the change appears in place')
   } finally { cleanup(); net.restore() }
 })
+
+test('“Open in Runs” is offered only to the person who owns the copy’s agent — never to an anonymous visitor', async () => {
+  const pendingChat = [{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: '', executionId: 'run-1', status: 'pending', createdAt: 'a' }]
+  const open = async (handler: (call: Call) => Response) => {
+    const net = stubFetch(handler)
+    const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    const link = ui.container.querySelector('a[href^="/agents?run="]')
+    cleanup(); net.restore()
+    return link
+  }
+  const member = (permissions: object) => (call: Call) => call.url.endsWith('/copy') ? Response.json({ success: true, artifactId: 'copy-1' })
+    : call.url.startsWith('/api/workflows') ? Response.json({ items: [] })
+    : Response.json({ success: true, artifact: { ...copy(pendingChat), permissions } })
+  assert.ok(await open(member({ canEdit: true, canShare: false, reason: 'owner' })), 'the copy’s owner can open its run')
+  assert.equal(await open(member({ canEdit: false, canShare: false, reason: 'view_only' })), null)
+  assert.equal(await open((call) => call.url.endsWith('/copy') ? Response.json({ error: 'Unauthorized' }, { status: 401 }) : Response.json({ success: true, copilot: guest(pendingChat) })), null, 'an anonymous visitor never sees it')
+})

@@ -135,6 +135,10 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   // The copilot paused on a question: it is asked and answered right here.
   const awaiting = pending?.question ?? null
   const hasCopy = Boolean(copy)
+  // Only the person who owns the agent behind this copy can open its runs.
+  // An anonymous visitor never can (their copilot runs as the sender), and
+  // has no run feed at all.
+  const ownsAgent = copy?.kind === 'member' && artifact?.permissions?.reason === 'owner'
   const canAsk = copy?.kind === 'guest' || (Boolean(artifact?.agent) && artifact?.permissions?.canEdit !== false && !artifact?.archivedAt)
 
   useEffect(() => (hasCopy && busy ? startVisibleInterval(() => void refresh(), 3_000) : undefined), [hasCopy, busy, refresh])
@@ -227,7 +231,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
                   </div>
                 ) : m.role === 'agent' && m.status === 'pending' ? (
                   // The run feed reads the app's run APIs, which a guest has no session for.
-                  m.executionId && copy?.kind === 'member' ? <RunFeed executionId={m.executionId} status="running" compact onStatusChange={() => void refresh()} /> :
+                  m.executionId && copy?.kind === 'member' ? <RunFeed executionId={m.executionId} status="running" compact runsLink={ownsAgent} onStatusChange={() => void refresh()} /> :
                     <div className="flex items-center gap-2 text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Working on it…</div>
                 ) : m.role === 'agent' ? (
                   <div className={cn(m.status === 'failed' && 'text-destructive')}><Markdown>{m.content}</Markdown></div>

@@ -21,7 +21,7 @@ type ExecutionDetail = {
  * toast. Ticks come over the execution's realtime channel; a slow poll
  * covers deployments without one.
  */
-export function RunFeed({ executionId, status, onStatusChange, compact = false }: { executionId: string; status: string; onStatusChange?: (status: string) => void; compact?: boolean }) {
+export function RunFeed({ executionId, status, onStatusChange, compact = false, runsLink = true }: { executionId: string; status: string; onStatusChange?: (status: string) => void; compact?: boolean; /** Off where the reader may not own the agent behind the run (a shared artifact): the Runs panel would have nothing to show them. */ runsLink?: boolean }) {
   const [detail, setDetail] = useState<ExecutionDetail | null>(null)
   const live = !isTerminalRunStatus(status)
 
@@ -54,9 +54,11 @@ export function RunFeed({ executionId, status, onStatusChange, compact = false }
           {live && <Loader2 className="h-4 w-4 animate-spin text-horizon-600" aria-hidden />}
           {live ? 'The agent is working' : 'Run finished'}
         </div>
-        <Link href={`/agents?run=${executionId}`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-          Open in Runs <ExternalLink className="h-3 w-3" aria-hidden />
-        </Link>
+        {runsLink && (
+          <Link href={`/agents?run=${executionId}`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+            Open in Runs <ExternalLink className="h-3 w-3" aria-hidden />
+          </Link>
+        )}
       </div>
       {live && <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"><TypewriterStatus />{latest && <span className="min-w-0 break-words">· {feedLabel(latest)}</span>}</div>}
       {rows.length > 0 && (

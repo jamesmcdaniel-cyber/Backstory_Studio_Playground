@@ -75,6 +75,8 @@ export type ArtifactSharing = {
   owner: Person | null
   editors: Person[]
   link: { enabled: boolean; url: string | null; views: number }
+  /** The MCP servers a copilot on this link can query: those the workspace marked shareable, and nothing else. */
+  copilotSources: string[]
   permissions: ArtifactPermissions
 }
 
@@ -102,7 +104,9 @@ export async function loadSharing(organizationId: string, artifactId: string, vi
   if (!artifact) return null
   const permissions = artifactPermissions(viewer, artifact)
   const [owner] = await people(organizationId, artifact.userId ? [artifact.userId] : [])
+  const sources = await prisma.mcpConnection.findMany({ where: { organizationId, isActive: true, shareableWithCopilots: true }, select: { name: true }, orderBy: { name: 'asc' }, take: 5 })
   return {
+    copilotSources: sources.map((source) => source.name),
     shareTemplate: artifact.shareTemplate,
     workspaceAccess: artifact.workspaceAccess === 'view' ? 'view' : 'edit',
     owner: owner ?? null,

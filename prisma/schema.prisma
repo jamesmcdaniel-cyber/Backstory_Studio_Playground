@@ -1260,6 +1260,10 @@ model McpConnection {
   /// thrown away, which made a read-only and a full-write grant identical rows.
   grantedScopes  String[]  @default([])
   isActive       Boolean   @default(true)
+  /// The ONLY data a shared-artifact copilot may query: a server its owner has
+  /// marked as safe to hand to anyone holding a shared link (demo data). Off
+  /// for every connection unless someone turns it on.
+  shareableWithCopilots Boolean @default(false)
   lastVerifiedAt DateTime?
   healthStatus   String    @default("unknown") // unknown | healthy | unhealthy | schema_changed
   lastError      String?   @db.Text

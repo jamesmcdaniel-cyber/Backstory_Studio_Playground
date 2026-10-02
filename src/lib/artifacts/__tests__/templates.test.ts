@@ -34,3 +34,19 @@ test('a guest copy’s tool loading exposes only bound editing and inline comput
   const denied = await code.client.executeTool(code.serverUrl, code.toolName, { code: 'return 1', documentIds: ['private-file'] }) as { error: string }
   assert.match(denied.error, /No readable document/)
 })
+
+test('a template copilot’s only data source is the shareable-MCP scope — never a person’s or the org’s live connections', async () => {
+  const { shareableMcpConnectionScope, mcpConnectionScope } = await import('@/features/agents/tool-planes')
+  assert.deepEqual(shareableMcpConnectionScope('org'), { organizationId: 'org', isActive: true, shareableWithCopilots: true })
+  assert.equal('shareableWithCopilots' in mcpConnectionScope('org', 'user'), false, 'ordinary agents are unaffected by the flag')
+  // The copilot branch of the tool loader must not reach for any other plane.
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync(new URL('../../../features/agents/execute-agent.ts', import.meta.url), 'utf8')
+  const start = source.indexOf('if (artifact?.templateCopy) {')
+  const branch = source.slice(start, source.indexOf('// Planes that produced no usable client', start))
+  assert.ok(start > 0 && branch.length > 200)
+  assert.match(branch, /shareableOnly: true/)
+  for (const forbidden of ['loadPeopleAiPlaneGroup', 'loadNangoPlaneGroups', 'loadNativePlaneGroups', 'getPeopleAiServiceClient']) {
+    assert.equal(branch.includes(forbidden), false, `${forbidden} must never load for a template copilot`)
+  }
+})

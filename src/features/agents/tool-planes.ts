@@ -108,6 +108,18 @@ export function mcpConnectionScope(organizationId: string, userId?: string) {
     : { organizationId, isActive: true }
 }
 
+/**
+ * The servers a shared-artifact copilot may query: ONLY those marked
+ * shareable, whoever in the workspace connected them. Marking one is its
+ * owner's statement that the data behind it (a demo tenant) may be handed to
+ * anyone holding a shared link. Everything else — a person's live Backstory
+ * connection, the org service identity, other MCP servers, every integration —
+ * is outside this scope and never loads for those copilots.
+ */
+export function shareableMcpConnectionScope(organizationId: string) {
+  return { organizationId, isActive: true, shareableWithCopilots: true }
+}
+
 // MCP tool lists are near-static, but discovery re-ran (initialize + tools/list
 // round-trips) on EVERY run. Cache the discovery per server URL so a warm run
 // skips the network entirely; busted on connection create/update.
@@ -268,11 +280,11 @@ export const mcpConnectionSlug = (name: string) => name.toLowerCase().replace(/[
 export async function loadMcpConnectionPlaneGroups(
   organizationId: string,
   ownerUserId?: string | null,
-  options: { connectionIds?: string[]; take?: number } = {},
+  options: { connectionIds?: string[]; take?: number; shareableOnly?: boolean } = {},
 ): Promise<ToolPlaneGroup[]> {
   const connections = (await prisma.mcpConnection.findMany({
     where: {
-      ...mcpConnectionScope(organizationId, ownerUserId ?? undefined),
+      ...(options.shareableOnly ? shareableMcpConnectionScope(organizationId) : mcpConnectionScope(organizationId, ownerUserId ?? undefined)),
       ...(options.connectionIds?.length ? { id: { in: options.connectionIds } } : {}),
     },
     ...(options.take ? { take: options.take } : {}),

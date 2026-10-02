@@ -207,6 +207,7 @@ const cases = (): Case[] => [
 
   { route: 'mcp-connections', method: 'POST', run: async () => (await import('../mcp-connections/route')).POST(rq('/api/mcp-connections', 'POST', { name: 'x', serverUrl: 'https://mcp.invalid.test/mcp' })) },
   { route: 'mcp-connections', method: 'PUT', run: async () => (await import('../mcp-connections/route')).PUT(rq('/api/mcp-connections', 'PUT', { id: connectionId, isActive: false })) },
+  { route: 'mcp-connections', method: 'PATCH', run: async () => (await import('../mcp-connections/route')).PATCH(rq('/api/mcp-connections', 'PATCH', { id: connectionId, shareableWithCopilots: true })) },
   { route: 'mcp-connections', method: 'DELETE', run: async () => (await import('../mcp-connections/route')).DELETE(rq('/api/mcp-connections', 'DELETE', { id: connectionId })) },
   { route: 'http-credentials', method: 'POST', run: async () => (await import('../http-credentials/route')).POST(rq('/api/http-credentials', 'POST', {})) },
   { route: 'http-credentials', method: 'PATCH', run: async () => (await import('../http-credentials/route')).PATCH(rq('/api/http-credentials', 'PATCH', { id: 'missing' })) },

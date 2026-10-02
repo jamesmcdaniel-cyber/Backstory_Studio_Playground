@@ -37,7 +37,7 @@ import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrati
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
-import { templateCopyRunsAs } from '@/lib/artifacts/template-policy'
+import { TEMPLATE_COPILOT_INSTRUCTIONS, templateCopyRunsAs } from '@/lib/artifacts/template-policy'
 import { downgradeNotice } from '@/lib/usage/model-tiers'
 import { buildAgentSystemPrompt } from './system-prompt'
 import {
@@ -451,15 +451,19 @@ export async function loadTools(
       name: toolName(plane.provider, tool.name), description: tool.description, inputSchema: tool.inputSchema,
       isWrite: false, binding: { provider: plane.provider, serverUrl: `backstory://${plane.provider}`, toolName: tool.name, isWrite: false, client: plane.client },
     })
-    // A personal copy's copilot also reads its OWNER's Backstory (Sales AI)
-    // data, through their own connection: the copy is theirs, in their
-    // workspace. Read-only, and never for a guest copy — that copilot runs as
-    // the sender, whose data is not an anonymous visitor's to query.
-    if (!artifact.guestCopy) {
-      const backstory = await loadPeopleAiPlaneGroup(organizationId, ownerUserId)
-      if (backstory?.client) for (const tool of backstory.tools.slice(0, 20)) discovered.push({
-        name: toolName(backstory.provider, tool.name), description: tool.description, inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
-        isWrite: false, binding: { provider: backstory.provider, serverUrl: backstory.serverUrl, toolName: tool.name, isWrite: false, client: backstory.client },
+    // The copilot's only data: MCP servers this workspace marked shareable
+    // (demo data, by its owner's say-so). Nobody's live Backstory connection,
+    // no service identity, no other MCP server and no integration loads here —
+    // for a signed-in person's copy and an anonymous visitor's alike.
+    const shareable = await loadMcpConnectionPlaneGroups(organizationId, ownerUserId, { shareableOnly: true, take: 5 }).catch((error) => {
+      apiLogger.warn('loadTools: shareable MCP servers could not be loaded for a template copilot', { organizationId, error: error instanceof Error ? error.message : String(error) })
+      return []
+    })
+    for (const group of shareable) {
+      if (!group.client) continue
+      for (const tool of group.tools.slice(0, 20)) discovered.push({
+        name: toolName(group.provider, tool.name), description: tool.description, inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
+        isWrite: false, binding: { provider: group.provider, serverUrl: group.serverUrl, toolName: tool.name, isWrite: false, client: group.client },
       })
     }
     return { ...materializeTools(discovered), unavailable: [], policyRemoved: [] }
@@ -720,7 +724,9 @@ async function runAgentExecutionInner(
   // is loaded: everything downstream reads the same fields it always did.
   // Unpublished agents — which is every agent that has not opted in — are
   // returned unchanged.
-  const agent = applyPublishedDefinition(agentRow)
+  // A template copilot's instructions are server policy, not whatever its row
+  // was created with: one rule set for every copy, old or new.
+  const agent = templateCopy ? { ...agentRow, objective: TEMPLATE_COPILOT_INSTRUCTIONS } : applyPublishedDefinition(agentRow)
 
   const agentMetadata = metadataOf(agent.metadata)
   // A flow step may pin the chat model for its runs; the agent's own model is

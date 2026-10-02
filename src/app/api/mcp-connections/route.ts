@@ -11,6 +11,7 @@ import {
 } from '@/lib/crypto/secrets'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { cacheDelete } from '@/lib/cache'
+import { recordAudit } from '@/lib/audit'
 import { safeMcpVerificationError, verifyStoredMcpConnection } from '@/lib/mcp/verify-connection'
 
 // Mirror of execute-agent's toolDiscoveryCacheKey (org-scoped) — kept in sync
@@ -65,6 +66,7 @@ function serializeConnection(conn: {
   authConfig: unknown
   grantedScopes: string[]
   isActive: boolean
+  shareableWithCopilots: boolean
   lastVerifiedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -78,6 +80,7 @@ function serializeConnection(conn: {
     description: conn.description,
     serverUrl: conn.serverUrl,
     isActive: conn.isActive,
+    shareableWithCopilots: conn.shareableWithCopilots,
     lastVerifiedAt: conn.lastVerifiedAt,
     createdAt: conn.createdAt,
     updatedAt: conn.updatedAt,
@@ -275,6 +278,33 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
 }, { permission: 'integration.manage' })
 
 // ── DELETE — remove a connection ──────────────────────────────────────────
+
+// ── PATCH — mark a server shareable with shared-artifact copilots ─────────
+//
+// The one switch that decides what a copilot on a shared link can query. It is
+// deliberately its own verb: it applies to platform-managed connections too
+// (PUT refuses those), and it is a disclosure decision, not a configuration
+// edit. A personal connection can only be shared by the person it belongs to.
+export const PATCH = withAuthenticatedApi(async (request, auth) => {
+  const body = z.object({ id: z.string().min(1), shareableWithCopilots: z.boolean() }).parse(await request.json())
+  const existing = await prisma.mcpConnection.findFirst({ where: { id: body.id, organizationId: auth.organizationId } })
+  if (!existing || (existing.userId && existing.userId !== auth.dbUser.id)) throw new ApiError('MCP connection not found', 404, 'NOT_FOUND')
+  const updated = await prisma.mcpConnection.update({
+    where: { id: existing.id, organizationId: auth.organizationId },
+    data: { shareableWithCopilots: body.shareableWithCopilots },
+  })
+  await recordAudit({
+    organizationId: auth.organizationId,
+    actorUserId: auth.dbUser.id,
+    action: body.shareableWithCopilots ? 'mcp_connection.shared_with_copilots' : 'mcp_connection.unshared_with_copilots',
+    resourceType: 'mcp_connection',
+    resourceId: existing.id,
+    detail: { name: existing.name, serverUrl: existing.serverUrl },
+  })
+  return { success: true, connection: serializeConnection(updated) }
+}, { permission: 'integration.manage' })
+
+// ── DELETE ────────────────────────────────────────────────────────────────
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {
   // Support id in JSON body or query param

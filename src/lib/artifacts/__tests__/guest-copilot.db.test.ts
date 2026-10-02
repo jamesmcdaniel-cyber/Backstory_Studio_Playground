@@ -171,6 +171,31 @@ if (!database) {
     assert.equal((await call('POST', { action: 'reply', message: 'again' })).status, 400, 'nothing is waiting any more')
   })
 
+  test('only an MCP server its owner marked shareable is in a copilot’s reach; the mark is the owner’s alone to set', async () => {
+    const { installTestAuth } = await import('@/lib/server/__tests__/test-auth')
+    const { PATCH } = await import('@/app/api/mcp-connections/route')
+    const { shareableMcpConnectionScope } = await import('@/features/agents/tool-planes')
+    const { loadSharing } = await import('../sharing')
+    const other = await db.user.create({ data: { organizationId: host.organizationId, supabaseId: crypto.randomUUID(), isActive: true } })
+    const base = { organizationId: host.organizationId, serverUrl: 'https://mcp.invalid.test/mcp', authType: 'none' }
+    const demo = await db.mcpConnection.create({ data: { ...base, userId: host.userId, provider: 'backstory', name: 'Backstory (Keyslogic demo)' } })
+    const prod = await db.mcpConnection.create({ data: { ...base, userId: null, name: 'Backstory (production)' } })
+    const theirs = await db.mcpConnection.create({ data: { ...base, userId: other.id, provider: 'backstory', name: 'Someone else’s Backstory' } })
+    const reach = () => db.mcpConnection.findMany({ where: shareableMcpConnectionScope(host.organizationId), select: { id: true } })
+    assert.deepEqual(await reach(), [], 'nothing is shareable until someone says so')
+
+    installTestAuth(host.auth)
+    const patch = (id: string, on: boolean) => PATCH(new NextRequest('https://qa.invalid/api/mcp-connections', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, shareableWithCopilots: on }) }))
+    assert.equal((await patch(theirs.id, true)).status, 404, 'another person’s connection is not yours to share')
+    assert.equal((await patch(demo.id, true)).status, 200, 'a platform-managed Backstory connection can be marked by its owner')
+    assert.deepEqual((await reach()).map(c => c.id), [demo.id])
+    assert.equal((await reach()).some(c => c.id === prod.id || c.id === theirs.id), false)
+    const sharing = await loadSharing(host.organizationId, sourceId, { userId: host.userId, can: () => true }, 'https://qa.invalid')
+    assert.deepEqual(sharing?.copilotSources, ['Backstory (Keyslogic demo)'], 'the sender is told exactly what visitors’ copilots can query')
+    assert.equal((await patch(demo.id, false)).status, 200)
+    assert.deepEqual(await reach(), [])
+  })
+
   test('turning the offer off closes the copilot and the copy’s page for visitors', async () => {
     const view = (await (await call('GET')).json()).copilot
     await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareTemplate: false } })

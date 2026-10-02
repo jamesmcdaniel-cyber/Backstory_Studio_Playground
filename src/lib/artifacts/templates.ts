@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma, systemPrisma, tenantTransaction } from '@/lib/prisma'
 import { hashToken } from '@/lib/crypto/secrets'
 import { ApiError } from '@/lib/server/api-handler'
-import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, MEMBER_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
+import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
 import { startOfUtcDay } from '@/lib/usage/free-tier-limits'
 import type { ArtifactChatMessage, GuestCopilotView } from './types'
 
@@ -35,9 +35,9 @@ export async function useArtifactTemplate(token: string, organizationId: string,
       const agent = await tx.agentTask.create({ data: {
         organizationId, userId, artifactTemplateCopyId: id,
         type: 'agent', agentType: 'CUSTOM', status: 'ACTIVE', visibility: 'private',
-        // The copy's own agent: listed among its owner's agents, with their
-        // Backstory data attached (read-only, through their own connection).
-        description: `Copilot for your copy of "${source.title.slice(0, 120)}". Edits it and answers questions about it.`, objective: MEMBER_COPILOT_INSTRUCTIONS,
+        // The copy's own agent: listed among its owner's agents. Its only data
+        // is the workspace's shareable (demo) MCP servers — never live data.
+        description: `Copilot for your copy of "${source.title.slice(0, 120)}". Edits it and answers questions about it.`, objective: TEMPLATE_COPILOT_INSTRUCTIONS,
         schedule: { type: 'manual', isActive: false },
         metadata: { title: `${source.title.slice(0, 70)} · copilot`, model: TEMPLATE_COPILOT_MODEL, integrations: ['Backstory'], skills: [], icon: 'artifact' },
       } })

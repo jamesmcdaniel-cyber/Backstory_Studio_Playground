@@ -30,7 +30,11 @@ LOG="$(mktemp -t worker-smoke.XXXXXX)"
 
 echo "worker smoke: port=$PORT boot_timeout=${BOOT_TIMEOUT}s observe=${OBSERVE}s"
 
-WORKER_PORT="$PORT" npx tsx src/lib/workers/runtime.ts >"$LOG" 2>&1 &
+# tsx directly, not `npx tsx`: the PID signalled below must be the one that
+# relays SIGTERM to the worker and exits with ITS status. Under npx on Linux the
+# wrapper dies of the signal itself (status 143) while the worker shuts down
+# cleanly behind it, failing a healthy run.
+WORKER_PORT="$PORT" ./node_modules/.bin/tsx src/lib/workers/runtime.ts >"$LOG" 2>&1 &
 WORKER_PID=$!
 
 fail() {

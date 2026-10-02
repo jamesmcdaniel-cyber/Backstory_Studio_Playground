@@ -112,6 +112,25 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
     }
   }
 
+  // What a copilot on a shared artifact link can query is exactly the servers
+  // switched on here — a disclosure, so turning it on asks first.
+  const toggleShareable = async (conn: SerializedConnection) => {
+    const next = !conn.shareableWithCopilots
+    if (next && !window.confirm(`Let copilots on shared artifact links query "${conn.name}"?\n\nAnyone holding a shared link — including people with no account — will be able to ask its copilot for data from this server. Only turn this on for a server connected to demo data.`)) return
+    const response = await fetch('/api/mcp-connections', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: conn.id, shareableWithCopilots: next }),
+    })
+    if (response.ok) {
+      toast.success(next ? `Copilots on shared links can now query "${conn.name}".` : `"${conn.name}" is no longer available to shared-link copilots.`)
+      await load()
+    } else {
+      const data = await response.json().catch(() => ({}))
+      toast.error(data.error || 'Failed to update sharing.')
+    }
+  }
+
   const deleteConnection = async (conn: SerializedConnection) => {
     setDeletingId(conn.id)
     try {
@@ -266,6 +285,18 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                       <span className="text-amber-700">Not verified yet</span>
                     </>
                   )}
+                </div>
+
+                <div className="flex items-start gap-2 border-t pt-3 text-xs">
+                  <Switch
+                    checked={Boolean(conn.shareableWithCopilots)}
+                    onCheckedChange={() => toggleShareable(conn)}
+                    aria-label={`Shared-artifact copilots can query ${conn.name}`}
+                  />
+                  <span>
+                    <span className="font-medium text-foreground">Shared-artifact copilots can query this</span>
+                    <span className="block text-muted-foreground">Demo data only. Anyone with a shared link can ask its copilot for data from this server; no other server or integration is ever available to them.</span>
+                  </span>
                 </div>
 
                 <div className="flex items-center justify-between gap-2 border-t pt-3">

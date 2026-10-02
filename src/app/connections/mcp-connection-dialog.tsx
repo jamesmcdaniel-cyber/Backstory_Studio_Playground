@@ -48,6 +48,8 @@ export type SerializedConnection = {
   description: string | null
   serverUrl: string
   isActive: boolean
+  /** Whether shared-artifact copilots may query this server (demo data only). */
+  shareableWithCopilots?: boolean
   provider?: string | null
   lastVerifiedAt?: string | null
   auth: {

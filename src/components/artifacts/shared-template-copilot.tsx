@@ -254,8 +254,10 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
           role="dialog"
           aria-modal="false"
           aria-label="AI Copilot"
-          // Same footprint as Ask Backstory's panel in the app.
-          className="fixed bottom-4 right-4 z-40 flex h-[min(600px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-[400px] flex-col overflow-hidden rounded-2xl border border-graphite-200 bg-white shadow-4 motion-safe:animate-fade-in-up sm:bottom-24 sm:h-[min(560px,calc(100dvh-8rem))]"
+          // Sized like the assistant panel beside an artifact in the app: tall
+          // enough to read a conversation and a version history without scrolling
+          // a letterbox.
+          className="fixed bottom-4 right-4 z-40 flex h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[440px] flex-col overflow-hidden rounded-2xl border border-graphite-200 bg-white shadow-4 motion-safe:animate-fade-in-up sm:bottom-24 sm:h-[min(860px,calc(100dvh-8rem))]"
         >
           <header className="flex items-center gap-2 border-b border-graphite-200 px-4 py-3">
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-horizon-50 text-horizon-600"><Sparkles className="h-4 w-4" aria-hidden /></span>

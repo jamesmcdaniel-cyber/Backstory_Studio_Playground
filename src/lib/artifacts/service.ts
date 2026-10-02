@@ -453,12 +453,18 @@ const ROI_ASSISTANT_RULES = `You are the assistant for the ROI dashboard this co
 4. A question the dashboard's facts cannot answer — live or recent account context: an account's recent activity, who is engaged, a deal's status or risks, a named opportunity, news. Answer it from the live sources you have: the Sales AI / Backstory MCP tools (find the account first, then its status, activity or engaged people) and any other connected integration. Say which source each fact came from, and keep it distinct from the analysis's computed numbers.
 A message can combine these — handle each part. Never write or return HTML: the page is rendered from what your tools store. Keep replies short, and keep units exact: say "usage records", "reps" or "deals" as the facts do, never one for another.`
 
-const DOCUMENT_ASSISTANT_RULES = (isHtml: boolean) => `You are the assistant for the artifact this conversation is about. Decide what each message is:
+// A shared-template copy has no "save as a new artifact": the copy IS the
+// visitor's own artifact, made to be changed. Told to save "a new one"
+// elsewhere, its copilot apologised for a tool it does not have and rebuilt
+// the page from scratch; these rules make every such request an in-place edit.
+const TEMPLATE_COPY_NEW_ONE_RULE = `3. "A NEW ONE" ("create a new artifact", "make one for Acme", "a version for the EMEA team"): this page is the user's own copy, made for them to change, so the request means CHANGE THIS PAGE. Do it here with edit_artifact: keep its layout, design, sections and working features, and change what was asked — usually the data it shows. Do not rebuild it as a different page of your own design unless a different design is what they asked for, and do not add a link, toggle or banner leading back to the earlier content (History already keeps every earlier version). Never say you could not create something or that you can only edit this copy — say what changed.`
+
+const DOCUMENT_ASSISTANT_RULES = (isHtml: boolean, templateCopy = false) => `You are the assistant for the artifact this conversation is about. Decide what each message is:
 1. A QUESTION about it: answer in Markdown, grounded in the document (and your tools where a fact is missing). Do not return the document.
 2. A CHANGE to it ("remove the risks section", "update the Q3 numbers", "make the header blue"): make it with edit_artifact — exact find-and-replace edits of the parts that change, everything else untouched. When the whole document is given below, edit from it directly — do not search for what you can already see. For a page too large to be given whole, use its map to read the part you need (read_artifact), look up anything else with ONE find_in_artifact call carrying every term, and copy the exact snippet into \`find\`. Use revise_artifact only to rewrite a small document from scratch. ${isHtml ? 'It is HTML: keep it valid, and if it is an interactive page keep its scripts working — chart data usually lives in inline <script> blocks, so a data change is an edit there.' : 'It is Markdown: keep its structure.'} Then tell the user in one or two sentences what changed.
-3. A COPY or VARIANT ("make a version for the EMEA team", "save this as a new one"): make the edits with saveAsNew: true and a fitting title, and share the new artifact's link. The original stays as it is.
-4. A question or change that needs facts the document does not hold: fetch them with the tools you have — the Sales AI / Backstory MCP and the integrations that produced this artifact — and say where each fact came from.
-5. THE SAME ANALYSIS FOR ANOTHER ACCOUNT — when get_artifact shows an \`analysis\` (the page was built from repository extracts, e.g. an Account 360 ROI dashboard): answer questions from its summary, and for "show me this for Acme" call list_roi_accounts, match the account, then start_roi_analysis; share the link it returns.
+${templateCopy ? TEMPLATE_COPY_NEW_ONE_RULE : `3. A COPY or VARIANT ("make a version for the EMEA team", "save this as a new one"): make the edits with saveAsNew: true and a fitting title, and share the new artifact's link. The original stays as it is.`}
+4. A question or change that needs facts the document does not hold: fetch them with the tools you have — ${templateCopy ? 'the shared demo data tools attached to this copilot' : 'the Sales AI / Backstory MCP and the integrations that produced this artifact'} — and say where each fact came from.${templateCopy ? '' : `
+5. THE SAME ANALYSIS FOR ANOTHER ACCOUNT — when get_artifact shows an \`analysis\` (the page was built from repository extracts, e.g. an Account 360 ROI dashboard): answer questions from its summary, and for "show me this for Acme" call list_roi_accounts, match the account, then start_roi_analysis; share the link it returns.`}
 Recompute with your tools only where a change needs new facts.`
 
 /** The owner's standing instructions, placed after the rules they must not override. */
@@ -467,7 +473,7 @@ function standingInstructions(instructions?: string): string {
   return text ? `\nSTANDING INSTRUCTIONS FOR THIS ARTIFACT (from the people who use it — follow them on every message unless they conflict with the rules above):\n${text}\n` : ''
 }
 
-export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[]; instructions?: string }): string {
+export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: string; title: string; content: string; message: string; chat: ArtifactChatMessage[]; instructions?: string; templateCopy?: boolean }): string {
   const history = params.chat
     .filter((m) => m.content && m.status !== 'pending')
     .slice(-8)
@@ -486,7 +492,7 @@ export function buildArtifactPrompt(params: { mode: ArtifactChatMode; kind?: str
   const doc = params.content.length > CONTEXT_MAX_CHARS
     ? `${params.content.slice(0, 4_000)}\n<!-- ${params.content.length.toLocaleString()} characters in all; this is the start. -->${outline ? `\n\nMAP OF THE DOCUMENT (@character offset, what is there). Go straight to the part you need with read_artifact at that offset; use find_in_artifact — with EVERY term you need in one call — only for text the map does not locate:\n${outline}` : '\nUse find_in_artifact (every term you need in one call) and read_artifact to see the rest.'}`
     : params.content
-  return [DOCUMENT_ASSISTANT_RULES(isHtml), ARTIFACT_CAPABILITIES, 'Work directly on the requested edit. Batch independent lookups and edits; do not draft a long plan or rebuild unaffected sections. Reply in two sentences after the save.', standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
+  return [DOCUMENT_ASSISTANT_RULES(isHtml, params.templateCopy), ARTIFACT_CAPABILITIES, 'Work directly on the requested edit. Batch independent lookups and edits; do not draft a long plan or rebuild unaffected sections. Reply in two sentences after the save.', standingInstructions(params.instructions), `ARTIFACT: "${params.title}"`, '', 'CURRENT DOCUMENT:', doc, history ? `\nCONVERSATION SO FAR:\n${history}` : '', '', `MESSAGE: ${params.message.trim()}${hint}`].join('\n')
 }
 
 /** Ask the producing agent a question, or ask it for a change (a new version). */
@@ -512,7 +518,7 @@ export async function askArtifact(params: { organizationId: string; userId: stri
   if (!agent) throw new Error('The producing agent is no longer available.')
   const current = row.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: row.currentVersionId, organizationId: params.organizationId }, select: { content: true } }) : null
   const assistant = readAssistantConfig(row.assistantConfig)
-  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat, instructions: assistant.instructions })
+  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat, instructions: assistant.instructions, templateCopy: Boolean(row.templateSourceId) })
   const execution = await prisma.agentExecution.create({
     data: {
       agentType: agent.agentType,

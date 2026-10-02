@@ -43,6 +43,14 @@ test('the producing flow is read from either trigger shape', () => {
   assert.equal(flowIdFromTrigger(null), null)
 })
 
+test('a shared-template copy is told to change itself in place, never to save a new artifact', () => {
+  const copy = buildArtifactPrompt({ mode: 'auto', title: 'Rep cockpit', content: '<html><body>doc</body></html>', message: 'create a new artifact using data from keyslogic', chat: [], templateCopy: true })
+  assert.doesNotMatch(copy, /saveAsNew/)
+  assert.doesNotMatch(copy, /start_roi_analysis/)
+  assert.match(copy, /CHANGE THIS PAGE/)
+  assert.match(copy, /keep its layout, design, sections and working features/)
+})
+
 test('a change request demands the whole revised document; a question forbids it', () => {
   const change = buildArtifactPrompt({ mode: 'change', title: 'Q3 review', content: '<html><body>doc</body></html>', message: 'Add a risks section', chat: [] })
   assert.match(change, /edit_artifact/)

@@ -285,10 +285,21 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
 // deliberately its own verb: it applies to platform-managed connections too
 // (PUT refuses those), and it is a disclosure decision, not a configuration
 // edit. A personal connection can only be shared by the person it belongs to.
+//
+// Turning it ON is gated twice, because the data behind a shared server is
+// handed to anyone holding a link: only a platform operator may do it, and a
+// workspace has exactly one shared server — the demo one. With that one on,
+// no other server (a production Backstory connection, say) can be switched on
+// beside it. Turning it off stays open to the connection's owner.
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const body = z.object({ id: z.string().min(1), shareableWithCopilots: z.boolean() }).parse(await request.json())
   const existing = await prisma.mcpConnection.findFirst({ where: { id: body.id, organizationId: auth.organizationId } })
   if (!existing || (existing.userId && existing.userId !== auth.dbUser.id)) throw new ApiError('MCP connection not found', 404, 'NOT_FOUND')
+  if (body.shareableWithCopilots && !existing.shareableWithCopilots) {
+    if (!auth.can('platform.administer')) throw new ApiError('Only a platform operator can make a server available to shared-link copilots.', 403, 'OPERATOR_ONLY')
+    const already = await prisma.mcpConnection.findFirst({ where: { organizationId: auth.organizationId, shareableWithCopilots: true, id: { not: existing.id } }, select: { name: true } })
+    if (already) throw new ApiError(`Only one server can be available to shared-link copilots, and "${already.name}" already is. Turn that one off first.`, 409, 'SHAREABLE_ALREADY_SET')
+  }
   const updated = await prisma.mcpConnection.update({
     where: { id: existing.id, organizationId: auth.organizationId },
     data: { shareableWithCopilots: body.shareableWithCopilots },

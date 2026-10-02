@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { useAuth } from '@/hooks/use-auth'
 import { needsSignIn, reconnectHref } from '@/lib/mcp/reconnect'
 
 const authLabels: Record<string, string> = {
@@ -39,6 +40,10 @@ const linkButtonClass =
 export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { returnTo?: string }) {
   const router = useRouter()
   const [connections, setConnections] = useState<SerializedConnection[]>([])
+  const { can } = useAuth()
+  // The name of the server already shared with shared-link copilots, when it
+  // is not this one: a workspace shares exactly one.
+  const sharedElsewhere = (conn: SerializedConnection) => connections.find((other) => other.id !== conn.id && other.shareableWithCopilots)?.name ?? null
   const [loading, setLoading] = useState(true)
   const [authError, setAuthError] = useState<string | null>(null)
   const [authStatus, setAuthStatus] = useState<number | null>(null)
@@ -287,17 +292,25 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                   )}
                 </div>
 
-                <div className="flex items-start gap-2 border-t pt-3 text-xs">
-                  <Switch
-                    checked={Boolean(conn.shareableWithCopilots)}
-                    onCheckedChange={() => toggleShareable(conn)}
-                    aria-label={`Shared-artifact copilots can query ${conn.name}`}
-                  />
-                  <span>
-                    <span className="font-medium text-foreground">Shared-artifact copilots can query this</span>
-                    <span className="block text-muted-foreground">Demo data only. Anyone with a shared link can ask its copilot for data from this server; no other server or integration is ever available to them.</span>
-                  </span>
-                </div>
+                {/* Offered only where it can be used: to a platform operator, on
+                    the one server a workspace shares (the demo one). Anyone who
+                    owns a shared server can still switch it off. */}
+                {(conn.shareableWithCopilots || (can('platform.administer') && !sharedElsewhere(conn))) && (
+                  <div className="flex items-start gap-2 border-t pt-3 text-xs">
+                    <Switch
+                      checked={Boolean(conn.shareableWithCopilots)}
+                      onCheckedChange={() => toggleShareable(conn)}
+                      aria-label={`Shared-artifact copilots can query ${conn.name}`}
+                    />
+                    <span>
+                      <span className="font-medium text-foreground">Shared-artifact copilots can query this</span>
+                      <span className="block text-muted-foreground">Demo data only. Anyone with a shared link can ask its copilot for data from this server; no other server or integration is ever available to them.</span>
+                    </span>
+                  </div>
+                )}
+                {!conn.shareableWithCopilots && can('platform.administer') && sharedElsewhere(conn) && (
+                  <p className="border-t pt-3 text-xs text-muted-foreground">Shared-artifact copilots already query “{sharedElsewhere(conn)}”. Only one server can be shared with them; turn that one off to share this instead.</p>
+                )}
 
                 <div className="flex items-center justify-between gap-2 border-t pt-3">
                   {conn.provider ? (

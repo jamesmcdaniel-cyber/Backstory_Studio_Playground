@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, ChevronUp, History, Loader2, MessageSquare, Plug, Settings2, Sparkles, SquarePen, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { ArrowUp, History, Loader2, MessageSquare, Plug, Settings2, Sparkles, SquarePen, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { indentOnTab } from '@/components/ui/textarea'
@@ -513,28 +513,6 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
         </div>
       )}
 
-      {/* Version control on the page itself once the copy has changed, so the
-          visitor's versions are in reach with the copilot closed. While the
-          panel is open its History tab is the version control instead. */}
-      {copy && loaded && versions.length > 1 && !open && (
-        <VersionControl
-          versions={versions}
-          latestId={latestVersionId}
-          latestNumber={latestNumber}
-          shownId={shownId}
-          viewingOlder={viewingOlder}
-          canRestore={canAsk}
-          restoring={restoring}
-          busy={busy}
-          onView={viewVersion}
-          onLatest={() => setViewId(null)}
-          onRestore={restore}
-          sharedUpdate={sharedUpdate}
-          taking={taking}
-          onTakeLatest={takeLatest}
-        />
-      )}
-
       {/* Ask Backstory's launcher, to the pixel: same corner, same pill. Hidden
           while the panel is open on a phone, where the panel covers it. */}
       <button
@@ -564,7 +542,7 @@ const formatWhen = (iso: string) => new Date(iso).toLocaleString(undefined, { mo
 /**
  * The copy's versions, newest first: any one can be viewed, and an earlier one
  * restored as a new version on top, so nothing is lost. The copilot's History
- * tab and the on-page version control both list them this way.
+ * tab lists them this way.
  */
 function VersionList({ label, versions, latestId, shownId, canRestore, restoring, busy, onView, onRestore, className, children }: {
   label: string
@@ -607,118 +585,6 @@ function VersionList({ label, versions, latestId, shownId, canRestore, restoring
       })}
       {children}
     </ol>
-  )
-}
-
-/**
- * Version control on the shared page, once the visitor's copy has changed: the
- * version on screen, the list of every version, and — while an older one is
- * shown — Restore and the way back to the latest. It sits in the corner
- * opposite the copilot's launcher, in the same pill.
- */
-function VersionControl({ versions, latestId, latestNumber, shownId, viewingOlder, canRestore, restoring, busy, onView, onLatest, onRestore, sharedUpdate, taking, onTakeLatest }: {
-  versions: VersionRow[]
-  latestId: string | null
-  latestNumber: number
-  shownId: string | null
-  viewingOlder: boolean
-  canRestore: boolean
-  restoring: string | null
-  busy: boolean
-  onView: (id: string) => void
-  onLatest: () => void
-  onRestore: (id: string) => Promise<string | null>
-  /** The original's newer version (its ISO time), when the copy started from an older one. */
-  sharedUpdate: string | null
-  taking: boolean
-  onTakeLatest: () => Promise<string | null>
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const [problem, setProblem] = useState('')
-  const root = useRef<HTMLDivElement>(null)
-  const toggleRef = useRef<HTMLButtonElement>(null)
-  const listId = useId()
-  const shown = versions.find((version) => version.id === shownId) ?? versions[0]
-
-  // The list closes on Escape (focus back on its toggle) or a click elsewhere.
-  useEffect(() => {
-    if (!expanded) return
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { setExpanded(false); toggleRef.current?.focus() } }
-    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setExpanded(false) }
-    document.addEventListener('keydown', onKey)
-    document.addEventListener('pointerdown', onPointer)
-    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onPointer) }
-  }, [expanded])
-
-  // Viewing or restoring closes the list, so the page it changed is in sight.
-  const view = (id: string) => { setProblem(''); onView(id); setExpanded(false) }
-  const restore = async (id: string) => {
-    setProblem('')
-    const failed = await onRestore(id)
-    if (failed) setProblem(failed)
-    else setExpanded(false)
-  }
-  const takeLatest = async () => {
-    setProblem('')
-    const failed = await onTakeLatest()
-    if (failed) setProblem(failed)
-    else setExpanded(false)
-  }
-  const action = 'px-3 py-2.5 text-sm font-medium underline-offset-2 transition-colors hover:underline disabled:opacity-50'
-
-  return (
-    <div ref={root} role="group" aria-label="Your versions" className="fixed bottom-4 left-4 z-40 flex max-w-[calc(100vw-6rem)] flex-col items-start gap-2">
-      {expanded && (
-        <div id={listId} className="flex max-h-[min(28rem,calc(100dvh-6rem))] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-graphite-200 bg-white shadow-4 motion-safe:animate-fade-in-up">
-          <div className="border-b border-graphite-200 px-4 py-3">
-            <p className="text-sm font-semibold text-graphite-900">Your versions</p>
-            <p className="mt-0.5 text-xs text-fg-muted">Only you see these changes. Version 1 is the page as it was shared.</p>
-          </div>
-          <VersionList label="Versions of your copy" versions={versions} latestId={latestId} shownId={shownId} canRestore={canRestore} restoring={restoring} busy={busy} onView={view} onRestore={(id) => void restore(id)} className="min-h-0 flex-1" />
-        </div>
-      )}
-      {/* The original moved on after this copy started: offered, never forced —
-          the visitor's own versions are theirs to keep. */}
-      {sharedUpdate && (
-        <div className="w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-horizon-200 bg-white px-4 py-3 text-xs shadow-3">
-          <p className="font-semibold text-graphite-900">The shared page was updated {formatWhen(sharedUpdate)}</p>
-          <p className="mt-0.5 text-fg-muted">Your copy started from an earlier version. Getting the latest adds it as a new version, and yours stay in the list.</p>
-          <button type="button" onClick={() => void takeLatest()} disabled={taking || busy} className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-horizon-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-horizon-700 disabled:opacity-50">
-            {taking && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}{taking ? 'Getting it…' : 'Get the latest version'}
-          </button>
-        </div>
-      )}
-      {problem && <p role="alert" className="rounded-lg border border-graphite-200 bg-white px-3 py-2 text-xs text-destructive shadow-2">{problem}</p>}
-      <div className={cn('flex items-center rounded-full border shadow-3', viewingOlder ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-graphite-200 bg-white text-graphite-900')}>
-        <button
-          ref={toggleRef}
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-          aria-controls={expanded ? listId : undefined}
-          title={viewingOlder ? 'An earlier version of your copy is on screen' : 'Your copy’s versions'}
-          className="flex min-w-0 items-center gap-2 rounded-full py-2.5 pl-3 pr-3 text-sm font-medium transition-colors hover:bg-black/[0.03]"
-        >
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-horizon-50 text-horizon-600">
-            {busy && !viewingOlder ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <History className="h-3.5 w-3.5" aria-hidden />}
-          </span>
-          <span className="truncate"><span className="sr-only sm:not-sr-only">Version </span>{shown.number} of {latestNumber}</span>
-          <ChevronUp className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !expanded && 'rotate-180')} aria-hidden />
-        </button>
-        {viewingOlder && (
-          <>
-            {canRestore && (
-              <button type="button" disabled={restoring !== null || busy} onClick={() => void restore(shown.id)} className={cn(action, 'border-l border-amber-300')}>
-                {restoring === shown.id ? 'Restoring…' : 'Restore'}
-              </button>
-            )}
-            <button type="button" onClick={() => { setProblem(''); onLatest() }} aria-label="Back to latest" className={cn(action, 'border-l border-amber-300 pr-4')}>
-              <span className="sm:hidden">Latest</span><span className="hidden sm:inline">Back to latest</span>
-            </button>
-          </>
-        )}
-      </div>
-    </div>
   )
 }
 

@@ -116,56 +116,27 @@ test('a visitor can look back through their copy’s versions and restore one, w
   } finally { cleanup(); net.restore() }
 })
 
-test('once a visitor’s copy has changed, version control is on the page itself — no copilot needed to see, view or restore a version', async () => {
-  const chat = [{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b', versionId: 'gv2' }]
+test('a visitor’s versions live in the copilot panel only: nothing is laid over the page, and a reply links to the version it made', async () => {
   const history = (latest: number) => Array.from({ length: latest }, (_, index) => ({ id: `gv${latest - index}`, number: latest - index, request: latest - index === 1 ? null : `Change ${latest - index}`, createdAt: '2026-10-02T00:00:00Z', source: latest - index === 1 ? 'created' : 'agent' }))
-  const net = stubFetch((call) => {
-    if (call.method === 'POST' && JSON.parse(call.body ?? '{}').action === 'restore') return Response.json({ success: true, copilot: { ...guest(chat, 'gv4'), versions: history(4) } })
-    return Response.json({ error: 'unexpected' }, { status: 500 })
-  })
+  const chat = [{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b', versionId: 'gv2' }]
+  const net = stubFetch(() => Response.json({ error: 'unexpected' }, { status: 500 }))
   const frame = (ui: ReturnType<typeof render>) => ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1]
   try {
-    // An untouched copy is the original: nothing to control yet.
-    const untouched = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest(), versions: history(1) } as never }}><p>original</p></SharedTemplateCopilot>)
-    assert.equal(untouched.queryByRole('group', { name: 'Your versions' }), null)
-    cleanup()
-
-    const ui = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest(chat, 'gv3'), versions: history(3) } as never }}><p>original</p></SharedTemplateCopilot>)
-    assert.equal(ui.queryByRole('dialog'), null, 'the copilot stays closed')
-    const toggle = ui.getByRole('button', { name: /Version 3 of 3/ })
-    await act(async () => { fireEvent.click(toggle) })
-    assert.equal(toggle.getAttribute('aria-expanded'), 'true')
-    const rows = ui.getByRole('list', { name: 'Versions of your copy' }).querySelectorAll('li')
-    assert.equal(rows.length, 3)
-    // Viewing an older version shows it and closes the list, so the page is in sight.
-    await act(async () => { fireEvent.click(rows[1].querySelector('button')!) })
-    assert.equal(frame(ui), 'gv2')
-    assert.equal(ui.queryByRole('list', { name: 'Versions of your copy' }), null)
-    assert.ok(ui.getByRole('button', { name: /Version 2 of 3/ }))
-    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Back to latest' })) })
-    assert.equal(frame(ui), 'gv3')
-    // Restore straight from the page: it becomes a new version on top.
-    await act(async () => { fireEvent.click(ui.getByRole('button', { name: /Version 3 of 3/ })) })
-    await act(async () => { fireEvent.click(ui.getByRole('list', { name: 'Versions of your copy' }).querySelectorAll('li')[2].querySelector('button')!) })
-    assert.equal(frame(ui), 'gv1')
-    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Restore' })) })
-    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'restore', versionId: 'gv1' })
-    assert.equal(frame(ui), 'gv4')
-    assert.ok(ui.getByRole('button', { name: /Version 4 of 4/ }))
-
-    // With the copilot open, its History tab is the version control: one set of controls on screen.
-    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    const ui = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest(chat, 'gv3'), versions: history(3), sharedUpdate: '2026-10-06T15:00:00Z' } as never }}><p>original</p></SharedTemplateCopilot>)
+    // With the copilot closed, the page is the page: only its launcher sits over it.
     assert.equal(ui.queryByRole('group', { name: 'Your versions' }), null)
-    // A reply that made a version links to it, as in the app.
+    assert.equal(ui.queryByText(/Version 3 of 3/), null)
+    assert.equal(ui.queryByText(/The shared page was updated/), null)
+    assert.deepEqual(ui.getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent), ['AI Copilot'])
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    assert.ok(ui.getByRole('tab', { name: /History \(3\)/ }))
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'View this version' })) })
     assert.equal(frame(ui), 'gv2')
     assert.match(ui.getByRole('status').textContent ?? '', /Viewing version 2/)
-    await act(async () => { fireEvent.click(ui.getAllByRole('button', { name: 'Close AI Copilot' })[0]) })
-    assert.ok(ui.getByRole('button', { name: /Version 2 of 4/ }), 'closed again, the page still says which version is on screen')
   } finally { cleanup(); net.restore() }
 })
 
-test('when the original has moved on, a visitor who changed their copy is offered its latest version — on the page and in the copilot', async () => {
+test('when the original has moved on, a visitor who changed their copy is offered its latest version in the copilot', async () => {
   const history = (latest: number) => Array.from({ length: latest }, (_, index) => ({ id: `gv${latest - index}`, number: latest - index, request: null, createdAt: '2026-10-02T00:00:00Z', source: latest - index === 1 ? 'created' : latest - index === 4 ? 'shared' : 'agent' }))
   const net = stubFetch((call) => {
     if (call.method === 'POST' && JSON.parse(call.body ?? '{}').action === 'take_latest') return Response.json({ success: true, copilot: { ...guest([], 'gv4'), versions: history(4), sharedUpdate: null } })
@@ -174,10 +145,9 @@ test('when the original has moved on, a visitor who changed their copy is offere
   const frame = (ui: ReturnType<typeof render>) => ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1]
   try {
     const ui = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest([], 'gv3'), versions: history(3), sharedUpdate: '2026-10-06T15:00:00Z' } as never }}><p>original</p></SharedTemplateCopilot>)
-    // With the copilot closed, beside the version control.
-    assert.match(ui.getByRole('group', { name: 'Your versions' }).textContent ?? '', /The shared page was updated/)
-    // With it open, under its tabs.
+    // In the copilot, under its tabs.
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    assert.match(ui.getByRole('dialog', { name: 'AI Copilot' }).textContent ?? '', /The shared page was updated/)
     await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Get the latest version' })) })
     assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'take_latest' })
     assert.equal(frame(ui), 'gv4', 'the latest shared version is on screen, as a new version of the copy')

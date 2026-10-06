@@ -5,7 +5,7 @@ import { hashToken } from '@/lib/crypto/secrets'
 import { ApiError } from '@/lib/server/api-handler'
 import { liveShareLinkWhere } from './sharing'
 import { guestUsage } from './guest-limits'
-import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
+import { GUEST_COPILOT_AGENT_TYPE, GUEST_COPILOT_LIMITS, SHARED_UPDATE_REQUEST, TEMPLATE_COPILOT_INSTRUCTIONS, TEMPLATE_COPILOT_MODEL } from './template-policy'
 import { startOfUtcDay } from '@/lib/usage/free-tier-limits'
 import type { ArtifactChatMessage, GuestCopilotView } from './types'
 import { addCopilotMcpServer, copilotMcpViews, removeCopilotMcpServer, testCopilotMcpServer, type CopilotMcpInput } from './copilot-mcp'
@@ -122,7 +122,46 @@ async function findGuestCopy(source: TemplateSource, digest: string | null) {
   return prisma.artifact.findFirst({ where: { organizationId: source.organizationId, templateSourceId: source.id, guestDigest: digest, userId: null, archivedAt: null }, select: { id: true, agentTaskId: true } })
 }
 
-async function guestView(organizationId: string, copyId: string): Promise<GuestCopilotView> {
+/**
+ * When the template's current version is newer than the one this copy last
+ * took — its first version, or the latest it was brought up to — the ISO time
+ * the original changed; otherwise null. A copy starts from the original as it
+ * was when the copilot was first opened, and never follows it by itself.
+ */
+async function sharedUpdateOf(source: TemplateSource, organizationId: string, copyId: string): Promise<string | null> {
+  if (!source.currentVersionId) return null
+  const [shared, taken] = await Promise.all([
+    // systemPrisma: the template's current version, already resolved from its live link.
+    systemPrisma.artifactVersion.findFirst({ where: { id: source.currentVersionId, artifactId: source.id, organizationId: source.organizationId }, select: { createdAt: true } }),
+    prisma.artifactVersion.findFirst({ where: { artifactId: copyId, organizationId, OR: [{ number: 1 }, { request: SHARED_UPDATE_REQUEST }] }, orderBy: { number: 'desc' }, select: { createdAt: true } }),
+  ])
+  return shared && taken && shared.createdAt > taken.createdAt ? shared.createdAt.toISOString() : null
+}
+
+/**
+ * Bring the template's current version into a copy as a NEW version on top, so
+ * whatever the copy had stays in its history and is one restore away. Read
+ * through the live link only, like the copy itself was. Not a copilot run: it
+ * never counts as one of a visitor's changes. False when the copy already has it.
+ */
+async function takeSharedVersion(token: string, source: TemplateSource, organizationId: string, copyId: string, userId: string | null): Promise<boolean> {
+  const copy = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { currentVersionId: true, chat: true } })
+  if (!copy) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
+  if (Array.isArray(copy.chat) && (copy.chat as unknown as ArtifactChatMessage[]).some((m) => m.status === 'pending')) throw new ApiError('Wait for the copilot to finish before taking the latest version.', 409, 'COPILOT_BUSY')
+  if (!(await sharedUpdateOf(source, organizationId, copyId))) return false
+  // systemPrisma: cross-tenant for a signed-in copy, restricted to this opted-in public token.
+  const shared = await systemPrisma.artifactVersion.findFirst({
+    where: { id: source.currentVersionId!, artifactId: source.id, organizationId: source.organizationId, artifact: { ...liveShareLinkWhere(token), shareTemplate: true, currentVersionId: source.currentVersionId } },
+    select: { content: true },
+  })
+  if (!shared) throw new ApiError('The template changed. Reload its link and try again.', 409, 'TEMPLATE_CHANGED')
+  const { addVersion } = await import('./service')
+  await addVersion({ artifactId: copyId, organizationId, content: shared.content, request: SHARED_UPDATE_REQUEST, createdByUserId: userId, ...(copy.currentVersionId ? { expectedVersionId: copy.currentVersionId } : {}) })
+  return true
+}
+
+async function guestView(source: TemplateSource, copyId: string): Promise<GuestCopilotView> {
+  const organizationId = source.organizationId
   const { artifactStatus } = await import('./service')
   await artifactStatus(organizationId, copyId) // settles a finished run's answer into the chat
   const row = await prisma.artifact.findFirst({ where: { id: copyId, organizationId }, select: { id: true, title: true, currentVersionId: true, versionCount: true, chat: true, copilotMcpServers: true, agentTaskId: true } })
@@ -134,6 +173,7 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
     title: row.title,
     versionId: row.currentVersionId,
     edited: row.versionCount > 1,
+    sharedUpdate: await sharedUpdateOf(source, organizationId, row.id),
     usage: await guestUsage(organizationId, row.id, row.agentTaskId),
     mcpServers: copilotMcpViews(row.copilotMcpServers),
     // No run ids or authors: a guest's history is what changed and when.
@@ -142,7 +182,7 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
       number: version.number,
       request: version.number === 1 ? null : version.request,
       createdAt: version.createdAt.toISOString(),
-      source: version.request?.startsWith('Restored version') ? 'restore' as const : version.number === 1 ? 'created' as const : 'agent' as const,
+      source: version.request?.startsWith('Restored version') ? 'restore' as const : version.request === SHARED_UPDATE_REQUEST ? 'shared' as const : version.number === 1 ? 'created' as const : 'agent' as const,
     })),
     chat: chat.map((m) => ({
       role: m.role,
@@ -161,7 +201,7 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
 export async function loadGuestCopy(token: string, guestToken: string | null | undefined): Promise<GuestCopilotView | null> {
   const source = await publicTemplate(token)
   const copy = await findGuestCopy(source, guestDigestOf(guestToken))
-  return copy ? guestView(source.organizationId, copy.id) : null
+  return copy ? guestView(source, copy.id) : null
 }
 
 /** Open the copilot: the visitor's copy, made on first use. Returns the token to keep in their cookie. */
@@ -169,7 +209,7 @@ export async function openGuestCopy(token: string, guestToken: string | null | u
   const source = await publicTemplate(token)
   const kept = guestDigestOf(guestToken) ? guestToken! : null
   const existing = await findGuestCopy(source, guestDigestOf(kept))
-  if (existing) return { view: await guestView(source.organizationId, existing.id), guestToken: kept! }
+  if (existing) return { view: await guestView(source, existing.id), guestToken: kept! }
   // The copilot runs as the template's owner. Without one still active in the
   // workspace there is nobody to host it: the visitor signs in for a copy of
   // their own instead.
@@ -203,12 +243,12 @@ export async function openGuestCopy(token: string, guestToken: string | null | u
       await tx.artifactVersion.create({ data: { id: versionId, organizationId, artifactId: id, number: 1, content: version.content, request: 'Created visitor template copy' } })
       return created
     })
-    return { view: await guestView(organizationId, copy.id), guestToken: fresh }
+    return { view: await guestView(source, copy.id), guestToken: fresh }
   } catch (error) {
     // Two tabs opening at once: the loser's transaction rolls back whole.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const copy = await findGuestCopy(source, guestDigest)
-      if (copy) return { view: await guestView(organizationId, copy.id), guestToken: fresh }
+      if (copy) return { view: await guestView(source, copy.id), guestToken: fresh }
     }
     throw error
   }
@@ -230,6 +270,11 @@ export async function askGuestCopy(token: string, guestToken: string | null | un
   ])
   if (mine >= GUEST_COPILOT_LIMITS.messagesPerVisitor) throw new ApiError(`You have used today’s ${GUEST_COPILOT_LIMITS.messagesPerVisitor} questions for this copilot. Come back tomorrow, or sign in to keep going in your own workspace.`, 429, 'GUEST_LIMIT_REACHED')
   if (all >= GUEST_COPILOT_LIMITS.messagesPerTemplate) throw new ApiError('This template’s copilot is busy today. Try again tomorrow, or sign in to use your own copy.', 429, 'GUEST_LIMIT_REACHED')
+  // Untouched, the copy is shown as the original's CURRENT version; if the
+  // original has moved on since the copy was made, catch up first, so the
+  // change is made to the page the visitor is looking at.
+  const untouched = await prisma.artifact.findFirst({ where: { id: copy.id, organizationId, versionCount: 1 }, select: { id: true } })
+  if (untouched) await takeSharedVersion(token, source, organizationId, copy.id, agent.userId)
   const { askArtifact } = await import('./service')
   try {
     await askArtifact({ organizationId, userId: agent.userId, id: copy.id, message, mode: 'auto', guestDigest })
@@ -238,7 +283,7 @@ export async function askGuestCopy(token: string, guestToken: string | null | un
     // Only the visitor's own mistakes are theirs to read.
     throw new ApiError(/^(Wait for the current answer|Type a message first)/.test(text) ? text : 'The copilot is unavailable right now. Please try again.', 400, 'MESSAGE_REJECTED', error)
   }
-  return guestView(organizationId, copy.id)
+  return guestView(source, copy.id)
 }
 
 /** A visitor's answer to the question their copilot paused on. */
@@ -254,7 +299,7 @@ export async function replyGuestCopy(token: string, guestToken: string | null | 
     const text = error instanceof Error ? error.message : ''
     throw new ApiError(/^(The assistant is not waiting|Type a message first)/.test(text) ? text.replace('assistant', 'copilot') : 'The copilot is unavailable right now. Please try again.', 400, 'MESSAGE_REJECTED', error)
   }
-  return guestView(source.organizationId, copy.id)
+  return guestView(source, copy.id)
 }
 
 /** A visitor puts an earlier version of their copy back, as a new version on top (history is kept). */
@@ -277,7 +322,33 @@ export async function restoreGuestCopy(token: string, guestToken: string | null 
     const text = error instanceof Error ? error.message : ''
     throw new ApiError(/^(That version is already|Version not found)/.test(text) ? text : 'The version could not be restored. Please try again.', 400, 'RESTORE_REJECTED', error)
   }
-  return guestView(organizationId, copy.id)
+  return guestView(source, copy.id)
+}
+
+/** A visitor takes the template's current version into their copy, as a new version on top. */
+export async function takeLatestGuestCopy(token: string, guestToken: string | null | undefined): Promise<GuestCopilotView> {
+  const source = await publicTemplate(token)
+  const copy = await findGuestCopy(source, guestDigestOf(guestToken))
+  if (!copy?.agentTaskId) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
+  // Recorded against the host, as a restore is.
+  const agent = await prisma.agentTask.findFirst({ where: { id: copy.agentTaskId, organizationId: source.organizationId, artifactTemplateCopyId: copy.id }, select: { userId: true } })
+  await takeSharedVersion(token, source, source.organizationId, copy.id, agent?.userId ?? null)
+  return guestView(source, copy.id)
+}
+
+/** Whether the template behind a signed-in person's copy has a newer version than the copy took (its ISO time), or null. */
+export async function templateCopyUpdate(token: string, organizationId: string, copyId: string): Promise<string | null> {
+  const source = await publicTemplate(token).catch(() => null)
+  return source ? sharedUpdateOf(source, organizationId, copyId) : null
+}
+
+/** A signed-in person takes the template's current version into their own copy, as a new version on top. */
+export async function takeLatestTemplateCopy(token: string, organizationId: string, userId: string): Promise<{ id: string }> {
+  const source = await publicTemplate(token)
+  const copy = await prisma.artifact.findFirst({ where: { organizationId, userId, templateSourceId: source.id }, select: { id: true } })
+  if (!copy) throw new ApiError('Open the copilot on this link first.', 404, 'NOT_FOUND')
+  await takeSharedVersion(token, source, organizationId, copy.id, userId)
+  return copy
 }
 
 /**
@@ -291,7 +362,7 @@ export async function changeGuestCopyMcp(token: string, guestToken: string | nul
   if (!copy) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
   if ('add' in change) await addCopilotMcpServer(source.organizationId, copy.id, change.add)
   else await removeCopilotMcpServer(source.organizationId, copy.id, change.remove)
-  return guestView(source.organizationId, copy.id)
+  return guestView(source, copy.id)
 }
 
 /** A visitor starts a new chat with their copy's copilot: the conversation is cleared, the copy and its versions stay. */
@@ -300,7 +371,7 @@ export async function clearGuestCopyChat(token: string, guestToken: string | nul
   const copy = await findGuestCopy(source, guestDigestOf(guestToken))
   if (!copy) throw new ApiError('Open the copilot again to continue.', 404, 'NOT_FOUND')
   // Settle a finished run's answer first, so "pending" means still working.
-  await guestView(source.organizationId, copy.id)
+  await guestView(source, copy.id)
   const { clearArtifactChat } = await import('./service')
   try {
     await clearArtifactChat({ organizationId: source.organizationId, id: copy.id })
@@ -308,7 +379,7 @@ export async function clearGuestCopyChat(token: string, guestToken: string | nul
     const text = error instanceof Error ? error.message : ''
     throw new ApiError(/^Wait for the current answer/.test(text) ? text : 'A new chat could not be started. Please try again.', 409, 'CHAT_BUSY', error)
   }
-  return guestView(source.organizationId, copy.id)
+  return guestView(source, copy.id)
 }
 
 /** A visitor tests a server before connecting it: its tools, nothing stored. */

@@ -165,6 +165,50 @@ test('once a visitor’s copy has changed, version control is on the page itself
   } finally { cleanup(); net.restore() }
 })
 
+test('when the original has moved on, a visitor who changed their copy is offered its latest version — on the page and in the copilot', async () => {
+  const history = (latest: number) => Array.from({ length: latest }, (_, index) => ({ id: `gv${latest - index}`, number: latest - index, request: null, createdAt: '2026-10-02T00:00:00Z', source: latest - index === 1 ? 'created' : latest - index === 4 ? 'shared' : 'agent' }))
+  const net = stubFetch((call) => {
+    if (call.method === 'POST' && JSON.parse(call.body ?? '{}').action === 'take_latest') return Response.json({ success: true, copilot: { ...guest([], 'gv4'), versions: history(4), sharedUpdate: null } })
+    return Response.json({ error: 'unexpected' }, { status: 500 })
+  })
+  const frame = (ui: ReturnType<typeof render>) => ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1]
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest([], 'gv3'), versions: history(3), sharedUpdate: '2026-10-06T15:00:00Z' } as never }}><p>original</p></SharedTemplateCopilot>)
+    // With the copilot closed, beside the version control.
+    assert.match(ui.getByRole('group', { name: 'Your versions' }).textContent ?? '', /The shared page was updated/)
+    // With it open, under its tabs.
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Get the latest version' })) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'take_latest' })
+    assert.equal(frame(ui), 'gv4', 'the latest shared version is on screen, as a new version of the copy')
+    assert.equal(ui.queryByText(/The shared page was updated/), null)
+    await act(async () => { fireEvent.click(ui.getByRole('tab', { name: /History \(4\)/ })) })
+    assert.match(ui.getByRole('list', { name: 'Version history' }).querySelector('li')?.textContent ?? '', /Latest shared version/)
+  } finally { cleanup(); net.restore() }
+})
+
+test('someone signed in whose untouched copy predates the original’s latest version: it catches up before the copilot changes it', async () => {
+  const net = stubFetch((call) => {
+    if (call.url.endsWith('/copy')) return Response.json({ success: true, artifactId: 'copy-1', sharedUpdate: null })
+    if (call.url.endsWith('/chat')) return Response.json({ success: true, artifact: copy([{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b' }], 3) })
+    return Response.json({ success: true, artifact: copy([], 2) })
+  })
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'member', id: 'copy-1', artifact: copy() as never, sharedUpdate: '2026-10-06T15:00:00Z' }}><p>original</p></SharedTemplateCopilot>)
+    assert.ok(ui.getByText('original'), 'untouched, the copy is shown as the original')
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    await act(async () => { fireEvent.change(ui.getByRole('textbox', { name: 'Message' }), { target: { value: 'Make it blue' } }) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Send message' })) })
+    const relevant = net.calls.filter((call) => !call.url.includes('/state') && !call.url.includes('/versions/')).map(({ url, method, body }) => ({ url, method, body }))
+    assert.deepEqual(relevant, [
+      { url: '/api/share/artifacts/test-token/copy', method: 'POST', body: '{"action":"take_latest"}' },
+      { url: '/api/artifacts/copy-1', method: undefined, body: undefined },
+      { url: '/api/artifacts/copy-1/chat', method: 'POST', body: '{"message":"Make it blue","mode":"auto"}' },
+    ])
+    assert.ok(ui.getByText('Done — it is blue.'))
+  } finally { cleanup(); net.restore() }
+})
+
 test('a copy the server already resolved is on screen from the first paint — the original never flashes, and nothing is looked up', async () => {
   const net = stubFetch(() => Response.json({ error: 'unexpected' }, { status: 500 }))
   try {

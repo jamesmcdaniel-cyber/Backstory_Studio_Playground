@@ -10,7 +10,7 @@ import { requireAuthContext } from '@/lib/server/auth'
 import { loadArtifact } from '@/lib/artifacts/service'
 import { artifactPermissions } from '@/lib/artifacts/sharing'
 import { viewerOf } from '@/lib/artifacts/route-access'
-import { findArtifactTemplateCopy, loadGuestCopy } from '@/lib/artifacts/templates'
+import { findArtifactTemplateCopy, loadGuestCopy, templateCopyUpdate } from '@/lib/artifacts/templates'
 
 /**
  * The copy this visitor already has of a template link, resolved before the
@@ -24,11 +24,12 @@ async function existingCopy(token: string): Promise<TemplateCopy | null> {
     if (auth?.can('agent.read')) {
       const copy = await findArtifactTemplateCopy(token, auth.organizationId, auth.dbUser.id)
       if (!copy) return null
-      const [artifact, row] = await Promise.all([
+      const [artifact, row, sharedUpdate] = await Promise.all([
         loadArtifact(auth.organizationId, copy.id),
         prisma.artifact.findFirst({ where: { id: copy.id, organizationId: auth.organizationId }, select: { userId: true, workspaceAccess: true, editorIds: true, templateSourceId: true } }),
+        templateCopyUpdate(token, auth.organizationId, copy.id),
       ])
-      return artifact && row ? { kind: 'member', id: copy.id, artifact: { ...artifact, permissions: artifactPermissions(viewerOf(auth), row) } } : null
+      return artifact && row ? { kind: 'member', id: copy.id, artifact: { ...artifact, permissions: artifactPermissions(viewerOf(auth), row) }, sharedUpdate } : null
     }
     // No account: the guest copy this browser's cookie opens.
     const guestToken = (await cookies()).get(GUEST_COOKIE)?.value

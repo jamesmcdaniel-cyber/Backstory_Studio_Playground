@@ -38,7 +38,8 @@ export type ArtifactVersionView = {
   /** Who asked for it (the person whose message or click made it). */
   author: string | null
   /** How it came to be. */
-  source: 'created' | 'agent' | 'flow' | 'restore'
+  /** 'shared': a template copy's version taken from the original's current one. */
+  source: 'created' | 'agent' | 'flow' | 'restore' | 'shared'
 }
 
 export type ArtifactView = {
@@ -87,6 +88,8 @@ export type GuestCopilotView = {
   versionId: string | null
   /** Whether the copilot has changed the copy yet; until then it is the original. */
   edited: boolean
+  /** The template's original has a newer version than this copy took (its ISO time), or null. */
+  sharedUpdate: string | null
   /** Today's allowance: queries sent and changes made, against the visitor limits. */
   usage: { queries: { used: number; limit: number }; changes: { used: number; limit: number } }
   /** MCP servers the visitor connected themselves; once any exist the copilot uses only these. */

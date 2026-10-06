@@ -343,7 +343,7 @@ export function ArtifactViewer({ id }: { id: string }) {
                     <p className="mt-0.5 text-muted-foreground">
                       {new Date(version.createdAt).toLocaleString()}
                       {version.author ? ` · ${version.author}` : ''}
-                      {' · '}{version.source === 'created' ? 'Created' : version.source === 'restore' ? 'Restored' : version.source === 'flow' ? 'Flow run' : 'Assistant'}
+                      {' · '}{version.source === 'created' ? 'Created' : version.source === 'restore' ? 'Restored' : version.source === 'flow' ? 'Flow run' : version.source === 'shared' ? 'Latest shared version' : 'Assistant'}
                     </p>
                     {version.request && <p className="mt-1 line-clamp-3 text-foreground">{version.request}</p>}
                     <div className="mt-2 flex flex-wrap gap-2">

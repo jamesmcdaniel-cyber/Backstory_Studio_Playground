@@ -23,7 +23,7 @@ const RESUME_KEY = 'backstory:template-copilot'
  * the sender's workspace, reached only through this link's public endpoints.
  */
 export type TemplateCopy =
-  | { kind: 'member'; id: string; artifact: ArtifactView | null }
+  | { kind: 'member'; id: string; artifact: ArtifactView | null; /** The original's newer version (its ISO time) when the copy started from an older one. */ sharedUpdate?: string | null }
   | { kind: 'guest'; view: GuestCopilotView }
 type Copy = TemplateCopy
 
@@ -44,6 +44,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [markdown, setMarkdown] = useState<{ url: string; text: string } | null>(null)
+  // A signed-in person's copy: whether the original has a newer version than
+  // the copy took. (A guest's arrives with their copy's view.)
+  const [memberUpdate, setMemberUpdate] = useState<string | null>(initialCopy?.kind === 'member' ? initialCopy.sharedUpdate ?? null : null)
   const chatEnd = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const loading = useRef(false)
@@ -78,8 +81,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       // Signed in: a copy of their own, in their workspace.
       const member = await fetch(`/api/share/artifacts/${encodeURIComponent(token)}/copy`, { method: 'POST' })
       if (member.status !== 401) {
-        const data = await member.json().catch(() => ({})) as { artifactId?: string; error?: string }
+        const data = await member.json().catch(() => ({})) as { artifactId?: string; sharedUpdate?: string | null; error?: string }
         if (!member.ok || typeof data.artifactId !== 'string') throw new Error(data.error || 'Could not open the copilot. Please try again.')
+        setMemberUpdate(data.sharedUpdate ?? null)
         const next: Copy = { kind: 'member', id: data.artifactId, artifact: null }
         copyRef.current = next
         setCopy(next)
@@ -118,8 +122,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
         // Signed in: their own copy, if they have made one.
         const member = await fetch(`/api/share/artifacts/${encodeURIComponent(token)}/copy`, { cache: 'no-store' })
         if (member.ok) {
-          const data = await member.json().catch(() => ({})) as { artifactId?: string | null }
+          const data = await member.json().catch(() => ({})) as { artifactId?: string | null; sharedUpdate?: string | null }
           if (cancelled || typeof data.artifactId !== 'string' || copyRef.current) return
+          setMemberUpdate(data.sharedUpdate ?? null)
           const next: Copy = { kind: 'member', id: data.artifactId, artifact: null }
           copyRef.current = next
           setCopy(next)
@@ -168,6 +173,8 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const viewingOlder = Boolean(viewed && shownId === viewed.id)
   const latestNumber = (copy?.kind === 'member' ? artifact?.versionCount : undefined) ?? versions[0]?.number ?? 1
   const viewVersion = (id: string) => setViewId(id === latestVersionId ? null : id)
+  // The original has moved on since this copy started from it.
+  const sharedUpdate = copy?.kind === 'guest' ? copy.view.sharedUpdate ?? null : memberUpdate
   // History appears once there is one: an untouched copy has a single version.
   const tab = chosenTab === 'history' && versions.length <= 1 ? 'chat' : chosenTab
   // Settings: MCP servers the person connected themselves. A guest's arrive
@@ -220,6 +227,10 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
     setSending(true)
     setError('')
     try {
+      // An untouched copy is on screen as the original's current version: catch
+      // it up first, so the change is made to that page. (A guest's copy
+      // catches up on the server.)
+      if (copy.kind === 'member' && !edited && memberUpdate && !awaiting && await takeLatest()) return
       // While the copilot waits on its question, what is typed is the answer.
       const response = copy.kind === 'member'
         ? await fetch(`/api/artifacts/${encodeURIComponent(copy.id)}/${awaiting ? 'reply' : 'chat'}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(awaiting ? { message: outgoing } : { message: outgoing, mode: 'auto' }) })
@@ -278,6 +289,37 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       setError(failed)
       return failed
     } finally { setRestoring(null) }
+  }
+
+  // Take the original's current version into the copy, as a new version on
+  // top: whatever the copy had stays in its history. Resolves to an error
+  // message, or null when it worked.
+  const [taking, setTaking] = useState(false)
+  const takeLatest = async (): Promise<string | null> => {
+    if (!copy || taking || busy) return null
+    setTaking(true)
+    setError('')
+    try {
+      if (copy.kind === 'member') {
+        const response = await fetch(`/api/share/artifacts/${encodeURIComponent(token)}/copy`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'take_latest' }) })
+        const data = await response.json().catch(() => ({})) as { error?: string }
+        if (!response.ok) throw new Error(data.error || 'The latest version could not be taken.')
+        setMemberUpdate(null)
+        loading.current = false // whatever was in flight predates the new version
+        await refresh()
+      } else {
+        const response = await fetch(guestUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'take_latest' }) })
+        const data = await response.json().catch(() => ({})) as { copilot?: GuestCopilotView; error?: string }
+        if (!response.ok || !data.copilot) throw new Error(data.error || 'The latest version could not be taken.')
+        setCopy({ kind: 'guest', view: data.copilot })
+      }
+      setViewId(null)
+      return null
+    } catch (caught) {
+      const failed = caught instanceof Error ? caught.message : 'The latest version could not be taken.'
+      setError(failed)
+      return failed
+    } finally { setTaking(false) }
   }
 
   // Connect or disconnect one of the person's own MCP servers. Resolves to an
@@ -360,6 +402,12 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
                   {option === 'chat' ? 'Chat' : option === 'history' ? `History (${latestNumber})` : 'Settings'}
                 </button>
               ))}
+            </div>
+          )}
+          {loaded && sharedUpdate && versions.length > 1 && (
+            <div className="flex items-center justify-between gap-3 border-b border-horizon-200 bg-horizon-50 px-4 py-2 text-xs text-graphite-900">
+              <span>The shared page was updated {formatWhen(sharedUpdate)}. Your copy started from an earlier version.</span>
+              <button type="button" onClick={() => void takeLatest()} disabled={taking || busy} className="shrink-0 font-medium text-horizon-700 underline underline-offset-2 disabled:opacity-50">{taking ? 'Getting it…' : 'Get the latest version'}</button>
             </div>
           )}
           {viewed && viewingOlder && (
@@ -481,6 +529,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
           onView={viewVersion}
           onLatest={() => setViewId(null)}
           onRestore={restore}
+          sharedUpdate={sharedUpdate}
+          taking={taking}
+          onTakeLatest={takeLatest}
         />
       )}
 
@@ -506,6 +557,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 }
 
 type VersionRow = { id: string; number: number; request?: string | null; createdAt: string; source?: string }
+
+/** When the original changed, in the visitor's own clock and words. */
+const formatWhen = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
 /**
  * The copy's versions, newest first: any one can be viewed, and an earlier one
@@ -537,9 +591,9 @@ function VersionList({ label, versions, latestId, shownId, canRestore, restoring
               {isCurrent && <span className="rounded-full bg-horizon-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">Current</span>}
             </div>
             <p className="mt-0.5 text-fg-muted">
-              {new Date(version.createdAt).toLocaleString()}{' · '}{version.source === 'created' ? 'As shared' : version.source === 'restore' ? 'Restored' : 'Copilot'}
+              {new Date(version.createdAt).toLocaleString()}{' · '}{version.source === 'created' ? 'As shared' : version.source === 'restore' ? 'Restored' : version.source === 'shared' ? 'Latest shared version' : 'Copilot'}
             </p>
-            {version.request && version.source !== 'created' && <p className="mt-1 line-clamp-3 text-graphite-900">{version.request}</p>}
+            {version.request && version.source !== 'created' && version.source !== 'shared' && <p className="mt-1 line-clamp-3 text-graphite-900">{version.request}</p>}
             <div className="mt-2 flex flex-wrap gap-3">
               {!isShown && <button type="button" onClick={() => onView(version.id)} className="font-medium text-horizon-700 underline underline-offset-2">View</button>}
               {!isCurrent && canRestore && (
@@ -562,7 +616,7 @@ function VersionList({ label, versions, latestId, shownId, canRestore, restoring
  * shown — Restore and the way back to the latest. It sits in the corner
  * opposite the copilot's launcher, in the same pill.
  */
-function VersionControl({ versions, latestId, latestNumber, shownId, viewingOlder, canRestore, restoring, busy, onView, onLatest, onRestore }: {
+function VersionControl({ versions, latestId, latestNumber, shownId, viewingOlder, canRestore, restoring, busy, onView, onLatest, onRestore, sharedUpdate, taking, onTakeLatest }: {
   versions: VersionRow[]
   latestId: string | null
   latestNumber: number
@@ -574,6 +628,10 @@ function VersionControl({ versions, latestId, latestNumber, shownId, viewingOlde
   onView: (id: string) => void
   onLatest: () => void
   onRestore: (id: string) => Promise<string | null>
+  /** The original's newer version (its ISO time), when the copy started from an older one. */
+  sharedUpdate: string | null
+  taking: boolean
+  onTakeLatest: () => Promise<string | null>
 }) {
   const [expanded, setExpanded] = useState(false)
   const [problem, setProblem] = useState('')
@@ -600,6 +658,12 @@ function VersionControl({ versions, latestId, latestNumber, shownId, viewingOlde
     if (failed) setProblem(failed)
     else setExpanded(false)
   }
+  const takeLatest = async () => {
+    setProblem('')
+    const failed = await onTakeLatest()
+    if (failed) setProblem(failed)
+    else setExpanded(false)
+  }
   const action = 'px-3 py-2.5 text-sm font-medium underline-offset-2 transition-colors hover:underline disabled:opacity-50'
 
   return (
@@ -611,6 +675,17 @@ function VersionControl({ versions, latestId, latestNumber, shownId, viewingOlde
             <p className="mt-0.5 text-xs text-fg-muted">Only you see these changes. Version 1 is the page as it was shared.</p>
           </div>
           <VersionList label="Versions of your copy" versions={versions} latestId={latestId} shownId={shownId} canRestore={canRestore} restoring={restoring} busy={busy} onView={view} onRestore={(id) => void restore(id)} className="min-h-0 flex-1" />
+        </div>
+      )}
+      {/* The original moved on after this copy started: offered, never forced —
+          the visitor's own versions are theirs to keep. */}
+      {sharedUpdate && (
+        <div className="w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-horizon-200 bg-white px-4 py-3 text-xs shadow-3">
+          <p className="font-semibold text-graphite-900">The shared page was updated {formatWhen(sharedUpdate)}</p>
+          <p className="mt-0.5 text-fg-muted">Your copy started from an earlier version. Getting the latest adds it as a new version, and yours stay in the list.</p>
+          <button type="button" onClick={() => void takeLatest()} disabled={taking || busy} className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-horizon-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-horizon-700 disabled:opacity-50">
+            {taking && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}{taking ? 'Getting it…' : 'Get the latest version'}
+          </button>
         </div>
       )}
       {problem && <p role="alert" className="rounded-lg border border-graphite-200 bg-white px-3 py-2 text-xs text-destructive shadow-2">{problem}</p>}

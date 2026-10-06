@@ -10,7 +10,7 @@ import { readAgentMetadata } from '@/lib/agents/metadata'
 import { validateArtifactContent, validateArtifactPython } from './validate-content'
 import { validateArtifactRuntime } from './preflight'
 import { ARTIFACT_CAPABILITIES } from './capabilities'
-import { GUEST_COPILOT_LIMITS, TEMPLATE_COPILOT_MODEL, templateCopyRunsAs } from './template-policy'
+import { GUEST_COPILOT_LIMITS, SHARED_UPDATE_REQUEST, TEMPLATE_COPILOT_MODEL, templateCopyRunsAs } from './template-policy'
 import { guestChangesToday } from './guest-limits'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
@@ -359,7 +359,7 @@ export async function loadArtifact(organizationId: string, id: string, before?: 
       bytes: Buffer.byteLength(version.content),
       format: reactComponentOf(version.content) || looksLikeHtml(version.content.slice(0, 4_000)) ? 'html' : 'markdown',
       author: version.createdByUserId ? authors.get(version.createdByUserId) ?? null : null,
-      source: version.executionId ? 'agent' : version.flowRunId ? 'flow' : version.request?.startsWith('Restored version') ? 'restore' : version.number === 1 ? 'created' : 'agent',
+      source: version.executionId ? 'agent' : version.flowRunId ? 'flow' : version.request?.startsWith('Restored version') ? 'restore' : version.request === SHARED_UPDATE_REQUEST ? 'shared' : version.number === 1 ? 'created' : 'agent',
     })),
     chat: chatOf(row),
     interactive: isInteractiveKind(row.kind),

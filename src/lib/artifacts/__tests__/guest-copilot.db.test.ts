@@ -300,6 +300,45 @@ if (!database) {
     assert.equal(await loadCopilotMcpGroups(host.organizationId, copyId), null)
   })
 
+  test('when the original gets a new version, an untouched copy catches up before its copilot changes it, and a changed copy is offered it', async () => {
+    const { SHARED_UPDATE_REQUEST } = await import('../template-policy')
+    const { templateCopyUpdate, takeLatestTemplateCopy, useArtifactTemplate } = await import('../templates')
+    const { loadArtifact } = await import('../service')
+    // Made before the original moves on: a fresh visitor's untouched copy, and the owner's own copy.
+    const fresh = await call('POST', { action: 'open' }, '')
+    const freshCookie = /bs_guest=([^;]+)/.exec(fresh.headers.get('set-cookie') ?? '')![1]
+    const freshCopy = (await fresh.json()).copilot.copyId
+    const member = await useArtifactTemplate(token, host.organizationId, host.userId)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const updated = content.replace('Template original', 'Updated today')
+    const next = await db.artifactVersion.create({ data: { organizationId: host.organizationId, artifactId: sourceId, number: 2, content: updated } })
+    await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { currentVersionId: next.id, versionCount: 2 } })
+
+    // The visitor who changed their copy: offered the new original, never forced.
+    const before = (await (await call('GET')).json()).copilot
+    assert.equal(before.sharedUpdate, next.createdAt.toISOString())
+    assert.equal((await call('POST', { action: 'take_latest' }, '')).status, 404, 'no cookie, no copy')
+    const taken = (await (await call('POST', { action: 'take_latest' })).json()).copilot
+    assert.equal(taken.sharedUpdate, null)
+    assert.deepEqual([taken.versions[0].number, taken.versions[0].source, taken.versions[0].request], [before.versions[0].number + 1, 'shared', SHARED_UPDATE_REQUEST])
+    assert.match(await (await contentRoute.GET(new NextRequest(`${base}/content?copy=${copyId}&v=${taken.versionId}`))).text(), /Updated today/)
+    assert.deepEqual(taken.usage.changes, before.usage.changes, 'not one of the visitor’s changes')
+    assert.equal((await (await call('POST', { action: 'take_latest' })).json()).copilot.versions.length, taken.versions.length, 'taken once')
+
+    // The untouched copy: before its copilot runs, it catches up with what is on screen.
+    await call('POST', { action: 'ask', message: 'Make it blue' }, freshCookie)
+    const caught = await db.artifactVersion.findMany({ where: { artifactId: freshCopy, organizationId: host.organizationId }, orderBy: { number: 'asc' } })
+    assert.deepEqual(caught.map((v) => [v.number, v.request]), [[1, 'Created visitor template copy'], [2, SHARED_UPDATE_REQUEST]])
+    assert.match(caught[1].content, /Updated today/)
+
+    // Someone signed in: the same, on the copy in their own workspace.
+    assert.equal(await templateCopyUpdate(token, host.organizationId, member.id), next.createdAt.toISOString())
+    await takeLatestTemplateCopy(token, host.organizationId, host.userId)
+    const mine = await loadArtifact(host.organizationId, member.id)
+    assert.equal(mine?.versions[0].source, 'shared')
+    assert.equal(await templateCopyUpdate(token, host.organizationId, member.id), null)
+  })
+
   test('an expired link closes the copilot and the copy’s page too, until the sender extends it', async () => {
     const view = (await (await call('GET')).json()).copilot
     await db.artifact.update({ where: { id: sourceId, organizationId: host.organizationId }, data: { shareExpiresAt: new Date(Date.now() - 1_000) } })

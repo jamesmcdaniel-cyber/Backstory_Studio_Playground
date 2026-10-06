@@ -151,6 +151,8 @@ async function guestView(organizationId: string, copyId: string): Promise<GuestC
       status: m.status,
       createdAt: m.createdAt,
       ...(m.question ? { question: m.question } : {}),
+      // A version of the visitor's own copy: already in their history above.
+      ...(m.versionId ? { versionId: m.versionId } : {}),
     })),
   }
 }

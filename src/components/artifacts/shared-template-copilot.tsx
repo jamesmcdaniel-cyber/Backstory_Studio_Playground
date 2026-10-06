@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, History, Loader2, MessageSquare, Plug, Settings2, Sparkles, SquarePen, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { ArrowUp, ChevronUp, History, Loader2, MessageSquare, Plug, Settings2, Sparkles, SquarePen, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
 import { indentOnTab } from '@/components/ui/textarea'
@@ -144,7 +144,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
   const artifact = copy?.kind === 'member' ? copy.artifact : null
   const loaded = copy?.kind === 'guest' || Boolean(artifact)
-  const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId' | 'question'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
+  const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId' | 'question' | 'versionId'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
   const latestVersionId = copy?.kind === 'guest' ? copy.view.versionId : artifact?.currentVersionId ?? null
   const title = copy?.kind === 'guest' ? copy.view.title : artifact?.title ?? ''
   // An untouched copy IS the original: keep the page the visitor is already
@@ -165,6 +165,9 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const versions = (copy?.kind === 'guest' ? copy.view.versions : artifact?.versions) ?? []
   const viewed = viewId ? versions.find((version) => version.id === viewId) ?? null : null
   const shownId = viewed && viewed.id !== latestVersionId ? viewed.id : versionId
+  const viewingOlder = Boolean(viewed && shownId === viewed.id)
+  const latestNumber = (copy?.kind === 'member' ? artifact?.versionCount : undefined) ?? versions[0]?.number ?? 1
+  const viewVersion = (id: string) => setViewId(id === latestVersionId ? null : id)
   // History appears once there is one: an untouched copy has a single version.
   const tab = chosenTab === 'history' && versions.length <= 1 ? 'chat' : chosenTab
   // Settings: MCP servers the person connected themselves. A guest's arrive
@@ -256,8 +259,8 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
   // Put an earlier version back: it becomes a new version on top, so nothing
   // in the history is lost.
-  const restore = async (target: string) => {
-    if (!copy || restoring || busy) return
+  const restore = async (target: string): Promise<string | null> => {
+    if (!copy || restoring || busy) return null
     setRestoring(target)
     setError('')
     try {
@@ -269,8 +272,11 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
       else if (copy.kind === 'guest' && response.ok && data.copilot) setCopy({ kind: 'guest', view: data.copilot })
       else throw new Error(data.error || 'The version could not be restored.')
       setViewId(null)
+      return null
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The version could not be restored.')
+      const failed = caught instanceof Error ? caught.message : 'The version could not be restored.'
+      setError(failed)
+      return failed
     } finally { setRestoring(null) }
   }
 
@@ -351,12 +357,12 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
               {(['chat', 'history', 'settings'] as const).filter((option) => (option !== 'history' || versions.length > 1) && (option !== 'settings' || canAsk)).map((option) => (
                 <button key={option} type="button" role="tab" aria-selected={tab === option} onClick={() => setTab(option)} className={cn('-mb-px inline-flex flex-1 items-center justify-center gap-1.5 border-b-2 px-3 py-2', tab === option ? 'border-horizon-600 text-graphite-900' : 'border-transparent text-fg-muted hover:text-graphite-900')}>
                   {option === 'chat' ? <MessageSquare className="h-3.5 w-3.5" aria-hidden /> : option === 'history' ? <History className="h-3.5 w-3.5" aria-hidden /> : <Settings2 className="h-3.5 w-3.5" aria-hidden />}
-                  {option === 'chat' ? 'Chat' : option === 'history' ? `History (${copy?.kind === 'member' ? artifact?.versionCount ?? versions.length : versions[0].number})` : 'Settings'}
+                  {option === 'chat' ? 'Chat' : option === 'history' ? `History (${latestNumber})` : 'Settings'}
                 </button>
               ))}
             </div>
           )}
-          {viewed && shownId === viewed.id && (
+          {viewed && viewingOlder && (
             <p role="status" className="flex items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
               <span>Viewing version {viewed.number} — not the latest.</span>
               <button type="button" onClick={() => setViewId(null)} className="font-medium underline underline-offset-2">Back to latest</button>
@@ -366,33 +372,20 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
           {tab === 'settings' && loaded && canAsk ? (
             <CopilotSettings servers={servers} loading={copy?.kind === 'member' && memberServers === null} busy={busy} onChange={changeServers} onTest={testServer} />
           ) : tab === 'history' ? (
-            <ol aria-label="Version history" className="min-h-0 flex-1 divide-y divide-graphite-200 overflow-y-auto">
-              {versions.map((version) => {
-                const isCurrent = version.id === latestVersionId
-                const isShown = version.id === shownId
-                return (
-                  <li key={version.id} className={cn('px-4 py-3 text-xs', isShown && 'bg-graphite-50')}>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-graphite-900">Version {version.number}</span>
-                      {isCurrent && <span className="rounded-full bg-horizon-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">Current</span>}
-                    </div>
-                    <p className="mt-0.5 text-fg-muted">
-                      {new Date(version.createdAt).toLocaleString()}{' · '}{version.source === 'created' ? 'As shared' : version.source === 'restore' ? 'Restored' : 'Copilot'}
-                    </p>
-                    {version.request && version.source !== 'created' && <p className="mt-1 line-clamp-3 text-graphite-900">{version.request}</p>}
-                    <div className="mt-2 flex flex-wrap gap-3">
-                      {!isShown && <button type="button" onClick={() => setViewId(isCurrent ? null : version.id)} className="font-medium text-horizon-700 underline underline-offset-2">View</button>}
-                      {!isCurrent && canAsk && (
-                        <button type="button" disabled={restoring !== null || busy} onClick={() => void restore(version.id)} className="font-medium text-horizon-700 underline underline-offset-2 disabled:opacity-50">
-                          {restoring === version.id ? 'Restoring…' : 'Restore'}
-                        </button>
-                      )}
-                    </div>
-                  </li>
-                )
-              })}
+            <VersionList
+              label="Version history"
+              versions={versions}
+              latestId={latestVersionId}
+              shownId={shownId}
+              canRestore={canAsk}
+              restoring={restoring}
+              busy={busy}
+              onView={viewVersion}
+              onRestore={(id) => void restore(id)}
+              className="min-h-0 flex-1"
+            >
               {error && <li role="alert" className="px-4 py-3 text-sm text-destructive">{error}</li>}
-            </ol>
+            </VersionList>
           ) : (
           <div aria-label="Copilot conversation" className="min-h-0 flex-1 space-y-3 overflow-y-auto break-words px-4 py-3">
             {opening && <p className="flex items-center gap-2 text-sm text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Opening the copilot…</p>}
@@ -413,7 +406,13 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
                   m.executionId && copy?.kind === 'member' ? <RunFeed executionId={m.executionId} status="running" compact quietUntilWork runsLink={ownsAgent} onStatusChange={() => void refresh()} /> :
                     <div className="flex items-center gap-2 text-fg-muted"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Working on it…</div>
                 ) : m.role === 'agent' ? (
-                  <div className={cn(m.status === 'failed' && 'text-destructive')}><Markdown>{m.content}</Markdown></div>
+                  <div className={cn(m.status === 'failed' && 'text-destructive')}>
+                    <Markdown>{m.content}</Markdown>
+                    {/* The version this reply made, one click away — as in the app. */}
+                    {m.versionId && m.versionId !== shownId && versions.some((version) => version.id === m.versionId) && (
+                      <button type="button" onClick={() => viewVersion(m.versionId!)} className="mt-1 text-xs font-medium text-horizon-700 underline underline-offset-2">View this version</button>
+                    )}
+                  </div>
                 ) : (
                   <p>{m.content}</p>
                 )}
@@ -466,6 +465,25 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
         </div>
       )}
 
+      {/* Version control on the page itself once the copy has changed, so the
+          visitor's versions are in reach with the copilot closed. While the
+          panel is open its History tab is the version control instead. */}
+      {copy && loaded && versions.length > 1 && !open && (
+        <VersionControl
+          versions={versions}
+          latestId={latestVersionId}
+          latestNumber={latestNumber}
+          shownId={shownId}
+          viewingOlder={viewingOlder}
+          canRestore={canAsk}
+          restoring={restoring}
+          busy={busy}
+          onView={viewVersion}
+          onLatest={() => setViewId(null)}
+          onRestore={restore}
+        />
+      )}
+
       {/* Ask Backstory's launcher, to the pixel: same corner, same pill. Hidden
           while the panel is open on a phone, where the panel covers it. */}
       <button
@@ -484,6 +502,148 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
         <span className="hidden sm:inline">{open ? 'Close' : 'AI Copilot'}</span>
       </button>
     </>
+  )
+}
+
+type VersionRow = { id: string; number: number; request?: string | null; createdAt: string; source?: string }
+
+/**
+ * The copy's versions, newest first: any one can be viewed, and an earlier one
+ * restored as a new version on top, so nothing is lost. The copilot's History
+ * tab and the on-page version control both list them this way.
+ */
+function VersionList({ label, versions, latestId, shownId, canRestore, restoring, busy, onView, onRestore, className, children }: {
+  label: string
+  versions: VersionRow[]
+  latestId: string | null
+  shownId: string | null
+  canRestore: boolean
+  restoring: string | null
+  busy: boolean
+  onView: (id: string) => void
+  onRestore: (id: string) => void
+  className?: string
+  children?: ReactNode
+}) {
+  return (
+    <ol aria-label={label} className={cn('divide-y divide-graphite-200 overflow-y-auto', className)}>
+      {versions.map((version) => {
+        const isCurrent = version.id === latestId
+        const isShown = version.id === shownId
+        return (
+          <li key={version.id} className={cn('px-4 py-3 text-xs', isShown && 'bg-graphite-50')}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-graphite-900">Version {version.number}</span>
+              {isCurrent && <span className="rounded-full bg-horizon-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">Current</span>}
+            </div>
+            <p className="mt-0.5 text-fg-muted">
+              {new Date(version.createdAt).toLocaleString()}{' · '}{version.source === 'created' ? 'As shared' : version.source === 'restore' ? 'Restored' : 'Copilot'}
+            </p>
+            {version.request && version.source !== 'created' && <p className="mt-1 line-clamp-3 text-graphite-900">{version.request}</p>}
+            <div className="mt-2 flex flex-wrap gap-3">
+              {!isShown && <button type="button" onClick={() => onView(version.id)} className="font-medium text-horizon-700 underline underline-offset-2">View</button>}
+              {!isCurrent && canRestore && (
+                <button type="button" disabled={restoring !== null || busy} onClick={() => onRestore(version.id)} className="font-medium text-horizon-700 underline underline-offset-2 disabled:opacity-50">
+                  {restoring === version.id ? 'Restoring…' : 'Restore'}
+                </button>
+              )}
+            </div>
+          </li>
+        )
+      })}
+      {children}
+    </ol>
+  )
+}
+
+/**
+ * Version control on the shared page, once the visitor's copy has changed: the
+ * version on screen, the list of every version, and — while an older one is
+ * shown — Restore and the way back to the latest. It sits in the corner
+ * opposite the copilot's launcher, in the same pill.
+ */
+function VersionControl({ versions, latestId, latestNumber, shownId, viewingOlder, canRestore, restoring, busy, onView, onLatest, onRestore }: {
+  versions: VersionRow[]
+  latestId: string | null
+  latestNumber: number
+  shownId: string | null
+  viewingOlder: boolean
+  canRestore: boolean
+  restoring: string | null
+  busy: boolean
+  onView: (id: string) => void
+  onLatest: () => void
+  onRestore: (id: string) => Promise<string | null>
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [problem, setProblem] = useState('')
+  const root = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const listId = useId()
+  const shown = versions.find((version) => version.id === shownId) ?? versions[0]
+
+  // The list closes on Escape (focus back on its toggle) or a click elsewhere.
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { setExpanded(false); toggleRef.current?.focus() } }
+    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setExpanded(false) }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPointer)
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onPointer) }
+  }, [expanded])
+
+  // Viewing or restoring closes the list, so the page it changed is in sight.
+  const view = (id: string) => { setProblem(''); onView(id); setExpanded(false) }
+  const restore = async (id: string) => {
+    setProblem('')
+    const failed = await onRestore(id)
+    if (failed) setProblem(failed)
+    else setExpanded(false)
+  }
+  const action = 'px-3 py-2.5 text-sm font-medium underline-offset-2 transition-colors hover:underline disabled:opacity-50'
+
+  return (
+    <div ref={root} role="group" aria-label="Your versions" className="fixed bottom-4 left-4 z-40 flex max-w-[calc(100vw-6rem)] flex-col items-start gap-2">
+      {expanded && (
+        <div id={listId} className="flex max-h-[min(28rem,calc(100dvh-6rem))] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-graphite-200 bg-white shadow-4 motion-safe:animate-fade-in-up">
+          <div className="border-b border-graphite-200 px-4 py-3">
+            <p className="text-sm font-semibold text-graphite-900">Your versions</p>
+            <p className="mt-0.5 text-xs text-fg-muted">Only you see these changes. Version 1 is the page as it was shared.</p>
+          </div>
+          <VersionList label="Versions of your copy" versions={versions} latestId={latestId} shownId={shownId} canRestore={canRestore} restoring={restoring} busy={busy} onView={view} onRestore={(id) => void restore(id)} className="min-h-0 flex-1" />
+        </div>
+      )}
+      {problem && <p role="alert" className="rounded-lg border border-graphite-200 bg-white px-3 py-2 text-xs text-destructive shadow-2">{problem}</p>}
+      <div className={cn('flex items-center rounded-full border shadow-3', viewingOlder ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-graphite-200 bg-white text-graphite-900')}>
+        <button
+          ref={toggleRef}
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          aria-controls={expanded ? listId : undefined}
+          title={viewingOlder ? 'An earlier version of your copy is on screen' : 'Your copy’s versions'}
+          className="flex min-w-0 items-center gap-2 rounded-full py-2.5 pl-3 pr-3 text-sm font-medium transition-colors hover:bg-black/[0.03]"
+        >
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-horizon-50 text-horizon-600">
+            {busy && !viewingOlder ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <History className="h-3.5 w-3.5" aria-hidden />}
+          </span>
+          <span className="truncate"><span className="sr-only sm:not-sr-only">Version </span>{shown.number} of {latestNumber}</span>
+          <ChevronUp className={cn('h-3.5 w-3.5 shrink-0 transition-transform', !expanded && 'rotate-180')} aria-hidden />
+        </button>
+        {viewingOlder && (
+          <>
+            {canRestore && (
+              <button type="button" disabled={restoring !== null || busy} onClick={() => void restore(shown.id)} className={cn(action, 'border-l border-amber-300')}>
+                {restoring === shown.id ? 'Restoring…' : 'Restore'}
+              </button>
+            )}
+            <button type="button" onClick={() => { setProblem(''); onLatest() }} aria-label="Back to latest" className={cn(action, 'border-l border-amber-300 pr-4')}>
+              <span className="sm:hidden">Latest</span><span className="hidden sm:inline">Back to latest</span>
+            </button>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 

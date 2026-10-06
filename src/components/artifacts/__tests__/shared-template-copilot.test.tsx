@@ -116,6 +116,55 @@ test('a visitor can look back through their copy’s versions and restore one, w
   } finally { cleanup(); net.restore() }
 })
 
+test('once a visitor’s copy has changed, version control is on the page itself — no copilot needed to see, view or restore a version', async () => {
+  const chat = [{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b', versionId: 'gv2' }]
+  const history = (latest: number) => Array.from({ length: latest }, (_, index) => ({ id: `gv${latest - index}`, number: latest - index, request: latest - index === 1 ? null : `Change ${latest - index}`, createdAt: '2026-10-02T00:00:00Z', source: latest - index === 1 ? 'created' : 'agent' }))
+  const net = stubFetch((call) => {
+    if (call.method === 'POST' && JSON.parse(call.body ?? '{}').action === 'restore') return Response.json({ success: true, copilot: { ...guest(chat, 'gv4'), versions: history(4) } })
+    return Response.json({ error: 'unexpected' }, { status: 500 })
+  })
+  const frame = (ui: ReturnType<typeof render>) => ui.container.querySelector('iframe')?.getAttribute('src')?.split('&v=')[1]
+  try {
+    // An untouched copy is the original: nothing to control yet.
+    const untouched = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest(), versions: history(1) } as never }}><p>original</p></SharedTemplateCopilot>)
+    assert.equal(untouched.queryByRole('group', { name: 'Your versions' }), null)
+    cleanup()
+
+    const ui = render(<SharedTemplateCopilot token="test-token" initialCopy={{ kind: 'guest', view: { ...guest(chat, 'gv3'), versions: history(3) } as never }}><p>original</p></SharedTemplateCopilot>)
+    assert.equal(ui.queryByRole('dialog'), null, 'the copilot stays closed')
+    const toggle = ui.getByRole('button', { name: /Version 3 of 3/ })
+    await act(async () => { fireEvent.click(toggle) })
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true')
+    const rows = ui.getByRole('list', { name: 'Versions of your copy' }).querySelectorAll('li')
+    assert.equal(rows.length, 3)
+    // Viewing an older version shows it and closes the list, so the page is in sight.
+    await act(async () => { fireEvent.click(rows[1].querySelector('button')!) })
+    assert.equal(frame(ui), 'gv2')
+    assert.equal(ui.queryByRole('list', { name: 'Versions of your copy' }), null)
+    assert.ok(ui.getByRole('button', { name: /Version 2 of 3/ }))
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Back to latest' })) })
+    assert.equal(frame(ui), 'gv3')
+    // Restore straight from the page: it becomes a new version on top.
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: /Version 3 of 3/ })) })
+    await act(async () => { fireEvent.click(ui.getByRole('list', { name: 'Versions of your copy' }).querySelectorAll('li')[2].querySelector('button')!) })
+    assert.equal(frame(ui), 'gv1')
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'Restore' })) })
+    assert.deepEqual(JSON.parse(net.calls.at(-1)?.body ?? '{}'), { action: 'restore', versionId: 'gv1' })
+    assert.equal(frame(ui), 'gv4')
+    assert.ok(ui.getByRole('button', { name: /Version 4 of 4/ }))
+
+    // With the copilot open, its History tab is the version control: one set of controls on screen.
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    assert.equal(ui.queryByRole('group', { name: 'Your versions' }), null)
+    // A reply that made a version links to it, as in the app.
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'View this version' })) })
+    assert.equal(frame(ui), 'gv2')
+    assert.match(ui.getByRole('status').textContent ?? '', /Viewing version 2/)
+    await act(async () => { fireEvent.click(ui.getAllByRole('button', { name: 'Close AI Copilot' })[0]) })
+    assert.ok(ui.getByRole('button', { name: /Version 2 of 4/ }), 'closed again, the page still says which version is on screen')
+  } finally { cleanup(); net.restore() }
+})
+
 test('a copy the server already resolved is on screen from the first paint — the original never flashes, and nothing is looked up', async () => {
   const net = stubFetch(() => Response.json({ error: 'unexpected' }, { status: 500 }))
   try {

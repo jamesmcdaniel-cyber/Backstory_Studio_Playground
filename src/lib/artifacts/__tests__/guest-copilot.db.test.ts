@@ -138,6 +138,15 @@ if (!database) {
     // The earlier edit is still there to view.
     const earlier = await contentRoute.GET(new NextRequest(`${base}/content?copy=${copyId}&v=${before.versionId}`))
     assert.match(await earlier.text(), /Visitor version/)
+    // A reply that made a version links to it from the visitor's chat; still no run id.
+    await db.artifact.update({ where: { id: copyId, organizationId: host.organizationId }, data: { chat: [
+      { role: 'user', content: 'Update heading', createdAt: 'a' },
+      { role: 'agent', content: 'Updated.', status: 'completed', executionId: 'guest-qa-edit', versionId: before.versionId, createdAt: 'b' },
+    ] } })
+    const reply = (await (await call('GET')).json()).copilot.chat.at(-1)
+    assert.equal(reply.versionId, before.versionId)
+    assert.equal(reply.executionId, undefined)
+    await db.artifact.update({ where: { id: copyId, organizationId: host.organizationId }, data: { chat: [] } })
   })
 
   test('a visitor’s copilot may change the copy three times a day: runs are counted, not saves, and restores are free', async () => {

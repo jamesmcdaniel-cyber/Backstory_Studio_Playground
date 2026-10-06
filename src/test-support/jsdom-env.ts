@@ -51,3 +51,12 @@ if (!g.IntersectionObserver) {
 
 // React 18 act() environment flag.
 g.IS_REACT_ACT_ENVIRONMENT = true
+
+// Component tests never talk to Supabase. CI sets a placeholder Supabase URL
+// at job scope, and under it a component that follows a run (subscribeTicks,
+// RunFeed) opens a realtime socket to that host, which retries forever and
+// keeps the test process from exiting — `npm test` then hung until the job
+// limit. Without the URL a subscription is a no-op and the poll fallback
+// drives updates, as on a deployment with no realtime.
+delete process.env.NEXT_PUBLIC_SUPABASE_URL
+delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY

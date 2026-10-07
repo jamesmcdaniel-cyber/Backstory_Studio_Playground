@@ -21,7 +21,7 @@ import { AskBackstory } from '@/components/assistant/ask-backstory'
 
 // Route prefixes that get the app chrome. Everything else (/, /auth/*, /connect,
 // /privacy, /terms, /auth-code-error) renders bare.
-const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/data-tables', '/approvals', '/settings', '/admin', '/artifacts']
+const APP_PREFIXES = ['/dashboard', '/agents', '/integrations', '/connections', '/credentials', '/templates', '/flows', '/data-tables', '/approvals', '/settings', '/admin', '/artifacts', '/roi']
 
 // Only the agent HQ (/agents) + the flow builder want an edge-to-edge
 // (fullscreen) content area; the rest — incl. the Librarian assistant home
@@ -48,7 +48,8 @@ export const PAGE_CONTAINER = 'mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-
  * like any contained page; only the measure differs.
  */
 export const WIDE_CONTAINER = 'w-full px-4 py-6 sm:px-6 sm:py-8'
-const WIDE_ROUTES = [/^\/artifacts\/[^/]+$/]
+// The ROI analysis page is its report, full width, like an artifact's page.
+const WIDE_ROUTES = [/^\/artifacts\/[^/]+$/, /^\/roi$/]
 
 /** Trailing slashes must not decide which layout a route gets. */
 function normalizePath(input: string) {
@@ -97,7 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // page has its own assistant too (beside the artifact, where the launcher
   // would sit over its conversation).
   const artifactSegments = pathname.startsWith('/artifacts/') ? pathname.slice('/artifacts/'.length).split('/').filter(Boolean) : []
-  const ownsAssistant = pathname === '/agents' || flowSegments.length === 1 || artifactSegments.length === 1
+  const ownsAssistant = pathname === '/agents' || pathname === '/roi' || flowSegments.length === 1 || artifactSegments.length === 1
   // Fullscreen workspaces must have stable geometry from their first paint.
   // A translated fullscreen wrapper can temporarily create overflow and makes
   // the route appear to resize after hydration.

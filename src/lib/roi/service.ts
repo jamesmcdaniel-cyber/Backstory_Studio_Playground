@@ -11,7 +11,7 @@ import { extractRoiNarrative, ROI_OUTPUT_CONTRACT, type RoiNarrative } from './c
 import { renderRoiDashboard } from './dashboard'
 import { runRoiPrep, type RoiFacts } from './prep'
 import { readView, type RoiView } from './view'
-import { stateJson, storeFacts } from './artifact-state'
+import { readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
 import { summarizeFacts, type RoiFactsSummary } from './facts'
 import { timeframeInstruction, timeframeLabel, type RoiTimeframe } from './timeframe'
 import { ROI_SOURCE_LABEL, ROI_TEMPLATES, isRoiSourceKind, type RoiSourceKind, type RoiTemplate } from './sources'
@@ -46,9 +46,14 @@ export const ROI_CONTEXT_MAX_CHARS = 4_000
 export const ROI_REASON_MAX_CHARS = 2_000
 export const ROI_QUESTION_MAX_CHARS = 2_000
 
-/** What the page tells people to expect, in seconds. */
+/** What the page tells people to expect, in seconds: a full build (data and
+ *  findings), and a settings change (findings rewritten on the same data). */
 export const ROI_EXPECTED_SECONDS = 90
+export const ROI_RECONFIGURE_EXPECTED_SECONDS = 60
 export const ROI_ASYNC_AFTER_SECONDS = 180
+
+/** A report is being updated already: one change at a time keeps its versions in order. */
+export class RoiBusyError extends Error {}
 
 const ACCOUNT360_KINDS: RoiSourceKind[] = ['clickstream', 'accounts', 'opportunities']
 
@@ -153,7 +158,19 @@ export type RoiResults = {
   factsFileId: string
   a360FactsFileId?: string
   artifactId?: string
+  /** The report version this run produced. */
+  versionId?: string
+  mode?: RoiRunMode
   kpis?: RoiRunKpi[]
+}
+
+/** A full build computes the data and writes the findings; a reconfigure rewrites the findings on the data the report already has. */
+export type RoiRunMode = 'full' | 'reconfigure'
+type ReconfigureMarker = { factsFileId: string; a360FactsFileId: string | null }
+
+function reconfigureOf(row: Pick<RoiAnalysis, 'results'>): ReconfigureMarker | null {
+  const marker = (row.results as { reconfigure?: ReconfigureMarker } | null)?.reconfigure
+  return marker && typeof marker.factsFileId === 'string' ? marker : null
 }
 export type Account360Results = { template: 'account360'; headline: string; summary: ReturnType<typeof summarizeAccount360>; factsFileId: string; artifactId?: string; kpis?: RoiRunKpi[] }
 
@@ -196,9 +213,14 @@ async function startRun(params: {
   return execution.id
 }
 
+/** One report per account: its title names the account and nothing that a settings change would make stale. */
 function titleFor(template: RoiTemplate, account: string): string {
-  const month = new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
-  return template === 'account360' ? `Account 360 ROI · ${account}` : `ROI analysis · ${account} · ${month}`
+  return template === 'account360' ? `Account 360 ROI · ${account}` : `ROI analysis · ${account}`
+}
+
+/** Where a run's notification lands: the ROI page, on the account's report. */
+export function roiPageLink(account: string): string {
+  return `/roi?account=${encodeURIComponent(account)}`
 }
 
 export async function createRoiAnalysis(params: {
@@ -216,6 +238,8 @@ export async function createRoiAnalysis(params: {
   view?: RoiView
   /** Which analysis to build. Defaults to the standard report. */
   template?: RoiTemplate
+  /** The account's report, when it has one: the build lands on it as a new version. */
+  artifactId?: string | null
 }): Promise<RoiAnalysis> {
   const template: RoiTemplate = params.template ?? 'standard'
   const config = params.config ?? configFromPreset(params.timeframe?.preset)
@@ -245,7 +269,10 @@ export async function createRoiAnalysis(params: {
   // The artifact is where the report lives, so it exists from the start (no
   // versions yet) and its page follows the run. The first version lands on it
   // when the run finishes.
-  const artifact = await prisma.artifact.create({
+  const existing = params.artifactId
+    ? await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { id: true } })
+    : null
+  const artifact = existing ?? await prisma.artifact.create({
     data: {
       organizationId: params.organizationId,
       userId: params.userId,
@@ -298,7 +325,7 @@ async function startAnalyst(row: RoiAnalysis, datasetIds: string[]): Promise<Roi
     agentType: agent.agentType,
     title: titleFor(template, row.account),
     input,
-    trigger: { type: 'roi_analysis', analysisId: row.id, ...(row.artifactId ? { link: `/artifacts/${row.artifactId}` } : {}) },
+    trigger: { type: 'roi_analysis', analysisId: row.id, link: template === 'standard' ? roiPageLink(row.account) : row.artifactId ? `/artifacts/${row.artifactId}` : roiPageLink(row.account) },
   })
   return prisma.roiAnalysis.update({
     where: { id: row.id, organizationId: row.organizationId },
@@ -351,6 +378,7 @@ export async function loadRoiAnalysis(organizationId: string, id: string): Promi
   let row = await prisma.roiAnalysis.findFirst({ where: { id, organizationId } })
   if (!row) return null
   row = await reconcileFetching(row)
+  row = await recheckContractFailure(row)
   row = await reconcileRun(row)
   row = await reconcileChat(row)
   const datasets = await loadDatasets(organizationId, datasetIdsOf(row))
@@ -363,6 +391,7 @@ async function phaseOf(row: RoiAnalysis): Promise<RoiRunPhase> {
   if (isTerminalRunStatus(row.status) || row.status === 'failed') return 'failed'
   if (row.status === 'fetching') return 'fetching'
   if (row.status === 'pending' || !row.executionId) return 'queued'
+  if (reconfigureOf(row)) return 'writing'
   const steps = await prisma.workflowStep.findMany({ where: { executionId: row.executionId, node: { contains: 'prepare_' } }, select: { status: true } })
   if (!steps.length) return 'computing'
   return steps.some((step) => step.status === 'running' || step.status === 'pending') ? 'computing' : 'writing'
@@ -425,8 +454,10 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
   const fail = (error: string) => prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { status: 'failed', error } })
   const extracted = extractRoiNarrative(run.text)
   if (extracted.error !== undefined) return fail(`${extracted.error} Open the run for the agent's full output.`)
-  let factsFileId = await factsFileIdFor(row.executionId)
-  const a360FactsFileId = row.template === 'standard' ? await factsFileIdFor(row.executionId, 'prepare_account360') : null
+  // A settings change reuses the report's computed data: its run only writes.
+  const reconfigure = reconfigureOf(row)
+  let factsFileId = reconfigure ? reconfigure.factsFileId : await factsFileIdFor(row.executionId)
+  const a360FactsFileId = reconfigure ? reconfigure.a360FactsFileId : row.template === 'standard' ? await factsFileIdFor(row.executionId, 'prepare_account360') : null
   let facts = await readJsonFile<RoiFacts>(factsFileId, row.organizationId)
   const a360 = await readJsonFile<Account360Facts>(a360FactsFileId, row.organizationId)
   if (!facts && !a360) return fail('The run finished without computing the facts (prepare_roi_facts did not store a result). Open the run to see what happened.')
@@ -460,10 +491,13 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
     view,
     config,
     reason: row.reason,
+    ...('DEALS' in facts ? { factsVersion: 2 } : {}),
   })
+  const request = [reconfigure ? 'Settings changed' : 'Built from the extracts', describeRunConfig(config).join(', '), row.reason.trim() ? `for ${row.reason.trim()}` : ''].filter(Boolean).join(' · ').slice(0, 300)
+  let versionId: string | undefined
   const artifactId = row.artifactId
-    ? await addVersion({ artifactId: row.artifactId, organizationId: row.organizationId, content: reportHtml, executionId: row.executionId, request: 'Built from the extracts', createdByUserId: row.userId, state: roiState })
-      .then(() => row.artifactId!)
+    ? await addVersion({ artifactId: row.artifactId, organizationId: row.organizationId, content: reportHtml, executionId: row.executionId, request, createdByUserId: row.userId, state: roiState })
+      .then((version) => { versionId = version.id; return row.artifactId! })
       .catch(() => undefined)
     : await createArtifact({
       organizationId: row.organizationId,
@@ -481,6 +515,8 @@ async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
     factsFileId: factsFileId!,
     ...(a360FactsFileId && a360 ? { a360FactsFileId } : {}),
     ...(artifactId ? { artifactId } : {}),
+    ...(versionId ? { versionId } : {}),
+    mode: reconfigure ? 'reconfigure' : 'full',
     kpis: runKpis(facts, a360, config),
   }
   return prisma.roiAnalysis.update({
@@ -543,21 +579,41 @@ async function reconcileChat(row: RoiAnalysis): Promise<RoiAnalysis> {
   return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { chat: jsonValue(chat) } })
 }
 
+/**
+ * A run whose answer failed the narrative contract is checked again, once,
+ * by whatever code reads it now: a worker running older code judges a newer
+ * agent's answer by the older contract (more findings, a new tab) and fails a
+ * run that the current contract accepts. Nothing is re-run — the answer is
+ * stored on the execution.
+ */
+async function recheckContractFailure(row: RoiAnalysis): Promise<RoiAnalysis> {
+  if (row.status !== 'failed' || !row.executionId || !row.error) return row
+  if (!/narrative contract|was not valid JSON|No JSON object|without computing the facts/.test(row.error)) return row
+  if ((row.results as { contractRechecked?: unknown } | null)?.contractRechecked) return row
+  const run = await finalMessage(row.executionId, row.organizationId)
+  if (run?.status !== 'completed') return row
+  const rechecked = await reconcileRun({ ...row, status: 'running' })
+  if (rechecked.status === 'completed') return rechecked
+  return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { results: jsonValue({ contractRechecked: true }) } })
+}
+
 /** Phase without querying the run's steps — for lists; the page polls in-flight runs for the precise one. */
 function quickPhase(row: RoiAnalysis): RoiRunPhase {
   if (row.status === 'completed') return 'ready'
   if (row.status === 'failed' || isTerminalRunStatus(row.status)) return 'failed'
   if (row.status === 'fetching') return 'fetching'
   if (row.status === 'pending' || !row.executionId) return 'queued'
-  return 'computing'
+  return reconfigureOf(row) ? 'writing' : 'computing'
 }
 
 export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[]; phase?: RoiRunPhase }, requestedBy: string | null = null): RoiAnalysisView {
   const config = row.config && typeof row.config === 'object' && Object.keys(row.config as object).length
     ? readRunConfig(row.config)
     : configFromPreset((row.timeframe as { preset?: string } | null)?.preset)
-  const results = row.results as (RoiResults | Account360Results | { dataFlowRunId?: string }) | null
+  const results = row.results as (RoiResults | Account360Results | { dataFlowRunId?: string } | { reconfigure?: ReconfigureMarker }) | null
   const kpis = results && 'kpis' in results && Array.isArray(results.kpis) ? results.kpis : []
+  const finished = results && 'narrative' in results ? results : null
+  const mode: RoiRunMode = reconfigureOf(row) || finished?.mode === 'reconfigure' ? 'reconfigure' : 'full'
   return {
     id: row.id,
     account: row.account,
@@ -575,7 +631,9 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
     agentTaskId: row.agentTaskId,
     artifactId: row.artifactId,
     hasReport: Boolean(row.reportHtml),
-    results: results && 'dataFlowRunId' in results ? null : results,
+    results: results && ('dataFlowRunId' in results || 'reconfigure' in results) ? null : results,
+    mode,
+    versionId: finished?.versionId ?? null,
     kpis,
     chat: chatOf(row),
     datasets: row.datasets ?? [],
@@ -584,6 +642,21 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
     updatedAt: row.updatedAt.toISOString(),
     completedAt: row.status === 'completed' ? row.updatedAt.toISOString() : null,
   }
+}
+
+/** Re-check the newest contract failures (see recheckContractFailure) so history shows recovered runs without anyone opening them. */
+export async function recheckRecentContractFailures(organizationId: string): Promise<number> {
+  const rows = await prisma.roiAnalysis.findMany({
+    where: { organizationId, status: 'failed', createdAt: { gte: new Date(Date.now() - 14 * 86_400_000) } },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+  })
+  let recovered = 0
+  for (const row of rows) {
+    const next = await recheckContractFailure(row).catch(() => row)
+    if (next.status === 'completed') recovered += 1
+  }
+  return recovered
 }
 
 /** The workspace's analyses for the page's history, newest first, with who ran each. */
@@ -636,4 +709,190 @@ export async function roiBuildFor(organizationId: string, artifactId: string): P
   if (!row) return null
   const reconciled = isTerminalRunStatus(row.status) ? row : (await loadRoiAnalysis(organizationId, row.id)) ?? row
   return { analysisId: reconciled.id, status: reconciled.status, executionId: reconciled.executionId, error: reconciled.error, account: reconciled.account }
+}
+
+// ---------------------------------------------------------------- one report per account
+
+export type AccountReport = {
+  artifactId: string
+  account: string
+  /** The report's current version state (null while its first build runs). */
+  state: RoiArtifactState['roi'] | null
+  /** Its data came from the ROI-page prep, so a settings change only rewrites the findings. */
+  factsCurrent: boolean
+  config: RoiRunConfig
+  reason: string
+  updatedAt: string
+  /** A run updating it right now, if any. */
+  activeAnalysisId: string | null
+}
+
+const sameAccount = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/**
+ * Every account's report: the newest ROI dashboard an analysis of that
+ * account built (the Iron Mountain dashboard for Iron Mountain). Settings
+ * changes and data refreshes land on it as versions — an account never gets
+ * a second report.
+ */
+export async function listAccountReports(organizationId: string): Promise<AccountReport[]> {
+  const analyses = await prisma.roiAnalysis.findMany({
+    where: { organizationId, artifactId: { not: null }, template: { in: ['standard', 'engagement'] } },
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+    select: { id: true, account: true, artifactId: true, status: true, config: true, reason: true, timeframe: true },
+  })
+  const artifactIds = [...new Set(analyses.map((row) => row.artifactId!))]
+  const artifacts = artifactIds.length
+    ? await prisma.artifact.findMany({ where: { id: { in: artifactIds }, organizationId, kind: 'roi_dashboard', archivedAt: null }, select: { id: true, currentVersionId: true, updatedAt: true } })
+    : []
+  const live = new Map(artifacts.map((artifact) => [artifact.id, artifact]))
+  // An account's report is the one its newest analysis built that still exists.
+  const chosen = new Map<string, { artifactId: string; account: string }>()
+  for (const row of analyses) {
+    const key = row.account.trim().toLowerCase()
+    if (chosen.has(key) || !live.has(row.artifactId!)) continue
+    chosen.set(key, { artifactId: row.artifactId!, account: row.account })
+  }
+  const versionIds = [...chosen.values()].map((entry) => live.get(entry.artifactId)?.currentVersionId).filter((id): id is string => Boolean(id))
+  const versions = versionIds.length ? await prisma.artifactVersion.findMany({ where: { id: { in: versionIds }, organizationId }, select: { id: true, state: true } }) : []
+  const stateOf = new Map(versions.map((version) => [version.id, readRoiState(version.state)]))
+  return [...chosen.values()].map((entry) => {
+    const artifact = live.get(entry.artifactId)!
+    const state = artifact.currentVersionId ? stateOf.get(artifact.currentVersionId) ?? null : null
+    const latest = analyses.find((row) => row.artifactId === entry.artifactId)!
+    const active = analyses.find((row) => row.artifactId === entry.artifactId && !isTerminalRunStatus(row.status) && row.status !== 'failed')
+    const config = state?.config ?? (latest.config && Object.keys(latest.config as object).length ? readRunConfig(latest.config) : configFromPreset(state?.timeframePreset ?? (latest.timeframe as { preset?: string } | null)?.preset))
+    return {
+      artifactId: entry.artifactId,
+      account: entry.account,
+      state,
+      factsCurrent: state?.factsVersion === 2,
+      config,
+      reason: state?.reason ?? latest.reason ?? '',
+      updatedAt: artifact.updatedAt.toISOString(),
+      activeAnalysisId: active?.id ?? null,
+    }
+  })
+}
+
+export async function findAccountReport(organizationId: string, account: string): Promise<AccountReport | null> {
+  return (await listAccountReports(organizationId)).find((report) => sameAccount(report.account, account)) ?? null
+}
+
+/**
+ * Apply a configuration to an account's report — the page's one action.
+ * With a report built on current data, only the findings are rewritten for
+ * the new settings (about a minute); otherwise, or when a refresh is asked
+ * for, the data is computed again. Either way the result is the next version
+ * of the same report.
+ */
+export async function requestRoiReport(params: {
+  organizationId: string
+  userId: string
+  account: string
+  config: RoiRunConfig
+  reason: string
+  context?: string
+  /** Recompute the data (new extracts, or the data flow) instead of only rewriting. */
+  refresh?: boolean
+}): Promise<RoiAnalysis> {
+  const report = await findAccountReport(params.organizationId, params.account)
+  if (report?.activeAnalysisId) throw new RoiBusyError(`The ${report.account} report is being updated already. Its next version lands in a minute or two; change the settings again after that.`)
+  if (report?.state && report.factsCurrent && !params.refresh) {
+    return startRoiReconfigure({ ...params, report, state: report.state })
+  }
+  return createRoiAnalysis({
+    organizationId: params.organizationId,
+    userId: params.userId,
+    account: report?.account ?? params.account,
+    config: params.config,
+    reason: params.reason,
+    context: params.context,
+    view: report?.state?.view,
+    template: 'standard',
+    artifactId: report?.artifactId ?? null,
+  })
+}
+
+export function buildReconfigurePrompt(params: { account: string; config: RoiRunConfig; reason: string; context: string; summary: unknown; a360Summary: unknown; previous: RoiNarrative | null }): string {
+  return [
+    `Rewrite the ROI analysis findings for the account "${params.account}" for new settings. The data is already computed — do NOT call prepare_roi_facts or prepare_account360; every number you may cite is in the summaries below.`,
+    '',
+    `WHY IT WAS RUN: ${params.reason.trim() || 'not stated'}. Shape the emphasis to it; never change a number because of it.`,
+    '',
+    `CONFIGURATION: ${describeRunConfig(params.config).join('. ')}. The summary's \`configured\` block holds these windows' averages and percent changes — cite those for every observation-vs-baseline claim.`,
+    '',
+    params.context.trim() ? `ADDITIONAL CONTEXT FROM THE REQUESTER:\n${params.context.trim()}\n` : '',
+    'FACTS SUMMARY (JSON):',
+    JSON.stringify(params.summary),
+    '',
+    params.a360Summary ? `ACCOUNT 360 SUMMARY (JSON):\n${JSON.stringify(params.a360Summary)}\n` : '',
+    params.previous ? `THE CURRENT FINDINGS (for continuity — keep what still holds under the new settings, rewrite what does not):\n${JSON.stringify({ headline: params.previous.headline, findings: params.previous.findings, watch: params.previous.watch, context: params.previous.context })}\n` : '',
+    'If Backstory tools are available, refresh the `context` block for the account (see your instructions); otherwise keep the current one if it still holds.',
+    '',
+    'OUTPUT',
+    ROI_OUTPUT_CONTRACT,
+  ].join('\n')
+}
+
+/** A settings change on a report built on current data: the analyst rewrites the findings; the data is reused. */
+async function startRoiReconfigure(params: {
+  organizationId: string
+  userId: string
+  config: RoiRunConfig
+  reason: string
+  context?: string
+  report: AccountReport
+  state: RoiArtifactState['roi']
+}): Promise<RoiAnalysis> {
+  const { report, state } = params
+  const agent = await ensureRoiAgent(params.organizationId, params.userId)
+  const row = await prisma.roiAnalysis.create({
+    data: {
+      organizationId: params.organizationId,
+      userId: params.userId,
+      agentTaskId: agent.id,
+      artifactId: report.artifactId,
+      account: report.account,
+      template: 'standard',
+      timeframe: jsonValue({ preset: presetFor(params.config) }),
+      config: jsonValue(params.config),
+      reason: params.reason.trim().slice(0, ROI_REASON_MAX_CHARS),
+      context: (params.context ?? '').trim().slice(0, ROI_CONTEXT_MAX_CHARS),
+      datasetIds: jsonValue(state.datasetIds),
+      view: jsonValue(state.view),
+      results: jsonValue({ reconfigure: { factsFileId: state.factsFileId, a360FactsFileId: state.a360FactsFileId ?? null } }),
+      status: 'pending',
+    },
+  })
+  try {
+    const facts = await readFacts(params.organizationId, state.factsFileId)
+    if (!facts) throw new Error('The report\'s computed data could not be read. Refresh the data to rebuild it.')
+    const a360 = await readAccount360Facts(params.organizationId, state.a360FactsFileId)
+    const input = buildReconfigurePrompt({
+      account: report.account,
+      config: params.config,
+      reason: row.reason,
+      context: row.context,
+      summary: summarizeFacts(facts, params.config),
+      a360Summary: a360 ? summarizeAccount360(a360) : null,
+      previous: state.narrative,
+    })
+    const executionId = await startRun({
+      organizationId: params.organizationId,
+      userId: params.userId,
+      agentId: agent.id,
+      agentType: agent.agentType,
+      title: `ROI analysis · ${report.account} · new settings`,
+      input,
+      trigger: { type: 'roi_analysis', analysisId: row.id, link: roiPageLink(report.account) },
+    })
+    return await prisma.roiAnalysis.update({ where: { id: row.id, organizationId: params.organizationId }, data: { executionId, status: 'running' } })
+  } catch (error) {
+    return prisma.roiAnalysis.update({
+      where: { id: row.id, organizationId: params.organizationId },
+      data: { status: 'failed', error: error instanceof Error ? error.message : String(error) },
+    })
+  }
 }

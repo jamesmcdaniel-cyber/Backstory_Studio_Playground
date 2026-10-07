@@ -505,19 +505,22 @@ export class ArtifactToolClient {
     const config = isRoiTimeframePreset(args.timeframe)
       ? { ...configFromPreset(args.timeframe), cohort: current?.state.config?.cohort ?? 'tiers', fiscalYearStartMonth: current?.state.config?.fiscalYearStartMonth ?? null }
       : current?.state.config ?? configFromPreset(current?.state.timeframePreset)
-    const { createRoiAnalysis } = await import('@/lib/roi/service')
-    const row = await createRoiAnalysis({
-      organizationId: this.organizationId,
-      userId: this.userId,
-      account: match.account,
-      config,
-      reason: typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim().slice(0, 1_000) : current?.state.reason ?? 'Requested from the ROI dashboard assistant',
-      context: typeof args.context === 'string' ? args.context.slice(0, 4_000) : '',
-      view: current?.state.view,
-      template,
-    })
+    const { createRoiAnalysis, requestRoiReport, RoiBusyError } = await import('@/lib/roi/service')
+    const reason = typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim().slice(0, 1_000) : current?.state.reason ?? 'Requested from the ROI dashboard assistant'
+    const context = typeof args.context === 'string' ? args.context.slice(0, 4_000) : ''
+    let row
+    try {
+      // The standard report: one per account, updated in place (a settings
+      // change rewrites its findings; otherwise it is built or rebuilt).
+      row = template === 'standard'
+        ? await requestRoiReport({ organizationId: this.organizationId, userId: this.userId, account: match.account, config, reason, context })
+        : await createRoiAnalysis({ organizationId: this.organizationId, userId: this.userId, account: match.account, config, reason, context, view: current?.state.view, template })
+    } catch (error) {
+      if (error instanceof RoiBusyError) return { started: false, reason: error.message }
+      throw error
+    }
     if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
-    return { started: true, account: match.account, template, configuration: describeRunConfig(config), link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background, a few minutes; the user is notified when the report is ready. It also appears in the ROI analysis page\'s run history.' }
+    return { started: true, account: match.account, template, configuration: describeRunConfig(config), link: template === 'standard' ? `/roi?account=${encodeURIComponent(match.account)}` : row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background — about a minute for new settings on an existing report, a few minutes to build one; the user is notified when it is ready. The account\'s report on the ROI analysis page updates in place.' }
   }
 }
 

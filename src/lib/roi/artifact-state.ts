@@ -26,6 +26,9 @@ export type RoiArtifactState = {
     /** How the run was configured on the ROI page, and why it was run. */
     config?: RoiRunConfig
     reason?: string
+    /** 2 = facts from the ROI-page prep (every deal, stage cells, accounts) — a
+     *  report on them can be reconfigured without recomputing. */
+    factsVersion?: number
   }
 }
 

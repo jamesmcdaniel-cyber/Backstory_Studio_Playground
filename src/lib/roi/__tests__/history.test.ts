@@ -31,6 +31,8 @@ function run(id: string, account: string, createdAt: string, extra: Partial<RoiA
     context: '',
     status: 'completed',
     phase: 'ready',
+    mode: 'full',
+    versionId: null,
     error: null,
     executionId: null,
     agentTaskId: null,

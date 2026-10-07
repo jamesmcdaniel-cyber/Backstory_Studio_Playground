@@ -1,10 +1,9 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarRange, Database, Loader2, Play, RotateCcw } from 'lucide-react'
+import { AlertTriangle, CalendarRange, Loader2, Play, RefreshCw, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { indentOnTab } from '@/components/ui/textarea'
-import { relativeTime } from '@/lib/relative-time'
 import { cn } from '@/lib/utils'
 import {
   DEFAULT_RUN_CONFIG,
@@ -38,31 +37,32 @@ function defaultCustom(months: string[]): CustomPeriods {
   return { baseline: { from: at(12), to: at(7) }, observation: { from: at(6), to: at(1) } }
 }
 
-function accountLine(account: RoiPageAccount, setup: RoiPageSetup): string {
-  const covers = account.covers.length ? `Covers ${account.covers.join(', ')}` : 'No extracts loaded yet'
-  if (account.loadedAt) return `${covers} · loaded ${relativeTime(account.loadedAt)}`
-  if (setup.dataSource.kind === 'flow') return `${covers} · fetched by the ${setup.dataSource.flowName ?? 'data'} flow when the run starts`
-  return covers
-}
-
 /**
- * The ROI analysis page's run form. Account and reason come first; the
- * configuration sits in its own group with the recommended defaults, a live
- * preview of the months it compares, and plain-English validation.
+ * The analysis settings for one account's report, in the ROI page's side
+ * panel. They open on the report's current settings; Apply makes them the
+ * report's next version — the findings rewritten for them on the report's
+ * data, or the report built when it has none yet. Refresh data recomputes
+ * the data too (new extracts, or the data flow).
  */
-const OTHER_ACCOUNT = '__other__'
-
-export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: (analysis: RoiAnalysisView) => void }) {
+export function SettingsForm({ setup, account, onStarted, busy }: {
+  setup: RoiPageSetup
+  /** The account the settings are for (typed accounts arrive without extracts or a report). */
+  account: RoiPageAccount
+  onStarted: (analysis: RoiAnalysisView) => void
+  /** A run is updating this report already. */
+  busy: boolean
+}) {
   const months = useMemo(() => recentFullMonths(new Date()), [])
-  const [account, setAccount] = useState(setup.accounts[0]?.account ?? '')
-  const [reason, setReason] = useState('')
-  const [windowChoice, setWindowChoice] = useState<WindowChoice>(DEFAULT_RUN_CONFIG.windowMonths)
-  const [comparison, setComparison] = useState<RoiComparison>(DEFAULT_RUN_CONFIG.comparison)
-  const [custom, setCustom] = useState<CustomPeriods>(() => defaultCustom(months))
-  const [cohort, setCohort] = useState<RoiCohortType>(DEFAULT_RUN_CONFIG.cohort)
-  const [fiscalStart, setFiscalStart] = useState<number | null>(DEFAULT_RUN_CONFIG.fiscalYearStartMonth ?? null)
+  const report = account.report
+  const start: RoiRunConfig = report?.config ?? DEFAULT_RUN_CONFIG
+  const [reason, setReason] = useState(report?.reason ?? '')
+  const [windowChoice, setWindowChoice] = useState<WindowChoice>(start.custom ? 'custom' : start.windowMonths)
+  const [comparison, setComparison] = useState<RoiComparison>(start.comparison)
+  const [custom, setCustom] = useState<CustomPeriods>(() => start.custom ?? defaultCustom(months))
+  const [cohort, setCohort] = useState<RoiCohortType>(start.cohort)
+  const [fiscalStart, setFiscalStart] = useState<number | null>(start.fiscalYearStartMonth ?? null)
   const [attempted, setAttempted] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+  const [submitting, setSubmitting] = useState<'apply' | 'refresh' | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const reasonRef = useRef<HTMLTextAreaElement>(null)
   const periodsRef = useRef<HTMLDivElement>(null)
@@ -85,13 +85,6 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
   const preview = parsed.success ? windowsPreview(config, months) : null
   const isDefault = windowChoice === DEFAULT_RUN_CONFIG.windowMonths && comparison === DEFAULT_RUN_CONFIG.comparison && cohort === DEFAULT_RUN_CONFIG.cohort && fiscalStart === (DEFAULT_RUN_CONFIG.fiscalYearStartMonth ?? null)
 
-  // With a data flow connected, any account can run: the flow fetches its data.
-  const canTypeAccount = setup.dataSource.kind === 'flow'
-  const [otherAccount, setOtherAccount] = useState('')
-  const typing = canTypeAccount && (account === OTHER_ACCOUNT || !setup.accounts.length)
-  const selected: RoiPageAccount | null = typing
-    ? (otherAccount.trim() ? { account: otherAccount.trim(), extracts: [], covers: [], loadedAt: null } : null)
-    : setup.accounts.find((candidate) => candidate.account === account) ?? setup.accounts[0] ?? null
   const reasonMissing = !reason.trim()
   const comparisonOption = ROI_COMPARISON_OPTIONS.find((option) => option.value === comparison) ?? ROI_COMPARISON_OPTIONS[0]
 
@@ -107,11 +100,9 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
     setCustom((current) => ({ ...current, [period]: { ...current[period], [end]: value } }))
   }
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (submitting) return
+  const submit = async (refresh: boolean) => {
+    if (submitting || busy) return
     setAttempted(true)
-    if (!selected) return
     setSubmitError(null)
     if (reasonMissing) {
       reasonRef.current?.focus()
@@ -121,65 +112,27 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
       periodsRef.current?.scrollIntoView({ block: 'center' })
       return
     }
-    setSubmitting(true)
+    setSubmitting(refresh ? 'refresh' : 'apply')
     try {
       const response = await fetch('/api/roi/analyses', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ account: selected.account, reason: reason.trim(), config: parsed.data }),
+        body: JSON.stringify({ account: account.account, reason: reason.trim(), config: parsed.data, refresh }),
       })
       const data = await response.json().catch(() => ({})) as { analysis?: RoiAnalysisView }
-      if (!response.ok || !data.analysis) throw new Error(apiErrorMessage(data, 'The analysis could not be started. Try again in a moment.'))
+      if (!response.ok || !data.analysis) throw new Error(apiErrorMessage(data, 'The report could not be updated. Try again in a moment.'))
       setAttempted(false)
-      onCreated(data.analysis)
+      onStarted(data.analysis)
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     } finally {
-      setSubmitting(false)
+      setSubmitting(null)
     }
   }
 
-  if (!setup.accounts.length && !canTypeAccount) {
-    return (
-      <div className="rounded-xl border border-dashed border-graphite-200 bg-graphite-50/50 p-6">
-        <div className="flex items-center gap-2 text-sm font-semibold"><Database className="h-4 w-4 text-horizon-600" aria-hidden />No account has data loaded yet</div>
-        <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-          An operator loads an account's warehouse extracts into the Repository, or an admin connects the data flow under Data source. Accounts appear here once their data is in.
-        </p>
-      </div>
-    )
-  }
-
+  const willRewrite = Boolean(report?.factsCurrent)
   return (
-    <form onSubmit={submit} noValidate className="space-y-6 rounded-xl border bg-card p-5 shadow-1 sm:p-6">
-      <div>
-        <label htmlFor="roi-account" className="text-sm font-medium">Account</label>
-        {setup.accounts.length > 0 && (
-          <select id="roi-account" value={typing ? OTHER_ACCOUNT : selected?.account ?? ''} onChange={(event) => { setAccount(event.target.value); setSubmitError(null) }} aria-describedby="roi-account-covers" className={cn(SELECT_CLASS, 'mt-1.5')}>
-            {setup.accounts.map((option) => <option key={option.account} value={option.account}>{option.account}</option>)}
-            {canTypeAccount && <option value={OTHER_ACCOUNT}>Another account…</option>}
-          </select>
-        )}
-        {typing && (
-          <input
-            id={setup.accounts.length ? 'roi-account-other' : 'roi-account'}
-            aria-label={setup.accounts.length ? 'Account name' : undefined}
-            value={otherAccount}
-            onChange={(event) => { setOtherAccount(event.target.value); setSubmitError(null) }}
-            placeholder="The customer account, as Backstory names it"
-            maxLength={200}
-            className={cn(SELECT_CLASS, 'mt-1.5')}
-          />
-        )}
-        {attempted && typing && !selected && <p className="mt-1.5 text-xs text-red-700">Name the account to analyse.</p>}
-        {selected && (
-          <p id="roi-account-covers" className="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground" title={selected.loadedAt ? new Date(selected.loadedAt).toLocaleString() : undefined}>
-            <Database className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span>{accountLine(selected, setup)}</span>
-          </p>
-        )}
-      </div>
-
+    <form onSubmit={(event) => { event.preventDefault(); void submit(false) }} noValidate className="space-y-5">
       <div>
         <label htmlFor="roi-reason" className="text-sm font-medium">Reason for running this analysis</label>
         <div role="group" aria-label="Common reasons" className="mt-1.5 flex flex-wrap gap-1.5">
@@ -223,11 +176,11 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
         </p>
       </div>
 
-      <section aria-labelledby="roi-config-heading" className="space-y-5 rounded-lg border bg-muted/30 p-4">
+      <section aria-labelledby="roi-config-heading" className="space-y-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <h2 id="roi-config-heading" className="text-sm font-semibold">Configuration</h2>
-            <p className="text-xs text-muted-foreground">The defaults suit most accounts.</p>
+            <h3 id="roi-config-heading" className="text-sm font-semibold">Analysis settings</h3>
+            <p className="text-xs text-muted-foreground">{report ? 'These are the report\'s current settings.' : 'The defaults suit most accounts.'}</p>
           </div>
           {!isDefault && (
             <button type="button" onClick={resetConfig} className="inline-flex items-center gap-1 rounded text-xs font-medium text-horizon-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -238,7 +191,7 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
 
         <fieldset>
           <legend className="text-sm font-medium">Analysis time frame</legend>
-          <div className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="mt-1.5 grid grid-cols-2 gap-2">
             {[...ROI_WINDOW_OPTIONS.map((option) => ({ value: option.value as WindowChoice, label: option.label, hint: option.hint })), { value: 'custom' as WindowChoice, label: 'Custom periods', hint: 'Pick the months yourself' }].map((option) => {
               const checked = windowChoice === option.value
               const id = `roi-window-${option.value}`
@@ -286,7 +239,7 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
           </fieldset>
         ) : (
           <div ref={periodsRef} className="space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3">
               <PeriodPicker name="baseline" legend="Baseline period" range={custom.baseline} months={months} errors={baselineErrors} onChange={(end, value) => setPeriod('baseline', end, value)} />
               <PeriodPicker name="observation" legend="Observation period" range={custom.observation} months={months} errors={observationErrors} onChange={(end, value) => setPeriod('observation', end, value)} />
             </div>
@@ -321,7 +274,7 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
 
         <fieldset>
           <legend className="text-sm font-medium">Cohort type</legend>
-          <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+          <div className="mt-1.5 grid gap-2">
             {ROI_COHORT_OPTIONS.map((option) => {
               const checked = cohort === option.value
               const id = `roi-cohort-${option.value}`
@@ -366,12 +319,28 @@ export function RunForm({ setup, onCreated }: { setup: RoiPageSetup; onCreated: 
 
       {submitError && <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{submitError}</p>}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">Takes about {aboutDuration(setup.expectedSeconds)}. You can leave the page while it runs.</p>
-        <Button type="submit" disabled={submitting}>
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
-          {submitting ? 'Starting…' : 'Run analysis'}
-        </Button>
+      <div className="space-y-2 border-t pt-4">
+        <p className="text-xs text-muted-foreground">
+          {busy
+            ? 'This report is being updated now. Apply again once the new version is in.'
+            : willRewrite
+              ? `Apply rewrites the findings for these settings on the report's data — about ${aboutDuration(setup.reconfigureSeconds)}. The report keeps its earlier versions.`
+              : report
+                ? `Apply rebuilds this report from the account's data — about ${aboutDuration(setup.expectedSeconds)}. The report keeps its earlier versions.`
+                : `Builds ${account.account}'s report — about ${aboutDuration(setup.expectedSeconds)}. You can leave the page while it runs.`}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="submit" disabled={Boolean(submitting) || busy}>
+            {submitting === 'apply' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
+            {submitting === 'apply' ? 'Starting…' : report ? 'Apply to the report' : 'Build the report'}
+          </Button>
+          {report && account.canRefresh && (
+            <Button type="button" variant="outline" disabled={Boolean(submitting) || busy} onClick={() => void submit(true)}>
+              {submitting === 'refresh' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />}
+              Refresh data
+            </Button>
+          )}
+        </div>
       </div>
     </form>
   )

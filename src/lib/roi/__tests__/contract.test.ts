@@ -4,14 +4,14 @@ import { extractRoiNarrative, type RoiNarrative } from '../contract'
 import { renderRoiDashboard } from '../dashboard'
 import { summarizeFacts, winAvg, popMask, windows } from '../facts'
 import type { RoiFacts } from '../prep'
-import { buildAnalysisPrompt, buildStandardPrompt } from '../service'
+import { buildAnalysisPrompt, buildReconfigurePrompt, buildStandardPrompt } from '../service'
 
 const narrative: RoiNarrative = {
   headline: 'Engaged deals win twice as often, and Backstory users create that engagement.',
   lede: 'Win rate climbs to **48%** with engagement. Users hold more senior meetings.',
   findings: [
-    { fig: '2.0×', cap: 'win rate, high vs low engagement', h: 'Engaged deals win about twice as often', p: 'High-engagement deals win **48%** vs **22%**.', tab: 'deals' },
-    { fig: '+54%', cap: 'senior meetings, users vs non-users', h: 'Users reach senior buyers more often', p: '6.3 vs 4.1 per rep per month.', tab: 'adoption' },
+    { fig: '2.0×', cap: 'win rate, high vs low engagement', h: 'Engaged deals win about twice as often', p: 'High-engagement deals win **48%** vs **22%**.', tab: 'deal' },
+    { fig: '+54%', cap: 'senior meetings, users vs non-users', h: 'Users reach senior buyers more often', p: '6.3 vs 4.1 per rep per month.', tab: 'users' },
   ],
   watch: [{ lead: 'Senior access is slipping.', text: 'Director+ meetings per rep are **-7.7%** vs the prior six months.' }, { lead: 'These are correlations.', text: 'Users self-select.' }],
   notes: {
@@ -77,19 +77,30 @@ test('renders the consolidated report with narrative slots, hiding sections with
   assert.match(html, /<title>Backstory ROI analysis · Iron Mountain<\/title>/)
   assert.match(html, /<h1>Engaged deals win twice as often/)
   assert.match(html, /src="\/vendor\/plotly\.min\.js"/)
-  for (const tab of ['summary', 'activity', 'adoption', 'deals', 'accounts', 'method']) assert.match(html, new RegExp(`data-tab="${tab}"`))
+  for (const tab of ['summary', 'lead', 'adopt', 'users', 'deal', 'stage', 'accounts', 'method']) assert.match(html, new RegExp(`data-tab="${tab}"`))
+  assert.match(html, /id="filtersBtn"/) // the filters live behind the menu, not in a bar
   assert.match(html, /Prepared for: Renewal/)
   assert.match(html, /No usage cohort file was provided/)
   assert.match(html, /const CFG = \{[^\n]*"comparison":"year_ago"/)
   assert.match(html, /<p class="lede">Win rate climbs to <b class="num">48%<\/b>/) // **bold** in narrative becomes a number span
 })
 
-test('a narrative written for the seven-tab dashboard still points its findings at the right tabs', () => {
-  const legacy = { ...narrative, findings: [{ ...narrative.findings[0], tab: 'stage' }, { ...narrative.findings[1], tab: 'users' }] } as unknown as RoiNarrative
+test('a narrative written for the consolidated layout points its findings at the dashboard tabs', () => {
+  const legacy = { ...narrative, findings: [{ ...narrative.findings[0], tab: 'deals' }, { ...narrative.findings[1], tab: 'adoption' }] } as unknown as RoiNarrative
   const html = renderRoiDashboard(facts, legacy, { account: 'Acme' })
-  assert.match(html, /"tab":"deals"/)
-  assert.match(html, /"tab":"adoption"/)
-  assert.equal(extractRoiNarrative(JSON.stringify({ ...narrative, findings: [{ ...narrative.findings[0], tab: 'lead' }, narrative.findings[1]] })).data?.findings[0].tab, 'activity')
+  assert.match(html, /"tab":"deal"/)
+  assert.match(html, /"tab":"adopt"/)
+  assert.equal(extractRoiNarrative(JSON.stringify({ ...narrative, findings: [{ ...narrative.findings[0], tab: 'activity' }, narrative.findings[1]] })).data?.findings[0].tab, 'lead')
+})
+
+test('the contract bends where it can: extra findings are trimmed, an unknown tab drops its link', () => {
+  const many = { ...narrative, findings: Array.from({ length: 8 }, (_, i) => ({ ...narrative.findings[0], h: `Finding ${i}`, tab: i === 0 ? 'nowhere' : 'deal' })) }
+  const result = extractRoiNarrative(JSON.stringify(many))
+  assert.equal(result.error, undefined)
+  assert.equal(result.data!.findings.length, 6)
+  assert.equal(result.data!.findings[0].h, 'Finding 0')
+  assert.equal(result.data!.findings[0].tab, undefined)
+  assert.equal(result.data!.findings[1].tab, 'deal')
 })
 
 test('Backstory account context renders as framing, escaped', () => {
@@ -126,7 +137,16 @@ test('the standard prompt routes each extract to its prep and carries the config
   assert.match(prompt, /Last 12 months vs the same 12 last year\. Cohorts: users vs non-users\. Fiscal year starts in February/)
   assert.match(prompt, /prepare_roi_facts ONCE with documentIds \["act"\]/)
   assert.match(prompt, /prepare_account360 ONCE with documentIds \["clk"\]/)
-  assert.match(prompt, /"tab": "activity\|adoption\|deals\|accounts"/)
+  assert.match(prompt, /"tab": "lead\|adopt\|users\|deal\|stage\|accounts"/)
+})
+
+test('a settings change asks only for the findings, with the summaries and the current findings in the prompt', () => {
+  const prompt = buildReconfigurePrompt({ account: 'Anaplan', config: { windowMonths: 3, comparison: 'prior', cohort: 'tiers', fiscalYearStartMonth: null, custom: null }, reason: 'QBR', context: '', summary: { configured: { observation: 'Apr – Jun 2026' } }, a360Summary: null, previous: narrative })
+  assert.match(prompt, /do NOT call prepare_roi_facts or prepare_account360/)
+  assert.match(prompt, /Last 3 months vs the 3 before/)
+  assert.match(prompt, /"observation":"Apr – Jun 2026"/)
+  assert.match(prompt, /THE CURRENT FINDINGS/)
+  assert.match(prompt, /OUTPUT\nReturn ONE JSON object/)
 })
 
 test('an over-long narrative is trimmed rather than rejected', () => {

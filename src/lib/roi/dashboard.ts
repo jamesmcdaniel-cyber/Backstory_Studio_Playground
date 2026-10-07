@@ -8,27 +8,32 @@ import { REPORT_CSS } from './report-css'
 import { REPORT_SCRIPT } from './report-script'
 
 /**
- * The ROI report — one consolidated readout per account, generic across
- * customers.
+ * The ROI report — the Iron Mountain dashboard, generic across customers,
+ * with Backstory's value-readout views added in place.
  *
- * It folds three earlier pages into six tabs with no element drawn twice:
- * the platform's seven-tab rep-engagement dashboard (Plotly, a "What this
- * shows" aside beside every chart, the upside calculator, the Method tab),
- * the HP Account 360 suite (cohorts by session volume and depth against
- * pipeline per account), and Backstory's own value readout (a global
- * fiscal-year / quarter / deal-type / role filter, scorecard tiles, the user
- * roster, deal outcomes by month and fiscal year, the stage × persona
- * heatmap, account-level deal engagement).
+ * Structure, styles and chart code are the Iron Mountain page's own (Plotly,
+ * its tabs, a "What this shows" aside beside every chart, the upside
+ * calculator, the Method tab):
  *
- *   Key findings · Activity trends · Adoption impact · Deal intelligence ·
- *   Account engagement · Method
+ *   Summary · Leading indicators · Adoption tiers · Users vs non-users ·
+ *   Deal engagement · Stage and persona · Account engagement · Method
  *
- * The data objects come from the preps (U, OPP, DEALS, ST, ACC, META, and
- * the Account 360 bundle), the prose from the analyst's narrative, the
- * windows from the run's configuration. Sections whose data is missing are
- * left out rather than drawn empty. Everything a filter changes is
- * recomputed in the page; Plotly loads from /vendor because the frame's CSP
- * allows nothing off our origin (fonts excepted).
+ * Inside them, each value-readout element appears once: headline numbers in
+ * the masthead; meeting channel and email direction, and senior engagement
+ * over three periods (leading indicators); cohort comparisons, senior
+ * engagement and pipeline by cohort, composition and the user roster
+ * (adoption tiers, users); deal outcomes by month and fiscal year with
+ * year-over-year findings (deal engagement); the stage × persona heatmap,
+ * win rate by stage and persona lines (stage and persona); and the Account 360
+ * cohorts with deal engagement per account (the one new tab). Fiscal year,
+ * quarter and role filters sit in a side panel behind a menu button — the ROI
+ * page hosts them in its own panel instead (see RoiReportFrame).
+ *
+ * The data objects come from the preps (U, OPP, DEALS, ST, ACC, META, and the
+ * Account 360 bundle), the prose from the analyst's narrative, the windows
+ * from the run's configuration. Sections whose data is missing are left out.
+ * Plotly loads from /vendor because the frame's CSP allows nothing off our
+ * origin (fonts excepted).
  */
 
 export type RoiDashboardOptions = {
@@ -177,31 +182,35 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   </div>
 </header>
 
-<nav class="tabs" aria-label="Sections"><div class="wrap" role="tablist">
-  <button role="tab" type="button" data-tab="summary" aria-selected="true">Key findings</button>
-  <button role="tab" type="button" data-tab="activity" aria-selected="false">Activity trends</button>
-  <button role="tab" type="button" data-tab="adoption" aria-selected="false">Adoption impact</button>
-  <button role="tab" type="button" data-tab="deals" aria-selected="false">Deal intelligence</button>
+<nav class="tabs" aria-label="Sections"><div class="wrap navrow">
+  <button type="button" class="hamburger" id="filtersBtn" aria-label="Filters" aria-controls="filterPanel" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="tablist" role="tablist">
+  <button role="tab" type="button" data-tab="summary" aria-selected="true">Summary</button>
+  <button role="tab" type="button" data-tab="lead" aria-selected="false">Leading indicators</button>
+  <button role="tab" type="button" data-tab="adopt" aria-selected="false">Adoption tiers</button>
+  <button role="tab" type="button" data-tab="users" aria-selected="false">Users vs non-users</button>
+  <button role="tab" type="button" data-tab="deal" aria-selected="false">Deal engagement</button>
+  <button role="tab" type="button" data-tab="stage" aria-selected="false">Stage and persona</button>
   <button role="tab" type="button" data-tab="accounts" aria-selected="false">Account engagement</button>
   <button role="tab" type="button" data-tab="method" aria-selected="false">Method</button>
-</div>
-<div class="gfbar" id="gfbar"><div class="wrap">
-  <span class="gf-title">Filters</span>
-  <div class="gf-group" id="gfFyWrap"><span>Fiscal year</span><div class="chips" id="gfFy"></div></div>
-  <div class="gf-group" id="gfFqWrap"><span>Quarter</span><div class="chips" id="gfFq"></div></div>
-  <div class="gf-group" id="gfTypeWrap"><span>Deal type</span><div class="chips" id="gfType"></div></div>
-  <div class="gf-group" id="gfRoleWrap"><span>Role</span><div class="chips" id="gfRole"></div></div>
+  </div>
   <span class="gf-badge" id="gfBadge"></span>
+</div></nav>
+<div class="scrim" id="filterScrim" hidden></div>
+<aside class="filter-panel" id="filterPanel" aria-label="Filters" hidden>
+  <div class="fp-head"><h2>Filters</h2><button type="button" class="fp-close" id="filtersClose" aria-label="Close filters">×</button></div>
+  <p class="fp-hint">Fiscal year and quarter slice the deal and stage views; role narrows the reps behind the activity and adoption views.</p>
+  <div class="fp-group" id="gfFyWrap"><h3>Fiscal year</h3><div class="chips" id="gfFy"></div></div>
+  <div class="fp-group" id="gfFqWrap"><h3>Quarter</h3><div class="chips" id="gfFq"></div></div>
+  <div class="fp-group" id="gfRoleWrap"><h3>Role</h3><div class="chips" id="gfRole"></div></div>
   <button type="button" class="gf-clear" id="gfClear">Clear filters</button>
-  <p class="gf-hint" id="gfHint"></p>
-</div></div>
-</nav>
+</aside>
 
 <main>
 <section class="panel active" id="p-summary"><div class="wrap">
   ${context ? `<div class="ctx" data-section="context"><div class="eyebrow">Account context · Backstory</div><p>${inline(context.summary)}</p>${context.facts.length ? `<dl>${context.facts.map((fact) => `<div><dt>${escapeHtml(fact.label)}</dt><dd>${escapeHtml(fact.value)}<small>${escapeHtml(fact.source || 'Backstory')}</small></dd></div>`).join('')}</dl>` : ''}</div>` : ''}
   <h2>The ROI story in ${findingsWord} numbers</h2>
-  <p class="intro">Each figure is traceable to a view in this report. The chain runs from product usage, to rep behaviour, to deal engagement, to outcomes.</p>
+  <p class="intro">Each figure is traceable to a view in this dashboard. The chain runs from product usage, to rep behaviour, to deal engagement, to outcomes.</p>
   <div class="findings" id="findings" data-section="findings"></div>
   <div class="watch" data-section="watch">
     <h3>What to watch</h3>
@@ -230,15 +239,16 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   </div>
 </div></section>
 
-<section class="panel" id="p-activity"><div class="wrap">
-  <h2>High-value activity, before and after</h2>
-  <p class="intro">Each rep's monthly value is averaged across the window, then averaged across reps. Pick a tile to chart it; the comparison opens on the windows this analysis was configured with.</p>
+<section class="panel" id="p-lead"><div class="wrap">
+  <h2>Leading indicators, averaged per rep per month</h2>
+  <p class="intro">Each rep's monthly value is averaged across the window, then averaged across reps. Pick a metric, a population and the baseline and observation windows.</p>
+  <div class="controls"><div class="ctl"><span>Metric</span><div class="chips" id="leadMetric"></div></div></div>
   <div class="controls">
-    <div class="ctl"><span>Comparison</span><div class="seg" id="leadMode">
-      <button type="button" aria-pressed="true" data-v="cfg">As configured</button><button type="button" aria-pressed="false" data-v="pp">The period before</button><button type="button" aria-pressed="false" data-v="yoy">Same period last year</button><button type="button" aria-pressed="false" data-v="custom">Custom</button></div></div>
     <div class="ctl"><span>Population</span><select id="leadPop">
       <option value="all">All reps</option><option value="User">Backstory users</option><option value="Non-user">Non-users</option>
       <option value="High">High adopters</option><option value="Medium">Medium adopters</option><option value="Low">Low adopters</option></select></div>
+    <div class="ctl"><span>Comparison</span><div class="seg" id="leadMode">
+      <button type="button" aria-pressed="true" data-v="pp">Last 6 vs prior 6</button><button type="button" aria-pressed="false" data-v="yoy">Last 6 vs same 6 last year</button><button type="button" aria-pressed="false" data-v="y12">Last 12 vs prior 12</button><button type="button" aria-pressed="false" data-v="q">Last quarter vs prior</button><button type="button" aria-pressed="false" data-v="custom">Custom</button></div></div>
     <div class="custom" id="leadCustom">
       <div class="ctl"><span>Baseline from</span><select id="bS"></select></div>
       <div class="ctl"><span>to</span><select id="bE"></select></div>
@@ -247,10 +257,13 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
     </div>
   </div>
   <div class="dyn" id="leadDyn"></div>
-  <div class="tiles" id="leadTiles" data-section="activityTiles" role="group" aria-label="Metrics"></div>
   <div data-section="leadTrend" class="block">
     <div><h3 id="leadTitle">Monthly trend</h3><p class="sub">Shaded bands mark the baseline (grey) and observation (blue) windows.</p><div class="chart" id="leadTrend"></div></div>
     ${aside('What this shows', notes.lead)}
+  </div>
+  <div data-section="leadTable" class="block full">
+    <div><h3>Baseline vs observation, all metrics</h3><p class="sub" id="leadTblSub"></p>
+    <div class="tbl-wrap"><table id="leadTbl"></table></div></div>
   </div>
   <div data-section="activityMix" class="block" id="mixBlock">
     <div><h3>How the activity is made up</h3>
@@ -264,32 +277,28 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   </div>
 </div></section>
 
-<section class="panel" id="p-adoption"><div class="wrap">
-  <h2>How adoption shows up in the work</h2>
+<section class="panel" id="p-adopt"><div class="wrap">
+  <h2>High, medium and low adopters</h2>
   <p class="intro" id="adoptIntro"></p>
-  <div class="controls">
-    <div class="ctl"><span>Cohorts</span><div class="seg" id="cohortView"><button type="button" aria-pressed="true" data-v="tiers">High, medium and low adopters</button><button type="button" aria-pressed="false" data-v="users">Users vs non-users</button></div></div>
-    <div class="ctl"><span>Window</span><div class="seg" id="cohortWin"><button type="button" aria-pressed="true" data-v="obs">Observation window</button><button type="button" aria-pressed="false" data-v="l12">Last 12 months</button></div></div>
-  </div>
-  <div class="tiles static" id="cohortKpis" data-section="cohortKpis"></div>
+  <div class="controls"><div class="ctl"><span>Window</span><div class="seg" id="adoptWin"><button type="button" aria-pressed="true" data-v="obs">Last 6 months</button><button type="button" aria-pressed="false" data-v="l12">Last 12 months</button></div></div></div>
+  <div class="tiles static" id="adoptKpis" data-section="adoptKpis"></div>
   <div data-section="adoptIndex" class="block">
-    <div><h3 id="adoptIndexTitle">Activity by cohort</h3><p class="sub" id="adoptIndexSub"></p><div class="chart" id="adoptIndex"></div></div>
-    <aside class="note"><h4>What this shows</h4><div id="adoptNote"></div></aside>
+    <div><h3>Engagement indexed to low adopters</h3><p class="sub">Low adopters = 100. Bars above 100 mean more activity per rep per month.</p><div class="chart" id="adoptIndex"></div></div>
+    ${aside('What this shows', notes.adopt)}
   </div>
   <div class="cards3">
-    <div class="card" data-section="cohortSenior"><h3>Senior engagement by cohort</h3><p class="sub">Director, VP and executive meetings per rep per month.</p><div class="chart short" id="cohortSenior"></div></div>
-    <div class="card" data-section="cohortPipeline"><h3>Pipeline created by cohort</h3><p class="sub">Per rep per month.</p><div class="chart short" id="cohortPipeline"></div></div>
-    <div class="card" data-section="cohortDonut"><h3>Cohort composition</h3><p class="sub">Reps in each cohort. Select a slice to filter the roster.</p><div class="chart short" id="cohortDonut"></div></div>
+    <div class="card" data-section="cohortSenior"><h3>Senior engagement by tier</h3><p class="sub">Director, VP and executive meetings per rep per month.</p><div class="chart short" id="adoptSenior"></div></div>
+    <div class="card" data-section="cohortPipeline"><h3>Pipeline created by tier</h3><p class="sub">Per rep per month.</p><div class="chart short" id="adoptPipeline"></div></div>
+    <div class="card" data-section="cohortDonut"><h3>Cohort composition</h3><p class="sub">Reps in each tier. Select a slice to filter the roster.</p><div class="chart short" id="adoptDonut"></div></div>
   </div>
-  <div data-section="usersTrend" class="block">
-    <div><h3>The cohort gap over time</h3>
-      <div class="controls" style="margin-top:10px"><div class="ctl"><span>Metric</span><select id="trendMetric"></select></div></div>
-      <p class="sub">Cohorts are defined by current usage, so a gap before the usage window shows these reps were already different.</p><div class="chart" id="usersTrend"></div></div>
-    ${aside('Reading this fairly', notes.usersTrend)}
+  <div data-section="adoptTrend" class="block full">
+    <div><h3>The tier gap over time</h3>
+      <div class="controls" style="margin-top:10px"><div class="ctl"><span>Metric</span><select id="adoptTrendMetric"></select></div></div>
+      <div class="chart" id="adoptTrend"></div></div>
   </div>
-  <div data-section="cohortTable" class="block full">
-    <div><h3>Per-rep monthly averages by cohort</h3><p class="sub" id="cohortTblSub"></p>
-    <div class="tbl-wrap"><table id="cohortTbl"></table></div></div>
+  <div data-section="adoptTable" class="block full">
+    <div><h3>Per-rep monthly averages by tier</h3><p class="sub" id="adoptTblSub"></p>
+    <div class="tbl-wrap"><table id="adoptTbl"></table></div></div>
   </div>
   <div data-section="roster" class="block full" id="rosterBlock">
     <div>
@@ -304,70 +313,94 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   </div>
 </div></section>
 
-<section class="panel" id="p-deals"><div class="wrap">
-  <h2>What engagement does to deals</h2>
-  <p class="intro">Closed deals with a Backstory engagement score. Deals that closed within seven days of creation are booked-on-creation orders that win almost every time; they are excluded by default so they don't mask the relationship. The filters above slice every chart here by fiscal year, quarter and deal type.</p>
-  <div class="subnav seg" id="dealSub"><button type="button" aria-pressed="true" data-v="eng">Engagement and outcomes</button><button type="button" aria-pressed="false" data-v="stage">Stage and persona</button></div>
-  <div id="dealEng">
-    <div class="controls">
-      <div class="ctl"><span>Group by</span><div class="seg" id="dealView"><button type="button" aria-pressed="true" data-v="levels">Engagement levels</button><button type="button" aria-pressed="false" data-v="deciles">Engagement deciles</button></div></div>
-      <div class="ctl" id="dealModeWrap"><span>View</span><div class="seg" id="dealMode"><button type="button" aria-pressed="true" data-v="overall">Overall</button><button type="button" aria-pressed="false" data-v="monthly">Monthly trend</button><button type="button" aria-pressed="false" data-v="fy">By fiscal year</button></div></div>
-      <label class="toggle" id="dealInclWrap"><input type="checkbox" id="dealIncl"> Include transactional deals (closed in 7 days or less)</label>
-    </div>
-    <div class="tiles static" id="dealKpis" data-section="dealKpis"></div>
-    <div class="dyn" id="dealDyn"></div>
-    <div class="yoy" id="dealYoy" data-section="dealFindings"></div>
-    <div data-section="dealWin" class="block">
-      <div><h3 id="dealWinTitle">Win rate</h3><p class="sub" id="dealWinSub">Bars show win rate; hover for deal counts and score range.</p><div class="chart" id="dealWin"></div></div>
-      <aside class="note"><h4>What this shows</h4><div id="dealWinNote"></div></aside>
-    </div>
-    <div data-section="dealVel" class="block" id="dealVelBlock">
-      <div><h3 id="dealVelTitle">Deal velocity</h3><p class="sub" id="dealVelSub">Median days from creation to close, for won and lost deals.</p><div class="chart" id="dealVel"></div></div>
-      ${aside('What this shows', notes.dealVel)}
-    </div>
-    <div data-section="dealVolume" class="block full" id="dealVolBlock">
-      <div><h3>Deal volume by engagement level</h3><p class="sub" id="dealVolSub"></p><div class="chart short" id="dealVol"></div></div>
-    </div>
+<section class="panel" id="p-users"><div class="wrap">
+  <h2>Backstory users vs non-users</h2>
+  <p class="intro" id="usersIntro"></p>
+  <div class="controls"><div class="ctl"><span>Window</span><div class="seg" id="usersWin"><button type="button" aria-pressed="true" data-v="obs">Last 6 months</button><button type="button" aria-pressed="false" data-v="l12">Last 12 months</button></div></div></div>
+  <div class="tiles static" id="usersKpis" data-section="usersKpis"></div>
+  <div data-section="usersLift" class="block">
+    <div><h3>How much more users do, per rep per month</h3><p class="sub">Percent difference, users vs non-users.</p><div class="chart" id="usersLift"></div></div>
+    ${aside('What this shows', notes.users)}
   </div>
-  <div id="dealStage" class="hidden">
-    <p class="intro" id="stageIntro"></p>
-    <div class="tiles static" id="stageKpis"></div>
-    <div class="yoy" id="stageYoy" data-section="stageFindings"></div>
-    <div data-section="stageHeat" class="block" id="heatBlock">
-      <div><h3 id="heatTitle">Stage × persona</h3>
-        <div class="controls" style="margin-top:10px"><div class="seg" id="heatMode"><button type="button" aria-pressed="true" data-v="won">Won deals</button><button type="button" aria-pressed="false" data-v="lost">Lost deals</button><button type="button" aria-pressed="false" data-v="diff">Won − lost</button><button type="button" aria-pressed="false" data-v="wr">Win rate when present</button><button type="button" aria-pressed="false" data-v="share">Share of activity</button></div></div>
-        <p class="sub" id="heatSub"></p><div class="chart tall" id="stageHeat"></div></div>
-      ${aside('What this shows', notes.stageHeat)}
+  <div class="cards2">
+    <div class="card" data-section="cohortSenior"><h3>Senior engagement, users vs non-users</h3><p class="sub">Director, VP and executive meetings per rep per month.</p><div class="chart short" id="usersSenior"></div></div>
+    <div class="card" data-section="cohortPipeline"><h3>Pipeline created, users vs non-users</h3><p class="sub">Per rep per month.</p><div class="chart short" id="usersPipeline"></div></div>
+  </div>
+  <div data-section="usersTrend" class="block">
+    <div><h3 id="usersTrendTitle">The senior-meeting gap over time</h3>
+      <div class="controls" style="margin-top:10px"><div class="ctl"><span>Metric</span><select id="usersTrendMetric"></select></div></div>
+      <p class="sub">Users are defined by current usage, so a gap before the usage window shows these reps were already more engaged.</p><div class="chart" id="usersTrend"></div></div>
+    ${aside('Reading this fairly', notes.usersTrend)}
+  </div>
+  <div data-section="usersTable" class="block full">
+    <div><h3>Per-rep monthly averages</h3><div class="tbl-wrap"><table id="usersTbl"></table></div></div>
+  </div>
+</div></section>
+
+<section class="panel" id="p-deal"><div class="wrap">
+  <h2>Deal engagement vs win rate and velocity</h2>
+  <p class="intro">Every closed deal with a Backstory engagement score. Deals that closed within seven days of creation are booked-on-creation orders that win almost every time; they are excluded by default so they don't mask the relationship.</p>
+  <div class="controls">
+    <div class="ctl"><span>Group by</span><div class="seg" id="dealView"><button type="button" aria-pressed="true" data-v="deciles">Engagement deciles</button><button type="button" aria-pressed="false" data-v="levels">Engagement levels</button></div></div>
+    <div class="ctl"><span>Deal type</span><select id="dealType"></select></div>
+    <div class="ctl" id="dealModeWrap"><span>View</span><div class="seg" id="dealMode"><button type="button" aria-pressed="true" data-v="overall">Overall</button><button type="button" aria-pressed="false" data-v="monthly">Monthly trend</button><button type="button" aria-pressed="false" data-v="fy">By fiscal year</button></div></div>
+    <label class="toggle" id="dealInclWrap"><input type="checkbox" id="dealIncl"> Include transactional deals (closed in 7 days or less)</label>
+  </div>
+  <div class="dyn" id="dealDyn"></div>
+  <div class="tiles static" id="dealKpis" data-section="dealKpis"></div>
+  <div class="yoy" id="dealYoy" data-section="dealFindings"></div>
+  <div data-section="dealWin" class="block">
+    <div><h3 id="dealWinTitle">Win rate</h3><p class="sub" id="dealWinSub">Bars show win rate; hover for deal counts and score range.</p><div class="chart" id="dealWin"></div></div>
+    <aside class="note"><h4>What this shows</h4><div id="dealWinNote"></div></aside>
+  </div>
+  <div data-section="dealVel" class="block" id="dealVelBlock">
+    <div><h3 id="dealVelTitle">Deal velocity</h3><p class="sub" id="dealVelSub">Median days from creation to close, for won and lost deals.</p><div class="chart" id="dealVel"></div></div>
+    ${aside('What this shows', notes.dealVel)}
+  </div>
+  <div data-section="dealVolume" class="block full" id="dealVolBlock">
+    <div><h3>Deal volume by engagement level</h3><p class="sub" id="dealVolSub"></p><div class="chart short" id="dealVol"></div></div>
+  </div>
+</div></section>
+
+<section class="panel" id="p-stage"><div class="wrap">
+  <h2>Where engagement happens, and who moves the deal</h2>
+  <p class="intro" id="stageIntro"></p>
+  <div class="tiles static" id="stageKpis" data-section="stageKpis"></div>
+  <div class="yoy" id="stageYoy" data-section="stageFindings"></div>
+  <div data-section="stageProf" class="block">
+    <div><h3>Engagement by stage at time of activity</h3>
+      <div class="controls" style="margin-top:10px"><div class="seg" id="stageView"><button type="button" aria-pressed="true" data-v="share">Share of activity</button><button type="button" aria-pressed="false" data-v="wl">Activity per deal, won vs lost</button><button type="button" aria-pressed="false" data-v="type">Channel mix</button><button type="button" aria-pressed="false" data-v="pwl">Personas, won vs lost</button><button type="button" aria-pressed="false" data-v="mixwon">Persona mix, won</button></div></div>
+      <p class="sub" id="stageProfSub"></p><div class="chart" id="stageProf"></div></div>
+    ${aside('What this shows', notes.stageProf)}
+  </div>
+  <div data-section="stageHeat" class="block" id="heatBlock">
+    <div><h3 id="heatTitle">Persona mix by stage</h3>
+      <div class="controls" style="margin-top:10px"><div class="seg" id="heatMode"><button type="button" aria-pressed="true" data-v="share">Share of activity</button><button type="button" aria-pressed="false" data-v="won">Won deals</button><button type="button" aria-pressed="false" data-v="lost">Lost deals</button><button type="button" aria-pressed="false" data-v="diff">Won − lost</button><button type="button" aria-pressed="false" data-v="wr">Win rate when present</button></div></div>
+      <p class="sub" id="heatSub"></p><div class="chart tall" id="stageHeat"></div></div>
+    ${aside('What this shows', notes.stageHeat)}
+  </div>
+  <div data-section="stageWin" class="block" id="stageWinBlock">
+    <div><h3>Win rate by stage</h3><p class="sub">Deals with activity logged at each stage, and how many of them were won. Each line is a fiscal year.</p><div class="chart" id="stageWin"></div></div>
+    <aside class="note"><h4>Reading this</h4><p id="stageWinNote"></p></aside>
+  </div>
+  <div data-section="stageSurv" class="block">
+    <div><h3>Early engagement and win rate among deals that reached late stage</h3>
+      <p class="sub">Only deals with activity in the late stages. Compares those that also had the persona engaged in the early stages with those that didn't.</p>
+      <div class="chart tall" id="stageSurv"></div></div>
+    ${aside('What this shows', notes.stageSurv)}
+  </div>
+  <div data-section="stagePersona" class="block">
+    <div><h3>Persona involvement, all pre-decision activity</h3>
+      <div class="controls" style="margin-top:10px"><div class="seg" id="persView"><button type="button" aria-pressed="true" data-v="wr">Win rate with vs without</button><button type="button" aria-pressed="false" data-v="share">Share of won deals</button><button type="button" aria-pressed="false" data-v="days">Days to close (won)</button></div></div>
+      <div class="chart tall" id="stagePers"></div></div>
+    <aside class="note"><h4>What this shows</h4><p id="persNote"></p></aside>
+  </div>
+  <div data-section="stageBreadth" class="block">
+    <div class="twocol">
+      <div><h3>Buying-committee breadth</h3><p class="sub">Number of distinct personas engaged before a decision.</p><div class="chart short" id="stageBreadth"></div></div>
+      <div><h3>Early activity intensity</h3><p class="sub">Quintiles of activity logged in the early stages.</p><div class="chart short" id="stageEarlyQ"></div></div>
     </div>
-    <div data-section="stageWin" class="block" id="stageWinBlock">
-      <div><h3>Win rate by stage</h3><p class="sub">Deals with activity logged at each stage, and how many of them were won. Each line is a fiscal year.</p><div class="chart" id="stageWin"></div></div>
-      <aside class="note"><h4>Reading this</h4><p id="stageWinNote"></p></aside>
-    </div>
-    <div data-section="stageProf" class="block">
-      <div><h3>Engagement by stage at time of activity</h3>
-        <div class="controls" style="margin-top:10px"><div class="seg" id="stageView"><button type="button" aria-pressed="true" data-v="share">Share of activity</button><button type="button" aria-pressed="false" data-v="wl">Activity per deal, won vs lost</button><button type="button" aria-pressed="false" data-v="pwl">Personas, won vs lost</button><button type="button" aria-pressed="false" data-v="mixwon">Persona mix, won</button><button type="button" aria-pressed="false" data-v="type">Channel mix</button></div></div>
-        <p class="sub" id="stageProfSub"></p><div class="chart" id="stageProf"></div></div>
-      ${aside('What this shows', notes.stageProf)}
-    </div>
-    <div data-section="stageSurv" class="block">
-      <div><h3>Early engagement and win rate among deals that reached late stage</h3>
-        <p class="sub">Only deals with activity in the late stages. Compares those that also had the persona engaged in the early stages with those that didn't.</p>
-        <div class="chart tall" id="stageSurv"></div></div>
-      ${aside('What this shows', notes.stageSurv)}
-    </div>
-    <div data-section="stagePersona" class="block">
-      <div><h3>Persona involvement, all pre-decision activity</h3>
-        <div class="controls" style="margin-top:10px"><div class="seg" id="persView"><button type="button" aria-pressed="true" data-v="wr">Win rate with vs without</button><button type="button" aria-pressed="false" data-v="share">Share of won deals</button><button type="button" aria-pressed="false" data-v="days">Days to close (won)</button></div></div>
-        <div class="chart tall" id="stagePers"></div></div>
-      <aside class="note"><h4>What this shows</h4><p id="persNote"></p></aside>
-    </div>
-    <div data-section="stageBreadth" class="block">
-      <div class="twocol">
-        <div><h3>Buying-committee breadth</h3><p class="sub">Number of distinct personas engaged before a decision.</p><div class="chart short" id="stageBreadth"></div></div>
-        <div><h3>Early activity intensity</h3><p class="sub">Quintiles of activity logged in the early stages.</p><div class="chart short" id="stageEarlyQ"></div></div>
-      </div>
-      ${aside('What this shows', notes.breadth)}
-    </div>
+    ${aside('What this shows', notes.breadth)}
   </div>
 </div></section>
 
@@ -383,7 +416,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
       <aside class="note"><h4>What this shows</h4>${paragraphs(notes.accounts)}<p id="a360Nuance"></p></aside>
     </div>
     <div data-section="a360Scatter" class="block full">
-      <div><h3>Sessions against pipeline, per account</h3><p class="sub">Each dot is an account; the dashed lines are the cohort cut-offs. Pipeline on a log scale.</p><div class="chart tall" id="a360Scatter"></div></div>
+      <div><h3>Sessions against pipeline, per account</h3><p class="sub">Each dot is an account; the dashed line is the sessions cut-off. Pipeline on a log scale.</p><div class="chart tall" id="a360Scatter"></div></div>
     </div>
     <div data-section="a360Trend" class="block full">
       <div><h3>Pipeline by month</h3>

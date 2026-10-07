@@ -48,6 +48,10 @@ export type RoiAnalysisView = {
   context: string
   status: string
   phase: RoiRunPhase
+  /** full = data computed and findings written; reconfigure = findings rewritten for new settings on the report's data. */
+  mode: 'full' | 'reconfigure'
+  /** The report version the run produced (completed runs). */
+  versionId: string | null
   error: string | null
   executionId: string | null
   agentTaskId: string | null
@@ -65,7 +69,7 @@ export type RoiAnalysisView = {
   completedAt: string | null
 }
 
-/** An account the page can run: its extracts are loaded (or the data flow can fetch them). */
+/** An account the page can show: it has a report, or data to build one (loaded extracts, or the data flow). */
 export type RoiPageAccount = {
   account: string
   /** Extract kinds loaded, e.g. ["activity", "usage", "engagement", "stages", "clickstream"]. */
@@ -73,6 +77,19 @@ export type RoiPageAccount = {
   /** Labels of the report sections those extracts feed. */
   covers: string[]
   loadedAt: string | null
+  /** The account's one report, when it has been built. Settings changes update it in place. */
+  report: {
+    artifactId: string
+    config: RoiRunConfig
+    reason: string
+    /** Built on current data: a settings change only rewrites the findings. */
+    factsCurrent: boolean
+    updatedAt: string
+    /** A run updating it right now. */
+    activeAnalysisId: string | null
+  } | null
+  /** Data can be (re)computed: extracts are loaded or the data flow is connected. */
+  canRefresh: boolean
 }
 
 /** What the page needs to draw its form: accounts, the agent behind it, where data comes from. */
@@ -86,8 +103,10 @@ export type RoiPageSetup = {
   flows: Array<{ id: string; name: string; published: boolean }>
   /** Whether the analyst can reach the Backstory platform (account context) for this user. */
   backstory: { connected: boolean }
-  /** Typical time for a run, in seconds — the page's progress estimate. */
+  /** Typical time for a full build, in seconds — the page's progress estimate. */
   expectedSeconds: number
+  /** Typical time for a settings change (findings rewritten on the same data). */
+  reconfigureSeconds: number
   /** After this many seconds the page tells the user it will notify them instead. */
   asyncAfterSeconds: number
 }

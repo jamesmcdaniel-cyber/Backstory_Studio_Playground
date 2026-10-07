@@ -11,64 +11,71 @@ import { isRoiTimeframePreset, type RoiTimeframePreset } from './timeframe'
  * change is a new version with the old one kept.
  */
 
-export const ROI_TABS = ['activity', 'adoption', 'deals', 'accounts', 'method'] as const
+export const ROI_TABS = ['lead', 'adopt', 'users', 'deal', 'stage', 'accounts', 'method'] as const
 export type RoiTab = (typeof ROI_TABS)[number]
 
 export const ROI_TAB_LABEL: Record<RoiTab, string> = {
-  activity: 'Activity trends',
-  adoption: 'Adoption impact',
-  deals: 'Deal intelligence',
+  lead: 'Leading indicators',
+  adopt: 'Adoption tiers',
+  users: 'Users vs non-users',
+  deal: 'Deal engagement',
+  stage: 'Stage and persona',
   accounts: 'Account engagement',
   method: 'Method',
 }
 
-/** The seven-tab dashboard's tabs: a new tab is hidden only when every old tab it absorbed was. */
-const LEGACY_TABS: Record<RoiTab, string[]> = { activity: ['lead'], adoption: ['adopt', 'users'], deals: ['deal', 'stage'], accounts: [], method: ['method'] }
+/** Tab ids from the short-lived consolidated layout: hiding one hid every dashboard tab it held. */
+const CONSOLIDATED_TABS: Record<string, RoiTab[]> = { activity: ['lead'], adoption: ['adopt', 'users'], deals: ['deal', 'stage'] }
 
 /** Every block the report can show or hide, with what it is. */
 export const ROI_SECTIONS = {
-  hero: 'Key findings: headline chart in the masthead',
-  heroStats: 'Key findings: the four headline numbers',
-  context: 'Key findings: account context from the Backstory platform',
-  findings: 'Key findings: the findings',
-  watch: 'Key findings: the "What to watch" list',
-  calculator: 'Key findings: the "Model the upside" calculator',
-  activityTiles: 'Activity trends: metric tiles, observation vs baseline',
-  leadTrend: 'Activity trends: monthly trend chart',
-  activityMix: 'Activity trends: meetings by channel and emails by direction',
-  seniorMix: 'Activity trends: senior engagement across three periods',
-  cohortKpis: 'Adoption impact: headline comparisons',
-  adoptIndex: 'Adoption impact: activity by cohort',
-  cohortSenior: 'Adoption impact: senior engagement by cohort',
-  cohortPipeline: 'Adoption impact: pipeline by cohort',
-  cohortDonut: 'Adoption impact: cohort composition',
-  usersTrend: 'Adoption impact: the cohort gap over time',
-  cohortTable: 'Adoption impact: per-rep averages by cohort',
-  roster: 'Adoption impact: user roster',
-  dealKpis: 'Deal intelligence: headline numbers',
-  dealFindings: 'Deal intelligence: year-over-year findings',
-  dealWin: 'Deal intelligence: win rate by engagement',
-  dealVel: 'Deal intelligence: deal velocity',
-  dealVolume: 'Deal intelligence: deal volume by engagement level',
-  stageFindings: 'Deal intelligence: stage and persona findings',
-  stageHeat: 'Deal intelligence: stage × persona heatmap',
-  stageWin: 'Deal intelligence: win rate by stage',
-  stageProf: 'Deal intelligence: engagement by stage',
-  stageSurv: 'Deal intelligence: early vs late engagement',
-  stagePersona: 'Deal intelligence: persona involvement',
-  stageBreadth: 'Deal intelligence: committee breadth and early activity',
+  hero: 'Summary: headline chart in the masthead',
+  heroStats: 'Summary: the four headline numbers',
+  context: 'Summary: account context from the Backstory platform',
+  findings: 'Summary: the ROI story findings',
+  watch: 'Summary: the "What to watch" list',
+  calculator: 'Summary: the "Model the upside" calculator',
+  leadTrend: 'Leading indicators: monthly trend chart',
+  leadTable: 'Leading indicators: baseline vs observation table',
+  activityMix: 'Leading indicators: meetings by channel and emails by direction',
+  seniorMix: 'Leading indicators: senior engagement across three periods',
+  adoptKpis: 'Adoption tiers: headline comparisons',
+  adoptIndex: 'Adoption tiers: indexed chart',
+  cohortSenior: 'Adoption tiers and users: senior engagement by cohort',
+  cohortPipeline: 'Adoption tiers and users: pipeline by cohort',
+  cohortDonut: 'Adoption tiers: cohort composition',
+  adoptTrend: 'Adoption tiers: the tier gap over time',
+  adoptTable: 'Adoption tiers: per-rep averages table',
+  roster: 'Adoption tiers: user roster',
+  usersKpis: 'Users vs non-users: headline comparisons',
+  usersLift: 'Users vs non-users: lift chart',
+  usersTrend: 'Users vs non-users: the gap over time',
+  usersTable: 'Users vs non-users: per-rep averages table',
+  dealKpis: 'Deal engagement: headline numbers',
+  dealFindings: 'Deal engagement: year-over-year findings',
+  dealWin: 'Deal engagement: win rate chart',
+  dealVel: 'Deal engagement: velocity chart',
+  dealVolume: 'Deal engagement: deal volume by engagement level',
+  stageKpis: 'Stage and persona: win rate by stage numbers',
+  stageFindings: 'Stage and persona: year-over-year findings',
+  stageProf: 'Stage and persona: engagement by stage',
+  stageHeat: 'Stage and persona: stage × persona heatmap',
+  stageWin: 'Stage and persona: win rate by stage',
+  stageSurv: 'Stage and persona: early vs late engagement',
+  stagePersona: 'Stage and persona: persona involvement',
+  stageBreadth: 'Stage and persona: committee breadth and early activity',
   a360Kpis: 'Account engagement: Account 360 cohort numbers',
   a360Cohorts: 'Account engagement: pipeline by Account 360 cohort',
   a360Scatter: 'Account engagement: sessions vs pipeline per account',
   a360Trend: 'Account engagement: pipeline trend by cohort',
-  a360Table: 'Account engagement: Account 360 account table',
+  a360Table: 'Account engagement: Account 360 account tables',
   accountDeals: 'Account engagement: win rate vs engagement per account',
   accountTable: 'Account engagement: account deal table',
 } as const
 export type RoiSection = keyof typeof ROI_SECTIONS
 
-/** Section ids of the seven-tab dashboard that became another block. */
-const LEGACY_SECTIONS: Record<string, RoiSection> = { leadTable: 'activityTiles', adoptTable: 'cohortTable', usersLift: 'adoptIndex', usersTable: 'cohortTable' }
+/** Section ids from the consolidated layout that became another block. */
+const LEGACY_SECTIONS: Record<string, RoiSection> = { activityTiles: 'leadTable', cohortKpis: 'adoptKpis', cohortTable: 'adoptTable' }
 
 const metricKey = z.string().regex(/^[a-z][a-z0-9_]{1,48}$/, 'Metric keys are lower_snake_case.')
 
@@ -92,16 +99,12 @@ export const roiViewSchema = z.object({
 export type RoiView = z.infer<typeof roiViewSchema>
 
 function normalizeTabs(tabs: string[]): RoiTab[] {
-  const hidden = new Set(tabs)
-  return ROI_TABS.filter((tab) => hidden.has(tab) || (LEGACY_TABS[tab].length > 0 && LEGACY_TABS[tab].every((legacy) => hidden.has(legacy))))
+  const hidden = new Set(tabs.flatMap((tab) => CONSOLIDATED_TABS[tab] ?? [tab]))
+  return ROI_TABS.filter((tab) => hidden.has(tab))
 }
 
-/** A tab named the old way or the new. */
-const tabSchema = z.preprocess((value) => {
-  if (typeof value !== 'string') return value
-  const match = (Object.entries(LEGACY_TABS) as Array<[RoiTab, string[]]>).find(([, legacy]) => legacy.includes(value))
-  return (ROI_TABS as readonly string[]).includes(value) ? value : match?.[0] ?? value
-}, z.enum(ROI_TABS))
+/** A tab named either way; a consolidated id names its first dashboard tab. */
+const tabSchema = z.preprocess((value) => (typeof value === 'string' && value in CONSOLIDATED_TABS ? CONSOLIDATED_TABS[value][0] : value), z.enum(ROI_TABS))
 
 export const EMPTY_VIEW: RoiView = { hiddenTabs: [], hiddenSections: [], hiddenMetrics: [], metricLabels: {}, extraMetrics: [] }
 

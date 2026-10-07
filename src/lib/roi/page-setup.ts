@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { backstoryMcpReady } from '@/lib/mcp/backstory-connection'
 import { findRoiAgent, roiDataFlowIdOf } from './agent'
 import { coversFor, listRoiSources } from './sources'
-import { ROI_ASYNC_AFTER_SECONDS, ROI_EXPECTED_SECONDS } from './service'
+import { listAccountReports, ROI_ASYNC_AFTER_SECONDS, ROI_EXPECTED_SECONDS, ROI_RECONFIGURE_EXPECTED_SECONDS } from './service'
 import type { RoiPageSetup } from './types'
 
 /**
@@ -28,25 +28,36 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     ? await prisma.flow.findMany({ where: { organizationId: params.organizationId, status: { not: 'DISABLED' } }, orderBy: { updatedAt: 'desc' }, take: 100, select: { id: true, name: true, publishedGraph: true } })
     : []
   const metadata = (agent?.metadata ?? {}) as { title?: unknown; model?: unknown }
+  const reports = await listAccountReports(params.organizationId)
+  const reportOf = (account: string) => {
+    const report = reports.find((entry) => entry.account.trim().toLowerCase() === account.trim().toLowerCase())
+    return report ? { artifactId: report.artifactId, config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt, activeAnalysisId: report.activeAnalysisId } : null
+  }
   const accounts: RoiPageSetup['accounts'] = sources
     .filter((source) => source.templates.includes('standard'))
     .map((source) => {
       const kinds = Object.keys(source.datasets) as Array<keyof typeof source.datasets>
       const loaded = kinds.map((kind) => source.datasets[kind]?.loadedAt).filter((value): value is string => Boolean(value)).sort()
-      return { account: source.account, extracts: kinds, covers: coversFor(kinds), loadedAt: loaded.at(-1) ?? null }
+      return { account: source.account, extracts: kinds, covers: coversFor(kinds), loadedAt: loaded.at(-1) ?? null, report: reportOf(source.account), canRefresh: true }
     })
-  // With a data flow, accounts analysed before can run again without loaded
-  // extracts — the flow fetches them. (New ones are typed on the page.)
+  // Accounts with a report but no loaded data still show (and can change
+  // settings); with a data flow, they can be refreshed too, as can accounts
+  // analysed before. New ones are typed on the page.
+  const known = new Set(accounts.map((entry) => entry.account.toLowerCase()))
+  for (const report of reports) {
+    if (known.has(report.account.toLowerCase())) continue
+    known.add(report.account.toLowerCase())
+    accounts.push({ account: report.account, extracts: [], covers: [], loadedAt: null, report: reportOf(report.account), canRefresh: Boolean(flow) })
+  }
   if (flow) {
-    const known = new Set(accounts.map((entry) => entry.account.toLowerCase()))
     const previous = await prisma.roiAnalysis.findMany({ where: { organizationId: params.organizationId }, distinct: ['account'], orderBy: { createdAt: 'desc' }, take: 200, select: { account: true } })
     for (const row of previous) {
       if (known.has(row.account.toLowerCase())) continue
       known.add(row.account.toLowerCase())
-      accounts.push({ account: row.account, extracts: [], covers: [], loadedAt: null })
+      accounts.push({ account: row.account, extracts: [], covers: [], loadedAt: null, report: null, canRefresh: true })
     }
-    accounts.sort((a, b) => a.account.localeCompare(b.account))
   }
+  accounts.sort((a, b) => a.account.localeCompare(b.account))
   return {
     accounts,
     agent: {
@@ -60,6 +71,7 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     flows: flows.map((row) => ({ id: row.id, name: row.name, published: Boolean(row.publishedGraph) })),
     backstory: { connected: backstory },
     expectedSeconds: ROI_EXPECTED_SECONDS,
+    reconfigureSeconds: ROI_RECONFIGURE_EXPECTED_SECONDS,
     asyncAfterSeconds: ROI_ASYNC_AFTER_SECONDS,
   }
 }

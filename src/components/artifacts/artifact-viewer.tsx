@@ -27,7 +27,19 @@ import { useAuth } from '@/hooks/use-auth'
  * change" gets a new version. Both are runs — narrated here while they work,
  * and visible in the Runs panel like every other run.
  */
-export function ArtifactViewer({ id }: { id: string }) {
+export type ArtifactFrameRenderer = (frame: { artifactId: string; versionId: string; title: string; writable: boolean; className: string }) => React.ReactNode
+
+export function ArtifactViewer({ id, embedded = false, showAssistant = true, renderFrame, showVersion }: {
+  id: string
+  /** Inside another page (the ROI page): no title row or page actions — that page has its own. */
+  embedded?: boolean
+  /** The assistant sidebar; a host page can toggle it. */
+  showAssistant?: boolean
+  /** Draw the document yourself (the ROI page hosts its report's filters through its own frame). */
+  renderFrame?: ArtifactFrameRenderer
+  /** Show this version (a run history row on the host page); the nonce re-applies the same id. */
+  showVersion?: { id: string; nonce: number } | null
+}) {
   const { can } = useAuth()
   const [artifact, setArtifact] = useState<ArtifactView | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -117,6 +129,9 @@ export function ArtifactViewer({ id }: { id: string }) {
   // finished, not at every save along the way, so the page reloads one time.
   const assistantWorking = Boolean(pending)
   useEffect(() => { const current = artifact?.currentVersionId; if (current) setVersionId((shown) => (!assistantWorking || shown === null ? current : shown)) }, [artifact?.currentVersionId, assistantWorking])
+  // A host asked for a particular version (a history row): show it once it is loaded.
+  const loadedIds = artifact?.versions.map((v) => v.id).join(',')
+  useEffect(() => { if (showVersion?.id && loadedIds?.split(',').includes(showVersion.id)) setVersionId(showVersion.id) }, [showVersion?.id, showVersion?.nonce, loadedIds])
   // Markdown versions are rendered here rather than framed; fetch the text when the shown version changes.
   const markdownVersionId = artifact?.versions.find((v) => v.id === (versionId ?? artifact.currentVersionId))?.format === 'markdown' ? (versionId ?? artifact?.currentVersionId ?? null) : null
   useEffect(() => {
@@ -223,7 +238,7 @@ export function ArtifactViewer({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      {!embedded && <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <Link href="/artifacts" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ArrowLeft className="h-3 w-3" aria-hidden /> All artifacts</Link>
           <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">{artifact.title}</h1>
@@ -250,7 +265,7 @@ export function ArtifactViewer({ id }: { id: string }) {
             </Button>
           )}
         </div>
-      </div>
+      </div>}
 
       {!configurationLocked && <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />}
       {error && <p role="status" className="text-sm text-amber-700">{error} <button onClick={() => void refresh()} className="underline">Retry now</button></p>}
@@ -264,7 +279,7 @@ export function ArtifactViewer({ id }: { id: string }) {
 
       <div
         ref={workspaceRef}
-        className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:h-[var(--workspace-h)] xl:grid-cols-[minmax(0,1fr)_340px]"
+        className={cn('grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:h-[var(--workspace-h)]', showAssistant && 'xl:grid-cols-[minmax(0,1fr)_340px]')}
         style={{ '--workspace-h': `${workspaceHeight}px` } as React.CSSProperties}
       >
         <div className="flex h-[var(--workspace-h)] min-h-0 min-w-0 flex-col gap-2 xl:h-full">
@@ -292,6 +307,8 @@ export function ArtifactViewer({ id }: { id: string }) {
               <div className="prose prose-sm h-full max-w-none overflow-y-auto p-6 dark:prose-invert">
                 {markdown?.versionId === shownMarkdown.id ? <Markdown>{markdown.text}</Markdown> : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>}
               </div>
+            ) : shownVersion && renderFrame ? (
+              renderFrame({ artifactId: id, versionId: shownVersion.id, title: artifact.title, writable: canEdit && shownVersion.id === artifact.currentVersionId && !artifact.archivedAt, className: 'block h-full w-full' })
             ) : shownVersion ? (
               <StatefulArtifactFrame
                 key={id}
@@ -310,7 +327,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           </div>
         </div>
 
-        <aside className="flex h-[640px] min-h-0 min-w-0 flex-col rounded-xl border border-border bg-background xl:h-full">
+        {showAssistant && <aside className="flex h-[640px] min-h-0 min-w-0 flex-col rounded-xl border border-border bg-background xl:h-full">
           <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
             {(['assistant', 'history', 'settings'] as const).filter(tab => tab !== 'settings' || !configurationLocked).map((tab) => (
               <button
@@ -448,7 +465,7 @@ export function ArtifactViewer({ id }: { id: string }) {
           )}
             </>
           )}
-        </aside>
+        </aside>}
       </div>
     </div>
   )

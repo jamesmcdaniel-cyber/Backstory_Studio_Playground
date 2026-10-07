@@ -45,34 +45,48 @@ var fmt=function(v,k){if(v==null||isNaN(v))return '–';if(isMoney(k))return mon
 /* ---------- fiscal periods ---------- */
 function fp(m){var y=+m.slice(0,4),mo=+m.slice(5,7),st=CFG.fyStart||1,off=(mo-st+12)%12,fy=st===1?y:(mo>=st?y+1:y);return {fy:'FY'+fy,fq:'Q'+(Math.floor(off/3)+1)};}
 
-/* ---------- global filters ---------- */
-var GF={fy:[],fq:[],type:[],role:[]};
+/* ---------- filters (side panel, or the ROI page's panel when hosted) ---------- */
+var GF={fy:[],fq:[],role:[]};
 function monthOK(m){if(!GF.fy.length&&!GF.fq.length)return true;if(!m)return false;var p=fp(m);return (!GF.fy.length||GF.fy.indexOf(p.fy)>=0)&&(!GF.fq.length||GF.fq.indexOf(p.fq)>=0);}
-function typeOK(t){return GF.type.length?GF.type.indexOf(t)>=0:!/renewal/i.test(t);}
 function roleOK(u){return !GF.role.length||GF.role.indexOf(u.r||'Other')>=0;}
 var ROLE_ORDER=['Account executives','CS / PS','SDR / BDR','Solutions engineering','Leadership','Other'];
-function chipGroup(id,values,key,label){var el=$(id);if(!el)return 0;el.innerHTML=values.map(function(v){return '<button type="button" aria-pressed="false" data-v="'+esc(v)+'">'+esc(label?label(v):v)+'</button>';}).join('');
-  $$(id+' button').forEach(function(b){b.onclick=function(){var v=b.getAttribute('data-v'),a=GF[key],ix=a.indexOf(v);if(ix>=0)a.splice(ix,1);else a.push(v);b.setAttribute('aria-pressed',ix<0);gfChanged();};});return values.length;}
+var OPTIONS={fy:[],fq:[],role:[]};
+function chipGroup(id,values,key){var el=$(id);if(!el)return 0;el.innerHTML=values.map(function(v){return '<button type="button" aria-pressed="'+(GF[key].indexOf(v)>=0)+'" data-v="'+esc(v)+'">'+esc(v)+'</button>';}).join('');
+  $$(id+' button').forEach(function(b){b.onclick=function(){var v=b.getAttribute('data-v'),a=GF[key],ix=a.indexOf(v);if(ix>=0)a.splice(ix,1);else a.push(v);b.setAttribute('aria-pressed',ix<0);gfChanged(true);};});return values.length;}
 function setupGF(){
   var months=D?D.months.slice():(HAS.cells?(ST.cellMonths||[]).slice():[]);
-  var fys=uniq(months.map(function(m){return fp(m).fy;})).sort();
-  var types=[];if(D)types=types.concat(D.types);if(HAS.cells)types=types.concat(ST.cellTypes||[]);if(!D&&OPP)types=types.concat(Object.keys(OPP).filter(function(t){return t!=='All (excl. renewals)';}));
-  types=uniq(types).filter(function(t){return t&&!/framework/i.test(t);});
-  var roles=U?ROLE_ORDER.filter(function(r){return U.users.some(function(u){return (u.r||'Other')===r&&u.r;});}):[];
-  if(!chipGroup('#gfFy',fys,'fy'))$('#gfFyWrap').classList.add('hidden');
-  if(!fys.length)$('#gfFqWrap').classList.add('hidden');else chipGroup('#gfFq',['Q1','Q2','Q3','Q4'],'fq');
-  if(!chipGroup('#gfType',types,'type'))$('#gfTypeWrap').classList.add('hidden');
-  if(!chipGroup('#gfRole',roles,'role'))$('#gfRoleWrap').classList.add('hidden');
-  $('#gfClear').onclick=function(){GF.fy=[];GF.fq=[];GF.type=[];GF.role=[];$$('.gfbar .chips button').forEach(function(b){b.setAttribute('aria-pressed','false');});gfChanged();};
+  OPTIONS.fy=uniq(months.map(function(m){return fp(m).fy;})).sort();
+  OPTIONS.fq=OPTIONS.fy.length?['Q1','Q2','Q3','Q4']:[];
+  OPTIONS.role=U?ROLE_ORDER.filter(function(r){return U.users.some(function(u){return u.r&&(u.r||'Other')===r;});}):[];
+  drawChips();
+  $('#gfClear').onclick=function(){GF.fy=[];GF.fq=[];GF.role=[];drawChips();gfChanged(true);};
+  var open=function(on){$('#filterPanel').hidden=!on;$('#filterScrim').hidden=!on;$('#filtersBtn').setAttribute('aria-expanded',on);if(on)$('#filtersClose').focus();else $('#filtersBtn').focus();};
+  $('#filtersBtn').onclick=function(){open($('#filterPanel').hidden);};
+  $('#filtersClose').onclick=function(){open(false);};
+  $('#filterScrim').onclick=function(){open(false);};
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!$('#filterPanel').hidden)open(false);});
+  if(!OPTIONS.fy.length&&!OPTIONS.role.length)$('#filtersBtn').classList.add('hidden');
 }
-function gfChanged(){var parts=[];if(GF.fy.length)parts.push(GF.fy.join(', '));if(GF.fq.length)parts.push(GF.fq.join(', '));if(GF.type.length)parts.push(GF.type.join(', '));if(GF.role.length)parts.push(GF.role.join(', '));
+function drawChips(){
+  if(!chipGroup('#gfFy',OPTIONS.fy,'fy'))$('#gfFyWrap').classList.add('hidden');
+  if(!chipGroup('#gfFq',OPTIONS.fq,'fq'))$('#gfFqWrap').classList.add('hidden');
+  if(!chipGroup('#gfRole',OPTIONS.role,'role'))$('#gfRoleWrap').classList.add('hidden');
+}
+function gfChanged(fromPanel){var parts=[].concat(GF.fy,GF.fq,GF.role);
   var b=$('#gfBadge');b.textContent=parts.length?'Filtered: '+parts.join(' · '):'';b.style.display=parts.length?'inline-block':'none';
+  if(fromPanel&&HOSTED)post({type:'backstory:roi-filters-changed',filters:GF});
   rerender();}
-function gfForTab(t){var dealish=t==='deals',people=t==='activity'||t==='adoption';
-  $('#gfbar').classList.toggle('hidden',!(dealish||people));
-  ['#gfFyWrap','#gfFqWrap','#gfTypeWrap'].forEach(function(s){$(s).style.display=dealish?'':'none';});
-  $('#gfRoleWrap').style.display=people?'':'none';
-  $('#gfHint').textContent=dealish?'Fiscal year, quarter and deal type slice every deal and stage view. With no deal type chosen, renewals are left out.':'Role narrows the reps behind every number on this tab.';}
+/* The ROI page hosts this report: its own side panel holds the filters, and
+   sends them here; this page's menu steps aside. Messages from anything but
+   the parent are ignored, and filter values must be ones offered. */
+var HOSTED=false;
+function post(msg){try{if(window.parent&&window.parent!==window)window.parent.postMessage(msg,'*');}catch(e){}}
+window.addEventListener('message',function(e){
+  if(e.source!==window.parent||window.parent===window)return;var m=e.data||{};
+  if(m.type==='backstory:roi-host'){HOSTED=true;document.body.classList.add('hosted');post({type:'backstory:roi-ready',options:OPTIONS,filters:GF});}
+  if(m.type==='backstory:roi-filters'&&m.filters){var f=m.filters;['fy','fq','role'].forEach(function(k){GF[k]=Array.isArray(f[k])?f[k].filter(function(v){return OPTIONS[k].indexOf(v)>=0;}):[];});drawChips();gfChanged(false);}
+  if(m.type==='backstory:roi-tab'&&typeof m.tab==='string')showTab(m.tab);
+});
 
 /* ---------- theme ---------- */
 var themeMode='auto';
@@ -127,9 +141,12 @@ function dealGroup(ix){if(ix.length<20)return null;var order=ix.slice().sort(fun
   var levels=lv.map(function(b,k){var o=bucket(b);o.level=LEVELS[k];return o;}).filter(function(r){return r.n>0;});
   var won=0;ix.forEach(function(i){won+=D.w[i];});
   return {deciles:deciles,levels:levels,n:n,win_rate:r1(won/n*100),r_win:deciles.length>2?Math.round(corr(deciles.map(function(r){return r.dec;}),deciles.map(function(r){return r.win_rate||0;}))*100)/100:null};}
+var ALL_TYPES='All (excl. renewals)';
+function dealType(){var el=$('#dealType');return el&&el.value?el.value:ALL_TYPES;}
+function typeOK(t){var sel=dealType();return sel===ALL_TYPES?!/renewal/i.test(t):t===sel;}
 function dealIdx(opts){opts=opts||{};var incl=opts.incl!=null?opts.incl:$('#dealIncl').checked,out=[];if(!D)return out;
   for(var i=0;i<D.w.length;i++){if(!incl&&D.x[i])continue;if(!typeOK(D.types[D.t[i]]))continue;if(!opts.ignoreMonth&&!monthOK(D.m[i]>=0?D.months[D.m[i]]:null))continue;if(opts.extra&&!opts.extra(i))continue;out.push(i);}return out;}
-function legacyTable(incl){if(!OPP)return null;var t=(GF.type.length===1&&OPP[GF.type[0]])?GF.type[0]:(OPP['All (excl. renewals)']?'All (excl. renewals)':Object.keys(OPP)[0]);return OPP[t][incl?'incl':'excl'];}
+function legacyTable(incl){if(!OPP)return null;var t=OPP[dealType()]?dealType():(OPP[ALL_TYPES]?ALL_TYPES:Object.keys(OPP)[0]);return OPP[t][incl?'incl':'excl'];}
 function currentDeals(){if(D)return dealGroup(dealIdx());return legacyTable($('#dealIncl')&&$('#dealIncl').checked);}
 function defaultDeals(){if(D){var renew=D.types.map(function(t){return /renewal/i.test(t);}),ix=[];for(var i=0;i<D.w.length;i++)if(!renew[D.t[i]]&&!D.x[i])ix.push(i);return dealGroup(ix);}return OPP?(OPP['All (excl. renewals)']||OPP[Object.keys(OPP)[0]]).excl:null;}
 var lvl=function(g,prefix){return g?g.levels.filter(function(r){return r.level.indexOf(prefix)===0;})[0]:null;};
@@ -182,29 +199,32 @@ function calc(){
   $('#cN').textContent=n0(nYr);$('#cLift').textContent=n0(lift);$('#cWR').textContent=(lv[0].win_rate||0).toFixed(1)+'% → '+(lv[1].win_rate||0).toFixed(1)+'%';$('#cWins').textContent=n0(wins);$('#cBig').textContent=money(wins*v);
 }
 
-/* ---------- activity trends ---------- */
-var leadMetric=MK.indexOf('dir_vp_exec')>=0?'dir_vp_exec':MK[0], leadMode='cfg', mixKind='meetings';
-function setupActivity(){
+/* ---------- leading indicators ---------- */
+var leadMetric=MK.indexOf('dir_vp_exec')>=0?'dir_vp_exec':MK[0], mixKind='meetings';
+var W=NM?{L6:rng(NM-6,NM-1),P6:rng(NM-12,NM-7),PY:rng(NM-18,NM-13),L12:rng(NM-12,NM-1),P12:rng(0,NM-13),L3:rng(NM-3,NM-1),P3:rng(NM-6,NM-4)}:{};
+/* The comparison the analysis was configured with, as one of the dashboard's own buttons (or Custom with its months). */
+var leadMode=(function(){if(CFG.custom)return 'custom';var n=CFG.windowMonths||6,c=CFG.comparison||'prior';if(n===6&&c==='prior')return 'pp';if(n===6&&c==='year_ago')return 'yoy';if(n===12&&c==='prior')return 'y12';if(n===3&&c==='prior')return 'q';return 'custom';})();
+function setupLead(){
+  $('#leadMetric').innerHTML=MK.map(function(k){return '<button type="button" data-k="'+k+'" aria-pressed="'+(k===leadMetric)+'">'+esc(LAB[k])+'</button>';}).join('');
+  $$('#leadMetric button').forEach(function(b){b.onclick=function(){leadMetric=b.getAttribute('data-k');$$('#leadMetric button').forEach(function(x){x.setAttribute('aria-pressed',x===b);});renderLead();};});
   var opts=MON.map(function(m,i){return '<option value="'+i+'">'+mlab(m)+'</option>';}).join('');
   ['bS','bE','oS','oE'].forEach(function(id){document.getElementById(id).innerHTML=opts;});
-  $('#bS').value=BASE[0]!=null?BASE[0]:0;$('#bE').value=BASE.length?BASE[BASE.length-1]:0;$('#oS').value=OBS[0]!=null?OBS[0]:0;$('#oE').value=OBS.length?OBS[OBS.length-1]:NM-1;
+  $('#bS').value=BASE[0]!=null?BASE[0]:Math.max(0,NM-12);$('#bE').value=BASE.length?BASE[BASE.length-1]:Math.max(0,NM-7);$('#oS').value=OBS[0]!=null?OBS[0]:Math.max(0,NM-6);$('#oE').value=OBS.length?OBS[OBS.length-1]:NM-1;
   if(!HAS.usage)$('#leadPop').innerHTML='<option value="all">All reps</option>';
-  $('#leadMode button[data-v="cfg"]').textContent='As configured ('+(CFG.obsLabel||wl(OBS))+' vs '+(CFG.baseLabel||wl(BASE))+')';
-  $('#leadMode button[data-v="pp"]').textContent='Last '+WN+' months vs the '+WN+' before';
-  $('#leadMode button[data-v="yoy"]').textContent='Last '+WN+' months vs a year earlier';
-  segBind('#leadMode',function(v){leadMode=v;$('#leadCustom').classList.toggle('on',v==='custom');renderActivity();});
+  segSet('#leadMode',leadMode);$('#leadCustom').classList.toggle('on',leadMode==='custom');
+  segBind('#leadMode',function(v){leadMode=v;$('#leadCustom').classList.toggle('on',v==='custom');renderLead();});
   segBind('#mixKind',function(v){mixKind=v;renderMix();});
-  ['bS','bE','oS','oE','leadPop'].forEach(function(id){document.getElementById(id).addEventListener('change',renderActivity);});
+  ['bS','bE','oS','oE','leadPop'].forEach(function(id){document.getElementById(id).addEventListener('change',renderLead);});
   if(!mat('in_person_meeting_count')&&!mat('received_email_count'))$('#mixBlock').classList.add('hidden');
   else{if(!mat('in_person_meeting_count')&&!mat('conference_call_count')){mixKind='emails';segSet('#mixKind','emails');$('#mixKind button[data-v="meetings"]').classList.add('hidden');}
     if(!mat('received_email_count'))$('#mixKind button[data-v="emails"]').classList.add('hidden');}
   if(!mat('director_meeting_count')&&!mat('vp_meeting_count'))$('#seniorBlock').classList.add('hidden');
 }
 function leadWindows(){
-  var last=rng(NM-WN,NM-1);
-  if(leadMode==='cfg')return [BASE,OBS,'Baseline ('+wl(BASE)+')','Observation ('+wl(OBS)+')'];
-  if(leadMode==='pp'){var pr=rng(NM-2*WN,NM-WN-1);return [pr,last,'Prior '+WN+' months ('+wl(pr)+')','Last '+WN+' months ('+wl(last)+')'];}
-  if(leadMode==='yoy'){var py=shift12(last);return [py,last,'Same months last year ('+wl(py)+')','Last '+WN+' months ('+wl(last)+')'];}
+  if(leadMode==='pp')return [W.P6,W.L6,'Prior 6 months ('+wl(W.P6)+')','Last 6 months ('+wl(W.L6)+')'];
+  if(leadMode==='yoy')return [W.PY,W.L6,'Same period last year ('+wl(W.PY)+')','Last 6 months ('+wl(W.L6)+')'];
+  if(leadMode==='y12')return [W.P12,W.L12,'Prior 12 months ('+wl(W.P12)+')','Last 12 months ('+wl(W.L12)+')'];
+  if(leadMode==='q')return [W.P3,W.L3,'Prior quarter ('+wl(W.P3)+')','Last quarter ('+wl(W.L3)+')'];
   var a=+$('#bS').value,b=+$('#bE').value,c=+$('#oS').value,d=+$('#oE').value;if(b<a){var t=a;a=b;b=t;}if(d<c){var t2=c;c=d;d=t2;}
   return [rng(a,b),rng(c,d),'Baseline ('+mlab(MON[a])+' – '+mlab(MON[b])+')','Observation ('+mlab(MON[c])+' – '+mlab(MON[d])+')'];
 }
@@ -213,17 +233,19 @@ function bands(bw,ow,B,O){var s=[],hz=css('--horizon');
   if(ow.length){s.push({type:'rect',xref:'x',yref:'paper',x0:ow[0]-.5,x1:ow[ow.length-1]+.5,y0:0,y1:1,fillcolor:hz,opacity:.16,line:{width:0},layer:'below'});if(O!=null&&!isNaN(O))s.push({type:'line',xref:'x',x0:ow[0]-.5,x1:ow[ow.length-1]+.5,y0:O,y1:O,line:{color:css('--horizon-deep'),width:2,dash:'dot'}});}
   return s;}
 var monthAxis=function(extra){return Object.assign({tickmode:'array',tickvals:MON.map(function(m,i){return i;}).filter(function(i){return i%3===0;}),ticktext:MON.filter(function(m,i){return i%3===0;}).map(mlab),gridcolor:'rgba(0,0,0,0)',linecolor:css('--rule-strong'),tickfont:{family:'Chivo Mono, monospace',size:11}},extra||{});};
-function renderActivity(){
+function renderLead(){
   var pop=$('#leadPop').value,mask=popMask(pop),w=leadWindows(),bw=w[0],ow=w[1],bl=w[2],ol=w[3];
   var B=winAvg(mask,bw),O=winAvg(mask,ow),k=leadMetric,series=monthly(mask,k),hz=css('--horizon');
-  $('#leadTiles').innerHTML=MK.map(function(m){var c=pct(O[m],B[m]);return '<button type="button" class="tile" aria-pressed="'+(m===k)+'" data-k="'+m+'"><div class="k">'+esc(LAB[m])+'</div><div class="v">'+fmt(O[m],m)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+fmt(B[m],m)+'</div></button>';}).join('');
-  $$('#leadTiles .tile').forEach(function(b){b.onclick=function(){leadMetric=b.getAttribute('data-k');renderActivity();};});
   $('#leadTitle').textContent=LAB[k]+', monthly average per rep';
   plot('leadTrend',[{type:'scatter',mode:'lines+markers',x:MON.map(function(m,i){return i;}),y:series,line:{color:hz,width:2.5,shape:'spline',smoothing:.4},marker:{size:6,color:hz},
     customdata:MON.map(mlab),hovertemplate:'%{customdata}<br>'+(isMoney(k)?'$%{y:,.0f}':'%{y:.2f}')+'<extra></extra>',name:LAB[k]}],
     base({shapes:bands(bw,ow,B[k],O[k]),showlegend:false,xaxis:monthAxis(),yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
   var ch=pct(O[k],B[k]),popName=$('#leadPop').selectedOptions[0].text.toLowerCase()+(GF.role.length?' ('+GF.role.join(', ')+')':'');
-  $('#leadDyn').innerHTML='For '+esc(popName)+', <b>'+esc(LAB[k].toLowerCase())+'</b> averaged <b class="num">'+fmt(O[k],k)+'</b> per rep per month in the observation window ('+esc(ol.replace(/^[^(]*\(|\)$/g,''))+') vs <b class="num">'+fmt(B[k],k)+'</b> in the baseline ('+esc(bl.replace(/^[^(]*\(|\)$/g,''))+'), a change of <b class="num">'+sp(ch)+'</b>. '+O.n.toLocaleString()+' reps in the observation window, '+B.n.toLocaleString()+' in the baseline.';
+  $('#leadDyn').innerHTML='For '+esc(popName)+', <b>'+esc(LAB[k].toLowerCase())+'</b> averaged <b class="num">'+fmt(O[k],k)+'</b> per rep per month in the '+esc(ol.toLowerCase().replace(/ \(.*/,''))+' window vs <b class="num">'+fmt(B[k],k)+'</b> in the baseline, a change of <b class="num">'+sp(ch)+'</b>. '+O.n.toLocaleString()+' reps in the observation window, '+B.n.toLocaleString()+' in the baseline.';
+  $('#leadTblSub').textContent=bl+' vs '+ol+'. Population: '+$('#leadPop').selectedOptions[0].text+(GF.role.length?' · '+GF.role.join(', '):'')+'.';
+  $('#leadTbl').innerHTML='<thead><tr><th>Metric</th><th>Baseline</th><th>Observation</th><th>Change</th></tr></thead><tbody>'+
+    MK.map(function(m){var c=pct(O[m],B[m]);return '<tr><td>'+esc(LAB[m])+'</td><td>'+fmt(B[m],m)+'</td><td>'+fmt(O[m],m)+'</td><td class="'+(c>=0?'up':'down')+'">'+sp(c)+'</td></tr>';}).join('')+
+    '<tr><td>Reps in window</td><td>'+B.n.toLocaleString()+'</td><td>'+O.n.toLocaleString()+'</td><td></td></tr></tbody>';
   renderMix();renderSenior();
 }
 function renderMix(){
@@ -247,65 +269,73 @@ function renderSenior(){
     base({barmode:'group',xaxis:xcat()}));
 }
 
-/* ---------- adoption impact ---------- */
-var cohortView=CFG.cohort==='users'?'users':'tiers', cohortWin='obs', rosterTier='All', rosterSort={k:'ev',dir:-1}, trendMetric=MK.indexOf('dir_vp_exec')>=0?'dir_vp_exec':MK[0];
-var cohortsOf=function(v){return v==='users'?['User','Non-user']:['High','Medium','Low'];};
+/* ---------- adoption tiers / users vs non-users ---------- */
+var adoptWin='obs', usersWin='obs', rosterTier='All', rosterSort={k:'ev',dir:-1};
+var WN_LABEL='Last '+(OBS.length||WN)+' months';
 var cohortName=function(c){return c==='User'?'Backstory users':c==='Non-user'?'Non-users':c+' adopters';};
-function cohortWindows(){return cohortWin==='l12'?[L12,P12,'last 12 months']:[OBS,BASE,'observation window'];}
-function setupAdoption(){
-  segSet('#cohortView',cohortView);
-  segBind('#cohortView',function(v){cohortView=v;rosterTier='All';renderAdoption();});
-  segBind('#cohortWin',function(v){cohortWin=v;renderAdoption();});
-  $('#trendMetric').innerHTML=MK.map(function(k){return '<option value="'+k+'"'+(k===trendMetric?' selected':'')+'>'+esc(LAB[k])+'</option>';}).join('');
-  $('#trendMetric').onchange=function(){trendMetric=$('#trendMetric').value;renderCohortTrend();};
+function winsFor(w){return w==='l12'?[L12,P12,'last 12 months','prior 12 months ('+wl(P12)+')']:[OBS,BASE,'observation window ('+wl(OBS)+')','baseline ('+wl(BASE)+')'];}
+function setupCohorts(){
+  ['#adoptWin','#usersWin'].forEach(function(sel){var b=$(sel+' button[data-v="obs"]');b.textContent=WN_LABEL;if((OBS.length||WN)===12)$(sel+' button[data-v="l12"]').classList.add('hidden');});
+  segBind('#adoptWin',function(v){adoptWin=v;renderAdopt();});
+  segBind('#usersWin',function(v){usersWin=v;renderUsers();});
+  var metricOpts=function(sel){return MK.map(function(k){return '<option value="'+k+'"'+(k===sel?' selected':'')+'>'+esc(LAB[k])+'</option>';}).join('');};
+  var def=MK.indexOf('dir_vp_exec')>=0?'dir_vp_exec':MK[0];
+  $('#adoptTrendMetric').innerHTML=metricOpts(def);$('#adoptTrendMetric').onchange=function(){cohortTrend('adoptTrend',['High','Medium','Low'],$('#adoptTrendMetric').value);};
+  $('#usersTrendMetric').innerHTML=metricOpts(def);$('#usersTrendMetric').onchange=function(){var k=$('#usersTrendMetric').value;$('#usersTrendTitle').textContent=k==='dir_vp_exec'?'The senior-meeting gap over time':'The gap over time: '+LAB[k].toLowerCase();cohortTrend('usersTrend',['User','Non-user'],k);};
   $('#rosterQ').addEventListener('input',renderRoster);
   if(!HAS.roster)$('#rosterBlock').classList.add('hidden');
 }
-function renderAdoption(){
-  var C=cohortsOf(cohortView),cw=cohortWindows(),A={},Bs={},P=palette();
-  C.forEach(function(c){A[c]=winAvg(popMask(c),cw[0]);Bs[c]=winAvg(popMask(c),cw[1]);});
-  var nT={High:0,Medium:0,Low:0};U.users.forEach(function(u){if(u.t&&roleOK(u))nT[u.t]++;});var nUser=U.users.filter(function(u){return u.f==='User'&&roleOK(u);}).length,nAll=U.users.filter(roleOK).length;
-  $('#adoptIntro').innerHTML=cohortView==='tiers'
-    ?U.nUsage+' reps appear in both the activity extract and the usage file. They are split into equal thirds by usage score: high (more than '+U.tierCuts[1]+', '+nT.High+' reps), medium ('+(U.tierCuts[0]+1)+'–'+U.tierCuts[1]+', '+nT.Medium+') and low ('+U.tierCuts[0]+' or fewer, '+nT.Low+').'
-    :'Users are the '+nUser+' reps with usage above the bottom 5%. Non-users are the '+(nAll-nUser).toLocaleString()+' other reps in the activity extract: no usage at all, or the '+U.nBottom+' lowest-usage reps.';
-  var top=C[0],bot=C[C.length-1],kk=['meeting_count','dir_vp_exec','people_engaged','pipeline_created'].filter(function(k){return MK.indexOf(k)>=0;});
-  $('#cohortKpis').innerHTML=kk.map(function(k){var c=pct(A[top][k],A[bot][k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' · '+esc(cohortName(top).toLowerCase())+'</div><div class="v">'+fmt(A[top][k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+esc(cohortName(bot).toLowerCase())+' ('+fmt(A[bot][k],k)+')</div></div>';}).join('');
-  if(cohortView==='tiers'){
-    $('#adoptIndexTitle').textContent='Activity indexed to low adopters';$('#adoptIndexSub').textContent='Low adopters = 100. Bars above 100 mean more activity per rep per month, '+cw[2]+'.';
-    plot('adoptIndex',['High','Medium'].map(function(t,i){return {type:'bar',name:t+' adopters',x:MK.map(function(k){return LAB[k];}),y:MK.map(function(k){return A[t][k]/A.Low[k]*100;}),marker:{color:i?css('--d2'):css('--d1')},
-      customdata:MK.map(function(k){return [fmt(A[t][k],k),fmt(A.Low[k],k)];}),hovertemplate:'%{x}<br>'+t+': %{customdata[0]} vs Low: %{customdata[1]}<br>Index %{y:.0f}<extra></extra>'};}),
-      base({barmode:'group',shapes:[{type:'line',xref:'paper',x0:0,x1:1,y0:100,y1:100,line:{color:css('--text3'),width:1.5,dash:'dash'}}],
-        annotations:[{xref:'paper',x:1,y:100,text:'Low = 100',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:'Chivo Mono, monospace',size:11,color:css('--text3')}}],
-        xaxis:{tickangle:0,automargin:true,gridcolor:'rgba(0,0,0,0)',tickfont:{size:11}},margin:{l:48,r:10,t:14,b:80}}));
-    $('#adoptNote').innerHTML=paras(N.notes.adopt)||'<p class="muted">—</p>';
-  } else {
-    var lifts=MK.map(function(k){return pct(A.User[k],A['Non-user'][k]);});
-    $('#adoptIndexTitle').textContent='How much more users do, per rep per month';$('#adoptIndexSub').textContent='Percent difference, users vs non-users, '+cw[2]+'.';
-    plot('adoptIndex',[{type:'bar',orientation:'h',y:MK.map(function(k){return LAB[k];}),x:lifts,marker:{color:lifts.map(function(v){return v>=0?css('--d1'):css('--neg');})},
-      text:lifts.map(sp),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},
-      customdata:MK.map(function(k){return [fmt(A.User[k],k),fmt(A['Non-user'][k],k)];}),hovertemplate:'%{y}<br>Users %{customdata[0]} vs non-users %{customdata[1]}<extra></extra>'}],
-      base({margin:{l:200,r:60,t:10,b:36},yaxis:{autorange:'reversed',automargin:true,tickfont:{size:13}},xaxis:{ticksuffix:'%',zeroline:true,zerolinecolor:css('--rule-strong'),gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},showlegend:false}));
-    $('#adoptNote').innerHTML=paras(N.notes.users)||'<p class="muted">—</p>';
-  }
+function cohortKpis(el,C,A){var P=palette(),top=C[0],bot=C[C.length-1],kk=['meeting_count','dir_vp_exec','people_engaged','pipeline_created'].filter(function(k){return MK.indexOf(k)>=0;});
+  $(el).innerHTML=kk.map(function(k){var c=pct(A[top][k],A[bot][k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' · '+esc(cohortName(top).toLowerCase())+'</div><div class="v">'+fmt(A[top][k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+esc(cohortName(bot).toLowerCase())+' ('+fmt(A[bot][k],k)+')</div></div>';}).join('');}
+function cohortBars(senId,pipeId,C,w){var P=palette();
   var sk=[['director_meeting_count','Director'],['vp_meeting_count','VP'],['executive_meeting_count','Executive']].filter(function(p){return mat(p[0]);});
-  plot('cohortSenior',sk.map(function(p,i){return {type:'bar',name:p[1],x:C.map(cohortName),y:C.map(function(c){return winAvg(popMask(c),cw[0],[p[0]])[p[0]];}),marker:{color:P[i]},hovertemplate:'%{x}<br>'+p[1]+': %{y:.2f}<extra></extra>'};}),base({barmode:'group',margin:{l:40,r:8,t:10,b:60},xaxis:xcat()}));
-  if(MK.indexOf('pipeline_created')>=0)plot('cohortPipeline',[{type:'bar',x:C.map(cohortName),y:C.map(function(c){return A[c].pipeline_created;}),marker:{color:C.map(function(c,i){return P[i];})},text:C.map(function(c){return money(A[c].pipeline_created);}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
-  else $('[data-section="cohortPipeline"]').classList.add('hidden');
-  var groups=cohortView==='tiers'?['High','Medium','Low','No usage']:['User','Non-user'];
-  var counts=groups.map(function(g){return U.users.filter(function(u){if(!roleOK(u))return false;if(g==='No usage')return !u.t;if(g==='User'||g==='Non-user')return u.f===g;return u.t===g;}).length;});
-  var donut=plot('cohortDonut',[{type:'pie',hole:.58,labels:groups.map(function(g){return g==='No usage'?'No usage data':cohortName(g);}),values:counts,customdata:groups,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
+  plot(senId,sk.map(function(p,i){return {type:'bar',name:p[1],x:C.map(cohortName),y:C.map(function(c){return winAvg(popMask(c),w,[p[0]])[p[0]];}),marker:{color:P[i]},hovertemplate:'%{x}<br>'+p[1]+': %{y:.2f}<extra></extra>'};}),base({barmode:'group',margin:{l:40,r:8,t:10,b:60},xaxis:xcat()}));
+  if(MK.indexOf('pipeline_created')<0){$('#'+pipeId).closest('.card').classList.add('hidden');return;}
+  var v=C.map(function(c){return winAvg(popMask(c),w,['pipeline_created']).pipeline_created;});
+  plot(pipeId,[{type:'bar',x:C.map(cohortName),y:v,marker:{color:C.map(function(c,i){return P[i];})},text:v.map(money),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+}
+function cohortTrend(id,C,k){var P=palette();
+  plot(id,C.map(function(c,i){return {type:'scatter',mode:'lines',name:cohortName(c),x:MON.map(mlab),y:monthly(popMask(c),k),line:{color:i===C.length-1?css('--text3'):P[i],width:2.4,dash:i===C.length-1?'dot':'solid'}};}),
+    base({hovermode:'x unified',xaxis:{gridcolor:'rgba(0,0,0,0)',nticks:8,linecolor:css('--rule-strong'),tickfont:{family:'Chivo Mono, monospace',size:11}},yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+}
+function renderAdopt(){
+  var C=['High','Medium','Low'],w=winsFor(adoptWin),A={},Bs={},P=palette();
+  C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);Bs[c]=winAvg(popMask(c),w[1]);});
+  var nT={High:0,Medium:0,Low:0};U.users.forEach(function(u){if(u.t&&roleOK(u))nT[u.t]++;});
+  $('#adoptIntro').innerHTML=U.nUsage+' reps appear in both the activity extract and the usage file. They\'re split into equal thirds by usage score: high (more than '+U.tierCuts[1]+', '+nT.High+' reps), medium ('+(U.tierCuts[0]+1)+'–'+U.tierCuts[1]+', '+nT.Medium+') and low ('+U.tierCuts[0]+' or fewer, '+nT.Low+').'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
+  cohortKpis('#adoptKpis',C,A);
+  var cols={High:css('--d1'),Medium:css('--d2')};
+  plot('adoptIndex',['High','Medium'].map(function(t){return {type:'bar',name:t+' adopters',x:MK.map(function(k){return LAB[k];}),y:MK.map(function(k){return A[t][k]/A.Low[k]*100;}),marker:{color:cols[t]},
+    customdata:MK.map(function(k){return [fmt(A[t][k],k),fmt(A.Low[k],k)];}),hovertemplate:'%{x}<br>'+t+': %{customdata[0]} vs Low: %{customdata[1]}<br>Index %{y:.0f}<extra></extra>'};}),
+    base({barmode:'group',shapes:[{type:'line',xref:'paper',x0:0,x1:1,y0:100,y1:100,line:{color:css('--text3'),width:1.5,dash:'dash'}}],
+      annotations:[{xref:'paper',x:1,y:100,text:'Low = 100',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:'Chivo Mono, monospace',size:11,color:css('--text3')}}],
+      xaxis:{tickangle:0,automargin:true,gridcolor:'rgba(0,0,0,0)',tickfont:{size:11}},margin:{l:48,r:10,t:14,b:80}}));
+  cohortBars('adoptSenior','adoptPipeline',C,w[0]);
+  var groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return U.users.filter(function(u){if(!roleOK(u))return false;return g==='No usage'?!u.t:u.t===g;}).length;});
+  var donut=plot('adoptDonut',[{type:'pie',hole:.58,labels:groups.map(function(g){return g==='No usage'?'No usage data':cohortName(g);}),values:counts,customdata:groups,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
   if(donut&&donut.on&&!donut._roiBound){donut._roiBound=true;donut.on('plotly_click',function(e){var g=e.points&&e.points[0]&&e.points[0].customdata;if(g==null)return;rosterTier=Array.isArray(g)?g[0]:g;renderRoster();var rb=$('#rosterBlock');if(rb)rb.scrollIntoView({behavior:'smooth',block:'start'});});}
-  renderCohortTrend();
-  $('#cohortTblSub').textContent='Averages per rep per month in the '+cw[2]+'; change against each cohort\'s own '+(cohortWin==='l12'?'prior 12 months ('+wl(P12)+')':'baseline ('+wl(BASE)+')')+'.';
-  $('#cohortTbl').innerHTML='<thead><tr><th>Metric</th>'+C.map(function(c){return '<th>'+esc(cohortName(c))+'</th><th>Change</th>';}).join('')+'</tr></thead><tbody>'+
-    MK.map(function(k){return '<tr><td>'+esc(LAB[k])+'</td>'+C.map(function(c){var ch=pct(A[c][k],Bs[c][k]);return '<td>'+fmt(A[c][k],k)+'</td><td class="'+(isNaN(ch)?'':ch>=0?'up':'down')+'">'+sp(ch)+'</td>';}).join('')+'</tr>';}).join('')+
-    '<tr><td>Reps</td>'+C.map(function(c){return '<td>'+A[c].n.toLocaleString()+'</td><td></td>';}).join('')+'</tr></tbody>';
+  cohortTrend('adoptTrend',C,$('#adoptTrendMetric').value);
+  $('#adoptTblSub').textContent='Averages per rep per month in the '+w[2]+'; change against each tier\'s own '+w[3]+'.';
+  $('#adoptTbl').innerHTML='<thead><tr><th>Metric</th>'+C.map(function(t){return '<th>'+t+'</th><th>Change</th>';}).join('')+'</tr></thead><tbody>'+
+    MK.map(function(k){return '<tr><td>'+esc(LAB[k])+'</td>'+C.map(function(t){var c=pct(A[t][k],Bs[t][k]);return '<td>'+fmt(A[t][k],k)+'</td><td class="'+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+'</td>';}).join('')+'</tr>';}).join('')+
+    '<tr><td>Reps</td>'+C.map(function(t){return '<td>'+A[t].n+'</td><td></td>';}).join('')+'</tr></tbody>';
   renderRoster();
 }
-function renderCohortTrend(){
-  var C=cohortsOf(cohortView),P=palette(),k=trendMetric;
-  plot('usersTrend',C.map(function(c,i){return {type:'scatter',mode:'lines',name:cohortName(c),x:MON.map(mlab),y:monthly(popMask(c),k),line:{color:i===C.length-1?css('--text3'):P[i],width:2.4,dash:i===C.length-1?'dot':'solid'}};}),
-    base({hovermode:'x unified',xaxis:{gridcolor:'rgba(0,0,0,0)',nticks:8,linecolor:css('--rule-strong'),tickfont:{family:'Chivo Mono, monospace',size:11}},yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+function renderUsers(){
+  var C=['User','Non-user'],w=winsFor(usersWin),A={};C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);});
+  var nUser=U.users.filter(function(u){return u.f==='User'&&roleOK(u);}).length,nAll=U.users.filter(roleOK).length;
+  $('#usersIntro').innerHTML='Users are the '+nUser+' reps with usage above the bottom 5%. Non-users are the '+(nAll-nUser).toLocaleString()+' reps in the activity extract with no usage, plus the '+U.nBottom+' lowest-usage reps.'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
+  cohortKpis('#usersKpis',C,A);
+  var lifts=MK.map(function(k){return pct(A.User[k],A['Non-user'][k]);});
+  plot('usersLift',[{type:'bar',orientation:'h',y:MK.map(function(k){return LAB[k];}),x:lifts,marker:{color:lifts.map(function(v){return v>=0?css('--d1'):css('--neg');})},
+    text:lifts.map(sp),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},
+    customdata:MK.map(function(k){return [fmt(A.User[k],k),fmt(A['Non-user'][k],k)];}),hovertemplate:'%{y}<br>Users %{customdata[0]} vs non-users %{customdata[1]}<extra></extra>'}],
+    base({margin:{l:200,r:60,t:10,b:36},yaxis:{autorange:'reversed',automargin:true,tickfont:{size:13}},xaxis:{ticksuffix:'%',zeroline:true,zerolinecolor:css('--rule-strong'),gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},showlegend:false}));
+  cohortBars('usersSenior','usersPipeline',C,w[0]);
+  cohortTrend('usersTrend',C,$('#usersTrendMetric').value);
+  $('#usersTbl').innerHTML='<thead><tr><th>Metric</th><th>Users</th><th>Non-users</th><th>Difference</th></tr></thead><tbody>'+
+    MK.map(function(k,i){return '<tr><td>'+esc(LAB[k])+'</td><td>'+fmt(A.User[k],k)+'</td><td>'+fmt(A['Non-user'][k],k)+'</td><td class="'+(lifts[i]>=0?'up':'down')+'">'+sp(lifts[i])+'</td></tr>';}).join('')+
+    '<tr><td>Reps</td><td>'+A.User.n+'</td><td>'+A['Non-user'].n.toLocaleString()+'</td><td></td></tr></tbody>';
 }
 var ROSTER_COLS=[['n','Name'],['tier','Cohort'],['r','Role'],['ti','Team or title'],['ev','Usage score'],['a','Account views'],['o','Opportunity views'],['meeting_count','Meetings'],['vp_meeting_count','VP meetings'],['executive_meeting_count','Exec meetings'],['pipeline_created','Pipeline created'],['last','Last active']];
 var rosterRows=null;
@@ -313,7 +343,7 @@ function buildRoster(){rosterRows=U.users.map(function(u,i){var row={i:i,n:u.n||
   ['meeting_count','vp_meeting_count','executive_meeting_count','pipeline_created'].forEach(function(k){row[k]=userAvg(i,k,OBS);});return row;});}
 function renderRoster(){
   if(!HAS.roster)return;if(!rosterRows)buildRoster();
-  var tiers=cohortView==='users'?['All','User','Non-user']:['All','High','Medium','Low','No usage'];if(tiers.indexOf(rosterTier)<0)rosterTier='All';
+  var tiers=['All','High','Medium','Low','No usage','User','Non-user'];if(tiers.indexOf(rosterTier)<0)rosterTier='All';
   $('#rosterTier').innerHTML=tiers.map(function(t){return '<button type="button" aria-pressed="'+(t===rosterTier)+'" data-v="'+t+'">'+esc(t==='All'?'All':t==='No usage'?'No usage data':cohortName(t))+'</button>';}).join('');
   $$('#rosterTier button').forEach(function(b){b.onclick=function(){rosterTier=b.getAttribute('data-v');renderRoster();};});
   var q=($('#rosterQ').value||'').toLowerCase();
@@ -328,22 +358,24 @@ function renderRoster(){
   $('#rosterCount').textContent='Showing '+Math.min(250,rows.length).toLocaleString()+' of '+rows.length.toLocaleString()+' reps';
 }
 
-/* ---------- deal intelligence ---------- */
-var dealView='levels', dealMode='overall', dealSub='eng', heatMode='won', stageView='share', persView='wr';
+/* ---------- deal engagement ---------- */
+var dealView='deciles', dealMode='overall', heatMode='share', stageView='share', persView='wr';
 function setupDeals(){
-  segBind('#dealSub',function(v){dealSub=v;$('#dealEng').classList.toggle('hidden',v!=='eng');$('#dealStage').classList.toggle('hidden',v!=='stage');renderDeals();});
-  segBind('#dealView',function(v){dealView=v;renderDeals();});
-  segBind('#dealMode',function(v){dealMode=v;renderDeals();});
-  $('#dealIncl').onchange=renderDeals;
+  var types=D?[ALL_TYPES].concat(D.types.filter(function(t){var n=0;for(var i=0;i<D.t.length;i++)if(D.types[D.t[i]]===t)n++;return n>=20&&!/framework/i.test(t);})):Object.keys(OPP||{});
+  $('#dealType').innerHTML=types.map(function(t){return '<option>'+esc(t)+'</option>';}).join('');
+  $('#dealType').onchange=renderDeal;
+  segBind('#dealView',function(v){dealView=v;renderDeal();});
+  segBind('#dealMode',function(v){dealMode=v;renderDeal();});
+  $('#dealIncl').onchange=renderDeal;
   if(!HAS.vel){$('#dealInclWrap').classList.add('hidden');$('#dealVelBlock').classList.add('hidden');}
   if(!D)$('#dealModeWrap').classList.add('hidden');
-  if(!HAS.OPP&&!HAS.D){$('#dealSub').classList.add('hidden');dealSub='stage';$('#dealEng').classList.add('hidden');$('#dealStage').classList.remove('hidden');}
-  if(!HAS.ST)$('#dealSub').classList.add('hidden');
+}
+function setupStage(){
   segBind('#heatMode',function(v){heatMode=v;renderHeat();});
   segBind('#stageView',function(v){stageView=v;renderStageProf();});
   segBind('#persView',function(v){persView=v;renderPers();});
 }
-function renderDeals(){if(dealSub==='eng')renderDealEng();else renderStage();}
+function renderDeal(){renderDealEng();}
 function fyOfDeal(i){return D.m[i]>=0?fp(D.months[D.m[i]]).fy:null;}
 function renderDealEng(){
   var g=currentDeals();var P=palette();
@@ -353,10 +385,10 @@ function renderDealEng(){
   if(hi)tiles.push(['High-engagement win rate',p1(hi.win_rate),n0(hi.n)+' deals']);
   if(lo)tiles.push(['Low-engagement win rate',p1(lo.win_rate),n0(lo.n)+' deals']);
   if(hi&&lo&&lo.win_rate)tiles.push(['Win rate lift, high vs low',(hi.win_rate/lo.win_rate).toFixed(1)+'×',(hi.win_rate-lo.win_rate).toFixed(1)+' pts']);
-  if(HAS.vel&&hi&&lo&&hi.med_days_won!=null&&lo.med_days_won!=null)tiles.push(['Days to close, won · high vs low',hi.med_days_won+' vs '+lo.med_days_won,(lo.med_days_won-hi.med_days_won>=0?(lo.med_days_won-hi.med_days_won).toFixed(0)+' days faster':(hi.med_days_won-lo.med_days_won).toFixed(0)+' days slower')]);
+  if(HAS.vel&&hi&&lo&&hi.med_days_won!=null&&lo.med_days_won!=null)tiles.push(['Days to close, won · high vs low',hi.med_days_won+' vs '+lo.med_days_won,(function(d){var a=Math.abs(d),u=Math.round(a)===1?' day ':' days ';return a<0.5?'same median time':Math.round(a)+u+(d>=0?'faster':'slower');})(lo.med_days_won-hi.med_days_won)]);
   tiles.push(['Deals analysed',n0(g.n),'win rate '+p1(g.win_rate)+(g.r_win!=null?' · r = '+g.r_win:'')]);
   $('#dealKpis').innerHTML=tiles.map(function(t){return '<div class="tile"><div class="k">'+esc(t[0])+'</div><div class="v">'+esc(t[1])+'</div><div class="d">'+esc(t[2])+'</div></div>';}).join('');
-  var dc=g.deciles,top=dc[dc.length-1],bot=dc[0],s='<b>'+n0(g.n)+'</b> deals'+($('#dealIncl').checked?' including transactional':'')+'.';
+  var dc=g.deciles,top=dc[dc.length-1],bot=dc[0],s='<b>'+esc(dealType())+'</b>, '+n0(g.n)+' deals'+($('#dealIncl').checked?' including transactional':'')+(GF.fy.length||GF.fq.length?' ('+esc([].concat(GF.fy,GF.fq).join(', '))+')':'')+'.';
   if(top&&bot&&bot.win_rate)s+=' Top decile wins <b class="num">'+top.win_rate.toFixed(1)+'%</b> vs <b class="num">'+bot.win_rate.toFixed(1)+'%</b> for the bottom (<b class="num">'+(top.win_rate/bot.win_rate).toFixed(1)+'×</b>'+(g.r_win!=null?', decile correlation r = '+g.r_win:'')+').';
   if(hi&&lo&&hi.win_rate!=null&&lo.win_rate!=null)s+=' High-engagement deals win <b class="num">'+hi.win_rate.toFixed(1)+'%</b> vs <b class="num">'+lo.win_rate.toFixed(1)+'%</b> for low.';
   $('#dealDyn').innerHTML=s;
@@ -424,7 +456,7 @@ function renderDealYoy(){
 
 /* ---------- stage and persona ---------- */
 var stageNames=function(){return ST.stages.map(function(s){return s.stage;});};
-function cellsOK(ignoreMonth){return (ST.cells||[]).filter(function(c){var t=(ST.cellTypes||[])[c[2]]||'';if(!typeOK(t))return false;if(ignoreMonth)return true;return monthOK(c[3]>=0?(ST.cellMonths||[])[c[3]]:null);});}
+function cellsOK(ignoreMonth){return (ST.cells||[]).filter(function(c){var t=(ST.cellTypes||[])[c[2]]||'';if(/framework/i.test(t))return false;if(ignoreMonth)return true;return monthOK(c[3]>=0?(ST.cellMonths||[])[c[3]]:null);});}
 function aggCells(cells){var S=stageNames().map(function(){return {won:0,lost:0,wa:new Array(NP).fill(0),la:new Array(NP).fill(0),ww:new Array(NP).fill(0),aw:new Array(NP).fill(0),acts:0};});
   cells.forEach(function(c){var a=S[c[0]];if(!a)return;var n=c[4];if(c[1])a.won+=n;else a.lost+=n;a.acts+=c[5];for(var k=0;k<NP;k++){if(c[1]){a.wa[k]+=c[6+k];a.ww[k]+=c[6+NP+k];}else a.la[k]+=c[6+k];a.aw[k]+=c[6+NP+k];}});return S;}
 function cellFy(c){return c[3]>=0?fp((ST.cellMonths||[])[c[3]]).fy:null;}
@@ -642,22 +674,24 @@ function fillMethod(){
 }
 
 /* ---------- plumbing ---------- */
-var TABS={summary:true,activity:HAS.U,adoption:HAS.usage,deals:HAS.OPP||HAS.D||HAS.ST,accounts:HAS.A360||HAS.ACC,method:true};
+var TABS={summary:true,lead:HAS.U,adopt:HAS.usage,users:HAS.usage,deal:HAS.OPP||HAS.D,stage:HAS.ST,accounts:HAS.A360||HAS.ACC,method:true};
 (VIEW.hiddenTabs||[]).forEach(function(t){TABS[t]=false;});
-var R={summary:function(){},activity:renderActivity,adoption:renderAdoption,deals:renderDeals,accounts:renderAccounts,method:function(){}};
+var R={summary:function(){},lead:renderLead,adopt:renderAdopt,users:renderUsers,deal:renderDeal,stage:renderStage,accounts:renderAccounts,method:function(){}};
 var current='summary';
-function showTab(t){if(!TABS[t])t='summary';current=t;$$('nav.tabs button[role=tab]').forEach(function(b){b.setAttribute('aria-selected',b.getAttribute('data-tab')===t);});$$('section.panel').forEach(function(s){s.classList.toggle('active',s.id==='p-'+t);});gfForTab(t);requestAnimationFrame(function(){R[t]();});}
+function showTab(t){if(!TABS[t])t='summary';current=t;$$('nav.tabs button[role=tab]').forEach(function(b){b.setAttribute('aria-selected',b.getAttribute('data-tab')===t);});$$('section.panel').forEach(function(s){s.classList.toggle('active',s.id==='p-'+t);});if(HOSTED)post({type:'backstory:roi-tab-shown',tab:t});requestAnimationFrame(function(){R[t]();});}
 function rerender(){R[current]();}
 $$('nav.tabs button[role=tab]').forEach(function(b){if(!TABS[b.getAttribute('data-tab')])b.classList.add('hidden');b.onclick=function(){showTab(b.getAttribute('data-tab'));};});
 $$('section.panel').forEach(function(s){var t=s.id.slice(2);if(!TABS[t])s.classList.add('hidden');});
 
 function init(){
-  setupGF();gfForTab('summary');
-  if(HAS.U)setupActivity();
-  if(HAS.usage)setupAdoption();
-  if(TABS.deals)setupDeals();
+  setupGF();
+  if(HAS.U)setupLead();
+  if(HAS.usage)setupCohorts();
+  if(TABS.deal)setupDeals();
+  if(HAS.ST)setupStage();
   if(TABS.accounts)setupAccounts();
   setupCalc();renderSummary();renderHero();renderHeroStats();fillMethod();
+  post({type:'backstory:roi-loaded'});
 }
 if(window.Plotly)init();else window.addEventListener('load',init);
 })();

@@ -14,16 +14,20 @@ import { z } from 'zod'
 const para = z.string().min(1).max(2_000)
 const paras = z.array(para).min(1).max(4)
 
-/** The report's tabs a finding can point at. */
-export const ROI_FINDING_TABS = ['activity', 'adoption', 'deals', 'accounts'] as const
+/** The report's tabs a finding can point at — the Iron Mountain dashboard's, plus Account engagement. */
+export const ROI_FINDING_TABS = ['lead', 'adopt', 'users', 'deal', 'stage', 'accounts'] as const
 export type RoiFindingTab = (typeof ROI_FINDING_TABS)[number]
 
-/** Tab ids from the seven-tab dashboard, mapped onto the consolidated report. */
-export const LEGACY_TAB: Record<string, RoiFindingTab> = { lead: 'activity', adopt: 'adoption', users: 'adoption', deal: 'deals', stage: 'deals' }
+/** Tab ids from the short-lived consolidated layout, mapped back onto the dashboard's. */
+export const LEGACY_TAB: Record<string, RoiFindingTab> = { activity: 'lead', adoption: 'adopt', deals: 'deal' }
 
+/**
+ * A finding's tab is a link, not a fact: one the report does not have drops
+ * the link ("See the detail") rather than failing a run that took minutes.
+ */
 export const findingTabSchema = z.preprocess(
   (value) => (typeof value === 'string' && value in LEGACY_TAB ? LEGACY_TAB[value] : value),
-  z.enum(ROI_FINDING_TABS),
+  z.enum(ROI_FINDING_TABS).optional().catch(undefined),
 )
 
 export const findingSchema = z.object({
@@ -39,6 +43,10 @@ export const findingSchema = z.object({
   tab: findingTabSchema,
 })
 
+/** A list that runs long keeps its first items (the strongest come first) instead of failing the contract. */
+const atMost = <T extends z.ZodTypeAny>(item: T, min: number, max: number) =>
+  z.preprocess((value) => (Array.isArray(value) ? value.slice(0, max) : value), z.array(item).min(min).max(max))
+
 export const ROI_NOTE_KEYS = ['lead', 'mix', 'adopt', 'users', 'usersTrend', 'dealWin', 'dealVel', 'dealTrend', 'stageProf', 'stageHeat', 'stageSurv', 'breadth', 'accounts', 'accountDeals'] as const
 
 export const roiNarrativeSchema = z.object({
@@ -46,9 +54,9 @@ export const roiNarrativeSchema = z.object({
   headline: z.string().min(10).max(240),
   /** Two or three sentences under the headline. */
   lede: z.string().min(10).max(1_200),
-  findings: z.array(findingSchema).min(2).max(6),
+  findings: atMost(findingSchema, 2, 6),
   /** Three or four "what to watch" items; a bold lead phrase then the point. */
-  watch: z.array(z.object({ lead: z.string().min(1).max(160), text: z.string().min(1).max(1_200) })).min(2).max(6),
+  watch: atMost(z.object({ lead: z.string().min(1).max(160), text: z.string().min(1).max(1_200) }), 2, 6),
   /**
    * Account context from the Backstory platform (where the relationship
    * stands, what is coming up), when the analyst could look the account up.
@@ -129,10 +137,10 @@ export const ROI_OUTPUT_CONTRACT = `Return ONE JSON object (in a \`\`\`json fenc
   "headline": "<one sentence: the thesis, e.g. 'Engaged deals win twice as often, and Backstory users create that engagement.'>",
   "lede": "<2-3 sentences under the headline: the chain from usage to behaviour to engagement to outcome, with the key numbers>",
   "context": { "summary": "<1-2 sentences: where the relationship stands, from the Backstory platform>", "facts": [ { "label": "<e.g. Renewal>", "value": "<e.g. Mar 2027, $1.2M>", "source": "Backstory" } ] },  // OPTIONAL — only when you looked the account up on the Backstory platform; omit otherwise
-  "findings": [ { "fig": "<formatted figure, e.g. 2.0× or +54% or +9 pts>", "cap": "<what the figure is>", "h": "<finding as a heading>", "p": "<1-2 sentences with the proving numbers>", "tab": "activity|adoption|deals|accounts" } ],  // 3-6 items, strongest first, one per area that has data
+  "findings": [ { "fig": "<formatted figure, e.g. 2.0× or +54% or +9 pts>", "cap": "<what the figure is>", "h": "<finding as a heading>", "p": "<1-2 sentences with the proving numbers>", "tab": "lead|adopt|users|deal|stage|accounts" } ],  // 3-6 items, strongest first, one per area that has data
   "watch": [ { "lead": "<bold lead phrase>", "text": "<the point, with numbers>" } ],  // 3-4 items: risks, levers, and one honest caveat about correlation
   "notes": {   // the "What this shows" aside beside each chart; 1-3 short paragraphs each; omit a key when its section has no data
-    "lead": ["..."],        // activity trends: what moved, observation vs baseline, org-wide
+    "lead": ["..."],        // leading indicators: what moved, observation vs baseline, org-wide
     "mix": ["..."],         // senior engagement (Director/VP/Exec) across the three periods
     "adopt": ["..."],       // high/medium/low adopters
     "users": ["..."],       // users vs non-users lift

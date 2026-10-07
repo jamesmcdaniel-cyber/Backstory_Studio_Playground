@@ -33,7 +33,10 @@ function recentLabel(iso: string): string | null {
  * recently run first). A completed run opens its report; an account with two
  * or more completed runs can put their headline numbers side by side.
  */
-export function RunHistory({ analyses, error }: { analyses: RoiAnalysisView[] | null; error?: string | null }) {
+/** Opens a finished run's version of the report in place (the ROI page); without it, runs link to their artifact. */
+type OpenRun = (run: RoiAnalysisView) => void
+
+export function RunHistory({ analyses, error, onOpenRun, compact = false }: { analyses: RoiAnalysisView[] | null; error?: string | null; onOpenRun?: OpenRun; compact?: boolean }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [comparing, setComparing] = useState<Record<string, boolean>>({})
@@ -44,11 +47,11 @@ export function RunHistory({ analyses, error }: { analyses: RoiAnalysisView[] | 
     <section aria-labelledby="roi-history-heading" className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 id="roi-history-heading" className="text-lg font-semibold tracking-tight">Run history</h2>
-          <p className="text-sm text-muted-foreground">Every analysis run from this page, by account.</p>
+          <h2 id="roi-history-heading" className={cn('font-semibold tracking-tight', compact ? 'text-sm' : 'text-lg')}>Run history</h2>
+          <p className={cn('text-muted-foreground', compact ? 'text-xs' : 'text-sm')}>Every run, by account: settings changes and data refreshes. Open one to see that version.</p>
         </div>
         {analyses && analyses.length > 0 && (
-          <div className="relative w-full sm:w-64">
+          <div className={cn('relative w-full', !compact && 'sm:w-64')}>
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
             <label htmlFor="roi-history-search" className="sr-only">Search accounts</label>
             <Input id="roi-history-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search accounts" className="pl-8" />
@@ -83,6 +86,7 @@ export function RunHistory({ analyses, error }: { analyses: RoiAnalysisView[] | 
                     setComparing((current) => ({ ...current, [key]: !isComparing }))
                     if (!isComparing) setOpen((current) => ({ ...current, [key]: true }))
                   }}
+                  onOpenRun={onOpenRun}
                 />
               </li>
             )
@@ -93,8 +97,9 @@ export function RunHistory({ analyses, error }: { analyses: RoiAnalysisView[] | 
   )
 }
 
-function AccountFolder({ folder, isOpen, canCompare, isComparing, onToggle, onToggleCompare }: {
+function AccountFolder({ folder, isOpen, canCompare, isComparing, onToggle, onToggleCompare, onOpenRun }: {
   folder: RoiAccountFolder
+  onOpenRun?: OpenRun
   isOpen: boolean
   canCompare: boolean
   isComparing: boolean
@@ -130,9 +135,9 @@ function AccountFolder({ folder, isOpen, canCompare, isComparing, onToggle, onTo
       </div>
       {isOpen && (
         <div id={panelId} className="border-t">
-          {isComparing && <RunComparison account={folder.account} runs={folder.runs} />}
+          {isComparing && <RunComparison account={folder.account} runs={folder.runs} onOpenRun={onOpenRun} />}
           <ul className="divide-y">
-            {folder.runs.map((run) => <RunRow key={run.id} run={run} />)}
+            {folder.runs.map((run) => <RunRow key={run.id} run={run} onOpenRun={onOpenRun} />)}
           </ul>
         </div>
       )}
@@ -140,10 +145,11 @@ function AccountFolder({ folder, isOpen, canCompare, isComparing, onToggle, onTo
   )
 }
 
-function RunRow({ run }: { run: RoiAnalysisView }) {
+function RunRow({ run, onOpenRun }: { run: RoiAnalysisView; onOpenRun?: OpenRun }) {
   const status = runStatus(run.phase)
   const recent = recentLabel(run.createdAt)
   const href = run.phase === 'ready' && run.artifactId ? `/artifacts/${run.artifactId}` : null
+  const openable = Boolean(onOpenRun && run.phase === 'ready' && run.artifactId)
   const body = (
     <>
       <div className="flex items-start justify-between gap-3">
@@ -170,7 +176,12 @@ function RunRow({ run }: { run: RoiAnalysisView }) {
   )
   return (
     <li>
-      {href ? (
+      {openable ? (
+        <button type="button" onClick={() => onOpenRun?.(run)} className="group block w-full px-3 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
+          <span className="sr-only">Show this version of the report: </span>
+          {body}
+        </button>
+      ) : href ? (
         <Link href={href} className="group block px-3 py-3 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
           <span className="sr-only">Open the report: </span>
           {body}
@@ -182,7 +193,7 @@ function RunRow({ run }: { run: RoiAnalysisView }) {
   )
 }
 
-function RunComparison({ account, runs }: { account: string; runs: RoiAnalysisView[] }) {
+function RunComparison({ account, runs, onOpenRun }: { account: string; runs: RoiAnalysisView[]; onOpenRun?: OpenRun }) {
   const comparison = useMemo(() => compareRuns(runs), [runs])
   return (
     <div className="border-b bg-muted/20 px-3 py-3 sm:px-4">
@@ -198,7 +209,9 @@ function RunComparison({ account, runs }: { account: string; runs: RoiAnalysisVi
                 <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Measure</th>
                 {comparison.runs.map((run) => (
                   <th key={run.id} scope="col" className="px-3 py-2 text-right align-bottom text-xs font-medium">
-                    {run.artifactId ? (
+                    {run.artifactId && onOpenRun ? (
+                      <button type="button" onClick={() => { const full = runs.find((candidate) => candidate.id === run.id); if (full) onOpenRun(full) }} className="text-horizon-700 hover:underline">{absoluteDate(run.createdAt, false)}</button>
+                    ) : run.artifactId ? (
                       <Link href={`/artifacts/${run.artifactId}`} className="text-horizon-700 hover:underline">{absoluteDate(run.createdAt, false)}</Link>
                     ) : absoluteDate(run.createdAt, false)}
                     {run.reason && <span className="block max-w-[11rem] truncate font-normal text-muted-foreground" title={run.reason}>{run.reason}</span>}

@@ -31,7 +31,7 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
   const reports = await listAccountReports(params.organizationId)
   const reportOf = (account: string) => {
     const report = reports.find((entry) => entry.account.trim().toLowerCase() === account.trim().toLowerCase())
-    return report ? { artifactId: report.artifactId, config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt, activeAnalysisId: report.activeAnalysisId } : null
+    return report ? { artifactId: report.artifactId, config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt, activeAnalysisId: report.activeAnalysisId, ready: Boolean(report.state) } : null
   }
   const accounts: RoiPageSetup['accounts'] = sources
     .filter((source) => source.templates.includes('standard'))

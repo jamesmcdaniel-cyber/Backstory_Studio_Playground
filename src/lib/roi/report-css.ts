@@ -63,7 +63,7 @@ nav.tabs button[role=tab]:hover{color:var(--text)}
 .hamburger{flex:none;display:inline-flex;flex-direction:column;justify-content:center;gap:4px;width:36px;height:36px;padding:0 9px;background:none;border:1px solid var(--rule-strong);border-radius:6px;cursor:pointer}
 .hamburger span{display:block;height:2px;border-radius:1px;background:var(--text)}
 .hamburger[aria-expanded="true"]{background:var(--surface)}
-body.hosted .hamburger{display:none}
+body.hosted .hamburger,body.hosted .gf-badge{display:none!important}
 .gf-badge{flex:none;font-size:12px;color:var(--horizon-deep);background:var(--accent-subtle);border-radius:999px;padding:2px 10px;display:none;white-space:nowrap}
 .scrim{position:fixed;inset:0;background:rgba(23,23,33,.35);z-index:40}
 .scrim[hidden]{display:none}

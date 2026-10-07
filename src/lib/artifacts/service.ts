@@ -7,7 +7,7 @@ import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdow
 import { reactArtifactDocument, reactComponentOf } from './runtime'
 import { readAssistantConfig } from './assistant-settings'
 import { readAgentMetadata } from '@/lib/agents/metadata'
-import { validateArtifactContent, validateArtifactPython } from './validate-content'
+import { maxArtifactCharsFor, validateArtifactContent, validateArtifactPython } from './validate-content'
 import { validateArtifactRuntime } from './preflight'
 import { ARTIFACT_CAPABILITIES } from './capabilities'
 import { GUEST_COPILOT_LIMITS, SHARED_UPDATE_REQUEST, TEMPLATE_COPILOT_MODEL, templateCopyRunsAs } from './template-policy'
@@ -115,7 +115,8 @@ type AddVersionParams = {
 }
 
 export async function addVersion(params: AddVersionParams): Promise<ArtifactVersion> {
-  validateArtifactContent(params.content)
+  const target = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { kind: true } })
+  validateArtifactContent(params.content, maxArtifactCharsFor(target?.kind))
   await validateArtifactPython(params.content)
   await validateArtifactRuntime(params.content)
   return tenantTransaction(params.organizationId, tx => insertValidatedVersion(tx, params))
@@ -170,7 +171,7 @@ export async function createArtifact(params: {
   flowRunId?: string | null
   state?: Prisma.InputJsonValue | null
 }): Promise<{ artifact: Artifact; version: ArtifactVersion }> {
-  validateArtifactContent(params.content)
+  validateArtifactContent(params.content, maxArtifactCharsFor(params.kind))
   await validateArtifactPython(params.content)
   await validateArtifactRuntime(params.content)
   return prisma.$transaction(async tx => {

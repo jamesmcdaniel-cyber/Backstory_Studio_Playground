@@ -390,6 +390,7 @@ async function phaseOf(row: RoiAnalysis): Promise<RoiRunPhase> {
   if (row.status === 'completed') return 'ready'
   if (isTerminalRunStatus(row.status) || row.status === 'failed') return 'failed'
   if (row.status === 'fetching') return 'fetching'
+  if (row.status === 'building') return 'building'
   if (row.status === 'pending' || !row.executionId) return 'queued'
   if (reconfigureOf(row)) return 'writing'
   const steps = await prisma.workflowStep.findMany({ where: { executionId: row.executionId, node: { contains: 'prepare_' } }, select: { status: true } })
@@ -435,14 +436,27 @@ async function readJsonFile<T>(fileId: string | null, organizationId: string): P
 
 const EMPTY_FACTS: RoiFacts = { U: null, OPP: null, ST: null, META: {}, notes: [] }
 
-async function reconcileRun(row: RoiAnalysis): Promise<RoiAnalysis> {
+/** A claim on a finished run older than this is from a reader that died mid-render; it can be taken over. */
+const BUILD_CLAIM_STALE_MS = 5 * 60_000
+
+async function reconcileRun(row: RoiAnalysis, claimFrom: { status: string; updatedAt: Date } = row): Promise<RoiAnalysis> {
   if (!row.executionId || isTerminalRunStatus(row.status)) return row
+  if (row.status === 'building' && Date.now() - row.updatedAt.getTime() < BUILD_CLAIM_STALE_MS) return row
   const run = await finalMessage(row.executionId, row.organizationId)
   if (!run) return row
   if (!isTerminalRunStatus(run.status)) {
     return run.status !== row.status
       ? prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { status: run.status } })
       : row
+  }
+  // One reader finishes a run: the executor and every page polling it race
+  // here, and each would otherwise add the report version again.
+  if (run.status === 'completed') {
+    const claimed = await prisma.roiAnalysis.updateMany({
+      where: { id: row.id, organizationId: row.organizationId, status: claimFrom.status, updatedAt: claimFrom.updatedAt },
+      data: { status: 'building' },
+    })
+    if (!claimed.count) return (await prisma.roiAnalysis.findFirst({ where: { id: row.id, organizationId: row.organizationId } })) ?? row
   }
   if (run.status !== 'completed') {
     return prisma.roiAnalysis.update({
@@ -592,8 +606,9 @@ async function recheckContractFailure(row: RoiAnalysis): Promise<RoiAnalysis> {
   if ((row.results as { contractRechecked?: unknown } | null)?.contractRechecked) return row
   const run = await finalMessage(row.executionId, row.organizationId)
   if (run?.status !== 'completed') return row
-  const rechecked = await reconcileRun({ ...row, status: 'running' })
-  if (rechecked.status === 'completed') return rechecked
+  // Claimed from its failed state, so concurrent readers re-check it once.
+  const rechecked = await reconcileRun({ ...row, status: 'running' }, { status: 'failed', updatedAt: row.updatedAt })
+  if (rechecked.status === 'completed' || rechecked.status === 'building') return rechecked
   return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { results: jsonValue({ contractRechecked: true }) } })
 }
 
@@ -602,6 +617,7 @@ function quickPhase(row: RoiAnalysis): RoiRunPhase {
   if (row.status === 'completed') return 'ready'
   if (row.status === 'failed' || isTerminalRunStatus(row.status)) return 'failed'
   if (row.status === 'fetching') return 'fetching'
+  if (row.status === 'building') return 'building'
   if (row.status === 'pending' || !row.executionId) return 'queued'
   return reconfigureOf(row) ? 'writing' : 'computing'
 }

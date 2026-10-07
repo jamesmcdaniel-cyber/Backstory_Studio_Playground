@@ -41,3 +41,11 @@ test('runtime preflight fails closed, accepts explicit passes, and preserves val
     keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index] })
   }
 })
+
+test('an ROI dashboard may be several MB (platform-rendered data); anything else keeps the 2 MB guard', async () => {
+  const { maxArtifactCharsFor, validateArtifactContent, MAX_ARTIFACT_CHARS } = await import('../validate-content')
+  const big = `<!DOCTYPE html><html><body><script>const DATA = ${JSON.stringify('x'.repeat(3_000_000))};</script></body></html>`
+  assert.doesNotThrow(() => validateArtifactContent(big, maxArtifactCharsFor('roi_dashboard')))
+  assert.throws(() => validateArtifactContent(big, maxArtifactCharsFor('page')), /exceeds 2000000 characters/)
+  assert.equal(maxArtifactCharsFor(null), MAX_ARTIFACT_CHARS)
+})

@@ -4,10 +4,21 @@ import { ARTIFACT_MODULES, ARTIFACT_UI_COMPONENTS, reactComponentOf } from './ru
 
 export const MAX_ARTIFACT_CHARS = 2_000_000
 
+/**
+ * ROI dashboards are rendered by the platform from computed data, not
+ * written by a model, and carry that data (every rep × month, every closed
+ * deal) so the page can slice it: a large account's report is a few MB.
+ */
+export const MAX_ROI_DASHBOARD_CHARS = 8_000_000
+
+export function maxArtifactCharsFor(kind: string | null | undefined): number {
+  return kind === 'roi_dashboard' ? MAX_ROI_DASHBOARD_CHARS : MAX_ARTIFACT_CHARS
+}
+
 /** Parse only, never execute generated JavaScript in the application process. */
-export function validateArtifactContent(content: string): void {
+export function validateArtifactContent(content: string, maxChars: number = MAX_ARTIFACT_CHARS): void {
   if (!content.trim()) throw new Error('Artifact content is empty.')
-  if (content.length > MAX_ARTIFACT_CHARS) throw new Error(`Artifact exceeds ${MAX_ARTIFACT_CHARS} characters; split it into smaller artifacts. Nothing was saved.`)
+  if (content.length > maxChars) throw new Error(`Artifact exceeds ${maxChars} characters; split it into smaller artifacts. Nothing was saved.`)
   const component = reactComponentOf(content)
   const blocks = component ? [{ source: component, typed: true }] : [...content.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].flatMap((m) => {
     if (/\bsrc\s*=/.test(m[1])) return []

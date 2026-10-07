@@ -82,7 +82,7 @@ export default function RoiPage() {
     if (!setup || account) return
     const wanted = params?.get('account') ?? rememberedAccount()
     const match = wanted ? setup.accounts.find((entry) => entry.account.toLowerCase() === wanted.toLowerCase()) : null
-    const chosen = match?.account ?? setup.accounts.find((entry) => entry.report)?.account ?? setup.accounts[0]?.account ?? null
+    const chosen = match?.account ?? setup.accounts.find((entry) => entry.report?.ready)?.account ?? setup.accounts.find((entry) => entry.report)?.account ?? setup.accounts[0]?.account ?? null
     if (chosen) setAccount(chosen)
     else setPanelOpen(true)
   }, [setup, account, params])

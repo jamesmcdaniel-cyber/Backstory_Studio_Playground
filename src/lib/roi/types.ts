@@ -87,6 +87,8 @@ export type RoiPageAccount = {
     updatedAt: string
     /** A run updating it right now. */
     activeAnalysisId: string | null
+    /** It has a version to show (false while its first build runs). */
+    ready: boolean
   } | null
   /** Data can be (re)computed: extracts are loaded or the data flow is connected. */
   canRefresh: boolean

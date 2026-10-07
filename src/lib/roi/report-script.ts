@@ -682,6 +682,16 @@ function showTab(t){if(!TABS[t])t='summary';current=t;$$('nav.tabs button[role=t
 function rerender(){R[current]();}
 $$('nav.tabs button[role=tab]').forEach(function(b){if(!TABS[b.getAttribute('data-tab')])b.classList.add('hidden');b.onclick=function(){showTab(b.getAttribute('data-tab'));};});
 $$('section.panel').forEach(function(s){var t=s.id.slice(2);if(!TABS[t])s.classList.add('hidden');});
+/* The platform's startup validator opens every saved version in an isolated
+   browser and runs these steps. The dashboard's primary workflow is opening a
+   view and seeing its numbers drawn, so the steps open the first view this
+   account's data has and wait for its figures. */
+window.__artifactTests=(function(){
+  var plan=[['lead','#leadDyn','per rep per month'],['deal','#dealDyn','deals'],['adopt','#adoptTblSub','per rep per month'],['users','#usersTbl','Reps'],['stage','#stageIntro','opportunities'],['accounts',HAS.A360?'#a360Kpis':'#accTbl',HAS.A360?'Pipeline created':'Account']];
+  var pick=plan.filter(function(p){return TABS[p[0]];})[0];
+  return pick?[{action:'click',selector:'nav.tabs button[data-tab="'+pick[0]+'"]'},{action:'expectText',selector:pick[1],value:pick[2]}]
+    :[{action:'click',selector:'#themeBtn'},{action:'expectText',selector:'#themeBtn',value:'Theme: light'}];
+})();
 
 function init(){
   setupGF();

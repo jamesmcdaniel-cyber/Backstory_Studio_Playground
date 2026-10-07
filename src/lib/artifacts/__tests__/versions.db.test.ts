@@ -41,6 +41,20 @@ if (TEST_DB) {
     assert.equal(view?.versionCount, 3)
   })
 
+  test('a run about an ROI dashboard, or an ROI analysis run, never creates a second artifact', async () => {
+    const before = await prisma.artifact.count({ where: { organizationId: seeded.organizationId } })
+    const { artifact } = await service.createArtifact({ organizationId: seeded.organizationId, userId: seeded.userId, kind: 'roi_dashboard', title: 'ROI analysis · Acme', content: '<html><body><h1>Acme</h1></body></html>' })
+    const longAnswer = `# Win rate by region\n\n${'Engaged deals win more often. '.repeat(80)}\n\n## Why\n\n${'The data says so. '.repeat(40)}`
+    const html = '<!DOCTYPE html><html><head><title>A new dashboard</title></head><body><h1>Acme</h1><script>1</script></body></html>'
+    // The assistant answering a question at length about the dashboard.
+    const asked = await service.registerVersionFromExecution({ organizationId: seeded.organizationId, userId: seeded.userId, executionId: `exec-ask-${Date.now()}`, agentTaskId: 'agent', agentTitle: 'ROI Analyst', trigger: { type: 'artifact', artifactId: artifact.id, artifactMode: 'ask' }, summary: longAnswer })
+    assert.equal(asked, null)
+    // The analyst writing an HTML page instead of its narrative.
+    const analysed = await service.registerVersionFromExecution({ organizationId: seeded.organizationId, userId: seeded.userId, executionId: `exec-roi-${Date.now()}`, agentTaskId: 'agent', agentTitle: 'ROI Analyst', trigger: { type: 'roi_analysis', analysisId: 'a1', link: '/roi?account=Acme' }, summary: html })
+    assert.equal(analysed, null)
+    assert.equal(await prisma.artifact.count({ where: { organizationId: seeded.organizationId } }), before + 1)
+  })
+
   test('concurrent saves serialize and invalid or stale edits cannot change current', async () => {
     const { artifact, version } = await service.createArtifact({ organizationId: seeded.organizationId, userId: seeded.userId, kind: 'page', title: 'Concurrency', content: '<html><body>One</body></html>' })
     const versions = await Promise.all([1, 2, 3].map(n => service.addVersion({ artifactId: artifact.id, organizationId: seeded.organizationId, content: `<html><body>${n}</body></html>` })))

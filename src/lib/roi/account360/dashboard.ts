@@ -544,6 +544,8 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 });
 
 renderTab1();
+// The platform's startup validator runs these: open the ROI dashboard tab and see its numbers.
+window.__artifactTests = [{ action: 'click', selector: '.tab-btn[data-tab="tab2"]' }, { action: 'expectText', selector: '#t2_kpiRow', value: 'Total pipeline created' }];
 `
 
 export function renderAccount360Dashboard(facts: Account360Facts, options: Account360DashboardOptions): string {

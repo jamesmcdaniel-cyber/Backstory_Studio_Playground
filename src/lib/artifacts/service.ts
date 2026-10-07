@@ -220,6 +220,10 @@ export async function registerVersionFromExecution(params: {
   // as a page the content route compiles.
   const html = executionArtifactDocument(params.summary)
   const t = (params.trigger ?? {}) as TriggerShape
+  // An ROI analysis's report belongs to the ROI service, which renders it from
+  // the run's computed facts onto the account's one artifact. Whatever the
+  // analyst's answer looks like, it is never a document of its own.
+  if (t.type === 'roi_analysis') return null
   const targetId = str(t.artifactId)
   if (targetId) {
     // The assistant's tools make versions themselves (revise_artifact,
@@ -247,6 +251,11 @@ export async function registerVersionFromExecution(params: {
       await markChatVersion(params.organizationId, target.id, params.executionId, version.id)
       return { artifactId: target.id, versionId: version.id, created: false }
     }
+    // A run about an artifact (its assistant answering, or a change it could
+    // not make as a version) is never a new artifact: the answer stays in that
+    // artifact's conversation. A variant the person asks for is saved as new
+    // by the assistant's own tools (saveAsNew), not inferred from its prose.
+    return null
   }
   const markdown = html ? null : markdownDocumentOf(params.summary)
   if (!html && !markdown) return null

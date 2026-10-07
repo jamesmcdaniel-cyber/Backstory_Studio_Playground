@@ -175,8 +175,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
   const viewVersion = (id: string) => setViewId(id === latestVersionId ? null : id)
   // The original has moved on since this copy started from it.
   const sharedUpdate = copy?.kind === 'guest' ? copy.view.sharedUpdate ?? null : memberUpdate
-  // History appears once there is one: an untouched copy has a single version.
-  const tab = chosenTab === 'history' && versions.length <= 1 ? 'chat' : chosenTab
+  const tab = chosenTab
   // Settings: MCP servers the person connected themselves. A guest's arrive
   // with their copy; a member's are read when the tab is first opened.
   const [memberServers, setMemberServers] = useState<CopilotMcpServerView[] | null>(null)
@@ -396,7 +395,8 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
           {loaded && (
             <div role="tablist" aria-label="Copilot views" className="flex border-b border-graphite-200 text-xs font-medium">
-              {(['chat', 'history', 'settings'] as const).filter((option) => (option !== 'history' || versions.length > 1) && (option !== 'settings' || canAsk)).map((option) => (
+              {/* History is there from the start: an untouched copy lists the page as shared. */}
+              {(['chat', 'history', 'settings'] as const).filter((option) => option !== 'settings' || canAsk).map((option) => (
                 <button key={option} type="button" role="tab" aria-selected={tab === option} onClick={() => setTab(option)} className={cn('-mb-px inline-flex flex-1 items-center justify-center gap-1.5 border-b-2 px-3 py-2', tab === option ? 'border-horizon-600 text-graphite-900' : 'border-transparent text-fg-muted hover:text-graphite-900')}>
                   {option === 'chat' ? <MessageSquare className="h-3.5 w-3.5" aria-hidden /> : option === 'history' ? <History className="h-3.5 w-3.5" aria-hidden /> : <Settings2 className="h-3.5 w-3.5" aria-hidden />}
                   {option === 'chat' ? 'Chat' : option === 'history' ? `History (${latestNumber})` : 'Settings'}
@@ -432,7 +432,12 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
               onRestore={(id) => void restore(id)}
               className="min-h-0 flex-1"
             >
-              {error && <li role="alert" className="px-4 py-3 text-sm text-destructive">{error}</li>}
+              {versions.length <= 1 && (
+                <li className="px-4 py-3 text-xs text-fg-muted">
+                  {canAsk ? 'Each change the copilot makes for you is saved here as a version you can view or restore. Only you see them — the original stays as it was shared.' : 'This copy has no changes yet.'}
+                </li>
+              )}
+              {error &&<li role="alert" className="px-4 py-3 text-sm text-destructive">{error}</li>}
             </VersionList>
           ) : (
           <div aria-label="Copilot conversation" className="min-h-0 flex-1 space-y-3 overflow-y-auto break-words px-4 py-3">

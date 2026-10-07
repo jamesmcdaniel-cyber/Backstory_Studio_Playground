@@ -116,6 +116,24 @@ test('a visitor can look back through their copy’s versions and restore one, w
   } finally { cleanup(); net.restore() }
 })
 
+test('a first-time visitor’s copilot has its version history from the start, before any change', async () => {
+  const net = stubFetch((call) => {
+    if (call.url.endsWith('/copy')) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    return Response.json({ success: true, copilot: { ...guest([], 'gv1'), versions: [{ id: 'gv1', number: 1, request: null, createdAt: '2026-10-02T00:00:00Z', source: 'created' }] } })
+  })
+  try {
+    const ui = render(<SharedTemplateCopilot token="test-token"><p>original</p></SharedTemplateCopilot>)
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    await act(async () => { fireEvent.click(ui.getByRole('button', { name: 'AI Copilot' })) })
+    await act(async () => { fireEvent.click(ui.getByRole('tab', { name: /History \(1\)/ })) })
+    const history = ui.getByRole('list', { name: 'Version history' })
+    assert.match(history.textContent ?? '', /Version 1.*Current.*As shared/)
+    // Until there is a change, it says what will be there — and only for them.
+    assert.match(history.textContent ?? '', /Each change the copilot makes for you is saved here/)
+    assert.ok(ui.getByText('original'), 'the page itself is unchanged')
+  } finally { cleanup(); net.restore() }
+})
+
 test('a visitor’s versions live in the copilot panel only: nothing is laid over the page, and a reply links to the version it made', async () => {
   const history = (latest: number) => Array.from({ length: latest }, (_, index) => ({ id: `gv${latest - index}`, number: latest - index, request: latest - index === 1 ? null : `Change ${latest - index}`, createdAt: '2026-10-02T00:00:00Z', source: latest - index === 1 ? 'created' : 'agent' }))
   const chat = [{ role: 'user', content: 'Make it blue', createdAt: 'a' }, { role: 'agent', content: 'Done — it is blue.', status: 'completed', createdAt: 'b', versionId: 'gv2' }]

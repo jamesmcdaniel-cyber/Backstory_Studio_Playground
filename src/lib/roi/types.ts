@@ -98,6 +98,8 @@ export type RoiPageAccount = {
     reason: string
     factsCurrent: boolean
     updatedAt: string
+    /** Drawn with an older layout; opening it re-draws it. */
+    stale?: boolean
   } | null
   /** The account's report has newer data than this person's page shows. */
   newerData: boolean

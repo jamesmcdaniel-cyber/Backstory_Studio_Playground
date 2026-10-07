@@ -134,7 +134,7 @@ export function extractRoiNarrative(text: string): { data: RoiNarrative; error?:
 /** The contract as the agent sees it (it travels in every run's prompt). */
 export const ROI_OUTPUT_CONTRACT = `Return ONE JSON object (in a \`\`\`json fence, nothing after it):
 {
-  "headline": "<one sentence: the thesis, e.g. 'Engaged deals win twice as often, and Backstory users create that engagement.'>",
+  "headline": "<the thesis in ONE short sentence of at most 15 words (about 100 characters) — it is the page title, so no clauses, no 'which…', e.g. 'Engaged deals win twice as often, and Backstory users create that engagement.'>",
   "lede": "<2-3 sentences under the headline: the chain from usage to behaviour to engagement to outcome, with the key numbers>",
   "context": { "summary": "<1-2 sentences: where the relationship stands, from the Backstory platform>", "facts": [ { "label": "<e.g. Renewal>", "value": "<e.g. Mar 2027, $1.2M>", "source": "Backstory" } ] },  // OPTIONAL — only when you looked the account up on the Backstory platform; omit otherwise
   "findings": [ { "fig": "<formatted figure, e.g. 2.0× or +54% or +9 pts>", "cap": "<what the figure is>", "h": "<finding as a heading>", "p": "<1-2 sentences with the proving numbers>", "tab": "activity|adoption|deals|stage|accounts" } ],  // 3-6 items, strongest first, one per area that has data

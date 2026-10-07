@@ -33,6 +33,10 @@ export type RoiArtifactState = {
     personal?: boolean
     /** The generic report version this one started from (personal pages). */
     basedOn?: { artifactId: string; versionId: string }
+    /** The layout version that drew it (ROI_RENDER_VERSION); older ones are re-drawn when opened. */
+    render?: number
+    /** Imported from a value readout rather than computed from extracts. */
+    source?: 'readout'
   }
 }
 

@@ -51,6 +51,8 @@ a{color:var(--horizon-deep)}
 .mast .eyebrow{font:500 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--horizon);margin-bottom:14px}
 .mast-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:48px;align-items:end;margin-top:34px}
 .mast h1{font-family:var(--serif);font-weight:400;font-size:clamp(34px,4.6vw,56px);line-height:1.06;letter-spacing:-.02em;max-width:17ch}
+.mast h1.long{font-size:clamp(28px,3.3vw,42px);line-height:1.1;max-width:24ch}
+.mast h1.xlong{font-size:clamp(24px,2.5vw,32px);line-height:1.18;max-width:36ch;letter-spacing:-.01em}
 .mast .lede{color:var(--mast-sub);font-size:17px;margin-top:18px;max-width:52ch}
 .mast .lede b{color:var(--mast-text)}
 .strip-wrap figcaption{color:var(--mast-sub);font-size:13px;margin-top:6px}

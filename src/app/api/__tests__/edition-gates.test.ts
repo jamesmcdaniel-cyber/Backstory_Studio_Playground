@@ -58,6 +58,7 @@ export const INTERNAL_ONLY_ROUTES = [
   'roi/analyses/[id]',
   'roi/page',
   'roi/page/open',
+  'roi/readout',
   'roi/settings',
 ]
 
@@ -76,6 +77,7 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'roi/analyses/[id]', load: () => import('../roi/analyses/[id]/route'), methods: ['GET'] },
   { name: 'roi/page', load: () => import('../roi/page/route'), methods: ['GET'] },
   { name: 'roi/page/open', load: () => import('../roi/page/open/route'), methods: ['POST'] },
+  { name: 'roi/readout', load: () => import('../roi/readout/route'), methods: ['POST'] },
   { name: 'roi/settings', load: () => import('../roi/settings/route'), methods: ['PATCH'] },
   { name: 'admin/domains', load: () => import('../admin/domains/route'), methods: ['GET', 'POST', 'PATCH'] },
   { name: 'admin/models', load: () => import('../admin/models/route'), methods: ['GET'] },

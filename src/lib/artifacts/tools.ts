@@ -6,7 +6,7 @@ import type { CodeDataset } from '@/features/flows/code-runner'
 import { looksLikeHtml } from '@/lib/html-detect'
 import { runRoiPrep, type RoiFacts } from '@/lib/roi/prep'
 import { summarizeFacts } from '@/lib/roi/facts'
-import { renderRoiDashboard } from '@/lib/roi/dashboard'
+import { renderRoiDashboard, ROI_RENDER_VERSION } from '@/lib/roi/dashboard'
 import { applyOperations, describeView, roiOperationSchema } from '@/lib/roi/view'
 import { currentRoiState, readAccount360Facts, readFacts, stateJson, storeFacts } from '@/lib/roi/artifact-state'
 import { isRoiTemplate, listRoiSources, ROI_TEMPLATES, type RoiTemplate } from '@/lib/roi/sources'
@@ -447,7 +447,7 @@ export class ArtifactToolClient {
       facts = { ...facts, U: fresh.U, META: { ...facts.META, capP: fresh.META.capP, capPO: fresh.META.capPO } }
       factsFileId = await storeFacts(this.organizationId, this.userId, facts)
     }
-    const state = { ...current.state, factsFileId, narrative: result.narrative, view: result.view }
+    const state = { ...current.state, factsFileId, narrative: result.narrative, view: result.view, render: ROI_RENDER_VERSION }
     const a360 = await readAccount360Facts(this.organizationId, state.a360FactsFileId)
     const html = renderRoiDashboard(facts, result.narrative, { account: state.account, timeframePreset: state.timeframePreset, view: result.view, config: state.config, reason: state.reason, a360 })
     const summary = typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim().slice(0, 300) : result.applied.join('; ')
@@ -485,9 +485,10 @@ export class ArtifactToolClient {
   private async listRoiAccounts() {
     const { listAccountReports } = await import('@/lib/roi/service')
     const [sources, reports] = await Promise.all([listRoiSources(this.organizationId), listAccountReports(this.organizationId)])
-    const accounts = sources.map((source) => ({ account: source.account, extracts: Object.keys(source.datasets), templates: source.templates, hasReport: reports.some((report) => report.account.toLowerCase() === source.account.toLowerCase() && report.state) }))
+    const shows = (report: (typeof reports)[number]) => Boolean(report.state || report.a360)
+    const accounts = sources.map((source) => ({ account: source.account, extracts: Object.keys(source.datasets), templates: source.templates, hasReport: reports.some((report) => report.account.toLowerCase() === source.account.toLowerCase() && shows(report)) }))
     for (const report of reports) {
-      if (report.state && !accounts.some((entry) => entry.account.toLowerCase() === report.account.toLowerCase())) accounts.push({ account: report.account, extracts: [], templates: ['standard'], hasReport: true })
+      if (shows(report) && !accounts.some((entry) => entry.account.toLowerCase() === report.account.toLowerCase())) accounts.push({ account: report.account, extracts: [], templates: ['standard'], hasReport: true })
     }
     return { accounts }
   }

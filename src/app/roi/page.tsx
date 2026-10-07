@@ -9,6 +9,7 @@ import { ArtifactViewer } from '@/components/artifacts/artifact-viewer'
 import { RoiReportFrame, NO_FILTERS, type ReportFilters } from '@/components/roi/report-frame'
 import { RunProgress } from '@/components/roi/run-progress'
 import { SettingsPanel } from '@/components/roi/settings-panel'
+import { ReadoutLoader } from '@/components/roi/readout-loader'
 import { describeRunConfig } from '@/lib/roi/config'
 import { apiErrorMessage, isRunSettled, upsertRun } from '@/lib/roi/history'
 import { cn } from '@/lib/utils'
@@ -169,7 +170,8 @@ export default function RoiPage() {
   useEffect(() => {
     if (!setup || !account || !selected || opening) return
     if (bound && same(bound.account, account)) return
-    if (selected.mine && setup.page && same(setup.page.currentAccount, account)) {
+    // Shown straight away when the page already shows it (and was drawn with today's layout).
+    if (selected.mine && !selected.mine.stale && setup.page && same(setup.page.currentAccount, account)) {
       setBound({ account, artifactId: setup.page.artifactId })
       if (pendingVersion.current) { setShowVersion({ id: pendingVersion.current, nonce: Date.now() }); pendingVersion.current = null }
       return
@@ -363,6 +365,17 @@ export default function RoiPage() {
         <div role="status" className="flex min-h-[60vh] flex-col items-center justify-center gap-3 rounded-xl border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin text-horizon-600" aria-hidden />
           {selected?.mine ? `Opening ${account}…` : `Putting the ${account} report on your page…`}
+        </div>
+      ) : account && same(account, 'Backstory') && !busy ? (
+        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/20 p-8 text-center">
+          <ChartNoAxesCombined className="h-6 w-6 text-horizon-600" aria-hidden />
+          <h2 className="text-lg font-semibold tracking-tight">Backstory&apos;s ROI readout</h2>
+          <p className="max-w-md text-sm text-muted-foreground">
+            {setup.canLoadExtracts
+              ? 'Backstory\'s own page is built from its value readout. Load the readout page (.html) and the report builds here in seconds, for everyone.'
+              : 'Backstory\'s own page is built from its value readout, which has not been loaded yet. A platform admin loads it from here.'}
+          </p>
+          {setup.canLoadExtracts && <ReadoutLoader account="Backstory" onLoaded={(result, name) => { applyOpen(name, result); void loadSetup(); void loadHistory() }} />}
         </div>
       ) : (
         <div className={cn('flex min-h-[60vh] flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/20 p-8 text-center')}>

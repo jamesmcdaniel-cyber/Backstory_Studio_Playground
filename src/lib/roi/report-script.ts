@@ -38,9 +38,15 @@ if(DEALS&&DEALS.w&&DEALS.w.length){
   var nD=DEALS.w.length;D={types:DEALS.types,months:DEALS.months,s:new Array(nD),w:new Array(nD),d:DEALS.d,t:new Array(nD),m:new Array(nD),x:new Array(nD)};
   for(var i=0;i<nD;i++){D.s[i]=parseInt(DEALS.s.substr(i*2,2),36)/10;D.w[i]=DEALS.w.charCodeAt(i)===49?1:0;D.t[i]=parseInt(DEALS.t.charAt(i),36);var mm=DEALS.m.substr(i*2,2);D.m[i]=mm==='zz'?-1:parseInt(mm,36);D.x[i]=DEALS.x.charCodeAt(i)===49?1:0;}
 }
+/* A value readout's aggregates (see readout-import.ts): group rows instead of reps, deal and stage tables instead of deals. */
+var AG=(typeof AGG!=='undefined'&&AGG)?AGG:null, AG_ALL='All deal types';
 var PERS_DEFAULT=['Director','VP','Executive','Management/Admin','Legal/Procurement','Finance','IT','Engineering','Ops/Product/Supply chain'];
 var PK=(ST&&ST.personaKeys)||PERS_DEFAULT, NP=PK.length;
-var HAS={U:!!U,usage:!!(U&&U.hasUsage),OPP:!!OPP,D:!!D,ST:!!ST,cells:!!(ST&&ST.cells&&ST.cells.length),ACC:!!(ACC&&ACC.accounts&&ACC.accounts.length),A360:!!A360,vel:!!(META&&META.hasVelocity),roster:!!(U&&U.users.some(function(u){return u.n;}))};
+var HAS={U:!!U,usage:!!(U&&U.hasUsage),OPP:!!OPP,D:!!D,ST:!!ST||!!(AG&&AG.stages&&AG.stages.wr.length),cells:!!(ST&&ST.cells&&ST.cells.length),ACC:!!(ACC&&ACC.accounts&&ACC.accounts.length),A360:!!A360,vel:!!(META&&META.hasVelocity),roster:!!(U&&U.users.some(function(u){return u.n;}))||!!(AG&&AG.roster&&AG.roster.length)};
+/* Rows stand for one rep each, or (readouts) for a group of reps: averages weight them. */
+var WT=U?U.users.map(function(u){return u.w==null?1:u.w;}):[];
+function cohortRow(u){return !AG||u.k==='cohort';}
+function headcount(pred){var n=0;if(!U)return 0;U.users.forEach(function(u,i){if(cohortRow(u)&&(AG||roleOK(u))&&pred(u))n+=WT[i];});return n;}
 var MK=U?Object.keys(U.labels):[], LAB=U?U.labels:{}, MON=U?U.months:[], NM=MON.length;
 var isMoney=function(k){return k.indexOf('pipeline')===0||((U&&U.moneyKeys)||[]).indexOf(k)>=0;};
 var fmt=function(v,k){if(v==null||isNaN(v))return '–';if(isMoney(k))return money(v);return v.toFixed(v<10?2:1);};
@@ -56,11 +62,12 @@ var ROLE_ORDER=['Account executives','CS / PS','SDR / BDR','Solutions engineerin
 var OPTIONS={fy:[],fq:[],role:[]};
 function chipGroup(id,values,key){var el=$(id);if(!el)return 0;el.innerHTML=values.map(function(v){return '<button type="button" aria-pressed="'+(GF[key].indexOf(v)>=0)+'" data-v="'+esc(v)+'">'+esc(v)+'</button>';}).join('');
   $$(id+' button').forEach(function(b){b.onclick=function(){var v=b.getAttribute('data-v'),a=GF[key],ix=a.indexOf(v);if(ix>=0)a.splice(ix,1);else a.push(v);b.setAttribute('aria-pressed',ix<0);gfChanged(true);};});return values.length;}
+function aggOK(r){return (!GF.fy.length||GF.fy.indexOf(r.fy)>=0)&&(!GF.fq.length||!r.fq||GF.fq.indexOf(r.fq)>=0);}
 function setupGF(){
   var months=D?D.months.slice():(HAS.cells?(ST.cellMonths||[]).slice():[]);
-  OPTIONS.fy=uniq(months.map(function(m){return fp(m).fy;})).sort();
+  OPTIONS.fy=AG?AG.fys.slice():uniq(months.map(function(m){return fp(m).fy;})).sort();
   OPTIONS.fq=OPTIONS.fy.length?['Q1','Q2','Q3','Q4']:[];
-  OPTIONS.role=U?ROLE_ORDER.filter(function(r){return U.users.some(function(u){return u.r&&(u.r||'Other')===r;});}):[];
+  OPTIONS.role=AG?ROLE_ORDER.filter(function(r){return AG.roster.some(function(u){return u.r===r;});}):U?ROLE_ORDER.filter(function(r){return U.users.some(function(u){return u.r&&(u.r||'Other')===r;});}):[];
   drawChips();
   $('#gfClear').onclick=function(){GF.fy=[];GF.fq=[];GF.role=[];drawChips();gfChanged(true);};
   var open=function(on){$('#filterPanel').hidden=!on;$('#filterScrim').hidden=!on;$('#filtersBtn').setAttribute('aria-expanded',on);if(on)$('#filtersClose').focus();else $('#filtersBtn').focus();};
@@ -116,13 +123,23 @@ function segBind(sel,cb){$$(sel+' button').forEach(function(b){b.onclick=functio
 function segSet(sel,v){$$(sel+' button').forEach(function(x){x.setAttribute('aria-pressed',x.getAttribute('data-v')===v);});}
 
 /* ---------- rep math ---------- */
-function popMask(p){return U.users.map(function(u){return (p==='all'?true:(p==='User'||p==='Non-user')?u.f===p:u.t===p)&&roleOK(u);});}
-function winAvg(mask,mi,keys){
+function popMask(p){
+  /* Readouts: the team row, or its role rows when roles are chosen; cohorts by their own rows (the readout has no role split within a cohort). */
+  if(AG){var mk=U.users.map(function(u){if(u.k==='role')return p==='all'&&GF.role.length>0&&GF.role.indexOf(u.r)>=0;if(u.k==='org')return p==='all'&&!GF.role.length;return p!=='all'&&((p==='User'||p==='Non-user')?u.f===p:u.t===p);});mk.pop=p;return mk;}
+  return U.users.map(function(u){return (p==='all'?true:(p==='User'||p==='Non-user')?u.f===p:u.t===p)&&roleOK(u);});}
+/* Readouts: a cohort over the readout's own last 6 or 12 months reads its per-rep totals (quiet months count), so the comparison matches the readout. */
+function cohortWindow(mask,mi){
+  if(!AG||!AG.cohortWindows||!mask.pop||mask.pop==='all')return null;
+  var len=mi.length,last=NM-1,contiguous=len&&mi[len-1]===last&&mi[0]===NM-len;if(!contiguous||(len!==6&&len!==12))return null;
+  var row=AG.cohortWindows[len===6?'l6':'l12'][mask.pop];if(!row)return null;
+  var out={},n=0;MK.forEach(function(k){out[k]=row[k]==null?NaN:row[k]/len;});U.users.forEach(function(u,i){if(mask[i])n+=WT[i];});out.n=n;return out;}
+function winAvg(mask,mi,keys,raw){
+  var cw=raw?null:cohortWindow(mask,mi);if(cw)return cw;
   var out={},n=0;(keys||MK).forEach(function(k,ki){var M=mat(k);if(!M){out[k]=NaN;return;}var s=0,c=0;
-    for(var i=0;i<M.length;i++){if(!mask[i])continue;var rs=0,rc=0;for(var j=0;j<mi.length;j++){var v=M[i][mi[j]];if(v!=null){rs+=v;rc++;}}if(rc){s+=rs/rc;c++;}}
+    for(var i=0;i<M.length;i++){if(!mask[i])continue;var rs=0,rc=0;for(var j=0;j<mi.length;j++){var v=M[i][mi[j]];if(v!=null){rs+=v;rc++;}}if(rc&&WT[i]){s+=rs/rc*WT[i];c+=WT[i];}}
     out[k]=c?s/c:NaN;if(k==='meeting_count'||(ki===0&&!n))n=c;});
   out.n=n;return out;}
-function monthly(mask,k){var M=mat(k),r=[];if(!M)return MON.map(function(){return null;});for(var j=0;j<NM;j++){var s=0,c=0;for(var i=0;i<M.length;i++){if(!mask[i])continue;var v=M[i][j];if(v!=null){s+=v;c++;}}r.push(c?s/c:null);}return r;}
+function monthly(mask,k){var M=mat(k),r=[];if(!M)return MON.map(function(){return null;});for(var j=0;j<NM;j++){var s=0,c=0;for(var i=0;i<M.length;i++){if(!mask[i]||!WT[i])continue;var v=M[i][j];if(v!=null){s+=v*WT[i];c+=WT[i];}}r.push(c?s/c:null);}return r;}
 function userAvg(i,k,mi){var M=mat(k);if(!M)return null;var s=0,c=0;for(var j=0;j<mi.length;j++){var v=M[i][mi[j]];if(v!=null){s+=v;c++;}}return c?s/c:null;}
 var rng=function(a,b){var r=[];for(var i=Math.max(0,a);i<=b;i++)r.push(i);return r;};
 var WN=CFG.windowMonths||6;
@@ -150,8 +167,19 @@ function typeOK(t){var sel=dealType();return sel===ALL_TYPES?!/renewal/i.test(t)
 function dealIdx(opts){opts=opts||{};var incl=opts.incl!=null?opts.incl:$('#dealIncl').checked,out=[];if(!D)return out;
   for(var i=0;i<D.w.length;i++){if(!incl&&D.x[i])continue;if(!typeOK(D.types[D.t[i]]))continue;if(!opts.ignoreMonth&&!monthOK(D.m[i]>=0?D.months[D.m[i]]:null))continue;if(opts.extra&&!opts.extra(i))continue;out.push(i);}return out;}
 function legacyTable(incl){if(!OPP)return null;var t=OPP[dealType()]?dealType():(OPP[ALL_TYPES]?ALL_TYPES:Object.keys(OPP)[0]);return OPP[t][incl?'incl':'excl'];}
-function currentDeals(){if(D)return dealGroup(dealIdx());return legacyTable($('#dealIncl')&&$('#dealIncl').checked);}
-function defaultDeals(){if(D){var renew=D.types.map(function(t){return /renewal/i.test(t);}),ix=[];for(var i=0;i<D.w.length;i++)if(!renew[D.t[i]]&&!D.x[i])ix.push(i);return dealGroup(ix);}return OPP?(OPP['All (excl. renewals)']||OPP[Object.keys(OPP)[0]]).excl:null;}
+/* Readouts: the type's table, or (with fiscal-year or quarter filters) levels from the monthly aggregates and deciles from the fiscal-year ones. */
+function aggBucket(list){var n=0,won=0,vs=0,vn=0,es=0,en=0;list.forEach(function(r){n+=r.n;won+=r.won;if(r.vel!=null){vs+=r.vel*r.n;vn+=r.n;}if(r.eng!=null){es+=r.eng*r.n;en+=r.n;}});return {n:n,won:won,win_rate:n?r1(won/n*100):null,avg_days:vn?Math.round(vs/vn):null,med_days_won:null,med_days_lost:null,eng:en?es/en:null};}
+function aggType(r){var t=dealType();return t===AG_ALL||r.t===t;}
+function aggDeals(){
+  var t=dealType();if(!GF.fy.length&&!GF.fq.length)return OPP[t]?OPP[t].excl:null;
+  var mrows=AG.deals.monthly.filter(function(r){return aggType(r)&&aggOK(r);});
+  var levels=[0,1,2].map(function(l){var b=aggBucket(mrows.filter(function(r){return r.l===l;}));b.level=LEVELS[l];b.lo=[0,31,71][l];b.hi=[30,70,100][l];return b;}).filter(function(b){return b.n>0;});
+  var drows=AG.deals.decileFy.filter(function(r){return aggType(r)&&(!GF.fy.length||GF.fy.indexOf(r.fy)>=0);});
+  var deciles=[1,2,3,4,5,6,7,8,9,10].map(function(d){var b=aggBucket(drows.filter(function(r){return r.dec===d;}));b.dec=d;b.lo=b.hi=b.eng==null?0:Math.round(b.eng);return b;}).filter(function(b){return b.n>0;});
+  var tot=aggBucket(mrows);if(tot.n<20)return null;
+  return {deciles:deciles,levels:levels,n:tot.n,win_rate:tot.win_rate,r_win:deciles.length>2?Math.round(corr(deciles.map(function(r){return r.dec;}),deciles.map(function(r){return r.win_rate||0;}))*100)/100:null};}
+function currentDeals(){if(D)return dealGroup(dealIdx());if(AG)return aggDeals();return legacyTable($('#dealIncl')&&$('#dealIncl').checked);}
+function defaultDeals(){if(AG)return OPP[AG_ALL]?OPP[AG_ALL].excl:null;if(D){var renew=D.types.map(function(t){return /renewal/i.test(t);}),ix=[];for(var i=0;i<D.w.length;i++)if(!renew[D.t[i]]&&!D.x[i])ix.push(i);return dealGroup(ix);}return OPP?(OPP['All (excl. renewals)']||OPP[Object.keys(OPP)[0]]).excl:null;}
 var lvl=function(g,prefix){return g?g.levels.filter(function(r){return r.level.indexOf(prefix)===0;})[0]:null;};
 
 /* ---------- hero ---------- */
@@ -163,6 +191,7 @@ function renderHero(){
       base({margin:{l:4,r:4,t:12,b:26},font:{family:css('--sans'),color:'#BBBCBC'},xaxis:{showgrid:false,linecolor:'#55555E',nticks:6,tickfont:{family:'Chivo Mono, monospace',size:11,color:'#BBBCBC'}},yaxis:{visible:false}}));
     $('#heroCap').textContent='Director, VP and executive meetings per rep per month, all reps';}
     else $('[data-section="hero"]').classList.add('hidden'); return; }
+  if(AG)$('#heroCap').textContent='Win rate by engagement decile, lowest to highest (every closed deal in the readout)';
   var d=g.deciles,hz2=css('--horizon');
   plot('heroStrip',[{type:'bar',x:d.map(function(r){return 'D'+r.dec;}),y:d.map(function(r){return r.win_rate;}),marker:{color:d.map(function(r,i){return i>=d.length-3?hz2:'#55555E';})},
     text:d.map(function(r){return r.win_rate==null?'–':r.win_rate.toFixed(0)+'%';}),textposition:'outside',textfont:{family:'Chivo Mono, monospace',size:12,color:'#FFFFFF'},cliponaxis:false,
@@ -203,9 +232,9 @@ function renderScorecard(){
 /* The adoption overview: who is in each usage cohort, and the pipeline each creates. */
 function renderOverview(){
   if(!HAS.usage){$('#overviewBlock').classList.add('hidden');return;}
-  var P=palette(),groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return U.users.filter(function(u){if(!roleOK(u))return false;return g==='No usage'?!u.t:u.t===g;}).length;}),total=counts.reduce(function(a,b){return a+b;},0);
-  $('#ovDonutSub').textContent=total.toLocaleString()+' reps: thirds of usage, and reps with no usage data.';
-  plot('ovDonut',[{type:'pie',hole:.6,labels:groups.map(function(g){return g==='No usage'?'No usage data':cohortName(g);}),values:counts,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
+  var P=palette(),groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return headcount(function(u){return g==='No usage'?!u.t:u.t===g;});}),total=counts.reduce(function(a,b){return a+b;},0),noneLabel=AG?'Non-users':'No usage data';
+  $('#ovDonutSub').textContent=AG?total.toLocaleString()+' people with activity: high, medium and low adopters by Backstory usage, and non-users.':total.toLocaleString()+' reps: thirds of usage, and reps with no usage data.';
+  plot('ovDonut',[{type:'pie',hole:.6,labels:groups.map(function(g){return g==='No usage'?noneLabel:cohortName(g);}),values:counts,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
   var card=$('#ovPipeline').closest('.card');
   if(MK.indexOf('pipeline_created')<0){card.classList.add('hidden');return;}
   var C=['High','Medium','Low','Non-user'],v=C.map(function(c){return winAvg(popMask(c),OBS,['pipeline_created']).pipeline_created;});
@@ -242,9 +271,10 @@ function setupLead(){
   segBind('#leadMode',function(v){leadMode=v;$('#leadCustom').classList.toggle('on',v==='custom');renderLead();});
   segBind('#mixKind',function(v){mixKind=v;renderMix();});
   ['bS','bE','oS','oE','leadPop'].forEach(function(id){document.getElementById(id).addEventListener('change',renderLead);});
-  if(!mat('in_person_meeting_count')&&!mat('received_email_count'))$('#mixBlock').classList.add('hidden');
-  else{if(!mat('in_person_meeting_count')&&!mat('conference_call_count')){mixKind='emails';segSet('#mixKind','emails');$('#mixKind button[data-v="meetings"]').classList.add('hidden');}
-    if(!mat('received_email_count'))$('#mixKind button[data-v="emails"]').classList.add('hidden');}
+  var hasMix=function(k){return AG?!!AG.org[k]:!!mat(k);};
+  if(!hasMix('in_person_meeting_count')&&!hasMix('received_email_count'))$('#mixBlock').classList.add('hidden');
+  else{if(!hasMix('in_person_meeting_count')&&!hasMix('conference_call_count')){mixKind='emails';segSet('#mixKind','emails');$('#mixKind button[data-v="meetings"]').classList.add('hidden');}
+    if(!hasMix('received_email_count'))$('#mixKind button[data-v="emails"]').classList.add('hidden');}
   if(!mat('director_meeting_count')&&!mat('vp_meeting_count'))$('#seniorBlock').classList.add('hidden');
 }
 function leadWindows(){
@@ -292,13 +322,15 @@ function renderMix(){
   if($('#mixBlock').classList.contains('hidden'))return;
   var mask=popMask($('#leadPop').value),w=leadWindows(),bw=w[0],ow=w[1],P=palette();
   var keys=mixKind==='meetings'?[['meeting_count','All meetings'],['in_person_meeting_count','In person'],['conference_call_count','Conference calls']]:[['sent_email_count','Sent'],['received_email_count','Received']];
-  keys=keys.filter(function(p){return mat(p[0]);});
-  plot('mixChart',keys.map(function(p,i){return {type:'scatter',mode:'lines',name:p[1],x:MON.map(function(m,j){return j;}),y:monthly(mask,p[0]),line:{color:P[i],width:i===0?2.6:2,dash:i===0?'solid':'dot'},customdata:MON.map(mlab),hovertemplate:'%{customdata}<br>'+esc(p[1])+': %{y:.2f}<extra></extra>'};}),
+  keys=keys.filter(function(p){return AG?!!AG.org[p[0]]:mat(p[0]);});
+  var seriesOf=function(k){return AG?AG.org[k]:monthly(mask,k);};
+  plot('mixChart',keys.map(function(p,i){return {type:'scatter',mode:'lines',name:p[1],x:MON.map(function(m,j){return j;}),y:seriesOf(p[0]),line:{color:P[i],width:i===0?2.6:2,dash:i===0?'solid':'dot'},customdata:MON.map(mlab),hovertemplate:'%{customdata}<br>'+esc(p[1])+': %{y:.2f}<extra></extra>'};}),
     base({shapes:bands(bw,ow),xaxis:monthAxis(),hovermode:'x unified'}));
-  var O=winAvg(mask,ow,keys.map(function(p){return p[0];})),B=winAvg(mask,bw,keys.map(function(p){return p[0];}));
+  var avgOf=function(k,w){var s=AG?AG.org[k]:null;if(!s){var A=winAvg(mask,w,[k]);return A[k];}var t=0,c=0;w.forEach(function(j){if(s[j]!=null){t+=s[j];c++;}});return c?t/c:NaN;};
+  var O={},B={};keys.forEach(function(p){O[p[0]]=avgOf(p[0],ow);B[p[0]]=avgOf(p[0],bw);});
   var note='';if(mixKind==='meetings'&&keys.length>1&&O.meeting_count){note=keys.slice(1).map(function(p){return esc(p[1])+' are <b class="num">'+p1(O[p[0]]/O.meeting_count*100)+'</b> of meetings in the observation window vs <b class="num">'+p1(B[p[0]]/B.meeting_count*100)+'</b> in the baseline.';}).join(' ');}
   else if(mixKind==='emails'&&O.sent_email_count&&O.received_email_count){note='Reps send <b class="num">'+fmt(O.sent_email_count,'x')+'</b> emails per month for every <b class="num">'+fmt(O.received_email_count,'x')+'</b> received in the observation window ('+(O.sent_email_count/O.received_email_count).toFixed(2)+' sent per received, vs '+(B.received_email_count?(B.sent_email_count/B.received_email_count).toFixed(2):'–')+' in the baseline).';}
-  $('#mixNote').innerHTML=note||'Monthly averages per rep for the same reps and windows as the tiles above.';
+  $('#mixNote').innerHTML=(note||'Monthly averages per rep for the same reps and windows as the tiles above.')+(AG?' The readout splits channels for the whole team only, so this chart does not follow the population.':'');
 }
 function renderSenior(){
   if($('#seniorBlock').classList.contains('hidden'))return;
@@ -346,10 +378,12 @@ function renderAdoption(){
   if(adoptView==='users'){renderUsers();renderRoster();}else renderAdopt();
 }
 function renderAdopt(){
-  var C=['High','Medium','Low'],w=winsFor(adoptWin),A={},Bs={},P=palette();
-  C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);Bs[c]=winAvg(popMask(c),w[1]);});
-  var nT={High:0,Medium:0,Low:0};U.users.forEach(function(u){if(u.t&&roleOK(u))nT[u.t]++;});
-  $('#adoptionIntro').innerHTML=U.nUsage+' reps appear in both the activity extract and the usage file. They\'re split into equal thirds by usage score: high (more than '+U.tierCuts[1]+', '+nT.High+' reps), medium ('+(U.tierCuts[0]+1)+'–'+U.tierCuts[1]+', '+nT.Medium+') and low ('+U.tierCuts[0]+' or fewer, '+nT.Low+').'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
+  var C=['High','Medium','Low'],w=winsFor(adoptWin),A={},Ar={},Bs={},P=palette();
+  /* Change against each tier's own baseline compares like with like: monthly averages on both sides (a readout's totals cover only its last 6 and 12 months). */
+  C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);Ar[c]=winAvg(popMask(c),w[0],undefined,true);Bs[c]=winAvg(popMask(c),w[1]);});
+  var nT={High:headcount(function(u){return u.t==='High';}),Medium:headcount(function(u){return u.t==='Medium';}),Low:headcount(function(u){return u.t==='Low';})};
+  if(AG)$('#adoptionIntro').innerHTML=(nT.High+nT.Medium+nT.Low)+' people use Backstory: '+nT.High+' high, '+nT.Medium+' medium and '+nT.Low+' low adopters by usage, against '+headcount(function(u){return u.f==='Non-user';})+' non-users. Averages are per rep per month; the readout has no role split within a cohort, so the role filter narrows the team views and the roster.';
+  else $('#adoptionIntro').innerHTML=U.nUsage+' reps appear in both the activity extract and the usage file. They\'re split into equal thirds by usage score: high (more than '+U.tierCuts[1]+', '+nT.High+' reps), medium ('+(U.tierCuts[0]+1)+'–'+U.tierCuts[1]+', '+nT.Medium+') and low ('+U.tierCuts[0]+' or fewer, '+nT.Low+').'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
   cohortKpis('#adoptKpis',C,A);
   var cols={High:css('--d1'),Medium:css('--d2')};
   plot('adoptIndex',['High','Medium'].map(function(t){return {type:'bar',name:t+' adopters',x:MK.map(function(k){return wrapLab(LAB[k]);}),y:MK.map(function(k){return A[t][k]/A.Low[k]*100;}),marker:{color:cols[t]},
@@ -358,20 +392,21 @@ function renderAdopt(){
       annotations:[{xref:'paper',x:1,y:100,text:'Low = 100',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:'Chivo Mono, monospace',size:11,color:css('--text3')}}],
       xaxis:{tickangle:0,automargin:true,gridcolor:'rgba(0,0,0,0)',tickfont:{size:11}},margin:{l:48,r:10,t:14,b:80}}));
   cohortBars('adoptSenior','adoptPipeline',C,w[0]);
-  var groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return U.users.filter(function(u){if(!roleOK(u))return false;return g==='No usage'?!u.t:u.t===g;}).length;});
-  var donut=plot('adoptDonut',[{type:'pie',hole:.58,labels:groups.map(function(g){return g==='No usage'?'No usage data':cohortName(g);}),values:counts,customdata:groups,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
+  var groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return headcount(function(u){return g==='No usage'?!u.t:u.t===g;});});
+  var donut=plot('adoptDonut',[{type:'pie',hole:.58,labels:groups.map(function(g){return g==='No usage'?(AG?'Non-users':'No usage data'):cohortName(g);}),values:counts,customdata:groups,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
   if(donut&&donut.on&&!donut._roiBound){donut._roiBound=true;donut.on('plotly_click',function(e){var g=e.points&&e.points[0]&&e.points[0].customdata;if(g==null)return;rosterTier=Array.isArray(g)?g[0]:g;renderRoster();var rb=$('#rosterBlock');if(rb)rb.scrollIntoView({behavior:'smooth',block:'start'});});}
   cohortTrend('adoptTrend',C,$('#adoptTrendMetric').value);
   $('#adoptTblSub').textContent='Averages per rep per month in the '+w[2]+'; change against each tier\'s own '+w[3]+'.';
   $('#adoptTbl').innerHTML='<thead><tr><th>Metric</th>'+C.map(function(t){return '<th>'+t+'</th><th>Change</th>';}).join('')+'</tr></thead><tbody>'+
-    MK.map(function(k){return '<tr><td>'+esc(LAB[k])+'</td>'+C.map(function(t){var c=pct(A[t][k],Bs[t][k]);return '<td>'+fmt(A[t][k],k)+'</td><td class="'+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+'</td>';}).join('')+'</tr>';}).join('')+
+    MK.map(function(k){return '<tr><td>'+esc(LAB[k])+'</td>'+C.map(function(t){var c=pct(Ar[t][k],Bs[t][k]);return '<td>'+fmt(A[t][k],k)+'</td><td class="'+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+'</td>';}).join('')+'</tr>';}).join('')+
     '<tr><td>Reps</td>'+C.map(function(t){return '<td>'+A[t].n+'</td><td></td>';}).join('')+'</tr></tbody>';
   renderRoster();
 }
 function renderUsers(){
   var C=['User','Non-user'],w=winsFor(adoptWin),A={};C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);});
-  var nUser=U.users.filter(function(u){return u.f==='User'&&roleOK(u);}).length,nAll=U.users.filter(roleOK).length;
-  $('#adoptionIntro').innerHTML='Users are the '+nUser+' reps with usage above the bottom 5%. Non-users are the '+(nAll-nUser).toLocaleString()+' reps in the activity extract with no usage, plus the '+U.nBottom+' lowest-usage reps.'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
+  var nUser=headcount(function(u){return u.f==='User';}),nAll=headcount(function(){return true;});
+  if(AG)$('#adoptionIntro').innerHTML='Users are the '+nUser+' people with Backstory usage; non-users the '+(nAll-nUser)+' without. Averages are per rep per month.';
+  else $('#adoptionIntro').innerHTML='Users are the '+nUser+' reps with usage above the bottom 5%. Non-users are the '+(nAll-nUser).toLocaleString()+' reps in the activity extract with no usage, plus the '+U.nBottom+' lowest-usage reps.'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
   cohortKpis('#usersKpis',C,A);
   var lifts=MK.map(function(k){return pct(A.User[k],A['Non-user'][k]);});
   plot('usersLift',[{type:'bar',orientation:'h',y:MK.map(function(k){return LAB[k];}),x:lifts,marker:{color:lifts.map(function(v){return v>=0?css('--d1'):css('--neg');})},
@@ -386,21 +421,23 @@ function renderUsers(){
 }
 var ROSTER_COLS=[['n','Name'],['tier','Cohort'],['r','Role'],['ti','Team or title'],['ev','Usage score'],['a','Account views'],['o','Opportunity views'],['meeting_count','Meetings'],['vp_meeting_count','VP meetings'],['executive_meeting_count','Exec meetings'],['pipeline_created','Pipeline created'],['last','Last active']];
 var rosterRows=null;
-function buildRoster(){rosterRows=U.users.map(function(u,i){var row={i:i,n:u.n||'',r:u.r||'Other',ti:u.ti||u.g||'',t:u.t,f:u.f,ev:u.u?u.u.ev:null,a:u.u?u.u.a:null,o:u.u?u.u.o:null,last:u.u?u.u.last:null};
+function buildRoster(){
+  if(AG){rosterRows=AG.roster.map(function(u,i){return {i:i,n:u.n,r:u.r||'Other',ti:u.ti,t:u.t,f:u.f,ev:u.ev,a:u.a,o:u.o,last:u.last,meeting_count:u.meetings,vp_meeting_count:u.vp,executive_meeting_count:u.exec,pipeline_created:u.pipeline};});return;}
+  rosterRows=U.users.map(function(u,i){var row={i:i,n:u.n||'',r:u.r||'Other',ti:u.ti||u.g||'',t:u.t,f:u.f,ev:u.u?u.u.ev:null,a:u.u?u.u.a:null,o:u.u?u.u.o:null,last:u.u?u.u.last:null};
   ['meeting_count','vp_meeting_count','executive_meeting_count','pipeline_created'].forEach(function(k){row[k]=userAvg(i,k,OBS);});return row;});}
 function renderRoster(){
   if(!HAS.roster)return;if(!rosterRows)buildRoster();
-  var tiers=['All','High','Medium','Low','No usage','User','Non-user'];if(tiers.indexOf(rosterTier)<0)rosterTier='All';
+  var tiers=AG?['All','High','Medium','Low','Non-user']:['All','High','Medium','Low','No usage','User','Non-user'];if(tiers.indexOf(rosterTier)<0)rosterTier='All';
   $('#rosterTier').innerHTML=tiers.map(function(t){return '<button type="button" aria-pressed="'+(t===rosterTier)+'" data-v="'+t+'">'+esc(t==='All'?'All':t==='No usage'?'No usage data':cohortName(t))+'</button>';}).join('');
   $$('#rosterTier button').forEach(function(b){b.onclick=function(){rosterTier=b.getAttribute('data-v');renderRoster();};});
   var q=($('#rosterQ').value||'').toLowerCase();
-  var rows=rosterRows.filter(function(r){var u=U.users[r.i];if(!roleOK(u))return false;
+  var rows=rosterRows.filter(function(r){var u=AG?{r:r.r}:U.users[r.i];if(!roleOK(u))return false;
     if(rosterTier!=='All'){if(rosterTier==='No usage'){if(r.t)return false;}else if(rosterTier==='User'||rosterTier==='Non-user'){if(r.f!==rosterTier)return false;}else if(r.t!==rosterTier)return false;}
     return !q||(r.n+' '+r.ti+' '+r.r).toLowerCase().indexOf(q)>=0;});
   var k=rosterSort.k,dir=rosterSort.dir;rows.sort(function(a,b){var va=k==='tier'?(a.t||a.f||''):a[k],vb=k==='tier'?(b.t||b.f||''):b[k];if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return -1;return (typeof va==='string'?va.localeCompare(vb):va-vb)*dir;});
-  $('#rosterSub').textContent=rosterRows.length.toLocaleString()+' reps · activity columns are per-month averages in the observation window ('+wl(OBS)+')';
+  $('#rosterSub').textContent=AG?rosterRows.length.toLocaleString()+' people · activity columns are totals for the last six months, as the readout reports them':rosterRows.length.toLocaleString()+' reps · activity columns are per-month averages in the observation window ('+wl(OBS)+')';
   $('#rosterTbl').innerHTML='<thead><tr>'+ROSTER_COLS.map(function(c){return '<th><button type="button" data-k="'+c[0]+'">'+esc(c[1])+(rosterSort.k===c[0]?(rosterSort.dir<0?' ↓':' ↑'):'')+'</button></th>';}).join('')+'</tr></thead><tbody>'+
-    rows.slice(0,250).map(function(r){return '<tr><td>'+esc(r.n||'—')+'</td><td class="txt"><span class="badge">'+esc(r.t||(r.f==='User'?'User':r.f?'Non-user':'—'))+'</span></td><td class="txt">'+esc(r.r)+'</td><td class="txt">'+esc(r.ti)+'</td><td>'+n0(r.ev)+'</td><td>'+n0(r.a)+'</td><td>'+n0(r.o)+'</td><td>'+fmt(r.meeting_count,'x')+'</td><td>'+fmt(r.vp_meeting_count,'x')+'</td><td>'+fmt(r.executive_meeting_count,'x')+'</td><td>'+money(r.pipeline_created)+'</td><td>'+esc(r.last||'—')+'</td></tr>';}).join('')+'</tbody>';
+    rows.slice(0,250).map(function(r){return '<tr><td>'+esc(r.n||'—')+'</td><td class="txt"><span class="badge">'+esc(r.t||(r.f==='User'?'User':r.f?'Non-user':'—'))+'</span></td><td class="txt">'+esc(r.r)+'</td><td class="txt">'+esc(r.ti)+'</td><td>'+n0(r.ev)+'</td><td>'+n0(r.a)+'</td><td>'+n0(r.o)+'</td><td>'+(AG?n0(r.meeting_count):fmt(r.meeting_count,'x'))+'</td><td>'+(AG?n0(r.vp_meeting_count):fmt(r.vp_meeting_count,'x'))+'</td><td>'+(AG?n0(r.executive_meeting_count):fmt(r.executive_meeting_count,'x'))+'</td><td>'+money(r.pipeline_created)+'</td><td>'+esc(r.last||'—')+'</td></tr>';}).join('')+'</tbody>';
   $$('#rosterTbl th button').forEach(function(b){b.onclick=function(){var kk=b.getAttribute('data-k');rosterSort={k:kk,dir:rosterSort.k===kk?-rosterSort.dir:-1};renderRoster();};});
   $('#rosterCount').textContent='Showing '+Math.min(250,rows.length).toLocaleString()+' of '+rows.length.toLocaleString()+' reps';
 }
@@ -409,17 +446,23 @@ function renderRoster(){
 var dealView='deciles', dealMode='overall', heatMode='share', stageView='share', persView='wr';
 function setupDeals(){
   var types=D?[ALL_TYPES].concat(D.types.filter(function(t){var n=0;for(var i=0;i<D.t.length;i++)if(D.types[D.t[i]]===t)n++;return n>=20&&!/framework/i.test(t);})):Object.keys(OPP||{});
+  if(AG){$('#dealInclWrap').classList.add('hidden');$('#p-deals .intro').textContent='Every closed deal in the readout with an engagement score, all deal types by default. Levels: low 0–30, medium 31–70, high 71+. Fiscal year and quarter filters slice the levels and the monthly view; deciles follow the fiscal year.';}
   $('#dealType').innerHTML=types.map(function(t){return '<option>'+esc(t)+'</option>';}).join('');
   $('#dealType').onchange=renderDeal;
   segBind('#dealView',function(v){dealView=v;renderDeal();});
   segBind('#dealMode',function(v){dealMode=v;renderDeal();});
   $('#dealIncl').onchange=renderDeal;
   if(!HAS.vel){$('#dealInclWrap').classList.add('hidden');$('#dealVelBlock').classList.add('hidden');}
-  if(!D)$('#dealModeWrap').classList.add('hidden');
+  if(!D&&!AG)$('#dealModeWrap').classList.add('hidden');
   if(!HAS.OPP&&!HAS.D)$$('#p-deals .controls,#dealDyn,#dealKpis,#dealYoy,#p-deals [data-section="dealWin"],#dealVelBlock,#dealVolBlock').forEach(function(e){e.classList.add('hidden');});
 }
 function renderDealsTab(){if(HAS.OPP||HAS.D)renderDeal();if(HAS.ACC){renderAccBubble();renderAccTable();}}
 function setupStage(){
+  if(AG){
+    heatMode='won';segSet('#heatMode','won');$('#heatMode button[data-v="share"]').classList.add('hidden');
+    stageView='pwl';segSet('#stageView','pwl');['share','type'].forEach(function(v){$('#stageView button[data-v="'+v+'"]').classList.add('hidden');});
+    ['stageSurv','stagePersona','stageBreadth'].forEach(function(id){var el=$('[data-section="'+id+'"]');if(el)el.classList.add('hidden');});
+  }
   segBind('#heatMode',function(v){heatMode=v;renderHeat();});
   segBind('#stageView',function(v){stageView=v;renderStageProf();});
   segBind('#persView',function(v){persView=v;renderPers();});
@@ -434,6 +477,7 @@ function renderDealEng(){
   if(hi)tiles.push(['High-engagement win rate',p1(hi.win_rate),n0(hi.n)+' deals']);
   if(lo)tiles.push(['Low-engagement win rate',p1(lo.win_rate),n0(lo.n)+' deals']);
   if(hi&&lo&&lo.win_rate)tiles.push(['Win rate lift, high vs low',(hi.win_rate/lo.win_rate).toFixed(1)+'×',(hi.win_rate-lo.win_rate).toFixed(1)+' pts']);
+  if(AG&&hi&&lo&&hi.avg_days!=null&&lo.avg_days!=null){var dd=lo.avg_days-hi.avg_days;tiles.push(['Days to close · high vs low',hi.avg_days+' vs '+lo.avg_days,Math.abs(dd)<1?'same average time':Math.abs(dd)+' days '+(dd>0?'faster':'slower')+' on average']);}
   if(HAS.vel&&hi&&lo&&hi.med_days_won!=null&&lo.med_days_won!=null)tiles.push(['Days to close, won · high vs low',hi.med_days_won+' vs '+lo.med_days_won,(function(d){var a=Math.abs(d),u=Math.round(a)===1?' day ':' days ';return a<0.5?'same median time':Math.round(a)+u+(d>=0?'faster':'slower');})(lo.med_days_won-hi.med_days_won)]);
   tiles.push(['Deals analysed',n0(g.n),'win rate '+p1(g.win_rate)+(g.r_win!=null?' · r = '+g.r_win:'')]);
   $('#dealKpis').innerHTML=tiles.map(function(t){return '<div class="tile"><div class="k">'+esc(t[0])+'</div><div class="v">'+esc(t[1])+'</div><div class="d">'+esc(t[2])+'</div></div>';}).join('');
@@ -442,7 +486,7 @@ function renderDealEng(){
   if(hi&&lo&&hi.win_rate!=null&&lo.win_rate!=null)s+=' High-engagement deals win <b class="num">'+hi.win_rate.toFixed(1)+'%</b> vs <b class="num">'+lo.win_rate.toFixed(1)+'%</b> for low.';
   $('#dealDyn').innerHTML=s;
   renderDealYoy();
-  var mode=D?dealMode:'overall';
+  var mode=(D||AG)?dealMode:'overall';
   $('#dealWinNote').innerHTML=paras(mode==='overall'?N.notes.dealWin:(N.notes.dealTrend||N.notes.dealWin))||'<p class="muted">—</p>';
   $('#dealVolBlock').classList.toggle('hidden',mode==='overall');
   if(mode==='overall'){
@@ -453,13 +497,18 @@ function renderDealEng(){
       textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},customdata:rows.map(function(r){return [r.n.toLocaleString(),(+r.lo).toFixed(0),(+r.hi).toFixed(0)];}),hovertemplate:'%{x}<br>Win rate %{y:.1f}%<br>%{customdata[0]} deals<br>Score %{customdata[1]}–%{customdata[2]}<extra></extra>'},
       {type:'scatter',mode:'lines',x:x,y:rows.map(function(){return g.win_rate;}),line:{color:css('--text3'),dash:'dash',width:1.5},hoverinfo:'skip'}],
       base({showlegend:false,yaxis:ypct(),xaxis:xcat(),annotations:[{xref:'paper',x:1,y:g.win_rate,text:'Overall '+g.win_rate+'%',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:'Chivo Mono, monospace',size:11,color:css('--text3')}}]}));
+    if(AG){$('#dealVelTitle').textContent='Deal velocity';$('#dealVelSub').textContent='Average days from creation to close, every closed deal. Lower is faster.';
+      plot('dealVel',[{type:'bar',name:'Average days to close',x:x,y:rows.map(function(r){return r.avg_days;}),marker:{color:colr},text:rows.map(function(r){return r.avg_days==null?'–':r.avg_days+'d';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{x}<br>%{y} days on average<extra></extra>'}],
+        base({showlegend:false,yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat()}));return;}
     if(HAS.vel){$('#dealVelTitle').textContent='Deal velocity';$('#dealVelSub').textContent='Median days from creation to close, for won and lost deals.';
       plot('dealVel',[{type:'bar',name:'Won deals',x:x,y:rows.map(function(r){return r.med_days_won;}),marker:{color:css('--d1')},hovertemplate:'%{x}<br>Won: %{y} days median<extra></extra>'},
         {type:'bar',name:'Lost deals',x:x,y:rows.map(function(r){return r.med_days_lost;}),marker:{color:css('--d3')},hovertemplate:'%{x}<br>Lost: %{y} days median<extra></extra>'}],
         base({barmode:'group',yaxis:{title:{text:'Median days',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat()}));}
     return;
   }
-  var ix=dealIdx(),lvColors=[css('--rule-strong'),css('--d2'),css('--d1')];
+  var lvColors=[css('--rule-strong'),css('--d2'),css('--d1')];
+  if(AG){renderAggDealModes(mode,lvColors);return;}
+  var ix=dealIdx();
   if(mode==='monthly'){
     var months=D.months.map(function(m,mi){return mi;}).filter(function(mi){return monthOK(D.months[mi]);});
     var cell=months.map(function(){return [[],[],[]];});var pos={};months.forEach(function(mi,k){pos[mi]=k;});
@@ -483,13 +532,42 @@ function renderDealEng(){
   $('#dealVolSub').textContent='Closed deals per fiscal year, stacked by engagement level.';
   plot('dealVol',LEVELS.map(function(L,li){return {type:'bar',name:L,x:fys,y:fys.map(function(f){return byFy[f].filter(function(i){return levelOf(D.s[i])===li;}).length;}),marker:{color:lvColors[li]}};}),base({barmode:'stack',xaxis:xcat()}));
 }
-function monthsInFy(f){if(!D)return 0;return D.months.filter(function(m){return fp(m).fy===f;}).length;}
+/* Readouts: the month and fiscal-year views read the deal aggregates directly. */
+function renderAggDealModes(mode,lvColors){
+  if(mode==='monthly'){
+    var rowsM=AG.deals.monthly.filter(function(r){return aggType(r)&&aggOK(r);}),months=uniq(rowsM.map(function(r){return r.m;})).sort(),xm=months.map(mlab);
+    var cell=months.map(function(m){return [0,1,2].map(function(l){return aggBucket(rowsM.filter(function(r){return r.m===m&&r.l===l;}));});});
+    $('#dealWinTitle').textContent='Win rate by close month';$('#dealWinSub').textContent='Each line is an engagement level; months with fewer than five deals at a level are left blank.';
+    plot('dealWin',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines+markers',name:L,x:xm,y:cell.map(function(c){return c[li].n>=5?c[li].win_rate:null;}),customdata:cell.map(function(c){return c[li].n;}),line:{color:lvColors[li],width:2.4},hovertemplate:'%{x}<br>'+L+': %{y:.1f}% (%{customdata} deals)<extra></extra>'};}),base({yaxis:ypct(),xaxis:xcat({nticks:12}),hovermode:'x unified'}));
+    $('#dealVelTitle').textContent='Days to close by close month';$('#dealVelSub').textContent='Average days from creation to close, by engagement level.';
+    plot('dealVel',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines',name:L,x:xm,y:cell.map(function(c){return c[li].n>=5?c[li].avg_days:null;}),line:{color:lvColors[li],width:2.2}};}),base({xaxis:xcat({nticks:12}),yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},hovermode:'x unified'}));
+    $('#dealVolSub').textContent='Closed deals per month, stacked by engagement level.';
+    plot('dealVol',LEVELS.map(function(L,li){return {type:'bar',name:L,x:xm,y:cell.map(function(c){return c[li].n;}),marker:{color:lvColors[li]}};}),base({barmode:'stack',xaxis:xcat({nticks:12})}));
+    return;
+  }
+  var rowsF=AG.deals.fy.filter(function(r){return aggType(r)&&(!GF.fy.length||GF.fy.indexOf(r.fy)>=0);}),fys=uniq(rowsF.map(function(r){return r.fy;})).sort();
+  var fyColors=[css('--rule-strong'),css('--d3'),css('--d2'),css('--d1'),css('--d6')].slice(-Math.max(1,fys.length));
+  var lv=function(f,l){return aggBucket(rowsF.filter(function(r){return r.fy===f&&r.l===l;}));};
+  $('#dealWinTitle').textContent='Win rate by fiscal year';$('#dealWinSub').textContent=dealView==='levels'?'Each bar is a fiscal year.':'Each line is a fiscal year, by engagement decile.';
+  if(dealView==='levels')plot('dealWin',fys.map(function(f,k){return {type:'bar',name:f,x:LEVELS,y:[0,1,2].map(function(l){return lv(f,l).win_rate;}),marker:{color:fyColors[k%fyColors.length]},hovertemplate:'%{x}<br>'+f+': %{y:.1f}%<extra></extra>'};}),base({barmode:'group',yaxis:ypct(),xaxis:xcat()}));
+  else plot('dealWin',fys.map(function(f,k){var d=[1,2,3,4,5,6,7,8,9,10].map(function(dec){return aggBucket(AG.deals.decileFy.filter(function(r){return r.fy===f&&r.dec===dec&&aggType(r);}));});return {type:'scatter',mode:'lines+markers',name:f,x:d.map(function(b,i){return 'D'+(i+1);}),y:d.map(function(b){return b.n>=5?b.win_rate:null;}),line:{color:fyColors[k%fyColors.length],width:2.4}};}),base({yaxis:ypct(),xaxis:xcat()}));
+  $('#dealVelTitle').textContent='Days to close by fiscal year';$('#dealVelSub').textContent='Average days from creation to close, by engagement level.';
+  plot('dealVel',fys.map(function(f,k){return {type:'bar',name:f,x:LEVELS,y:[0,1,2].map(function(l){return lv(f,l).avg_days;}),marker:{color:fyColors[k%fyColors.length]}};}),base({barmode:'group',xaxis:xcat(),yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+  $('#dealVolSub').textContent='Closed deals per fiscal year, stacked by engagement level.';
+  plot('dealVol',LEVELS.map(function(L,li){return {type:'bar',name:L,x:fys,y:fys.map(function(f){return lv(f,li).n;}),marker:{color:lvColors[li]}};}),base({barmode:'stack',xaxis:xcat()}));
+}
+function monthsInFy(f){if(AG)return uniq(AG.deals.monthly.filter(function(r){return r.fy===f;}).map(function(r){return r.m;})).length;if(!D)return 0;return D.months.filter(function(m){return fp(m).fy===f;}).length;}
 function trendWord(vals){var a=vals.filter(function(v){return v!=null;});if(a.length<2)return 'steady';var d=a[a.length-1]-a[0];return Math.abs(d)<3?'steady':d>0?'rising':'falling';}
+function aggFyGroups(){var rowsF=AG.deals.fy.filter(aggType),fys=uniq(rowsF.map(function(r){return r.fy;})).sort().filter(function(f){return aggBucket(rowsF.filter(function(r){return r.fy===f;})).n>=20;});
+  return {fys:fys,G:fys.map(function(f){return {levels:[0,1,2].map(function(l){var bk=aggBucket(rowsF.filter(function(r){return r.fy===f&&r.l===l;}));bk.level=LEVELS[l];bk.med_days_won=bk.avg_days;return bk;}).filter(function(bk){return bk.n>0;})};})};}
 function renderDealYoy(){
-  var el=$('#dealYoy');if(!D){el.innerHTML='';return;}
-  var ix=dealIdx({ignoreMonth:true}),by={};ix.forEach(function(i){var f=fyOfDeal(i);if(!f)return;(by[f]=by[f]||[]).push(i);});
-  var fys=Object.keys(by).sort().filter(function(f){return by[f].length>=20;});if(fys.length<2){el.innerHTML='';return;}
-  var G=fys.map(function(f){return dealGroup(by[f]);}),a=fys.length-2,b=fys.length-1,partial=monthsInFy(fys[b])<12?' (partial year)':'';
+  var el=$('#dealYoy');if(!D&&!AG){el.innerHTML='';return;}
+  var fys,G;
+  if(AG){var ag=aggFyGroups();fys=ag.fys;G=ag.G;}
+  else{var ix=dealIdx({ignoreMonth:true}),by={};ix.forEach(function(i){var f=fyOfDeal(i);if(!f)return;(by[f]=by[f]||[]).push(i);});
+    fys=Object.keys(by).sort().filter(function(f){return by[f].length>=20;});G=fys.map(function(f){return dealGroup(by[f]);});}
+  if(fys.length<2){el.innerHTML='';return;}
+  var a=fys.length-2,b=fys.length-1,partial=monthsInFy(fys[b])<12?' (partial year)':'';
   var L=function(g,p){return g?g.levels.filter(function(r){return r.level.indexOf(p)===0;})[0]:null;};
   var cards=[];
   var ha=L(G[a],'High'),hb=L(G[b],'High');
@@ -499,11 +577,33 @@ function renderDealYoy(){
         :'High-engagement deals went from '+n0(ha.n)+' in '+fys[a]+' to '+n0(hb.n)+' in '+fys[b]+' ('+sp(ch)+'), at '+p1(ha.win_rate)+' and '+p1(hb.win_rate)+' win rates.']);}
   var mids=G.map(function(g){var r=L(g,'Medium');return r?r.win_rate:null;}),mw=trendWord(mids);cards.push([mw==='falling'?'neg':mw==='rising'?'pos':'','Medium-engagement win rate',mids.map(p1).join(' → '),mw==='steady'?'Steady across '+fys.join(', ')+': the middle band is a predictable outcome range year to year.':'Medium-engagement deals are '+mw+' across '+fys.join(', ')+'.']);
   var lows=G.map(function(g){var r=L(g,'Low');return r?r.win_rate:null;}),lw=trendWord(lows);cards.push([lw==='falling'?'neg':lw==='rising'?'pos':'','Low-engagement win rate',lows.map(p1).join(' → '),'Low-engagement deals are '+lw+' across '+fys.join(', ')+(lw==='falling'?' — the gap between engaged and disengaged deals is widening.':'.')]);
-  if(HAS.vel&&ha&&hb&&ha.med_days_won!=null&&hb.med_days_won!=null){var dd=ha.med_days_won-hb.med_days_won;cards.push([Math.abs(dd)<1?'':dd>0?'pos':'neg','High-engagement velocity',ha.med_days_won+'d → '+hb.med_days_won+'d',Math.abs(dd)<1?'Won high-engagement deals closed in the same median time in '+fys[b]+partial+' as in '+fys[a]+'.':'Won high-engagement deals closed '+Math.abs(dd).toFixed(0)+' days '+(dd>0?'faster':'slower')+' (median) in '+fys[b]+partial+' than in '+fys[a]+'.']);}
+  if(HAS.vel&&ha&&hb&&ha.med_days_won!=null&&hb.med_days_won!=null){var dd=ha.med_days_won-hb.med_days_won,what=AG?'High-engagement deals':'Won high-engagement deals',how=AG?'average':'median';cards.push([Math.abs(dd)<1?'':dd>0?'pos':'neg','High-engagement velocity',ha.med_days_won+'d → '+hb.med_days_won+'d',Math.abs(dd)<1?what+' closed in the same '+how+' time in '+fys[b]+partial+' as in '+fys[a]+'.':what+' closed '+Math.abs(dd).toFixed(0)+' days '+(dd>0?'faster':'slower')+' ('+how+') in '+fys[b]+partial+' than in '+fys[a]+'.']);}
   el.innerHTML='<div class="yoy-title">Year over year · '+esc(fys[a])+' → '+esc(fys[b])+'</div>'+cards.map(function(c){return '<div class="'+c[0]+'"><h4>'+esc(c[1])+'</h4><div class="s">'+esc(c[2])+'</div><p>'+esc(c[3])+'</p></div>';}).join('');
 }
 
 /* ---------- stage and persona ---------- */
+/* Readouts: the stage views read the readout's stage and persona tables; fiscal-year filters pick its per-year rows. */
+var SA=AG?AG.stages:null;
+var shortStage=function(st){return String(st).replace(/^\d+ - /,'');};
+function aggStageWr(fyOnly){var src=fyOnly?SA.wrFy.filter(function(r){return r.fy===fyOnly;}):GF.fy.length?SA.wrFy.filter(function(r){return GF.fy.indexOf(r.fy)>=0;}):SA.wr;
+  return SA.order.map(function(st){var n=0,w=0;src.forEach(function(r){if(r.stage===st){n+=r.n;w+=r.won;}});return {stage:st,n:n,won:w,wr:n?w/n*100:null};});}
+function aggPersona(won){var src=GF.fy.length?SA.personaFy.filter(function(r){return GF.fy.indexOf(r.fy)>=0;}):SA.persona;
+  return SA.order.map(function(st){var n=0,p=SA.personas.map(function(){return 0;});src.forEach(function(r){if(r.stage===st&&r.won===won){n+=r.n;r.p.forEach(function(v,k){p[k]+=v*r.n;});}});return {n:n,p:p.map(function(v){return n?v/n:null;})};});}
+function renderAggStage(){
+  var W=aggStageWr();
+  $('#stageIntro').innerHTML='Win rate for deals with activity matched to each stage, and the personas engaged on won and lost deals. '+(GF.fy.length?'Fiscal years: '+esc(GF.fy.join(', '))+'.':'Every fiscal year in the readout.')+(GF.fq.length?' The readout splits stages by fiscal year only, so quarter filters do not apply here.':'');
+  $('#stageKpis').innerHTML=W.slice(0,4).map(function(a){return '<div class="tile"><div class="k">Win rate · '+esc(shortStage(a.stage))+'</div><div class="v">'+p1(a.wr)+'</div><div class="d">'+n0(a.n)+' deals with activity here</div></div>';}).join('');
+  var fys=uniq(SA.wrFy.map(function(r){return r.fy;})).sort(),cards=[];
+  if(fys.length>=2){var fa=fys[fys.length-2],fb=fys[fys.length-1],A=aggStageWr(fa),Bw=aggStageWr(fb),partial=monthsInFy(fb)<12?' (partial year)':'';
+    var deltas=A.map(function(a,i){var b=Bw[i];return a.n>=20&&b.n>=20?{st:a.stage,a:a.wr,b:b.wr}:null;}).filter(Boolean).sort(function(x,y){return (y.b-y.a)-(x.b-x.a);});
+    if(deltas.length){var up=deltas[0],dn=deltas[deltas.length-1];
+      if(up.b-up.a>0)cards.push(['pos','Biggest win-rate gain by stage',shortStage(up.st)+': '+p1(up.a)+' → '+p1(up.b),'Deals with '+shortStage(up.st)+' activity won '+(up.b-up.a).toFixed(1)+' points more often in '+fb+partial+' than in '+fa+'.']);
+      if(dn!==up&&dn.b-dn.a<0)cards.push(['neg','Biggest win-rate drop by stage',shortStage(dn.st)+': '+p1(dn.a)+' → '+p1(dn.b),'Deals with '+shortStage(dn.st)+' activity won '+(dn.a-dn.b).toFixed(1)+' points less often in '+fb+partial+' than in '+fa+'.']);}}
+  var best=null;SA.heat.wr.forEach(function(row,k){row.forEach(function(v,i){if(v!=null&&i<SA.order.length-1&&(!best||v>best.v))best={v:v,k:k,i:i};});});
+  if(best)cards.push(['','Strongest persona signal',SA.personas[best.k]+' at '+shortStage(SA.order[best.i])+': '+p1(best.v),'Of the deals with '+SA.personas[best.k]+' engaged at '+shortStage(SA.order[best.i])+', '+p1(best.v)+' were won — the highest of any persona before the deal is decided.']);
+  $('#stageYoy').innerHTML=cards.length?'<div class="yoy-title">Stage and persona'+(fys.length>=2?' · '+esc(fys[fys.length-2])+' → '+esc(fys[fys.length-1]):'')+'</div>'+cards.map(function(c){return '<div class="'+c[0]+'"><h4>'+esc(c[1])+'</h4><div class="s">'+esc(c[2])+'</div><p>'+esc(c[3])+'</p></div>';}).join(''):'';
+  renderHeat();renderStageWin();renderStageProf();
+}
 var stageNames=function(){return ST.stages.map(function(s){return s.stage;});};
 function cellsOK(ignoreMonth){return (ST.cells||[]).filter(function(c){var t=(ST.cellTypes||[])[c[2]]||'';if(/framework/i.test(t))return false;if(ignoreMonth)return true;return monthOK(c[3]>=0?(ST.cellMonths||[])[c[3]]:null);});}
 function aggCells(cells){var S=stageNames().map(function(){return {won:0,lost:0,wa:new Array(NP).fill(0),la:new Array(NP).fill(0),ww:new Array(NP).fill(0),aw:new Array(NP).fill(0),acts:0};});
@@ -511,6 +611,7 @@ function aggCells(cells){var S=stageNames().map(function(){return {won:0,lost:0,
 function cellFy(c){return c[3]>=0?fp((ST.cellMonths||[])[c[3]]).fy:null;}
 function renderStage(){
   if(!HAS.ST)return;
+  if(AG){renderAggStage();return;}
   $('#stageIntro').innerHTML=ST.base.n_opps.toLocaleString()+' closed non-renewal opportunities, with each activity tagged by the stage the deal was in when it was matched. Win-rate analysis of personas uses the '+ST.base.n_pre.toLocaleString()+' deals with pre-decision activity ('+(ST.base.wr_pre==null?'–':ST.base.wr_pre+'%')+' win rate).';
   var post=ST.postStages||[];
   if(HAS.cells&&!cellsOK().length){$('#stageIntro').innerHTML+='<div class="notice">No deals match these filters. Clear a filter to see the stage and persona views.</div>';}
@@ -535,6 +636,15 @@ function renderStageYoy(S,names,pre){
   el.innerHTML=cards.length?'<div class="yoy-title">Stage and persona'+(fys.length>=2?' · '+esc(fys[fys.length-2])+' → '+esc(fys[fys.length-1]):'')+'</div>'+cards.map(function(c){return '<div class="'+c[0]+'"><h4>'+esc(c[1])+'</h4><div class="s">'+esc(c[2])+'</div><p>'+esc(c[3])+'</p></div>';}).join(''):'';
 }
 function renderHeat(){
+  if(AG){
+    var mode=heatMode==='share'?'won':heatMode,Z=SA.heat[mode],sc=mode==='diff'?[[0,css('--neg')],[.5,css('--page')],[1,css('--pos')]]:[[0,css('--page')],[1,mode==='lost'?css('--d3'):css('--horizon')]];
+    var subs={won:'Average activities with each persona per won deal at each stage. Darker means more engagement.',lost:'Average activities with each persona per lost deal at each stage.',diff:'Won-deal average minus lost-deal average. Green: winners had more of this persona at this stage.',wr:'Of the deals with each persona engaged at each stage, the share won.'};
+    $('#heatTitle').textContent='Stage × persona';$('#heatSub').textContent=subs[mode]+' The readout\'s heatmap covers every fiscal year, so the filters do not apply here.';
+    var tz=Z.map(function(r){return r.map(function(v){return v==null?'':mode==='wr'?v.toFixed(0)+'%':mode==='diff'?(v>=0?'+':'')+v.toFixed(1):v.toFixed(1);});});
+    var ht={type:'heatmap',x:SA.order.map(shortStage),y:SA.personas,z:Z,colorscale:sc,text:tz,texttemplate:'%{text}',textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{y} at %{x}<br>%{text}<extra></extra>',showscale:false,xgap:2,ygap:2,hoverongaps:false};if(mode==='diff')ht.zmid=0;
+    plot('stageHeat',[ht],base({margin:{l:110,r:10,t:10,b:70},xaxis:{side:'bottom',tickfont:{size:11},gridcolor:'rgba(0,0,0,0)'},yaxis:{autorange:'reversed',tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
+    return;
+  }
   var names=stageNames(),z,txt,scale=[[0,css('--page')],[1,css('--horizon')]],zmid=null,hover,sub;
   if(heatMode==='share'||!HAS.cells){
     if(!HAS.cells){segSet('#heatMode','share');$$('#heatMode button').forEach(function(b){if(b.getAttribute('data-v')!=='share')b.classList.add('hidden');});}
@@ -551,6 +661,15 @@ function renderHeat(){
   plot('stageHeat',[tr],base({margin:{l:190,r:10,t:10,b:70},xaxis:{side:'bottom',tickfont:{size:11},gridcolor:'rgba(0,0,0,0)'},yaxis:{autorange:'reversed',tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
 }
 function renderStageWin(){
+  if(AG){
+    var W=aggStageWr(),xs=SA.order.map(shortStage),dat=[{type:'bar',name:GF.fy.length?esc(GF.fy.join(', ')):'All fiscal years',x:xs,y:W.map(function(a){return a.wr;}),customdata:W.map(function(a){return a.n;}),marker:{color:css('--rule-strong')},hovertemplate:'%{x}<br>Win rate %{y:.1f}% (%{customdata} deals)<extra></extra>'}];
+    var fyl=uniq(SA.wrFy.map(function(r){return r.fy;})).sort();
+    if(fyl.length>=2&&!GF.fy.length)fyl.forEach(function(f,k){var A=aggStageWr(f);dat.push({type:'scatter',mode:'lines+markers',name:f,x:xs,y:A.map(function(a){return a.n>=10?a.wr:null;}),line:{color:[css('--d3'),css('--d2'),css('--d1'),css('--d6')][k%4],width:2.2}});});
+    plot('stageWin',dat,base({yaxis:ypct(),xaxis:xcat()}));
+    var f0=W[0],fl=W[W.length-1];
+    if(f0&&fl)$('#stageWinNote').innerHTML='Deals with activity at <b>'+esc(shortStage(f0.stage))+'</b> win <b class="num">'+p1(f0.wr)+'</b>; those with activity at <b>'+esc(shortStage(fl.stage))+'</b> win <b class="num">'+p1(fl.wr)+'</b>. Later stages hold only the deals that survived to them, so part of the rise is survivorship.';
+    return;
+  }
   if(!HAS.cells)return;var names=stageNames(),S=aggCells(cellsOK()),P=palette();
   var data=[{type:'bar',name:'All selected deals',x:names,y:S.map(function(a){var n=a.won+a.lost;return n?a.won/n*100:null;}),customdata:S.map(function(a){return a.won+a.lost;}),marker:{color:css('--rule-strong')},hovertemplate:'%{x}<br>Win rate %{y:.1f}% (%{customdata} deals)<extra></extra>'}];
   var cells=cellsOK(),fys=uniq(cells.map(cellFy).filter(Boolean)).sort();
@@ -561,6 +680,18 @@ function renderStageWin(){
     $('#stageWinNote').innerHTML='Deals with activity at <b>'+esc(names[pre[0]])+'</b> win <b class="num">'+p1(wf)+'</b>; those still active at <b>'+esc(names[pre[pre.length-1]])+'</b> win <b class="num">'+p1(wl2)+'</b>. Later stages hold only the deals that survived to them, so the rise is partly survivorship — the early-engagement chart below controls for it.';}
 }
 function renderStageProf(){
+  if(AG){
+    var xa=SA.order.map(shortStage),won=aggPersona(true),lost=aggPersona(false),Pc=palette(),dt,ly,sb;
+    var total=function(r){return r.n?r.p.reduce(function(a,b){return a+(b||0);},0):null;};
+    if(stageView==='wl'){dt=[{type:'bar',name:'Won deals',x:xa,y:won.map(total),marker:{color:css('--d1')},customdata:won.map(function(r){return r.n;}),hovertemplate:'%{x}<br>Won: %{y:.1f} activities per deal (%{customdata} deals)<extra></extra>'},
+        {type:'bar',name:'Lost deals',x:xa,y:lost.map(total),marker:{color:css('--d3')},customdata:lost.map(function(r){return r.n;}),hovertemplate:'%{x}<br>Lost: %{y:.1f} activities per deal (%{customdata} deals)<extra></extra>'}];
+      ly=base({barmode:'group',yaxis:{title:{text:'Avg activities per deal, these personas',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat(),margin:{l:56,r:20,t:14,b:60}});sb='Activities per deal with the six personas the readout tracks, won and lost.';}
+    else if(stageView==='mixwon'){dt=SA.personas.map(function(p,k){return {type:'scatter',mode:'lines',stackgroup:'one',name:p,x:xa,y:won.map(function(r){return r.p[k]||0;}),line:{color:Pc[k%Pc.length],width:1}};});
+      ly=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per won deal',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},margin:{l:56,r:20,t:14,b:80}});sb='Who is engaged at each stage of the deals that were won, stacked.';}
+    else {dt=[];SA.personas.forEach(function(p,k){dt.push({type:'scatter',mode:'lines',name:p+', won',x:xa,y:won.map(function(r){return r.p[k];}),line:{color:Pc[k%Pc.length],width:2.4},legendgroup:p});dt.push({type:'scatter',mode:'lines',name:p+', lost',x:xa,y:lost.map(function(r){return r.p[k];}),line:{color:Pc[k%Pc.length],width:1.6,dash:'dash'},legendgroup:p,showlegend:false});});
+      ly=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per deal',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},margin:{l:56,r:20,t:14,b:80}});sb='Solid lines are won deals, dashed lost. Fiscal-year filters apply.';}
+    $('#stageProfSub').textContent=sb;plot('stageProf',dt,ly);return;
+  }
   var S=ST.stages,x=S.map(function(s){return s.stage;}),post=S.map(function(s){return (ST.postStages||[]).indexOf(s.stage)>=0;}),data,lay,P=palette(),sub='';
   if(stageView==='share'){
     data=[{type:'bar',name:'Share of all activity',x:x,y:S.map(function(s){return s.share;}),marker:{color:S.map(function(s,i){return post[i]?css('--rule-strong'):css('--d1');})},text:S.map(function(s){return s.share.toFixed(1)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},
@@ -705,6 +836,7 @@ function renderAccTable(){
 
 /* ---------- method ---------- */
 function fillMethod(){
+  if(AG)return;
   if(HAS.U){$('#capP').textContent=money(META.capP);$('#capPO').textContent=money(META.capPO);}
   if(HAS.usage)$('#methodUsage').innerHTML=['The usage file is left-joined to the activity extract on lower-cased email. '+U.nUsage+' of '+U.usageRecords+' usage records match an activity rep.',
       'Tiers are terciles of the usage score among matched reps (cut points '+U.tierCuts[0]+' and '+U.tierCuts[1]+').',

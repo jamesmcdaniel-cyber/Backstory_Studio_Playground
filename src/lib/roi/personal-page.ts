@@ -1,9 +1,10 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { addVersion } from '@/lib/artifacts/service'
-import { renderRoiDashboard } from './dashboard'
-import { currentRoiState, readAccount360Facts, readFacts, readRoiState, stateJson, type RoiArtifactState } from './artifact-state'
-import { readRunConfig, type RoiRunConfig } from './config'
+import { renderRoiDashboard, ROI_RENDER_VERSION } from './dashboard'
+import { currentRoiState, readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
+import { DEFAULT_RUN_CONFIG, readRunConfig, type RoiRunConfig } from './config'
+import { account360Narrative } from './account360-report'
 import { ensureRoiAgent } from './agent'
 import { EMPTY_VIEW } from './view'
 
@@ -83,6 +84,8 @@ export type PersonalAccountVersion = {
   factsCurrent: boolean
   /** The generic report version it started from, to tell when newer data exists. */
   basedOnVersionId: string | null
+  /** Drawn with an older layout: re-drawn from its own state when opened. */
+  stale: boolean
 }
 
 export type PersonalPage = {
@@ -119,6 +122,7 @@ export async function loadPersonalPage(organizationId: string, userId: string): 
       reason: state.reason ?? '',
       factsCurrent: state.factsVersion === 2,
       basedOnVersionId: state.basedOn?.versionId ?? null,
+      stale: (state.render ?? 0) < ROI_RENDER_VERSION,
     }
   }
   return { artifactId, currentVersionId: artifact?.currentVersionId ?? null, currentAccount, accounts }
@@ -129,6 +133,36 @@ export async function setCurrentVersion(organizationId: string, artifactId: stri
   const version = await prisma.artifactVersion.findFirst({ where: { id: versionId, artifactId, organizationId }, select: { id: true } })
   if (!version) throw new Error('That version is not on this page.')
   await prisma.artifact.update({ where: { id: artifactId, organizationId }, data: { currentVersionId: versionId } })
+}
+
+/**
+ * An Account 360 page as report state: no activity or deal facts (an empty
+ * facts file), its Account 360 data, and findings computed from that data.
+ */
+async function account360State(organizationId: string, userId: string, artifactId: string, account: string): Promise<{ state: RoiArtifactState['roi']; versionId: string } | null> {
+  const artifact = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId, kind: 'page' }, select: { currentVersionId: true } })
+  if (!artifact?.currentVersionId) return null
+  const version = await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId }, select: { id: true, state: true } })
+  const roi = (version?.state as { roi?: { template?: unknown; factsFileId?: unknown; headline?: unknown; datasetIds?: unknown } } | null)?.roi
+  if (!version || roi?.template !== 'account360' || typeof roi.factsFileId !== 'string') return null
+  const a360 = await readAccount360Facts(organizationId, roi.factsFileId)
+  if (!a360) return null
+  const factsFileId = await storeFacts(organizationId, userId, { U: null, OPP: null, ST: null, META: {}, notes: [] })
+  return {
+    versionId: version.id,
+    state: {
+      analysisId: `account360:${artifactId}`,
+      account,
+      timeframePreset: 'last6_vs_prior6',
+      factsFileId,
+      a360FactsFileId: roi.factsFileId,
+      datasetIds: Array.isArray(roi.datasetIds) ? roi.datasetIds.filter((id): id is string => typeof id === 'string') : [],
+      narrative: account360Narrative(a360, account, typeof roi.headline === 'string' ? roi.headline : null),
+      view: EMPTY_VIEW,
+      config: DEFAULT_RUN_CONFIG,
+      reason: 'Account 360',
+    },
+  }
 }
 
 /** The template a page draws with: its latest view (hidden tabs, renamed and added metrics). */
@@ -154,7 +188,7 @@ export async function populateFromGeneric(params: {
   request?: string
   executionId?: string | null
 }): Promise<{ artifactId: string; versionId: string }> {
-  const generic = await currentRoiState(params.organizationId, params.genericArtifactId)
+  const generic = (await currentRoiState(params.organizationId, params.genericArtifactId)) ?? (await account360State(params.organizationId, params.userId, params.genericArtifactId, params.account))
   if (!generic) throw new Error(`The ${params.account} report has nothing to start from yet.`)
   const pageId = await ensurePersonalPage(params.organizationId, params.userId)
   const facts = await readFacts(params.organizationId, generic.state.factsFileId)
@@ -171,6 +205,7 @@ export async function populateFromGeneric(params: {
     reason,
     personal: true,
     basedOn: { artifactId: params.genericArtifactId, versionId: generic.versionId },
+    render: ROI_RENDER_VERSION,
   }
   const version = await addVersion({
     artifactId: pageId,
@@ -182,6 +217,29 @@ export async function populateFromGeneric(params: {
     state: stateJson(state),
   })
   return { artifactId: pageId, versionId: version.id }
+}
+
+/**
+ * Re-draw a version of the page from its own state with today's layout, as
+ * the page's next version: same data, findings, settings and layout choices.
+ */
+export async function redrawVersion(params: { organizationId: string; userId: string; artifactId: string; versionId: string }): Promise<string> {
+  const version = await prisma.artifactVersion.findFirst({ where: { id: params.versionId, artifactId: params.artifactId, organizationId: params.organizationId }, select: { state: true } })
+  const state = readRoiState(version?.state)
+  if (!state) throw new Error('That version has no report state to re-draw.')
+  const facts = await readFacts(params.organizationId, state.factsFileId)
+  if (!facts) throw new Error('That version\'s data could not be read.')
+  const a360 = await readAccount360Facts(params.organizationId, state.a360FactsFileId)
+  const html = renderRoiDashboard(facts, state.narrative, { account: state.account, generatedAt: new Date().toISOString(), view: state.view, config: state.config, reason: state.reason, a360 })
+  const made = await addVersion({
+    artifactId: params.artifactId,
+    organizationId: params.organizationId,
+    content: html,
+    request: `${state.account} · the latest report layout`,
+    createdByUserId: params.userId,
+    state: stateJson({ ...state, render: ROI_RENDER_VERSION }),
+  })
+  return made.id
 }
 
 export type OpenResult =
@@ -206,6 +264,11 @@ export async function openAccountOnPage(params: {
   const page = await loadPersonalPage(params.organizationId, params.userId)
   const mine = page?.accounts[lower(params.account)]
   if (page && mine && !params.update) {
+    // Drawn with an older layout: the same report, re-drawn with today's.
+    if (mine.stale) {
+      const redrawn = await redrawVersion({ organizationId: params.organizationId, userId: params.userId, artifactId: page.artifactId, versionId: mine.versionId }).catch(() => null)
+      if (redrawn) return { status: 'ready', artifactId: page.artifactId, versionId: redrawn }
+    }
     if (page.currentVersionId !== mine.versionId) await setCurrentVersion(params.organizationId, page.artifactId, mine.versionId)
     return { status: 'ready', artifactId: page.artifactId, versionId: mine.versionId }
   }

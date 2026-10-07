@@ -86,8 +86,18 @@ export function decodeDeals(deals: RoiDeals): DecodedDeals {
 
 // ---------------------------------------------------------------- rep math
 
+/**
+ * Which rows a population takes. Readout facts hold group rows (see
+ * readout-import.ts): the team row is "all", cohort rows the cohorts, and role
+ * rows (the browser's role filter) none of these.
+ */
 export function popMask(U: NonNullable<RoiFacts['U']>, pop: string): boolean[] {
-  return U.users.map((u) => (pop === 'all' ? true : pop === 'User' || pop === 'Non-user' ? u.f === pop : u.t === pop))
+  return U.users.map((u) => {
+    if (u.k === 'role') return false
+    if (u.k === 'org') return pop === 'all'
+    if (u.k === 'cohort' && pop === 'all') return false
+    return pop === 'all' ? true : pop === 'User' || pop === 'Non-user' ? u.f === pop : u.t === pop
+  })
 }
 
 /** Per-rep mean across the window's months, then mean across reps. */
@@ -106,7 +116,9 @@ export function winAvg(U: NonNullable<RoiFacts['U']>, mask: boolean[], monthIdx:
         const v = M[i][j]
         if (v !== null && v !== undefined) { rs += v; rc += 1 }
       }
-      if (rc) { sum += rs / rc; count += 1 }
+      // A group row stands for `w` reps (readouts); a rep row for one.
+      const weight = U.users[i]?.w ?? 1
+      if (rc && weight) { sum += (rs / rc) * weight; count += weight }
     }
     out[key] = count ? sum / count : null
     if (key === 'meeting_count' || (n === 0 && key === keys[0])) n = count
@@ -249,15 +261,17 @@ export function summarizeFacts(facts: RoiFacts, config?: RoiRunConfig | null) {
         byPopulation[pop][name] = roundAverages(winAvg(U, mask, idx))
       }
     }
+    // Reps a row stands for: one, or a readout group row's weight (team and role rows are not cohorts).
+    const reps = (user: (typeof U.users)[number]) => (user.k === 'org' || user.k === 'role' ? 0 : user.w ?? 1)
     const tierCounts = { High: 0, Medium: 0, Low: 0 }
-    for (const user of U.users) if (user.t && user.t in tierCounts) tierCounts[user.t as keyof typeof tierCounts] += 1
+    for (const user of U.users) if (user.t && user.t in tierCounts) tierCounts[user.t as keyof typeof tierCounts] += reps(user)
     activity = {
       months: { first: monthLabel(U.months[0]), last: monthLabel(U.months[U.months.length - 1]), count: U.months.length },
       windows: Object.fromEntries(Object.entries(W).filter(([, idx]) => idx.length).map(([name, idx]) => [name, `${monthLabel(U.months[idx[0]])} – ${monthLabel(U.months[idx[idx.length - 1]])}`])),
       metrics: U.labels,
-      reps: U.users.length,
+      reps: facts.AGG ? facts.AGG.reps : U.users.reduce((sum, user) => sum + reps(user), 0),
       usage: U.hasUsage
-        ? { matchedReps: U.nUsage, usageRecords: U.usageRecords, bottomFivePercent: U.nBottom, users: U.users.filter((u) => u.f === 'User').length, tierCuts: U.tierCuts, tierCounts }
+        ? { matchedReps: U.nUsage, usageRecords: U.usageRecords, bottomFivePercent: U.nBottom, users: U.users.filter((u) => u.f === 'User').reduce((sum, user) => sum + reps(user), 0), tierCuts: U.tierCuts, tierCounts }
         : null,
       /** averages per rep per month; keys are metric ids, values by population then window */
       averagesPerRepPerMonth: byPopulation,

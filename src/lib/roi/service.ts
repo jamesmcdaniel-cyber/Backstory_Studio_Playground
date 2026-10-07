@@ -8,10 +8,10 @@ import { readStoredFile } from '@/lib/files/storage'
 import { addVersion, createArtifact } from '@/lib/artifacts/service'
 import { ensureRoiAgent, roiDataFlowIdOf } from './agent'
 import { extractRoiNarrative, ROI_OUTPUT_CONTRACT, type RoiNarrative } from './contract'
-import { renderRoiDashboard } from './dashboard'
+import { renderRoiDashboard, ROI_RENDER_VERSION } from './dashboard'
 import { runRoiPrep, type RoiFacts } from './prep'
 import { readView, type RoiView } from './view'
-import { readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
+import { currentRoiState, readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
 import { summarizeFacts, type RoiFactsSummary } from './facts'
 import { timeframeInstruction, timeframeLabel, type RoiTimeframe } from './timeframe'
 import { ROI_SOURCE_LABEL, ROI_TEMPLATES, isRoiSourceKind, type RoiSourceKind, type RoiTemplate } from './sources'
@@ -537,6 +537,7 @@ async function reconcileRun(row: RoiAnalysis, claimFrom: { status: string; updat
     reason: row.reason,
     ...('DEALS' in facts ? { factsVersion: 2 } : {}),
     ...(markers.personal ? { personal: true, ...(markers.basedOn ? { basedOn: markers.basedOn } : {}) } : {}),
+    render: ROI_RENDER_VERSION,
   })
   const request = [row.account, reconfigure ? 'settings changed' : 'built from the extracts', describeRunConfig(config).join(', '), row.reason.trim() ? `for ${row.reason.trim()}` : ''].filter(Boolean).join(' · ').slice(0, 300)
   let versionId: string | undefined
@@ -831,6 +832,12 @@ export type AccountReport = {
   /** Its current version, and that version's state (null before its first version, or for a version from before state was kept). */
   currentVersionId: string | null
   state: RoiArtifactState['roi'] | null
+  /**
+   * An Account 360 page standing in for the report: the account's only
+   * finished analysis. Its data draws the report's Account engagement tab
+   * until a full build replaces it.
+   */
+  a360: { factsFileId: string; headline: string | null } | null
   /** Its data came from the ROI-page prep, so a settings change only rewrites the findings. */
   factsCurrent: boolean
   config: RoiRunConfig
@@ -844,51 +851,84 @@ export type AccountReport = {
 const sameAccount = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
 const isActive = (status: string) => !isTerminalRunStatus(status) && status !== 'failed'
 
-/** Every account's generic report: the newest one its builds made that still exists — never anyone's own page. */
+/**
+ * Every account's generic report — never anyone's own page. The newest
+ * report with something to show wins: a version with its state, or one from
+ * before state was kept (read through the build that made it). An account
+ * with none falls back to its newest Account 360 page, then to its newest
+ * report artifact (a first build still running).
+ */
 export async function listAccountReports(organizationId: string): Promise<AccountReport[]> {
   const [analyses, personal] = await Promise.all([
     prisma.roiAnalysis.findMany({
-      where: { organizationId, artifactId: { not: null }, template: { in: ['standard', 'engagement'] } },
+      where: { organizationId, artifactId: { not: null }, template: { in: ['standard', 'engagement', 'account360'] } },
       orderBy: { createdAt: 'desc' },
       take: 500,
-      select: { id: true, account: true, artifactId: true, status: true, config: true, reason: true, timeframe: true, userId: true },
+      select: { id: true, account: true, artifactId: true, status: true, config: true, reason: true, timeframe: true, userId: true, template: true },
     }),
     personalPageIds(organizationId),
   ])
   const builds = analyses.filter((row) => !personal.has(row.artifactId!))
   const artifactIds = [...new Set(builds.map((row) => row.artifactId!))]
   const artifacts = artifactIds.length
-    ? await prisma.artifact.findMany({ where: { id: { in: artifactIds }, organizationId, kind: 'roi_dashboard', archivedAt: null }, select: { id: true, currentVersionId: true, updatedAt: true } })
+    ? await prisma.artifact.findMany({ where: { id: { in: artifactIds }, organizationId, kind: { in: ['roi_dashboard', 'page'] }, archivedAt: null }, select: { id: true, currentVersionId: true, updatedAt: true, kind: true } })
     : []
   const live = new Map(artifacts.map((artifact) => [artifact.id, artifact]))
-  const chosen = new Map<string, { artifactId: string; account: string }>()
-  for (const row of builds) {
-    const key = row.account.trim().toLowerCase()
-    if (chosen.has(key) || !live.has(row.artifactId!)) continue
-    chosen.set(key, { artifactId: row.artifactId!, account: row.account })
-  }
-  const versionIds = [...chosen.values()].map((entry) => live.get(entry.artifactId)?.currentVersionId).filter((id): id is string => Boolean(id))
+  const versionIds = artifacts.map((artifact) => artifact.currentVersionId).filter((id): id is string => Boolean(id))
   const versions = versionIds.length ? await prisma.artifactVersion.findMany({ where: { id: { in: versionIds }, organizationId }, select: { id: true, state: true } }) : []
-  const stateOf = new Map(versions.map((version) => [version.id, readRoiState(version.state)]))
-  return [...chosen.values()].map((entry) => {
-    const artifact = live.get(entry.artifactId)!
-    const state = artifact.currentVersionId ? stateOf.get(artifact.currentVersionId) ?? null : null
-    const latest = builds.find((row) => row.artifactId === entry.artifactId)!
-    const active = builds.find((row) => row.artifactId === entry.artifactId && isActive(row.status))
+  const stateById = new Map(versions.map((version) => [version.id, version.state]))
+  const reportState = async (artifactId: string) => {
+    const artifact = live.get(artifactId)
+    if (!artifact || artifact.kind !== 'roi_dashboard' || !artifact.currentVersionId) return null
+    return readRoiState(stateById.get(artifact.currentVersionId)) ?? (await currentRoiState(organizationId, artifactId).catch(() => null))?.state ?? null
+  }
+  const a360Of = (artifactId: string) => {
+    const artifact = live.get(artifactId)
+    if (!artifact || artifact.kind !== 'page' || !artifact.currentVersionId) return null
+    const roi = (stateById.get(artifact.currentVersionId) as { roi?: { template?: unknown; factsFileId?: unknown; headline?: unknown } } | null)?.roi
+    return roi?.template === 'account360' && typeof roi.factsFileId === 'string' ? { factsFileId: roi.factsFileId, headline: typeof roi.headline === 'string' ? roi.headline : null } : null
+  }
+  const byAccount = new Map<string, typeof builds>()
+  for (const row of builds) {
+    if (!live.has(row.artifactId!)) continue
+    const key = row.account.trim().toLowerCase()
+    byAccount.set(key, [...(byAccount.get(key) ?? []), row])
+  }
+  const reports: AccountReport[] = []
+  for (const rows of byAccount.values()) {
+    const standard = rows.filter((row) => row.template !== 'account360')
+    const candidates = [...new Set(standard.map((row) => row.artifactId!))]
+    let chosen: string | null = null
+    let state: RoiArtifactState['roi'] | null = null
+    let a360: AccountReport['a360'] = null
+    for (const id of candidates) {
+      const found = await reportState(id)
+      if (found) { chosen = id; state = found; break }
+    }
+    if (!chosen) {
+      const page = rows.find((row) => row.template === 'account360' && a360Of(row.artifactId!))
+      if (page) { chosen = page.artifactId!; a360 = a360Of(chosen) } else chosen = candidates[0] ?? null
+    }
+    if (!chosen) continue
+    const artifact = live.get(chosen)!
+    const latest = rows.find((row) => row.artifactId === chosen)!
+    const active = standard.find((row) => isActive(row.status))
     const config = state?.config ?? (latest.config && Object.keys(latest.config as object).length ? readRunConfig(latest.config) : configFromPreset(state?.timeframePreset ?? (latest.timeframe as { preset?: string } | null)?.preset))
-    return {
-      artifactId: entry.artifactId,
-      account: entry.account,
+    reports.push({
+      artifactId: chosen,
+      account: latest.account,
       currentVersionId: artifact.currentVersionId,
       state,
+      a360,
       factsCurrent: state?.factsVersion === 2,
       config,
       reason: state?.reason ?? latest.reason ?? '',
       updatedAt: artifact.updatedAt.toISOString(),
       activeAnalysisId: active?.id ?? null,
       activeUserId: active?.userId ?? null,
-    }
-  })
+    })
+  }
+  return reports
 }
 
 export async function findAccountReport(organizationId: string, account: string): Promise<AccountReport | null> {
@@ -913,7 +953,7 @@ export async function openRoiAccount(params: { organizationId: string; userId: s
     findGeneric: async (account) => {
       const report = await findAccountReport(params.organizationId, account)
       // Only a version with its state can be re-drawn on someone's page.
-      return report ? { artifactId: report.artifactId, account: report.account, hasVersion: Boolean(report.state) } : null
+      return report ? { artifactId: report.artifactId, account: report.account, hasVersion: Boolean(report.state || report.a360) } : null
     },
   })
 }
@@ -956,7 +996,8 @@ export async function requestRoiReport(params: {
     context: params.context,
     view: report?.state?.view,
     template: 'standard',
-    artifactId: report?.artifactId ?? null,
+    // An Account 360 page is not a report artifact: a build makes the account's first one.
+    artifactId: report && !report.a360 ? report.artifactId : null,
     markers: { populatePage: true },
   })
 }

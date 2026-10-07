@@ -35,10 +35,10 @@ export function pageAccountOf(params: {
     covers: params.covers,
     loadedAt: params.loadedAt,
     report: report
-      ? { artifactId: report.artifactId, versionId: report.currentVersionId, ready: Boolean(report.state), config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt }
+      ? { artifactId: report.artifactId, versionId: report.currentVersionId, ready: Boolean(report.state || report.a360), config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt }
       : null,
-    mine: mine ? { versionId: mine.versionId, config: mine.config, reason: mine.reason, factsCurrent: mine.factsCurrent, updatedAt: mine.createdAt } : null,
-    newerData: Boolean(mine && report?.state && report.currentVersionId && mine.basedOnVersionId && mine.basedOnVersionId !== report.currentVersionId),
+    mine: mine ? { versionId: mine.versionId, config: mine.config, reason: mine.reason, factsCurrent: mine.factsCurrent, updatedAt: mine.createdAt, ...(mine.stale ? { stale: true } : {}) } : null,
+    newerData: Boolean(mine && (report?.state || report?.a360) && report?.currentVersionId && mine.basedOnVersionId && mine.basedOnVersionId !== report.currentVersionId),
     activeAnalysisId: params.myActiveRun ?? report?.activeAnalysisId ?? null,
     canRefresh: params.canRefresh,
   }
@@ -95,6 +95,8 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
   }
   for (const report of reports) add(report.account, Boolean(flow))
   for (const mine of Object.values(page?.accounts ?? {})) add(mine.account, Boolean(flow))
+  // Backstory's own readout is everyone's starting page: it is listed before it is loaded.
+  add(ROI_DEFAULT_ACCOUNT, Boolean(flow))
   if (flow) {
     const previous = await prisma.roiAnalysis.findMany({ where: { organizationId: params.organizationId }, distinct: ['account'], orderBy: { createdAt: 'desc' }, take: 200, select: { account: true } })
     for (const row of previous) add(row.account, true)
@@ -116,7 +118,8 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     reconfigureSeconds: ROI_RECONFIGURE_EXPECTED_SECONDS,
     asyncAfterSeconds: ROI_ASYNC_AFTER_SECONDS,
     page: page ? { artifactId: page.artifactId, currentAccount: page.currentAccount } : null,
-    defaultAccount: accounts.find((item) => key(item.account) === key(ROI_DEFAULT_ACCOUNT) && (item.report?.ready || item.mine))?.account ?? null,
+    // Backstory once its report exists — and for operators before, so they land where its readout loads.
+    defaultAccount: accounts.find((item) => key(item.account) === key(ROI_DEFAULT_ACCOUNT) && (item.report?.ready || item.mine || params.canLoadExtracts))?.account ?? null,
     canLoadExtracts: params.canLoadExtracts === true,
   }
 }

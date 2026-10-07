@@ -37,6 +37,13 @@ import { REPORT_SCRIPT } from './report-script'
  * origin (fonts excepted).
  */
 
+/**
+ * The report layout's version, kept on every version's state. Raise it when
+ * the layout changes: a person's page re-draws an account from its own state
+ * the next time they open it, so saved pages take the new layout.
+ */
+export const ROI_RENDER_VERSION = 4
+
 export type RoiDashboardOptions = {
   account: string
   generatedAt?: string
@@ -126,7 +133,8 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   const dealCount = facts.DEALS?.w.length ?? (facts.OPP ? Object.values(facts.OPP)[0]?.incl.n : null)
   const reason = (options.reason ?? '').trim()
   const metaLine = [activityRange, dealCount ? `${Math.round(dealCount).toLocaleString()} closed deals` : '', generatedLabel ? `Generated ${generatedLabel}` : ''].filter(Boolean).join(' · ')
-  const reps = U ? U.users.length : 0
+  const reps = facts.AGG ? facts.AGG.reps : U ? U.users.length : 0
+
   const eyebrow = ['Key findings', windows?.observationLabel ?? '', reps ? `${reps.toLocaleString()} reps` : '', reason ? `for ${reason}` : ''].filter(Boolean).join(' · ')
   const notes = narrative.notes
   const aside = (title: string, items: string[] | undefined, id?: string) => `<aside class="note"${id ? ` id="${id}"` : ''}><h4>${escapeHtml(title)}</h4>${paragraphs(items) || '<p class="muted">—</p>'}</aside>`
@@ -146,6 +154,8 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
     baseLabel: windows?.baselineLabel ?? '',
     lyLabel: windows?.yearAgoLabel ?? null,
   }
+  // Long headlines step down in size instead of filling the masthead.
+  const headlineClass = normalized.headline.length > 150 ? ' class="xlong"' : normalized.headline.length > 95 ? ' class="long"' : ''
   const configLines = describeRunConfig(config)
   const findingsWord = ['two', 'three', 'four', 'five', 'six'][normalized.findings.length - 2] ?? 'four'
   const context = normalized.context
@@ -176,7 +186,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
     <div class="mast-grid">
       <div>
         <div class="eyebrow">${escapeHtml(eyebrow)}</div>
-        <h1>${escapeHtml(normalized.headline)}</h1>
+        <h1${headlineClass}>${escapeHtml(normalized.headline)}</h1>
         <p class="lede">${inline(normalized.lede)}</p>
       </div>
       <figure class="strip-wrap" data-section="hero">
@@ -488,7 +498,15 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
     ${windows ? `<li>Observation window ${escapeHtml(windows.observationLabel)}; baseline ${escapeHtml(windows.baselineLabel)}${windows.yearAgoLabel ? `; the same window a year earlier ${escapeHtml(windows.yearAgoLabel)}` : ''}. Windows count back from the newest month in the activity extract unless explicit months were chosen.</li>` : ''}
     <li>${config.fiscalYearStartMonth ? `Fiscal years start in ${MONTH_NAMES[config.fiscalYearStartMonth - 1]} and are named for the calendar year they end in.` : 'No fiscal year start was set, so fiscal years are calendar years.'}</li>
   </ul>
-  <h3>Activity trends</h3>
+${facts.AGG ? `  <h3>Where the numbers come from</h3>
+  <ul>
+    <li>Source: ${escapeHtml(account)}'s value readout. It carries monthly averages per rep for the whole team, each adoption cohort and each role; a roster of ${facts.AGG ? facts.AGG.roster.length : 0} people; deal outcomes by month, fiscal year, decile and opportunity type; stage and persona tables; and deal engagement per account.</li>
+    <li>Team views use the readout's team averages, cohort views its cohort averages; with a role filter, the team views use its role averages. The roster shows the readout's totals for the last six months.</li>
+    <li>Adoption cohorts are the readout's: high, medium and low adopters by Backstory usage, and non-users.</li>
+    <li>Deals: every closed deal with an engagement score, all opportunity types by default. Levels: Low 0 – 30, Medium 31 – 70, High 71+; deciles are the readout's. Velocity is the average days from creation to close across won and lost deals.</li>
+    <li>Stage and persona: win rate for deals with activity at each stage. Persona figures are activities per deal on won and lost deals; the heatmap's win rate is the share of deals with the persona engaged at the stage that were won.</li>
+  </ul>
+` : `  <h3>Activity trends</h3>
   <ul>
     <li>Source: the activity extract, one row per rep per month, up to 24 months.</li>
     <li>Metrics: meetings, emails sent, Director + VP + Executive meetings, VP meetings, Executive meetings, people engaged (external people touched), pipeline created (touched) and pipeline created (owned).</li>
@@ -509,7 +527,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   </ul>
   <h3>Account engagement</h3>
   <ul id="methodA360"></ul>
-  <h3>Data notes for this run</h3>
+`}  <h3>Data notes for this run</h3>
   <ul>${caveats.length ? caveats.map((caveat) => `<li>${inline(caveat)}</li>`).join('') : '<li>No data issues were reported.</li>'}</ul>
   <h3>What this analysis doesn't claim</h3>
   <ul>
@@ -529,6 +547,7 @@ const ST = ${scriptJson(facts.ST)};
 const ACC = ${scriptJson(facts.ACC ?? null)};
 const META = ${scriptJson(facts.META ?? {})};
 const A360 = ${scriptJson(a360)};
+const AGG = ${scriptJson(facts.AGG ?? null)};
 const N = ${scriptJson(normalized)};
 const CFG = ${scriptJson(runConfig)};
 const VIEW = ${scriptJson({ hiddenTabs: view.hiddenTabs })};

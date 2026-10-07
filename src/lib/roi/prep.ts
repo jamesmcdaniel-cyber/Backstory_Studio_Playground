@@ -673,6 +673,53 @@ export type RoiUser = {
   r?: string
   /** Usage detail: usage score, account and opportunity views, last active day. */
   u?: { ev: number; a: number | null; o: number | null; last: string | null }
+  /**
+   * Readout facts (see ./readout-import.ts) hold group rows, not reps: the
+   * whole team, each adoption cohort, each role. `k` says which, `w` how many
+   * reps the row stands for — averages weight rows by it.
+   */
+  k?: 'org' | 'cohort' | 'role'
+  w?: number
+}
+
+/**
+ * What a value readout carries that per-rep and per-deal facts would compute:
+ * the roster as the readout reports it (window totals), whole-team meeting
+ * channels, deal outcomes by month, fiscal year, decile and type, and the
+ * stage × persona tables. Present only on facts imported from a readout.
+ */
+export type RoiReadoutAgg = {
+  source: 'readout'
+  /** Active users in scope. */
+  reps: number
+  roster: Array<{ n: string; ti: string; r: string; t: string | null; f: 'User' | 'Non-user'; ev: number | null; a: number | null; o: number | null; last: string | null; meetings: number | null; emails: number | null; vp: number | null; exec: number | null; pipeline: number | null }>
+  /** Whole-team monthly series the cohort rows lack (meeting channels, emails received). */
+  org: Record<string, Array<number | null>>
+  /**
+   * The readout's own cohort comparisons: per-rep totals over its last 6 and
+   * 12 months (quiet months count), by cohort (High, Medium, Low, Non-user,
+   * User). Cohort views over those windows use them, so they match the readout.
+   */
+  cohortWindows?: Record<'l6' | 'l12', Record<string, Record<string, number | null>>>
+  fys: string[]
+  types: string[]
+  deals: {
+    monthly: Array<{ m: string; fy: string; fq: string; l: number; t: string; n: number; won: number; vel: number | null }>
+    fy: Array<{ fy: string; l: number; t: string; n: number; won: number; vel: number | null }>
+    decileFy: Array<{ fy: string; dec: number; t: string; n: number; won: number; vel: number | null; eng: number | null }>
+  }
+  stages: {
+    /** The deal stages the stage views draw, in order. */
+    order: string[]
+    personas: string[]
+    wr: Array<{ stage: string; n: number; won: number }>
+    wrFy: Array<{ fy: string; stage: string; t: string; n: number; won: number }>
+    /** Average activities per deal with each persona (personas order), won and lost, by stage. */
+    persona: Array<{ stage: string; won: boolean; n: number; p: number[] }>
+    personaFy: Array<{ fy: string; stage: string; won: boolean; n: number; p: number[] }>
+    /** [persona][stage] in order: average activities on won / lost deals, won − lost, win rate when present (%). */
+    heat: { won: Array<Array<number | null>>; lost: Array<Array<number | null>>; diff: Array<Array<number | null>>; wr: Array<Array<number | null>> }
+  }
 }
 
 /**
@@ -742,11 +789,14 @@ export type RoiFacts = {
   } | null
   META: { capP?: number; capPO?: number; medWon?: number; meanWonCap?: number; transactionalShare?: number | null; hasVelocity?: boolean }
   notes: string[]
+  /** Facts imported from a value readout (aggregates, not reps and deals). */
+  AGG?: RoiReadoutAgg | null
 }
 
 export type DealTable = {
-  deciles: Array<{ dec: number; n: number; won: number; win_rate: number | null; med_days_won: number | null; avg_days_won: number | null; med_days_lost: number | null; lo: number; hi: number }>
-  levels: Array<{ level: string; n: number; won: number; win_rate: number | null; med_days_won: number | null; avg_days_won: number | null; med_days_lost: number | null; lo: number; hi: number }>
+  /** `avg_days` (every closed deal) appears on readout tables, which carry no won/lost medians. */
+  deciles: Array<{ dec: number; n: number; won: number; win_rate: number | null; med_days_won: number | null; avg_days_won: number | null; med_days_lost: number | null; avg_days?: number | null; lo: number; hi: number }>
+  levels: Array<{ level: string; n: number; won: number; win_rate: number | null; med_days_won: number | null; avg_days_won: number | null; med_days_lost: number | null; avg_days?: number | null; lo: number; hi: number }>
   n: number
   win_rate: number
   r_win: number | null

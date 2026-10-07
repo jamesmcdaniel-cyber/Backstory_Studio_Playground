@@ -6,7 +6,9 @@ import { AlertCircle, AlertTriangle, CalendarRange, Info, Loader2, Play, Refresh
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { AccountSelect } from '@/components/roi/account-select'
 import { ExtractLoader } from '@/components/roi/extract-loader'
+import { ReadoutLoader } from '@/components/roi/readout-loader'
 import { PageSetupCard } from '@/components/roi/page-setup-card'
 import { PanelSection, SegmentedControl } from '@/components/roi/panel-section'
 import { RunHistory } from '@/components/roi/run-history'
@@ -24,12 +26,11 @@ import {
   type RoiCohortType,
   type RoiComparison,
 } from '@/lib/roi/config'
-import { aboutDuration, accountStatusLine, apiErrorMessage, hasReasonPreset, runsOfAccount, runsSummary, type RoiApplyMode } from '@/lib/roi/history'
+import { aboutDuration, accountStatusLine, apiErrorMessage, hasReasonPreset, runsOfAccount, runsSummary, sinceLabel, type RoiApplyMode } from '@/lib/roi/history'
 import type { RoiAnalysisView, RoiOpenResult, RoiPageAccount, RoiPageSetup } from '@/lib/roi/types'
 
 type SectionId = 'filters' | 'settings' | 'reason' | 'history' | 'data'
 
-const OTHER_ACCOUNT = '__other__'
 const NETWORK_ERROR = 'The page could not reach the server. Check your connection and try again.'
 const FIELD = 'w-full rounded-md border border-input bg-background text-foreground transition-colors duration-fast hover:border-graphite-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-red-500'
 const CHIP = 'rounded-full border px-2 py-0.5 text-xs font-medium transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
@@ -343,6 +344,13 @@ export function SettingsPanel({ open, onClose, setup, account, onAccountChange, 
             )}
             {setup.canLoadExtracts && (
               <div className="mt-5 border-t pt-4">
+                <p className="text-xs font-medium">Value readout</p>
+                <p className="mb-2 mt-0.5 text-xs text-muted-foreground">A readout page with its data embedded (Backstory's own) builds {account?.account ?? 'Backstory'}'s report in seconds, with no extracts.</p>
+                <ReadoutLoader account={account?.account ?? 'Backstory'} compact onLoaded={(result) => { onPageChanged(result); onExtractsLoaded() }} />
+              </div>
+            )}
+            {setup.canLoadExtracts && (
+              <div className="mt-5 border-t pt-4">
                 <ExtractLoader setup={setup} onLoaded={onExtractsLoaded} />
               </div>
             )}
@@ -403,9 +411,10 @@ function AccountPicker({ setup, account, onAccountChange }: { setup: RoiPageSetu
   const [typed, setTyped] = useState('')
   const [typedError, setTypedError] = useState<string | null>(null)
   const listed = Boolean(account && setup.accounts.some((entry) => entry.account.trim().toLowerCase() === account.account.trim().toLowerCase()))
+  const hintOf = (entry: RoiPageAccount) => (entry.mine ? `On your page · updated ${sinceLabel(entry.mine.updatedAt)}` : entry.report?.ready ? `Report ready · updated ${sinceLabel(entry.report.updatedAt)}` : entry.activeAnalysisId ? 'Being built now' : 'No report yet')
   const options = [
-    ...setup.accounts.map((entry) => ({ value: entry.account, label: entry.report || entry.mine ? entry.account : `${entry.account} (no report yet)` })),
-    ...(account && !listed ? [{ value: account.account, label: `${account.account} (no report yet)` }] : []),
+    ...setup.accounts.map((entry) => ({ value: entry.account, label: entry.account, hint: hintOf(entry), ready: Boolean(entry.mine || entry.report?.ready) })),
+    ...(account && !listed ? [{ value: account.account, label: account.account, hint: 'No report yet', ready: false }] : []),
   ]
   const showTyped = canType && (typing || options.length === 0)
   const status = account ? accountStatusLine(account, setup.dataSource) : null
@@ -436,26 +445,20 @@ function AccountPicker({ setup, account, onAccountChange }: { setup: RoiPageSetu
 
   return (
     <div className="mt-4">
-      <label htmlFor={options.length ? 'roi-account' : 'roi-account-typed'} className="mb-1 block text-xs font-medium text-muted-foreground">Account</label>
+      <label htmlFor={options.length ? 'roi-account' : 'roi-account-typed'} className="mb-1.5 block text-xs font-medium text-muted-foreground">Account</label>
       {options.length > 0 && (
-        <select
+        <AccountSelect
           id="roi-account"
-          value={typing ? OTHER_ACCOUNT : account?.account ?? ''}
-          onChange={(event) => {
-            if (event.target.value === OTHER_ACCOUNT) {
-              setTyping(true)
-              return
-            }
+          value={typing ? null : account?.account ?? null}
+          options={options}
+          placeholder={typing ? 'Another account' : 'Choose an account'}
+          onSelect={(next) => {
             setTyping(false)
             setTypedError(null)
-            onAccountChange(event.target.value)
+            onAccountChange(next)
           }}
-          className={cn(FIELD, 'h-9 px-2.5 text-sm font-medium')}
-        >
-          {!account && !typing && <option value="" disabled>Choose an account</option>}
-          {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          {canType && <option value={OTHER_ACCOUNT}>Another account…</option>}
-        </select>
+          onOther={canType ? () => setTyping(true) : undefined}
+        />
       )}
       {showTyped && (
         <form onSubmit={submitTyped} noValidate className={cn('flex gap-2', options.length > 0 && 'mt-2')}>

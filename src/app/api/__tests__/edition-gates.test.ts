@@ -56,6 +56,8 @@ export const INTERNAL_ONLY_ROUTES = [
   'roi/analyses',
   'roi/sources',
   'roi/analyses/[id]',
+  'roi/page',
+  'roi/settings',
 ]
 
 const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>; methods: string[] }> = [
@@ -71,6 +73,8 @@ const cases: Array<{ name: string; load: () => Promise<Record<string, unknown>>;
   { name: 'roi/analyses', load: () => import('../roi/analyses/route'), methods: ['GET', 'POST'] },
   { name: 'roi/sources', load: () => import('../roi/sources/route'), methods: ['GET', 'POST'] },
   { name: 'roi/analyses/[id]', load: () => import('../roi/analyses/[id]/route'), methods: ['GET'] },
+  { name: 'roi/page', load: () => import('../roi/page/route'), methods: ['GET'] },
+  { name: 'roi/settings', load: () => import('../roi/settings/route'), methods: ['PATCH'] },
   { name: 'admin/domains', load: () => import('../admin/domains/route'), methods: ['GET', 'POST', 'PATCH'] },
   { name: 'admin/models', load: () => import('../admin/models/route'), methods: ['GET'] },
   { name: 'admin/models/bench', load: () => import('../admin/models/bench/route'), methods: ['POST'] },

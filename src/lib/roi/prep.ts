@@ -32,9 +32,40 @@ PERSONAS = [
 ]
 METRICS = [
     ("meeting_count", "Meetings"), ("sent_email_count", "Emails sent"), ("dir_vp_exec", "Director + VP + Exec meetings"),
-    ("vp_meeting_count", "VP meetings"), ("executive_meeting_count", "Executive meetings"),
+    ("vp_meeting_count", "VP meetings"), ("executive_meeting_count", "Executive meetings"), ("people_engaged", "People engaged"),
     ("pipeline_created", "Pipeline created"), ("pipeline_created_owned", "Pipeline created (owned)"),
 ]
+# Breakdowns the activity tab draws (meeting channel, email direction, the
+# senior mix) — matrices like the metrics, but not metrics of their own.
+BREAKDOWNS = [
+    ("director_meeting_count", "Director meetings"), ("in_person_meeting_count", "In-person meetings"),
+    ("conference_call_count", "Conference calls"), ("received_email_count", "Emails received"),
+]
+ROLE_RULES = [
+    ("SDR / BDR", ["sdr", "bdr", "business development", "sales development", "inside sales", "isr"]),
+    ("Solutions engineering", ["solution", "sales engineer", "presales", "pre-sales", "-se-", " se "]),
+    ("CS / PS", ["csm", "customer success", "success", "professional services", "consult", "onboarding", "implementation", "support", "renewal"]),
+    ("Account executives", ["account exec", "account manag", "-ae", " ae", "gam", "gar", "-am-", "-am", "sales", "seller", "territory", "rep"]),
+    ("Leadership", ["director", "-dir", "head", "vice president", "-vp", " vp", "chief", "cro", "manager", "mgr", "lead"]),
+]
+LEADER_TAIL = ["director", "dir", "head", "vp", "manager", "mgr", "lead", "chief", "cro"]
+
+def role_group(role, title, team=""):
+    role = "" if str(role or "").lower() in ("nan", "none") else str(role or "")
+    title = "" if str(title or "").lower() in ("nan", "none") else str(title or "")
+    # A CRM hierarchy path ("…:NA-US-CSM-Director6:NA-US-CSM-Director6-Rep")
+    # names the seat in its last segment when the role column is empty.
+    seat = role or str(team or "").split(":")[-1]
+    text = (" " + title + " " + seat + " ").lower()
+    if not text.strip():
+        return "Other"
+    tail = seat.lower().replace(" ", "-").split("-")[-1].strip()
+    if tail and any(tail.startswith(x) for x in LEADER_TAIL):
+        return "Leadership"
+    for label, needles in ROLE_RULES:
+        if any(n in text for n in needles):
+            return label
+    return "Other"
 
 def cols(df):
     return [str(c) for c in df.columns]
@@ -93,6 +124,16 @@ else:
             a[c] = np.nan
             notes.append("Activity extract has no " + c + " column; that metric is empty.")
     a["dir_vp_exec"] = a[["director_meeting_count", "vp_meeting_count", "executive_meeting_count"]].sum(axis=1, min_count=1)
+    people_c = "external_people_touched" if has(a, "external_people_touched") else ("external_people_met_with" if has(a, "external_people_met_with") else None)
+    if people_c is not None:
+        a["people_engaged"] = fnum(a[people_c])
+    else:
+        a["people_engaged"] = np.nan
+        METRICS = [mk for mk in METRICS if mk[0] != "people_engaged"]
+        notes.append("Activity extract has no external_people_touched column; people engaged is unavailable.")
+    breakdowns = [(c, l) for c, l in BREAKDOWNS if has(a, c)]
+    for c, l in breakdowns:
+        a[c] = fnum(a[c])
     # Metrics the viewer asked for: a sum of activity-extract columns.
     money_keys = []
     for extra in (input.get("extraMetrics") or []):
@@ -128,17 +169,43 @@ else:
     if team_col:
         t = a[[ "email_l", team_col ]].dropna().drop_duplicates("email_l")
         teams = dict(zip(t["email_l"], t[team_col].astype(str)))
-    matrices = {}
-    for key, label in METRICS:
+    # Matrices travel compact — rows joined by ";", values by ",", empty for
+    # no activity that month — because the report embeds every rep × month
+    # (2,000 reps × 24 months × a dozen series is megabytes as JSON arrays).
+    # decodeMatrix (facts.ts) and the report's script read it back.
+    def cell(v, digits):
+        if np.isnan(v):
+            return ""
+        f = float(v)
+        return str(int(f)) if f.is_integer() else str(round(f, digits))
+    def matrix_of(key, digits):
         piv = a.pivot_table(index="email_l", columns="month", values=key, aggfunc="mean")
         piv = piv.reindex(index=users, columns=months)
-        vals = piv.values
-        matrix = []
-        for row in vals:
-            matrix.append([None if np.isnan(v) else round(float(v), 3) for v in row])
-        matrices[key] = matrix
+        return ";".join(",".join(cell(v, digits) for v in row) for row in piv.values)
+    matrices = {}
+    for key, label in METRICS:
+        matrices[key] = matrix_of(key, 3)
+    extra_matrices = {}
+    for key, label in breakdowns:
+        extra_matrices[key] = matrix_of(key, 2)
+    name_c = "full_name" if has(a, "full_name") else None
+    role_c = "role_name" if has(a, "role_name") else None
+    title_c = "title" if has(a, "title") else None
+    people = {}
+    info_cols = [c for c in [name_c, role_c, title_c] if c]
+    if info_cols:
+        latest = a.sort_values("month").drop_duplicates("email_l", keep="last").set_index("email_l")
+        for e in users:
+            if e in latest.index:
+                row = latest.loc[e]
+                people[e] = {
+                    "n": str(row[name_c]) if name_c and str(row[name_c]) not in ("nan", "None") else "",
+                    "ti": str(row[title_c] if title_c else (row[role_c] if role_c else "")).replace("nan", ""),
+                    "r": role_group(row[role_c] if role_c else "", row[title_c] if title_c else "", teams.get(e, "")),
+                }
     tier = {}
     flag = {}
+    usage_detail = {}
     tier_cuts = []
     n_usage = 0
     n_bottom = 0
@@ -166,8 +233,21 @@ else:
                 u["last_dt"] = pd.to_datetime(u[date_col], errors="coerce")
             else:
                 u["last_dt"] = pd.NaT
-            g = u.groupby("email_l").agg(score=("score", "sum"), last_dt=("last_dt", "max")).reset_index()
+            acct_c = find_col(u, ["account"], exclude=["id"])
+            opp_c = find_col(u, ["opp"], exclude=["id"])
+            u["acct_v"] = fnum(u[acct_c]) if acct_c else np.nan
+            u["opp_v"] = fnum(u[opp_c]) if opp_c else np.nan
+            g = u.groupby("email_l").agg(score=("score", "sum"), last_dt=("last_dt", "max"), acct_v=("acct_v", "sum"), opp_v=("opp_v", "sum")).reset_index()
             g = g[g["email_l"].isin(uidx)]
+            usage_detail = {}
+            g["last_s"] = g["last_dt"].dt.strftime("%Y-%m-%d")
+            for _, row in g.iterrows():
+                usage_detail[row["email_l"]] = {
+                    "ev": int(row["score"]) if not np.isnan(row["score"]) else 0,
+                    "a": None if not acct_c or np.isnan(row["acct_v"]) else int(row["acct_v"]),
+                    "o": None if not opp_c or np.isnan(row["opp_v"]) else int(row["opp_v"]),
+                    "last": row["last_s"] if isinstance(row["last_s"], str) else None,
+                }
             n_usage = int(len(g))
             if n_usage >= 6:
                 has_usage = True
@@ -187,10 +267,22 @@ else:
                 notes.append("Only " + str(n_usage) + " usage records matched an activity rep; adoption cohorts are unavailable.")
     else:
         notes.append("No usage cohort file — adoption tiers and users vs non-users are unavailable.")
+    def user_row(e):
+        row = {"t": tier.get(e), "f": (flag.get(e, "Non-user") if has_usage else None), "g": str(teams.get(e, "")).split(":")[-1].strip()}
+        p = people.get(e)
+        if p:
+            row["n"] = p["n"]
+            row["ti"] = p["ti"]
+            row["r"] = p["r"]
+        if e in usage_detail:
+            row["u"] = usage_detail[e]
+        return row
     U = {
         "months": months,
-        "users": [{"t": tier.get(e), "f": (flag.get(e, "Non-user") if has_usage else None), "g": teams.get(e, "")} for e in users],
+        "users": [user_row(e) for e in users],
         "m": matrices,
+        "mx": extra_matrices,
+        "mxLabels": {k: l for k, l in breakdowns},
         "labels": {k: l for k, l in METRICS},
         "tierCuts": tier_cuts,
         "nUsage": n_usage,
@@ -222,7 +314,9 @@ def opp_level_frame(df, source):
     if closed_c is not None:
         cl = o[closed_c].astype(str).str.strip().str.lower()
         o = o[cl.isin(["true", "1", "yes", "t"]) | cl.isin(["nan", "none", ""])]
-    o["score"] = fnum(o[score_c])
+    # One decimal: the report re-buckets deals in the browser from scores
+    # carried at that precision, and must land every deal where this does.
+    o["score"] = fnum(o[score_c]).round(1)
     o = o[o["score"].notna()]
     o["type"] = o[type_c].astype(str).str.strip() if type_c else "All"
     o["amount"] = fnum(o[amt_c]) if amt_c else np.nan
@@ -247,7 +341,8 @@ def opp_level_frame(df, source):
         hi_m = pd.to_datetime(months[-1] + "-01") + pd.offsets.MonthEnd(1)
         keep = cl.isna() | ((cl >= lo_m) & (cl <= hi_m))
         o = o[keep]
-    return o[["id", "won", "score", "type", "amount", "days"]]
+    o["close"] = pd.to_datetime(o[close_c], errors="coerce").dt.strftime("%Y-%m") if close_c else None
+    return o[["id", "won", "score", "type", "amount", "days", "close"]]
 
 def bucket_rows(o, key_col, label_fn):
     rows = []
@@ -278,6 +373,7 @@ def deal_table(o):
     return {"deciles": deciles, "levels": levels, "n": float(len(o)), "win_rate": round(float(o["won"].mean() * 100), 1), "r_win": None if r is None or np.isnan(r) else round(r, 2)}
 
 OPP = None
+DEALS = None
 opp_frame = None
 if opp is not None and not ONLY_ACTIVITY:
     opp_frame = opp_level_frame(opp, "Opportunity engagement")
@@ -316,11 +412,46 @@ if opp_frame is not None and len(opp_frame) >= 20:
         META["meanWonCap"] = float(won_amt.clip(upper=capw).mean())
     META["transactionalShare"] = round(float(opp_frame["transactional"].mean() * 100), 1) if has_days else None
     META["hasVelocity"] = bool(has_days)
+    # Every closed deal, column-wise and compact, so the report can slice by
+    # fiscal year, quarter, close month and deal type in the browser. Deciles
+    # recomputed there use the same equal-count bins over rank as deal_table.
+    d_types = [t for t, n in opp_frame["type"].value_counts().items()]
+    t_idx = {t: i for i, t in enumerate(d_types)}
+    d_months = sorted([m for m in opp_frame["close"].dropna().unique() if isinstance(m, str)])
+    m_idx = {m: i for i, m in enumerate(d_months)}
+    # Encoded compact (decodeDeals in facts.ts): s = score × 10 as two base-36
+    # characters, t = type as one (at most 36 types; the rarest fold into the
+    # last), m = close month as two ("zz" unknown), w/x = "0"/"1" strings,
+    # d = days as integers (-1 unknown).
+    B36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+    def b36(n, width):
+        n = max(0, min(int(n), 36 ** width - 1))
+        out = ""
+        for _ in range(width):
+            out = B36[n % 36] + out
+            n //= 36
+        return out
+    if len(d_types) > 36:
+        d_types = d_types[:35] + ["Other"]
+        t_idx = {t: min(i, 35) for i, t in enumerate([t for t, n in opp_frame["type"].value_counts().items()])}
+    DEALS = {
+        "types": d_types,
+        "months": d_months,
+        "n": int(len(opp_frame)),
+        "s": "".join(b36(round(float(v) * 10), 2) for v in opp_frame["score"]),
+        "w": "".join("1" if v else "0" for v in opp_frame["won"]),
+        "d": [-1 if (v is None or np.isnan(v)) else int(round(float(v))) for v in fnum(opp_frame["days"])],
+        "t": "".join(B36[t_idx.get(v, 0)] for v in opp_frame["type"]),
+        "m": "".join(b36(m_idx[v], 2) if isinstance(v, str) and v in m_idx else "zz" for v in opp_frame["close"]),
+        "x": "".join("1" if v else "0" for v in opp_frame["transactional"]),
+    }
 elif not ONLY_ACTIVITY:
     notes.append("No opportunity-level data with an engagement score — deal engagement is unavailable.")
 
 # ---------------------------------------------------------------- ST (stages & personas)
 ST = None
+ACC = None
+d_months_all = DEALS["months"] if DEALS else []
 if stages is None or ONLY_ACTIVITY:
     if not ONLY_ACTIVITY:
         notes.append("No closed-deals-by-stage file — the stage and persona analysis is unavailable.")
@@ -436,7 +567,83 @@ else:
             ids = list(eq_series[q == qi].index)
             vals = eq_series[q == qi]
             early_q.append({"q": ["Q1 lowest", "Q2", "Q3", "Q4", "Q5 highest"][qi], "lo": int(vals.min()), "hi": int(vals.max()), "n": len(ids), "win_rate": wr(ids), "med_days_won": med_days_won(ids)})
+    # Stage × persona cells: per (stage, won, deal type, close month), the
+    # deals present, their activities, each persona's activities and how
+    # many of those deals had the persona at all. The report filters these
+    # by fiscal year, quarter and deal type, and draws the heatmap (won and
+    # lost averages, the difference, the win rate when the persona is
+    # present), win rate by stage and the won/lost persona lines from them.
+    s["close"] = pd.to_datetime(s["opportunity_close_date"], errors="coerce").dt.strftime("%Y-%m") if has(s, "opportunity_close_date") else None
+    pcols = [c for label, c in PERSONAS]
+    per = s.groupby(["id", "stage"], sort=False).agg(**{"acts": ("acts", "sum"), **{c: (c, "sum") for c in pcols}}).reset_index()
+    first = s.drop_duplicates("id").set_index("id")
+    per["won"] = per["id"].map(first["won"]).fillna(False)
+    per["type"] = per["id"].map(first["type"]).fillna("")
+    per["close"] = per["id"].map(first["close"]) if has(s, "opportunity_close_date") else None
+    c_types = sorted([t for t in per["type"].unique() if isinstance(t, str)])
+    # Close months outside the analysis window (stray far-future dates in
+    # CRM data) are kept in the totals but carry no month, so they never
+    # become a fiscal year of their own.
+    if has(s, "opportunity_close_date"):
+        lo_c = months[0] if activity is not None else (d_months_all[0] if d_months_all else None)
+        hi_c = months[-1] if activity is not None else (d_months_all[-1] if d_months_all else None)
+        if lo_c and hi_c:
+            per["close"] = per["close"].where(per["close"].between(lo_c, hi_c))
+    c_months = sorted([m for m in per["close"].dropna().unique() if isinstance(m, str)]) if has(s, "opportunity_close_date") else []
+    st_idx = {n: i for i, n in enumerate(stage_names)}
+    ct_idx = {t: i for i, t in enumerate(c_types)}
+    cm_idx = {m: i for i, m in enumerate(c_months)}
+    per["st_i"] = per["stage"].map(st_idx)
+    per["t_i"] = per["type"].map(ct_idx).fillna(0)
+    per["m_i"] = per["close"].map(cm_idx).fillna(-1) if c_months else -1
+    per["w_i"] = per["won"].astype(int)
+    for c in pcols:
+        per["has_" + c] = (per[c] > 0).astype(int)
+    agg_spec = {"n": ("id", "count"), "acts": ("acts", "sum")}
+    for c in pcols:
+        agg_spec["s_" + c] = (c, "sum")
+        agg_spec["h_" + c] = ("has_" + c, "sum")
+    cells_df = per.groupby(["st_i", "w_i", "t_i", "m_i"]).agg(**agg_spec).reset_index()
+    cells = []
+    for _, r in cells_df.iterrows():
+        cells.append([int(r["st_i"]), int(r["w_i"]), int(r["t_i"]), int(r["m_i"]), int(r["n"]), round(float(r["acts"]), 1)]
+            + [round(float(r["s_" + c]), 1) for c in pcols] + [int(r["h_" + c]) for c in pcols])
+    # Accounts: deal engagement per account (non-renewal closed deals), the
+    # report's account-level view — win rate against average engagement.
+    ACC = None
+    acct_c = "account_name" if has(s, "account_name") else None
+    score_c = "opportunity_engagement_level" if has(s, "opportunity_engagement_level") else None
+    if acct_c:
+        o2 = s.drop_duplicates("id")[["id", acct_c, "won"] + ([score_c] if score_c else [])].copy()
+        o2["acct"] = o2[acct_c].astype(str).str.strip()
+        o2["eng"] = fnum(o2[score_c]) if score_c else np.nan
+        o2["days"] = o2["id"].map(opp_days) if opp_days else np.nan
+        acts_by_opp = s.groupby("id").agg(**{"acts": ("acts", "sum"), **{c: (c, "sum") for c in pcols}})
+        o2 = o2.join(acts_by_opp, on="id")
+        o2 = o2[(o2["acct"] != "") & (o2["acct"].str.lower() != "nan")]
+        counts = o2.groupby("acct")["id"].count()
+        keep_accts = list(counts[counts >= 2].sort_values(ascending=False).index[:300])
+        rows = []
+        for acct in keep_accts:
+            g = o2[o2["acct"] == acct]
+            n = len(g)
+            acts = float(g["acts"].sum())
+            rows.append({
+                "account": acct, "opps": int(n), "won": int(g["won"].sum()),
+                "win_rate": round(float(g["won"].mean() * 100), 1),
+                "eng": r1(fnum(g["eng"]).mean()) if score_c else None,
+                "days": r1(med(g["days"])) if opp_days else None,
+                "acts": int(acts), "exec": int(g["executive_activity_count"].sum()), "vp": int(g["vp_activity_count"].sum()), "dir": int(g["director_activity_count"].sum()),
+                "depth": round(acts / n, 1) if n else None,
+                "breadth": int(sum(1 for c in pcols if float(g[c].sum()) > 0)),
+            })
+        if rows:
+            ACC = {"accounts": rows, "nAccounts": int(o2["acct"].nunique()), "nShown": len(rows)}
     ST = {
+        "cells": cells,
+        "cellTypes": c_types,
+        "cellMonths": c_months,
+        "personaKeys": [label for label, c in PERSONAS],
         "stages": st_rows,
         "personas": personas_rows,
         "surv": surv,
@@ -450,14 +657,59 @@ else:
         "cycleMatch": round(sum(1 for i in pre_ids if i in opp_days) / len(pre_ids) * 100, 1) if pre_ids and opp_days else None,
     }
 
-return {"U": U, "OPP": OPP, "ST": ST, "META": META, "notes": notes}
+return {"U": U, "OPP": OPP, "DEALS": DEALS, "ST": ST, "ACC": ACC, "META": META, "notes": notes}
 `
+
+export type RoiUser = {
+  /** Adoption tier (High/Medium/Low) or null. */
+  t: string | null
+  /** User / Non-user, or null without a usage file. */
+  f: string | null
+  /** Team. */
+  g: string
+  /** Full name, title or CRM role, and role group (best effort) — newer facts only. */
+  n?: string
+  ti?: string
+  r?: string
+  /** Usage detail: usage score, account and opportunity views, last active day. */
+  u?: { ev: number; a: number | null; o: number | null; last: string | null }
+}
+
+/**
+ * Every closed deal, column-wise and encoded compact (see the prep; decode
+ * with decodeDeals in facts.ts). Absent from facts computed before the ROI page.
+ */
+export type RoiDeals = {
+  types: string[]
+  months: string[]
+  n: number
+  /** Engagement score × 10, two base-36 characters per deal. */
+  s: string
+  /** Won "1" / lost "0", one character per deal. */
+  w: string
+  /** Days from creation to close, -1 when unknown. */
+  d: number[]
+  /** Index into types, one base-36 character per deal. */
+  t: string
+  /** Index into months (close month), two base-36 characters per deal, "zz" unknown. */
+  m: string
+  /** Transactional (closed within 7 days), "1"/"0". */
+  x: string
+}
+
+/** A rep × month matrix: rows of months (null = no activity), or the prep's compact string. */
+export type RoiMatrix = Array<Array<number | null>> | string
+
+export type RoiAccountRow = { account: string; opps: number; won: number; win_rate: number; eng: number | null; days: number | null; acts: number; exec: number; vp: number; dir: number; depth: number | null; breadth: number }
 
 export type RoiFacts = {
   U: {
     months: string[]
-    users: Array<{ t: string | null; f: string | null; g: string }>
-    m: Record<string, Array<Array<number | null>>>
+    users: RoiUser[]
+    m: Record<string, RoiMatrix>
+    /** Breakdown matrices (director, in-person, conference, received) and their labels. */
+    mx?: Record<string, RoiMatrix>
+    mxLabels?: Record<string, string>
     labels: Record<string, string>
     tierCuts: number[]
     nUsage: number
@@ -468,7 +720,14 @@ export type RoiFacts = {
     activityColumns?: string[]
   } | null
   OPP: Record<string, { excl: DealTable; incl: DealTable }> | null
+  DEALS?: RoiDeals | null
+  ACC?: { accounts: RoiAccountRow[]; nAccounts: number; nShown: number } | null
   ST: {
+    /** [stage, won, type, month, deals, activities, ...persona activities, ...deals with persona] — see the prep. */
+    cells?: number[][]
+    cellTypes?: string[]
+    cellMonths?: string[]
+    personaKeys?: string[]
     stages: Array<Record<string, unknown> & { stage: string; share: number; dir_above_pct: number; won_acts: number | null; lost_acts: number | null; won_n: number; lost_n: number }>
     personas: Array<{ persona: string; wr_with: number | null; wr_without: number | null; lift_pts: number | null; prevalence: number | null; won_share: number | null; days_with: number | null; days_without: number | null; amt_with: number | null; amt_without: number | null }>
     surv: Array<{ persona: string; wr_early: number | null; wr_no_early: number | null; n_early: number; n_no: number; lift: number | null }>

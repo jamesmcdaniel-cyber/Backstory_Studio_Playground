@@ -8,6 +8,7 @@ import {
   Bot,
   BookOpen,
   Check,
+  ChartNoAxesCombined,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
@@ -49,6 +50,7 @@ import { liveAgentIds } from '@/lib/agents/run-status'
 import { resizeImageToDataUrl } from '@/lib/client/image'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
 import { creditUsagePct } from '@/lib/usage/credit-pct'
+import { isCustomerEdition } from '@/lib/edition'
 import { cn } from '@/lib/utils'
 import type { Activity, Agent as AgentType } from '@/lib/types'
 
@@ -101,6 +103,11 @@ const navigation = [
   { name: 'Integrations', href: '/integrations', icon: Plug },
 ]
 
+// Internal edition only, for anyone who can run agents: the ROI analysis page
+// reads People.ai warehouse extracts about customers (the customer edition
+// 404s /roi as well). Drawn right after Library.
+const roiNavItem = { name: 'ROI analysis', href: '/roi', icon: ChartNoAxesCombined }
+
 // Super admins only. Customer workspaces never resolve catalogue.review (the
 // org-kind double-gate in resolvePermissions), so the entry is absent there
 // rather than shown-and-refused — one check covers both edition and role.
@@ -126,6 +133,7 @@ export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { user, signOut, can } = useAuth()
+  const showRoi = !isCustomerEdition() && can('agent.run')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [orgMenuOpen, setOrgMenuOpen] = useState(false)
@@ -671,7 +679,7 @@ export function Sidebar() {
         <div className="flex-1 overflow-y-auto px-2 py-2">
           <nav aria-label="Main navigation" className="mb-2 space-y-0.5">
             {[
-              ...navigation,
+              ...navigation.flatMap((item) => (item.href === '/templates' && showRoi ? [item, roiNavItem] : [item])),
               ...(can('catalogue.review') ? [reviewsNavItem] : []),
               ...(can('platform.administer') ? [adminNavItem] : []),
             ].map((item) => {
@@ -849,7 +857,7 @@ export function Sidebar() {
         </div>
       </aside>
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} showRoi={showRoi} />
       <Dialog open={folderDialog !== null} onOpenChange={(open) => { if (!open && !savingFolder) setFolderDialog(null) }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>

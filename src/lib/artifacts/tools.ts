@@ -8,11 +8,12 @@ import { runRoiPrep, type RoiFacts } from '@/lib/roi/prep'
 import { summarizeFacts } from '@/lib/roi/facts'
 import { renderRoiDashboard } from '@/lib/roi/dashboard'
 import { applyOperations, describeView, roiOperationSchema } from '@/lib/roi/view'
-import { currentRoiState, readFacts, stateJson, storeFacts } from '@/lib/roi/artifact-state'
+import { currentRoiState, readAccount360Facts, readFacts, stateJson, storeFacts } from '@/lib/roi/artifact-state'
 import { isRoiTemplate, listRoiSources, ROI_TEMPLATES, type RoiTemplate } from '@/lib/roi/sources'
 import { summarizeAccount360 } from '@/lib/roi/account360/facts'
 import type { Account360Facts } from '@/lib/roi/account360/prep'
 import { isRoiTimeframePreset } from '@/lib/roi/timeframe'
+import { configFromPreset, describeRunConfig } from '@/lib/roi/config'
 import { addVersion, createArtifact } from './service'
 
 /**
@@ -98,7 +99,7 @@ const ROI_TOOLS = [
     name: 'update_roi_dashboard',
     description:
       'Change the ROI dashboard this conversation is about and save the result as a new version (the previous is kept). Pass `operations`, a list of edits: ' +
-      'hide_tab/show_tab {tab: lead|adopt|users|deal|stage|method}; hide_section/show_section {section} (sections from get_artifact); ' +
+      'hide_tab/show_tab {tab: activity|adoption|deals|accounts|method}; hide_section/show_section {section} (sections from get_artifact); ' +
       'hide_metric/show_metric {metric}; rename_metric {metric, label}; add_metric {metric: {key: lower_snake, label, columns: [activity-extract columns summed per rep per month], format: count|currency}} — adding recomputes the facts before this call returns, so the saved version already shows it; remove_added_metric {metric}; ' +
       'set_default_comparison {preset: last6_vs_prior6|last6_vs_year_ago|last12_vs_prior12|last3_vs_prior3}; set_headline {text}; set_lede {text}; remove_finding {index (0-based)}; upsert_finding {index?, finding: {fig, cap, h, p, tab}}; remove_watch_item {index}; upsert_watch_item {index?, item: {lead, text}}; set_note {note, paragraphs[]}; add_caveat {text}. ' +
       'Every number you write into the narrative must come from the facts summary. Returns what was applied and anything rejected, with the reason.',
@@ -116,7 +117,7 @@ const ROI_TOOLS = [
                 type: 'string',
                 enum: ['hide_tab', 'show_tab', 'hide_section', 'show_section', 'hide_metric', 'show_metric', 'rename_metric', 'add_metric', 'remove_added_metric', 'set_default_comparison', 'set_headline', 'set_lede', 'remove_finding', 'upsert_finding', 'remove_watch_item', 'upsert_watch_item', 'set_note', 'add_caveat'],
               },
-              tab: { type: 'string', enum: ['lead', 'adopt', 'users', 'deal', 'stage', 'method'], description: 'hide_tab / show_tab' },
+              tab: { type: 'string', enum: ['activity', 'adoption', 'deals', 'accounts', 'method'], description: 'hide_tab / show_tab' },
               section: { type: 'string', description: 'hide_section / show_section: a section id from get_artifact' },
               metric: {
                 description: 'hide_metric / show_metric / rename_metric / remove_added_metric: the metric KEY (a string, e.g. "pipeline_created"). add_metric: an OBJECT {key, label, columns, format}.',
@@ -141,11 +142,11 @@ const ROI_TOOLS = [
               finding: {
                 type: 'object',
                 description: 'upsert_finding',
-                properties: { fig: { type: 'string' }, cap: { type: 'string' }, h: { type: 'string' }, p: { type: 'string' }, tab: { type: 'string', enum: ['lead', 'adopt', 'users', 'deal', 'stage'] } },
+                properties: { fig: { type: 'string' }, cap: { type: 'string' }, h: { type: 'string' }, p: { type: 'string' }, tab: { type: 'string', enum: ['activity', 'adoption', 'deals', 'accounts'] } },
                 required: ['fig', 'cap', 'h', 'p', 'tab'],
               },
               item: { type: 'object', description: 'upsert_watch_item', properties: { lead: { type: 'string' }, text: { type: 'string' } }, required: ['lead', 'text'] },
-              note: { type: 'string', enum: ['lead', 'adopt', 'users', 'usersTrend', 'dealWin', 'dealVel', 'stageProf', 'stageHeat', 'stageSurv', 'breadth'], description: 'set_note' },
+              note: { type: 'string', enum: ['lead', 'mix', 'adopt', 'users', 'usersTrend', 'dealWin', 'dealVel', 'dealTrend', 'stageProf', 'stageHeat', 'stageSurv', 'breadth', 'accounts', 'accountDeals'], description: 'set_note' },
               paragraphs: { type: 'array', items: { type: 'string' }, description: 'set_note: 1-4 paragraphs' },
             },
             required: ['op'],
@@ -164,14 +165,15 @@ const ROI_TOOLS = [
   },
   {
     name: 'start_roi_analysis',
-    description: 'Build this ROI dashboard for another account (or the same account over another time frame). Starts a new analysis in the background — five to fifteen minutes — carrying over this dashboard\'s view (hidden and added metrics, sections) where it has one. Returns a link the user can open; tell them it will notify them when ready. The account must be one list_roi_accounts returns, with the template this dashboard uses (or the one the user asked for) among its templates.',
+    description: 'Build this ROI dashboard for another account (or the same account over another time frame). Starts a new analysis in the background — a few minutes — carrying over this dashboard\'s view (hidden and added metrics, sections) where it has one. Returns a link the user can open; tell them it will notify them when ready. The account must be one list_roi_accounts returns, with the template this dashboard uses (or the one the user asked for) among its templates.',
     isWrite: false,
     inputSchema: {
       type: 'object',
       properties: {
         account: { type: 'string', description: 'Exactly as list_roi_accounts names it.' },
-        template: { type: 'string', enum: ['engagement', 'account360'], description: 'engagement = rep engagement ROI; account360 = Account 360 click-stream → pipeline. Defaults to this dashboard\'s own.' },
-        timeframe: { type: 'string', enum: ['last6_vs_prior6', 'last6_vs_year_ago', 'last12_vs_prior12', 'last3_vs_prior3'], description: 'Rep engagement only.' },
+        template: { type: 'string', enum: ['standard', 'engagement', 'account360'], description: 'standard = the consolidated ROI report (every section the account\'s extracts feed); engagement = rep engagement only; account360 = Account 360 click-stream → pipeline only. Defaults to this dashboard\'s own.' },
+        timeframe: { type: 'string', enum: ['last6_vs_prior6', 'last6_vs_year_ago', 'last12_vs_prior12', 'last3_vs_prior3'], description: 'Only when the user asked for a different time frame; otherwise this dashboard\'s configuration carries over.' },
+        reason: { type: 'string', description: 'Why the user wants it (QBR, renewal, churn risk…), from their request. Defaults to this dashboard\'s reason.' },
         context: { type: 'string', description: 'Optional context for the analyst, from the user\'s request.' },
       },
       required: ['account'],
@@ -269,14 +271,18 @@ export class ArtifactToolClient {
       if (!current) return { ...base, error: 'The dashboard\'s underlying facts could not be found; it can be read but not edited.' }
       const facts = await readFacts(this.organizationId, current.state.factsFileId)
       if (!facts) return { ...base, error: 'The facts file behind this dashboard is missing.' }
+      const config = current.state.config ?? configFromPreset(current.state.timeframePreset)
+      const a360 = await readAccount360Facts(this.organizationId, current.state.a360FactsFileId)
       return {
         ...base,
         account: current.state.account,
-        timeframe: current.state.timeframePreset,
+        configuration: describeRunConfig(config),
+        ...(current.state.reason ? { reason: current.state.reason } : {}),
         view: describeView(current.state.view, facts.U?.labels ?? {}),
         activityColumns: await activityColumnsFor(this.organizationId, facts, current.state.datasetIds),
         narrative: current.state.narrative,
-        facts: summarizeFacts(facts),
+        facts: summarizeFacts(facts, config),
+        ...(a360 ? { accountEngagement: summarizeAccount360(a360) } : {}),
       }
     }
     const version = artifact.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { content: true, state: true } }) : null
@@ -441,7 +447,8 @@ export class ArtifactToolClient {
       factsFileId = await storeFacts(this.organizationId, this.userId, facts)
     }
     const state = { ...current.state, factsFileId, narrative: result.narrative, view: result.view }
-    const html = renderRoiDashboard(facts, result.narrative, { account: state.account, timeframePreset: state.timeframePreset, view: result.view })
+    const a360 = await readAccount360Facts(this.organizationId, state.a360FactsFileId)
+    const html = renderRoiDashboard(facts, result.narrative, { account: state.account, timeframePreset: state.timeframePreset, view: result.view, config: state.config, reason: state.reason, a360 })
     const summary = typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim().slice(0, 300) : result.applied.join('; ')
     const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content: html, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId, state: stateJson(state) })
     this.context.expectedVersionId = version.id
@@ -481,8 +488,8 @@ export class ArtifactToolClient {
     const pageState = artifact.kind === 'page' && artifact.currentVersionId
       ? pageRoiState((await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { state: true } }))?.state)
       : null
-    const template: RoiTemplate | null = isRoiTemplate(args.template) ? args.template : artifact.kind === 'roi_dashboard' ? 'engagement' : pageState?.template ?? null
-    if (!template) throw new Error('This page was not built by an ROI analysis; pass template (engagement or account360).')
+    const template: RoiTemplate | null = isRoiTemplate(args.template) ? args.template : artifact.kind === 'roi_dashboard' ? 'standard' : pageState?.template ?? null
+    if (!template) throw new Error('This page was not built by an ROI analysis; pass template (standard, engagement or account360).')
     const sources = await listRoiSources(this.organizationId)
     const match = sources.find((source) => source.account.toLowerCase() === account.toLowerCase())
     if (!match || !match.templates.includes(template)) {
@@ -493,20 +500,24 @@ export class ArtifactToolClient {
         hint: 'An operator loads an account\'s extracts into the Repository; until then it cannot be analysed.',
       }
     }
-    const current = artifact.kind === 'roi_dashboard' && template === 'engagement' ? await currentRoiState(this.organizationId, artifact.id) : null
-    const timeframe = isRoiTimeframePreset(args.timeframe) ? args.timeframe : (current?.state.timeframePreset && isRoiTimeframePreset(current.state.timeframePreset) ? current.state.timeframePreset : 'last6_vs_prior6')
+    const current = artifact.kind === 'roi_dashboard' && template !== 'account360' ? await currentRoiState(this.organizationId, artifact.id) : null
+    // The same configuration as this dashboard unless a time frame was asked for.
+    const config = isRoiTimeframePreset(args.timeframe)
+      ? { ...configFromPreset(args.timeframe), cohort: current?.state.config?.cohort ?? 'tiers', fiscalYearStartMonth: current?.state.config?.fiscalYearStartMonth ?? null }
+      : current?.state.config ?? configFromPreset(current?.state.timeframePreset)
     const { createRoiAnalysis } = await import('@/lib/roi/service')
     const row = await createRoiAnalysis({
       organizationId: this.organizationId,
       userId: this.userId,
       account: match.account,
-      timeframe: { preset: timeframe },
+      config,
+      reason: typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim().slice(0, 1_000) : current?.state.reason ?? 'Requested from the ROI dashboard assistant',
       context: typeof args.context === 'string' ? args.context.slice(0, 4_000) : '',
       view: current?.state.view,
       template,
     })
     if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
-    return { started: true, account: match.account, template, ...(template === 'engagement' ? { timeframe } : {}), link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background, five to fifteen minutes; the user is notified when the dashboard is ready.' }
+    return { started: true, account: match.account, template, configuration: describeRunConfig(config), link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background, a few minutes; the user is notified when the report is ready. It also appears in the ROI analysis page\'s run history.' }
   }
 }
 

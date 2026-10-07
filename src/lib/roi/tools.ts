@@ -7,6 +7,10 @@ import { runRoiPrep, type RoiFacts } from './prep'
 import { summarizeFacts } from './facts'
 import { runAccount360Prep, type Account360Facts, type Account360Options } from './account360/prep'
 import { summarizeAccount360 } from './account360/facts'
+import { roiRunConfigSchema } from './config'
+import { isRoiSourceKind, type RoiSourceKind } from './sources'
+
+const ACCOUNT360_KINDS: RoiSourceKind[] = ['clickstream', 'accounts', 'opportunities']
 
 /**
  * The ROI plane — one tool per analysis template. `prepare_roi_facts` (rep
@@ -26,12 +30,13 @@ export const ROI_TOOLS = [
     name: 'prepare_roi_facts',
     description:
       'Run the standard ROI prep over the repository datasets for an account: leading indicators per rep per month with baseline/observation windows, adoption cohorts (usage tiers, users vs non-users), deal engagement deciles/levels vs win rate and velocity, and the stage/persona analysis with the survivorship control. ' +
-      'Pass every dataset documentId the run named (up to 4). Returns a compact summary of the computed facts — every number the narrative may cite — plus notes on what could not be computed. Call it once, first; do not recompute these with run_code.',
+      'Pass the activity, usage, engagement and stage dataset documentIds the run named (up to 4; Account 360 extracts are ignored here — they go to prepare_account360), and the run\'s `config` exactly as the run gives it. Returns a compact summary of the computed facts — every number the narrative may cite, with the configured windows in `configured` — plus notes on what could not be computed. Call it once, first; do not recompute these with run_code.',
     isWrite: false,
     inputSchema: {
       type: 'object',
       properties: {
         documentIds: { type: 'array', items: { type: 'string' }, description: `Repository dataset ids, up to ${ROI_MAX_DATASETS}.` },
+        config: { type: 'object', description: 'The run configuration from the run instructions (windowMonths, comparison, custom, cohort, fiscalYearStartMonth). Optional.' },
       },
       required: ['documentIds'],
     },
@@ -73,10 +78,11 @@ export class RoiToolClient {
 
   async executeTool(_serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
     if (name !== 'prepare_roi_facts' && name !== 'prepare_account360') throw new Error(`Unknown ROI tool "${name}".`)
-    const loaded = await this.loadDatasets(args)
+    const loaded = await this.loadDatasets(args, name === 'prepare_account360' ? 'account360' : 'core')
     if ('error' in loaded) return loaded
     const datasets = loaded.datasets
     if (name === 'prepare_account360') return this.prepareAccount360(datasets, args)
+    const config = roiRunConfigSchema.safeParse(args.config ?? null)
     let facts: RoiFacts
     try {
       facts = await this.runPrep(datasets)
@@ -84,7 +90,7 @@ export class RoiToolClient {
       return { error: error instanceof Error ? error.message : String(error), hint: 'Check that the datasets are the expected extracts (repository_read shows their columns). Do not retry more than once.' }
     }
     const factsFileId = await this.store(ROI_FACTS_FILENAME_PREFIX, facts)
-    const summary = summarizeFacts(facts)
+    const summary = summarizeFacts(facts, config.success ? config.data : null)
     return {
       factsFileId,
       datasets: datasets.map((dataset) => ({ frame: dataset.name, filename: dataset.filename })),
@@ -126,10 +132,21 @@ export class RoiToolClient {
     return saved.id
   }
 
-  private async loadDatasets(args: Record<string, unknown>): Promise<{ datasets: CodeDataset[] } | { error: string }> {
-    const ids = Array.isArray(args.documentIds)
-      ? [...new Set(args.documentIds.filter((id): id is string => typeof id === 'string' && id.length > 0))].slice(0, ROI_MAX_DATASETS)
+  private async loadDatasets(args: Record<string, unknown>, plane: 'core' | 'account360'): Promise<{ datasets: CodeDataset[] } | { error: string }> {
+    let ids = Array.isArray(args.documentIds)
+      ? [...new Set(args.documentIds.filter((id): id is string => typeof id === 'string' && id.length > 0))].slice(0, 8)
       : []
+    // A tagged extract goes to the prep it belongs to, whatever the model
+    // passed: a click-stream read as a usage file would skew the cohorts.
+    if (ids.length) {
+      const tagged = await prisma.knowledgeDocument.findMany({ where: { id: { in: ids }, organizationId: this.organizationId }, select: { id: true, sourceMetadata: true } })
+      const kindOf = new Map(tagged.map((doc) => [doc.id, (doc.sourceMetadata as { roi?: { kind?: unknown } } | null)?.roi?.kind]))
+      ids = ids.filter((id) => {
+        const kind = kindOf.get(id)
+        if (!isRoiSourceKind(kind)) return true
+        return plane === 'account360' ? ACCOUNT360_KINDS.includes(kind) : !ACCOUNT360_KINDS.includes(kind)
+      }).slice(0, ROI_MAX_DATASETS)
+    }
     if (!ids.length) return { error: 'Pass the dataset documentIds from the run instructions.' }
     const docs = await prisma.knowledgeDocument.findMany({
       where: {

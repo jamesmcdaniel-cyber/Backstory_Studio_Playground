@@ -1731,6 +1731,11 @@ model RoiAnalysis {
   /// dashboard) | account360 (Account 360 click-stream → pipeline — the HP suite).
   template       String   @default("engagement")
   timeframe      Json     @default("{}")
+  /// The run configuration from the ROI analysis page (src/lib/roi/config.ts):
+  /// windows, comparison, cohort type, fiscal year start.
+  config         Json     @default("{}")
+  /// Why the analysis was run (QBR, renewal, churn risk…) — required on the page.
+  reason         String   @default("") @db.Text
   context        String   @default("") @db.Text
   datasetIds     Json     @default("[]")
   /// pending | running | completed | failed | blocked | cancelled

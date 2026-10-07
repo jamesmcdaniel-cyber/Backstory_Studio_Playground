@@ -266,5 +266,19 @@ export async function finalizeFlowRun(
     })
   }
 
+  // The ROI page's data flow: its finish hands the analysis back to the ROI
+  // service, which starts the analyst on what the flow loaded (or records why
+  // there is nothing to analyse). Reads of the analysis reconcile too, so a
+  // failure here only delays the analyst until someone looks.
+  if (status === 'succeeded' || status === 'failed') {
+    const { roiAnalysisIdOfTrigger } = await import('@/lib/roi/data-source')
+    const analysisId = roiAnalysisIdOfTrigger(job.trigger)
+    if (analysisId) {
+      await import('@/lib/roi/service')
+        .then(({ continueRoiAnalysisAfterDataFlow }) => continueRoiAnalysisAfterDataFlow(job.organizationId, analysisId, { status, error: runError }))
+        .catch((error) => apiLogger.error('roi analysis continuation failed', { flowRunId: run.id, analysisId, error: error instanceof Error ? error.message : String(error) }))
+    }
+  }
+
   return { status, output: effectiveOutput }
 }

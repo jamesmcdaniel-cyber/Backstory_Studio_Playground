@@ -32,6 +32,12 @@ export const ROI_SOURCE_LABEL: Record<RoiSourceKind, string> = {
  * are loaded.
  */
 export const ROI_TEMPLATES = {
+  standard: {
+    label: 'ROI analysis',
+    description: 'The standard readout: key findings, activity trends, adoption impact, deal intelligence (incl. stage × persona) and account engagement — every section the account\'s extracts can feed.',
+    kinds: ['activity', 'usage', 'engagement', 'stages', 'clickstream', 'accounts', 'opportunities'],
+    required: [] as RoiSourceKind[],
+  },
   engagement: {
     label: 'Rep engagement ROI',
     description: 'Leading indicators per rep, adoption cohorts, deal engagement vs win rate, and stage/persona — the Iron Mountain dashboard.',
@@ -53,13 +59,31 @@ export function isRoiTemplate(value: unknown): value is RoiTemplate {
   return typeof value === 'string' && value in ROI_TEMPLATES
 }
 
+/** The report sections each extract kind feeds, in words, for the page's account picker. */
+const KIND_COVERS: Record<RoiSourceKind, string> = {
+  activity: 'Activity trends',
+  usage: 'Adoption impact',
+  engagement: 'Deal engagement',
+  stages: 'Stage and persona',
+  clickstream: 'Account engagement',
+  accounts: 'Account engagement',
+  opportunities: 'Account engagement',
+}
+
+export function coversFor(kinds: RoiSourceKind[]): string[] {
+  return [...new Set(ROI_SOURCE_KINDS.filter((kind) => kinds.includes(kind)).map((kind) => KIND_COVERS[kind]))]
+}
+
 /** The templates an account's loaded extracts can run. */
 export function templatesFor(datasets: Partial<Record<RoiSourceKind, unknown>>): RoiTemplate[] {
-  return ROI_TEMPLATE_IDS.filter((id) => {
+  const runnable = (id: RoiTemplate) => {
     const template = ROI_TEMPLATES[id]
     const loaded = template.kinds.filter((kind) => datasets[kind])
     return loaded.length > 0 && template.required.every((kind) => datasets[kind])
-  })
+  }
+  // The standard report needs at least one part it can build: any of the
+  // rep-engagement extracts, or a complete Account 360 set.
+  return ROI_TEMPLATE_IDS.filter((id) => (id === 'standard' ? runnable('engagement') || runnable('account360') : runnable(id)))
 }
 
 export type RoiSourceTag = { account: string; kind: RoiSourceKind; loadedAt: string; organizationId?: string }
@@ -111,7 +135,7 @@ export async function listRoiSources(organizationId: string): Promise<RoiAccount
 }
 
 /** The dataset ids a template reads for an account, newest per kind. Empty when nothing is loaded. */
-export async function resolveRoiDatasetIds(organizationId: string, account: string, template: RoiTemplate = 'engagement'): Promise<string[]> {
+export async function resolveRoiDatasetIds(organizationId: string, account: string, template: RoiTemplate = 'standard'): Promise<string[]> {
   const sources = await listRoiSources(organizationId)
   const match = sources.find((source) => source.account.toLowerCase() === account.trim().toLowerCase())
   if (!match) return []

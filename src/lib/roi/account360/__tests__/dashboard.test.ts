@@ -77,10 +77,10 @@ test('the summary carries the ratios a headline cites, computed rather than left
 })
 
 test('an account offers the analyses its loaded extracts can run', () => {
-  assert.deepEqual(templatesFor({ activity: {}, engagement: {} }), ['engagement'])
-  assert.deepEqual(templatesFor({ clickstream: {}, accounts: {}, opportunities: {} }), ['account360'])
-  assert.deepEqual(templatesFor({ clickstream: {}, accounts: {} }), [], 'Account 360 cannot run without the opportunity pull')
-  assert.deepEqual(templatesFor({ usage: {}, clickstream: {}, opportunities: {} }), ['engagement', 'account360'])
+  assert.deepEqual(templatesFor({ activity: {}, engagement: {} }), ['standard', 'engagement'])
+  assert.deepEqual(templatesFor({ clickstream: {}, accounts: {}, opportunities: {} }), ['standard', 'account360'])
+  assert.deepEqual(templatesFor({ clickstream: {}, accounts: {} }), [], 'Account 360 cannot run without the opportunity pull, so neither can the standard report')
+  assert.deepEqual(templatesFor({ usage: {}, clickstream: {}, opportunities: {} }), ['standard', 'engagement', 'account360'])
 })
 
 test('a page can be rebuilt for another account but is never edited through an ROI view', () => {

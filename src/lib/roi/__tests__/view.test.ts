@@ -9,8 +9,8 @@ const narrative: RoiNarrative = {
   headline: 'Engaged deals win twice as often.',
   lede: 'Win rate climbs with engagement.',
   findings: [
-    { fig: '2.0×', cap: 'win rate', h: 'Engaged deals win', p: 'High 49% vs low 25%.', tab: 'deal' },
-    { fig: '+52%', cap: 'senior meetings', h: 'Users meet senior buyers', p: '9.1 vs 6.0.', tab: 'users' },
+    { fig: '2.0×', cap: 'win rate', h: 'Engaged deals win', p: 'High 49% vs low 25%.', tab: 'deals' },
+    { fig: '+52%', cap: 'senior meetings', h: 'Users meet senior buyers', p: '9.1 vs 6.0.', tab: 'adoption' },
   ],
   watch: [{ lead: 'Senior access is slipping.', text: '-7.7%.' }, { lead: 'Correlation.', text: 'Users self-select.' }],
   notes: {},
@@ -35,7 +35,7 @@ const facts: RoiFacts = {
 
 test('a request becomes applied edits; unknown targets are rejected with a reason, the rest still apply', () => {
   const result = applyOperations({ view: EMPTY_VIEW, narrative }, [
-    { op: 'hide_tab', tab: 'adopt' },
+    { op: 'hide_tab', tab: 'adoption' },
     { op: 'hide_metric', metric: 'pipeline_created' },
     { op: 'rename_metric', metric: 'meeting_count', label: 'Customer meetings' },
     { op: 'hide_metric', metric: 'bookings' },
@@ -43,7 +43,7 @@ test('a request becomes applied edits; unknown targets are rejected with a reaso
     { op: 'hide_section', section: 'nonsense' },
     { op: 'remove_finding', index: 0 },
   ], context)
-  assert.deepEqual(result.view.hiddenTabs, ['adopt'])
+  assert.deepEqual(result.view.hiddenTabs, ['adoption'])
   assert.deepEqual(result.view.hiddenMetrics, ['pipeline_created'])
   assert.equal(result.view.metricLabels.meeting_count, 'Customer meetings')
   assert.deepEqual(result.view.hiddenSections, ['calculator'])
@@ -70,13 +70,15 @@ test('adding a metric needs real columns and asks for a recompute', () => {
 test('the last finding cannot be removed and every tab cannot be hidden', () => {
   const one = { ...narrative, findings: [narrative.findings[0]] }
   assert.match(applyOperations({ view: EMPTY_VIEW, narrative: one }, [{ op: 'remove_finding', index: 0 }], context).rejected[0], /at least one finding/)
-  const all = applyOperations({ view: EMPTY_VIEW, narrative }, ['lead', 'adopt', 'users', 'deal', 'stage', 'method'].map((tab) => ({ op: 'hide_tab' as const, tab: tab as 'lead' })), context)
-  assert.ok(all.view.hiddenTabs.length < 6)
+  const all = applyOperations({ view: EMPTY_VIEW, narrative }, ['activity', 'adoption', 'deals', 'accounts', 'method'].map((tab) => ({ op: 'hide_tab' as const, tab: tab as 'activity' })), context)
+  assert.ok(all.view.hiddenTabs.length < 5)
   assert.match(all.rejected.join(' '), /At least one tab/)
 })
 
 test('operations from the model are validated before anything applies', () => {
-  assert.equal(roiOperationSchema.safeParse({ op: 'hide_tab', tab: 'lead' }).success, true)
+  assert.equal(roiOperationSchema.safeParse({ op: 'hide_tab', tab: 'activity' }).success, true)
+  // The seven-tab dashboard's ids still work, mapped onto the consolidated tabs.
+  assert.deepEqual(roiOperationSchema.parse({ op: 'hide_tab', tab: 'stage' }), { op: 'hide_tab', tab: 'deals' })
   assert.equal(roiOperationSchema.safeParse({ op: 'hide_tab', tab: 'everything' }).success, false)
   assert.equal(roiOperationSchema.safeParse({ op: 'drop_table', table: 'users' }).success, false)
   assert.equal(roiOperationSchema.safeParse({ op: 'add_metric', metric: { key: 'Bad Key', label: 'x', columns: ['a'] } }).success, false)
@@ -91,12 +93,19 @@ test('the page renders the view: hidden metrics are gone from the data, labels a
   assert.match(html, /\[data-section="calculator"\]\{display:none!important\}/)
   assert.match(html, /\[data-section="watch"\]\{display:none!important\}/)
   assert.match(html, /const VIEW = \{"hiddenTabs":\["method"\]\}/)
-  assert.match(html, /const PRESET = "last6_vs_year_ago"/)
+  assert.match(html, /const CFG = \{[^\n]*"comparison":"year_ago"/)
+})
+
+test('a view saved by the seven-tab dashboard reads onto the consolidated report', () => {
+  const view = readView({ hiddenTabs: ['adopt', 'users', 'lead', 'deal'], hiddenSections: ['usersLift', 'leadTable'] })
+  // adoption absorbed adopt + users (both hidden); deals absorbed deal + stage (stage still shown).
+  assert.deepEqual(view.hiddenTabs, ['activity', 'adoption'])
+  assert.deepEqual(view.hiddenSections, ['adoptIndex', 'activityTiles'])
 })
 
 test('the assistant is told what it can edit', () => {
   const described = describeView(readView({ hiddenMetrics: ['pipeline_created'] }), facts.U!.labels) as { metrics: Array<{ key: string; hidden: boolean }>; sections: unknown[]; tabs: unknown[] }
   assert.equal(described.metrics.find((m) => m.key === 'pipeline_created')?.hidden, true)
-  assert.ok(described.sections.length >= 18)
-  assert.equal(described.tabs.length, 6)
+  assert.ok(described.sections.length >= 30)
+  assert.equal(described.tabs.length, 5)
 })

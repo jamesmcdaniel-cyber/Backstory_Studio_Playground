@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { RoiNarrative } from './contract'
+import { findingSchema, ROI_NOTE_KEYS, type RoiNarrative } from './contract'
 import { isRoiTimeframePreset, type RoiTimeframePreset } from './timeframe'
 
 /**
@@ -11,40 +11,64 @@ import { isRoiTimeframePreset, type RoiTimeframePreset } from './timeframe'
  * change is a new version with the old one kept.
  */
 
-export const ROI_TABS = ['lead', 'adopt', 'users', 'deal', 'stage', 'method'] as const
+export const ROI_TABS = ['activity', 'adoption', 'deals', 'accounts', 'method'] as const
 export type RoiTab = (typeof ROI_TABS)[number]
 
 export const ROI_TAB_LABEL: Record<RoiTab, string> = {
-  lead: 'Leading indicators',
-  adopt: 'Adoption tiers',
-  users: 'Users vs non-users',
-  deal: 'Deal engagement',
-  stage: 'Stage and persona',
+  activity: 'Activity trends',
+  adoption: 'Adoption impact',
+  deals: 'Deal intelligence',
+  accounts: 'Account engagement',
   method: 'Method',
 }
 
-/** Every block the page can show or hide, with what it is. */
+/** The seven-tab dashboard's tabs: a new tab is hidden only when every old tab it absorbed was. */
+const LEGACY_TABS: Record<RoiTab, string[]> = { activity: ['lead'], adoption: ['adopt', 'users'], deals: ['deal', 'stage'], accounts: [], method: ['method'] }
+
+/** Every block the report can show or hide, with what it is. */
 export const ROI_SECTIONS = {
-  hero: 'Headline chart in the masthead',
-  findings: 'The ROI story findings on the summary tab',
-  watch: 'The "What to watch" list',
-  calculator: 'The "Model the upside" calculator',
-  leadTrend: 'Leading indicators: monthly trend chart',
-  leadTable: 'Leading indicators: baseline vs observation table',
-  adoptIndex: 'Adoption tiers: indexed chart',
-  adoptTable: 'Adoption tiers: per-rep averages table',
-  usersLift: 'Users vs non-users: lift chart',
-  usersTrend: 'Users vs non-users: senior-meeting gap over time',
-  usersTable: 'Users vs non-users: per-rep averages table',
-  dealWin: 'Deal engagement: win rate chart',
-  dealVel: 'Deal engagement: velocity chart',
-  stageProf: 'Stage and persona: engagement by stage',
-  stageHeat: 'Stage and persona: persona mix heatmap',
-  stageSurv: 'Stage and persona: early vs late engagement',
-  stagePersona: 'Stage and persona: persona involvement',
-  stageBreadth: 'Stage and persona: committee breadth and early activity',
+  hero: 'Key findings: headline chart in the masthead',
+  heroStats: 'Key findings: the four headline numbers',
+  context: 'Key findings: account context from the Backstory platform',
+  findings: 'Key findings: the findings',
+  watch: 'Key findings: the "What to watch" list',
+  calculator: 'Key findings: the "Model the upside" calculator',
+  activityTiles: 'Activity trends: metric tiles, observation vs baseline',
+  leadTrend: 'Activity trends: monthly trend chart',
+  activityMix: 'Activity trends: meetings by channel and emails by direction',
+  seniorMix: 'Activity trends: senior engagement across three periods',
+  cohortKpis: 'Adoption impact: headline comparisons',
+  adoptIndex: 'Adoption impact: activity by cohort',
+  cohortSenior: 'Adoption impact: senior engagement by cohort',
+  cohortPipeline: 'Adoption impact: pipeline by cohort',
+  cohortDonut: 'Adoption impact: cohort composition',
+  usersTrend: 'Adoption impact: the cohort gap over time',
+  cohortTable: 'Adoption impact: per-rep averages by cohort',
+  roster: 'Adoption impact: user roster',
+  dealKpis: 'Deal intelligence: headline numbers',
+  dealFindings: 'Deal intelligence: year-over-year findings',
+  dealWin: 'Deal intelligence: win rate by engagement',
+  dealVel: 'Deal intelligence: deal velocity',
+  dealVolume: 'Deal intelligence: deal volume by engagement level',
+  stageFindings: 'Deal intelligence: stage and persona findings',
+  stageHeat: 'Deal intelligence: stage × persona heatmap',
+  stageWin: 'Deal intelligence: win rate by stage',
+  stageProf: 'Deal intelligence: engagement by stage',
+  stageSurv: 'Deal intelligence: early vs late engagement',
+  stagePersona: 'Deal intelligence: persona involvement',
+  stageBreadth: 'Deal intelligence: committee breadth and early activity',
+  a360Kpis: 'Account engagement: Account 360 cohort numbers',
+  a360Cohorts: 'Account engagement: pipeline by Account 360 cohort',
+  a360Scatter: 'Account engagement: sessions vs pipeline per account',
+  a360Trend: 'Account engagement: pipeline trend by cohort',
+  a360Table: 'Account engagement: Account 360 account table',
+  accountDeals: 'Account engagement: win rate vs engagement per account',
+  accountTable: 'Account engagement: account deal table',
 } as const
 export type RoiSection = keyof typeof ROI_SECTIONS
+
+/** Section ids of the seven-tab dashboard that became another block. */
+const LEGACY_SECTIONS: Record<string, RoiSection> = { leadTable: 'activityTiles', adoptTable: 'cohortTable', usersLift: 'adoptIndex', usersTable: 'cohortTable' }
 
 const metricKey = z.string().regex(/^[a-z][a-z0-9_]{1,48}$/, 'Metric keys are lower_snake_case.')
 
@@ -58,7 +82,7 @@ export const extraMetricSchema = z.object({
 export type RoiExtraMetric = z.infer<typeof extraMetricSchema>
 
 export const roiViewSchema = z.object({
-  hiddenTabs: z.array(z.enum(ROI_TABS)).default([]),
+  hiddenTabs: z.array(z.string()).default([]).transform((tabs) => normalizeTabs(tabs)),
   hiddenSections: z.array(z.string()).default([]),
   hiddenMetrics: z.array(z.string()).default([]),
   metricLabels: z.record(z.string(), z.string().max(60)).default({}),
@@ -67,17 +91,30 @@ export const roiViewSchema = z.object({
 })
 export type RoiView = z.infer<typeof roiViewSchema>
 
+function normalizeTabs(tabs: string[]): RoiTab[] {
+  const hidden = new Set(tabs)
+  return ROI_TABS.filter((tab) => hidden.has(tab) || (LEGACY_TABS[tab].length > 0 && LEGACY_TABS[tab].every((legacy) => hidden.has(legacy))))
+}
+
+/** A tab named the old way or the new. */
+const tabSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value
+  const match = (Object.entries(LEGACY_TABS) as Array<[RoiTab, string[]]>).find(([, legacy]) => legacy.includes(value))
+  return (ROI_TABS as readonly string[]).includes(value) ? value : match?.[0] ?? value
+}, z.enum(ROI_TABS))
+
 export const EMPTY_VIEW: RoiView = { hiddenTabs: [], hiddenSections: [], hiddenMetrics: [], metricLabels: {}, extraMetrics: [] }
 
 export function readView(value: unknown): RoiView {
   const parsed = roiViewSchema.safeParse(value ?? {})
-  return parsed.success ? parsed.data : { ...EMPTY_VIEW }
+  if (!parsed.success) return { ...EMPTY_VIEW }
+  return { ...parsed.data, hiddenSections: [...new Set(parsed.data.hiddenSections.map((section) => LEGACY_SECTIONS[section] ?? section))] }
 }
 
 /** One edit the assistant can make. A request becomes a list of these. */
 export const roiOperationSchema = z.discriminatedUnion('op', [
-  z.object({ op: z.literal('hide_tab'), tab: z.enum(ROI_TABS) }),
-  z.object({ op: z.literal('show_tab'), tab: z.enum(ROI_TABS) }),
+  z.object({ op: z.literal('hide_tab'), tab: tabSchema }),
+  z.object({ op: z.literal('show_tab'), tab: tabSchema }),
   z.object({ op: z.literal('hide_section'), section: z.string() }),
   z.object({ op: z.literal('show_section'), section: z.string() }),
   z.object({ op: z.literal('hide_metric'), metric: z.string() }),
@@ -92,17 +129,11 @@ export const roiOperationSchema = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('upsert_finding'),
     index: z.number().int().min(0).optional(),
-    finding: z.object({
-      fig: z.string().min(1).max(16),
-      cap: z.string().min(1).max(80),
-      h: z.string().min(1).max(90),
-      p: z.string().min(1).max(1_200),
-      tab: z.enum(['lead', 'adopt', 'users', 'deal', 'stage']),
-    }),
+    finding: findingSchema,
   }),
   z.object({ op: z.literal('remove_watch_item'), index: z.number().int().min(0) }),
   z.object({ op: z.literal('upsert_watch_item'), index: z.number().int().min(0).optional(), item: z.object({ lead: z.string().min(1).max(160), text: z.string().min(1).max(1_200) }) }),
-  z.object({ op: z.literal('set_note'), note: z.enum(['lead', 'adopt', 'users', 'usersTrend', 'dealWin', 'dealVel', 'stageProf', 'stageHeat', 'stageSurv', 'breadth']), paragraphs: z.array(z.string().min(1).max(2_000)).min(1).max(4) }),
+  z.object({ op: z.literal('set_note'), note: z.enum(ROI_NOTE_KEYS), paragraphs: z.array(z.string().min(1).max(2_000)).min(1).max(4) }),
   z.object({ op: z.literal('add_caveat'), text: z.string().min(1).max(800) }),
 ])
 export type RoiOperation = z.infer<typeof roiOperationSchema>
@@ -152,6 +183,7 @@ export function applyOperations(current: { view: RoiView; narrative: RoiNarrativ
         break
       case 'hide_section':
       case 'show_section': {
+        operation.section = LEGACY_SECTIONS[operation.section] ?? operation.section
         if (!(operation.section in ROI_SECTIONS)) {
           rejected.push(`No section "${operation.section}". Sections: ${Object.keys(ROI_SECTIONS).join(', ')}.`)
           break

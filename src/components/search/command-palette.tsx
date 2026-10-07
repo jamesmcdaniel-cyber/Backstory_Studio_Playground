@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertCircle, Bot, Brain, CheckCircle2, CircleDashed, Database, FileOutput, FileText, HelpCircle, KeyRound, Loader2, Plug, Search, Settings, Workflow } from 'lucide-react'
+import { AlertCircle, Bot, Brain, ChartNoAxesCombined, CheckCircle2, CircleDashed, Database, FileOutput, FileText, HelpCircle, KeyRound, Loader2, Plug, Search, Settings, Workflow } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
@@ -31,6 +31,10 @@ const NAV_ITEMS: NavResult[] = [
   { label: 'Settings', href: '/settings', icon: Settings },
 ]
 
+// The ROI analysis page sits after Library, internal edition only, for
+// people who can run agents — the sidebar resolves that gate and passes it.
+const ROI_NAV_ITEM: NavResult = { label: 'ROI analysis', href: '/roi', icon: ChartNoAxesCombined }
+
 function runStatusIcon(status: string) {
   switch (status.toLowerCase()) {
     case 'completed': return <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
@@ -40,7 +44,7 @@ function runStatusIcon(status: string) {
   }
 }
 
-export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function CommandPalette({ open, onOpenChange, showRoi = false }: { open: boolean; onOpenChange: (open: boolean) => void; showRoi?: boolean }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [agents, setAgents] = useState<AgentResult[]>([])
@@ -52,10 +56,11 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const requestId = useRef(0)
 
   const navMatches = useMemo<NavResult[]>(() => {
+    const items = NAV_ITEMS.flatMap((item) => (item.href === '/templates' && showRoi ? [item, ROI_NAV_ITEM] : [item]))
     const trimmed = query.trim().toLowerCase()
-    if (!trimmed) return NAV_ITEMS
-    return NAV_ITEMS.filter((item) => item.label.toLowerCase().includes(trimmed))
-  }, [query])
+    if (!trimmed) return items
+    return items.filter((item) => item.label.toLowerCase().includes(trimmed))
+  }, [query, showRoi])
 
   const results = useMemo<Result[]>(() => [
     ...navMatches.map((nav) => ({ kind: 'nav' as const, nav })),

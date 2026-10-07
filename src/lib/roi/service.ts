@@ -21,6 +21,8 @@ import { summarizeAccount360 } from './account360/facts'
 import { configFromPreset, describeRunConfig, presetFor, readRunConfig, type RoiRunConfig } from './config'
 import { fetchRoiData, loadedExtracts, RoiDataUnavailableError } from './data-source'
 import { runKpis } from './kpis'
+import { loadPersonalPage, openAccountOnPage, personalPageIds, populateFromGeneric, type OpenResult } from './personal-page'
+export type { OpenResult } from './personal-page'
 import type { RoiAnalysisView, RoiChatMessage, RoiDataset, RoiRunKpi, RoiRunPhase } from './types'
 
 /**
@@ -143,9 +145,9 @@ export function buildStandardPrompt(params: { account: string; config: RoiRunCon
     params.context.trim() ? `ADDITIONAL CONTEXT FROM THE REQUESTER:\n${params.context.trim()}\n` : '',
     'STEPS',
     core.length ? `1. Call prepare_roi_facts ONCE with documentIds ${ids(core)} and config ${JSON.stringify(params.config)}.` : '1. No activity, usage or deal extracts are loaded: skip prepare_roi_facts and say so in caveats.',
-    a360.length ? `2. Call prepare_account360 ONCE with documentIds ${ids(a360)} (pass excludeUsers for any users the requester asked to leave out).` : '2. No Account 360 extracts are loaded: skip prepare_account360; the Account engagement tab shows deal engagement per account only.',
+    a360.length ? `2. Call prepare_account360 ONCE with documentIds ${ids(a360)} (pass excludeUsers for any users the requester asked to leave out).` : '2. No Account 360 extracts are loaded: skip prepare_account360; the report leaves out the Account engagement tab (the account-level deal view stays under Deal engagement).',
     '3. If Backstory tools are available, look the customer account up for the `context` block (see your instructions); otherwise leave it out.',
-    '4. Return the narrative contract below. Findings may point at the activity, adoption, deals or accounts tab.',
+    '4. Return the narrative contract below. Findings may point at the activity, adoption, deals, stage or accounts tab.',
     '',
     'OUTPUT',
     ROI_OUTPUT_CONTRACT,
@@ -160,6 +162,11 @@ export type RoiResults = {
   artifactId?: string
   /** The report version this run produced. */
   versionId?: string
+  /** For a build started from someone's page: the version it put on their page. */
+  personalVersionId?: string
+  pageError?: string
+  personal?: true
+  populatePage?: true
   mode?: RoiRunMode
   kpis?: RoiRunKpi[]
 }
@@ -171,6 +178,24 @@ type ReconfigureMarker = { factsFileId: string; a360FactsFileId: string | null }
 function reconfigureOf(row: Pick<RoiAnalysis, 'results'>): ReconfigureMarker | null {
   const marker = (row.results as { reconfigure?: ReconfigureMarker } | null)?.reconfigure
   return marker && typeof marker.factsFileId === 'string' ? marker : null
+}
+
+/**
+ * What a run is for, carried on the row from start to finish: a version of
+ * someone's own page (personal); a build of an account's report that lands
+ * on its requester's page too (populatePage — every build of an account's
+ * report does, unless it is a separate artifact the person asked for).
+ */
+type RunMarkers = { personal?: true; populatePage?: true; separate?: true; basedOn?: { artifactId: string; versionId: string } }
+
+function markersOf(row: Pick<RoiAnalysis, 'results'>): RunMarkers {
+  const r = row.results as { personal?: unknown; populatePage?: unknown; separate?: unknown; basedOn?: { artifactId?: unknown; versionId?: unknown } } | null
+  return {
+    ...(r?.personal === true ? { personal: true as const } : {}),
+    ...(r?.populatePage === true ? { populatePage: true as const } : {}),
+    ...(r?.separate === true ? { separate: true as const } : {}),
+    ...(typeof r?.basedOn?.artifactId === 'string' && typeof r.basedOn.versionId === 'string' ? { basedOn: { artifactId: r.basedOn.artifactId, versionId: r.basedOn.versionId } } : {}),
+  }
 }
 export type Account360Results = { template: 'account360'; headline: string; summary: ReturnType<typeof summarizeAccount360>; factsFileId: string; artifactId?: string; kpis?: RoiRunKpi[] }
 
@@ -240,6 +265,8 @@ export async function createRoiAnalysis(params: {
   template?: RoiTemplate
   /** The account's report, when it has one: the build lands on it as a new version. */
   artifactId?: string | null
+  /** What the run is for (see RunMarkers). */
+  markers?: RunMarkers
 }): Promise<RoiAnalysis> {
   const template: RoiTemplate = params.template ?? 'standard'
   const config = params.config ?? configFromPreset(params.timeframe?.preset)
@@ -263,6 +290,7 @@ export async function createRoiAnalysis(params: {
       context: (params.context ?? '').trim().slice(0, ROI_CONTEXT_MAX_CHARS),
       datasetIds: jsonValue(preloaded ?? []),
       ...(params.view ? { view: jsonValue(params.view) } : {}),
+      ...(params.markers && Object.keys(params.markers).length ? { results: jsonValue(params.markers) } : {}),
       status: 'pending',
     },
   })
@@ -298,7 +326,7 @@ export async function createRoiAnalysis(params: {
     if (data.kind === 'ready') return await startAnalyst({ ...row, artifactId: artifact.id }, data.datasetIds)
     return prisma.roiAnalysis.update({
       where: { id: row.id, organizationId: params.organizationId },
-      data: { status: 'fetching', results: jsonValue({ dataFlowRunId: data.flowRunId }) },
+      data: { status: 'fetching', results: jsonValue({ ...(params.markers ?? {}), dataFlowRunId: data.flowRunId }) },
     })
   } catch (error) {
     return fail(error)
@@ -329,7 +357,7 @@ async function startAnalyst(row: RoiAnalysis, datasetIds: string[]): Promise<Roi
   })
   return prisma.roiAnalysis.update({
     where: { id: row.id, organizationId: row.organizationId },
-    data: { executionId, status: 'running', datasetIds: jsonValue(datasets.map((dataset) => dataset.documentId)), results: Prisma.DbNull },
+    data: { executionId, status: 'running', datasetIds: jsonValue(datasets.map((dataset) => dataset.documentId)), results: Object.keys(markersOf(row)).length ? jsonValue(markersOf(row)) : Prisma.DbNull },
   })
 }
 
@@ -379,6 +407,7 @@ export async function loadRoiAnalysis(organizationId: string, id: string): Promi
   if (!row) return null
   row = await reconcileFetching(row)
   row = await recheckContractFailure(row)
+  row = await recheckUnsavedReport(row)
   row = await reconcileRun(row)
   row = await reconcileChat(row)
   const datasets = await loadDatasets(organizationId, datasetIdsOf(row))
@@ -465,7 +494,8 @@ async function reconcileRun(row: RoiAnalysis, claimFrom: { status: string; updat
     })
   }
   if (row.template === 'account360') return completeAccount360(row, run.text)
-  const fail = (error: string) => prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { status: 'failed', error } })
+  const markers = markersOf(row)
+  const fail = (error: string) => prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { status: 'failed', error, results: Object.keys(markers).length ? jsonValue(markers) : Prisma.DbNull } })
   const extracted = extractRoiNarrative(run.text)
   if (extracted.error !== undefined) return fail(`${extracted.error} Open the run for the agent's full output.`)
   // A settings change reuses the report's computed data: its run only writes.
@@ -506,24 +536,38 @@ async function reconcileRun(row: RoiAnalysis, claimFrom: { status: string; updat
     config,
     reason: row.reason,
     ...('DEALS' in facts ? { factsVersion: 2 } : {}),
+    ...(markers.personal ? { personal: true, ...(markers.basedOn ? { basedOn: markers.basedOn } : {}) } : {}),
   })
-  const request = [reconfigure ? 'Settings changed' : 'Built from the extracts', describeRunConfig(config).join(', '), row.reason.trim() ? `for ${row.reason.trim()}` : ''].filter(Boolean).join(' · ').slice(0, 300)
+  const request = [row.account, reconfigure ? 'settings changed' : 'built from the extracts', describeRunConfig(config).join(', '), row.reason.trim() ? `for ${row.reason.trim()}` : ''].filter(Boolean).join(' · ').slice(0, 300)
   let versionId: string | undefined
-  const artifactId = row.artifactId
-    ? await addVersion({ artifactId: row.artifactId, organizationId: row.organizationId, content: reportHtml, executionId: row.executionId, request, createdByUserId: row.userId, state: roiState })
-      .then((version) => { versionId = version.id; return row.artifactId! })
-      .catch(() => undefined)
-    : await createArtifact({
-      organizationId: row.organizationId,
-      userId: row.userId,
-      kind: 'roi_dashboard',
-      title: titleFor('standard', row.account),
-      content: reportHtml,
-      agentTaskId: row.agentTaskId,
-      executionId: row.executionId,
-      state: roiState,
-    }).then(({ artifact }) => artifact.id).catch(() => undefined)
+  let artifactId: string | undefined
+  try {
+    if (row.artifactId) {
+      versionId = (await addVersion({ artifactId: row.artifactId, organizationId: row.organizationId, content: reportHtml, executionId: row.executionId, request, createdByUserId: row.userId, state: roiState })).id
+      artifactId = row.artifactId
+    } else {
+      const created = await createArtifact({ organizationId: row.organizationId, userId: row.userId, kind: 'roi_dashboard', title: titleFor('standard', row.account), content: reportHtml, agentTaskId: row.agentTaskId, executionId: row.executionId, state: roiState })
+      artifactId = created.artifact.id
+      versionId = created.version.id
+    }
+  } catch (error) {
+    // Never "completed" with nothing to show: say why the report did not save.
+    return fail(`The report was built but could not be saved: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  // A build of an account's report lands on its requester's own page too, in
+  // their layout — whether or not the marker survived an older reader. A
+  // separate artifact (asked for by name) does not. The report is saved either way.
+  let personalVersionId: string | undefined
+  let pageError: string | undefined
+  if (!markers.personal && !markers.separate && row.template === 'standard' && artifactId && !(await personalPageIds(row.organizationId)).has(artifactId)) {
+    await populateFromGeneric({ organizationId: row.organizationId, userId: row.userId, account: row.account, genericArtifactId: artifactId, config, reason: row.reason, request: `${row.account} · new data, ${describeRunConfig(config)[0].toLowerCase()}` })
+      .then((made) => { personalVersionId = made.versionId })
+      .catch((error) => { pageError = error instanceof Error ? error.message : String(error) })
+  }
   const results: RoiResults = {
+    ...markers,
+    ...(personalVersionId ? { personalVersionId } : {}),
+    ...(pageError ? { pageError } : {}),
     narrative: extracted.data,
     summary: summarizeFacts(facts, config),
     factsFileId: factsFileId!,
@@ -602,14 +646,36 @@ async function reconcileChat(row: RoiAnalysis): Promise<RoiAnalysis> {
  */
 async function recheckContractFailure(row: RoiAnalysis): Promise<RoiAnalysis> {
   if (row.status !== 'failed' || !row.executionId || !row.error) return row
-  if (!/narrative contract|was not valid JSON|No JSON object|without computing the facts/.test(row.error)) return row
+  if (!/narrative contract|was not valid JSON|No JSON object|without computing the facts|could not be saved/.test(row.error)) return row
   if ((row.results as { contractRechecked?: unknown } | null)?.contractRechecked) return row
   const run = await finalMessage(row.executionId, row.organizationId)
   if (run?.status !== 'completed') return row
   // Claimed from its failed state, so concurrent readers re-check it once.
   const rechecked = await reconcileRun({ ...row, status: 'running' }, { status: 'failed', updatedAt: row.updatedAt })
   if (rechecked.status === 'completed' || rechecked.status === 'building') return rechecked
-  return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { results: jsonValue({ contractRechecked: true }) } })
+  return markRechecked(rechecked)
+}
+
+function markRechecked(row: RoiAnalysis): Promise<RoiAnalysis> {
+  return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { results: jsonValue({ ...markersOf(row), contractRechecked: true }) } })
+}
+
+/**
+ * A run that says "completed" but saved no report — an older reader
+ * rendered it with older code, the startup validator refused the save, and
+ * the refusal was swallowed — is rendered again, once, from what the run
+ * stored. Nothing is re-run. When it still cannot be saved, the run says why.
+ */
+async function recheckUnsavedReport(row: RoiAnalysis): Promise<RoiAnalysis> {
+  if (row.status !== 'completed' || !row.executionId || !row.artifactId || row.template === 'account360') return row
+  const results = row.results as (Partial<RoiResults> & { contractRechecked?: unknown }) | null
+  if (!results || results.versionId || results.contractRechecked) return row
+  const saved = await prisma.artifactVersion.findFirst({ where: { artifactId: row.artifactId, organizationId: row.organizationId, executionId: row.executionId }, select: { id: true } })
+  if (saved) return prisma.roiAnalysis.update({ where: { id: row.id, organizationId: row.organizationId }, data: { results: jsonValue({ ...results, versionId: saved.id }) } })
+  // Claimed from its completed state, so concurrent readers render it once.
+  const rendered = await reconcileRun({ ...row, status: 'running' }, { status: 'completed', updatedAt: row.updatedAt })
+  if (rendered.status === 'building' || (rendered.status === 'completed' && (rendered.results as { versionId?: unknown } | null)?.versionId)) return rendered
+  return markRechecked(rendered)
 }
 
 /** Phase without querying the run's steps — for lists; the page polls in-flight runs for the precise one. */
@@ -622,7 +688,7 @@ function quickPhase(row: RoiAnalysis): RoiRunPhase {
   return reconfigureOf(row) ? 'writing' : 'computing'
 }
 
-export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[]; phase?: RoiRunPhase }, requestedBy: string | null = null): RoiAnalysisView {
+export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[]; phase?: RoiRunPhase }, requestedBy: string | null = null, viewerUserId: string | null = null): RoiAnalysisView {
   const config = row.config && typeof row.config === 'object' && Object.keys(row.config as object).length
     ? readRunConfig(row.config)
     : configFromPreset((row.timeframe as { preset?: string } | null)?.preset)
@@ -630,6 +696,11 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
   const kpis = results && 'kpis' in results && Array.isArray(results.kpis) ? results.kpis : []
   const finished = results && 'narrative' in results ? results : null
   const mode: RoiRunMode = reconfigureOf(row) || finished?.mode === 'reconfigure' ? 'reconfigure' : 'full'
+  // Where the run shows on the viewer's own page: a change to their page is a
+  // version of it; a build they started landed a version on it as well.
+  const mine = Boolean(viewerUserId) && row.userId === viewerUserId
+  const saved = row.status === 'completed' ? (row.results as { personal?: unknown; versionId?: unknown; personalVersionId?: unknown } | null) : null
+  const pageVersionId = mine && saved ? ((saved.personal === true ? saved.versionId : saved.personalVersionId) as string | undefined) ?? null : null
   return {
     id: row.id,
     account: row.account,
@@ -650,6 +721,7 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
     results: results && ('dataFlowRunId' in results || 'reconfigure' in results) ? null : results,
     mode,
     versionId: finished?.versionId ?? null,
+    pageVersionId,
     kpis,
     chat: chatOf(row),
     datasets: row.datasets ?? [],
@@ -660,23 +732,40 @@ export function serializeRoiAnalysis(row: RoiAnalysis & { datasets?: RoiDataset[
   }
 }
 
-/** Re-check the newest contract failures (see recheckContractFailure) so history shows recovered runs without anyone opening them. */
-export async function recheckRecentContractFailures(organizationId: string): Promise<number> {
-  const rows = await prisma.roiAnalysis.findMany({
-    where: { organizationId, status: 'failed', createdAt: { gte: new Date(Date.now() - 14 * 86_400_000) } },
-    orderBy: { createdAt: 'desc' },
-    take: 10,
-  })
+/**
+ * Re-check the newest runs an older reader got wrong — contract failures
+ * (recheckContractFailure) and reports that never saved
+ * (recheckUnsavedReport) — so history and the page show recovered runs
+ * without anyone opening them.
+ */
+export async function recheckRecentRuns(organizationId: string): Promise<number> {
+  const since = new Date(Date.now() - 14 * 86_400_000)
+  const [failed, completed] = await Promise.all([
+    prisma.roiAnalysis.findMany({ where: { organizationId, status: 'failed', createdAt: { gte: since } }, orderBy: { createdAt: 'desc' }, take: 10 }),
+    prisma.roiAnalysis.findMany({ where: { organizationId, status: 'completed', template: { not: 'account360' }, artifactId: { not: null }, createdAt: { gte: since } }, orderBy: { createdAt: 'desc' }, take: 20 }),
+  ])
+  const unsaved = completed.filter((row) => {
+    const results = row.results as { versionId?: unknown; contractRechecked?: unknown } | null
+    return results && !results.versionId && !results.contractRechecked
+  }).slice(0, 5)
   let recovered = 0
-  for (const row of rows) {
+  for (const row of failed) {
     const next = await recheckContractFailure(row).catch(() => row)
     if (next.status === 'completed') recovered += 1
+  }
+  for (const row of unsaved) {
+    const next = await recheckUnsavedReport(row).catch(() => row)
+    if ((next.results as { versionId?: unknown } | null)?.versionId) recovered += 1
   }
   return recovered
 }
 
-/** The workspace's analyses for the page's history, newest first, with who ran each. */
-export async function listRoiAnalyses(organizationId: string, take = 200): Promise<RoiAnalysisView[]> {
+/**
+ * The page's run history, newest first, with who ran each: every build of
+ * an account's report, and the viewer's own changes to their page — never
+ * someone else's page.
+ */
+export async function listRoiAnalyses(organizationId: string, viewerUserId: string, take = 200): Promise<RoiAnalysisView[]> {
   // Everything but reportHtml, which is megabytes and unused by a list.
   const rows = await prisma.roiAnalysis.findMany({
     where: { organizationId },
@@ -688,10 +777,12 @@ export async function listRoiAnalyses(organizationId: string, take = 200): Promi
       createdAt: true, updatedAt: true,
     },
   })
-  const userIds = [...new Set(rows.map((row) => row.userId))]
+  const personal = await personalPageIds(organizationId)
+  const visible = rows.filter((row) => row.userId === viewerUserId || (!markersOf(row).personal && !(row.artifactId && personal.has(row.artifactId))))
+  const userIds = [...new Set(visible.map((row) => row.userId))]
   const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds }, organizationId }, select: { id: true, name: true, email: true } }) : []
   const nameOf = new Map(users.map((user) => [user.id, user.name?.trim() || user.email || null]))
-  return rows.map((row) => serializeRoiAnalysis({ ...row, reportHtml: null }, nameOf.get(row.userId) ?? null))
+  return visible.map((row) => serializeRoiAnalysis({ ...row, reportHtml: null }, nameOf.get(row.userId) ?? null, viewerUserId))
 }
 
 /** Recompute an analysis's facts with added metrics (a carried-over view). */
@@ -727,45 +818,51 @@ export async function roiBuildFor(organizationId: string, artifactId: string): P
   return { analysisId: reconciled.id, status: reconciled.status, executionId: reconciled.executionId, error: reconciled.error, account: reconciled.account }
 }
 
-// ---------------------------------------------------------------- one report per account
+// ---------------------------------------------------------------- generic reports and personal pages
 
+/**
+ * An account's generic report: the shared starting point, built from the
+ * account's data (the Iron Mountain dashboard for Iron Mountain). Builds and
+ * data refreshes land on it as versions; everyone's own page starts from it.
+ */
 export type AccountReport = {
   artifactId: string
   account: string
-  /** The report's current version state (null while its first build runs). */
+  /** Its current version, and that version's state (null before its first version, or for a version from before state was kept). */
+  currentVersionId: string | null
   state: RoiArtifactState['roi'] | null
   /** Its data came from the ROI-page prep, so a settings change only rewrites the findings. */
   factsCurrent: boolean
   config: RoiRunConfig
   reason: string
   updatedAt: string
-  /** A run updating it right now, if any. */
+  /** A build updating it right now, if any (and who started it). */
   activeAnalysisId: string | null
+  activeUserId: string | null
 }
 
 const sameAccount = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+const isActive = (status: string) => !isTerminalRunStatus(status) && status !== 'failed'
 
-/**
- * Every account's report: the newest ROI dashboard an analysis of that
- * account built (the Iron Mountain dashboard for Iron Mountain). Settings
- * changes and data refreshes land on it as versions — an account never gets
- * a second report.
- */
+/** Every account's generic report: the newest one its builds made that still exists — never anyone's own page. */
 export async function listAccountReports(organizationId: string): Promise<AccountReport[]> {
-  const analyses = await prisma.roiAnalysis.findMany({
-    where: { organizationId, artifactId: { not: null }, template: { in: ['standard', 'engagement'] } },
-    orderBy: { createdAt: 'desc' },
-    take: 500,
-    select: { id: true, account: true, artifactId: true, status: true, config: true, reason: true, timeframe: true },
-  })
-  const artifactIds = [...new Set(analyses.map((row) => row.artifactId!))]
+  const [analyses, personal] = await Promise.all([
+    prisma.roiAnalysis.findMany({
+      where: { organizationId, artifactId: { not: null }, template: { in: ['standard', 'engagement'] } },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+      select: { id: true, account: true, artifactId: true, status: true, config: true, reason: true, timeframe: true, userId: true },
+    }),
+    personalPageIds(organizationId),
+  ])
+  const builds = analyses.filter((row) => !personal.has(row.artifactId!))
+  const artifactIds = [...new Set(builds.map((row) => row.artifactId!))]
   const artifacts = artifactIds.length
     ? await prisma.artifact.findMany({ where: { id: { in: artifactIds }, organizationId, kind: 'roi_dashboard', archivedAt: null }, select: { id: true, currentVersionId: true, updatedAt: true } })
     : []
   const live = new Map(artifacts.map((artifact) => [artifact.id, artifact]))
-  // An account's report is the one its newest analysis built that still exists.
   const chosen = new Map<string, { artifactId: string; account: string }>()
-  for (const row of analyses) {
+  for (const row of builds) {
     const key = row.account.trim().toLowerCase()
     if (chosen.has(key) || !live.has(row.artifactId!)) continue
     chosen.set(key, { artifactId: row.artifactId!, account: row.account })
@@ -776,18 +873,20 @@ export async function listAccountReports(organizationId: string): Promise<Accoun
   return [...chosen.values()].map((entry) => {
     const artifact = live.get(entry.artifactId)!
     const state = artifact.currentVersionId ? stateOf.get(artifact.currentVersionId) ?? null : null
-    const latest = analyses.find((row) => row.artifactId === entry.artifactId)!
-    const active = analyses.find((row) => row.artifactId === entry.artifactId && !isTerminalRunStatus(row.status) && row.status !== 'failed')
+    const latest = builds.find((row) => row.artifactId === entry.artifactId)!
+    const active = builds.find((row) => row.artifactId === entry.artifactId && isActive(row.status))
     const config = state?.config ?? (latest.config && Object.keys(latest.config as object).length ? readRunConfig(latest.config) : configFromPreset(state?.timeframePreset ?? (latest.timeframe as { preset?: string } | null)?.preset))
     return {
       artifactId: entry.artifactId,
       account: entry.account,
+      currentVersionId: artifact.currentVersionId,
       state,
       factsCurrent: state?.factsVersion === 2,
       config,
       reason: state?.reason ?? latest.reason ?? '',
       updatedAt: artifact.updatedAt.toISOString(),
       activeAnalysisId: active?.id ?? null,
+      activeUserId: active?.userId ?? null,
     }
   })
 }
@@ -796,12 +895,36 @@ export async function findAccountReport(organizationId: string, account: string)
   return (await listAccountReports(organizationId)).find((report) => sameAccount(report.account, account)) ?? null
 }
 
+/** This person's run updating an account right now (a change to their page, or a build they started). */
+async function activeRunFor(organizationId: string, userId: string, account: string): Promise<string | null> {
+  const rows = await prisma.roiAnalysis.findMany({
+    where: { organizationId, userId, status: { in: ['pending', 'fetching', 'running', 'building'] } },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+    select: { id: true, account: true },
+  })
+  return rows.find((row) => sameAccount(row.account, account))?.id ?? null
+}
+
+/** Open an account on this person's page (see openAccountOnPage). */
+export async function openRoiAccount(params: { organizationId: string; userId: string; account: string; update?: boolean }): Promise<OpenResult> {
+  return openAccountOnPage({
+    ...params,
+    findGeneric: async (account) => {
+      const report = await findAccountReport(params.organizationId, account)
+      // Only a version with its state can be re-drawn on someone's page.
+      return report ? { artifactId: report.artifactId, account: report.account, hasVersion: Boolean(report.state) } : null
+    },
+  })
+}
+
 /**
- * Apply a configuration to an account's report — the page's one action.
- * With a report built on current data, only the findings are rewritten for
- * the new settings (about a minute); otherwise, or when a refresh is asked
- * for, the data is computed again. Either way the result is the next version
- * of the same report.
+ * Apply settings for an account — the ROI page's one action, always about
+ * this person's own page. When their page holds the account on current data,
+ * only the findings are rewritten for the new settings (about a minute), as
+ * the next version of their page. Otherwise — or when they ask for fresh
+ * data — the account's report is built (or rebuilt) from its data, and the
+ * result lands on their page as well.
  */
 export async function requestRoiReport(params: {
   organizationId: string
@@ -813,21 +936,28 @@ export async function requestRoiReport(params: {
   /** Recompute the data (new extracts, or the data flow) instead of only rewriting. */
   refresh?: boolean
 }): Promise<RoiAnalysis> {
-  const report = await findAccountReport(params.organizationId, params.account)
-  if (report?.activeAnalysisId) throw new RoiBusyError(`The ${report.account} report is being updated already. Its next version lands in a minute or two; change the settings again after that.`)
-  if (report?.state && report.factsCurrent && !params.refresh) {
-    return startRoiReconfigure({ ...params, report, state: report.state })
+  const mine = await activeRunFor(params.organizationId, params.userId, params.account)
+  if (mine) throw new RoiBusyError(`Your ${params.account} page is being updated already. Its next version lands in a minute or two; change the settings again after that.`)
+  const page = await loadPersonalPage(params.organizationId, params.userId)
+  const current = page?.accounts[params.account.trim().toLowerCase()]
+  if (page && current && current.factsCurrent && !params.refresh) {
+    const version = await prisma.artifactVersion.findFirst({ where: { id: current.versionId, artifactId: page.artifactId, organizationId: params.organizationId }, select: { state: true } })
+    const state = readRoiState(version?.state)
+    if (state) return startRoiReconfigure({ ...params, account: current.account, pageArtifactId: page.artifactId, state })
   }
+  const report = await findAccountReport(params.organizationId, params.account)
+  if (report?.activeAnalysisId) throw new RoiBusyError(`The ${report.account} report is being rebuilt already. It lands on everyone's starting point in a few minutes; your page takes it when it is in.`)
   return createRoiAnalysis({
     organizationId: params.organizationId,
     userId: params.userId,
-    account: report?.account ?? params.account,
+    account: report?.account ?? current?.account ?? params.account,
     config: params.config,
     reason: params.reason,
     context: params.context,
     view: report?.state?.view,
     template: 'standard',
     artifactId: report?.artifactId ?? null,
+    markers: { populatePage: true },
   })
 }
 
@@ -852,25 +982,26 @@ export function buildReconfigurePrompt(params: { account: string; config: RoiRun
   ].join('\n')
 }
 
-/** A settings change on a report built on current data: the analyst rewrites the findings; the data is reused. */
+/** A settings change on this person's page: the analyst rewrites the findings on the page's data — the next version of their page. */
 async function startRoiReconfigure(params: {
   organizationId: string
   userId: string
+  account: string
   config: RoiRunConfig
   reason: string
   context?: string
-  report: AccountReport
+  pageArtifactId: string
   state: RoiArtifactState['roi']
 }): Promise<RoiAnalysis> {
-  const { report, state } = params
+  const { state } = params
   const agent = await ensureRoiAgent(params.organizationId, params.userId)
   const row = await prisma.roiAnalysis.create({
     data: {
       organizationId: params.organizationId,
       userId: params.userId,
       agentTaskId: agent.id,
-      artifactId: report.artifactId,
-      account: report.account,
+      artifactId: params.pageArtifactId,
+      account: params.account,
       template: 'standard',
       timeframe: jsonValue({ preset: presetFor(params.config) }),
       config: jsonValue(params.config),
@@ -878,16 +1009,16 @@ async function startRoiReconfigure(params: {
       context: (params.context ?? '').trim().slice(0, ROI_CONTEXT_MAX_CHARS),
       datasetIds: jsonValue(state.datasetIds),
       view: jsonValue(state.view),
-      results: jsonValue({ reconfigure: { factsFileId: state.factsFileId, a360FactsFileId: state.a360FactsFileId ?? null } }),
+      results: jsonValue({ reconfigure: { factsFileId: state.factsFileId, a360FactsFileId: state.a360FactsFileId ?? null }, personal: true, ...(state.basedOn ? { basedOn: state.basedOn } : {}) }),
       status: 'pending',
     },
   })
   try {
     const facts = await readFacts(params.organizationId, state.factsFileId)
-    if (!facts) throw new Error('The report\'s computed data could not be read. Refresh the data to rebuild it.')
+    if (!facts) throw new Error('The page\'s computed data could not be read. Refresh the data to rebuild it.')
     const a360 = await readAccount360Facts(params.organizationId, state.a360FactsFileId)
     const input = buildReconfigurePrompt({
-      account: report.account,
+      account: params.account,
       config: params.config,
       reason: row.reason,
       context: row.context,
@@ -900,9 +1031,9 @@ async function startRoiReconfigure(params: {
       userId: params.userId,
       agentId: agent.id,
       agentType: agent.agentType,
-      title: `ROI analysis · ${report.account} · new settings`,
+      title: `ROI analysis · ${params.account} · new settings`,
       input,
-      trigger: { type: 'roi_analysis', analysisId: row.id, link: roiPageLink(report.account) },
+      trigger: { type: 'roi_analysis', analysisId: row.id, link: roiPageLink(params.account) },
     })
     return await prisma.roiAnalysis.update({ where: { id: row.id, organizationId: params.organizationId }, data: { executionId, status: 'running' } })
   } catch (error) {

@@ -1,22 +1,34 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  ROI_EXTRACT_KINDS,
   aboutDuration,
+  accountStatusLine,
   apiErrorMessage,
+  applyModeFor,
+  canonicalAccountName,
   compareRuns,
+  extractDescription,
   formatElapsed,
   groupRunsByAccount,
   hasReasonPreset,
   isRunSettled,
   recentFullMonths,
   runStatus,
+  runsOfAccount,
+  runsSummary,
+  sameRunConfig,
+  settingsStartFor,
+  sinceLabel,
   stepStates,
   toggleReasonPreset,
+  uniqueAccountNames,
   upsertRun,
   windowsPreview,
 } from '../history'
-import { DEFAULT_RUN_CONFIG } from '../config'
-import type { RoiAnalysisView, RoiRunKpi } from '../types'
+import { DEFAULT_RUN_CONFIG, type RoiRunConfig } from '../config'
+import { ROI_SOURCE_KINDS, ROI_SOURCE_LABEL } from '../sources'
+import type { RoiAnalysisView, RoiPageAccount, RoiRunKpi } from '../types'
 
 function run(id: string, account: string, createdAt: string, extra: Partial<RoiAnalysisView> = {}): RoiAnalysisView {
   return {
@@ -33,6 +45,7 @@ function run(id: string, account: string, createdAt: string, extra: Partial<RoiA
     phase: 'ready',
     mode: 'full',
     versionId: null,
+    pageVersionId: null,
     error: null,
     executionId: null,
     agentTaskId: null,
@@ -157,4 +170,84 @@ test('reason presets are added and removed as comma-separated parts', () => {
   assert.equal(toggleReasonPreset('CFO asked for proof', 'Renewal'), 'CFO asked for proof, Renewal')
   assert.equal(hasReasonPreset('CFO asked, Renewal', 'Renewal'), true)
   assert.equal(hasReasonPreset('Renewal coming up', 'Renewal'), false)
+})
+
+const NOW = new Date('2026-10-07T12:00:00Z')
+const minutesAgo = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000).toISOString()
+const CUSTOM = { baseline: { from: '2025-01', to: '2025-06' }, observation: { from: '2026-01', to: '2026-06' } }
+
+function pageAccount(extra: Partial<RoiPageAccount> = {}): RoiPageAccount {
+  return { account: 'HP', extracts: [], covers: [], loadedAt: null, report: null, mine: null, newerData: false, activeAnalysisId: null, canRefresh: true, ...extra }
+}
+const accountReport = (extra: Partial<NonNullable<RoiPageAccount['report']>> = {}): NonNullable<RoiPageAccount['report']> => ({
+  artifactId: 'report-1', versionId: 'v1', ready: true, config: { ...DEFAULT_RUN_CONFIG, windowMonths: 12 }, reason: 'Renewal', factsCurrent: true, updatedAt: minutesAgo(90), ...extra,
+})
+const myPage = (extra: Partial<NonNullable<RoiPageAccount['mine']>> = {}): NonNullable<RoiPageAccount['mine']> => ({
+  versionId: 'page-v1', config: { ...DEFAULT_RUN_CONFIG, cohort: 'users' }, reason: 'QBR / EBR', factsCurrent: true, updatedAt: minutesAgo(5), ...extra,
+})
+
+test('the panel opens on the page\'s settings, else the report\'s, else the defaults', () => {
+  assert.deepEqual(settingsStartFor(pageAccount({ report: accountReport(), mine: myPage() })), { config: { ...DEFAULT_RUN_CONFIG, cohort: 'users' }, reason: 'QBR / EBR' })
+  assert.deepEqual(settingsStartFor(pageAccount({ report: accountReport() })), { config: { ...DEFAULT_RUN_CONFIG, windowMonths: 12 }, reason: 'Renewal' })
+  assert.deepEqual(settingsStartFor(pageAccount()), { config: DEFAULT_RUN_CONFIG, reason: '' })
+  assert.deepEqual(settingsStartFor(null), { config: DEFAULT_RUN_CONFIG, reason: '' })
+  // A stored config without the optional settings gets them filled in.
+  const sparse = { windowMonths: 3, comparison: 'prior', cohort: 'tiers' } as RoiRunConfig
+  assert.deepEqual(settingsStartFor(pageAccount({ mine: myPage({ config: sparse }) })).config, { ...DEFAULT_RUN_CONFIG, windowMonths: 3 })
+})
+
+test('two configurations are the same analysis when they pick the same windows and cohorts', () => {
+  assert.equal(sameRunConfig(DEFAULT_RUN_CONFIG, { ...DEFAULT_RUN_CONFIG }), true)
+  assert.equal(sameRunConfig(DEFAULT_RUN_CONFIG, { ...DEFAULT_RUN_CONFIG, windowMonths: 12 }), false)
+  assert.equal(sameRunConfig(DEFAULT_RUN_CONFIG, { ...DEFAULT_RUN_CONFIG, comparison: 'year_ago' }), false)
+  assert.equal(sameRunConfig(DEFAULT_RUN_CONFIG, { ...DEFAULT_RUN_CONFIG, cohort: 'users' }), false)
+  assert.equal(sameRunConfig(DEFAULT_RUN_CONFIG, { ...DEFAULT_RUN_CONFIG, fiscalYearStartMonth: 2 }), false)
+  assert.equal(sameRunConfig({ ...DEFAULT_RUN_CONFIG, fiscalYearStartMonth: undefined }, { ...DEFAULT_RUN_CONFIG, fiscalYearStartMonth: null }), true)
+  // Explicit periods replace the counted-back window: its length and comparison no longer count.
+  assert.equal(sameRunConfig({ ...DEFAULT_RUN_CONFIG, custom: CUSTOM }, { ...DEFAULT_RUN_CONFIG, windowMonths: 12, comparison: 'year_ago', custom: { ...CUSTOM } }), true)
+  assert.equal(sameRunConfig({ ...DEFAULT_RUN_CONFIG, custom: CUSTOM }, { ...DEFAULT_RUN_CONFIG, custom: { ...CUSTOM, observation: { from: '2026-02', to: '2026-06' } } }), false)
+  assert.equal(sameRunConfig({ ...DEFAULT_RUN_CONFIG, custom: CUSTOM }, DEFAULT_RUN_CONFIG), false)
+})
+
+test('apply rewrites on the page\'s current data, rebuilds otherwise, and builds an account with nothing yet', () => {
+  assert.equal(applyModeFor(pageAccount({ report: accountReport(), mine: myPage() })), 'rewrite')
+  assert.equal(applyModeFor(pageAccount({ report: accountReport(), mine: myPage({ factsCurrent: false }) })), 'rebuild')
+  // Only this person's page makes a rewrite: the report's data is not on their page yet.
+  assert.equal(applyModeFor(pageAccount({ report: accountReport() })), 'rebuild')
+  assert.equal(applyModeFor(pageAccount()), 'build')
+})
+
+test('run history reads as one line: how many runs, and when the last one was', () => {
+  const analyses = [run('a', 'HP', minutesAgo(60 * 30)), run('b', ' hp ', minutesAgo(5)), run('c', 'Iron Mountain', minutesAgo(1))]
+  assert.deepEqual(runsOfAccount(analyses, 'HP').map((item) => item.id), ['b', 'a'])
+  assert.equal(runsSummary(runsOfAccount(analyses, 'HP'), NOW), '2 runs · last run 5m ago')
+  assert.equal(runsSummary([run('d', 'HP', NOW.toISOString())], NOW), '1 run · last run just now')
+  assert.equal(runsSummary([], NOW), 'No runs yet')
+  assert.equal(sinceLabel(minutesAgo(180), NOW), '3h ago')
+  assert.match(sinceLabel(minutesAgo(60 * 24 * 10), NOW), /^on \S/)
+})
+
+test('an account\'s status line says how fresh the page and its data are', () => {
+  const repository = { kind: 'repository', flowId: null, flowName: null } as const
+  const flow = { kind: 'flow', flowId: 'flow-1', flowName: 'Databricks pull' } as const
+  assert.equal(
+    accountStatusLine(pageAccount({ mine: myPage(), report: accountReport(), loadedAt: minutesAgo(60 * 48), extracts: ['activity'] }), repository, NOW),
+    'Your page updated 5m ago · data loaded 2d ago',
+  )
+  assert.equal(accountStatusLine(pageAccount({ report: accountReport() }), flow, NOW), 'Report updated 1h ago · data from the Databricks pull flow')
+  assert.equal(accountStatusLine(pageAccount({ report: accountReport({ ready: false }) }), repository, NOW), 'Report being built · no data loaded')
+  assert.equal(accountStatusLine(pageAccount(), repository, NOW), 'No report yet · no data loaded')
+})
+
+test('the page\'s extract kinds mirror the server\'s, in order and by name', () => {
+  assert.deepEqual(ROI_EXTRACT_KINDS.map((entry) => entry.kind), [...ROI_SOURCE_KINDS])
+  for (const entry of ROI_EXTRACT_KINDS) assert.equal(entry.label, ROI_SOURCE_LABEL[entry.kind])
+  assert.equal(extractDescription('usage', ' HP ', new Date('2026-10-07T23:00:00Z')), 'Usage cohort for HP — ROI analysis extract, loaded 2026-10-07.')
+})
+
+test('typed account names land on the spelling the page already uses', () => {
+  assert.deepEqual(uniqueAccountNames(['Backstory', ' HP ', 'backstory', '', null, 'Iron Mountain']), ['Backstory', 'HP', 'Iron Mountain'])
+  assert.equal(canonicalAccountName('  hp ', ['Backstory', 'HP']), 'HP')
+  assert.equal(canonicalAccountName(' Globex ', ['Backstory', 'HP']), 'Globex')
+  assert.equal(canonicalAccountName('   ', ['HP']), '')
 })

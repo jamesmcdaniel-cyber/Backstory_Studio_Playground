@@ -60,6 +60,8 @@ export type RoiAnalysisView = {
   results: unknown
   /** Headline numbers for run-over-run comparison (completed runs). */
   kpis: RoiRunKpi[]
+  /** The version of the VIEWER's page this run produced, to open it in place (null when it is not on their page). */
+  pageVersionId: string | null
   chat: RoiChatMessage[]
   datasets: RoiDataset[]
   /** Who started it, for run history. */
@@ -77,19 +79,30 @@ export type RoiPageAccount = {
   /** Labels of the report sections those extracts feed. */
   covers: string[]
   loadedAt: string | null
-  /** The account's one report, when it has been built. Settings changes update it in place. */
+  /** The account's generic report: the shared starting point, built from its data. */
   report: {
     artifactId: string
+    /** Its current version (null while its first build runs). */
+    versionId: string | null
+    ready: boolean
     config: RoiRunConfig
     reason: string
     /** Built on current data: a settings change only rewrites the findings. */
     factsCurrent: boolean
     updatedAt: string
-    /** A run updating it right now. */
-    activeAnalysisId: string | null
-    /** It has a version to show (false while its first build runs). */
-    ready: boolean
   } | null
+  /** This person's own page for the account: its latest version there (null until they open it). */
+  mine: {
+    versionId: string
+    config: RoiRunConfig
+    reason: string
+    factsCurrent: boolean
+    updatedAt: string
+  } | null
+  /** The account's report has newer data than this person's page shows. */
+  newerData: boolean
+  /** A run updating this account for this person: their own change, or a build of the account's report. */
+  activeAnalysisId: string | null
   /** Data can be (re)computed: extracts are loaded or the data flow is connected. */
   canRefresh: boolean
 }
@@ -111,4 +124,16 @@ export type RoiPageSetup = {
   reconfigureSeconds: number
   /** After this many seconds the page tells the user it will notify them instead. */
   asyncAfterSeconds: number
+  /** This person's own ROI page (null until they first open an account). */
+  page: { artifactId: string; currentAccount: string | null } | null
+  /** The account everyone starts on once it has a report: Backstory's own readout. */
+  defaultAccount: string | null
+  /** May load an account's extracts from the panel (platform operators). */
+  canLoadExtracts: boolean
 }
+
+/** Opening an account on this person's page. */
+export type RoiOpenResult =
+  | { status: 'ready'; artifactId: string; versionId: string }
+  /** The account has no report to start from: it must be built first. */
+  | { status: 'needs_build'; artifactId: string | null }

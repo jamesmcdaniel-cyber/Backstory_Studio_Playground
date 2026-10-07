@@ -99,7 +99,7 @@ const ROI_TOOLS = [
     name: 'update_roi_dashboard',
     description:
       'Change the ROI dashboard this conversation is about and save the result as a new version (the previous is kept). Pass `operations`, a list of edits: ' +
-      'hide_tab/show_tab {tab: activity|adoption|deals|accounts|method}; hide_section/show_section {section} (sections from get_artifact); ' +
+      'hide_tab/show_tab {tab: activity|adoption|deals|stage|accounts|method} (the Executive summary always shows); hide_section/show_section {section} (sections from get_artifact); ' +
       'hide_metric/show_metric {metric}; rename_metric {metric, label}; add_metric {metric: {key: lower_snake, label, columns: [activity-extract columns summed per rep per month], format: count|currency}} — adding recomputes the facts before this call returns, so the saved version already shows it; remove_added_metric {metric}; ' +
       'set_default_comparison {preset: last6_vs_prior6|last6_vs_year_ago|last12_vs_prior12|last3_vs_prior3}; set_headline {text}; set_lede {text}; remove_finding {index (0-based)}; upsert_finding {index?, finding: {fig, cap, h, p, tab}}; remove_watch_item {index}; upsert_watch_item {index?, item: {lead, text}}; set_note {note, paragraphs[]}; add_caveat {text}. ' +
       'Every number you write into the narrative must come from the facts summary. Returns what was applied and anything rejected, with the reason.',
@@ -117,7 +117,7 @@ const ROI_TOOLS = [
                 type: 'string',
                 enum: ['hide_tab', 'show_tab', 'hide_section', 'show_section', 'hide_metric', 'show_metric', 'rename_metric', 'add_metric', 'remove_added_metric', 'set_default_comparison', 'set_headline', 'set_lede', 'remove_finding', 'upsert_finding', 'remove_watch_item', 'upsert_watch_item', 'set_note', 'add_caveat'],
               },
-              tab: { type: 'string', enum: ['activity', 'adoption', 'deals', 'accounts', 'method'], description: 'hide_tab / show_tab' },
+              tab: { type: 'string', enum: ['activity', 'adoption', 'deals', 'stage', 'accounts', 'method'], description: 'hide_tab / show_tab' },
               section: { type: 'string', description: 'hide_section / show_section: a section id from get_artifact' },
               metric: {
                 description: 'hide_metric / show_metric / rename_metric / remove_added_metric: the metric KEY (a string, e.g. "pipeline_created"). add_metric: an OBJECT {key, label, columns, format}.',
@@ -142,7 +142,7 @@ const ROI_TOOLS = [
               finding: {
                 type: 'object',
                 description: 'upsert_finding',
-                properties: { fig: { type: 'string' }, cap: { type: 'string' }, h: { type: 'string' }, p: { type: 'string' }, tab: { type: 'string', enum: ['activity', 'adoption', 'deals', 'accounts'] } },
+                properties: { fig: { type: 'string' }, cap: { type: 'string' }, h: { type: 'string' }, p: { type: 'string' }, tab: { type: 'string', enum: ['activity', 'adoption', 'deals', 'stage', 'accounts'] } },
                 required: ['fig', 'cap', 'h', 'p', 'tab'],
               },
               item: { type: 'object', description: 'upsert_watch_item', properties: { lead: { type: 'string' }, text: { type: 'string' } }, required: ['lead', 'text'] },
@@ -159,18 +159,19 @@ const ROI_TOOLS = [
   },
   {
     name: 'list_roi_accounts',
-    description: 'Accounts whose ROI extracts are loaded in this workspace, which extracts each has, and which analyses (templates) those extracts can run. Use before start_roi_analysis to match the account the user named.',
+    description: 'Accounts the ROI report can show: those with extracts loaded in this workspace (which extracts, which analyses they can run) and those with a report already built. Use before start_roi_analysis to match the account the user named.',
     isWrite: false,
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'start_roi_analysis',
-    description: 'Build this ROI dashboard for another account (or the same account over another time frame). Starts a new analysis in the background — a few minutes — carrying over this dashboard\'s view (hidden and added metrics, sections) where it has one. Returns a link the user can open; tell them it will notify them when ready. The account must be one list_roi_accounts returns, with the template this dashboard uses (or the one the user asked for) among its templates.',
+    description: 'Show this ROI report for another account (or the same account with other settings). The ROI report shows one account at a time on the person\'s own ROI page: another account opens THERE, in the same layout, as the page\'s next version — at once when the account already has a report (`opened: true`), or after a background build of a few minutes when it does not (`started: true`; the person is notified). New settings (a time frame) rewrite the findings in about a minute. Only when the user explicitly asks for a separate copy or a new artifact, pass `asNewArtifact: true`. The account must be one list_roi_accounts returns.',
     isWrite: false,
     inputSchema: {
       type: 'object',
       properties: {
-        account: { type: 'string', description: 'Exactly as list_roi_accounts names it.' },
+        account: { type: 'string', description: 'Exactly as list_roi_accounts names it. For an opportunity, its account.' },
+        asNewArtifact: { type: 'boolean', description: 'Only when the user explicitly asked for a separate copy or a new artifact. Otherwise omit: the account opens on their ROI page.' },
         template: { type: 'string', enum: ['standard', 'engagement', 'account360'], description: 'standard = the consolidated ROI report (every section the account\'s extracts feed); engagement = rep engagement only; account360 = Account 360 click-stream → pipeline only. Defaults to this dashboard\'s own.' },
         timeframe: { type: 'string', enum: ['last6_vs_prior6', 'last6_vs_year_ago', 'last12_vs_prior12', 'last3_vs_prior3'], description: 'Only when the user asked for a different time frame; otherwise this dashboard\'s configuration carries over.' },
         reason: { type: 'string', description: 'Why the user wants it (QBR, renewal, churn risk…), from their request. Defaults to this dashboard\'s reason.' },
@@ -243,7 +244,7 @@ export class ArtifactToolClient {
         case 'find_in_artifact': return await this.find(args)
         case 'read_artifact': return await this.read(args)
         case 'update_roi_dashboard': return await this.updateRoi(args)
-        case 'list_roi_accounts': return { accounts: (await listRoiSources(this.organizationId)).map((source) => ({ account: source.account, extracts: Object.keys(source.datasets), templates: source.templates })) }
+        case 'list_roi_accounts': return await this.listRoiAccounts()
         case 'start_roi_analysis': return await this.startRoi(args)
         default: throw new Error(`Unknown artifact tool "${name}".`)
       }
@@ -481,6 +482,16 @@ export class ArtifactToolClient {
     return runRoiPrep(datasets, { extraMetrics, onlyActivity: true })
   }
 
+  private async listRoiAccounts() {
+    const { listAccountReports } = await import('@/lib/roi/service')
+    const [sources, reports] = await Promise.all([listRoiSources(this.organizationId), listAccountReports(this.organizationId)])
+    const accounts = sources.map((source) => ({ account: source.account, extracts: Object.keys(source.datasets), templates: source.templates, hasReport: reports.some((report) => report.account.toLowerCase() === source.account.toLowerCase() && report.state) }))
+    for (const report of reports) {
+      if (report.state && !accounts.some((entry) => entry.account.toLowerCase() === report.account.toLowerCase())) accounts.push({ account: report.account, extracts: [], templates: ['standard'], hasReport: true })
+    }
+    return { accounts }
+  }
+
   private async startRoi(args: Record<string, unknown>) {
     const artifact = await this.artifact()
     const account = typeof args.account === 'string' ? args.account.trim() : ''
@@ -490,37 +501,57 @@ export class ArtifactToolClient {
       : null
     const template: RoiTemplate | null = isRoiTemplate(args.template) ? args.template : artifact.kind === 'roi_dashboard' ? 'standard' : pageState?.template ?? null
     if (!template) throw new Error('This page was not built by an ROI analysis; pass template (standard, engagement or account360).')
+    const service = await import('@/lib/roi/service')
+    const { RoiDataUnavailableError } = await import('@/lib/roi/data-source')
     const sources = await listRoiSources(this.organizationId)
     const match = sources.find((source) => source.account.toLowerCase() === account.toLowerCase())
-    if (!match || !match.templates.includes(template)) {
+    const report = template === 'standard' ? await service.findAccountReport(this.organizationId, account) : null
+    const name = report?.account ?? match?.account ?? null
+    const asNew = args.asNewArtifact === true || template !== 'standard'
+    if (!name || (asNew && (!match || !match.templates.includes(template)))) {
       return {
         started: false,
-        reason: match ? `"${match.account}" has extracts loaded, but not the ones the ${ROI_TEMPLATES[template].label} needs.` : `No extracts are loaded for "${account}".`,
+        reason: match ? `"${match.account}" has extracts loaded, but not the ones the ${ROI_TEMPLATES[template].label} needs.` : `"${account}" has no ROI report and no extracts loaded.`,
         accountsWithExtracts: sources.filter((source) => source.templates.includes(template)).map((source) => source.account),
-        hint: 'An operator loads an account\'s extracts into the Repository; until then it cannot be analysed.',
+        hint: 'An operator loads an account\'s extracts into the Repository (or connects the data flow); until then it cannot be analysed.',
       }
     }
     const current = artifact.kind === 'roi_dashboard' && template !== 'account360' ? await currentRoiState(this.organizationId, artifact.id) : null
     // The same configuration as this dashboard unless a time frame was asked for.
-    const config = isRoiTimeframePreset(args.timeframe)
-      ? { ...configFromPreset(args.timeframe), cohort: current?.state.config?.cohort ?? 'tiers', fiscalYearStartMonth: current?.state.config?.fiscalYearStartMonth ?? null }
+    const newSettings = isRoiTimeframePreset(args.timeframe)
+    const config = newSettings
+      ? { ...configFromPreset(args.timeframe as string), cohort: current?.state.config?.cohort ?? 'tiers', fiscalYearStartMonth: current?.state.config?.fiscalYearStartMonth ?? null }
       : current?.state.config ?? configFromPreset(current?.state.timeframePreset)
-    const { createRoiAnalysis, requestRoiReport, RoiBusyError } = await import('@/lib/roi/service')
     const reason = typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim().slice(0, 1_000) : current?.state.reason ?? 'Requested from the ROI dashboard assistant'
     const context = typeof args.context === 'string' ? args.context.slice(0, 4_000) : ''
-    let row
     try {
-      // The standard report: one per account, updated in place (a settings
-      // change rewrites its findings; otherwise it is built or rebuilt).
-      row = template === 'standard'
-        ? await requestRoiReport({ organizationId: this.organizationId, userId: this.userId, account: match.account, config, reason, context })
-        : await createRoiAnalysis({ organizationId: this.organizationId, userId: this.userId, account: match.account, config, reason, context, view: current?.state.view, template })
+      if (!asNew) {
+        // The person's own ROI page shows the account, in its layout: the
+        // page's next version, never another artifact.
+        const opened = await service.openRoiAccount({ organizationId: this.organizationId, userId: this.userId, account: name })
+        if (opened.status === 'ready' && !newSettings) {
+          return { opened: true, account: name, link: service.roiPageLink(name), note: `The ROI page shows ${name} now, in the same layout — its next version, nothing new to open. Say so in one sentence; offer to change anything.` }
+        }
+        const row = await service.requestRoiReport({ organizationId: this.organizationId, userId: this.userId, account: name, config, reason, context })
+        if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
+        return {
+          started: true,
+          account: name,
+          configuration: describeRunConfig(config),
+          link: service.roiPageLink(name),
+          note: opened.status === 'ready'
+            ? 'The findings are being rewritten for the new settings — about a minute. The ROI page updates in place; the person is notified.'
+            : `${name} has no report yet, so it is being built from its data — a few minutes. It lands on the ROI page, in this layout; the person is notified.`,
+        }
+      }
+      // A separate artifact, because the user asked for one (or another analysis).
+      const row = await service.createRoiAnalysis({ organizationId: this.organizationId, userId: this.userId, account: match!.account, config, reason, context, view: current?.state.view, template, markers: { separate: true } })
+      if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
+      return { started: true, account: match!.account, template, configuration: describeRunConfig(config), link: row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'A separate artifact, built in the background — a few minutes; the person is notified when it is ready.' }
     } catch (error) {
-      if (error instanceof RoiBusyError) return { started: false, reason: error.message }
+      if (error instanceof service.RoiBusyError || error instanceof RoiDataUnavailableError) return { started: false, reason: error.message }
       throw error
     }
-    if (row.status === 'failed') return { started: false, reason: row.error ?? 'The analysis could not be started.' }
-    return { started: true, account: match.account, template, configuration: describeRunConfig(config), link: template === 'standard' ? `/roi?account=${encodeURIComponent(match.account)}` : row.artifactId ? `/artifacts/${row.artifactId}` : '/artifacts', note: 'Runs in the background — about a minute for new settings on an existing report, a few minutes to build one; the user is notified when it is ready. The account\'s report on the ROI analysis page updates in place.' }
   }
 }
 

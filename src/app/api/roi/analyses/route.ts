@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { trackDetached } from '@/lib/flows/keep-alive'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
-import { createRoiAnalysis, listRoiAnalyses, recheckRecentContractFailures, requestRoiReport, serializeRoiAnalysis, RoiBusyError, ROI_CONTEXT_MAX_CHARS, ROI_MAX_DATASETS, ROI_REASON_MAX_CHARS } from '@/lib/roi/service'
+import { createRoiAnalysis, listRoiAnalyses, recheckRecentRuns, requestRoiReport, serializeRoiAnalysis, RoiBusyError, ROI_CONTEXT_MAX_CHARS, ROI_MAX_DATASETS, ROI_REASON_MAX_CHARS } from '@/lib/roi/service'
 import { isRoiTimeframePreset } from '@/lib/roi/timeframe'
 import { isRoiTemplate } from '@/lib/roi/sources'
 import { configFromPreset, roiRunConfigSchema } from '@/lib/roi/config'
@@ -10,12 +11,14 @@ import { RoiDataUnavailableError } from '@/lib/roi/data-source'
 
 export const runtime = 'nodejs'
 
-// GET /api/roi/analyses — this workspace's analyses, newest first, for the
-// ROI page's run history (with who ran each). Runs a worker on older code
-// failed against an older contract are re-checked first.
+// GET /api/roi/analyses — the ROI page's run history, newest first (with
+// who ran each): builds of every account's report and the viewer's own
+// changes to their page. Runs an older reader got wrong (a contract failure,
+// a report that never saved) are re-checked after the response — a re-render
+// can take a while, and the page picks the result up on its next load.
 export const GET = withAuthenticatedApi(async (_request, auth) => {
-  await recheckRecentContractFailures(auth.organizationId).catch(() => 0)
-  return { success: true, analyses: await listRoiAnalyses(auth.organizationId) }
+  trackDetached(recheckRecentRuns(auth.organizationId))
+  return { success: true, analyses: await listRoiAnalyses(auth.organizationId, auth.dbUser.id) }
 }, { permission: 'agent.read', internalOnly: true })
 
 const bodySchema = z.object({
@@ -57,7 +60,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         context: body.context,
         refresh: body.refresh === true,
       })
-      return { success: true, analysis: serializeRoiAnalysis(row, auth.dbUser.name?.trim() || auth.dbUser.email || null) }
+      return { success: true, analysis: serializeRoiAnalysis(row, auth.dbUser.name?.trim() || auth.dbUser.email || null, auth.dbUser.id) }
     }
     const row = await createRoiAnalysis({
       organizationId: auth.organizationId,
@@ -69,7 +72,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       datasetIds: body.datasetIds,
       template: isRoiTemplate(body.template) ? body.template : undefined,
     })
-    return { success: true, analysis: serializeRoiAnalysis(row, auth.dbUser.name?.trim() || auth.dbUser.email || null) }
+    return { success: true, analysis: serializeRoiAnalysis(row, auth.dbUser.name?.trim() || auth.dbUser.email || null, auth.dbUser.id) }
   } catch (error) {
     if (error instanceof RoiDataUnavailableError) throw new ApiError(error.message, 400, 'NO_DATA')
     if (error instanceof RoiBusyError) throw new ApiError(error.message, 409, 'REPORT_BUSY')

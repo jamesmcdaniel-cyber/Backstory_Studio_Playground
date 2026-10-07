@@ -14,12 +14,12 @@ import { z } from 'zod'
 const para = z.string().min(1).max(2_000)
 const paras = z.array(para).min(1).max(4)
 
-/** The report's tabs a finding can point at — the Iron Mountain dashboard's, plus Account engagement. */
-export const ROI_FINDING_TABS = ['lead', 'adopt', 'users', 'deal', 'stage', 'accounts'] as const
+/** The report's tabs a finding can point at — Backstory's value-readout layout, plus Account engagement. */
+export const ROI_FINDING_TABS = ['activity', 'adoption', 'deals', 'stage', 'accounts'] as const
 export type RoiFindingTab = (typeof ROI_FINDING_TABS)[number]
 
-/** Tab ids from the short-lived consolidated layout, mapped back onto the dashboard's. */
-export const LEGACY_TAB: Record<string, RoiFindingTab> = { activity: 'lead', adoption: 'adopt', deals: 'deal' }
+/** Tab ids from the Iron Mountain layout, mapped onto today's. */
+export const LEGACY_TAB: Record<string, RoiFindingTab> = { lead: 'activity', adopt: 'adoption', users: 'adoption', deal: 'deals' }
 
 /**
  * A finding's tab is a link, not a fact: one the report does not have drops
@@ -137,13 +137,13 @@ export const ROI_OUTPUT_CONTRACT = `Return ONE JSON object (in a \`\`\`json fenc
   "headline": "<one sentence: the thesis, e.g. 'Engaged deals win twice as often, and Backstory users create that engagement.'>",
   "lede": "<2-3 sentences under the headline: the chain from usage to behaviour to engagement to outcome, with the key numbers>",
   "context": { "summary": "<1-2 sentences: where the relationship stands, from the Backstory platform>", "facts": [ { "label": "<e.g. Renewal>", "value": "<e.g. Mar 2027, $1.2M>", "source": "Backstory" } ] },  // OPTIONAL — only when you looked the account up on the Backstory platform; omit otherwise
-  "findings": [ { "fig": "<formatted figure, e.g. 2.0× or +54% or +9 pts>", "cap": "<what the figure is>", "h": "<finding as a heading>", "p": "<1-2 sentences with the proving numbers>", "tab": "lead|adopt|users|deal|stage|accounts" } ],  // 3-6 items, strongest first, one per area that has data
+  "findings": [ { "fig": "<formatted figure, e.g. 2.0× or +54% or +9 pts>", "cap": "<what the figure is>", "h": "<finding as a heading>", "p": "<1-2 sentences with the proving numbers>", "tab": "activity|adoption|deals|stage|accounts" } ],  // 3-6 items, strongest first, one per area that has data
   "watch": [ { "lead": "<bold lead phrase>", "text": "<the point, with numbers>" } ],  // 3-4 items: risks, levers, and one honest caveat about correlation
   "notes": {   // the "What this shows" aside beside each chart; 1-3 short paragraphs each; omit a key when its section has no data
-    "lead": ["..."],        // leading indicators: what moved, observation vs baseline, org-wide
+    "lead": ["..."],        // activity trends: what moved, observation vs baseline, org-wide
     "mix": ["..."],         // senior engagement (Director/VP/Exec) across the three periods
-    "adopt": ["..."],       // high/medium/low adopters
-    "users": ["..."],       // users vs non-users lift
+    "adopt": ["..."],       // adoption impact: high/medium/low adopters
+    "users": ["..."],       // adoption impact: users vs non-users lift
     "usersTrend": ["..."],  // the cohort gap over time, read fairly (correlation)
     "dealWin": ["..."],     // win rate by engagement decile/level
     "dealVel": ["..."],     // velocity: won and lost
@@ -154,7 +154,7 @@ export const ROI_OUTPUT_CONTRACT = `Return ONE JSON object (in a \`\`\`json fenc
     "persona": { "wr": "...", "share": "...", "days": "..." },  // one paragraph per persona view
     "breadth": ["..."],     // buying-committee breadth and early activity intensity
     "accounts": ["..."],    // Account 360 cohorts vs pipeline per account
-    "accountDeals": ["..."] // deal engagement per account: win rate vs engagement
+    "accountDeals": ["..."] // deal engagement, account-level view: win rate vs engagement per account
   },
   "caveats": ["<data notes for the Method tab>"]
 }`

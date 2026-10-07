@@ -29,6 +29,10 @@ export type RoiArtifactState = {
     /** 2 = facts from the ROI-page prep (every deal, stage cells, accounts) — a
      *  report on them can be reconfigured without recomputing. */
     factsVersion?: number
+    /** A version of someone's own ROI page (not an account's generic report). */
+    personal?: boolean
+    /** The generic report version this one started from (personal pages). */
+    basedOn?: { artifactId: string; versionId: string }
   }
 }
 

@@ -264,6 +264,7 @@ const cases = (): Case[] => [
   { route: 'roi/sources', method: 'POST', run: async () => (await import('../roi/sources/route')).POST(rq('/api/roi/sources', 'POST', { documentId: 'missing', account: 'Acme', kind: 'activity' })) },
   { route: 'roi/analyses', method: 'POST', run: async () => (await import('../roi/analyses/route')).POST(rq('/api/roi/analyses', 'POST', { account: 'Acme', timeframe: 'last6_vs_prior6', datasetIds: ['missing'] })) },
   { route: 'roi/settings', method: 'PATCH', run: async () => (await import('../roi/settings/route')).PATCH(rq('/api/roi/settings', 'PATCH', { dataFlowId: null })) },
+  { route: 'roi/page/open', method: 'POST', run: async () => (await import('../roi/page/open/route')).POST(rq('/api/roi/page/open', 'POST', { account: 'Acme' })) },
   { route: 'rag/backfill', method: 'POST', run: async () => (await import('../rag/backfill/route')).POST(rq('/api/rag/backfill', 'POST', {})) },
   { route: 'template-proposals/[id]/accept', method: 'POST', run: async () => (await import('../template-proposals/[id]/accept/route')).POST(rq('/api/template-proposals/missing/accept', 'POST', {})) },
   { route: 'template-proposals/[id]/dismiss', method: 'POST', run: async () => (await import('../template-proposals/[id]/dismiss/route')).POST(rq('/api/template-proposals/missing/dismiss', 'POST', {})) },

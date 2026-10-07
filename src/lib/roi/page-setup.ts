@@ -2,8 +2,47 @@ import { prisma } from '@/lib/prisma'
 import { backstoryMcpReady } from '@/lib/mcp/backstory-connection'
 import { findRoiAgent, roiDataFlowIdOf } from './agent'
 import { coversFor, listRoiSources } from './sources'
-import { listAccountReports, ROI_ASYNC_AFTER_SECONDS, ROI_EXPECTED_SECONDS, ROI_RECONFIGURE_EXPECTED_SECONDS } from './service'
-import type { RoiPageSetup } from './types'
+import { listAccountReports, ROI_ASYNC_AFTER_SECONDS, ROI_EXPECTED_SECONDS, ROI_RECONFIGURE_EXPECTED_SECONDS, type AccountReport } from './service'
+import { loadPersonalPage, type PersonalPage } from './personal-page'
+import type { RoiPageAccount, RoiPageSetup } from './types'
+
+/** The account everyone starts on once its report is built: Backstory's own value readout. */
+export const ROI_DEFAULT_ACCOUNT = 'Backstory'
+
+const ACTIVE_STATUSES = ['pending', 'fetching', 'running', 'building']
+
+/**
+ * One account as this person sees it: the account's report (everyone's
+ * starting point), their own page's latest version of it, and whether the
+ * report has data their page does not show yet.
+ */
+export function pageAccountOf(params: {
+  account: string
+  extracts: RoiPageAccount['extracts']
+  covers: string[]
+  loadedAt: string | null
+  canRefresh: boolean
+  report: AccountReport | null
+  page: PersonalPage | null
+  /** This person's run on the account, if one is in flight. */
+  myActiveRun: string | null
+}): RoiPageAccount {
+  const { report } = params
+  const mine = params.page?.accounts[params.account.trim().toLowerCase()] ?? null
+  return {
+    account: params.account,
+    extracts: params.extracts,
+    covers: params.covers,
+    loadedAt: params.loadedAt,
+    report: report
+      ? { artifactId: report.artifactId, versionId: report.currentVersionId, ready: Boolean(report.state), config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt }
+      : null,
+    mine: mine ? { versionId: mine.versionId, config: mine.config, reason: mine.reason, factsCurrent: mine.factsCurrent, updatedAt: mine.createdAt } : null,
+    newerData: Boolean(mine && report?.state && report.currentVersionId && mine.basedOnVersionId && mine.basedOnVersionId !== report.currentVersionId),
+    activeAnalysisId: params.myActiveRun ?? report?.activeAnalysisId ?? null,
+    canRefresh: params.canRefresh,
+  }
+}
 
 /**
  * What the ROI analysis page draws its form from: the accounts it can run,
@@ -13,7 +52,7 @@ import type { RoiPageSetup } from './types'
  * Only the analyst's owner configures it (it is private): before the first
  * run provisions it, any workspace admin may — they become its owner.
  */
-export async function loadRoiPageSetup(params: { organizationId: string; userId: string; role: string; canWriteAgents: boolean }): Promise<RoiPageSetup> {
+export async function loadRoiPageSetup(params: { organizationId: string; userId: string; role: string; canWriteAgents: boolean; canLoadExtracts?: boolean }): Promise<RoiPageSetup> {
   const [sources, agent, backstory] = await Promise.all([
     listRoiSources(params.organizationId),
     findRoiAgent(params.organizationId),
@@ -28,34 +67,37 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     ? await prisma.flow.findMany({ where: { organizationId: params.organizationId, status: { not: 'DISABLED' } }, orderBy: { updatedAt: 'desc' }, take: 100, select: { id: true, name: true, publishedGraph: true } })
     : []
   const metadata = (agent?.metadata ?? {}) as { title?: unknown; model?: unknown }
-  const reports = await listAccountReports(params.organizationId)
-  const reportOf = (account: string) => {
-    const report = reports.find((entry) => entry.account.trim().toLowerCase() === account.trim().toLowerCase())
-    return report ? { artifactId: report.artifactId, config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt, activeAnalysisId: report.activeAnalysisId, ready: Boolean(report.state) } : null
-  }
+  const [reports, page, myRuns] = await Promise.all([
+    listAccountReports(params.organizationId),
+    loadPersonalPage(params.organizationId, params.userId),
+    prisma.roiAnalysis.findMany({ where: { organizationId: params.organizationId, userId: params.userId, status: { in: ACTIVE_STATUSES } }, orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, account: true } }),
+  ])
+  const key = (account: string) => account.trim().toLowerCase()
+  const reportOf = (account: string) => reports.find((entry) => key(entry.account) === key(account)) ?? null
+  const myRunOf = (account: string) => myRuns.find((row) => key(row.account) === key(account))?.id ?? null
+  const entry = (account: string, extras: Pick<RoiPageAccount, 'extracts' | 'covers' | 'loadedAt' | 'canRefresh'>) =>
+    pageAccountOf({ account, ...extras, report: reportOf(account), page, myActiveRun: myRunOf(account) })
   const accounts: RoiPageSetup['accounts'] = sources
     .filter((source) => source.templates.includes('standard'))
     .map((source) => {
       const kinds = Object.keys(source.datasets) as Array<keyof typeof source.datasets>
       const loaded = kinds.map((kind) => source.datasets[kind]?.loadedAt).filter((value): value is string => Boolean(value)).sort()
-      return { account: source.account, extracts: kinds, covers: coversFor(kinds), loadedAt: loaded.at(-1) ?? null, report: reportOf(source.account), canRefresh: true }
+      return entry(source.account, { extracts: kinds, covers: coversFor(kinds), loadedAt: loaded.at(-1) ?? null, canRefresh: true })
     })
-  // Accounts with a report but no loaded data still show (and can change
-  // settings); with a data flow, they can be refreshed too, as can accounts
-  // analysed before. New ones are typed on the page.
-  const known = new Set(accounts.map((entry) => entry.account.toLowerCase()))
-  for (const report of reports) {
-    if (known.has(report.account.toLowerCase())) continue
-    known.add(report.account.toLowerCase())
-    accounts.push({ account: report.account, extracts: [], covers: [], loadedAt: null, report: reportOf(report.account), canRefresh: Boolean(flow) })
+  // Accounts with a report, or on this person's page, but no loaded data
+  // still show (and can change settings); with a data flow they can be
+  // refreshed too, as can accounts analysed before. New ones are typed on the page.
+  const known = new Set(accounts.map((item) => key(item.account)))
+  const add = (account: string, canRefresh: boolean) => {
+    if (known.has(key(account))) return
+    known.add(key(account))
+    accounts.push(entry(account, { extracts: [], covers: [], loadedAt: null, canRefresh }))
   }
+  for (const report of reports) add(report.account, Boolean(flow))
+  for (const mine of Object.values(page?.accounts ?? {})) add(mine.account, Boolean(flow))
   if (flow) {
     const previous = await prisma.roiAnalysis.findMany({ where: { organizationId: params.organizationId }, distinct: ['account'], orderBy: { createdAt: 'desc' }, take: 200, select: { account: true } })
-    for (const row of previous) {
-      if (known.has(row.account.toLowerCase())) continue
-      known.add(row.account.toLowerCase())
-      accounts.push({ account: row.account, extracts: [], covers: [], loadedAt: null, report: null, canRefresh: true })
-    }
+    for (const row of previous) add(row.account, true)
   }
   accounts.sort((a, b) => a.account.localeCompare(b.account))
   return {
@@ -73,5 +115,8 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     expectedSeconds: ROI_EXPECTED_SECONDS,
     reconfigureSeconds: ROI_RECONFIGURE_EXPECTED_SECONDS,
     asyncAfterSeconds: ROI_ASYNC_AFTER_SECONDS,
+    page: page ? { artifactId: page.artifactId, currentAccount: page.currentAccount } : null,
+    defaultAccount: accounts.find((item) => key(item.account) === key(ROI_DEFAULT_ACCOUNT) && (item.report?.ready || item.mine))?.account ?? null,
+    canLoadExtracts: params.canLoadExtracts === true,
   }
 }

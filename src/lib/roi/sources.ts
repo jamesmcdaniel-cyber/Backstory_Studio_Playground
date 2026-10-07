@@ -13,18 +13,9 @@ import { saveStoredFile } from '@/lib/files/storage'
  * lands, writes the same tag on what it pulls — nothing downstream changes.
  */
 
-export const ROI_SOURCE_KINDS = ['activity', 'usage', 'engagement', 'stages', 'clickstream', 'accounts', 'opportunities'] as const
-export type RoiSourceKind = (typeof ROI_SOURCE_KINDS)[number]
+import { ROI_SOURCE_KINDS, ROI_SOURCE_LABEL, type RoiSourceKind } from './source-kinds'
 
-export const ROI_SOURCE_LABEL: Record<RoiSourceKind, string> = {
-  activity: 'Activity extract',
-  usage: 'Usage cohort',
-  engagement: 'Opportunity engagement',
-  stages: 'Closed deals by stage',
-  clickstream: 'Account 360 click-stream',
-  accounts: 'Parent accounts',
-  opportunities: 'Opportunity pull',
-}
+export { ROI_SOURCE_KINDS, ROI_SOURCE_LABEL, type RoiSourceKind }
 
 /**
  * The analyses an account's extracts can feed. Each names its extracts and

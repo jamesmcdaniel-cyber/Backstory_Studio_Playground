@@ -1,5 +1,6 @@
 /**
- * The ROI report's script (see dashboard.ts). Plain ES2017 in a raw string:
+ * The ROI report's script (see dashboard.ts) — Backstory's value readout.
+ * Plain ES2017 in a raw string:
  * no template literals, so nothing in it can interpolate or close the
  * embedding. It reads the globals the page declares — U, OPP, DEALS, ST,
  * ACC, META, A360, N, CFG, VIEW — and draws every tab with Plotly from
@@ -25,6 +26,8 @@ var pct=function(a,b){return (b&&a!=null&&!isNaN(a))?((a/b-1)*100):NaN;};
 var uniq=function(a){var o=[];a.forEach(function(x){if(o.indexOf(x)<0)o.push(x);});return o;};
 var median=function(a){if(!a.length)return null;var s=a.slice().sort(function(x,y){return x-y;}),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2;};
 var r1=function(v){return (v==null||isNaN(v))?null:Math.round(v*10)/10;};
+/* Long axis labels break onto two lines at the space nearest their middle. */
+var wrapLab=function(s){s=String(s);if(s.length<=14)return s;var mid=s.length/2,best=-1;for(var i=0;i<s.length;i++){if(s.charAt(i)===' '&&(best<0||Math.abs(i-mid)<Math.abs(best-mid)))best=i;}return best<0?s:s.slice(0,best)+'<br>'+s.slice(best+1);};
 
 /* ---------- data ---------- */
 var dm=function(s){if(s==null)return null;if(typeof s!=='string')return s;if(!s)return [];return s.split(';').map(function(r){return r.split(',').map(function(v){return v===''?null:+v;});});};
@@ -180,11 +183,35 @@ function renderHeroStats(){
   el.innerHTML=out.slice(0,4).map(function(s){return '<div><div class="v">'+esc(s[0])+'</div><div class="l">'+esc(s[1])+'</div></div>';}).join('');
 }
 
-/* ---------- key findings ---------- */
+/* ---------- executive summary ---------- */
+var TAB_TAG={activity:'Activity trends',adoption:'Adoption impact',deals:'Deal engagement',stage:'Stage and persona',accounts:'Account engagement'};
 function renderSummary(){
-  $('#findings').innerHTML=N.findings.map(function(f){return '<div class="finding"><div class="fig">'+esc(f.fig)+'<small>'+esc(f.cap)+'</small></div><div><h3>'+esc(f.h)+'</h3><p>'+md(f.p)+'</p>'+(TABS[f.tab]?'<button class="go" data-go="'+esc(f.tab)+'" type="button">See the detail</button>':'')+'</div></div>';}).join('');
+  $('#findings').innerHTML=N.findings.map(function(f,i){var t=TABS[f.tab]?f.tab:null;
+    return '<article class="fcard'+(t?' t-'+t:'')+'"><div class="ftag">'+esc(t?TAB_TAG[t]:'Finding '+(i+1))+'</div><div class="ffig">'+esc(f.fig)+'</div><div class="fcap">'+esc(f.cap)+'</div><h3>'+esc(f.h)+'</h3><p>'+md(f.p)+'</p>'+(t?'<button class="go" data-go="'+esc(t)+'" type="button">See the detail</button>':'')+'</article>';}).join('');
   $$('.go').forEach(function(b){b.onclick=function(){showTab(b.getAttribute('data-go'));window.scrollTo({top:$('nav.tabs').offsetTop,behavior:'smooth'});};});
   $('#watch').innerHTML=N.watch.map(function(w){return '<li><b>'+esc(w.lead)+'</b> '+md(w.text)+'</li>';}).join('');
+}
+/* The scorecard: the configured observation window against its baseline, all reps (the role filter applies). */
+function renderScorecard(){
+  if(!HAS.U){$('#scoreBlock').classList.add('hidden');return;}
+  var keys=['meeting_count','sent_email_count','dir_vp_exec','vp_meeting_count','people_engaged','pipeline_created','executive_meeting_count'].filter(function(k){return MK.indexOf(k)>=0;});
+  MK.forEach(function(k){if(keys.length<6&&keys.indexOf(k)<0)keys.push(k);});keys=keys.slice(0,6);
+  var mask=popMask('all'),O=winAvg(mask,OBS,keys),B=winAvg(mask,BASE,keys);
+  $('#scoreWin').textContent=wl(OBS)+' vs '+wl(BASE)+(GF.role.length?' · '+GF.role.join(', '):'');
+  $('#scoreKpis').innerHTML=keys.map(function(k){var c=pct(O[k],B[k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' per rep</div><div class="v">'+fmt(O[k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+fmt(B[k],k)+'</div></div>';}).join('');
+}
+/* The adoption overview: who is in each usage cohort, and the pipeline each creates. */
+function renderOverview(){
+  if(!HAS.usage){$('#overviewBlock').classList.add('hidden');return;}
+  var P=palette(),groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return U.users.filter(function(u){if(!roleOK(u))return false;return g==='No usage'?!u.t:u.t===g;}).length;}),total=counts.reduce(function(a,b){return a+b;},0);
+  $('#ovDonutSub').textContent=total.toLocaleString()+' reps: thirds of usage, and reps with no usage data.';
+  plot('ovDonut',[{type:'pie',hole:.6,labels:groups.map(function(g){return g==='No usage'?'No usage data':cohortName(g);}),values:counts,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
+  var card=$('#ovPipeline').closest('.card');
+  if(MK.indexOf('pipeline_created')<0){card.classList.add('hidden');return;}
+  var C=['High','Medium','Low','Non-user'],v=C.map(function(c){return winAvg(popMask(c),OBS,['pipeline_created']).pipeline_created;});
+  $('#ovPipelineSub').textContent='Average per rep per month, '+wl(OBS)+'.';
+  plot('ovPipeline',[{type:'bar',x:C.map(cohortName),y:v,marker:{color:[P[0],P[1],P[2],css('--rule-strong')]},text:v.map(money),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],
+    base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
 }
 function setupCalc(){
   if(!OPP||META.medWon==null){$('#calc').classList.add('hidden');return;}
@@ -246,7 +273,20 @@ function renderLead(){
   $('#leadTbl').innerHTML='<thead><tr><th>Metric</th><th>Baseline</th><th>Observation</th><th>Change</th></tr></thead><tbody>'+
     MK.map(function(m){var c=pct(O[m],B[m]);return '<tr><td>'+esc(LAB[m])+'</td><td>'+fmt(B[m],m)+'</td><td>'+fmt(O[m],m)+'</td><td class="'+(c>=0?'up':'down')+'">'+sp(c)+'</td></tr>';}).join('')+
     '<tr><td>Reps in window</td><td>'+B.n.toLocaleString()+'</td><td>'+O.n.toLocaleString()+'</td><td></td></tr></tbody>';
-  renderMix();renderSenior();
+  renderPeriod(B,O,bl,ol);renderMix();renderSenior();
+}
+/* Period comparison: every metric's change against the baseline, in one unit (the table below holds the values). */
+function renderPeriod(B,O,bl,ol){
+  var keys=MK.filter(function(k){var c=pct(O[k],B[k]);return !isNaN(c)&&isFinite(c);});
+  if(!keys.length){$('#periodBlock').classList.add('hidden');return;}
+  $('#periodBlock').classList.remove('hidden');
+  var ch=keys.map(function(k){return pct(O[k],B[k]);}),lo=Math.min.apply(null,ch.concat([0])),hi=Math.max.apply(null,ch.concat([0])),pad=(hi-lo)*0.2||5;
+  $('#periodSub').textContent='Change per rep per month: '+ol+' against '+bl+'.';
+  plot('periodChart',[{type:'bar',orientation:'h',y:keys.map(function(k){return LAB[k];}),x:ch,marker:{color:ch.map(function(v){return v>=0?css('--d1'):css('--neg');})},text:ch.map(sp),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},
+    customdata:keys.map(function(k){return [fmt(B[k],k),fmt(O[k],k)];}),hovertemplate:'%{y}<br>%{customdata[0]} → %{customdata[1]} per rep per month<extra></extra>'}],
+    base({margin:{l:200,r:64,t:10,b:36},yaxis:{autorange:'reversed',automargin:true,tickfont:{size:13}},xaxis:{ticksuffix:'%',range:[lo-pad,hi+pad],zeroline:true,zerolinecolor:css('--rule-strong'),gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},showlegend:false}));
+  var moves=keys.map(function(k,i){return [k,ch[i]];}).sort(function(a,b){return Math.abs(b[1])-Math.abs(a[1]);}).slice(0,3);
+  $('#periodNote').innerHTML=moves.map(function(m){return '<b>'+esc(LAB[m[0]])+'</b> '+(m[1]>=0?'rose':'fell')+' <b class="num">'+sp(m[1])+'</b>';}).join('; ')+' per rep per month against the baseline.';
 }
 function renderMix(){
   if($('#mixBlock').classList.contains('hidden'))return;
@@ -270,14 +310,15 @@ function renderSenior(){
 }
 
 /* ---------- adoption tiers / users vs non-users ---------- */
-var adoptWin='obs', usersWin='obs', rosterTier='All', rosterSort={k:'ev',dir:-1};
+var adoptView=CFG.cohort==='users'?'users':'tiers', adoptWin='obs', rosterTier='All', rosterSort={k:'ev',dir:-1};
 var WN_LABEL='Last '+(OBS.length||WN)+' months';
 var cohortName=function(c){return c==='User'?'Backstory users':c==='Non-user'?'Non-users':c+' adopters';};
 function winsFor(w){return w==='l12'?[L12,P12,'last 12 months','prior 12 months ('+wl(P12)+')']:[OBS,BASE,'observation window ('+wl(OBS)+')','baseline ('+wl(BASE)+')'];}
 function setupCohorts(){
-  ['#adoptWin','#usersWin'].forEach(function(sel){var b=$(sel+' button[data-v="obs"]');b.textContent=WN_LABEL;if((OBS.length||WN)===12)$(sel+' button[data-v="l12"]').classList.add('hidden');});
-  segBind('#adoptWin',function(v){adoptWin=v;renderAdopt();});
-  segBind('#usersWin',function(v){usersWin=v;renderUsers();});
+  $('#adoptWin button[data-v="obs"]').textContent=WN_LABEL;if((OBS.length||WN)===12)$('#adoptWin button[data-v="l12"]').classList.add('hidden');
+  segSet('#adoptView',adoptView);
+  segBind('#adoptView',function(v){adoptView=v;renderAdoption();});
+  segBind('#adoptWin',function(v){adoptWin=v;renderAdoption();});
   var metricOpts=function(sel){return MK.map(function(k){return '<option value="'+k+'"'+(k===sel?' selected':'')+'>'+esc(LAB[k])+'</option>';}).join('');};
   var def=MK.indexOf('dir_vp_exec')>=0?'dir_vp_exec':MK[0];
   $('#adoptTrendMetric').innerHTML=metricOpts(def);$('#adoptTrendMetric').onchange=function(){cohortTrend('adoptTrend',['High','Medium','Low'],$('#adoptTrendMetric').value);};
@@ -298,21 +339,27 @@ function cohortTrend(id,C,k){var P=palette();
   plot(id,C.map(function(c,i){return {type:'scatter',mode:'lines',name:cohortName(c),x:MON.map(mlab),y:monthly(popMask(c),k),line:{color:i===C.length-1?css('--text3'):P[i],width:2.4,dash:i===C.length-1?'dot':'solid'}};}),
     base({hovermode:'x unified',xaxis:{gridcolor:'rgba(0,0,0,0)',nticks:8,linecolor:css('--rule-strong'),tickfont:{family:'Chivo Mono, monospace',size:11}},yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
 }
+/* Adoption impact: the tiers or users vs non-users view, then the roster. */
+function renderAdoption(){
+  $('#tiersView').classList.toggle('hidden',adoptView!=='tiers');
+  $('#usersView').classList.toggle('hidden',adoptView!=='users');
+  if(adoptView==='users'){renderUsers();renderRoster();}else renderAdopt();
+}
 function renderAdopt(){
   var C=['High','Medium','Low'],w=winsFor(adoptWin),A={},Bs={},P=palette();
   C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);Bs[c]=winAvg(popMask(c),w[1]);});
   var nT={High:0,Medium:0,Low:0};U.users.forEach(function(u){if(u.t&&roleOK(u))nT[u.t]++;});
-  $('#adoptIntro').innerHTML=U.nUsage+' reps appear in both the activity extract and the usage file. They\'re split into equal thirds by usage score: high (more than '+U.tierCuts[1]+', '+nT.High+' reps), medium ('+(U.tierCuts[0]+1)+'–'+U.tierCuts[1]+', '+nT.Medium+') and low ('+U.tierCuts[0]+' or fewer, '+nT.Low+').'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
+  $('#adoptionIntro').innerHTML=U.nUsage+' reps appear in both the activity extract and the usage file. They\'re split into equal thirds by usage score: high (more than '+U.tierCuts[1]+', '+nT.High+' reps), medium ('+(U.tierCuts[0]+1)+'–'+U.tierCuts[1]+', '+nT.Medium+') and low ('+U.tierCuts[0]+' or fewer, '+nT.Low+').'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
   cohortKpis('#adoptKpis',C,A);
   var cols={High:css('--d1'),Medium:css('--d2')};
-  plot('adoptIndex',['High','Medium'].map(function(t){return {type:'bar',name:t+' adopters',x:MK.map(function(k){return LAB[k];}),y:MK.map(function(k){return A[t][k]/A.Low[k]*100;}),marker:{color:cols[t]},
+  plot('adoptIndex',['High','Medium'].map(function(t){return {type:'bar',name:t+' adopters',x:MK.map(function(k){return wrapLab(LAB[k]);}),y:MK.map(function(k){return A[t][k]/A.Low[k]*100;}),marker:{color:cols[t]},
     customdata:MK.map(function(k){return [fmt(A[t][k],k),fmt(A.Low[k],k)];}),hovertemplate:'%{x}<br>'+t+': %{customdata[0]} vs Low: %{customdata[1]}<br>Index %{y:.0f}<extra></extra>'};}),
     base({barmode:'group',shapes:[{type:'line',xref:'paper',x0:0,x1:1,y0:100,y1:100,line:{color:css('--text3'),width:1.5,dash:'dash'}}],
       annotations:[{xref:'paper',x:1,y:100,text:'Low = 100',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:'Chivo Mono, monospace',size:11,color:css('--text3')}}],
       xaxis:{tickangle:0,automargin:true,gridcolor:'rgba(0,0,0,0)',tickfont:{size:11}},margin:{l:48,r:10,t:14,b:80}}));
   cohortBars('adoptSenior','adoptPipeline',C,w[0]);
   var groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return U.users.filter(function(u){if(!roleOK(u))return false;return g==='No usage'?!u.t:u.t===g;}).length;});
-  var donut=plot('adoptDonut',[{type:'pie',hole:.58,labels:groups.map(function(g){return g==='No usage'?'No usage data':cohortName(g);}),values:counts,customdata:groups,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
+  var donut=plot('adoptDonut',[{type:'pie',hole:.58,labels:groups.map(function(g){return g==='No usage'?'No usage data':cohortName(g);}),values:counts,customdata:groups,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
   if(donut&&donut.on&&!donut._roiBound){donut._roiBound=true;donut.on('plotly_click',function(e){var g=e.points&&e.points[0]&&e.points[0].customdata;if(g==null)return;rosterTier=Array.isArray(g)?g[0]:g;renderRoster();var rb=$('#rosterBlock');if(rb)rb.scrollIntoView({behavior:'smooth',block:'start'});});}
   cohortTrend('adoptTrend',C,$('#adoptTrendMetric').value);
   $('#adoptTblSub').textContent='Averages per rep per month in the '+w[2]+'; change against each tier\'s own '+w[3]+'.';
@@ -322,9 +369,9 @@ function renderAdopt(){
   renderRoster();
 }
 function renderUsers(){
-  var C=['User','Non-user'],w=winsFor(usersWin),A={};C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);});
+  var C=['User','Non-user'],w=winsFor(adoptWin),A={};C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);});
   var nUser=U.users.filter(function(u){return u.f==='User'&&roleOK(u);}).length,nAll=U.users.filter(roleOK).length;
-  $('#usersIntro').innerHTML='Users are the '+nUser+' reps with usage above the bottom 5%. Non-users are the '+(nAll-nUser).toLocaleString()+' reps in the activity extract with no usage, plus the '+U.nBottom+' lowest-usage reps.'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
+  $('#adoptionIntro').innerHTML='Users are the '+nUser+' reps with usage above the bottom 5%. Non-users are the '+(nAll-nUser).toLocaleString()+' reps in the activity extract with no usage, plus the '+U.nBottom+' lowest-usage reps.'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
   cohortKpis('#usersKpis',C,A);
   var lifts=MK.map(function(k){return pct(A.User[k],A['Non-user'][k]);});
   plot('usersLift',[{type:'bar',orientation:'h',y:MK.map(function(k){return LAB[k];}),x:lifts,marker:{color:lifts.map(function(v){return v>=0?css('--d1'):css('--neg');})},
@@ -369,7 +416,9 @@ function setupDeals(){
   $('#dealIncl').onchange=renderDeal;
   if(!HAS.vel){$('#dealInclWrap').classList.add('hidden');$('#dealVelBlock').classList.add('hidden');}
   if(!D)$('#dealModeWrap').classList.add('hidden');
+  if(!HAS.OPP&&!HAS.D)$$('#p-deals .controls,#dealDyn,#dealKpis,#dealYoy,#p-deals [data-section="dealWin"],#dealVelBlock,#dealVolBlock').forEach(function(e){e.classList.add('hidden');});
 }
+function renderDealsTab(){if(HAS.OPP||HAS.D)renderDeal();if(HAS.ACC){renderAccBubble();renderAccTable();}}
 function setupStage(){
   segBind('#heatMode',function(v){heatMode=v;renderHeat();});
   segBind('#stageView',function(v){stageView=v;renderStageProf();});
@@ -568,7 +617,7 @@ function renderBreadth(){
   var br=ST.breadth||[];if(br.length){var best=br.reduce(function(a,b){return (b.win_rate||0)>(a.win_rate||0)?b:a;},br[0]);
   plot('stageBreadth',[{type:'bar',x:br.map(function(b){return b.k===6?'6+':String(b.k);}),y:br.map(function(b){return b.win_rate;}),marker:{color:br.map(function(b){return b.k===best.k?css('--d1'):css('--rule-strong');})},text:br.map(function(b){return b.win_rate==null?'–':b.win_rate.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},
     customdata:br.map(function(b){return [b.n.toLocaleString(),b.med_days_won==null?'–':b.med_days_won];}),hovertemplate:'%{x} personas<br>Win rate %{y:.1f}%<br>%{customdata[0]} deals, %{customdata[1]} days median (won)<extra></extra>'}],
-    base({showlegend:false,yaxis:ypct(),xaxis:{title:{text:'Personas engaged',font:{size:12}},gridcolor:'rgba(0,0,0,0)'},margin:{l:44,r:10,t:14,b:48}}));}
+    base({showlegend:false,yaxis:ypct(),xaxis:{type:'category',title:{text:'Personas engaged',font:{size:12}},gridcolor:'rgba(0,0,0,0)'},margin:{l:44,r:10,t:14,b:48}}));}
   var eq=ST.early_q||[];if(eq.length){var bq=eq.reduce(function(a,b){return (b.win_rate||0)>(a.win_rate||0)?b:a;},eq[0]);
   plot('stageEarlyQ',[{type:'bar',x:eq.map(function(q){return q.q.replace(' lowest','').replace(' highest','');}),y:eq.map(function(q){return q.win_rate;}),marker:{color:eq.map(function(q){return q.q===bq.q?css('--d1'):css('--rule-strong');})},text:eq.map(function(q){return q.win_rate==null?'–':q.win_rate.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},
     customdata:eq.map(function(q){return [q.lo,q.hi,q.med_days_won==null?'–':q.med_days_won];}),hovertemplate:'%{x}: %{customdata[0]}–%{customdata[1]} early activities<br>Win rate %{y:.1f}%<br>%{customdata[2]} days median (won)<extra></extra>'}],
@@ -581,25 +630,23 @@ var coColor=function(c){return css({'Power Users':'--c-power','Frequent Browsers
 var a360Lo=0,a360Hi=0,a360Sort={k:'created',dir:-1},a360TrendView='total',accSort={k:'opps',dir:-1};
 function a360Accounts(lo,hi){return A360.B.accounts.map(function(a){var c=0,w=0;for(var i=lo;i<=hi;i++){c+=a.created_by_month[i]||0;w+=a.closed_won_by_month[i]||0;}return {account:a.account,cohort:a.cohort,sessions:a.unique_sessions,deep:a.deep_action_ratio,users:a.unique_users,created:c,won:w};});}
 function a360Agg(lo,hi){var rows=a360Accounts(lo,hi),o={};CO.forEach(function(c){var r=rows.filter(function(a){return a.cohort===c;}),n=r.length,tc=0,tw=0;r.forEach(function(a){tc+=a.created;tw+=a.won;});o[c]={n:n,total_created:tc,total_won:tw,avg_created:n?tc/n:0,avg_won:n?tw/n:0};});return o;}
-function setupAccounts(){
-  if(HAS.A360){var M=A360.B.months,n=M.length;a360Hi=n-1;a360Lo=Math.max(0,n-WN);
-    $('#a360Range').innerHTML='<button type="button" aria-pressed="true" data-v="cfg">Last '+WN+' months</button><button type="button" aria-pressed="false" data-v="all">All '+n+' months</button>';
-    segBind('#a360Range',function(v){a360Lo=v==='all'?0:Math.max(0,n-WN);renderAccounts();});
-    segBind('#a360TrendView',function(v){a360TrendView=v;renderA360Trend();});
-    $('#a360Cohort').innerHTML='<option value="">All cohorts</option>'+CO.map(function(c){return '<option>'+c+'</option>';}).join('');
-    $('#a360Cohort').onchange=renderA360Table;$('#a360Q').addEventListener('input',renderA360Table);
-    var B=A360.B,Mt=A360.M;
-    $('#a360Intro').innerHTML='How the team uses Account 360 on '+Mt.accounts.toLocaleString()+' parent accounts ('+Mt.engaged.toLocaleString()+' engaged, '+Mt.noEngagement.toLocaleString()+' with no Account 360 activity), click-stream '+esc(Mt.clickStart)+' to '+esc(Mt.clickEnd)+'. Accounts are cohorted on the medians of sessions ('+B.session_median+') and of the share of deep actions ('+(B.depth_ratio_median*100).toFixed(0)+'%).'+(Mt.excludedUsers&&Mt.excludedUsers.length?' '+Mt.excludedUsers.length+' users who browse broadly (or were named) are excluded.':'');
-    var Q=[['Power Users','Many sessions and deep actions — opportunities, metrics, activities.'],['Frequent Browsers','Many sessions, mostly page views.'],['Focused Diggers','Few sessions, but deep when they come.'],['Light Touch','Few sessions, little depth.'],['No Engagement','No Account 360 activity in the window.']];
-    $('#a360Quads').innerHTML=Q.map(function(q){return '<div style="--c:'+coColor(q[0])+'"><h4>'+q[0]+'</h4><p>'+q[1]+'</p></div>';}).join('');
-  } else $('#a360Wrap').classList.add('hidden');
-  if(HAS.ACC){$('#accQ').addEventListener('input',renderAccTable);
-    var rows=ACC.accounts.filter(function(a){return a.eng!=null;}),r=rows.length>5?corr(rows.map(function(a){return a.eng;}),rows.map(function(a){return a.win_rate;})):null;
-    $('#accIntro').innerHTML=ACC.nShown.toLocaleString()+' accounts with two or more closed non-renewal deals'+(ACC.nAccounts>ACC.nShown?' (the largest of '+ACC.nAccounts.toLocaleString()+')':'')+'.'+(r!=null?' Across them, average engagement and win rate correlate at <b class="num">r = '+r.toFixed(2)+'</b>.':'');
-  } else $('#accDealsWrap').classList.add('hidden');
-  if(!HAS.A360&&HAS.ACC)$('#accDealsWrap .section-h').classList.add('hidden');
+function setupA360(){
+  var M=A360.B.months,n=M.length;a360Hi=n-1;a360Lo=Math.max(0,n-WN);
+  $('#a360Range').innerHTML='<button type="button" aria-pressed="true" data-v="cfg">Last '+WN+' months</button><button type="button" aria-pressed="false" data-v="all">All '+n+' months</button>';
+  segBind('#a360Range',function(v){a360Lo=v==='all'?0:Math.max(0,n-WN);renderA360();});
+  segBind('#a360TrendView',function(v){a360TrendView=v;renderA360Trend();});
+  $('#a360Cohort').innerHTML='<option value="">All cohorts</option>'+CO.map(function(c){return '<option>'+c+'</option>';}).join('');
+  $('#a360Cohort').onchange=renderA360Table;$('#a360Q').addEventListener('input',renderA360Table);
+  var B=A360.B,Mt=A360.M;
+  $('#a360Intro').innerHTML='How the team uses Account 360 on '+Mt.accounts.toLocaleString()+' parent accounts ('+Mt.engaged.toLocaleString()+' engaged, '+Mt.noEngagement.toLocaleString()+' with no Account 360 activity), click-stream '+esc(Mt.clickStart)+' to '+esc(Mt.clickEnd)+'. Accounts are cohorted on the medians of sessions ('+B.session_median+') and of the share of deep actions ('+(B.depth_ratio_median*100).toFixed(0)+'%).'+(Mt.excludedUsers&&Mt.excludedUsers.length?' '+Mt.excludedUsers.length+' users who browse broadly (or were named) are excluded.':'');
+  var Q=[['Power Users','Many sessions and deep actions — opportunities, metrics, activities.'],['Frequent Browsers','Many sessions, mostly page views.'],['Focused Diggers','Few sessions, but deep when they come.'],['Light Touch','Few sessions, little depth.'],['No Engagement','No Account 360 activity in the window.']];
+  $('#a360Quads').innerHTML=Q.map(function(q){return '<div style="--c:'+coColor(q[0])+'"><h4>'+q[0]+'</h4><p>'+q[1]+'</p></div>';}).join('');
 }
-function renderAccounts(){if(HAS.A360)renderA360();if(HAS.ACC){renderAccBubble();renderAccTable();}}
+function setupAccDeals(){
+  $('#accQ').addEventListener('input',renderAccTable);
+  var rows=ACC.accounts.filter(function(a){return a.eng!=null;}),r=rows.length>5?corr(rows.map(function(a){return a.eng;}),rows.map(function(a){return a.win_rate;})):null;
+  $('#accIntro').innerHTML=ACC.nShown.toLocaleString()+' accounts with two or more closed non-renewal deals'+(ACC.nAccounts>ACC.nShown?' (the largest of '+ACC.nAccounts.toLocaleString()+')':'')+'.'+(r!=null?' Across them, average engagement and win rate correlate at <b class="num">r = '+r.toFixed(2)+'</b>.':'');
+}
 function renderA360(){
   var M=A360.B.months,agg=a360Agg(a360Lo,a360Hi),pw=agg['Power Users'],br=agg['Frequent Browsers'],dg=agg['Focused Diggers'],lt=agg['Light Touch'],nn=agg['No Engagement'];
   $('#a360RangeLabel').textContent=mlabL(M[a360Lo])+' – '+mlabL(M[a360Hi]);
@@ -674,20 +721,23 @@ function fillMethod(){
 }
 
 /* ---------- plumbing ---------- */
-var TABS={summary:true,lead:HAS.U,adopt:HAS.usage,users:HAS.usage,deal:HAS.OPP||HAS.D,stage:HAS.ST,accounts:HAS.A360||HAS.ACC,method:true};
-(VIEW.hiddenTabs||[]).forEach(function(t){TABS[t]=false;});
-var R={summary:function(){},lead:renderLead,adopt:renderAdopt,users:renderUsers,deal:renderDeal,stage:renderStage,accounts:renderAccounts,method:function(){}};
+var TABS={summary:true,activity:HAS.U,adoption:HAS.usage,deals:HAS.OPP||HAS.D||HAS.ACC,stage:HAS.ST,accounts:HAS.A360,method:true};
+/* Tab ids from earlier layouts: hiding maps onto today's tabs ("users" is a view now, so hides nothing); navigating opens the view. */
+var HIDE_AS={lead:'activity',adopt:'adoption',deal:'deals'}, OPEN_AS={lead:'activity',adopt:'adoption',users:'adoption',deal:'deals'};
+(VIEW.hiddenTabs||[]).forEach(function(t){t=HIDE_AS[t]||t;if(t!=='summary'&&t in TABS)TABS[t]=false;});
+var R={summary:function(){renderScorecard();renderOverview();},activity:renderLead,adoption:renderAdoption,deals:renderDealsTab,stage:renderStage,accounts:function(){if(HAS.A360)renderA360();},method:function(){}};
 var current='summary';
-function showTab(t){if(!TABS[t])t='summary';current=t;$$('nav.tabs button[role=tab]').forEach(function(b){b.setAttribute('aria-selected',b.getAttribute('data-tab')===t);});$$('section.panel').forEach(function(s){s.classList.toggle('active',s.id==='p-'+t);});if(HOSTED)post({type:'backstory:roi-tab-shown',tab:t});requestAnimationFrame(function(){R[t]();});}
+function showTab(t){if(t==='users'&&HAS.usage){adoptView='users';segSet('#adoptView','users');}t=OPEN_AS[t]||t;if(!TABS[t])t='summary';current=t;$$('nav.tabs button[role=tab]').forEach(function(b){b.setAttribute('aria-selected',b.getAttribute('data-tab')===t);});$$('section.panel').forEach(function(s){s.classList.toggle('active',s.id==='p-'+t);});if(HOSTED)post({type:'backstory:roi-tab-shown',tab:t});requestAnimationFrame(function(){R[t]();});}
 function rerender(){R[current]();}
 $$('nav.tabs button[role=tab]').forEach(function(b){if(!TABS[b.getAttribute('data-tab')])b.classList.add('hidden');b.onclick=function(){showTab(b.getAttribute('data-tab'));};});
 $$('section.panel').forEach(function(s){var t=s.id.slice(2);if(!TABS[t])s.classList.add('hidden');});
 /* The platform's startup validator opens every saved version in an isolated
-   browser and runs these steps. The dashboard's primary workflow is opening a
+   browser and runs these steps. The readout's primary workflow is opening a
    view and seeing its numbers drawn, so the steps open the first view this
    account's data has and wait for its figures. */
 window.__artifactTests=(function(){
-  var plan=[['lead','#leadDyn','per rep per month'],['deal','#dealDyn','deals'],['adopt','#adoptTblSub','per rep per month'],['users','#usersTbl','Reps'],['stage','#stageIntro','opportunities'],['accounts',HAS.A360?'#a360Kpis':'#accTbl',HAS.A360?'Pipeline created':'Account']];
+  var deals=HAS.OPP||HAS.D;
+  var plan=[['activity','#leadDyn','per rep per month'],['deals',deals?'#dealDyn':'#accTbl',deals?'deals':'Account'],['adoption','#adoptionIntro','reps'],['stage','#stageIntro','opportunities'],['accounts','#a360Kpis','Pipeline created']];
   var pick=plan.filter(function(p){return TABS[p[0]];})[0];
   return pick?[{action:'click',selector:'nav.tabs button[data-tab="'+pick[0]+'"]'},{action:'expectText',selector:pick[1],value:pick[2]}]
     :[{action:'click',selector:'#themeBtn'},{action:'expectText',selector:'#themeBtn',value:'Theme: light'}];
@@ -697,10 +747,11 @@ function init(){
   setupGF();
   if(HAS.U)setupLead();
   if(HAS.usage)setupCohorts();
-  if(TABS.deal)setupDeals();
+  if(TABS.deals)setupDeals();
   if(HAS.ST)setupStage();
-  if(TABS.accounts)setupAccounts();
-  setupCalc();renderSummary();renderHero();renderHeroStats();fillMethod();
+  if(HAS.ACC)setupAccDeals();else $('#accDealsWrap').classList.add('hidden');
+  if(HAS.A360)setupA360();
+  setupCalc();renderSummary();renderHero();renderHeroStats();fillMethod();R.summary();
   post({type:'backstory:roi-loaded'});
 }
 if(window.Plotly)init();else window.addEventListener('load',init);

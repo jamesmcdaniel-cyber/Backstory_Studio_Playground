@@ -29,9 +29,13 @@ import { useAuth } from '@/hooks/use-auth'
  */
 export type ArtifactFrameRenderer = (frame: { artifactId: string; versionId: string; title: string; writable: boolean; className: string }) => React.ReactNode
 
-export function ArtifactViewer({ id, embedded = false, showAssistant = true, renderFrame, showVersion }: {
+export function ArtifactViewer({ id, embedded = false, showAssistant = true, renderFrame, showVersion, onVersions }: {
   id: string
-  /** Inside another page (the ROI page): no title row or page actions — that page has its own. */
+  /**
+   * Inside another page (the ROI page, a person's own report): no title row,
+   * page actions, version row or history and settings tabs — that page has its
+   * own controls. The assistant stays.
+   */
   embedded?: boolean
   /** The assistant sidebar; a host page can toggle it. */
   showAssistant?: boolean
@@ -39,6 +43,8 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
   renderFrame?: ArtifactFrameRenderer
   /** Show this version (a run history row on the host page); the nonce re-applies the same id. */
   showVersion?: { id: string; nonce: number } | null
+  /** Tells the host which version is shown and which is current, whenever either changes. */
+  onVersions?: (versions: { shownVersionId: string | null; currentVersionId: string | null }) => void
 }) {
   const { can } = useAuth()
   const [artifact, setArtifact] = useState<ArtifactView | null>(null)
@@ -124,7 +130,9 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
   // Pause in background tabs and refresh immediately when they become visible.
   useEffect(() => startVisibleInterval(() => void refresh(), busy ? 3_000 : 10_000), [busy, refresh])
   useAgentExecStream(pending?.executionId, () => void refresh(), Boolean(pending?.executionId))
-  useEffect(() => { chatEnd.current?.scrollIntoView({ block: 'nearest' }) }, [artifact?.chat.length, pending])
+  // The conversation scrolls inside its own panel; scrolling its end into view
+  // would move the whole page where the panel sits below the document (phones).
+  useEffect(() => { const log = chatEnd.current?.parentElement; if (log) log.scrollTop = log.scrollHeight }, [artifact?.chat.length, pending])
   // A new version arriving moves the viewer to it — once the assistant has
   // finished, not at every save along the way, so the page reloads one time.
   const assistantWorking = Boolean(pending)
@@ -132,6 +140,12 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
   // A host asked for a particular version (a history row): show it once it is loaded.
   const loadedIds = artifact?.versions.map((v) => v.id).join(',')
   useEffect(() => { if (showVersion?.id && loadedIds?.split(',').includes(showVersion.id)) setVersionId(showVersion.id) }, [showVersion?.id, showVersion?.nonce, loadedIds])
+  // The host follows what is on screen (the ROI page names the account the shown version is about).
+  const onVersionsRef = useRef(onVersions)
+  onVersionsRef.current = onVersions
+  const shownId = artifact ? (artifact.versions.find((v) => v.id === versionId) ?? artifact.versions[0])?.id ?? null : null
+  const currentId = artifact?.currentVersionId ?? null
+  useEffect(() => { if (artifact) onVersionsRef.current?.({ shownVersionId: shownId, currentVersionId: currentId }) }, [artifact, shownId, currentId])
   // Markdown versions are rendered here rather than framed; fetch the text when the shown version changes.
   const markdownVersionId = artifact?.versions.find((v) => v.id === (versionId ?? artifact.currentVersionId))?.format === 'markdown' ? (versionId ?? artifact?.currentVersionId ?? null) : null
   useEffect(() => {
@@ -286,15 +300,17 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
           {shownVersion && shownVersion.id !== artifact.currentVersionId ? (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
               <History className="h-3.5 w-3.5" aria-hidden />
-              <span>Viewing version {shownVersion.number} of {artifact.versionCount} · {new Date(shownVersion.createdAt).toLocaleString()}{shownVersion.request ? ` · ${shownVersion.request.slice(0, 80)}` : ''}</span>
+              <span>{embedded ? 'Showing an earlier run' : `Viewing version ${shownVersion.number} of ${artifact.versionCount}`} · {new Date(shownVersion.createdAt).toLocaleString()}{shownVersion.request ? ` · ${shownVersion.request.slice(0, 80)}` : ''}</span>
               <span className="ml-auto flex items-center gap-2">
-                <Button size="sm" variant="outline" disabled={restoring !== null} onClick={() => void restore(shownVersion.id)}>
-                  {restoring === shownVersion.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Restore this version
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setVersionId(artifact.currentVersionId)}>Back to current</Button>
+                {canEdit && (
+                  <Button size="sm" variant="outline" disabled={restoring !== null} onClick={() => void restore(shownVersion.id)}>
+                    {restoring === shownVersion.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden />}{embedded ? 'Use this one' : 'Restore this version'}
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setVersionId(artifact.currentVersionId)}>{embedded ? 'Back to latest' : 'Back to current'}</Button>
               </span>
             </div>
-          ) : artifact.versions.length > 1 ? (
+          ) : !embedded && artifact.versions.length > 1 ? (
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <History className="h-3.5 w-3.5" aria-hidden />
               <span>Version {shownVersion?.number} of {artifact.versionCount} (current){shownVersion?.request ? ` · ${shownVersion.request.slice(0, 80)}` : ''}</span>
@@ -328,7 +344,12 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
         </div>
 
         {showAssistant && <aside className="flex h-[640px] min-h-0 min-w-0 flex-col rounded-xl border border-border bg-background xl:h-full">
-          <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
+          {embedded ? (
+            <div className="flex items-center gap-1.5 border-b border-border px-4 py-2.5 text-sm font-medium">
+              <MessageSquare className="h-4 w-4 text-horizon-600" aria-hidden />
+              <span className="truncate">{artifact.agent ? artifact.agent.title : 'Conversation'}</span>
+            </div>
+          ) : <div role="tablist" aria-label="Panel" className="flex items-center gap-1 border-b border-border px-2 py-1.5 text-sm">
             {(['assistant', 'history', 'settings'] as const).filter(tab => tab !== 'settings' || !configurationLocked).map((tab) => (
               <button
                 key={tab}
@@ -342,10 +363,10 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
                 {tab === 'assistant' ? <span className="max-w-[9rem] truncate">{artifact.agent ? artifact.agent.title : 'Conversation'}</span> : tab === 'history' ? `History (${artifact.versionCount})` : <span className="sr-only sm:not-sr-only">Settings</span>}
               </button>
             ))}
-          </div>
-          {panel === 'settings' && !configurationLocked ? (
+          </div>}
+          {!embedded && panel === 'settings' && !configurationLocked ? (
             <AssistantSettingsPanel artifactId={artifact.id} canEdit={canConfigure} />
-          ) : panel === 'history' ? (
+          ) : !embedded && panel === 'history' ? (
             <ol className="min-h-0 flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
               {artifact.nextVersionBefore && <li className="p-3"><Button variant="outline" disabled={historyLoading} onClick={() => void loadHistory()}>{historyLoading ? 'Loading…' : 'Load older versions'}</Button></li>}
               {artifact.versions.map((version) => {
@@ -382,7 +403,7 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
             {!artifact.chat.length && canAsk && (
               <div className="flex flex-col gap-1.5">
                 {(artifact.kind === 'roi_dashboard'
-                  ? ['Why is win rate higher for engaged deals?', 'Remove the adoption tiers tab', 'Add accounts touched as a leading indicator', 'Show me this for another account']
+                  ? ['Why is win rate higher for engaged deals?', 'Hide the account engagement tab', 'Add accounts touched as an activity metric', 'Show me this for another account']
                   : ['Summarise this in three bullets', 'Make it shorter']
                 ).map((suggestion) => (
                   <button key={suggestion} type="button" disabled={busy || sending} onClick={() => void send(null, suggestion)} className="rounded-lg border border-border px-2.5 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-50">
@@ -394,7 +415,11 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
             {!artifact.agent && canEdit && <AttachAgentCard artifactId={artifact.id} onAttached={() => void refresh()} />}
             {!artifact.chat.length && (artifact.agent || !canEdit) && (
               <p className="text-xs text-muted-foreground">
-                {canAsk ? 'Ask about it, tell the assistant what to change, or — for a dashboard — ask for it on another account. Every change is a new version; the old ones are kept.' : 'This artifact has no agent attached yet.'}
+                {canAsk
+                  ? embedded
+                    ? 'Ask about the report, tell the analyst what to change, or ask for another account or opportunity — it opens here, in this layout. Every change saves to your page.'
+                    : 'Ask about it, tell the assistant what to change, or — for a dashboard — ask for it on another account. Every change is a new version; the old ones are kept.'
+                  : 'This artifact has no agent attached yet.'}
               </p>
             )}
             {artifact.chat.map((m, index) => (
@@ -419,10 +444,10 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
                 )}
               </div>
             ))}
-            {artifact.build && building && artifact.build.executionId && artifact.build.executionId !== pending?.executionId && (
+            {!embedded && artifact.build && building && artifact.build.executionId && artifact.build.executionId !== pending?.executionId && (
               <RunFeed executionId={artifact.build.executionId} status={artifact.build.status} compact onStatusChange={refresh} />
             )}
-            {artifact.build && ['failed', 'blocked', 'cancelled'].includes(artifact.build.status) && (
+            {!embedded && artifact.build && ['failed', 'blocked', 'cancelled'].includes(artifact.build.status) && (
               <div role="status" className="rounded-lg border border-amber-300/60 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
                 <p className="font-medium">Building the dashboard for {artifact.build.account} {artifact.build.status === 'cancelled' ? 'was cancelled' : 'did not finish'}.</p>
                 {artifact.build.error && <p className="mt-1">{artifact.build.error}</p>}

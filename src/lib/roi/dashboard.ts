@@ -6,6 +6,7 @@ import { configFromPreset, describeRunConfig, MONTH_NAMES, resolveWindows, type 
 import { encodeMatrix } from './facts'
 import { REPORT_CSS } from './report-css'
 import { REPORT_SCRIPT } from './report-script'
+import { hasLiveData, type RoiLiveAccount } from './live-account'
 
 /**
  * The ROI report — Backstory's value readout, generic across customer
@@ -57,6 +58,54 @@ export type RoiDashboardOptions = {
   reason?: string
   /** The Account 360 prep's result, for the Account engagement tab. */
   a360?: Account360Facts | null
+  /** The account today, read live from Backstory and Salesforce (a person's own page only). */
+  live?: RoiLiveAccount | null
+}
+
+const moneyText = (value: number | null | undefined) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '–'
+  const a = Math.abs(value)
+  return a >= 1e9 ? `$${(value / 1e9).toFixed(2)}B` : a >= 1e6 ? `$${(value / 1e6).toFixed(1)}M` : a >= 1e3 ? `$${Math.round(value / 1e3)}K` : `$${Math.round(value)}`
+}
+
+/** "Account today": the live Backstory and Salesforce read, drawn on the summary. */
+function liveSection(live: RoiLiveAccount | null | undefined, account: string): string {
+  if (!live || !hasLiveData(live)) return ''
+  const fetched = new Date(live.fetchedAt)
+  const when = Number.isNaN(fetched.getTime()) ? '' : fetched.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
+  const from = live.sources.filter((s) => s.ok).map((s) => s.name).join(' and ')
+  const level = (score: number | null) => (score === null ? '' : `<span class="eng ${score <= 30 ? 'lo' : score <= 70 ? 'md' : 'hi'}">${Math.round(score)}</span>`)
+  const sf = live.salesforce
+  const tiles: string[] = []
+  if (sf) {
+    const closed = sf.closedWon + sf.closedLost
+    tiles.push(`<div class="tile"><div class="k">Won deals · last 2 years</div><div class="v">${sf.closedWon.toLocaleString()}</div><div class="d">of ${closed.toLocaleString()} closed</div></div>`)
+    if (closed) tiles.push(`<div class="tile"><div class="k">Win rate · Salesforce</div><div class="v">${((sf.closedWon / closed) * 100).toFixed(1)}%</div><div class="d">${sf.closedLost.toLocaleString()} lost</div></div>`)
+    tiles.push(`<div class="tile"><div class="k">Won amount</div><div class="v">${moneyText(sf.wonAmount)}</div><div class="d">closed-won, last 2 years</div></div>`)
+    if (sf.avgDaysToClose !== null) tiles.push(`<div class="tile"><div class="k">Days to close · won</div><div class="v">${sf.avgDaysToClose}</div><div class="d">average, created to closed</div></div>`)
+    const openAmount = sf.openByStage.reduce((sum, s) => sum + s.amount, 0)
+    if (sf.openByStage.length) tiles.push(`<div class="tile"><div class="k">Open pipeline</div><div class="v">${moneyText(openAmount)}</div><div class="d">${sf.openByStage.reduce((sum, s) => sum + s.count, 0)} open opportunities</div></div>`)
+  }
+  const opps = (live.opportunities ?? []).slice(0, 8)
+  const people = live.people
+  const status = live.status
+  // Backstory bolds names and themes, not numbers: plain bold, not the number face.
+  const strong = (text: string) => escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+  const list = (items: string[]) => items.length ? `<ul>${items.map((item) => `<li>${strong(item)}</li>`).join('')}</ul>` : '<p class="muted">Nothing recorded in the last 30 days.</p>'
+  return `<div class="live" data-section="live">
+    <div class="section-lbl">${escapeHtml(live.account?.name ?? account)} today · live from ${escapeHtml(from || 'Backstory')}${when ? ` · ${escapeHtml(when)}` : ''}</div>
+    ${tiles.length ? `<div class="tiles static score">${tiles.join('')}</div>` : ''}
+    <div class="live-grid">
+      ${opps.length ? `<div class="card"><h3>Open opportunities</h3><p class="sub">With Backstory's engagement score (low 0–30, medium 31–70, high 71+).</p><div class="tbl-wrap"><table><thead><tr><th>Opportunity</th><th>Type</th><th>Amount</th><th>Closes</th><th>Engagement</th></tr></thead><tbody>${opps.map((o) => `<tr><td>${escapeHtml(o.name)}</td><td class="txt">${escapeHtml(o.type ?? '—')}</td><td>${moneyText(o.amount)}</td><td>${escapeHtml(o.closeDate ?? '—')}</td><td>${level(o.engagement) || '—'}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+      ${people ? `<div class="card"><h3>Engaged in the last 30 days</h3><p class="sub">${people.externalCount} people at ${escapeHtml(live.account?.name ?? account)}, ${people.internalCount} on the team.</p><div class="tbl-wrap"><table><thead><tr><th>Person</th><th>Title</th><th>Emails</th><th>Meetings</th></tr></thead><tbody>${people.external.slice(0, 8).map((p) => `<tr><td>${escapeHtml(p.name)}</td><td class="txt">${escapeHtml(p.title || '—')}</td><td>${p.emails}</td><td>${p.meetings}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+    </div>
+    ${status ? `<div class="live-status"><div><h4>Risks</h4>${list(status.risks)}</div><div><h4>Next steps</h4>${list(status.nextSteps)}</div><div><h4>What is being discussed</h4>${list(status.topics)}</div></div>` : ''}
+    ${sf && (sf.byType.length || sf.byFy.length) ? `<div class="live-grid">
+      ${sf.byFy.length ? `<div class="card"><h3>Closed deals by fiscal year · Salesforce</h3><div class="tbl-wrap"><table><thead><tr><th>Fiscal year</th><th>Won</th><th>Lost</th><th>Win rate</th><th>Won amount</th></tr></thead><tbody>${sf.byFy.map((f) => `<tr><td>${escapeHtml(f.fy)}</td><td>${f.won}</td><td>${f.lost}</td><td>${f.won + f.lost ? ((f.won / (f.won + f.lost)) * 100).toFixed(1) + '%' : '–'}</td><td>${moneyText(f.wonAmount)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+      ${sf.byType.length ? `<div class="card"><h3>Closed deals by type · Salesforce</h3><div class="tbl-wrap"><table><thead><tr><th>Type</th><th>Won</th><th>Lost</th><th>Win rate</th></tr></thead><tbody>${sf.byType.map((t) => `<tr><td>${escapeHtml(t.type)}</td><td>${t.won}</td><td>${t.lost}</td><td>${t.won + t.lost ? ((t.won / (t.won + t.lost)) * 100).toFixed(1) + '%' : '–'}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+    </div>` : ''}
+    <p class="sub live-src">${live.sources.map((s) => `${escapeHtml(s.name)}: ${s.ok ? (s.note ? escapeHtml(s.note) : 'read live') : escapeHtml(s.note ?? 'unavailable')}`).join(' · ')}. Read with your own connections; it shows on your page only and refreshes every few hours.</p>
+  </div>`
 }
 
 function escapeHtml(value: string): string {
@@ -225,6 +274,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
 <main>
 <section class="panel active" id="p-summary"><div class="wrap">
   ${context ? `<div class="ctx" data-section="context"><div class="eyebrow">Account context · Backstory</div><p>${inline(context.summary)}</p>${context.facts.length ? `<dl>${context.facts.map((fact) => `<div><dt>${escapeHtml(fact.label)}</dt><dd>${escapeHtml(fact.value)}<small>${escapeHtml(fact.source || 'Backstory')}</small></dd></div>`).join('')}</dl>` : ''}</div>` : ''}
+  ${liveSection(options.live, account)}
   <div class="section-lbl">What the data shows</div>
   <h2>The ROI story in ${findingsWord} numbers</h2>
   <p class="intro">Each figure is traceable to a view in this readout. The chain runs from product usage, to rep behaviour, to deal engagement, to outcomes.</p>

@@ -6,6 +6,7 @@ import type { RoiFacts } from './prep'
 import type { Account360Facts } from './account360/prep'
 import { readView, type RoiView } from './view'
 import { readRunConfig, type RoiRunConfig } from './config'
+import type { RoiLiveAccount } from './live-account'
 
 /**
  * The state an ROI dashboard version is rendered from. Stored on the
@@ -37,6 +38,8 @@ export type RoiArtifactState = {
     render?: number
     /** Imported from a value readout rather than computed from extracts. */
     source?: 'readout'
+    /** The account today, read live from Backstory and Salesforce (a person's own page only). */
+    live?: RoiLiveAccount
   }
 }
 

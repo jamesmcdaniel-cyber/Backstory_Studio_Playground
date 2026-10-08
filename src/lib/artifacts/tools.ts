@@ -449,7 +449,7 @@ export class ArtifactToolClient {
     }
     const state = { ...current.state, factsFileId, narrative: result.narrative, view: result.view, render: ROI_RENDER_VERSION }
     const a360 = await readAccount360Facts(this.organizationId, state.a360FactsFileId)
-    const html = renderRoiDashboard(facts, result.narrative, { account: state.account, timeframePreset: state.timeframePreset, view: result.view, config: state.config, reason: state.reason, a360 })
+    const html = renderRoiDashboard(facts, result.narrative, { account: state.account, timeframePreset: state.timeframePreset, view: result.view, config: state.config, reason: state.reason, a360, live: state.live })
     const summary = typeof args.summary === 'string' && args.summary.trim() ? args.summary.trim().slice(0, 300) : result.applied.join('; ')
     const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content: html, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId, state: stateJson(state) })
     this.context.expectedVersionId = version.id

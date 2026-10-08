@@ -36,6 +36,7 @@ export const ROI_SECTIONS = {
   hero: 'Executive summary: headline chart in the masthead',
   heroStats: 'Executive summary: the four headline numbers',
   context: 'Executive summary: account context from the Backstory platform',
+  live: 'Executive summary: the account today, live from Backstory and Salesforce',
   findings: 'Executive summary: the findings cards',
   scorecard: 'Executive summary: the scorecard (observation vs baseline)',
   overview: 'Executive summary: adoption overview (cohorts and pipeline by tier)',

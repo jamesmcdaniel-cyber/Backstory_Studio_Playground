@@ -38,7 +38,8 @@ export function pageAccountOf(params: {
       ? { artifactId: report.artifactId, versionId: report.currentVersionId, ready: Boolean(report.state || report.a360), config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt }
       : null,
     mine: mine ? { versionId: mine.versionId, config: mine.config, reason: mine.reason, factsCurrent: mine.factsCurrent, updatedAt: mine.createdAt, ...(mine.stale ? { stale: true } : {}) } : null,
-    newerData: Boolean(mine && (report?.state || report?.a360) && report?.currentVersionId && mine.basedOnVersionId && mine.basedOnVersionId !== report.currentVersionId),
+    // A page that started from a live read (no report then) is told when one exists.
+    newerData: Boolean(mine && (report?.state || report?.a360) && report?.currentVersionId && mine.basedOnVersionId !== report.currentVersionId),
     activeAnalysisId: params.myActiveRun ?? report?.activeAnalysisId ?? null,
     canRefresh: params.canRefresh,
   }
@@ -118,8 +119,8 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     reconfigureSeconds: ROI_RECONFIGURE_EXPECTED_SECONDS,
     asyncAfterSeconds: ROI_ASYNC_AFTER_SECONDS,
     page: page ? { artifactId: page.artifactId, currentAccount: page.currentAccount } : null,
-    // Backstory once its report exists — and for operators before, so they land where its readout loads.
-    defaultAccount: accounts.find((item) => key(item.account) === key(ROI_DEFAULT_ACCOUNT) && (item.report?.ready || item.mine || params.canLoadExtracts))?.account ?? null,
+    // Everyone starts on Backstory: its readout, or the business as it stands, live.
+    defaultAccount: accounts.find((item) => key(item.account) === key(ROI_DEFAULT_ACCOUNT))?.account ?? null,
     canLoadExtracts: params.canLoadExtracts === true,
   }
 }

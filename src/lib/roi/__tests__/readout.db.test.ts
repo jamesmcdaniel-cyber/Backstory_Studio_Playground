@@ -110,3 +110,32 @@ if (TEST_DB) {
     assert.equal(await versionsOf(page!.artifactId), before + 1)
   })
 }
+
+if (process.env.TEST_DATABASE_URL) {
+  test('an account with no report opens on what Backstory and Salesforce show live, and only on the reader\'s page', async () => {
+    const { prisma } = await import('@/lib/prisma')
+    const { seedTestOrg } = await import('@/lib/server/__tests__/test-auth')
+    const pages = await import('../personal-page')
+    const seededLive = await seedTestOrg(prisma)
+    try {
+      const fetchLive = async () => ({
+        fetchedAt: new Date().toISOString(),
+        scope: 'account' as const,
+        sources: [{ name: 'Backstory' as const, ok: true }, { name: 'Salesforce' as const, ok: true }],
+        opportunities: [{ name: 'Initech - Renewal', type: 'Renewal', amount: 50000, closeDate: '2026-12-01', engagement: 80, owner: 'Dana' }],
+        salesforce: { closedWon: 3, closedLost: 1, wonAmount: 90000, avgDaysToClose: 40, byType: [], byFy: [], openByStage: [] },
+      })
+      const opened = await pages.openAccountOnPage({ organizationId: seededLive.organizationId, userId: seededLive.userId, account: 'Initech', findGeneric: async () => null, fetchLive })
+      assert.equal(opened.status, 'ready')
+      const page = await pages.loadPersonalPage(seededLive.organizationId, seededLive.userId)
+      const version = await prisma.artifactVersion.findFirst({ where: { id: page!.accounts.initech!.versionId, organizationId: seededLive.organizationId }, select: { content: true, state: true } })
+      assert.match(version!.content, /Initech today · live from Backstory and Salesforce/)
+      assert.equal((version!.state as { roi: { live: { salesforce: { closedWon: number } } } }).roi.live.salesforce.closedWon, 3)
+      // Nothing to read: still "build it".
+      const empty = await pages.openAccountOnPage({ organizationId: seededLive.organizationId, userId: seededLive.userId, account: 'Globex', findGeneric: async () => null, fetchLive: async () => ({ fetchedAt: new Date().toISOString(), sources: [] }) })
+      assert.equal(empty.status, 'needs_build')
+    } finally {
+      await seededLive.cleanup()
+    }
+  })
+}

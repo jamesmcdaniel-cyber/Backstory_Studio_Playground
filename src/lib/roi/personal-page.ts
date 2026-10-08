@@ -5,6 +5,8 @@ import { renderRoiDashboard, ROI_RENDER_VERSION } from './dashboard'
 import { currentRoiState, readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
 import { DEFAULT_RUN_CONFIG, readRunConfig, type RoiRunConfig } from './config'
 import { account360Narrative } from './account360-report'
+import { fetchLiveAccount, hasLiveData, liveNarrative, ROI_LIVE_TTL_MS, type RoiLiveAccount } from './live-account'
+import { roiNarrativeSchema } from './contract'
 import { ensureRoiAgent } from './agent'
 import { EMPTY_VIEW } from './view'
 
@@ -122,10 +124,16 @@ export async function loadPersonalPage(organizationId: string, userId: string): 
       reason: state.reason ?? '',
       factsCurrent: state.factsVersion === 2,
       basedOnVersionId: state.basedOn?.versionId ?? null,
-      stale: (state.render ?? 0) < ROI_RENDER_VERSION,
+      stale: (state.render ?? 0) < ROI_RENDER_VERSION || liveIsStale(state.live),
     }
   }
   return { artifactId, currentVersionId: artifact?.currentVersionId ?? null, currentAccount, accounts }
+}
+
+/** A page's live account data is read again once it is older than ROI_LIVE_TTL_MS (or was never read). */
+export function liveIsStale(live: RoiLiveAccount | undefined, now = Date.now()): boolean {
+  const at = live ? Date.parse(live.fetchedAt) : NaN
+  return !Number.isFinite(at) || now - at > ROI_LIVE_TTL_MS
 }
 
 /** Show this version (point the page at it) without rewriting history. */
@@ -197,7 +205,9 @@ export async function populateFromGeneric(params: {
   const view = (await templateViewOf(params.organizationId, pageId)) ?? generic.state.view ?? EMPTY_VIEW
   const config = params.config ?? generic.state.config
   const reason = params.reason ?? generic.state.reason ?? ''
-  const html = renderRoiDashboard(facts, generic.state.narrative, { account: generic.state.account, generatedAt: new Date().toISOString(), view, config, reason, a360 })
+  // The account today, from this person's own Backstory and Salesforce connections.
+  const live = await fetchLiveAccount({ organizationId: params.organizationId, userId: params.userId, account: generic.state.account, fyStartMonth: config?.fiscalYearStartMonth ?? null })
+  const html = renderRoiDashboard(facts, generic.state.narrative, { account: generic.state.account, generatedAt: new Date().toISOString(), view, config, reason, a360, live })
   const state: RoiArtifactState['roi'] = {
     ...generic.state,
     view,
@@ -206,6 +216,7 @@ export async function populateFromGeneric(params: {
     personal: true,
     basedOn: { artifactId: params.genericArtifactId, versionId: generic.versionId },
     render: ROI_RENDER_VERSION,
+    live,
   }
   const version = await addVersion({
     artifactId: pageId,
@@ -230,16 +241,37 @@ export async function redrawVersion(params: { organizationId: string; userId: st
   const facts = await readFacts(params.organizationId, state.factsFileId)
   if (!facts) throw new Error('That version\'s data could not be read.')
   const a360 = await readAccount360Facts(params.organizationId, state.a360FactsFileId)
-  const html = renderRoiDashboard(facts, state.narrative, { account: state.account, generatedAt: new Date().toISOString(), view: state.view, config: state.config, reason: state.reason, a360 })
+  const live = liveIsStale(state.live) ? await fetchLiveAccount({ organizationId: params.organizationId, userId: params.userId, account: state.account, fyStartMonth: state.config?.fiscalYearStartMonth ?? null }) : state.live
+  const html = renderRoiDashboard(facts, state.narrative, { account: state.account, generatedAt: new Date().toISOString(), view: state.view, config: state.config, reason: state.reason, a360, live })
   const made = await addVersion({
     artifactId: params.artifactId,
     organizationId: params.organizationId,
     content: html,
-    request: `${state.account} · the latest report layout`,
+    request: (state.render ?? 0) < ROI_RENDER_VERSION ? `${state.account} · the latest report layout` : `${state.account} · live account data refreshed`,
     createdByUserId: params.userId,
-    state: stateJson({ ...state, render: ROI_RENDER_VERSION }),
+    state: stateJson({ ...state, render: ROI_RENDER_VERSION, ...(live ? { live } : {}) }),
   })
   return made.id
+}
+
+/**
+ * An account with no report yet (its warehouse extracts have not arrived):
+ * the person's page shows the account as it stands, read live from Backstory
+ * and Salesforce, until a build replaces it. Null when nothing could be read.
+ */
+export async function populateLive(params: { organizationId: string; userId: string; account: string; fetchLive?: typeof fetchLiveAccount }): Promise<{ artifactId: string; versionId: string } | null> {
+  const live = await (params.fetchLive ?? fetchLiveAccount)({ organizationId: params.organizationId, userId: params.userId, account: params.account })
+  if (!hasLiveData(live)) return null
+  const pageId = await ensurePersonalPage(params.organizationId, params.userId)
+  const facts = { U: null, OPP: null, ST: null, META: {}, notes: [] }
+  const factsFileId = await storeFacts(params.organizationId, params.userId, facts)
+  const narrative = roiNarrativeSchema.parse(liveNarrative(live, params.account))
+  const view = (await templateViewOf(params.organizationId, pageId)) ?? EMPTY_VIEW
+  const reason = 'Live account data'
+  const html = renderRoiDashboard(facts, narrative, { account: params.account, generatedAt: new Date().toISOString(), view, config: DEFAULT_RUN_CONFIG, reason, live })
+  const state: RoiArtifactState['roi'] = { analysisId: `live:${Date.now()}`, account: params.account, timeframePreset: 'last6_vs_prior6', factsFileId, datasetIds: [], narrative, view, config: DEFAULT_RUN_CONFIG, reason, personal: true, render: ROI_RENDER_VERSION, live }
+  const version = await addVersion({ artifactId: pageId, organizationId: params.organizationId, content: html, request: `${params.account} · live from Backstory and Salesforce`, createdByUserId: params.userId, state: stateJson(state) })
+  return { artifactId: pageId, versionId: version.id }
 }
 
 export type OpenResult =
@@ -260,6 +292,7 @@ export async function openAccountOnPage(params: {
   account: string
   update?: boolean
   findGeneric: (account: string) => Promise<{ artifactId: string; account: string; hasVersion: boolean } | null>
+  fetchLive?: typeof fetchLiveAccount
 }): Promise<OpenResult> {
   const page = await loadPersonalPage(params.organizationId, params.userId)
   const mine = page?.accounts[lower(params.account)]
@@ -273,7 +306,11 @@ export async function openAccountOnPage(params: {
     return { status: 'ready', artifactId: page.artifactId, versionId: mine.versionId }
   }
   const generic = await params.findGeneric(params.account)
-  if (!generic?.hasVersion) return { status: 'needs_build', artifactId: page?.artifactId ?? null }
+  if (!generic?.hasVersion) {
+    // No report yet: the account as it stands, live, when there is anything to read.
+    const live = mine ? null : await populateLive({ organizationId: params.organizationId, userId: params.userId, account: params.account, fetchLive: params.fetchLive })
+    return live ? { status: 'ready', ...live } : { status: 'needs_build', artifactId: page?.artifactId ?? null }
+  }
   const made = await populateFromGeneric({
     organizationId: params.organizationId,
     userId: params.userId,

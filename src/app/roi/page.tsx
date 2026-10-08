@@ -9,7 +9,6 @@ import { ArtifactViewer } from '@/components/artifacts/artifact-viewer'
 import { RoiReportFrame, NO_FILTERS, type ReportFilters } from '@/components/roi/report-frame'
 import { RunProgress } from '@/components/roi/run-progress'
 import { SettingsPanel } from '@/components/roi/settings-panel'
-import { ReadoutLoader } from '@/components/roi/readout-loader'
 import { describeRunConfig } from '@/lib/roi/config'
 import { apiErrorMessage, isRunSettled, upsertRun } from '@/lib/roi/history'
 import { cn } from '@/lib/utils'
@@ -180,7 +179,8 @@ export default function RoiPage() {
     const key = `${account.toLowerCase()}|${readiness}`
     if (attempted.current === key) return
     attempted.current = key
-    if (selected.mine || selected.report?.ready) void open(account)
+    // Every account opens: its page, its report, or — with neither — what Backstory and Salesforce show live.
+    void open(account)
   }, [setup, account, selected, bound, opening, open, readiness])
 
   // The page changed under us — the analyst put another account on it, or a
@@ -364,18 +364,7 @@ export default function RoiPage() {
       ) : opening ? (
         <div role="status" className="flex min-h-[60vh] flex-col items-center justify-center gap-3 rounded-xl border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin text-horizon-600" aria-hidden />
-          {selected?.mine ? `Opening ${account}…` : `Putting the ${account} report on your page…`}
-        </div>
-      ) : account && same(account, 'Backstory') && !busy ? (
-        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/20 p-8 text-center">
-          <ChartNoAxesCombined className="h-6 w-6 text-horizon-600" aria-hidden />
-          <h2 className="text-lg font-semibold tracking-tight">Backstory&apos;s ROI readout</h2>
-          <p className="max-w-md text-sm text-muted-foreground">
-            {setup.canLoadExtracts
-              ? 'Backstory\'s own page is built from its value readout. Load the readout page (.html) and the report builds here in seconds, for everyone.'
-              : 'Backstory\'s own page is built from its value readout, which has not been loaded yet. A platform admin loads it from here.'}
-          </p>
-          {setup.canLoadExtracts && <ReadoutLoader account="Backstory" onLoaded={(result, name) => { applyOpen(name, result); void loadSetup(); void loadHistory() }} />}
+          {selected?.mine ? `Opening ${account}…` : selected?.report?.ready ? `Putting the ${account} report on your page…` : `Reading ${account} live from Backstory and Salesforce…`}
         </div>
       ) : (
         <div className={cn('flex min-h-[60vh] flex-col items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/20 p-8 text-center')}>
@@ -386,7 +375,7 @@ export default function RoiPage() {
               ? 'Open the panel to choose an account.'
               : busy
                 ? 'It lands here, on your page, when the run finishes. You can leave; you will be notified.'
-                : 'Open the settings, say why it is being run, and build it. It lands here, on your page, and every change after that saves to your page.'}
+                : `Nothing could be read live from Backstory or Salesforce for ${account} with your connections, and its warehouse data has not arrived. Open the settings to build it once data is available.`}
           </p>
           {!busy && <Button type="button" onClick={() => setPanelOpen(true)}><Menu className="h-4 w-4" aria-hidden />{account ? 'Open the settings' : 'Choose an account'}</Button>}
         </div>

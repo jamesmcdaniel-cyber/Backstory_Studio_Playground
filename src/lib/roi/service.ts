@@ -523,7 +523,9 @@ async function reconcileRun(row: RoiAnalysis, claimFrom: { status: string; updat
     }
   }
   const generatedAt = new Date().toISOString()
-  const reportHtml = renderRoiDashboard(facts, extracted.data, { account: row.account, generatedAt, view, config, reason: row.reason, a360 })
+  // A change to someone's own page keeps the page's live account data.
+  const pageLive = markers.personal && row.artifactId ? (await currentRoiState(row.organizationId, row.artifactId).catch(() => null))?.state.live : undefined
+  const reportHtml = renderRoiDashboard(facts, extracted.data, { account: row.account, generatedAt, view, config, reason: row.reason, a360, live: pageLive })
   const roiState = stateJson({
     analysisId: row.id,
     account: row.account,
@@ -536,7 +538,7 @@ async function reconcileRun(row: RoiAnalysis, claimFrom: { status: string; updat
     config,
     reason: row.reason,
     ...('DEALS' in facts ? { factsVersion: 2 } : {}),
-    ...(markers.personal ? { personal: true, ...(markers.basedOn ? { basedOn: markers.basedOn } : {}) } : {}),
+    ...(markers.personal ? { personal: true, ...(markers.basedOn ? { basedOn: markers.basedOn } : {}), ...(pageLive ? { live: pageLive } : {}) } : {}),
     render: ROI_RENDER_VERSION,
   })
   const request = [row.account, reconfigure ? 'settings changed' : 'built from the extracts', describeRunConfig(config).join(', '), row.reason.trim() ? `for ${row.reason.trim()}` : ''].filter(Boolean).join(' · ').slice(0, 300)

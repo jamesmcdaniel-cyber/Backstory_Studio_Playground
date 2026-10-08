@@ -132,6 +132,7 @@ function plot(id,data,layout){
   var el=document.getElementById(id);if(!el||!window.Plotly)return null;
   layout=layout||base();
   el.classList.remove('empty');el.removeAttribute('data-empty');
+  data=applyChartOptions(id,data,layout,el);
   styleTraces(data,layout,el);
   if(!NO_TOOLS[id])chartTools(el);
   Plotly.react(el,data,layout,PCFG);
@@ -139,7 +140,37 @@ function plot(id,data,layout){
   el.classList.add('drawn');
   bindLift(el);
   if(el._roiWrap&&el._roiWrap.classList.contains('table'))refreshTable(el);
+  applySectionTitles();
   return el;
+}
+/* The assistant's drawing options for a chart (VIEW.charts, set with
+   update_roi_dashboard): kind, labels, height, title, subtitle, colours. */
+var CHART_OPTS=(typeof VIEW!=='undefined'&&VIEW&&VIEW.charts)||{};
+function applyChartOptions(id,data,layout,el){
+  var o=CHART_OPTS[id];if(!o)return data;
+  if(o.height){el.classList.remove('short','tall');if(o.height!=='normal')el.classList.add(o.height);}
+  if(o.title||o.subtitle){var box=el.parentNode;while(box&&box!==document.body&&!box.querySelector('h3,h4'))box=box.parentNode;var h=box&&box!==document.body?box.querySelector('h3,h4'):null;
+    if(h&&o.title)h.textContent=o.title;
+    if(h&&o.subtitle){var sub=h.nextElementSibling;while(sub&&!(sub.classList&&sub.classList.contains('sub')))sub=sub.nextElementSibling;if(sub)sub.textContent=o.subtitle;}}
+  var colorAt=function(i,fallback){return (o.colors&&o.colors[i%o.colors.length])||fallback;};
+  var out=data.map(function(src,i){var tr=Object.assign({},src);
+    if(o.colors){
+      if(tr.type==='bar'){var mk=Object.assign({},tr.marker||{});mk.color=Array.isArray(mk.color)?mk.color.map(function(c,j){return colorAt(j,c);}):colorAt(i,mk.color);tr.marker=mk;}
+      else if(tr.type==='scatter'){tr.line=Object.assign({},tr.line||{},{color:colorAt(i,(tr.line||{}).color)});if(tr.marker&&!Array.isArray(tr.marker.color))tr.marker=Object.assign({},tr.marker,{color:colorAt(i,tr.marker.color)});if(tr.fillcolor)tr.fillcolor=rgba(colorAt(i,tr.fillcolor),.12);}
+      else if(tr.type==='pie'){tr.marker=Object.assign({},tr.marker||{},{colors:((tr.marker||{}).colors||[]).map(function(c,j){return colorAt(j,c);})});}}
+    if((o.kind==='line'||o.kind==='area')&&tr.type==='bar'&&tr.orientation!=='h'){
+      var col=Array.isArray((tr.marker||{}).color)?colorAt(i,css('--d1')):((tr.marker||{}).color||css('--d1'));
+      var line={type:'scatter',mode:'lines+markers',name:tr.name,x:tr.x,y:tr.y,customdata:tr.customdata,hovertemplate:tr.hovertemplate,line:{color:col,width:2},showlegend:tr.showlegend,legendgroup:tr.legendgroup};
+      if(tr.text&&o.labels!==false){line.text=tr.text;line.mode='lines+markers+text';line.textposition='top center';line.textfont=tr.textfont;}
+      if(layout.barmode==='stack')line.stackgroup='one';else if(o.kind==='area')line.fill='tozeroy';
+      tr=line;}
+    else if(o.kind==='bar'&&tr.type==='scatter'&&/lines/.test(tr.mode||'lines')&&!tr.stackgroup&&tr.hoverinfo!=='skip'){
+      tr={type:'bar',name:tr.name,x:tr.x,y:tr.y,customdata:tr.customdata,hovertemplate:tr.hovertemplate,marker:{color:(tr.line||{}).color||css('--d1')},showlegend:tr.showlegend,legendgroup:tr.legendgroup};}
+    if(o.labels===false&&tr.type!=='heatmap'){tr.text=undefined;if(tr.type==='bar')tr.textposition='none';else if(tr.type==='scatter'&&tr.mode)tr.mode=tr.mode.replace(/\+?text/,'');}
+    else if(o.labels===true&&tr.type==='bar'&&!tr.text){var vals=(tr.orientation==='h'?tr.x:tr.y)||[],ax=tr.orientation==='h'?layout.xaxis:layout.yaxis;tr.text=vals.map(function(v){return v==null?'':fmtCell(v,ax);});tr.textposition='outside';tr.cliponaxis=false;}
+    return tr;});
+  if(o.kind==='line'||o.kind==='area'){delete layout.barmode;}
+  return out;
 }
 /* A chart with nothing to draw says so in place of the plot. */
 function emptyChart(id,msg){var el=document.getElementById(id);if(!el)return;if(window.Plotly&&el._roi)Plotly.purge(el);el._roi=null;el.classList.remove('drawn');el.classList.add('empty');el.setAttribute('data-empty',msg||'Nothing to draw yet.');}
@@ -1004,8 +1035,8 @@ var HIDE_AS={lead:'activity',adopt:'adoption',deal:'deals'}, OPEN_AS={lead:'acti
 (VIEW.hiddenTabs||[]).forEach(function(t){t=HIDE_AS[t]||t;if(t!=='summary'&&t in TABS)TABS[t]=false;});
 var R={summary:function(){renderScorecard();renderOverview();},activity:renderLead,adoption:renderAdoption,deals:renderDealsTab,stage:renderStage,accounts:function(){if(HAS.A360)renderA360();},method:function(){}};
 var current='summary';
-function showTab(t){if(t==='users'&&HAS.usage){adoptView='users';segSet('#adoptView','users');}t=OPEN_AS[t]||t;if(!TABS[t])t='summary';current=t;$$('nav.tabs button[role=tab]').forEach(function(b){b.setAttribute('aria-selected',b.getAttribute('data-tab')===t);});$$('section.panel').forEach(function(s){s.classList.toggle('active',s.id==='p-'+t);});if(HOSTED)post({type:'backstory:roi-tab-shown',tab:t});requestAnimationFrame(function(){R[t]();});}
-function rerender(){R[current]();}
+function showTab(t){if(t==='users'&&HAS.usage){adoptView='users';segSet('#adoptView','users');}t=OPEN_AS[t]||t;if(!TABS[t])t='summary';current=t;$$('nav.tabs button[role=tab]').forEach(function(b){b.setAttribute('aria-selected',b.getAttribute('data-tab')===t);});$$('section.panel').forEach(function(s){s.classList.toggle('active',s.id==='p-'+t);});if(HOSTED)post({type:'backstory:roi-tab-shown',tab:t});requestAnimationFrame(function(){R[t]();applySectionTitles();});}
+function rerender(){R[current]();applySectionTitles();}
 $$('nav.tabs button[role=tab]').forEach(function(b){if(!TABS[b.getAttribute('data-tab')])b.classList.add('hidden');b.onclick=function(){showTab(b.getAttribute('data-tab'));};});
 $$('section.panel').forEach(function(s){var t=s.id.slice(2);if(!TABS[t])s.classList.add('hidden');});
 /* The platform's startup validator opens every saved version in an isolated
@@ -1020,7 +1051,11 @@ window.__artifactTests=(function(){
     :[{action:'click',selector:'#themeBtn'},{action:'expectText',selector:'#themeBtn',value:'Theme: light'}];
 })();
 
+/* Headings the assistant changed on built-in blocks (VIEW.sectionTitles): applied after every render, since some tabs rewrite their own headings. */
+var SECTION_TITLES=(typeof VIEW!=='undefined'&&VIEW&&VIEW.sectionTitles)||{};
+function applySectionTitles(){Object.keys(SECTION_TITLES).forEach(function(sec){var block=document.querySelector('[data-section="'+sec+'"]');var h=block?block.querySelector('h3,h4'):null;if(h)h.textContent=SECTION_TITLES[sec];});}
 function init(){
+  applySectionTitles();
   setupGF();
   if(HAS.U)setupLead();
   if(HAS.usage)setupCohorts();
@@ -1028,7 +1063,7 @@ function init(){
   if(HAS.ST)setupStage();
   if(HAS.ACC)setupAccDeals();else $('#accDealsWrap').classList.add('hidden');
   if(HAS.A360)setupA360();
-  setupCalc();renderSummary();renderHero();renderHeroStats();fillMethod();R.summary();
+  setupCalc();renderSummary();renderHero();renderHeroStats();fillMethod();R.summary();applySectionTitles();
   post({type:'backstory:roi-loaded'});
 }
 if(window.Plotly)init();else window.addEventListener('load',init);

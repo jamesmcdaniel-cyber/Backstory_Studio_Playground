@@ -78,6 +78,34 @@ const GENERIC_TOOLS = [
     },
   },
   {
+    name: 'create_artifact',
+    description: 'Make a NEW artifact from content you wrote and return its link — a report (HTML), an interactive page (HTML with scripts, or a React module that `export default function App()`), or a Markdown document. It is validated and saved like any artifact; this conversation\'s artifact is unchanged. Use it for a deliverable that is not a version of this artifact: an executive one-pager, a chart page, a brief to send on. An interactive page follows the artifact runtime rules (vendored imports only; define window.__artifactTests).',
+    isWrite: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        content: { type: 'string', description: 'The complete artifact.' },
+        kind: { type: 'string', enum: ['report', 'page', 'document'], description: 'report = an HTML report (default); page = an interactive app; document = Markdown.' },
+      },
+      required: ['title', 'content'],
+    },
+  },
+  {
+    name: 'render_artifact',
+    description: 'Have the artifact renderer — the same pass that finishes agent deliverables — build a complete interactive React artifact from your brief and the evidence you pass, and save it as a NEW artifact (several minutes). Use it when the request is for a new interactive app (a one-page executive readout, a chart explorer, a what-if model) rather than a change to this artifact. The renderer has no data access of its own: put every figure it must show in `evidence` (the facts summary from get_artifact, or tool results), and be specific in `brief` about sections, charts and audience.',
+    isWrite: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        brief: { type: 'string', description: 'What to build, for whom, and what it must show.' },
+        evidence: { type: 'string', description: 'The numbers and facts to build from, as text or JSON.' },
+      },
+      required: ['title', 'brief'],
+    },
+  },
+  {
     name: 'revise_artifact',
     description: 'Replace the whole content with a rewritten version — only for a full rewrite of a small report or document (prefer edit_artifact for changes). Pass the COMPLETE content in the same format and a one-line summary. Set `saveAsNew: true` (optional `title`) to save it as a new artifact instead. Not for ROI dashboards.',
     isWrite: false,
@@ -102,7 +130,11 @@ const ROI_TOOLS = [
       'hide_tab/show_tab {tab: activity|adoption|deals|stage|accounts|method} (the Executive summary always shows); hide_section/show_section {section} (sections from get_artifact); ' +
       'hide_metric/show_metric {metric}; rename_metric {metric, label}; add_metric {metric: {key: lower_snake, label, columns: [activity-extract columns summed per rep per month], format: count|currency}} — adding recomputes the facts before this call returns, so the saved version already shows it; remove_added_metric {metric}; ' +
       'set_default_comparison {preset: last6_vs_prior6|last6_vs_year_ago|last12_vs_prior12|last3_vs_prior3}; set_headline {text}; set_lede {text}; remove_finding {index (0-based)}; upsert_finding {index?, finding: {fig, cap, h, p, tab}}; remove_watch_item {index}; upsert_watch_item {index?, item: {lead, text}}; set_note {note, paragraphs[]}; add_caveat {text}. ' +
-      'Every number you write into the narrative must come from the facts summary. Returns what was applied and anything rejected, with the reason.',
+      'THE LOOK AND THE CHARTS: set_style {style: {accent?: #hex, series?: [#hex ×1-6, the chart series colours in order], density?: comfortable|compact, css?: a style sheet over the report\'s own}}; reset_style; ' +
+      'set_chart {chart: a chart id from get_artifact, options: {kind?: bar|line|area, labels?: true|false (value labels on the marks), height?: short|normal|tall, title?, subtitle?, colors?: [#hex]}}; reset_chart {chart}; ' +
+      'add_section {customSection: {id: lower-case-dashes, tab: summary|activity|adoption|deals|stage|accounts|method, title, html (HTML and CSS only — no script, iframe or event handlers; it is drawn with the report\'s styles: .tiles/.tile/.k/.v for numbers, table for tables, .sub for small print), position?: start|end}} (the same id rewrites it); remove_section {id}; set_section_title {section, title}. ' +
+      'Chart craft: one series one colour; colours that stay distinct for colour-blind readers (the defaults are validated); value labels on a few marks, not every point; bars for comparisons, lines for change over time; never two y-axes. ' +
+      'Every number you write into the narrative or a section must come from the facts summary. Returns what was applied and anything rejected, with the reason.',
     isWrite: false,
     inputSchema: {
       type: 'object',
@@ -115,7 +147,7 @@ const ROI_TOOLS = [
             properties: {
               op: {
                 type: 'string',
-                enum: ['hide_tab', 'show_tab', 'hide_section', 'show_section', 'hide_metric', 'show_metric', 'rename_metric', 'add_metric', 'remove_added_metric', 'set_default_comparison', 'set_headline', 'set_lede', 'remove_finding', 'upsert_finding', 'remove_watch_item', 'upsert_watch_item', 'set_note', 'add_caveat'],
+                enum: ['hide_tab', 'show_tab', 'hide_section', 'show_section', 'hide_metric', 'show_metric', 'rename_metric', 'add_metric', 'remove_added_metric', 'set_default_comparison', 'set_headline', 'set_lede', 'remove_finding', 'upsert_finding', 'remove_watch_item', 'upsert_watch_item', 'set_note', 'add_caveat', 'set_style', 'reset_style', 'set_chart', 'reset_chart', 'add_section', 'remove_section', 'set_section_title'],
               },
               tab: { type: 'string', enum: ['activity', 'adoption', 'deals', 'stage', 'accounts', 'method'], description: 'hide_tab / show_tab' },
               section: { type: 'string', description: 'hide_section / show_section: a section id from get_artifact' },
@@ -148,6 +180,12 @@ const ROI_TOOLS = [
               item: { type: 'object', description: 'upsert_watch_item', properties: { lead: { type: 'string' }, text: { type: 'string' } }, required: ['lead', 'text'] },
               note: { type: 'string', enum: ['lead', 'mix', 'adopt', 'users', 'usersTrend', 'dealWin', 'dealVel', 'dealTrend', 'stageProf', 'stageHeat', 'stageSurv', 'breadth', 'accounts', 'accountDeals'], description: 'set_note' },
               paragraphs: { type: 'array', items: { type: 'string' }, description: 'set_note: 1-4 paragraphs' },
+              style: { type: 'object', description: 'set_style', properties: { accent: { type: 'string' }, series: { type: 'array', items: { type: 'string' } }, density: { type: 'string', enum: ['comfortable', 'compact'] }, css: { type: 'string' } } },
+              chart: { type: 'string', description: 'set_chart / reset_chart: a chart id from get_artifact (e.g. "dealWin")' },
+              options: { type: 'object', description: 'set_chart', properties: { kind: { type: 'string', enum: ['bar', 'line', 'area'] }, labels: { type: 'boolean' }, height: { type: 'string', enum: ['short', 'normal', 'tall'] }, title: { type: 'string' }, subtitle: { type: 'string' }, colors: { type: 'array', items: { type: 'string' } } } },
+              customSection: { type: 'object', description: 'add_section', properties: { id: { type: 'string' }, tab: { type: 'string', enum: ['summary', 'activity', 'adoption', 'deals', 'stage', 'accounts', 'method'] }, title: { type: 'string' }, html: { type: 'string' }, position: { type: 'string', enum: ['start', 'end'] } }, required: ['id', 'tab', 'title', 'html'] },
+              id: { type: 'string', description: 'remove_section: the added section\'s id' },
+              title: { type: 'string', description: 'set_section_title: the new heading' },
             },
             required: ['op'],
           },
@@ -184,9 +222,13 @@ const ROI_TOOLS = [
 
 export type ArtifactToolDescriptor = { name: string; description: string; inputSchema: Record<string, unknown> }
 
-/** The tools for an artifact of this kind. */
-export function artifactToolsFor(kind: string): ArtifactToolDescriptor[] {
-  const generic = kind === 'roi_dashboard' ? GENERIC_TOOLS.filter((tool) => tool.name === 'get_artifact') : [...GENERIC_TOOLS]
+const NEW_ARTIFACT_TOOLS = ['create_artifact', 'render_artifact']
+
+/** The tools for an artifact of this kind. A template copy's copilot only ever reads and revises the copy, so it is not offered the tools that make new artifacts. */
+export function artifactToolsFor(kind: string, options: { templateCopy?: boolean } = {}): ArtifactToolDescriptor[] {
+  // An ROI dashboard is never edited as text, but its assistant can still make new artifacts.
+  const generic = (kind === 'roi_dashboard' ? GENERIC_TOOLS.filter((tool) => ['get_artifact', ...NEW_ARTIFACT_TOOLS].includes(tool.name)) : [...GENERIC_TOOLS])
+    .filter((tool) => !options.templateCopy || !NEW_ARTIFACT_TOOLS.includes(tool.name))
   // An ROI dashboard is edited through its view; a page (an Account 360
   // dashboard among them) is edited as HTML, and can still be rebuilt for
   // another account from its extracts.
@@ -234,11 +276,13 @@ export class ArtifactToolClient {
 
   async executeTool(_serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
     try {
-      if (this.context.templateCopy && (!GENERIC_TOOLS.some(tool => tool.name === name) || args.saveAsNew)) {
+      if (this.context.templateCopy && (!GENERIC_TOOLS.some(tool => tool.name === name) || args.saveAsNew || name === 'create_artifact' || name === 'render_artifact')) {
         throw new Error('This copilot can only read and revise your template copy.')
       }
       switch (name) {
         case 'get_artifact': return await this.getArtifact()
+        case 'create_artifact': return await this.createNew(args)
+        case 'render_artifact': return await this.renderNew(args)
         case 'revise_artifact': return await this.revise(args)
         case 'edit_artifact': return await this.edit(args)
         case 'find_in_artifact': return await this.find(args)
@@ -398,6 +442,34 @@ export class ArtifactToolClient {
     const applied = applyTextEdits(content, parsed.data.edits)
     if ('error' in applied) return { saved: false, error: applied.error }
     return this.save(artifact, applied.content, parsed.data.summary, parsed.data.saveAsNew, parsed.data.title)
+  }
+
+  /** A new artifact from content the assistant wrote: validated and saved like any other. */
+  private async createNew(args: Record<string, unknown>) {
+    const parsed = z.object({ title: z.string().trim().min(1).max(200), content: z.string().min(1), kind: z.enum(['report', 'page', 'document']).default('report') }).safeParse(args)
+    if (!parsed.success) throw new Error('Pass a title and the complete content (and optionally kind: report, page or document).')
+    if (this.context.guestCopy) throw new Error('A visitor\'s copy cannot make new artifacts.')
+    const artifact = await this.artifact()
+    const { artifact: created } = await createArtifact({ organizationId: this.organizationId, userId: this.userId, kind: parsed.data.kind, title: parsed.data.title, content: parsed.data.content, agentTaskId: artifact.agentTaskId })
+    return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
+  }
+
+  /** The artifact renderer builds a complete React app from a brief and evidence; it is saved as a new artifact. */
+  private async renderNew(args: Record<string, unknown>) {
+    const parsed = z.object({ title: z.string().trim().min(1).max(200), brief: z.string().trim().min(20).max(20_000), evidence: z.string().max(200_000).optional() }).safeParse(args)
+    if (!parsed.success) throw new Error('Pass a title and a brief of at least a sentence (and the evidence to build from).')
+    if (this.context.guestCopy) throw new Error('A visitor\'s copy cannot make new artifacts.')
+    const artifact = await this.artifact()
+    const { renderArtifact } = await import('@/features/agents/artifact-renderer')
+    const component = await renderArtifact({
+      objective: `Build an interactive artifact titled "${parsed.data.title}".`,
+      request: parsed.data.brief,
+      draft: parsed.data.brief,
+      evidence: parsed.data.evidence ?? '',
+      ledger: { organizationId: this.organizationId, userId: this.userId, agentExecutionId: this.context.executionId },
+    })
+    const { artifact: created } = await createArtifact({ organizationId: this.organizationId, userId: this.userId, kind: 'page', title: parsed.data.title, content: component, agentTaskId: artifact.agentTaskId })
+    return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Rendered and saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
   }
 
   /** Save content as the artifact's next version, or as a new artifact. */

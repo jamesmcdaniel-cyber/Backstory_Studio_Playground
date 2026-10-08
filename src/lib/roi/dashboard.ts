@@ -163,6 +163,28 @@ function viewFacts(facts: RoiFacts, view: RoiView): RoiFacts {
   return { ...facts, U: { ...facts.U, labels, m: matrices, mx } }
 }
 
+/** The report's look over the brand defaults: accent, series, density, a style sheet. */
+function customStyle(view: RoiView): string {
+  const style = view.style
+  if (!style) return ''
+  const vars: string[] = []
+  if (style.accent) vars.push(`--horizon:${style.accent}`, `--horizon-deep:${style.accent}`)
+  style.series?.forEach((hex, index) => vars.push(`--s${index + 1}:${hex}`))
+  const rules: string[] = []
+  if (vars.length) rules.push(`:root,:root[data-theme="dark"]{${vars.join(';')}}`)
+  if (style.density === 'compact') rules.push('body{font-size:15px}.block,.cards3,.cards2,.calc{margin-top:28px;padding-top:20px}.chart{height:320px}.chart.tall{height:400px}.chart.short{height:240px}section.panel{padding:28px 0 56px}')
+  if (style.css) rules.push(style.css.replace(/<\/style/gi, '<\\/style'))
+  return rules.length ? `<style id="roiCustomStyle">${rules.join('\n')}</style>` : ''
+}
+
+/** The blocks the assistant added to a tab, at its start or its end. */
+function customSections(view: RoiView, tab: string, position: 'start' | 'end'): string {
+  return view.sections
+    .filter((section) => section.tab === tab && (section.position ?? 'end') === position)
+    .map((section) => `<div class="block full custom-section" data-custom="${escapeHtml(section.id)}"><div><h3>${escapeHtml(section.title)}</h3><div class="custom-body">${section.html}</div></div></div>`)
+    .join('\n')
+}
+
 function a360Bundle(a360: Account360Facts | null | undefined) {
   if (!a360?.BUNDLE?.accounts?.length) return null
   return { B: a360.BUNDLE, M: a360.META, notes: a360.notes ?? [] }
@@ -220,6 +242,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
 <link href="https://fonts.googleapis.com/css2?family=Cardo:wght@400;700&family=Chivo+Mono:wght@400;500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
 <script src="/vendor/plotly.min.js"></script>
 <style>${REPORT_CSS}${view.hiddenSections.map((section) => `[data-section="${section.replace(/[^a-zA-Z0-9]/g, '')}"]{display:none!important}`).join('')}</style>
+${customStyle(view)}
 </head>
 <body>
 <header class="mast">
@@ -278,6 +301,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   <div class="section-lbl">What the data shows</div>
   <h2>The ROI story in ${findingsWord} numbers</h2>
   <p class="intro">Each figure is traceable to a view in this readout. The chain runs from product usage, to rep behaviour, to deal engagement, to outcomes.</p>
+${customSections(view, 'summary', 'start')}
   <div class="fgrid" id="findings" data-section="findings"></div>
   <div data-section="scorecard" id="scoreBlock">
     <div class="section-lbl">Scorecard · <span id="scoreWin"></span></div>
@@ -315,12 +339,14 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
       <p>A directional model, not a forecast. It assumes lifted deals take on the medium-engagement win rate observed in this data.</p>
     </div>
   </div>
+${customSections(view, 'summary', 'end')}
 </div></section>
 
 <section class="panel" id="p-activity"><div class="wrap">
   <div class="section-lbl">Activity trends</div>
   <h2>What reps do, averaged per rep per month</h2>
   <p class="intro">Each rep's monthly value is averaged across the window, then averaged across reps. Pick a metric, a population and the baseline and observation windows.</p>
+${customSections(view, 'activity', 'start')}
   <div class="dyn callout" id="leadDyn"></div>
   <div class="controls"><div class="ctl"><span>Metric</span><div class="chips" id="leadMetric"></div></div></div>
   <div class="controls">
@@ -358,12 +384,14 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
     <div><h3>Senior engagement, three periods</h3><p class="sub">Director, VP and executive meetings per rep per month: the same window a year earlier, the baseline, and the observation window.</p><div class="chart" id="seniorChart"></div></div>
     ${aside('What this shows', notes.mix)}
   </div>
+${customSections(view, 'activity', 'end')}
 </div></section>
 
 <section class="panel" id="p-adoption"><div class="wrap">
   <div class="section-lbl">Adoption impact</div>
   <h2>What Backstory adopters do differently</h2>
   <p class="intro" id="adoptionIntro"></p>
+${customSections(view, 'adoption', 'start')}
   <div class="controls">
     <div class="ctl"><span>View</span><div class="seg" id="adoptView"><button type="button" aria-pressed="true" data-v="tiers">High, medium and low tiers</button><button type="button" aria-pressed="false" data-v="users">Users vs non-users</button></div></div>
     <div class="ctl"><span>Window</span><div class="seg" id="adoptWin"><button type="button" aria-pressed="true" data-v="obs">Last 6 months</button><button type="button" aria-pressed="false" data-v="l12">Last 12 months</button></div></div>
@@ -420,12 +448,14 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
       <p class="sub right" id="rosterCount"></p>
     </div>
   </div>
+${customSections(view, 'adoption', 'end')}
 </div></section>
 
 <section class="panel" id="p-deals"><div class="wrap">
   <div class="section-lbl">Deal engagement</div>
   <h2>Engagement against win rate and velocity</h2>
   <p class="intro">Every closed deal with a Backstory engagement score. Deals that closed within seven days of creation are booked-on-creation orders that win almost every time; they are excluded by default so they don't mask the relationship.</p>
+${customSections(view, 'deals', 'start')}
   <div class="controls">
     <div class="ctl"><span>Group by</span><div class="seg" id="dealView"><button type="button" aria-pressed="true" data-v="deciles">Engagement deciles</button><button type="button" aria-pressed="false" data-v="levels">Engagement levels</button></div></div>
     <div class="ctl"><span>Deal type</span><select id="dealType"></select></div>
@@ -459,12 +489,14 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
         <div class="tbl-wrap tall"><table id="accTbl"></table></div></div>
     </div>
   </div>
+${customSections(view, 'deals', 'end')}
 </div></section>
 
 <section class="panel" id="p-stage"><div class="wrap">
   <div class="section-lbl">Stage and persona</div>
   <h2>Where engagement happens, and who moves the deal</h2>
   <p class="intro" id="stageIntro"></p>
+${customSections(view, 'stage', 'start')}
   <div class="tiles static" id="stageKpis" data-section="stageKpis"></div>
   <div class="yoy" id="stageYoy" data-section="stageFindings"></div>
   <div data-section="stageHeat" class="block" id="heatBlock">
@@ -502,6 +534,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
     </div>
     ${aside('What this shows', notes.breadth)}
   </div>
+${customSections(view, 'stage', 'end')}
 </div></section>
 
 <section class="panel" id="p-accounts"><div class="wrap">
@@ -509,6 +542,7 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
   <h2>Which accounts the team works, and what they carry</h2>
   <div id="a360Wrap">
     <p class="intro" id="a360Intro"></p>
+${customSections(view, 'accounts', 'start')}
     <div class="controls"><div class="ctl"><span>Months</span><div class="seg" id="a360Range"></div></div><span class="sub" id="a360RangeLabel"></span></div>
     <div class="quads" id="a360Quads"></div>
     <div class="tiles static" id="a360Kpis" data-section="a360Kpis"></div>
@@ -536,11 +570,13 @@ export function renderRoiDashboard(rawFacts: RoiFacts, narrative: RoiNarrative, 
         <div class="tbl-wrap tall"><table id="a360Tbl"></table></div></div>
     </div>
   </div>
+${customSections(view, 'accounts', 'end')}
 </div></section>
 
 <section class="panel" id="p-method"><div class="wrap method">
   <div class="section-lbl">Method</div>
   <h2>Method and caveats</h2>
+${customSections(view, 'method', 'start')}
   <h3>This analysis</h3>
   <ul>
     ${reason ? `<li>Run for: ${escapeHtml(reason)}.</li>` : ''}
@@ -585,6 +621,7 @@ ${facts.AGG ? `  <h3>Where the numbers come from</h3>
     <li>Pipeline and bookings aren't normalised for quota, territory or role mix.</li>
     <li>The upside model uses median won deal value by default because amounts are heavily skewed; the P95-capped mean is shown for comparison.</li>
   </ul>
+${customSections(view, 'method', 'end')}
 </div></section>
 </main>
 <footer><div class="wrap">Backstory value readout for ${escapeHtml(account)}${generatedLabel ? ` · ${escapeHtml(generatedLabel)}` : ''} · prepared with Backstory activity and opportunity data · computed by the ROI Analyst</div></footer>
@@ -600,7 +637,7 @@ const A360 = ${scriptJson(a360)};
 const AGG = ${scriptJson(facts.AGG ?? null)};
 const N = ${scriptJson(normalized)};
 const CFG = ${scriptJson(runConfig)};
-const VIEW = ${scriptJson({ hiddenTabs: view.hiddenTabs })};
+const VIEW = ${scriptJson({ hiddenTabs: view.hiddenTabs, charts: view.charts, sectionTitles: view.sectionTitles })};
 </script>
 <script>${REPORT_SCRIPT}</script>
 </body>

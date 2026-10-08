@@ -441,7 +441,7 @@ export async function loadTools(
     // No connector discovery or credential lookup occurs for personal copies.
     // The code sandbox can compute on inline data, never repository files.
     const planes = [
-      { provider: 'artifact', tools: artifactToolsFor('report').map(tool => {
+      { provider: 'artifact', tools: artifactToolsFor('report', { templateCopy: true }).map(tool => {
         const schema = tool.inputSchema as { properties?: Record<string, unknown> }
         return { ...tool, description: tool.description.replace(/ Set `saveAsNew: true`[\s\S]*$/, ''), inputSchema: { ...tool.inputSchema, properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== 'saveAsNew' && key !== 'title')) } }
       }), client: new ArtifactToolClient(organizationId, ownerUserId ?? '', artifact) },

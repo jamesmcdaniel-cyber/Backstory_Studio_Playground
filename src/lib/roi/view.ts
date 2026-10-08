@@ -82,6 +82,91 @@ export const ROI_SECTIONS = {
 } as const
 export type RoiSection = keyof typeof ROI_SECTIONS
 
+/** Every chart the report draws, by its element id, for set_chart. */
+export const ROI_CHARTS = {
+  heroStrip: 'Masthead: win rate by engagement decile, the headline chart',
+  ovDonut: 'Executive summary: usage cohorts donut',
+  ovPipeline: 'Executive summary: pipeline created by adoption tier',
+  leadTrend: 'Activity trends: the monthly trend of the chosen metric',
+  periodChart: 'Activity trends: period comparison, change per metric',
+  mixChart: 'Activity trends: meetings by channel or emails by direction',
+  seniorChart: 'Activity trends: senior engagement across three periods',
+  adoptIndex: 'Adoption impact (tiers): engagement indexed to low adopters',
+  adoptSenior: 'Adoption impact (tiers): senior engagement by tier',
+  adoptPipeline: 'Adoption impact (tiers): pipeline created by tier',
+  adoptDonut: 'Adoption impact (tiers): cohort composition donut',
+  adoptTrend: 'Adoption impact (tiers): the tier gap over time',
+  usersLift: 'Adoption impact (users): how much more users do',
+  usersSenior: 'Adoption impact (users): senior engagement, users vs non-users',
+  usersPipeline: 'Adoption impact (users): pipeline created, users vs non-users',
+  usersTrend: 'Adoption impact (users): the gap over time',
+  dealWin: 'Deal engagement: win rate by decile, level, month or fiscal year',
+  dealVel: 'Deal engagement: deal velocity',
+  dealVol: 'Deal engagement: deal volume by engagement level',
+  accBubble: 'Deal engagement: account win rate against engagement (bubbles)',
+  stageHeat: 'Stage and persona: the stage × persona heatmap',
+  stageWin: 'Stage and persona: win rate by stage',
+  stageProf: 'Stage and persona: engagement by stage at time of activity',
+  stageSurv: 'Stage and persona: early engagement among deals that reached late stage',
+  stagePers: 'Stage and persona: persona involvement',
+  stageBreadth: 'Stage and persona: buying-committee breadth',
+  stageEarlyQ: 'Stage and persona: early activity intensity',
+  a360Cohorts: 'Account engagement: pipeline per account by Account 360 cohort',
+  a360Scatter: 'Account engagement: sessions against pipeline per account',
+  a360Trend: 'Account engagement: pipeline by month',
+} as const
+export type RoiChart = keyof typeof ROI_CHARTS
+
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Colours are six-digit hex, like #2878C0.')
+
+/** How one chart is drawn, over the report's defaults. */
+export const chartOptionsSchema = z.object({
+  kind: z.enum(['bar', 'line', 'area']).optional(),
+  labels: z.boolean().optional(),
+  height: z.enum(['short', 'normal', 'tall']).optional(),
+  title: z.string().trim().min(1).max(120).optional(),
+  subtitle: z.string().trim().max(300).optional(),
+  colors: z.array(hexColor).min(1).max(6).optional(),
+})
+export type RoiChartOptions = z.infer<typeof chartOptionsSchema>
+
+export const ROI_CUSTOM_HTML_MAX = 20_000
+export const ROI_CUSTOM_SECTIONS_MAX = 12
+
+/** A block the assistant adds to a tab: its own HTML, drawn with the report's styles. */
+export const customSectionSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/, 'Section ids are lower-case letters, digits and dashes.'),
+  tab: z.enum(['summary', ...ROI_TABS] as ['summary', ...typeof ROI_TABS[number][]]),
+  title: z.string().trim().min(1).max(120),
+  html: z.string().min(1).max(ROI_CUSTOM_HTML_MAX),
+  /** Where on the tab: before its first block, or after its last (the default). */
+  position: z.enum(['start', 'end']).optional(),
+})
+export type RoiCustomSection = z.infer<typeof customSectionSchema>
+
+/** The report's look, over the brand defaults. */
+export const styleSchema = z.object({
+  accent: hexColor.optional(),
+  series: z.array(hexColor).min(1).max(6).optional(),
+  density: z.enum(['comfortable', 'compact']).optional(),
+  css: z.string().max(8_000).optional(),
+})
+export type RoiStyle = z.infer<typeof styleSchema>
+
+/** Why a custom section's HTML is refused: the report's own script and sandbox stay the report's. */
+export function unsafeCustomHtml(html: string): string | null {
+  if (/<\s*(script|iframe|object|embed|link|meta|base|form)\b/i.test(html)) return 'A custom section is HTML and CSS only: no script, iframe, object, embed, link, meta, base or form tags.'
+  if (/\bon[a-z]+\s*=/i.test(html)) return 'A custom section cannot carry inline event handlers (onclick and the like).'
+  if (/javascript:/i.test(html)) return 'A custom section cannot use javascript: URLs.'
+  return null
+}
+
+/** Why a style sheet is refused. */
+export function unsafeCustomCss(css: string): string | null {
+  if (/@import|<\/style|expression\s*\(|behavior\s*:/i.test(css)) return 'Custom CSS cannot import, close the style tag, or use expression() or behavior:.'
+  return null
+}
+
 /** Section ids from the consolidated layout that became another block. */
 const LEGACY_SECTIONS: Record<string, RoiSection> = { activityTiles: 'leadTable', cohortKpis: 'adoptKpis', cohortTable: 'adoptTable' }
 
@@ -103,6 +188,14 @@ export const roiViewSchema = z.object({
   metricLabels: z.record(z.string(), z.string().max(60)).default({}),
   extraMetrics: z.array(extraMetricSchema).max(12).default([]),
   defaultComparison: z.string().optional(),
+  /** The look: accent, series colours, density, a style sheet. */
+  style: styleSchema.optional(),
+  /** Per-chart drawing options, keyed by chart id (ROI_CHARTS). */
+  charts: z.record(z.string(), chartOptionsSchema).default({}),
+  /** Blocks the assistant added, drawn on their tabs. */
+  sections: z.array(customSectionSchema).max(ROI_CUSTOM_SECTIONS_MAX).default([]),
+  /** Headings changed on the report's own sections, keyed by section id. */
+  sectionTitles: z.record(z.string(), z.string().trim().min(1).max(120)).default({}),
 })
 export type RoiView = z.infer<typeof roiViewSchema>
 
@@ -114,7 +207,7 @@ function normalizeTabs(tabs: string[]): RoiTab[] {
 /** A tab named by today's id or an earlier layout's. */
 const tabSchema = z.preprocess((value) => (typeof value === 'string' && LEGACY_TABS[value] ? LEGACY_TABS[value] : value), z.enum(ROI_TABS))
 
-export const EMPTY_VIEW: RoiView = { hiddenTabs: [], hiddenSections: [], hiddenMetrics: [], metricLabels: {}, extraMetrics: [] }
+export const EMPTY_VIEW: RoiView = { hiddenTabs: [], hiddenSections: [], hiddenMetrics: [], metricLabels: {}, extraMetrics: [], charts: {}, sections: [], sectionTitles: {} }
 
 export function readView(value: unknown): RoiView {
   const parsed = roiViewSchema.safeParse(value ?? {})
@@ -146,6 +239,13 @@ export const roiOperationSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('upsert_watch_item'), index: z.number().int().min(0).optional(), item: z.object({ lead: z.string().min(1).max(160), text: z.string().min(1).max(1_200) }) }),
   z.object({ op: z.literal('set_note'), note: z.enum(ROI_NOTE_KEYS), paragraphs: z.array(z.string().min(1).max(2_000)).min(1).max(4) }),
   z.object({ op: z.literal('add_caveat'), text: z.string().min(1).max(800) }),
+  z.object({ op: z.literal('set_style'), style: styleSchema }),
+  z.object({ op: z.literal('reset_style') }),
+  z.object({ op: z.literal('set_chart'), chart: z.string(), options: chartOptionsSchema }),
+  z.object({ op: z.literal('reset_chart'), chart: z.string() }),
+  z.object({ op: z.literal('add_section'), customSection: customSectionSchema }),
+  z.object({ op: z.literal('remove_section'), id: z.string() }),
+  z.object({ op: z.literal('set_section_title'), section: z.string(), title: z.string().trim().min(1).max(120) }),
 ])
 export type RoiOperation = z.infer<typeof roiOperationSchema>
 
@@ -301,6 +401,58 @@ export function applyOperations(current: { view: RoiView; narrative: RoiNarrativ
         narrative.caveats = [...(narrative.caveats ?? []), operation.text]
         applied.push('Added a caveat')
         break
+      case 'set_style': {
+        const cssProblem = operation.style.css ? unsafeCustomCss(operation.style.css) : null
+        if (cssProblem) { rejected.push(cssProblem); break }
+        view.style = { ...(view.style ?? {}), ...operation.style }
+        const what = [operation.style.accent ? `accent ${operation.style.accent}` : '', operation.style.series ? `${operation.style.series.length} series colours` : '', operation.style.density ? `${operation.style.density} density` : '', operation.style.css ? 'custom CSS' : ''].filter(Boolean)
+        applied.push(`Styled the report${what.length ? `: ${what.join(', ')}` : ''}`)
+        break
+      }
+      case 'reset_style':
+        delete view.style
+        applied.push('Reset the report to the brand style')
+        break
+      case 'set_chart':
+      case 'reset_chart': {
+        if (!(operation.chart in ROI_CHARTS)) {
+          rejected.push(`No chart "${operation.chart}". Charts: ${Object.keys(ROI_CHARTS).join(', ')}.`)
+          break
+        }
+        if (operation.op === 'reset_chart') {
+          delete view.charts[operation.chart]
+          applied.push(`Reset the ${operation.chart} chart to its default drawing`)
+          break
+        }
+        view.charts[operation.chart] = { ...(view.charts[operation.chart] ?? {}), ...operation.options }
+        applied.push(`Changed the ${operation.chart} chart: ${Object.keys(operation.options).join(', ')}`)
+        break
+      }
+      case 'add_section': {
+        const section = operation.customSection
+        const problem = unsafeCustomHtml(section.html)
+        if (problem) { rejected.push(problem); break }
+        const existing = view.sections.findIndex((item) => item.id === section.id)
+        if (existing < 0 && view.sections.length >= ROI_CUSTOM_SECTIONS_MAX) { rejected.push(`The report holds at most ${ROI_CUSTOM_SECTIONS_MAX} added sections; remove one first.`); break }
+        if (existing >= 0) view.sections[existing] = section
+        else view.sections.push(section)
+        applied.push(`${existing >= 0 ? 'Rewrote' : 'Added'} the section "${section.title}" on the ${section.tab === 'summary' ? 'Executive summary' : ROI_TAB_LABEL[section.tab]} tab`)
+        break
+      }
+      case 'remove_section': {
+        const index = view.sections.findIndex((item) => item.id === operation.id)
+        if (index < 0) { rejected.push(`No added section "${operation.id}". Added sections: ${view.sections.map((item) => item.id).join(', ') || 'none'}.`); break }
+        applied.push(`Removed the section "${view.sections[index].title}"`)
+        view.sections.splice(index, 1)
+        break
+      }
+      case 'set_section_title': {
+        const section = LEGACY_SECTIONS[operation.section] ?? operation.section
+        if (!(section in ROI_SECTIONS)) { rejected.push(`No section "${operation.section}" to retitle. Sections: ${Object.keys(ROI_SECTIONS).join(', ')}.`); break }
+        view.sectionTitles[section] = operation.title
+        applied.push(`Retitled ${ROI_SECTIONS[section as RoiSection]} to "${operation.title}"`)
+        break
+      }
     }
   }
   if (view.hiddenTabs.length >= ROI_TABS.length) {
@@ -318,5 +470,9 @@ export function describeView(view: RoiView, metricLabels: Record<string, string>
     metrics: Object.entries(metricLabels).map(([key, label]) => ({ key, label: view.metricLabels[key] ?? label, hidden: view.hiddenMetrics.includes(key), added: view.extraMetrics.some((m) => m.key === key) })),
     addedMetrics: view.extraMetrics,
     defaultComparison: view.defaultComparison ?? null,
+    charts: Object.entries(ROI_CHARTS).map(([chart, what]) => ({ chart, what, ...(view.charts[chart] ? { options: view.charts[chart] } : {}) })),
+    style: view.style ?? null,
+    addedSections: view.sections.map(({ html, ...section }) => ({ ...section, htmlChars: html.length })),
+    sectionTitles: view.sectionTitles,
   }
 }

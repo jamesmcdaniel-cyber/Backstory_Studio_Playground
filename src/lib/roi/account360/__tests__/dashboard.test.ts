@@ -88,4 +88,10 @@ test('a page can be rebuilt for another account but is never edited through an R
   assert.ok(page.includes('start_roi_analysis') && page.includes('list_roi_accounts') && page.includes('edit_artifact'))
   assert.ok(!page.includes('update_roi_dashboard'))
   assert.ok(!artifactToolsFor('document').map((tool) => tool.name).includes('start_roi_analysis'))
+  // Every assistant can make a new artifact, by writing it or by having the renderer build it; an ROI dashboard's can too, though it never edits the page as text.
+  const roi = artifactToolsFor('roi_dashboard').map((tool) => tool.name)
+  assert.deepEqual(roi, ['get_artifact', 'create_artifact', 'render_artifact', 'update_roi_dashboard', 'list_roi_accounts', 'start_roi_analysis'])
+  assert.ok(artifactToolsFor('document').map((tool) => tool.name).includes('create_artifact'))
+  assert.ok(page.includes('render_artifact'))
+  assert.ok(!artifactToolsFor('page', { templateCopy: true }).map((tool) => tool.name).some((name) => name === 'create_artifact' || name === 'render_artifact'), 'a template copy only edits itself')
 })

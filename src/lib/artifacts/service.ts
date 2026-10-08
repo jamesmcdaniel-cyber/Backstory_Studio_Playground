@@ -717,15 +717,22 @@ export async function replyToArtifactQuestion(params: { organizationId: string; 
   // The exchange becomes part of the conversation: the question as the
   // assistant's message, the answer as the person's, then the run carries on.
   const now = new Date().toISOString()
-  const { question, ...resumed } = waiting
-  const next: ArtifactChatMessage[] = [
-    ...chat.slice(0, index),
-    { role: 'agent', content: question!, status: 'completed', createdAt: waiting.createdAt },
-    { role: 'user', content: answer, createdAt: now },
-    { ...resumed, createdAt: now, answeredQuestionId: str((execution.metadata as { pendingQuestion?: { toolCallId?: unknown } } | null)?.pendingQuestion?.toolCallId) ?? undefined },
-    ...chat.slice(index + 1),
-  ]
-  await prisma.artifact.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue(next) } })
+  const answeredQuestionId = str((execution.metadata as { pendingQuestion?: { toolCallId?: unknown } } | null)?.pendingQuestion?.toolCallId) ?? undefined
+  // Written as a compare-and-swap on the conversation: a poll settling another
+  // message meanwhile is re-read and the exchange placed on the fresh chat; a
+  // question already answered (by a racing reply) is written once, not twice.
+  await rewriteChat(prisma, params.organizationId, row.id, (current) => {
+    const at = current.findIndex((m) => m.role === 'agent' && m.status === 'pending' && m.executionId === waiting.executionId && m.question)
+    if (at < 0) return null
+    const { question, ...resumed } = current[at]
+    return [
+      ...current.slice(0, at),
+      { role: 'agent', content: question!, status: 'completed', createdAt: current[at].createdAt },
+      { role: 'user', content: answer, createdAt: now },
+      { ...resumed, createdAt: now, answeredQuestionId },
+      ...current.slice(at + 1),
+    ]
+  }, row)
   const { resumeAgentExecution } = await import('@/features/agents/execute-agent')
   try {
     await resumeAgentExecution({ executionId: execution.id, agentId: execution.agentTaskId, organizationId: params.organizationId, userId: execution.userId, reply: answer })

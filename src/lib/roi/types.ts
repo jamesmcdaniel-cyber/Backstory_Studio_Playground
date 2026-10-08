@@ -132,6 +132,10 @@ export type RoiPageSetup = {
   defaultAccount: string | null
   /** May load an account's extracts from the panel (platform operators). */
   canLoadExtracts: boolean
+  /** Accounts kept off the page (the analyst's owner chooses). */
+  hiddenAccounts: string[]
+  /** Hidden accounts the page would otherwise list, for the owner to bring back. */
+  hiddenAvailable: string[]
 }
 
 /** Opening an account on this person's page. */

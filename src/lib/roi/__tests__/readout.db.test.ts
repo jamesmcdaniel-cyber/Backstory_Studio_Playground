@@ -139,3 +139,27 @@ if (process.env.TEST_DATABASE_URL) {
     }
   })
 }
+
+if (process.env.TEST_DATABASE_URL) {
+  test('accounts kept off the page are not listed — Iron Mountain until the owner says otherwise', async () => {
+    const { prisma } = await import('@/lib/prisma')
+    const { seedTestOrg } = await import('@/lib/server/__tests__/test-auth')
+    const { importReadout } = await import('../readout-service')
+    const { loadRoiPageSetup } = await import('../page-setup')
+    const { findRoiAgent, setRoiHiddenAccounts } = await import('../agent')
+    const s = await seedTestOrg(prisma)
+    try {
+      await importReadout({ organizationId: s.organizationId, userId: s.userId, html: readoutHtml(), account: 'Iron Mountain' })
+      await importReadout({ organizationId: s.organizationId, userId: s.userId, html: readoutHtml(), account: 'HP' })
+      const setupOf = () => loadRoiPageSetup({ organizationId: s.organizationId, userId: s.userId, role: 'ADMIN', canWriteAgents: true })
+      const first = await setupOf()
+      assert.deepEqual(first.accounts.map((a) => a.account), ['Backstory', 'HP'])
+      assert.deepEqual(first.hiddenAccounts, ['Iron Mountain'])
+      assert.deepEqual(first.hiddenAvailable, ['Iron Mountain'])
+      await setRoiHiddenAccounts(s.organizationId, (await findRoiAgent(s.organizationId))!, [])
+      assert.deepEqual((await setupOf()).accounts.map((a) => a.account), ['Backstory', 'HP', 'Iron Mountain'])
+    } finally {
+      await s.cleanup()
+    }
+  })
+}

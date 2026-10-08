@@ -142,6 +142,27 @@ export function roiDataFlowIdOf(agent: Pick<AgentTask, 'metadata'> | null): stri
 }
 
 /** Connect (or disconnect, with null) the data flow. */
+/**
+ * Accounts kept off the ROI page (their reports and data stay; the page just
+ * does not list them). The analyst's owner changes the list from the page.
+ * Until it has been set, Iron Mountain is hidden — the user asked on
+ * 2026-10-07 for Backstory and HP only, for now.
+ */
+export const ROI_DEFAULT_HIDDEN_ACCOUNTS = ['Iron Mountain']
+
+export function roiHiddenAccountsOf(agent: Pick<AgentTask, 'metadata'> | null): string[] {
+  const list = agent ? metadataOf(agent).roiHiddenAccounts : undefined
+  return Array.isArray(list) ? list.filter((name): name is string => typeof name === 'string' && name.trim().length > 0) : ROI_DEFAULT_HIDDEN_ACCOUNTS
+}
+
+export async function setRoiHiddenAccounts(organizationId: string, agent: AgentTask, accounts: string[]): Promise<AgentTask> {
+  const unique = [...new Map(accounts.map((name) => [name.trim().toLowerCase(), name.trim()])).values()].filter(Boolean).slice(0, 200)
+  return prisma.agentTask.update({
+    where: { id: agent.id, organizationId },
+    data: { metadata: { ...metadataOf(agent), roiHiddenAccounts: unique } as Prisma.InputJsonValue },
+  })
+}
+
 export async function setRoiDataFlow(organizationId: string, agent: AgentTask, flowId: string | null): Promise<AgentTask> {
   return prisma.agentTask.update({
     where: { id: agent.id, organizationId },

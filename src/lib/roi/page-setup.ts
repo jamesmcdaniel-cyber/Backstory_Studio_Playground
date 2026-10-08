@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { backstoryMcpReady } from '@/lib/mcp/backstory-connection'
-import { findRoiAgent, roiDataFlowIdOf } from './agent'
+import { findRoiAgent, roiDataFlowIdOf, roiHiddenAccountsOf } from './agent'
 import { coversFor, listRoiSources } from './sources'
 import { listAccountReports, ROI_ASYNC_AFTER_SECONDS, ROI_EXPECTED_SECONDS, ROI_RECONFIGURE_EXPECTED_SECONDS, type AccountReport } from './service'
 import { loadPersonalPage, type PersonalPage } from './personal-page'
@@ -102,6 +102,11 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     const previous = await prisma.roiAnalysis.findMany({ where: { organizationId: params.organizationId }, distinct: ['account'], orderBy: { createdAt: 'desc' }, take: 200, select: { account: true } })
     for (const row of previous) add(row.account, true)
   }
+  // Accounts the analyst's owner keeps off the page are not listed.
+  const hidden = roiHiddenAccountsOf(agent)
+  const hiddenKeys = new Set(hidden.map(key))
+  const hiddenAvailable = accounts.filter((item) => hiddenKeys.has(key(item.account))).map((item) => item.account)
+  for (let i = accounts.length - 1; i >= 0; i -= 1) if (hiddenKeys.has(key(accounts[i].account)) && key(accounts[i].account) !== key(ROI_DEFAULT_ACCOUNT)) accounts.splice(i, 1)
   accounts.sort((a, b) => a.account.localeCompare(b.account))
   return {
     accounts,
@@ -122,5 +127,7 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
     // Everyone starts on Backstory: its readout, or the business as it stands, live.
     defaultAccount: accounts.find((item) => key(item.account) === key(ROI_DEFAULT_ACCOUNT))?.account ?? null,
     canLoadExtracts: params.canLoadExtracts === true,
+    hiddenAccounts: hidden,
+    hiddenAvailable,
   }
 }

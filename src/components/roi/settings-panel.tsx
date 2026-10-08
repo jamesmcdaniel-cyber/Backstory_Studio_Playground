@@ -339,6 +339,7 @@ export function SettingsPanel({ open, onClose, setup, account, onAccountChange, 
 
           <PanelSection id="roi-section-data" title="Data source and analyst" summary={dataSummary} open={isOpen('data')} onOpenChange={setOpen('data')}>
             <PageSetupCard setup={setup} onDataSourceChange={onDataSourceChange} />
+            {setup.agent.canConfigure && <AccountVisibility setup={setup} onChanged={onExtractsLoaded} />}
             {account && account.covers.length > 0 && (
               <p className="mt-2 text-xs text-muted-foreground">{account.account}'s extracts feed {account.covers.join(', ')}.</p>
             )}
@@ -397,6 +398,61 @@ export function SettingsPanel({ open, onClose, setup, account, onAccountChange, 
       </div>
     </div>,
     document.body,
+  )
+}
+
+/**
+ * Which accounts the ROI page lists (the analyst's owner chooses). Hidden
+ * accounts keep their reports and data; the page just does not offer them.
+ */
+function AccountVisibility({ setup, onChanged }: { setup: RoiPageSetup; onChanged: () => void }) {
+  const [saving, setSaving] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const hidden = new Set(setup.hiddenAccounts.map((name) => name.trim().toLowerCase()))
+  const names = [...new Map([...setup.accounts.map((entry) => entry.account), ...setup.hiddenAvailable].map((name) => [name.trim().toLowerCase(), name])).values()].sort((a, b) => a.localeCompare(b))
+  const toggle = async (name: string) => {
+    const key = name.trim().toLowerCase()
+    const next = hidden.has(key) ? setup.hiddenAccounts.filter((item) => item.trim().toLowerCase() !== key) : [...setup.hiddenAccounts, name]
+    setSaving(name)
+    setError(null)
+    try {
+      const response = await fetch('/api/roi/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hiddenAccounts: next }) })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(apiErrorMessage(data, 'The account list could not be saved.'))
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The account list could not be saved.')
+    } finally {
+      setSaving(null)
+    }
+  }
+  if (!names.length) return null
+  return (
+    <div className="mt-5 border-t pt-4">
+      <p className="text-xs font-medium">Accounts on this page</p>
+      <p className="mb-2 mt-0.5 text-xs text-muted-foreground">Hidden accounts keep their reports and data; the page just does not list them.</p>
+      <ul className="space-y-1">
+        {names.map((name) => {
+          const shown = !hidden.has(name.trim().toLowerCase())
+          return (
+            <li key={name} className="flex items-center justify-between gap-2 rounded-md px-1 py-0.5">
+              <span className={cn('truncate text-sm', !shown && 'text-muted-foreground line-through')}>{name}</span>
+              <button
+                type="button"
+                onClick={() => void toggle(name)}
+                disabled={saving !== null || name.trim().toLowerCase() === 'backstory'}
+                aria-pressed={shown}
+                aria-label={`${shown ? 'Hide' : 'Show'} ${name} on the ROI page`}
+                className={TEXT_BUTTON + ' disabled:opacity-50'}
+              >
+                {saving === name ? 'Saving…' : shown ? 'Hide' : 'Show'}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      {error && <p role="alert" className="mt-1 text-xs text-red-700">{error}</p>}
+    </div>
   )
 }
 

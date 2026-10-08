@@ -29,6 +29,23 @@ import { useAuth } from '@/hooks/use-auth'
  */
 export type ArtifactFrameRenderer = (frame: { artifactId: string; versionId: string; title: string; writable: boolean; className: string }) => React.ReactNode
 
+/**
+ * The last copy of each artifact this tab showed. Opening one again (back to
+ * the ROI page, a revisited artifact) draws it straight away and refreshes in
+ * the background — the refresh asks only whether it changed. Memory only, so
+ * it lasts for the session and never outlives a reload.
+ */
+const VIEW_CACHE = new Map<string, ArtifactView>()
+const VIEW_CACHE_MAX = 12
+function remember(id: string, view: ArtifactView) {
+  VIEW_CACHE.delete(id)
+  VIEW_CACHE.set(id, view)
+  if (VIEW_CACHE.size > VIEW_CACHE_MAX) {
+    const oldest = VIEW_CACHE.keys().next().value
+    if (oldest !== undefined) VIEW_CACHE.delete(oldest)
+  }
+}
+
 export function ArtifactViewer({ id, embedded = false, showAssistant = true, renderFrame, showVersion, onVersions }: {
   id: string
   /**
@@ -47,7 +64,7 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
   onVersions?: (versions: { shownVersionId: string | null; currentVersionId: string | null }) => void
 }) {
   const { can } = useAuth()
-  const [artifact, setArtifact] = useState<ArtifactView | null>(null)
+  const [artifact, setArtifact] = useState<ArtifactView | null>(() => VIEW_CACHE.get(id) ?? null)
   const [error, setError] = useState<string | null>(null)
   const [versionId, setVersionId] = useState<string | null>(null)
   const [message, setMessage] = useState('')
@@ -125,7 +142,15 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
   // conversation, not in the Runs panel.
   const awaiting = pending?.question ?? null
 
-  useEffect(() => { artifactRef.current = null; setArtifact(null); setVersionId(null); void refresh(); return () => { requestRef.current?.abort(); requestRef.current = null } }, [refresh])
+  useEffect(() => {
+    const cached = VIEW_CACHE.get(id) ?? null
+    artifactRef.current = cached
+    setArtifact(cached)
+    setVersionId(null)
+    void refresh()
+    return () => { requestRef.current?.abort(); requestRef.current = null }
+  }, [refresh, id])
+  useEffect(() => { if (artifact) remember(id, artifact) }, [artifact, id])
   // External flows and other tabs can publish even when this viewer is idle.
   // Pause in background tabs and refresh immediately when they become visible.
   useEffect(() => startVisibleInterval(() => void refresh(), busy ? 3_000 : 10_000), [busy, refresh])

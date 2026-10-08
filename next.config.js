@@ -15,8 +15,11 @@ const nextConfig = {
   },
   async headers() {
     return [
+      // Every API response is no-store — except a saved artifact version's page,
+      // which never changes once saved: its route sets its own caching (see
+      // src/app/api/artifacts/[id]/versions/[versionId]/content/route.ts).
       {
-        source: '/api/:path*',
+        source: '/api/:path((?!artifacts/[^/]+/versions/[^/]+/content$).*)',
         headers: [{ key: 'Cache-Control', value: 'no-store' }],
       },
       // The Python runtime an artifact page loads. The page runs sandboxed (an

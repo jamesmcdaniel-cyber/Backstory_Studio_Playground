@@ -32,6 +32,8 @@ function setupOf(extra: Partial<RoiPageSetup> = {}): RoiPageSetup {
     page: { artifactId: 'page-1', currentAccount: 'HP' },
     defaultAccount: 'Backstory',
     canLoadExtracts: true,
+    hiddenAccounts: [],
+    hiddenAvailable: [],
     ...extra,
   }
 }

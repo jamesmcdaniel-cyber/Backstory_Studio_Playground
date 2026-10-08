@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ChartNoAxesCombined, ExternalLink, Loader2, Menu, MessageSquare, RefreshCw, SlidersHorizontal } from 'lucide-react'
+import { ExternalLink, Loader2, Menu, MessageSquare, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ArtifactViewer } from '@/components/artifacts/artifact-viewer'
@@ -12,6 +12,7 @@ import { SettingsPanel } from '@/components/roi/settings-panel'
 import { describeRunConfig } from '@/lib/roi/config'
 import { apiErrorMessage, isRunSettled, upsertRun } from '@/lib/roi/history'
 import { cn } from '@/lib/utils'
+import { useSupabase } from '@/components/providers/supabase-provider'
 import type { RoiAnalysisView, RoiOpenResult, RoiPageAccount, RoiPageSetup } from '@/lib/roi/types'
 
 const LAST_ACCOUNT_KEY = 'backstory:roi-account'
@@ -26,6 +27,24 @@ function store(key: string, value: string) {
 const same = (a: string | null | undefined, b: string | null | undefined) => Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase())
 
 /**
+ * What the page last showed, for the person who saw it: navigating back to
+ * the ROI page draws it at once — the account, its report, the history — and
+ * then checks for anything newer in the background. Module memory, so it lasts
+ * while the app stays open in this tab (client-side navigation) and never
+ * survives a reload or reaches another person.
+ */
+type PageMemory = {
+  userId: string
+  setup: RoiPageSetup | null
+  analyses: RoiAnalysisView[] | null
+  account: string | null
+  typedAccount: string | null
+  bound: { account: string; artifactId: string } | null
+  tab: string | null
+}
+let pageMemory: PageMemory | null = null
+
+/**
  * The ROI analysis page: the person's own ROI report, full width, with the
  * analyst beside it. Everyone starts from an account's report (Backstory's
  * own readout first); from then on the page is theirs — every settings
@@ -38,21 +57,23 @@ const same = (a: string | null | undefined, b: string | null | undefined) => Boo
 export default function RoiPage() {
   const router = useRouter()
   const params = useSearchParams()
-  const [setup, setSetup] = useState<RoiPageSetup | null>(null)
+  const { user } = useSupabase()
+  const [remembered] = useState(() => (pageMemory && user && pageMemory.userId === user.id ? pageMemory : null))
+  const [setup, setSetup] = useState<RoiPageSetup | null>(remembered?.setup ?? null)
   const [setupError, setSetupError] = useState<string | null>(null)
-  const [analyses, setAnalyses] = useState<RoiAnalysisView[] | null>(null)
+  const [analyses, setAnalyses] = useState<RoiAnalysisView[] | null>(remembered?.analyses ?? null)
   const [historyError, setHistoryError] = useState<string | null>(null)
-  const [account, setAccount] = useState<string | null>(null)
-  const [typedAccount, setTypedAccount] = useState<string | null>(null)
+  const [account, setAccount] = useState<string | null>(remembered?.account ?? null)
+  const [typedAccount, setTypedAccount] = useState<string | null>(remembered?.typedAccount ?? null)
   // The person's page, once it shows the selected account.
-  const [bound, setBound] = useState<{ account: string; artifactId: string } | null>(null)
+  const [bound, setBound] = useState<{ account: string; artifactId: string } | null>(remembered?.bound ?? null)
   const [opening, setOpening] = useState(false)
   const [openError, setOpenError] = useState<string | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(true)
   const [filters, setFilters] = useState<ReportFilters>(NO_FILTERS)
   const [filterOptions, setFilterOptions] = useState<ReportFilters | null>(null)
-  const [tab, setTab] = useState<string | null>(null)
+  const [tab, setTab] = useState<string | null>(remembered?.tab ?? null)
   const [showVersion, setShowVersion] = useState<{ id: string; nonce: number } | null>(null)
   const [shownVersionId, setShownVersionId] = useState<string | null>(null)
   const [tracked, setTracked] = useState<string | null>(null)
@@ -66,6 +87,9 @@ export default function RoiPage() {
   const attempted = useRef<string | null>(null)
 
   useEffect(() => { if (stored(ASSISTANT_KEY) === '0') setAssistantOpen(false) }, [])
+  useEffect(() => {
+    if (user) pageMemory = { userId: user.id, setup, analyses, account, typedAccount, bound, tab }
+  }, [user, setup, analyses, account, typedAccount, bound, tab])
 
   const loadSetup = useCallback(async () => {
     try {
@@ -168,7 +192,8 @@ export default function RoiPage() {
   const readiness = `${Boolean(selected?.mine)}:${Boolean(selected?.report?.ready)}:${setup?.page?.artifactId ?? ''}`
   useEffect(() => {
     if (!setup || !account || !selected || opening) return
-    if (bound && same(bound.account, account)) return
+    // Already showing it — unless it was drawn with an older layout or holds stale live data: then re-open (it re-draws).
+    if (bound && same(bound.account, account) && !selected.mine?.stale) return
     // Shown straight away when the page already shows it (and was drawn with today's layout).
     if (selected.mine && !selected.mine.stale && setup.page && same(setup.page.currentAccount, account)) {
       setBound({ account, artifactId: setup.page.artifactId })
@@ -234,6 +259,13 @@ export default function RoiPage() {
     if (now.ready && now.account && linked && !same(linked, now.account)) now.chooseAccount(linked)
   }, [linked])
 
+  // The account on screen was taken off the page (hidden by the analyst's owner): go to the starting account.
+  useEffect(() => {
+    if (!setup || !account || selected || opening) return
+    const next = setup.defaultAccount ?? setup.accounts[0]?.account ?? null
+    if (next && !same(next, account)) chooseAccount(next)
+  }, [setup, account, selected, opening, chooseAccount])
+
   const onStarted = useCallback((analysis: RoiAnalysisView) => {
     setAnalyses((current) => upsertRun(current ?? [], analysis))
     setTracked(analysis.id)
@@ -284,22 +316,48 @@ export default function RoiPage() {
   return (
     <div className="space-y-3">
       {/* Below lg the app's navigation button floats at the top left; the header starts beside it. */}
-      <div className="flex flex-wrap items-center gap-3 pl-12 lg:pl-0">
-        <Button type="button" variant="outline" size="sm" onClick={() => setPanelOpen(true)} aria-haspopup="dialog" aria-expanded={panelOpen} className="gap-2">
+      <div className="flex flex-wrap items-center gap-2 pl-12 lg:flex-nowrap lg:items-start lg:pl-0">
+        {/* The report names the account in its own masthead; the page title is for screen readers. */}
+        <h1 className="sr-only">ROI analysis · {account ?? 'Choose an account'}</h1>
+        <Button type="button" variant="outline" size="sm" onClick={() => setPanelOpen(true)} aria-haspopup="dialog" aria-expanded={panelOpen} className="shrink-0 gap-2">
           <Menu className="h-4 w-4" aria-hidden />
           <span>Filters</span>
           {filterCount > 0 && <span className="rounded-full bg-horizon-600 px-1.5 text-[10px] font-semibold text-white">{filterCount}</span>}
         </Button>
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-horizon-700"><ChartNoAxesCombined className="h-3.5 w-3.5" aria-hidden /> ROI analysis</div>
-          <h1 className="truncate text-lg font-semibold tracking-tight">{account ?? 'Choose an account'}</h1>
-        </div>
-        {configLine.length > 0 && (
-          <button type="button" onClick={() => setPanelOpen(true)} className="hidden min-w-0 flex-wrap items-center gap-1.5 text-left lg:flex" title="Change the settings">
-            {configLine.map((line) => <span key={line} className="rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">{line}</span>)}
-          </button>
+        {/* Active filters, right beside the button: the report filters chosen (each removable), then the analysis settings.
+            From lg they fill the space between the button and the actions, wrapping there rather than taking a row of their own. */}
+        {(filterCount > 0 || configLine.length > 0) && (
+          <ul aria-label="Active filters" className="flex min-h-8 min-w-0 basis-full flex-wrap content-center items-center gap-1.5 lg:flex-1 lg:basis-0">
+            {(['fy', 'fq', 'role'] as const).flatMap((group) => filters[group].map((value) => (
+              <li key={`${group}:${value}`}>
+                <span className="inline-flex items-center gap-1 rounded-full border border-horizon-300 bg-horizon-100 py-0.5 pl-2.5 pr-1 text-xs font-medium text-horizon-900 dark:border-horizon-700 dark:bg-horizon-900/50 dark:text-horizon-100">
+                  {value}
+                  <button
+                    type="button"
+                    onClick={() => setFilters((current) => ({ ...current, [group]: current[group].filter((item) => item !== value) }))}
+                    aria-label={`Remove the ${value} filter`}
+                    className="rounded-full px-1 leading-none text-horizon-700 hover:bg-horizon-200 hover:text-horizon-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-horizon-200 dark:hover:bg-horizon-800"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            )))}
+            {configLine.map((line) => (
+              <li key={line}>
+                <button
+                  type="button"
+                  onClick={() => setPanelOpen(true)}
+                  title="Change the settings"
+                  className="rounded-full border border-horizon-200 bg-horizon-50 px-2.5 py-0.5 text-xs font-medium text-horizon-800 transition-colors hover:bg-horizon-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-horizon-800 dark:bg-horizon-950/40 dark:text-horizon-200"
+                >
+                  {line}
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {showing && shownVersionId && (
             <a href={`/api/artifacts/${showing.artifactId}/versions/${shownVersionId}/content`} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs font-medium hover:bg-muted">
               Open full page <ExternalLink className="h-3 w-3" aria-hidden />

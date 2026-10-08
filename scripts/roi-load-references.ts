@@ -5,7 +5,9 @@
  * read them. Run where the database and object storage are configured (the
  * worker), with an admin's user id:
  *
- *   npx tsx scripts/roi-load-references.ts --org <organizationId> [--user <adminUserId>] [--replace] <file ...>
+ *   npx tsx scripts/roi-load-references.ts [--org <workspace id or slug>] [--user <adminUserId>] [--replace] <file ...>
+ *
+ * --org can be left out when exactly one workspace has an ROI Analyst.
  *
  * Text files (.md, .txt, .sql, the bare *_Query / *_SQL files) are stored as
  * text; HTML readouts and dashboards go through the file ingester, which
@@ -15,7 +17,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { prisma } from '@/lib/prisma'
+import { prisma, systemPrisma } from '@/lib/prisma'
 import { ingestKnowledgeFile, ingestKnowledgeText } from '@/lib/knowledge/ingest'
 import { ensureRoiAgent, findRoiAgent } from '@/lib/roi/agent'
 
@@ -39,8 +41,26 @@ function describe(filename: string): string {
 }
 
 async function main() {
-  const organizationId = arg('org')
-  if (!organizationId) throw new Error('--org is required')
+  // The workspace: its id or slug, or — when exactly one workspace has an
+  // ROI Analyst — nothing at all.
+  const orgArg = arg('org')
+  let organizationId = orgArg
+  if (orgArg && !/^[0-9a-f-]{36}$/i.test(orgArg)) {
+    // systemPrisma: resolving which workspace the operator named — there is no tenant yet.
+    const bySlug = await systemPrisma.organization.findFirst({ where: { OR: [{ slug: orgArg }, { name: orgArg }] }, select: { id: true } })
+    if (!bySlug) throw new Error(`No workspace with the slug or name "${orgArg}"`)
+    organizationId = bySlug.id
+  }
+  if (!organizationId) {
+    // systemPrisma: an operator's command with no workspace named looks across all of them for the one analyst.
+    const analysts = await systemPrisma.agentTask.findMany({ where: { status: { not: 'DELETED' }, metadata: { path: ['templateId'], equals: 'builtin:roi-analyst' } }, select: { organizationId: true } })
+    const orgs = [...new Set(analysts.map((agent) => agent.organizationId))]
+    if (orgs.length !== 1) {
+      const names = await systemPrisma.organization.findMany({ where: { id: { in: orgs } }, select: { id: true, name: true, slug: true } })
+      throw new Error(orgs.length ? `Several workspaces have an ROI Analyst; pass --org <id or slug>: ${names.map((org) => `${org.slug} (${org.id})`).join(', ')}` : 'No workspace has an ROI Analyst yet; open the ROI page once, or pass --org <id or slug> and --user <adminUserId>')
+    }
+    organizationId = orgs[0]
+  }
   const replace = process.argv.includes('--replace')
   const files: string[] = []
   for (let index = 2; index < process.argv.length; index += 1) {

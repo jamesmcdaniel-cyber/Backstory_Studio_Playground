@@ -89,6 +89,8 @@ export type RoiPageAccount = {
     reason: string
     /** Built on current data: a settings change only rewrites the findings. */
     factsCurrent: boolean
+    /** Imported from a value readout rather than built from extracts. */
+    source?: 'readout'
     updatedAt: string
   } | null
   /** This person's own page for the account: its latest version there (null until they open it). */
@@ -98,6 +100,8 @@ export type RoiPageAccount = {
     reason: string
     factsCurrent: boolean
     updatedAt: string
+    /** Where its data came from: a value readout, or a live read alone (no report then). */
+    source?: 'readout' | 'live'
     /** Drawn with an older layout; opening it re-draws it. */
     stale?: boolean
   } | null

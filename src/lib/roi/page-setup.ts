@@ -1,13 +1,12 @@
 import { prisma } from '@/lib/prisma'
 import { backstoryMcpReady } from '@/lib/mcp/backstory-connection'
-import { findRoiAgent, roiDataFlowIdOf, roiHiddenAccountsOf } from './agent'
+import { findRoiAgent, roiDataFlowIdOf, roiHiddenAccountKeys, roiHiddenAccountsOf, ROI_DEFAULT_ACCOUNT } from './agent'
 import { coversFor, listRoiSources } from './sources'
 import { listAccountReports, ROI_ASYNC_AFTER_SECONDS, ROI_EXPECTED_SECONDS, ROI_RECONFIGURE_EXPECTED_SECONDS, type AccountReport } from './service'
 import { loadPersonalPage, type PersonalPage } from './personal-page'
 import type { RoiPageAccount, RoiPageSetup } from './types'
 
-/** The account everyone starts on once its report is built: Backstory's own value readout. */
-export const ROI_DEFAULT_ACCOUNT = 'Backstory'
+export { ROI_DEFAULT_ACCOUNT }
 
 const ACTIVE_STATUSES = ['pending', 'fetching', 'running', 'building']
 
@@ -35,10 +34,21 @@ export function pageAccountOf(params: {
     covers: params.covers,
     loadedAt: params.loadedAt,
     report: report
-      ? { artifactId: report.artifactId, versionId: report.currentVersionId, ready: Boolean(report.state || report.a360), config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, updatedAt: report.updatedAt }
+      ? { artifactId: report.artifactId, versionId: report.currentVersionId, ready: Boolean(report.state || report.a360), config: report.config, reason: report.reason, factsCurrent: report.factsCurrent, ...(report.state?.source === 'readout' ? { source: 'readout' as const } : {}), updatedAt: report.updatedAt }
       : null,
-    mine: mine ? { versionId: mine.versionId, config: mine.config, reason: mine.reason, factsCurrent: mine.factsCurrent, updatedAt: mine.createdAt, ...(mine.stale ? { stale: true } : {}) } : null,
-    // A page that started from a live read (no report then) is told when one exists.
+    mine: mine
+      ? {
+          versionId: mine.versionId,
+          config: mine.config,
+          reason: mine.reason,
+          // Data nothing could compute afresh is only ever rewritten on (as the service does).
+          factsCurrent: mine.factsCurrent || (mine.source !== 'live' && !params.canRefresh),
+          updatedAt: mine.createdAt,
+          ...(mine.source ? { source: mine.source } : {}),
+          ...(mine.stale ? { stale: true } : {}),
+        }
+      : null,
+    // The report has data the page does not show yet (a page drawn live takes it on its own when it next opens).
     newerData: Boolean(mine && (report?.state || report?.a360) && report?.currentVersionId && mine.basedOnVersionId !== report.currentVersionId),
     activeAnalysisId: params.myActiveRun ?? report?.activeAnalysisId ?? null,
     canRefresh: params.canRefresh,
@@ -104,9 +114,9 @@ export async function loadRoiPageSetup(params: { organizationId: string; userId:
   }
   // Accounts the analyst's owner keeps off the page are not listed.
   const hidden = roiHiddenAccountsOf(agent)
-  const hiddenKeys = new Set(hidden.map(key))
+  const hiddenKeys = roiHiddenAccountKeys(agent)
   const hiddenAvailable = accounts.filter((item) => hiddenKeys.has(key(item.account))).map((item) => item.account)
-  for (let i = accounts.length - 1; i >= 0; i -= 1) if (hiddenKeys.has(key(accounts[i].account)) && key(accounts[i].account) !== key(ROI_DEFAULT_ACCOUNT)) accounts.splice(i, 1)
+  for (let i = accounts.length - 1; i >= 0; i -= 1) if (hiddenKeys.has(key(accounts[i].account))) accounts.splice(i, 1)
   accounts.sort((a, b) => a.account.localeCompare(b.account))
   return {
     accounts,

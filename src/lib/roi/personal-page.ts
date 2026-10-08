@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { addVersion } from '@/lib/artifacts/service'
 import { renderRoiDashboard, ROI_RENDER_VERSION } from './dashboard'
-import { currentRoiState, readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
+import { currentRoiState, factsAreCurrent, isLiveOnly, readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
 import { DEFAULT_RUN_CONFIG, readRunConfig, type RoiRunConfig } from './config'
 import { account360Narrative } from './account360-report'
 import { fetchLiveAccount, hasLiveData, liveNarrative, ROI_LIVE_TTL_MS, type RoiLiveAccount } from './live-account'
@@ -84,6 +84,8 @@ export type PersonalAccountVersion = {
   config: RoiRunConfig
   reason: string
   factsCurrent: boolean
+  /** Where its data came from: a value readout, or a live read alone (the account had no report then). */
+  source: 'readout' | 'live' | null
   /** The generic report version it started from, to tell when newer data exists. */
   basedOnVersionId: string | null
   /** Drawn with an older layout: re-drawn from its own state when opened. */
@@ -122,7 +124,8 @@ export async function loadPersonalPage(organizationId: string, userId: string): 
       createdAt: version.createdAt.toISOString(),
       config: readRunConfig(state.config ?? {}),
       reason: state.reason ?? '',
-      factsCurrent: state.factsVersion === 2,
+      factsCurrent: factsAreCurrent(state),
+      source: isLiveOnly(state) ? 'live' : state.source === 'readout' ? 'readout' : null,
       basedOnVersionId: state.basedOn?.versionId ?? null,
       stale: (state.render ?? 0) < ROI_RENDER_VERSION || liveIsStale(state.live),
     }
@@ -269,7 +272,7 @@ export async function populateLive(params: { organizationId: string; userId: str
   const view = (await templateViewOf(params.organizationId, pageId)) ?? EMPTY_VIEW
   const reason = 'Live account data'
   const html = renderRoiDashboard(facts, narrative, { account: params.account, generatedAt: new Date().toISOString(), view, config: DEFAULT_RUN_CONFIG, reason, live })
-  const state: RoiArtifactState['roi'] = { analysisId: `live:${Date.now()}`, account: params.account, timeframePreset: 'last6_vs_prior6', factsFileId, datasetIds: [], narrative, view, config: DEFAULT_RUN_CONFIG, reason, personal: true, render: ROI_RENDER_VERSION, live }
+  const state: RoiArtifactState['roi'] = { analysisId: `live:${Date.now()}`, account: params.account, timeframePreset: 'last6_vs_prior6', factsFileId, datasetIds: [], narrative, view, config: DEFAULT_RUN_CONFIG, reason, personal: true, render: ROI_RENDER_VERSION, live, source: 'live' }
   const version = await addVersion({ artifactId: pageId, organizationId: params.organizationId, content: html, request: `${params.account} · live from Backstory and Salesforce`, createdByUserId: params.userId, state: stateJson(state) })
   return { artifactId: pageId, versionId: version.id }
 }
@@ -284,7 +287,9 @@ export type OpenResult =
  * one (made current), otherwise the account's generic report put on the page.
  * `update` takes the generic report's newer data even when the page has the
  * account already — with the report's settings and findings, which were
- * written for that data; the page keeps its own layout.
+ * written for that data; the page keeps its own layout. A page drawn live,
+ * because the account had no report then, takes the report as soon as one
+ * exists: nobody has to ask for it.
  */
 export async function openAccountOnPage(params: {
   organizationId: string
@@ -296,7 +301,10 @@ export async function openAccountOnPage(params: {
 }): Promise<OpenResult> {
   const page = await loadPersonalPage(params.organizationId, params.userId)
   const mine = page?.accounts[lower(params.account)]
-  if (page && mine && !params.update) {
+  // A page drawn live looks for the account's report every time it opens.
+  const generic = !mine || params.update || mine.source === 'live' ? await params.findGeneric(params.account) : null
+  const takesReport = mine?.source === 'live' && Boolean(generic?.hasVersion)
+  if (page && mine && !params.update && !takesReport) {
     // Drawn with an older layout: the same report, re-drawn with today's.
     if (mine.stale) {
       const redrawn = await redrawVersion({ organizationId: params.organizationId, userId: params.userId, artifactId: page.artifactId, versionId: mine.versionId }).catch(() => null)
@@ -305,7 +313,6 @@ export async function openAccountOnPage(params: {
     if (page.currentVersionId !== mine.versionId) await setCurrentVersion(params.organizationId, page.artifactId, mine.versionId)
     return { status: 'ready', artifactId: page.artifactId, versionId: mine.versionId }
   }
-  const generic = await params.findGeneric(params.account)
   if (!generic?.hasVersion) {
     // No report yet: the account as it stands, live, when there is anything to read.
     const live = mine ? null : await populateLive({ organizationId: params.organizationId, userId: params.userId, account: params.account, fetchLive: params.fetchLive })
@@ -316,7 +323,7 @@ export async function openAccountOnPage(params: {
     userId: params.userId,
     account: generic.account,
     genericArtifactId: generic.artifactId,
-    request: mine ? `${generic.account} · newer data from the account's report` : undefined,
+    request: mine ? (mine.source === 'live' ? `${generic.account} · the account's report, now that it exists` : `${generic.account} · newer data from the account's report`) : undefined,
   })
   return { status: 'ready', ...made }
 }

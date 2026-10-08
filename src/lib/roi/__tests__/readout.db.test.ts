@@ -163,3 +163,59 @@ if (process.env.TEST_DATABASE_URL) {
     }
   })
 }
+
+if (process.env.TEST_DATABASE_URL) {
+  test('everyone gets Backstory\'s readout once it is loaded, and changing their page never asks for data', async () => {
+    const { prisma } = await import('@/lib/prisma')
+    const { seedTestOrg } = await import('@/lib/server/__tests__/test-auth')
+    const { importReadout } = await import('../readout-service')
+    const { DEFAULT_RUN_CONFIG } = await import('../config')
+    const { ArtifactToolClient } = await import('@/lib/artifacts/tools')
+    const service = await import('../service')
+    const pages = await import('../personal-page')
+    const s = await seedTestOrg(prisma)
+    try {
+      const colleague = (await prisma.user.create({ data: { supabaseId: crypto.randomUUID(), organizationId: s.organizationId, isActive: true, role: 'USER', name: 'Colleague' } })).id
+      const pageOf = async () => (await pages.loadPersonalPage(s.organizationId, colleague))!
+      // The colleague opened Backstory before the readout was loaded: a page drawn live.
+      const findGeneric = async (account: string) => {
+        const report = await service.findAccountReport(s.organizationId, account)
+        return report ? { artifactId: report.artifactId, account: report.account, hasVersion: Boolean(report.state || report.a360) } : null
+      }
+      const fetchLive = async () => ({ fetchedAt: new Date().toISOString(), scope: 'company' as const, sources: [{ name: 'Backstory' as const, ok: true }], status: { risks: [], topics: ['Pricing'], nextSteps: ['QBR in November'] } })
+      await pages.openAccountOnPage({ organizationId: s.organizationId, userId: colleague, account: 'Backstory', findGeneric, fetchLive })
+      assert.equal((await pageOf()).accounts.backstory?.source, 'live')
+
+      // An admin loads the readout once. The colleague's first Apply finds their page on it (it takes
+      // the report it was missing) and rewrites the findings on the readout's figures — never a build
+      // from extracts the readout does not have.
+      await importReadout({ organizationId: s.organizationId, userId: s.userId, html: readoutHtml() })
+      const row = await service.requestRoiReport({ organizationId: s.organizationId, userId: colleague, account: 'Backstory', config: { ...DEFAULT_RUN_CONFIG, cohort: 'users' }, reason: 'QBR' })
+      const markerOf = (results: unknown) => (results as { reconfigure?: { source?: string } } | null)?.reconfigure
+      assert.equal(markerOf(row.results)?.source, 'readout')
+      const taken = (await pageOf()).accounts.backstory!
+      assert.equal(taken.source, 'readout')
+      assert.equal(taken.factsCurrent, true)
+      // The rewrite lands and keeps the readout's provenance, so the next change is a rewrite too.
+      const report = await service.findAccountReport(s.organizationId, 'Backstory')
+      const execution = await prisma.agentExecution.create({ data: { agentType: 'custom', agentTaskId: row.agentTaskId, status: 'completed', input: { prompt: 'rewrite' }, trigger: { type: 'roi_analysis' }, output: { summary: JSON.stringify(report!.state!.narrative) }, userId: colleague, organizationId: s.organizationId } })
+      await prisma.roiAnalysis.update({ where: { id: row.id, organizationId: s.organizationId }, data: { status: 'running', error: null, executionId: execution.id } })
+      assert.equal((await service.loadRoiAnalysis(s.organizationId, row.id))?.status, 'completed')
+      const rewritten = (await pageOf()).accounts.backstory!
+      assert.notEqual(rewritten.versionId, taken.versionId)
+      assert.equal(rewritten.source, 'readout')
+      assert.equal(rewritten.factsCurrent, true)
+
+      // The analyst: a new time frame is a rewrite as well, and a hidden account stays off the page.
+      const analyst = new ArtifactToolClient(s.organizationId, colleague, { artifactId: (await pageOf()).artifactId, executionId: 'test', request: null })
+      assert.doesNotMatch(JSON.stringify(await analyst.executeTool('', 'start_roi_analysis', { account: 'Backstory', timeframe: 'last12_vs_prior12' })), /extract|upload/i)
+      const latest = await prisma.roiAnalysis.findFirst({ where: { organizationId: s.organizationId, userId: colleague }, orderBy: { createdAt: 'desc' } })
+      assert.notEqual(latest?.id, row.id)
+      assert.equal(markerOf(latest?.results)?.source, 'readout')
+      assert.match(JSON.stringify(await analyst.executeTool('', 'start_roi_analysis', { account: 'Iron Mountain' })), /kept off the ROI page/)
+      assert.ok(!JSON.stringify(await analyst.executeTool('', 'list_roi_accounts', {})).includes('Iron Mountain'))
+    } finally {
+      await s.cleanup()
+    }
+  })
+}

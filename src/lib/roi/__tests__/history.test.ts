@@ -237,6 +237,10 @@ test('an account\'s status line says how fresh the page and its data are', () =>
   assert.equal(accountStatusLine(pageAccount({ report: accountReport() }), flow, NOW), 'Report updated 1h ago · data from the Databricks pull flow')
   assert.equal(accountStatusLine(pageAccount({ report: accountReport({ ready: false }) }), repository, NOW), 'Report being built · no data loaded')
   assert.equal(accountStatusLine(pageAccount(), repository, NOW), 'No report yet · no data loaded')
+  // A value readout, or a live read, is data: the line never says nothing is loaded.
+  assert.equal(accountStatusLine(pageAccount({ report: accountReport({ source: 'readout' }) }), repository, NOW), 'Report updated 1h ago · from its value readout')
+  assert.equal(accountStatusLine(pageAccount({ report: accountReport({ source: 'readout' }), mine: myPage({ source: 'readout' }) }), repository, NOW), 'Your page updated 5m ago · from its value readout')
+  assert.equal(accountStatusLine(pageAccount({ mine: myPage({ source: 'live', factsCurrent: false }) }), repository, NOW), 'Your page updated 5m ago · live from Backstory and Salesforce')
 })
 
 test('the page\'s extract kinds mirror the server\'s, in order and by name', () => {

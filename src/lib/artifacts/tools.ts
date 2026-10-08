@@ -8,7 +8,7 @@ import { runRoiPrep, type RoiFacts } from '@/lib/roi/prep'
 import { summarizeFacts } from '@/lib/roi/facts'
 import { renderRoiDashboard, ROI_RENDER_VERSION } from '@/lib/roi/dashboard'
 import { applyOperations, describeView, roiOperationSchema } from '@/lib/roi/view'
-import { currentRoiState, readAccount360Facts, readFacts, stateJson, storeFacts } from '@/lib/roi/artifact-state'
+import { currentRoiState, isLiveOnly, readAccount360Facts, readFacts, stateJson, storeFacts } from '@/lib/roi/artifact-state'
 import { isRoiTemplate, listRoiSources, ROI_TEMPLATES, type RoiTemplate } from '@/lib/roi/sources'
 import { summarizeAccount360 } from '@/lib/roi/account360/facts'
 import type { Account360Facts } from '@/lib/roi/account360/prep'
@@ -159,18 +159,18 @@ const ROI_TOOLS = [
   },
   {
     name: 'list_roi_accounts',
-    description: 'Accounts the ROI report can show: those with extracts loaded in this workspace (which extracts, which analyses they can run) and those with a report already built. Use before start_roi_analysis to match the account the user named.',
+    description: 'Accounts the ROI report can show: those with extracts loaded in this workspace (which extracts, which analyses they can run) and those with a report already built, less any the page keeps off its list. Use before start_roi_analysis to match the account the user named; an account not listed can still be opened, live from Backstory and Salesforce.',
     isWrite: false,
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'start_roi_analysis',
-    description: 'Show this ROI report for another account (or the same account with other settings). The ROI report shows one account at a time on the person\'s own ROI page: another account opens THERE, in the same layout, as the page\'s next version — at once when the account already has a report (`opened: true`), or after a background build of a few minutes when it does not (`started: true`; the person is notified). New settings (a time frame) rewrite the findings in about a minute. Only when the user explicitly asks for a separate copy or a new artifact, pass `asNewArtifact: true`. The account must be one list_roi_accounts returns.',
+    description: 'Show this ROI report for another account (or the same account with other settings). The ROI report shows one account at a time on the person\'s own ROI page: another account opens THERE, in the same layout, as the page\'s next version — at once when the account already has a report (`opened: true`), or after a background build of a few minutes when it does not (`started: true`; the person is notified). New settings (a time frame) rewrite the findings in about a minute. Only when the user explicitly asks for a separate copy or a new artifact, pass `asNewArtifact: true`. Any account can be named: one with no report opens live from Backstory and Salesforce (`opened: true, live: true`) until its data arrives.',
     isWrite: false,
     inputSchema: {
       type: 'object',
       properties: {
-        account: { type: 'string', description: 'Exactly as list_roi_accounts names it. For an opportunity, its account.' },
+        account: { type: 'string', description: 'As list_roi_accounts names it when it is listed; otherwise as the user or Backstory names it. For an opportunity, its account.' },
         asNewArtifact: { type: 'boolean', description: 'Only when the user explicitly asked for a separate copy or a new artifact. Otherwise omit: the account opens on their ROI page.' },
         template: { type: 'string', enum: ['standard', 'engagement', 'account360'], description: 'standard = the consolidated ROI report (every section the account\'s extracts feed); engagement = rep engagement only; account360 = Account 360 click-stream → pipeline only. Defaults to this dashboard\'s own.' },
         timeframe: { type: 'string', enum: ['last6_vs_prior6', 'last6_vs_year_ago', 'last12_vs_prior12', 'last3_vs_prior3'], description: 'Only when the user asked for a different time frame; otherwise this dashboard\'s configuration carries over.' },
@@ -274,9 +274,15 @@ export class ArtifactToolClient {
       if (!facts) return { ...base, error: 'The facts file behind this dashboard is missing.' }
       const config = current.state.config ?? configFromPreset(current.state.timeframePreset)
       const a360 = await readAccount360Facts(this.organizationId, current.state.a360FactsFileId)
+      const dataSource = isLiveOnly(current.state)
+        ? 'Live from Backstory and Salesforce: the account has no report yet. The view and findings can be changed; there are no computed figures to re-slice.'
+        : current.state.source === 'readout'
+          ? 'The account\'s value readout, already loaded for everyone. Its figures are fixed; the view and findings can be changed, and a new time frame or cohort view rewrites the findings on the same figures (start_roi_analysis).'
+          : null
       return {
         ...base,
         account: current.state.account,
+        ...(dataSource ? { dataSource } : {}),
         configuration: describeRunConfig(config),
         ...(current.state.reason ? { reason: current.state.reason } : {}),
         view: describeView(current.state.view, facts.U?.labels ?? {}),
@@ -484,13 +490,19 @@ export class ArtifactToolClient {
 
   private async listRoiAccounts() {
     const { listAccountReports } = await import('@/lib/roi/service')
-    const [sources, reports] = await Promise.all([listRoiSources(this.organizationId), listAccountReports(this.organizationId)])
+    const [sources, reports, hidden] = await Promise.all([listRoiSources(this.organizationId), listAccountReports(this.organizationId), this.hiddenRoiAccounts()])
     const shows = (report: (typeof reports)[number]) => Boolean(report.state || report.a360)
     const accounts = sources.map((source) => ({ account: source.account, extracts: Object.keys(source.datasets), templates: source.templates, hasReport: reports.some((report) => report.account.toLowerCase() === source.account.toLowerCase() && shows(report)) }))
     for (const report of reports) {
       if (shows(report) && !accounts.some((entry) => entry.account.toLowerCase() === report.account.toLowerCase())) accounts.push({ account: report.account, extracts: [], templates: ['standard'], hasReport: true })
     }
-    return { accounts }
+    return { accounts: accounts.filter((entry) => !hidden.has(entry.account.trim().toLowerCase())) }
+  }
+
+  /** Accounts the ROI page keeps off its list (its analyst's owner chooses). */
+  private async hiddenRoiAccounts(): Promise<Set<string>> {
+    const { findRoiAgent, roiHiddenAccountKeys } = await import('@/lib/roi/agent')
+    return roiHiddenAccountKeys(await findRoiAgent(this.organizationId))
   }
 
   private async startRoi(args: Record<string, unknown>) {
@@ -504,17 +516,27 @@ export class ArtifactToolClient {
     if (!template) throw new Error('This page was not built by an ROI analysis; pass template (standard, engagement or account360).')
     const service = await import('@/lib/roi/service')
     const { RoiDataUnavailableError } = await import('@/lib/roi/data-source')
+    if ((await this.hiddenRoiAccounts()).has(account.toLowerCase())) {
+      return { started: false, reason: `"${account}" is kept off the ROI page for now; the analyst's owner can show it again from the page's panel (Data source and analyst).` }
+    }
     const sources = await listRoiSources(this.organizationId)
     const match = sources.find((source) => source.account.toLowerCase() === account.toLowerCase())
     const report = template === 'standard' ? await service.findAccountReport(this.organizationId, account) : null
     const name = report?.account ?? match?.account ?? null
     const asNew = args.asNewArtifact === true || template !== 'standard'
+    if (!name && !asNew) {
+      // No report and no data yet: the account as it stands, live from Backstory and Salesforce, on the page.
+      const opened = await service.openRoiAccount({ organizationId: this.organizationId, userId: this.userId, account })
+      if (opened.status === 'ready') {
+        return { opened: true, live: true, account, link: service.roiPageLink(account), note: `The ROI page shows ${account} now, live from Backstory and Salesforce — it has no report yet, so the full analysis arrives with its data. Say so in a sentence; offer to change anything.` }
+      }
+      return { started: false, reason: `"${account}" has no ROI report yet, and nothing about it could be read from Backstory or Salesforce. Check how Backstory names the account.` }
+    }
     if (!name || (asNew && (!match || !match.templates.includes(template)))) {
       return {
         started: false,
-        reason: match ? `"${match.account}" has extracts loaded, but not the ones the ${ROI_TEMPLATES[template].label} needs.` : `"${account}" has no ROI report and no extracts loaded.`,
-        accountsWithExtracts: sources.filter((source) => source.templates.includes(template)).map((source) => source.account),
-        hint: 'An operator loads an account\'s extracts into the Repository (or connects the data flow); until then it cannot be analysed.',
+        reason: match ? `"${match.account}" has data in the workspace, but not what the ${ROI_TEMPLATES[template].label} needs.` : `"${account}" has no data in the workspace for a separate ${ROI_TEMPLATES[template].label} yet; it can still be opened on the ROI page, live from Backstory and Salesforce.`,
+        accountsWithData: sources.filter((source) => source.templates.includes(template)).map((source) => source.account),
       }
     }
     const current = artifact.kind === 'roi_dashboard' && template !== 'account360' ? await currentRoiState(this.organizationId, artifact.id) : null

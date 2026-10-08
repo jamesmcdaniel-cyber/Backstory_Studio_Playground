@@ -36,11 +36,27 @@ export type RoiArtifactState = {
     basedOn?: { artifactId: string; versionId: string }
     /** The layout version that drew it (ROI_RENDER_VERSION); older ones are re-drawn when opened. */
     render?: number
-    /** Imported from a value readout rather than computed from extracts. */
-    source?: 'readout'
+    /** Imported from a value readout, or drawn from live data alone (no report then), rather than computed from extracts. */
+    source?: 'readout' | 'live'
     /** The account today, read live from Backstory and Salesforce (a person's own page only). */
     live?: RoiLiveAccount
   }
+}
+
+/**
+ * Drawn from live data alone, because the account had no report then.
+ * Versions from before `source: 'live'` was kept are known by their id.
+ */
+export function isLiveOnly(state: Pick<RoiArtifactState['roi'], 'source' | 'analysisId'>): boolean {
+  return state.source === 'live' || state.analysisId.startsWith('live:')
+}
+
+/**
+ * The version's data is complete — computed by the ROI-page prep, or a value
+ * readout's own figures — so a settings change only rewrites the findings.
+ */
+export function factsAreCurrent(state: Pick<RoiArtifactState['roi'], 'factsVersion' | 'source'>): boolean {
+  return state.factsVersion === 2 || state.source === 'readout'
 }
 
 export function readRoiState(state: unknown): RoiArtifactState['roi'] | null {

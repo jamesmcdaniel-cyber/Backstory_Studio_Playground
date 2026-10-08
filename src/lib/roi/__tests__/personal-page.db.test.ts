@@ -125,6 +125,24 @@ if (TEST_DB) {
     assert.equal(result.status, 'needs_build')
   })
 
+  test('a page drawn live takes the account\'s report as soon as there is one, without being asked', async () => {
+    const findGeneric = async (account: string) => {
+      const report = await service.findAccountReport(seeded.organizationId, account)
+      return report ? { artifactId: report.artifactId, account: report.account, hasVersion: Boolean(report.state || report.a360) } : null
+    }
+    const fetchLive = async () => ({ fetchedAt: new Date().toISOString(), sources: [{ name: 'Backstory' as const, ok: true }], status: { risks: [], topics: ['Renewal'], nextSteps: ['QBR'] } })
+    const open = () => pages.openAccountOnPage({ organizationId: seeded.organizationId, userId: colleague, account: 'Umbrella', findGeneric, fetchLive })
+    const drawn = await open()
+    assert.equal((await pages.loadPersonalPage(seeded.organizationId, colleague))?.accounts.umbrella?.source, 'live')
+    assert.deepEqual(await open(), drawn, 'with no report yet, opening it again keeps the live page')
+    const umbrella = await accountReport('Umbrella')
+    const taken = await service.openRoiAccount({ organizationId: seeded.organizationId, userId: colleague, account: 'Umbrella' })
+    assert.ok(taken.status === 'ready' && drawn.status === 'ready' && taken.versionId !== drawn.versionId)
+    const mine = (await pages.loadPersonalPage(seeded.organizationId, colleague))?.accounts.umbrella
+    assert.equal(mine?.source, null)
+    assert.equal(mine?.basedOnVersionId, umbrella.versionId)
+  })
+
   test('each person has their own page, and sees only their own page runs in history', async () => {
     const mine = await service.openRoiAccount({ organizationId: seeded.organizationId, userId: seeded.userId, account: 'Globex' })
     const theirs = await service.openRoiAccount({ organizationId: seeded.organizationId, userId: colleague, account: 'Globex' })

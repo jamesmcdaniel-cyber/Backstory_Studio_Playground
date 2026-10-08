@@ -141,7 +141,6 @@ export function roiDataFlowIdOf(agent: Pick<AgentTask, 'metadata'> | null): stri
   return typeof id === 'string' && id ? id : null
 }
 
-/** Connect (or disconnect, with null) the data flow. */
 /**
  * Accounts kept off the ROI page (their reports and data stay; the page just
  * does not list them). The analyst's owner changes the list from the page.
@@ -150,9 +149,17 @@ export function roiDataFlowIdOf(agent: Pick<AgentTask, 'metadata'> | null): stri
  */
 export const ROI_DEFAULT_HIDDEN_ACCOUNTS = ['Iron Mountain']
 
+/** The account everyone starts on: Backstory's own value readout. It is never hidden. */
+export const ROI_DEFAULT_ACCOUNT = 'Backstory'
+
 export function roiHiddenAccountsOf(agent: Pick<AgentTask, 'metadata'> | null): string[] {
   const list = agent ? metadataOf(agent).roiHiddenAccounts : undefined
   return Array.isArray(list) ? list.filter((name): name is string => typeof name === 'string' && name.trim().length > 0) : ROI_DEFAULT_HIDDEN_ACCOUNTS
+}
+
+/** The hidden accounts, lower-cased for matching, never the default account. */
+export function roiHiddenAccountKeys(agent: Pick<AgentTask, 'metadata'> | null): Set<string> {
+  return new Set(roiHiddenAccountsOf(agent).map((name) => name.trim().toLowerCase()).filter((name) => name !== ROI_DEFAULT_ACCOUNT.toLowerCase()))
 }
 
 export async function setRoiHiddenAccounts(organizationId: string, agent: AgentTask, accounts: string[]): Promise<AgentTask> {
@@ -163,6 +170,7 @@ export async function setRoiHiddenAccounts(organizationId: string, agent: AgentT
   })
 }
 
+/** Connect (or disconnect, with null) the data flow. */
 export async function setRoiDataFlow(organizationId: string, agent: AgentTask, flowId: string | null): Promise<AgentTask> {
   return prisma.agentTask.update({
     where: { id: agent.id, organizationId },

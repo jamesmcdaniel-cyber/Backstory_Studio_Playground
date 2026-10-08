@@ -69,6 +69,12 @@ export async function fetchRoiData(params: {
 /** The account's tagged extracts, or a plain-English reason there are none. */
 export async function loadedExtracts(organizationId: string, account: string, template: RoiTemplate): Promise<string[]> {
   const ids = await resolveRoiDatasetIds(organizationId, account, template)
-  if (!ids.length) throw new RoiDataUnavailableError(`No ${ROI_TEMPLATES[template].label} data is loaded for "${account.trim()}" yet. An operator loads the account's extracts, or an admin connects the data flow on the ROI analysis page.`)
+  if (!ids.length) throw new RoiDataUnavailableError(`"${account.trim()}" has no warehouse data in the workspace yet, so its ${ROI_TEMPLATES[template].label} cannot be built. Its page shows the account live from Backstory and Salesforce until the data flow brings the rest.`)
   return ids
+}
+
+/** Whether a run could compute the account's data afresh: the data flow is connected, or its extracts are loaded. */
+export async function canComputeRoiData(organizationId: string, account: string, dataFlowId: string | null): Promise<boolean> {
+  if (dataFlowId && await prisma.flow.findFirst({ where: { id: dataFlowId, organizationId }, select: { id: true } })) return true
+  return (await resolveRoiDatasetIds(organizationId, account, 'standard')).length > 0
 }

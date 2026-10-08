@@ -6,12 +6,12 @@ import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { unwrapHtmlFence } from '@/lib/roi/text'
 import { readStoredFile } from '@/lib/files/storage'
 import { addVersion, createArtifact } from '@/lib/artifacts/service'
-import { ensureRoiAgent, roiDataFlowIdOf } from './agent'
+import { ensureRoiAgent, findRoiAgent, roiDataFlowIdOf } from './agent'
 import { extractRoiNarrative, ROI_OUTPUT_CONTRACT, type RoiNarrative } from './contract'
 import { renderRoiDashboard, ROI_RENDER_VERSION } from './dashboard'
 import { runRoiPrep, type RoiFacts } from './prep'
 import { readView, type RoiView } from './view'
-import { currentRoiState, readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
+import { currentRoiState, factsAreCurrent, readAccount360Facts, readFacts, readRoiState, stateJson, storeFacts, type RoiArtifactState } from './artifact-state'
 import { summarizeFacts, type RoiFactsSummary } from './facts'
 import { timeframeInstruction, timeframeLabel, type RoiTimeframe } from './timeframe'
 import { ROI_SOURCE_LABEL, ROI_TEMPLATES, isRoiSourceKind, type RoiSourceKind, type RoiTemplate } from './sources'
@@ -19,7 +19,7 @@ import { renderAccount360Dashboard } from './account360/dashboard'
 import type { Account360Facts } from './account360/prep'
 import { summarizeAccount360 } from './account360/facts'
 import { configFromPreset, describeRunConfig, presetFor, readRunConfig, type RoiRunConfig } from './config'
-import { fetchRoiData, loadedExtracts, RoiDataUnavailableError } from './data-source'
+import { canComputeRoiData, fetchRoiData, loadedExtracts, RoiDataUnavailableError } from './data-source'
 import { runKpis } from './kpis'
 import { loadPersonalPage, openAccountOnPage, personalPageIds, populateFromGeneric, type OpenResult } from './personal-page'
 export type { OpenResult } from './personal-page'
@@ -173,7 +173,8 @@ export type RoiResults = {
 
 /** A full build computes the data and writes the findings; a reconfigure rewrites the findings on the data the report already has. */
 export type RoiRunMode = 'full' | 'reconfigure'
-type ReconfigureMarker = { factsFileId: string; a360FactsFileId: string | null }
+/** `source` carries a value readout's provenance onto the rewritten version, so later changes are rewrites too. */
+type ReconfigureMarker = { factsFileId: string; a360FactsFileId: string | null; source?: 'readout' }
 
 function reconfigureOf(row: Pick<RoiAnalysis, 'results'>): ReconfigureMarker | null {
   const marker = (row.results as { reconfigure?: ReconfigureMarker } | null)?.reconfigure
@@ -538,6 +539,7 @@ async function reconcileRun(row: RoiAnalysis, claimFrom: { status: string; updat
     config,
     reason: row.reason,
     ...('DEALS' in facts ? { factsVersion: 2 } : {}),
+    ...(reconfigure?.source === 'readout' ? { source: 'readout' as const } : {}),
     ...(markers.personal ? { personal: true, ...(markers.basedOn ? { basedOn: markers.basedOn } : {}), ...(pageLive ? { live: pageLive } : {}) } : {}),
     render: ROI_RENDER_VERSION,
   })
@@ -922,7 +924,7 @@ export async function listAccountReports(organizationId: string): Promise<Accoun
       currentVersionId: artifact.currentVersionId,
       state,
       a360,
-      factsCurrent: state?.factsVersion === 2,
+      factsCurrent: state ? factsAreCurrent(state) : false,
       config,
       reason: state?.reason ?? latest.reason ?? '',
       updatedAt: artifact.updatedAt.toISOString(),
@@ -962,11 +964,12 @@ export async function openRoiAccount(params: { organizationId: string; userId: s
 
 /**
  * Apply settings for an account — the ROI page's one action, always about
- * this person's own page. When their page holds the account on current data,
- * only the findings are rewritten for the new settings (about a minute), as
- * the next version of their page. Otherwise — or when they ask for fresh
- * data — the account's report is built (or rebuilt) from its data, and the
- * result lands on their page as well.
+ * this person's own page. When their page holds the account on complete data
+ * (the ROI prep's, or a value readout's), or on data nothing could compute
+ * afresh, only the findings are rewritten for the new settings (about a
+ * minute), as the next version of their page. Otherwise — or when they ask
+ * for fresh data — the account's report is built (or rebuilt) from its data,
+ * and the result lands on their page as well.
  */
 export async function requestRoiReport(params: {
   organizationId: string
@@ -980,9 +983,19 @@ export async function requestRoiReport(params: {
 }): Promise<RoiAnalysis> {
   const mine = await activeRunFor(params.organizationId, params.userId, params.account)
   if (mine) throw new RoiBusyError(`Your ${params.account} page is being updated already. Its next version lands in a minute or two; change the settings again after that.`)
-  const page = await loadPersonalPage(params.organizationId, params.userId)
-  const current = page?.accounts[params.account.trim().toLowerCase()]
-  if (page && current && current.factsCurrent && !params.refresh) {
+  let page = await loadPersonalPage(params.organizationId, params.userId)
+  let current = page?.accounts[params.account.trim().toLowerCase()]
+  if (current?.source === 'live') {
+    // Drawn live before the account had a report: it takes the report first, when there is one now.
+    const opened = await openRoiAccount({ organizationId: params.organizationId, userId: params.userId, account: current.account })
+    if (opened.status === 'ready' && opened.versionId !== current.versionId) {
+      page = await loadPersonalPage(params.organizationId, params.userId)
+      current = page?.accounts[params.account.trim().toLowerCase()]
+    }
+  }
+  // A page drawn from live data alone has no findings data to rewrite.
+  if (page && current && current.source !== 'live' && !params.refresh
+    && (current.factsCurrent || !(await canComputeRoiData(params.organizationId, current.account, roiDataFlowIdOf(await findRoiAgent(params.organizationId)))))) {
     const version = await prisma.artifactVersion.findFirst({ where: { id: current.versionId, artifactId: page.artifactId, organizationId: params.organizationId }, select: { state: true } })
     const state = readRoiState(version?.state)
     if (state) return startRoiReconfigure({ ...params, account: current.account, pageArtifactId: page.artifactId, state })
@@ -1052,7 +1065,7 @@ async function startRoiReconfigure(params: {
       context: (params.context ?? '').trim().slice(0, ROI_CONTEXT_MAX_CHARS),
       datasetIds: jsonValue(state.datasetIds),
       view: jsonValue(state.view),
-      results: jsonValue({ reconfigure: { factsFileId: state.factsFileId, a360FactsFileId: state.a360FactsFileId ?? null }, personal: true, ...(state.basedOn ? { basedOn: state.basedOn } : {}) }),
+      results: jsonValue({ reconfigure: { factsFileId: state.factsFileId, a360FactsFileId: state.a360FactsFileId ?? null, ...(state.source === 'readout' ? { source: 'readout' } : {}) }, personal: true, ...(state.basedOn ? { basedOn: state.basedOn } : {}) }),
       status: 'pending',
     },
   })

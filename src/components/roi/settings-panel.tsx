@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { AccountSelect } from '@/components/roi/account-select'
 import { ExtractLoader } from '@/components/roi/extract-loader'
-import { ReadoutLoader } from '@/components/roi/readout-loader'
 import { PageSetupCard } from '@/components/roi/page-setup-card'
 import { PanelSection, SegmentedControl } from '@/components/roi/panel-section'
 import { RunHistory } from '@/components/roi/run-history'
@@ -342,13 +341,6 @@ export function SettingsPanel({ open, onClose, setup, account, onAccountChange, 
             {setup.agent.canConfigure && <AccountVisibility setup={setup} onChanged={onExtractsLoaded} />}
             {account && account.covers.length > 0 && (
               <p className="mt-2 text-xs text-muted-foreground">{account.account}'s extracts feed {account.covers.join(', ')}.</p>
-            )}
-            {setup.canLoadExtracts && (
-              <div className="mt-5 border-t pt-4">
-                <p className="text-xs font-medium">Value readout</p>
-                <p className="mb-2 mt-0.5 text-xs text-muted-foreground">A readout page with its data embedded (Backstory's own) builds {account?.account ?? 'Backstory'}'s report in seconds, with no extracts.</p>
-                <ReadoutLoader account={account?.account ?? 'Backstory'} compact onLoaded={(result) => { onPageChanged(result); onExtractsLoaded() }} />
-              </div>
             )}
             {setup.canLoadExtracts && (
               <div className="mt-5 border-t pt-4">

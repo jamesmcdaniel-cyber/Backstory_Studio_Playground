@@ -192,10 +192,12 @@ export default function RoiPage() {
   const readiness = `${Boolean(selected?.mine)}:${Boolean(selected?.report?.ready)}:${setup?.page?.artifactId ?? ''}`
   useEffect(() => {
     if (!setup || !account || !selected || opening) return
-    // Already showing it — unless it was drawn with an older layout or holds stale live data: then re-open (it re-draws).
-    if (bound && same(bound.account, account) && !selected.mine?.stale) return
-    // Shown straight away when the page already shows it (and was drawn with today's layout).
-    if (selected.mine && !selected.mine.stale && setup.page && same(setup.page.currentAccount, account)) {
+    // Re-opened when it was drawn with an older layout or holds stale live data
+    // (it re-draws), or was drawn live and the account has a report now (it takes it).
+    const reopen = Boolean(selected.mine?.stale) || (selected.mine?.source === 'live' && Boolean(selected.report?.ready))
+    if (bound && same(bound.account, account) && !reopen) return
+    // Shown straight away when the page already shows it (and needs nothing above).
+    if (selected.mine && !reopen && setup.page && same(setup.page.currentAccount, account)) {
       setBound({ account, artifactId: setup.page.artifactId })
       if (pendingVersion.current) { setShowVersion({ id: pendingVersion.current, nonce: Date.now() }); pendingVersion.current = null }
       return

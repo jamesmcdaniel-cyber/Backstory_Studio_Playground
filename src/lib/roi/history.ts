@@ -253,7 +253,10 @@ export function accountStatusLine(
   else if (account.report?.ready) parts.push(`Report updated ${sinceLabel(account.report.updatedAt, now)}`)
   else if (account.report) parts.push('Report being built')
   else parts.push('No report yet')
+  const source = account.mine ? account.mine.source : account.report?.source
   if (account.loadedAt) parts.push(`data loaded ${sinceLabel(account.loadedAt, now)}`)
+  else if (source === 'readout') parts.push('from its value readout')
+  else if (source === 'live') parts.push('live from Backstory and Salesforce')
   else if (dataSource.kind === 'flow') parts.push(`data from the ${dataSource.flowName ?? 'data'} flow`)
   else if (!account.extracts.length) parts.push('no data loaded')
   return parts.join(' · ')

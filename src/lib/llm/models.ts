@@ -15,17 +15,17 @@ export type ChatModel = {
 }
 
 export const CHAT_MODELS: readonly ChatModel[] = [
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', hint: 'Fastest' },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', hint: 'Fastest' },
   { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: 'Balanced' },
   { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: 'Deepest' },
-  { id: 'claude-fable-5', label: 'Fable 5', hint: 'Most capable' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'Most capable' },
 ] as const
 
 /** The surfaces that offer a picker, and the model each starts on. */
 export const CHAT_SURFACE_DEFAULTS = {
   copilot: 'claude-sonnet-5-5',
   assistant: 'claude-sonnet-5-5',
-  librarian: 'claude-haiku-4-5',
+  librarian: 'claude-haiku-5-5',
   artifact: 'claude-opus-5-5',
 } as const
 export type ChatSurface = keyof typeof CHAT_SURFACE_DEFAULTS

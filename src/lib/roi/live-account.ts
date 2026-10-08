@@ -221,10 +221,17 @@ async function readBackstoryWith(client: PeopleAiClient, account: string, compan
   }
 }
 
+const SALESFORCE_ROW_LIMIT = 2000
+
 /** Salesforce through the workspace's Nango connection, else a connected Salesforce MCP server's query tool. */
 async function readSalesforce(organizationId: string, userId: string, account: string, fyStartMonth: number | null, company: boolean): Promise<{ salesforce?: RoiLiveAccount['salesforce']; source: RoiLiveSource }> {
-  const where = company ? '' : `Account.Name LIKE '${soqlString(account)}%' AND `
-  const soql = `SELECT Id, StageName, Amount, CloseDate, CreatedDate, Type, IsWon, IsClosed FROM Opportunity WHERE ${where}(CloseDate = LAST_N_MONTHS:24 OR IsClosed = false) ORDER BY CloseDate DESC LIMIT 2000`
+  // The account by name, or a longer name that starts with it as a word
+  // ("HP Inc."): a bare prefix also pulled "HPE" and "HPC Systems" into the
+  // page's win rate. LAST_N_MONTHS excludes the current month, so it is
+  // named too; otherwise deals closed this month never counted.
+  const name = soqlString(account)
+  const where = company ? '' : `(Account.Name = '${name}' OR Account.Name LIKE '${name} %') AND `
+  const soql = `SELECT Id, StageName, Amount, CloseDate, CreatedDate, Type, IsWon, IsClosed FROM Opportunity WHERE ${where}(CloseDate = LAST_N_MONTHS:24 OR CloseDate = THIS_MONTH OR IsClosed = false) ORDER BY CloseDate DESC LIMIT ${SALESFORCE_ROW_LIMIT}`
   const keys = PROVIDER_CONFIG_KEYS.salesforce
   const connection = await resolveNangoConnection(organizationId, keys, userId).catch(() => null)
   let records: Array<Record<string, unknown>> | null = null
@@ -245,7 +252,10 @@ async function readSalesforce(organizationId: string, userId: string, account: s
   }
   if (!records) return { source: { name: 'Salesforce', ok: false, note: 'No Salesforce connection' } }
   if (!records.length) return { source: { name: 'Salesforce', ok: true, note: company ? 'No opportunities in the last two years' : `No opportunities for ${account}` } }
-  return { source: { name: 'Salesforce', ok: true }, salesforce: summarizeSalesforce(records, fyStartMonth) }
+  // A full page of rows means older ones were left behind, and the win rate
+  // is read from the most recent deals only. Say so rather than present it whole.
+  const truncated = records.length >= SALESFORCE_ROW_LIMIT
+  return { source: { name: 'Salesforce', ok: true, ...(truncated ? { note: `Only the ${SALESFORCE_ROW_LIMIT.toLocaleString()} most recent opportunities were read` } : {}) }, salesforce: summarizeSalesforce(records, fyStartMonth) }
 }
 
 /** Backstory's own page reads the whole business; every other account, itself. */

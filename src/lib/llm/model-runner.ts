@@ -119,6 +119,14 @@ export type ModelTurn = {
   servedModel: string
   /** Wall-clock for the call, so the console can report latency beside cost. */
   latencyMs: number
+  /**
+   * Why the model stopped. `refusal` means a safety classifier declined the
+   * turn (HTTP 200, usually empty content) and `max_tokens` means the reply was
+   * cut off; both look like an ordinary "finished with no tool calls" turn to a
+   * caller that only reads `text`, so the agent loop reads this instead.
+   * Optional so scripted/eval runners that never set it keep working.
+   */
+  stopReason?: string | null
 }
 
 // The transcript is provider-native message JSON. It is persisted on the
@@ -294,6 +302,7 @@ class AnthropicProvider implements Provider {
       provider: this.providerId,
       servedModel: this.model,
       latencyMs: Date.now() - startedAt,
+      stopReason: message.stop_reason ?? null,
     }
   }
 }
@@ -408,7 +417,7 @@ class AgentRunner implements ModelRunner {
 // redirect to.
 // ---------------------------------------------------------------------------
 export const DEFAULT_AGENT_MODEL = process.env.AGENT_MODEL?.trim() || 'claude-sonnet-5-5'
-export const DEFAULT_SUMMARY_MODEL = process.env.SUMMARY_MODEL?.trim() || 'claude-haiku-4-5'
+export const DEFAULT_SUMMARY_MODEL = process.env.SUMMARY_MODEL?.trim() || 'claude-haiku-5-5'
 const FALLBACK_CLAUDE_MODEL = 'claude-opus-4-8'
 const hasAnthropic = () => !!process.env.ANTHROPIC_API_KEY
 const isClaude = (model: string) => model.startsWith('claude')
@@ -476,7 +485,7 @@ export function createPinnedRunner(requested: string): ModelRunner {
 // SUMMARY_MODEL but falling back to whichever endpoint's key is present.
 function summaryTarget(): { target: 'claude'; model: string } | null {
   if (!hasAnthropic()) return null
-  return { target: 'claude', model: isClaude(DEFAULT_SUMMARY_MODEL) ? DEFAULT_SUMMARY_MODEL : 'claude-haiku-4-5' }
+  return { target: 'claude', model: isClaude(DEFAULT_SUMMARY_MODEL) ? DEFAULT_SUMMARY_MODEL : 'claude-haiku-5-5' }
 }
 
 /**

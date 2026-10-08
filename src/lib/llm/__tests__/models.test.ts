@@ -4,16 +4,16 @@ import { CHAT_MODELS, CHAT_SURFACE_DEFAULTS, chatModelLabel, isChatModel, resolv
 import { computeCostUsd } from '@/lib/usage/pricing'
 
 test('the chat list is exactly the four offered models', () => {
-  assert.deepEqual(CHAT_MODELS.map((model) => model.id), ['claude-haiku-4-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5'])
+  assert.deepEqual(CHAT_MODELS.map((model) => model.id), ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1'])
 })
 
 test('a requested model is used only when it is on the list', () => {
   assert.equal(resolveChatModel('claude-opus-5-5', 'copilot'), 'claude-opus-5-5')
   assert.equal(resolveChatModel('claude-sonnet-5', 'copilot'), CHAT_SURFACE_DEFAULTS.copilot, 'retired from the list: falls back')
-  assert.equal(resolveChatModel('gpt-5', 'librarian'), 'claude-haiku-4-5')
+  assert.equal(resolveChatModel('gpt-5', 'librarian'), 'claude-haiku-5-5')
   assert.equal(resolveChatModel(undefined, 'assistant'), 'claude-sonnet-5-5')
-  assert.equal(resolveChatModel({ id: 'claude-fable-5' }, 'artifact'), 'claude-opus-5-5', 'artifacts are built and changed on Opus 5.5 by default')
-  assert.equal(isChatModel('claude-fable-5'), true)
+  assert.equal(resolveChatModel({ id: 'claude-fable-5-1' }, 'artifact'), 'claude-opus-5-5', 'artifacts are built and changed on Opus 5.5 by default')
+  assert.equal(isChatModel('claude-fable-5-1'), true)
 })
 
 test('every surface default is on the list', () => {

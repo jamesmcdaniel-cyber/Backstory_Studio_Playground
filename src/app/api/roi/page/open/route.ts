@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
-import { openRoiAccount } from '@/lib/roi/service'
+import { openRoiAccount, RoiBusyError } from '@/lib/roi/service'
 
 export const runtime = 'nodejs'
 
@@ -24,6 +24,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     const result = await openRoiAccount({ organizationId: auth.organizationId, userId: auth.dbUser.id, account: parsed.data.account, update: parsed.data.update === true })
     return { success: true, result }
   } catch (error) {
+    if (error instanceof RoiBusyError) throw new ApiError(error.message, 409, 'REPORT_BUSY')
     throw new ApiError(error instanceof Error ? error.message : 'The account could not be opened.', 400, 'OPEN_FAILED')
   }
 }, { permission: 'agent.run', internalOnly: true })

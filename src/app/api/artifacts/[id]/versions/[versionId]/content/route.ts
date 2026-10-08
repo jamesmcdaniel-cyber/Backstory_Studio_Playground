@@ -32,6 +32,19 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   }
   const found = await versionContent(auth.organizationId, id, saved ? versionId : 'current')
   if (!found) throw new ApiError('Version not found.', 404, 'NOT_FOUND')
+  // ?download=1 hands over the document as authored (no injected runtime), as
+  // a file: the one export path, so a page can leave the platform whole.
+  if (new URL(request.url).searchParams.get('download') === '1') {
+    const html = /<\s*(!doctype|html|head|body|div|section|script)\b/i.test(found.content.slice(0, 4_000))
+    return new Response(found.content, {
+      status: 200,
+      headers: {
+        'content-type': html ? 'text/html; charset=utf-8' : 'text/markdown; charset=utf-8',
+        'content-disposition': `attachment; filename="artifact-${id}-${saved ? versionId : 'current'}.${html ? 'html' : 'md'}"`,
+        'cache-control': 'private, no-store',
+      },
+    })
+  }
   const response = artifactPageResponse(found, new URL(request.url).origin)
   if (saved) {
     response.headers.set('cache-control', VERSION_CACHE)

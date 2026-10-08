@@ -21,14 +21,16 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   if (existing ? existing.userId !== auth.dbUser.id : !isAdmin) {
     throw new ApiError('Only the ROI Analyst\'s owner can change where its data comes from.', 403, 'FORBIDDEN')
   }
-  let agent = existing ?? await ensureRoiAgent(auth.organizationId, auth.dbUser.id)
-  if (parsed.data.hiddenAccounts !== undefined) agent = await setRoiHiddenAccounts(auth.organizationId, agent, parsed.data.hiddenAccounts)
-  if (parsed.data.dataFlowId === undefined) return { success: true, hiddenAccounts: roiHiddenAccountsOf(agent) }
+  // Validate everything before writing anything: a bad flow id used to
+  // return 404 after the hidden list had already changed.
   let flow: { id: string; name: string } | null = null
   if (parsed.data.dataFlowId) {
     flow = await prisma.flow.findFirst({ where: { id: parsed.data.dataFlowId, organizationId: auth.organizationId }, select: { id: true, name: true } })
     if (!flow) throw new ApiError('That flow is not in this workspace.', 404, 'NOT_FOUND')
   }
+  let agent = existing ?? await ensureRoiAgent(auth.organizationId, auth.dbUser.id)
+  if (parsed.data.hiddenAccounts !== undefined) agent = await setRoiHiddenAccounts(auth.organizationId, agent, parsed.data.hiddenAccounts)
+  if (parsed.data.dataFlowId === undefined) return { success: true, hiddenAccounts: roiHiddenAccountsOf(agent) }
   await setRoiDataFlow(auth.organizationId, agent, flow?.id ?? null)
   return { success: true, hiddenAccounts: roiHiddenAccountsOf(agent), dataSource: flow ? { kind: 'flow', flowId: flow.id, flowName: flow.name } : { kind: 'repository', flowId: null, flowName: null } }
 }, { permission: 'agent.write', internalOnly: true })

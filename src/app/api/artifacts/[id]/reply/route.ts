@@ -16,7 +16,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = new URL(request.url).pathname.split('/').at(-2)
   if (!id) throw new ApiError('Artifact id is required.', 400, 'ID_REQUIRED')
   const editable = await requireEditable(auth, id)
-  const limited = await rateLimit(`artifact-chat:${auth.organizationId}`, { limit: 20, windowMs: 60_000 })
+  const limited = await rateLimit(`artifact-chat:${auth.organizationId}:${auth.dbUser.id}`, { limit: 20, windowMs: 60_000 })
   if (!limited.ok) throw new ApiError('Too many messages at once. Try again in a minute.', 429, 'RATE_LIMITED')
   const parsed = z.object({ message: z.string().trim().min(1).max(ARTIFACT_QUESTION_MAX_CHARS) }).safeParse(await request.json().catch(() => null))
   if (!parsed.success) throw new ApiError('Type a message first.', 400, 'INVALID_BODY')

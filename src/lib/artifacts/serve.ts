@@ -58,7 +58,9 @@ export function artifactPageResponse(found: { content: string; kind: string }, o
     ? content
     : `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:ui-sans-serif,system-ui,sans-serif;color:#1f2937;font-size:14px;line-height:1.55;word-break:break-word}</style></head><body>${content}</body></html>`
   const runtimeTag = `<style data-backstory-design-system="1">${ARTIFACT_DESIGN_CSS}</style><script>${artifactClientRuntime(origin)}</script>`
-  const withRuntime = page.replace(/<head([^>]*)>/i, `<head$1>${runtimeTag}`)
+  // `<head` followed by a boundary: a page with a <header> and no <head> had
+  // the runtime injected inside its header element.
+  const withRuntime = page.replace(/<head(?=[\s>])([^>]*)>/i, `<head$1>${runtimeTag}`)
   const body = interactive ? withLinkScript(withRuntime === page ? runtimeTag + page : withRuntime) : page
   return new Response(body, {
     status: 200,

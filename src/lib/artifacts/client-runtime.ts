@@ -10,11 +10,14 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
     pending.delete(e.data.id); clearTimeout(p.timer);
     if(e.data.error) p.reject(new Error(e.data.error)); else p.resolve(e.data.result);
   });
+  function noBridge(message){var e=new Error(message);e.noBridge=true;return e;}
   function request(op, payload){
     return new Promise(function(resolve,reject){
-      if(window.parent === window) return reject(new Error('Open this artifact inside Backstory to use private saved state.'));
+      if(window.parent === window) return reject(noBridge('Open this artifact inside Backstory to use private saved state.'));
       var id = String(++seq);
-      var timer = setTimeout(function(){pending.delete(id);reject(new Error('State service did not respond. Changes are not saved.'));},15000);
+      // A first read that nobody answers (a public link, a thumbnail, a page
+      // outside the viewer) means there is no bridge here, not an outage.
+      var timer = setTimeout(function(){pending.delete(id);reject(op==='get'?noBridge('No saved-state service here.'):new Error('State service did not respond. Changes are not saved.'));},op==='get'?4000:15000);
       pending.set(id,{resolve:resolve,reject:reject,timer:timer});
       window.parent.postMessage({type:'backstory:state',id:id,op:op,payload:payload},'*');
     });
@@ -23,7 +26,9 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
   function canonical(value){return JSON.stringify(value,function(key,v){if(!v||typeof v!=='object'||Array.isArray(v))return v;var sorted={};Object.keys(v).sort().forEach(function(k){sorted[k]=v[k];});return sorted;});}
   var manualDirty=false;
   function signalDirty(){window.parent.postMessage({type:'backstory:dirty',dirty:manualDirty||Array.from(slots.values()).some(function(s){return s.saving||s.dirty;})},'*');}
-  document.addEventListener('input',function(){manualDirty=true;signalDirty();});
+  // Typing alone is not a draft: a search box or filter in ordinary state
+  // used to pin the frame to a stale version and prompt on every navigation.
+  // Pages flag real drafts with setDirty(true); saved-state slots flag their own.
   window.addEventListener('beforeunload',function(e){if(manualDirty||Array.from(slots.values()).some(function(s){return s.saving||s.dirty;})){e.preventDefault();e.returnValue='';}});
   function recovery(s,key){
     if(s.notice)s.notice.remove();
@@ -37,6 +42,9 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
     if(s.recovering)return;
     s.recovering=true;s.emit();
     try{
+      // A write still waiting in the coalescing window goes first, so the
+      // recovery compares against what the page actually holds.
+      if(s.flushTimer){clearTimeout(s.flushTimer);flush(s,key);}
       await s.chain;
       var result=await request('get',{key:key});
       if(!s.ready||discard){if(result.revision)s.value=result.value;s.revision=result.revision;s.ready=true;s.dirty=false;}
@@ -50,11 +58,28 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
   }
   function slot(key, initial){
     if(slots.has(key)) return slots.get(key);
-    var s={value:typeof initial==='function'?initial():initial,revision:0,ready:false,error:null,saving:false,dirty:false,recovering:false,writes:0,listeners:new Set(),chain:Promise.resolve()};
+    var s={value:typeof initial==='function'?initial():initial,revision:0,ready:false,readOnly:false,error:null,saving:false,dirty:false,recovering:false,writes:0,flushTimer:null,listeners:new Set(),chain:Promise.resolve()};
     slots.set(key,s);
     s.emit=function(){s.listeners.forEach(function(fn){fn();});signalDirty();};
-    s.load=request('get',{key:key}).then(function(r){if(r.revision) s.value=r.value;s.revision=r.revision;s.ready=true;s.emit();}).catch(function(e){s.error=e.message;recovery(s,key);s.emit();});
+    s.load=request('get',{key:key}).then(function(r){if(r.revision) s.value=r.value;s.revision=r.revision;s.readOnly=!!r.readOnly;s.ready=true;s.emit();}).catch(function(e){
+      // No bridge: the page works on its initial data, read-only, with no banner.
+      if(e.noBridge){s.readOnly=true;s.ready=true;s.emit();return;}
+      s.error=e.message;recovery(s,key);s.emit();});
     return s;
+  }
+  // Writes to one key within a short window become one save: a field bound
+  // to state used to send a request per keystroke and hit the save limit.
+  var FLUSH_MS=400;
+  function flush(s,key){
+    s.flushTimer=null;
+    var payload=s.value;
+    s.writes++;s.saving=true;
+    s.chain=s.chain.then(function(){if(s.error)return;return request('set',{key:key,value:payload,revision:s.revision}).then(function(r){s.revision=r.revision;});}).catch(function(e){s.error=e.message;recovery(s,key);}).finally(function(){
+      s.writes--;
+      if(s.value!==payload&&!s.flushTimer&&!s.error){s.flushTimer=setTimeout(function(){flush(s,key);},0);}
+      s.saving=s.writes>0||!!s.flushTimer;
+      if(!s.saving&&!s.error){s.dirty=false;}
+      s.emit();});
   }
   function useArtifactState(key, initial){
     var R=window.React,s=slot(key,initial), force=R.useState(0)[1];
@@ -64,10 +89,14 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       var next=typeof value==='function'?value(s.value):value;
       // Snapshot before queueing: callers cannot mutate a pending payload.
       try{next=JSON.parse(JSON.stringify(next));}catch(e){window.__artifactError(e);return;}
-      s.value=next;s.dirty=true;s.writes++;s.saving=true;s.emit();
-      s.chain=s.chain.then(function(){if(s.error)return;return request('set',{key:key,value:next,revision:s.revision}).then(function(r){s.revision=r.revision;});}).catch(function(e){s.error=e.message;recovery(s,key);}).finally(function(){s.writes--;s.saving=s.writes>0;if(!s.saving&&!s.error){s.dirty=false;manualDirty=false;}s.emit();});
+      s.value=next;
+      // Read-only here: the page keeps working on the value in memory.
+      if(s.readOnly){s.emit();return;}
+      s.dirty=true;s.saving=true;
+      if(!s.flushTimer)s.flushTimer=setTimeout(function(){flush(s,key);},FLUSH_MS);
+      s.emit();
     }
-    return [s.value,R.useCallback(set,[s,key]),{ready:s.ready,saving:s.saving,error:s.error,dirty:s.dirty,recovering:s.recovering,retry:function(){return recover(s,key,false);},reload:function(){return recover(s,key,true);}}];
+    return [s.value,R.useCallback(set,[s,key]),{ready:s.ready,readOnly:s.readOnly,saving:s.saving,error:s.error,dirty:s.dirty,recovering:s.recovering,retry:function(){return recover(s,key,false);},reload:function(){return recover(s,key,true);}}];
   }
   var worker=null, active=null, jobs=[], globals={}, pythonSeq=0;
   function pump(){

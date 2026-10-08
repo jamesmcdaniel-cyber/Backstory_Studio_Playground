@@ -90,7 +90,7 @@ primary_region = "iad"
   # Per-workspace in-flight ceiling, enforced at dispatch (org-capacity.ts).
   ORG_MAX_INFLIGHT_RUNS = "10"
   AGENT_MODEL = "claude-sonnet-5-5"
-  SUMMARY_MODEL = "claude-haiku-4-5"
+  SUMMARY_MODEL = "claude-haiku-5-5"
 
 # No [[services]] block on purpose: the worker takes no public traffic. The
 # health endpoint is checked machine-locally.

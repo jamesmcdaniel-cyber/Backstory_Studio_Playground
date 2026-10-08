@@ -12,6 +12,8 @@ import { ROI_RUN_STEPS, aboutDuration, formatElapsed, isRunSettled, stepStates }
 import type { RoiAnalysisView } from '@/lib/roi/types'
 
 const POLL_MS = 3000
+/** Consecutive failed polls before the card says the run cannot be reached. */
+const UNREACHABLE_AFTER = 5
 
 type Props = {
   analysis: RoiAnalysisView
@@ -42,19 +44,27 @@ export function RunProgress({ analysis, expectedSeconds, asyncAfterSeconds, onCh
     if (settled) return
     let cancelled = false
     let busy = false
+    let failures = 0
     const tick = () => {
       if (busy) return
       busy = true
       fetch(`/api/roi/analyses/${analysis.id}`, { cache: 'no-store' })
-        .then((response) => (response.ok ? response.json() : null))
-        .then((data: { analysis?: RoiAnalysisView } | null) => { if (!cancelled && data?.analysis) handlers.current.onChange(data.analysis) })
-        .catch(() => undefined)
+        .then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))))
+        .then((data: { analysis?: RoiAnalysisView } | null) => {
+          failures = 0
+          if (!cancelled) setUnreachable(false)
+          if (!cancelled && data?.analysis) handlers.current.onChange(data.analysis)
+        })
+        // A run the page cannot reach used to spin silently until a reload;
+        // after a few misses the card says so and keeps trying.
+        .catch(() => { failures += 1; if (!cancelled && failures >= UNREACHABLE_AFTER) setUnreachable(true) })
         .finally(() => { busy = false })
     }
     const stop = startVisibleInterval(tick, POLL_MS)
     return () => { cancelled = true; stop() }
   }, [analysis.id, settled])
 
+  const [unreachable, setUnreachable] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (settled) return
@@ -70,7 +80,7 @@ export function RunProgress({ analysis, expectedSeconds, asyncAfterSeconds, onCh
     if (isRunSettled(before) || !isRunSettled(analysis.phase)) return
     if (analysis.phase === 'ready') {
       const artifactId = analysis.artifactId
-      toast.success(`The ROI report for ${analysis.account} is ready.`, artifactId ? { action: { label: 'Open report', onClick: () => router.push(`/artifacts/${artifactId}`) } } : undefined)
+      toast.success(`The ROI report for ${analysis.account} is ready.`, artifactId ? { action: { label: 'Open report', onClick: () => router.push(`/roi?account=${encodeURIComponent(analysis.account)}`) } } : undefined)
     } else {
       toast.error(`The ROI analysis for ${analysis.account} did not finish.`)
     }
@@ -118,13 +128,19 @@ export function RunProgress({ analysis, expectedSeconds, asyncAfterSeconds, onCh
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[var(--status-good-bg)] px-3 py-2.5">
           <p className="flex items-center gap-2 text-sm font-medium text-[var(--status-good-fg)]"><CircleCheck className="h-4 w-4" aria-hidden />The report is ready.</p>
           <Button asChild size="sm">
-            <Link href={analysis.artifactId ? `/artifacts/${analysis.artifactId}` : '/artifacts?kind=roi_dashboard'}>
+            <Link href={`/roi?account=${encodeURIComponent(analysis.account)}`}>
               <FileOutput className="h-4 w-4" aria-hidden />Open report
             </Link>
           </Button>
         </div>
       ) : (
         <>
+          {unreachable && (
+            <p role="status" className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              This run cannot be reached right now. The page keeps checking; it also updates when the run lands.
+            </p>
+          )}
           <ol aria-label="Progress" className="mt-4 grid gap-3 sm:grid-cols-4">
             {ROI_RUN_STEPS.map((step, index) => {
               const state = states[index]

@@ -18,7 +18,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!id) throw new ApiError('Artifact id is required.', 400, 'ID_REQUIRED')
   // The assistant changes the artifact: edit access, per artifact, not role.
   const editable = await requireEditable(auth, id)
-  const limited = await rateLimit(`artifact-chat:${auth.organizationId}`, { limit: 20, windowMs: 60_000 })
+  const limited = await rateLimit(`artifact-chat:${auth.organizationId}:${auth.dbUser.id}`, { limit: 20, windowMs: 60_000 })
   if (!limited.ok) throw new ApiError('Too many messages at once. Try again in a minute.', 429, 'RATE_LIMITED')
   const allowance = await checkDailyRunAllowance('agent', { organizationId: auth.organizationId, userId: auth.dbUser.id, canReview: auth.can('catalogue.review'), email: auth.dbUser.email })
   if (allowance.over) throw new ApiError(limitMessage('agent', allowance.limit), 429, 'DAILY_LIMIT_REACHED')

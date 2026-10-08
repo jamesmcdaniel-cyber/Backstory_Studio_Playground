@@ -34,7 +34,7 @@ export function validateArtifactContent(content: string, maxChars: number = MAX_
         for (const match of code.matchAll(/require\((['"])([^'"]+)\1\)/g)) {
           const name = match[2]
           const ui = name.startsWith('@/components/ui/') && (ARTIFACT_UI_COMPONENTS as readonly string[]).includes(name.slice('@/components/ui/'.length))
-          if (!(name in ARTIFACT_MODULES) && name !== '@backstory/artifact' && !ui) throw new Error(`Unsupported artifact import: ${name}`)
+          if (!(name in ARTIFACT_MODULES) && name !== '@backstory/artifact' && !ui) throw new Error(`Unsupported artifact import: ${name}. Available: ${Object.keys(ARTIFACT_MODULES).join(', ')}, @backstory/artifact, @/components/ui/*.`)
         }
         new Script(`(async function(){${code}\n})`)
       } else new Script(block.source)

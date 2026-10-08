@@ -1461,6 +1461,22 @@ async function runAgentExecutionInner(
       }
 
       if (!turnResult.toolCalls.length) {
+        // A declined turn comes back as HTTP 200 with stop_reason 'refusal' and
+        // (usually) no content. Without this branch it reads as a finished run
+        // whose answer is the generic "completed without a text response", and
+        // nobody can tell the model declined. Say so plainly and record it.
+        if (turnResult.stopReason === 'refusal') {
+          finalText = turnResult.text || 'The model declined to complete this request. Rephrase the task, or narrow it to the specific records and action you need.'
+          await recordEvent(execution.id, null, 'run.refused', { model: turnResult.servedModel })
+          break
+        }
+        // A reply cut off at the output limit is not an answer. Keep what came
+        // back, but say it was truncated rather than presenting it as whole.
+        if (turnResult.stopReason === 'max_tokens') {
+          finalText = `${turnResult.text ? `${turnResult.text}\n\n` : ''}(The answer was cut off at the model's output limit. Ask for the rest, or for a shorter version.)`
+          await recordEvent(execution.id, null, 'run.truncated', { model: turnResult.servedModel })
+          break
+        }
         finalText = turnResult.text || 'Agent completed without a text response.'
         break
       }

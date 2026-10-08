@@ -34,8 +34,13 @@ function rates(input: number, output: number): Rates {
 
 const PER_MILLION: Record<string, Rates> = {
   // Anthropic first-party rates.
+  'anthropic:claude-fable-5-1': rates(10, 50),
   'anthropic:claude-fable-5': rates(10, 50),
+  'anthropic:claude-mythos-5-1': rates(10, 50),
   'anthropic:claude-mythos-5': rates(10, 50),
+  // Opus 5.5 is cheaper than Opus 5; without its own row the prefix match
+  // would price it at Opus 5 rates (25% high).
+  'anthropic:claude-opus-5-5': rates(4, 20),
   'anthropic:claude-opus-5': rates(5, 25),
   'anthropic:claude-opus-4-8': rates(5, 25),
   'anthropic:claude-opus-4-7': rates(5, 25),
@@ -46,8 +51,13 @@ const PER_MILLION: Record<string, Rates> = {
   // silently becomes 33% too low on 2026-09-01 is worse for an ops dashboard
   // than one that runs slightly high for a few weeks. Overstating spend is the
   // safe direction here.
+  // Sonnet 5.5 ships at $2/$10 (its standing price, not an introductory one).
+  'anthropic:claude-sonnet-5-5': rates(2, 10),
   'anthropic:claude-sonnet-5': rates(3, 15),
   'anthropic:claude-sonnet-4-6': rates(3, 15),
+  // Haiku 5.5 is served on the production key; Anthropic has not published
+  // its price sheet yet, so it carries Haiku 4.5's rates until it does.
+  'anthropic:claude-haiku-5-5': rates(1, 5),
   'anthropic:claude-haiku-4-5': rates(1, 5),
 
   // Voyage embeddings (input only — embeddings produce no output tokens).

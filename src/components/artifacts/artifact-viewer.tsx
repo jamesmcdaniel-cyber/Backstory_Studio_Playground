@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, Eye, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Settings2, Share2, Workflow } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, Download, Eye, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Settings2, Share2, Workflow } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -290,9 +290,14 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
         </div>
         <div className="flex items-center gap-2">
           {shownVersion && (
-            <a href={`/api/artifacts/${id}/versions/${shownVersion.id}/content`} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs font-medium hover:bg-muted">
-              Open full page <ExternalLink className="h-3 w-3" aria-hidden />
-            </a>
+            <>
+              <a href={`/api/artifacts/${id}/versions/${shownVersion.id}/content?download=1`} download className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs font-medium hover:bg-muted">
+                Download <Download className="h-3 w-3" aria-hidden />
+              </a>
+              <a href={`/api/artifacts/${id}/versions/${shownVersion.id}/content`} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs font-medium hover:bg-muted">
+                Open full page <ExternalLink className="h-3 w-3" aria-hidden />
+              </a>
+            </>
           )}
           {!configurationLocked && <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
             <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />Share

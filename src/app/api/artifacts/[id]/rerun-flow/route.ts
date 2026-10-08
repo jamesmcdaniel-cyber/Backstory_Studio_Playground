@@ -3,6 +3,8 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { rateLimit } from '@/lib/ratelimit'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
 import { rerunArtifactFlow, ARTIFACT_QUESTION_MAX_CHARS } from '@/lib/artifacts/service'
+import { requireEditable, viewerOf } from '@/lib/artifacts/route-access'
+import { artifactPermissions } from '@/lib/artifacts/sharing'
 
 export const runtime = 'nodejs'
 
@@ -11,7 +13,11 @@ export const runtime = 'nodejs'
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const id = new URL(request.url).pathname.split('/').at(-2)
   if (!id) throw new ApiError('Artifact id is required.', 400, 'ID_REQUIRED')
-  const limited = await rateLimit(`artifact-flow:${auth.organizationId}`, { limit: 10, windowMs: 60_000 })
+  // A re-run publishes the flow's output as the next version: edit access on
+  // THIS artifact, like every other route that changes one. `flow.run` alone
+  // let a view-only member re-run anyone's artifact with their own message.
+  const editable = await requireEditable(auth, id)
+  const limited = await rateLimit(`artifact-flow:${auth.organizationId}:${auth.dbUser.id}`, { limit: 10, windowMs: 60_000 })
   if (!limited.ok) throw new ApiError('Too many flow runs at once. Try again in a minute.', 429, 'RATE_LIMITED')
   const allowance = await checkDailyRunAllowance('flow', { organizationId: auth.organizationId, userId: auth.dbUser.id, canReview: auth.can('catalogue.review'), email: auth.dbUser.email })
   if (allowance.over) throw new ApiError(limitMessage('flow', allowance.limit), 429, 'DAILY_LIMIT_REACHED')
@@ -19,7 +25,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!parsed.success) throw new ApiError('Check the request and try again.', 400, 'INVALID_BODY')
   try {
     const artifact = await rerunArtifactFlow({ organizationId: auth.organizationId, userId: auth.dbUser.id, id, message: parsed.data.message })
-    return { success: true, artifact }
+    return { success: true, artifact: { ...artifact, permissions: artifactPermissions(viewerOf(auth), editable) } }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'The flow could not be started.'
     throw new ApiError(message, message === 'Artifact not found.' ? 404 : 400, 'FLOW_REJECTED')

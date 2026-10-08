@@ -355,16 +355,23 @@ export class ArtifactToolClient {
     const terms = [...new Set([...(Array.isArray(args.texts) ? args.texts : []), args.text].filter((term): term is string => typeof term === 'string' && Boolean(term.trim())))].slice(0, 12)
     if (!terms.length) throw new Error('Pass the text to find.')
     const { content } = await this.currentContent()
-    const haystack = content.toLowerCase()
+    // Case-insensitive only when lower-casing keeps every offset aligned
+    // (some characters change length), so a match's offset is the content's.
+    const lowered = content.toLowerCase()
+    const haystack = lowered.length === content.length ? lowered : content
     // One term keeps its 20 matches; several share the budget so the answer stays readable.
     const limit = terms.length === 1 ? 20 : 6
     const search = (text: string) => {
-      const needle = text.toLowerCase()
+      const needle = haystack === content ? text : text.toLowerCase()
       const matches: Array<{ offset: number; context: string }> = []
+      // Context is cut around the MATCH, never from the start of its line: on
+      // a one-line or minified page the old line-based window returned the
+      // first 1,200 characters of the line and never the match itself.
+      const reach = terms.length === 1 ? 500 : 300
       for (let at = haystack.indexOf(needle); at >= 0 && matches.length < limit; at = haystack.indexOf(needle, at + needle.length)) {
-        const start = Math.max(0, content.lastIndexOf('\n', Math.max(0, at - 200)))
-        const endBreak = content.indexOf('\n', at + needle.length + 200)
-        matches.push({ offset: at, context: content.slice(start, endBreak < 0 ? Math.min(content.length, at + 600) : endBreak).slice(0, terms.length === 1 ? 1_200 : 700) })
+        const start = Math.max(0, at - reach)
+        const end = Math.min(content.length, at + needle.length + reach)
+        matches.push({ offset: at, context: content.slice(start, end) })
       }
       return { matches, ...(matches.length === limit ? { note: `Showing the first ${limit} matches; search for something more specific.` } : {}) }
     }

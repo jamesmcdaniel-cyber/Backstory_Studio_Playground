@@ -133,6 +133,18 @@ export async function loadPersonalPage(organizationId: string, userId: string): 
   return { artifactId, currentVersionId: artifact?.currentVersionId ?? null, currentAccount, accounts }
 }
 
+/**
+ * Re-read the live data, keeping what the page had when the read comes back
+ * empty: a Backstory or Salesforce timeout used to replace six hours of good
+ * tiles with nothing, stamped fresh so it stayed that way until the TTL.
+ * Kept data keeps its old `fetchedAt`, so the next open tries again.
+ */
+export async function refreshLive(previous: RoiLiveAccount | undefined, read: () => Promise<RoiLiveAccount>): Promise<RoiLiveAccount | undefined> {
+  const fresh = await read()
+  if (hasLiveData(fresh) || !hasLiveData(previous)) return fresh
+  return previous
+}
+
 /** A page's live account data is read again once it is older than ROI_LIVE_TTL_MS (or was never read). */
 export function liveIsStale(live: RoiLiveAccount | undefined, now = Date.now()): boolean {
   const at = live ? Date.parse(live.fetchedAt) : NaN
@@ -244,7 +256,7 @@ export async function redrawVersion(params: { organizationId: string; userId: st
   const facts = await readFacts(params.organizationId, state.factsFileId)
   if (!facts) throw new Error('That version\'s data could not be read.')
   const a360 = await readAccount360Facts(params.organizationId, state.a360FactsFileId)
-  const live = liveIsStale(state.live) ? await fetchLiveAccount({ organizationId: params.organizationId, userId: params.userId, account: state.account, fyStartMonth: state.config?.fiscalYearStartMonth ?? null }) : state.live
+  const live = liveIsStale(state.live) ? await refreshLive(state.live, () => fetchLiveAccount({ organizationId: params.organizationId, userId: params.userId, account: state.account, fyStartMonth: state.config?.fiscalYearStartMonth ?? null })) : state.live
   const html = renderRoiDashboard(facts, state.narrative, { account: state.account, generatedAt: new Date().toISOString(), view: state.view, config: state.config, reason: state.reason, a360, live })
   const made = await addVersion({
     artifactId: params.artifactId,
@@ -318,12 +330,21 @@ export async function openAccountOnPage(params: {
     const live = mine ? null : await populateLive({ organizationId: params.organizationId, userId: params.userId, account: params.account, fetchLive: params.fetchLive })
     return live ? { status: 'ready', ...live } : { status: 'needs_build', artifactId: page?.artifactId ?? null }
   }
-  const made = await populateFromGeneric({
-    organizationId: params.organizationId,
-    userId: params.userId,
-    account: generic.account,
-    genericArtifactId: generic.artifactId,
-    request: mine ? (mine.source === 'live' ? `${generic.account} · the account's report, now that it exists` : `${generic.account} · newer data from the account's report`) : undefined,
-  })
-  return { status: 'ready', ...made }
+  try {
+    const made = await populateFromGeneric({
+      organizationId: params.organizationId,
+      userId: params.userId,
+      account: generic.account,
+      genericArtifactId: generic.artifactId,
+      request: mine ? (mine.source === 'live' ? `${generic.account} · the account's report, now that it exists` : `${generic.account} · newer data from the account's report`) : undefined,
+    })
+    return { status: 'ready', ...made }
+  } catch (error) {
+    // The report could not be read (its facts file is gone, say). A page that
+    // already shows the account keeps showing what it has rather than
+    // failing to open at all; a page without it reports the error.
+    if (!page || !mine || params.update) throw error
+    if (page.currentVersionId !== mine.versionId) await setCurrentVersion(params.organizationId, page.artifactId, mine.versionId)
+    return { status: 'ready', artifactId: page.artifactId, versionId: mine.versionId }
+  }
 }

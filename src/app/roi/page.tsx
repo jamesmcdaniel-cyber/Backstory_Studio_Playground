@@ -265,7 +265,10 @@ export default function RoiPage() {
   useEffect(() => {
     if (!setup || !account || selected || opening) return
     const next = setup.defaultAccount ?? setup.accounts[0]?.account ?? null
-    if (next && !same(next, account)) chooseAccount(next)
+    if (next && !same(next, account)) {
+      toast.info(`${account} is not on the ROI page. Showing ${next} instead.`)
+      chooseAccount(next)
+    }
   }, [setup, account, selected, opening, chooseAccount])
 
   const onStarted = useCallback((analysis: RoiAnalysisView) => {

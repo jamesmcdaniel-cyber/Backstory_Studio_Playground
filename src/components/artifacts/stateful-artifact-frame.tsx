@@ -29,9 +29,16 @@ export function StatefulArtifactFrame({ artifactId, versionId, title, className,
       const target = frame.current?.contentWindow
       let counted = false
       try {
-        if (!writable) throw new Error('Private application state is only available in an editable artifact.')
-        if (inFlight >= 8) throw new Error('Too many pending state requests.')
         if (!['get', 'set'].includes(msg.op) || !/^[a-zA-Z0-9_-]{1,64}$/.test(msg.payload?.key ?? '')) throw new Error('Invalid state request.')
+        // A reader who cannot edit (a view-only teammate, a historical version)
+        // gets a read-only answer, so the page renders its initial data
+        // instead of a red banner and a form that never enables.
+        if (!writable) {
+          if (msg.op === 'set') throw new Error('This artifact is read-only here; changes stay on screen only.')
+          if (!disposed) target?.postMessage({ type: 'backstory:state-result', id: msg.id, result: { value: null, revision: 0, readOnly: true } }, '*')
+          return
+        }
+        if (inFlight >= 8) throw new Error('Too many pending state requests.')
         const body = msg.op === 'set' ? JSON.stringify({ key: msg.payload.key, value: msg.payload.value, revision: msg.payload.revision, versionId: displayed }) : undefined
         if (body && new TextEncoder().encode(body).length > 257024) throw new Error('Application state exceeds 256 KB.')
         inFlight++

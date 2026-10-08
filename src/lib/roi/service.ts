@@ -187,11 +187,16 @@ function reconfigureOf(row: Pick<RoiAnalysis, 'results'>): ReconfigureMarker | n
  * on its requester's page too (populatePage — every build of an account's
  * report does, unless it is a separate artifact the person asked for).
  */
-type RunMarkers = { personal?: true; populatePage?: true; separate?: true; basedOn?: { artifactId: string; versionId: string } }
+type RunMarkers = { personal?: true; populatePage?: true; separate?: true; basedOn?: { artifactId: string; versionId: string }; reconfigure?: ReconfigureMarker }
 
 function markersOf(row: Pick<RoiAnalysis, 'results'>): RunMarkers {
   const r = row.results as { personal?: unknown; populatePage?: unknown; separate?: unknown; basedOn?: { artifactId?: unknown; versionId?: unknown } } | null
+  // The reconfigure marker travels with the row too: a failed settings run
+  // that lost it was re-checked as a full build, found no facts step, and
+  // was written off as "finished without computing the facts".
+  const reconfigure = reconfigureOf(row)
   return {
+    ...(reconfigure ? { reconfigure } : {}),
     ...(r?.personal === true ? { personal: true as const } : {}),
     ...(r?.populatePage === true ? { populatePage: true as const } : {}),
     ...(r?.separate === true ? { separate: true as const } : {}),
@@ -406,6 +411,7 @@ async function reconcileFetching(row: RoiAnalysis): Promise<RoiAnalysis> {
 export async function loadRoiAnalysis(organizationId: string, id: string): Promise<(RoiAnalysis & { datasets: RoiDataset[]; phase: RoiRunPhase }) | null> {
   let row = await prisma.roiAnalysis.findFirst({ where: { id, organizationId } })
   if (!row) return null
+  row = await failOrphanedRun(row)
   row = await reconcileFetching(row)
   row = await recheckContractFailure(row)
   row = await recheckUnsavedReport(row)
@@ -413,6 +419,29 @@ export async function loadRoiAnalysis(organizationId: string, id: string): Promi
   row = await reconcileChat(row)
   const datasets = await loadDatasets(organizationId, datasetIdsOf(row))
   return { ...row, datasets: datasets.map(({ kind: _kind, ...dataset }) => dataset), phase: await phaseOf(row) }
+}
+
+/** A row that never got a run or a data-flow run within this long never will. */
+const ORPHAN_AFTER_MS = 15 * 60_000
+
+export function isOrphanedRun(row: Pick<RoiAnalysis, 'status' | 'executionId' | 'results' | 'createdAt'>, now = Date.now()): boolean {
+  if (row.status !== 'pending' || row.executionId) return false
+  if ((row.results as { dataFlowRunId?: unknown } | null)?.dataFlowRunId) return false
+  return now - row.createdAt.getTime() > ORPHAN_AFTER_MS
+}
+
+/**
+ * A row created and never started — the process died between the insert and
+ * the agent run — counted as active for good: the person's page said "being
+ * updated already" and the account said "being rebuilt already" to everyone,
+ * with no run that could ever finish. It fails here instead.
+ */
+async function failOrphanedRun(row: RoiAnalysis): Promise<RoiAnalysis> {
+  if (!isOrphanedRun(row)) return row
+  return prisma.roiAnalysis.update({
+    where: { id: row.id, organizationId: row.organizationId },
+    data: { status: 'failed', error: 'The run never started. Apply the settings again.' },
+  })
 }
 
 /** Where a run is, for the page's progress state. */
@@ -771,9 +800,17 @@ export async function recheckRecentRuns(organizationId: string): Promise<number>
  * someone else's page.
  */
 export async function listRoiAnalyses(organizationId: string, viewerUserId: string, take = 200): Promise<RoiAnalysisView[]> {
+  // Other people's page runs are excluded in the query, not after it: taken
+  // after the limit, a busy workspace's page runs filled the 200 slots and
+  // the viewer's own older runs and an account's builds dropped out.
+  const personal = await personalPageIds(organizationId)
+  const otherPages = [...personal]
   // Everything but reportHtml, which is megabytes and unused by a list.
   const rows = await prisma.roiAnalysis.findMany({
-    where: { organizationId },
+    where: {
+      organizationId,
+      OR: [{ userId: viewerUserId }, { artifactId: null }, ...(otherPages.length ? [{ artifactId: { notIn: otherPages } }] : [{}])],
+    },
     orderBy: { createdAt: 'desc' },
     take,
     select: {
@@ -782,12 +819,16 @@ export async function listRoiAnalyses(organizationId: string, viewerUserId: stri
       createdAt: true, updatedAt: true,
     },
   })
-  const personal = await personalPageIds(organizationId)
-  const visible = rows.filter((row) => row.userId === viewerUserId || (!markersOf(row).personal && !(row.artifactId && personal.has(row.artifactId))))
+  const visible = rows.filter((row) => canViewRoiAnalysis(row, viewerUserId, personal))
   const userIds = [...new Set(visible.map((row) => row.userId))]
   const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds }, organizationId }, select: { id: true, name: true, email: true } }) : []
   const nameOf = new Map(users.map((user) => [user.id, user.name?.trim() || user.email || null]))
   return visible.map((row) => serializeRoiAnalysis({ ...row, reportHtml: null }, nameOf.get(row.userId) ?? null, viewerUserId))
+}
+
+/** The same rule the history list applies: builds show to everyone, a person's own page runs only to them. */
+export function canViewRoiAnalysis(row: Pick<RoiAnalysis, 'userId' | 'artifactId' | 'results'>, viewerUserId: string, personal: Set<string>): boolean {
+  return row.userId === viewerUserId || (!markersOf(row).personal && !(row.artifactId && personal.has(row.artifactId)))
 }
 
 /** Recompute an analysis's facts with added metrics (a carried-over view). */
@@ -868,7 +909,7 @@ export async function listAccountReports(organizationId: string): Promise<Accoun
       where: { organizationId, artifactId: { not: null }, template: { in: ['standard', 'engagement', 'account360'] } },
       orderBy: { createdAt: 'desc' },
       take: 500,
-      select: { id: true, account: true, artifactId: true, status: true, config: true, reason: true, timeframe: true, userId: true, template: true },
+      select: { id: true, account: true, artifactId: true, status: true, config: true, reason: true, timeframe: true, userId: true, template: true, executionId: true, results: true, createdAt: true },
     }),
     personalPageIds(organizationId),
   ])
@@ -916,7 +957,7 @@ export async function listAccountReports(organizationId: string): Promise<Accoun
     if (!chosen) continue
     const artifact = live.get(chosen)!
     const latest = rows.find((row) => row.artifactId === chosen)!
-    const active = standard.find((row) => isActive(row.status))
+    const active = standard.find((row) => isActive(row.status) && !isOrphanedRun(row))
     const config = state?.config ?? (latest.config && Object.keys(latest.config as object).length ? readRunConfig(latest.config) : configFromPreset(state?.timeframePreset ?? (latest.timeframe as { preset?: string } | null)?.preset))
     reports.push({
       artifactId: chosen,
@@ -945,13 +986,20 @@ async function activeRunFor(organizationId: string, userId: string, account: str
     where: { organizationId, userId, status: { in: ['pending', 'fetching', 'running', 'building'] } },
     orderBy: { createdAt: 'desc' },
     take: 20,
-    select: { id: true, account: true },
+    select: { id: true, account: true, status: true, executionId: true, results: true, createdAt: true },
   })
-  return rows.find((row) => sameAccount(row.account, account))?.id ?? null
+  return rows.find((row) => sameAccount(row.account, account) && !isOrphanedRun(row))?.id ?? null
 }
 
 /** Open an account on this person's page (see openAccountOnPage). */
 export async function openRoiAccount(params: { organizationId: string; userId: string; account: string; update?: boolean }): Promise<OpenResult> {
+  // Taking the report's newer data while this person's own run is still
+  // rewriting the account would be undone when that run lands: its version
+  // was drawn from the data it started with. The UI disables the button; the
+  // server enforces it for a second tab or a stale panel.
+  if (params.update && (await activeRunFor(params.organizationId, params.userId, params.account))) {
+    throw new RoiBusyError(`Your ${params.account} page is being updated already. Update it again once that lands.`)
+  }
   return openAccountOnPage({
     ...params,
     findGeneric: async (account) => {

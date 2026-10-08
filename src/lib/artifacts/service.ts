@@ -1,5 +1,5 @@
 import { artifactOutline } from './outline'
-import type { Artifact, ArtifactVersion, Prisma } from '@prisma/client'
+import { Prisma, type Artifact, type ArtifactVersion } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
@@ -340,12 +340,16 @@ export async function loadArtifact(organizationId: string, id: string, before?: 
   let row = await prisma.artifact.findFirst({ where: { id, organizationId } })
   if (!row) return null
   row = await reconcileChat(row)
-  const versions = await prisma.artifactVersion.findMany({
-    where: { artifactId: id, organizationId, ...(before ? { number: { lt: before } } : {}) },
-    orderBy: { number: 'desc' },
-    take: 20,
-    select: { id: true, number: true, executionId: true, flowRunId: true, request: true, createdAt: true, content: true, createdByUserId: true },
-  })
+  // The list needs each version's size and format, not its content: the
+  // viewer polls this every few seconds while the assistant works, and 20
+  // ROI dashboards at several MB each were read from the database per poll.
+  const versions = await prisma.$queryRaw<Array<{ id: string; number: number; executionId: string | null; flowRunId: string | null; request: string | null; createdAt: Date; createdByUserId: string | null; bytes: number; head: string }>>`
+    SELECT "id", "number", "executionId", "flowRunId", "request", "createdAt", "createdByUserId",
+           octet_length("content")::int AS "bytes", left("content", 4000) AS "head"
+    FROM "artifact_versions"
+    WHERE "artifactId" = ${id} AND "organizationId" = ${organizationId}::uuid ${before ? Prisma.sql`AND "number" < ${before}` : Prisma.empty}
+    ORDER BY "number" DESC
+    LIMIT 20`
   const refs = await references(organizationId, [row])
   const authorIds = [...new Set(versions.map((version) => version.createdByUserId).filter((id): id is string => Boolean(id)))]
   const authors = new Map((authorIds.length ? await prisma.user.findMany({ where: { id: { in: authorIds }, organizationId }, select: { id: true, name: true, email: true } }) : []).map((user) => [user.id, user.name || user.email || 'A teammate']))
@@ -366,8 +370,8 @@ export async function loadArtifact(organizationId: string, id: string, before?: 
       flowRunId: version.flowRunId,
       request: version.request,
       createdAt: version.createdAt.toISOString(),
-      bytes: Buffer.byteLength(version.content),
-      format: reactComponentOf(version.content) || looksLikeHtml(version.content.slice(0, 4_000)) ? 'html' : 'markdown',
+      bytes: version.bytes,
+      format: reactComponentOf(version.head) || looksLikeHtml(version.head) ? 'html' : 'markdown',
       author: version.createdByUserId ? authors.get(version.createdByUserId) ?? null : null,
       source: version.executionId ? 'agent' : version.flowRunId ? 'flow' : version.request?.startsWith('Restored version') ? 'restore' : version.request === SHARED_UPDATE_REQUEST ? 'shared' : version.number === 1 ? 'created' : 'agent',
     })),
@@ -632,6 +636,7 @@ export async function rerunArtifactFlow(params: { organizationId: string; userId
   const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
   if (!row) throw new Error('Artifact not found.')
   if (!row.flowId) throw new Error('This artifact was not produced by a flow.')
+  if (row.templateSourceId) throw new Error('A copy of a shared artifact cannot re-run the original\'s flow.')
   const chat = chatOf(row)
   if (chat.some((m) => m.status === 'pending')) throw new Error('Wait for the current answer before sending another.')
   const { startFlowExecution } = await import('@/features/flows/execute-flow')

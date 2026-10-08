@@ -96,7 +96,7 @@ function mount(props: Partial<React.ComponentProps<typeof SettingsPanel>> = {}) 
 
 const section = (name: RegExp) => screen.getByRole('button', { name })
 
-test('the panel opens on the account with its sections collapsed sensibly and Apply waiting for a change', (t) => {
+test('the panel opens on the account with its sections collapsed sensibly and Run waiting for a change', (t) => {
   t.after(cleanup)
   mount()
   assert.ok(screen.getByRole('dialog', { name: 'Filters and settings' }))
@@ -111,15 +111,15 @@ test('the panel opens on the account with its sections collapsed sensibly and Ap
   assert.match(section(/^Analysis settings/).textContent ?? '', /Last 6 months vs the 6 before · Cohorts: high, medium and low adopters/)
   assert.match(section(/^Reason/).textContent ?? '', /Renewal/)
   assert.match(section(/^Run history/).textContent ?? '', /3 runs · last run 10m ago/)
-  const apply = screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement
+  const apply = screen.getByRole('button', { name: 'Run analysis' }) as HTMLButtonElement
   assert.equal(apply.disabled, true)
-  assert.ok(screen.getByText('Change a setting or the reason, then apply.'))
+  assert.ok(screen.getByText('Change a setting or the reason, then run.'))
   assert.ok(screen.getByRole('button', { name: /Refresh data/ }))
   // Focus starts on the close button.
   assert.equal(document.activeElement?.getAttribute('aria-label'), 'Close filters and settings')
 })
 
-test('a changed setting is flagged, and Apply sends it without refresh', async (t) => {
+test('a changed setting is flagged, and Run sends it without refresh', async (t) => {
   t.after(cleanup)
   const calls = stubFetch({ '/api/roi/analyses': () => ({ json: { success: true, analysis: run('new', 'HP', new Date().toISOString(), { phase: 'queued' }) } }) })
   const { events } = mount()
@@ -132,7 +132,7 @@ test('a changed setting is flagged, and Apply sends it without refresh', async (
   assert.ok(screen.getByText("Rewrites the findings on your page's data — about 40 seconds."))
   fireEvent.click(screen.getByRole('radio', { name: 'Same period last year' }))
   assert.ok(screen.getByText(/Compares .* with /))
-  const apply = screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement
+  const apply = screen.getByRole('button', { name: 'Run analysis' }) as HTMLButtonElement
   assert.equal(apply.disabled, false)
   await act(async () => { fireEvent.click(apply) })
   await waitFor(() => assert.equal(events.started.length, 1))
@@ -155,7 +155,7 @@ test('a missing reason opens the Reason section, focuses the field and says what
   stubFetch({})
   mount({ account: NEW })
   // An account with neither a page nor a report: Build, and the reason starts open.
-  const build = screen.getByRole('button', { name: /Build the report/ }) as HTMLButtonElement
+  const build = screen.getByRole('button', { name: /Run analysis/ }) as HTMLButtonElement
   assert.equal(section(/^Reason/).getAttribute('aria-expanded'), 'true')
   assert.equal(screen.queryByRole('button', { name: /^Report filters/ }), null)
   assert.equal(screen.queryByRole('button', { name: /Refresh data/ }), null)
@@ -187,7 +187,7 @@ test('invalid custom periods are flagged, and a submit focuses the first bad mon
   assert.ok(screen.getByText(/The baseline period ends before it starts\./))
   fireEvent.click(section(/^Analysis settings/))
   assert.match(section(/^Analysis settings/).textContent ?? '', /Not valid/)
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Apply' })) })
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Run analysis' })) })
   await waitFor(() => assert.equal(section(/^Analysis settings/).getAttribute('aria-expanded'), 'true'))
   await waitFor(() => assert.equal(document.activeElement?.id, 'roi-baseline-from'))
 })
@@ -236,9 +236,9 @@ test('newer data offers Update my page, which reports the result to the page', a
 test('while the page is being updated, both actions wait', (t) => {
   t.after(cleanup)
   mount({ busy: true })
-  assert.equal((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled, true)
+  assert.equal((screen.getByRole('button', { name: 'Run analysis' }) as HTMLButtonElement).disabled, true)
   assert.equal((screen.getByRole('button', { name: /Refresh data/ }) as HTMLButtonElement).disabled, true)
-  assert.ok(screen.getByText('This page is being updated now. Apply again once it lands.'))
+  assert.ok(screen.getByText('This page is being updated now. Run again once it lands.'))
 })
 
 test('Escape closes the panel, but only leaves the typed account entry when typing', (t) => {

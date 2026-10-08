@@ -79,8 +79,8 @@ function keepFocusIn(container: HTMLElement | null, event: KeyboardEvent) {
 
 /** What the primary action will do, in one line. */
 function applyLine({ working, unchanged, mode, setup }: { working: boolean; unchanged: boolean; mode: RoiApplyMode; setup: RoiPageSetup }): string {
-  if (working) return 'This page is being updated now. Apply again once it lands.'
-  if (unchanged) return 'Change a setting or the reason, then apply.'
+  if (working) return 'This page is being updated now. Run again once it lands.'
+  if (unchanged) return 'Change a setting or the reason, then run.'
   if (mode === 'rewrite') return `Rewrites the findings on your page's data — about ${aboutDuration(setup.reconfigureSeconds)}.`
   if (mode === 'rebuild') return `Rebuilds your page from the account's data — about ${aboutDuration(setup.expectedSeconds)}.`
   return `Builds the report from the account's data — about ${aboutDuration(setup.expectedSeconds)}.`
@@ -365,8 +365,8 @@ export function SettingsPanel({ open, onClose, setup, account, onAccountChange, 
                 aria-describedby="roi-apply-help"
                 onClick={() => void submit(false)}
               >
-                {submitting === 'apply' ? <Loader2 className="animate-spin" aria-hidden /> : mode === 'build' ? <Play aria-hidden /> : null}
-                {submitting === 'apply' ? 'Starting…' : mode === 'build' ? 'Build the report' : 'Apply'}
+                {submitting === 'apply' ? <Loader2 className="animate-spin" aria-hidden /> : <Play aria-hidden />}
+                {submitting === 'apply' ? 'Starting…' : 'Run analysis'}
               </Button>
               {showRefresh && (
                 <Button

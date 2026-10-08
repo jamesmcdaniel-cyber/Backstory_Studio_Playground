@@ -19,6 +19,7 @@ import { encryptSecret } from '@/lib/crypto/secrets'
 import { prisma } from '@/lib/prisma'
 import {
   OAUTH_COOKIE,
+  assertPublicOAuthEndpoints,
   buildAuthorizeUrl,
   discoverAuthServer,
   generatePkce,
@@ -73,7 +74,12 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   const redirectUri = `${request.nextUrl.origin}/api/mcp-connections/oauth/callback`
 
   try {
+    // discoverAuthServer guards the server URL itself; the endpoints the
+    // metadata names are the server's choice and get the same treatment
+    // (https, public address) before anything is POSTed to them or the
+    // browser is sent there.
     const meta = await discoverAuthServer(effectiveServerUrl)
+    await assertPublicOAuthEndpoints(meta)
     if (!meta.registration_endpoint) {
       throw new Error('OAuth server does not advertise a registration_endpoint')
     }

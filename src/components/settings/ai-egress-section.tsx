@@ -21,7 +21,7 @@ import { Switch } from '@/components/ui/switch'
 import { Section } from '@/components/settings/section'
 import { SettingsRow } from '@/components/settings/dialogs'
 
-type Policy = 'allowed' | 'blocked'
+type Policy = 'allowed' | 'blocked' | 'redacted'
 
 export function AiEgressSection() {
   const [policy, setPolicy] = useState<Policy | null>(null)
@@ -48,11 +48,12 @@ export function AiEgressSection() {
       const data = await response.json().catch(() => ({}))
       if (!response.ok || !data.success) return toast.error(data.error || 'Could not save that setting.')
       setPolicy(data.aiEgressPolicy as Policy)
-      toast.success(next === 'blocked' ? 'AI features are now switched off for this workspace.' : 'AI features are back on.')
+      toast.success(next === 'blocked' ? 'AI features are now switched off for this workspace.' : next === 'redacted' ? 'Personal identifiers are now masked before anything reaches the model provider.' : 'AI features are on, sending text as it is.')
     } finally { setBusy(false) }
   }
 
   const blocked = policy === 'blocked'
+  const redacted = policy === 'redacted'
 
   return (
     <Section
@@ -72,6 +73,21 @@ export function AiEgressSection() {
           disabled={!loaded || busy}
           aria-label="Allow AI features"
           onCheckedChange={(checked) => void update(checked ? 'allowed' : 'blocked')}
+        />
+      </SettingsRow>
+      <SettingsRow
+        title="Mask personal identifiers"
+        description={
+          redacted
+            ? 'On. Email addresses and phone numbers are replaced with placeholders before any text reaches the model provider, and put back in what comes out; card and national-id numbers are removed outright. Tools still act on the real values.'
+            : 'Off. Text is sent to the model provider as it is. Turn this on when an agreement allows AI processing but not the sharing of personal identifiers.'
+        }
+      >
+        <Switch
+          checked={redacted}
+          disabled={!loaded || busy || blocked}
+          aria-label="Mask personal identifiers"
+          onCheckedChange={(checked) => void update(checked ? 'redacted' : 'allowed')}
         />
       </SettingsRow>
     </Section>

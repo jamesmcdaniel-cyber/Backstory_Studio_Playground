@@ -259,6 +259,8 @@ if (TEST_DB) {
     { name: 'GET /api/artifacts/[id]/assistant', run: async () => (await import('../artifacts/[id]/assistant/route')).GET(req('/api/artifacts/missing/assistant')) },
     { name: 'GET /api/artifacts/[id]/sharing', run: async () => (await import('../artifacts/[id]/sharing/route')).GET(req('/api/artifacts/missing/sharing')) },
     { name: 'GET /api/artifacts/[id]/state', run: async () => (await import('../artifacts/[id]/state/route')).GET(req('/api/artifacts/missing/state?key=smoke')) },
+    { name: 'GET /api/artifacts/[id]/shared-state', run: async () => (await import('../artifacts/[id]/shared-state/route')).GET(req('/api/artifacts/missing/shared-state?key=smoke')) },
+    { name: 'GET /api/artifacts/[id]/render-errors', run: async () => (await import('../artifacts/[id]/render-errors/route')).GET(req('/api/artifacts/missing/render-errors?versionId=missing')) },
     { name: 'GET /api/roi/sources', run: async () => (await import('../roi/sources/route')).GET(req('/api/roi/sources')) },
     { name: 'GET /api/roi/analyses', run: async () => (await import('../roi/analyses/route')).GET(req('/api/roi/analyses')) },
     { name: 'GET /api/roi/analyses/[id]', run: async () => (await import('../roi/analyses/[id]/route')).GET(req('/api/roi/analyses/missing')) },

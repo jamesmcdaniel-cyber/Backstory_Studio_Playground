@@ -4,6 +4,7 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/visibility'
 import { ingestKnowledgeFile, ingestKnowledgeDataset, UnsupportedFileError } from '@/lib/knowledge/ingest'
 import { STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
+import { scanFileBuffer } from '@/lib/files/security'
 import {
   deleteRepositoryAsset,
   findVisibleRepositoryAsset,
@@ -77,6 +78,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (file.size > MAX_UPLOAD_BYTES) throw new ApiError('File is too large (max 10 MB).', 413, 'TOO_LARGE')
 
   const buffer = Buffer.from(await file.arrayBuffer())
+  // The same gate the repository upload passes through (executable check,
+  // and the FILE_SCAN_URL scanner when one is configured) — run here BEFORE
+  // the text extractors see the bytes, not only when the original is retained
+  // afterwards. A rejection surfaces as 422 FILE_REJECTED via the handler.
+  await scanFileBuffer(buffer, file.name || 'upload')
   try {
     const document = await ingestKnowledgeFile({
       organizationId: auth.organizationId,

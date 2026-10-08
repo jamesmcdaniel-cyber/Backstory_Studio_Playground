@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, Download, Eye, ExternalLink, History, Loader2, MessageSquare, RotateCcw, Settings2, Share2, Workflow } from 'lucide-react'
+import { AlertTriangle, Archive, ArchiveRestore, ArrowLeft, ArrowUp, Bot, Download, Eye, ExternalLink, GitCompare, History, Loader2, MessageSquare, RotateCcw, Settings2, Share2, Undo2, Workflow, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
@@ -15,7 +15,8 @@ import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
 import { chatModelLabel } from '@/lib/llm/models'
 import { RunFeed } from '@/components/runs/run-feed'
 import { useAgentExecStream } from '@/components/runs/use-agent-exec-stream'
-import { StatefulArtifactFrame } from './stateful-artifact-frame'
+import { StatefulArtifactFrame, type RenderErrorMessage } from './stateful-artifact-frame'
+import { foldUnchanged, lineDiff, type LineDiff } from '@/lib/artifacts/line-diff'
 import { AssistantSettingsPanel } from './assistant-settings-panel'
 import { ShareDialog } from './share-dialog'
 import { AttachAgentCard } from './attach-agent-card'
@@ -108,6 +109,10 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
   })
   const [model, setModel] = useChatModel('artifact')
   const [restoring, setRestoring] = useState<string | null>(null)
+  // What the shown version's page reported broke (the frame records it; the server keeps the latest per version).
+  const [renderErrors, setRenderErrors] = useState<{ versionId: string; errors: RenderErrorMessage[] } | null>(null)
+  // History: a version laid against the current one as a line diff.
+  const [compare, setCompare] = useState<{ versionId: string; number: number; diff: LineDiff | null; error: string | null } | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
   const requestRef = useRef<AbortController | null>(null)
   const artifactRef = useRef(artifact)
@@ -182,6 +187,34 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
       .catch(() => { if (!cancelled) setMarkdown({ versionId: markdownVersionId, text: '_The document could not be loaded._' }) })
     return () => { cancelled = true }
   }, [id, markdownVersionId])
+
+  // The shown version's recorded runtime errors, if any; the frame updates this as its page reports.
+  useEffect(() => {
+    if (!shownId) { setRenderErrors(null); return }
+    let cancelled = false
+    fetch(`/api/artifacts/${id}/render-errors?versionId=${encodeURIComponent(shownId)}`, { cache: 'no-store', signal: AbortSignal.timeout(12_000) })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { report?: { versionId: string; errors: RenderErrorMessage[] } | null } | null) => { if (!cancelled) setRenderErrors(data?.report?.errors?.length ? { versionId: data.report.versionId, errors: data.report.errors } : null) })
+      .catch(() => { if (!cancelled) setRenderErrors(null) })
+    return () => { cancelled = true }
+  }, [id, shownId])
+
+  const compareWithCurrent = async (version: { id: string; number: number }) => {
+    const current = artifactRef.current?.currentVersionId
+    if (!current) return
+    setCompare({ versionId: version.id, number: version.number, diff: null, error: null })
+    try {
+      // ?download=1 is the authored source, without the injected runtime.
+      const [before, after] = await Promise.all([version.id, current].map(async (v) => {
+        const response = await fetch(`/api/artifacts/${id}/versions/${v}/content?download=1`, { cache: 'no-store', signal: AbortSignal.timeout(20_000) })
+        if (!response.ok) throw new Error('Could not load the version to compare.')
+        return response.text()
+      }))
+      setCompare((prior) => (prior?.versionId === version.id ? { ...prior, diff: lineDiff(before, after) } : prior))
+    } catch (err) {
+      setCompare((prior) => (prior?.versionId === version.id ? { ...prior, error: err instanceof Error ? err.message : String(err) } : prior))
+    }
+  }
 
   const send = async (event: React.FormEvent | null, text?: string) => {
     event?.preventDefault()
@@ -274,6 +307,15 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
   const configurationLocked = artifact.configurationLocked === true || artifact.permissions?.canConfigure === false
   const canConfigure = canAsk && !configurationLocked
   const shownMarkdown = shownVersion?.format === 'markdown' ? shownVersion : null
+  // The version before the current one, by number: what "Undo last change" goes back to.
+  const currentVersion = artifact.versions.find((v) => v.id === artifact.currentVersionId)
+  const previousVersion = currentVersion ? artifact.versions.filter((v) => v.number < currentVersion.number).sort((a, b) => b.number - a.number)[0] ?? null : null
+  const undoLastChange = () => {
+    if (!previousVersion || !currentVersion) return
+    if (window.confirm(`Undo the last change? Version ${previousVersion.number} becomes current again, as a new version; version ${currentVersion.number} stays in the history.`)) void restore(previousVersion.id)
+  }
+  const shownErrors = renderErrors && shownVersion && renderErrors.versionId === shownVersion.id ? renderErrors.errors : []
+  const firstError = shownErrors[0]?.message ?? ''
 
   return (
     <div className="space-y-4">
@@ -346,8 +388,22 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
               <span>Version {shownVersion?.number} of {artifact.versionCount} (current){shownVersion?.request ? ` · ${shownVersion.request.slice(0, 80)}` : ''}</span>
               <button type="button" onClick={() => setPanel('history')} className="font-medium text-horizon-700 underline underline-offset-2">History</button>
               {shownVersion?.executionId && <Link href={`/agents?run=${shownVersion.executionId}`} className="hover:text-foreground">Open the run</Link>}
+              {canEdit && !artifact.archivedAt && (
+                <button type="button" disabled={!previousVersion || restoring !== null} onClick={undoLastChange} title={previousVersion ? `Back to version ${previousVersion.number}` : 'There is no earlier version to go back to'} className="ml-auto inline-flex items-center gap-1 rounded-md border border-input px-2 py-1 font-medium text-foreground hover:bg-muted disabled:opacity-50">
+                  {restoring && previousVersion && restoring === previousVersion.id ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Undo2 className="h-3 w-3" aria-hidden />} Undo last change
+                </button>
+              )}
             </div>
           ) : null}
+          {firstError && !shownMarkdown && (
+            <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-300/70 bg-rose-50 px-3 py-2 text-xs text-rose-900 dark:bg-rose-950/30 dark:text-rose-100">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate" title={firstError}>This version hit a runtime error{shownErrors.length > 1 ? ` (${shownErrors.length})` : ''}: {firstError}</span>
+              {canAsk && shownVersion?.id === artifact.currentVersionId && (
+                <Button size="sm" variant="outline" className="bg-white dark:bg-transparent" disabled={busy || sending} onClick={() => void send(null, `Fix the runtime errors on this version: ${firstError}`)}>Fix this</Button>
+              )}
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-white">
             {shownMarkdown ? (
               <div className="prose prose-sm h-full max-w-none overflow-y-auto p-6 dark:prose-invert">
@@ -361,6 +417,7 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
                 artifactId={id}
                 versionId={shownVersion.id}
                 writable={canEdit && shownVersion.id === artifact.currentVersionId && !artifact.archivedAt}
+                onRenderErrors={setRenderErrors}
                 title={artifact.title}
                 // Opaque origin (never allow-same-origin): the page cannot reach
                 // the app. Whether its scripts run is the server's call — the
@@ -397,6 +454,30 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
           {!embedded && panel === 'settings' && !configurationLocked ? (
             <AssistantSettingsPanel artifactId={artifact.id} canEdit={canConfigure} />
           ) : !embedded && panel === 'history' ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+            {compare && (
+              <section aria-label={`Version ${compare.number} compared with current`} className="flex min-h-0 max-h-[55%] flex-col border-b border-border">
+                <div className="flex items-center gap-2 px-3 py-2 text-xs">
+                  <GitCompare className="h-3.5 w-3.5 text-horizon-600" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate font-medium">Version {compare.number} → current{compare.diff ? <span className="ml-2 font-normal text-muted-foreground"><span className="text-emerald-700">+{compare.diff.added}</span> <span className="text-rose-700">−{compare.diff.removed}</span>{compare.diff.truncated ? ' · long page, first 4,000 lines compared' : ''}</span> : null}</span>
+                  <button type="button" onClick={() => setCompare(null)} aria-label="Close comparison" className="rounded p-1 hover:bg-muted"><X className="h-3.5 w-3.5" aria-hidden /></button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto bg-muted/30 font-mono text-[11px] leading-5">
+                  {compare.error ? <p className="p-3 text-rose-700">{compare.error}</p>
+                    : !compare.diff ? <p className="flex items-center gap-2 p-3 text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Comparing…</p>
+                    : !compare.diff.added && !compare.diff.removed ? <p className="p-3 text-muted-foreground">No differences in the source.</p>
+                    : <table className="w-max min-w-full border-collapse"><tbody>
+                      {foldUnchanged(compare.diff).map((line, index) => line.kind === 'fold'
+                        ? <tr key={index}><td colSpan={3} className="bg-muted/60 px-3 text-center text-muted-foreground">… {line.count} unchanged line{line.count === 1 ? '' : 's'} …</td></tr>
+                        : <tr key={index} className={cn(line.kind === 'added' && 'bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100', line.kind === 'removed' && 'bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-100')}>
+                          <td className="select-none px-2 text-right text-muted-foreground">{line.oldLine ?? ''}</td>
+                          <td className="select-none px-2 text-right text-muted-foreground">{line.newLine ?? ''}</td>
+                          <td className="whitespace-pre px-2"><span className="select-none">{line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '− ' : '  '}</span>{line.text}</td>
+                        </tr>)}
+                    </tbody></table>}
+                </div>
+              </section>
+            )}
             <ol className="min-h-0 flex-1 divide-y divide-border overflow-y-auto" aria-label="Version history">
               {artifact.nextVersionBefore && <li className="p-3"><Button variant="outline" disabled={historyLoading} onClick={() => void loadHistory()}>{historyLoading ? 'Loading…' : 'Load older versions'}</Button></li>}
               {artifact.versions.map((version) => {
@@ -421,12 +502,18 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
                           {restoring === version.id ? 'Restoring…' : 'Restore'}
                         </button>
                       )}
+                      {!isCurrent && artifact.currentVersionId && (
+                        <button type="button" onClick={() => void compareWithCurrent(version)} className={cn('font-medium underline underline-offset-2', compare?.versionId === version.id ? 'text-foreground' : 'text-horizon-700')}>
+                          {compare?.versionId === version.id && !compare.diff && !compare.error ? 'Comparing…' : 'Compare with current'}
+                        </button>
+                      )}
                       {version.executionId && <Link href={`/agents?run=${version.executionId}`} className="text-muted-foreground hover:text-foreground">Run</Link>}
                     </div>
                   </li>
                 )
               })}
             </ol>
+            </div>
           ) : (
             <>
           <div aria-label="Artifact conversation" className="min-h-0 flex-1 space-y-3 overflow-y-auto break-words px-4 py-3">

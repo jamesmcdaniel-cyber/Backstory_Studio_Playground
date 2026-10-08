@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { rateLimit } from '@/lib/ratelimit'
 import { auditRowsToCsv } from '@/lib/audit'
 
 export const runtime = 'nodejs'
@@ -10,6 +11,10 @@ export const runtime = 'nodejs'
  * compliance surface — an immutable record of what agents did.
  */
 export const GET = withAuthenticatedApi(async (request, auth) => {
+  // Exports are the expensive reads: a full-table scan serialized into one
+  // response. One budget across every export route, per user.
+  const limited = await rateLimit(`export:${auth.userId}`, { limit: 20, windowMs: 60_000 })
+  if (!limited.ok) throw new ApiError('Too many exports — wait a minute and try again.', 429, 'RATE_LIMITED')
 
   const limit = Math.min(Number(request.nextUrl.searchParams.get('limit')) || 5000, 20000)
   const rows = await prisma.auditEvent.findMany({

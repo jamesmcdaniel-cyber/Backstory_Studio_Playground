@@ -123,3 +123,43 @@ test('a directive-injection attempt cannot smuggle a semicolon into the policy',
   const csp = buildContentSecurityPolicy({ nonce: 'test-nonce' })
   assert.equal(csp.includes('script-src *'), false)
 })
+
+// ── The directives that make the policy a script-execution control at all ───
+
+function directiveOf(csp: string, name: string): string {
+  const directive = csp.split(';').map((entry) => entry.trim()).find((entry) => entry.startsWith(`${name} `))
+  assert.ok(directive, `the policy must carry a ${name} directive`)
+  return directive
+}
+
+test('default-src and script-src are present and script-src never admits unsafe-inline', () => {
+  const csp = buildContentSecurityPolicy({ nonce: 'test-nonce' })
+  assert.equal(directiveOf(csp, 'default-src'), "default-src 'self'")
+  const scriptSrc = directiveOf(csp, 'script-src')
+  // The session cookie is readable from script by design; this directive is
+  // the control that comment relies on. 'unsafe-inline' would undo it.
+  assert.ok(!scriptSrc.includes("'unsafe-inline'"), 'script-src must not admit inline script')
+  assert.ok(!scriptSrc.includes("'unsafe-eval'"), 'production script-src must not admit eval')
+  assert.match(scriptSrc, /'strict-dynamic'/)
+})
+
+test('connect-src is derived from the configured Supabase project, http and websocket', () => {
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co'
+  const connectSrc = directiveOf(buildContentSecurityPolicy({ nonce: 'test-nonce' }), 'connect-src')
+  assert.ok(connectSrc.includes('https://abcdefgh.supabase.co'), 'the REST/auth origin')
+  assert.ok(connectSrc.includes('wss://abcdefgh.supabase.co'), 'the realtime websocket origin')
+  // Never the whole provider: *.supabase.co would admit every project on the internet.
+  assert.ok(!connectSrc.includes('*.supabase.co'))
+})
+
+test('the artifact iframe (same origin) and the Nango Connect UI are framable', () => {
+  const frameSrc = directiveOf(buildContentSecurityPolicy({ nonce: 'test-nonce' }), 'frame-src')
+  assert.match(frameSrc, /'self'/)
+  assert.match(frameSrc, /https:\/\/connect\.nango\.dev/)
+})
+
+test("only development admits 'unsafe-eval' and local HMR websockets", () => {
+  const dev = buildContentSecurityPolicy({ nonce: 'test-nonce', isDevelopment: true })
+  assert.match(directiveOf(dev, 'script-src'), /'unsafe-eval'/)
+  assert.match(directiveOf(dev, 'connect-src'), /ws:\/\/localhost:\*/)
+})

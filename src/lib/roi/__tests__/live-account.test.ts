@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hasLiveData, liveNarrative, parseAccount, parsePeople, parseStatus, summarizeSalesforce, toolData, type RoiLiveAccount } from '../live-account'
+import { bucketByFiscalYear, hasLiveData, liveFiscalYears, liveNarrative, parseAccount, parsePeople, parseStatus, summarizeSalesforce, toolData, type RoiLiveAccount } from '../live-account'
+import { liveIsStale } from '../personal-page'
 import { roiNarrativeSchema } from '../contract'
 import { renderRoiDashboard } from '../dashboard'
 
@@ -46,7 +47,39 @@ test('Salesforce opportunities summarise into won and lost, by type and fiscal y
   assert.equal(s.avgDaysToClose, Math.round((30 + 50) / 2))
   assert.deepEqual(s.byType[0], { type: 'New Business', won: 1, lost: 1 })
   assert.deepEqual(s.byFy.map((f) => f.fy), ['FY2025', 'FY2026', 'FY2027'], 'fiscal years start in February')
+  assert.deepEqual(s.byMonth, [
+    { month: '2025-01', won: 1, lost: 0, wonAmount: 300 },
+    { month: '2025-12', won: 0, lost: 1, wonAmount: 0 },
+    { month: '2026-03', won: 1, lost: 0, wonAmount: 100 },
+  ], 'the raw close months are kept, so fiscal years can be bucketed when drawn')
   assert.deepEqual(s.openByStage, [{ stage: 'Negotiation', count: 2, amount: 100 }])
+})
+
+test('fiscal years are bucketed from the raw months with whatever fiscal start is in force when drawn', () => {
+  const byMonth = [
+    { month: '2025-01', won: 1, lost: 0, wonAmount: 300 },
+    { month: '2025-12', won: 0, lost: 1, wonAmount: 0 },
+    { month: '2026-03', won: 1, lost: 0, wonAmount: 100 },
+  ]
+  assert.deepEqual(bucketByFiscalYear(byMonth, null).map((f) => [f.fy, f.won, f.lost, f.wonAmount]), [['FY2025', 1, 1, 300], ['FY2026', 1, 0, 100]], 'January: calendar years (December 2025 is FY2025)')
+  assert.deepEqual(bucketByFiscalYear(byMonth, 2).map((f) => f.fy), ['FY2025', 'FY2026', 'FY2027'], 'February: the same months, relabelled')
+  assert.deepEqual(bucketByFiscalYear(byMonth, 7).map((f) => [f.fy, f.won + f.lost]), [['FY2025', 1], ['FY2026', 2]], 'July: December 2025 and March 2026 share FY2026')
+  const sf = { closedWon: 2, closedLost: 1, wonAmount: 400, avgDaysToClose: null, byType: [], byFy: [{ fy: 'FY2026', won: 2, lost: 1, wonAmount: 400 }], openByStage: [] }
+  assert.deepEqual(liveFiscalYears(sf, 2), sf.byFy, 'a version read before the months were kept shows what it was bucketed with')
+  assert.equal(liveFiscalYears({ ...sf, byMonth }, 2).length, 3)
+})
+
+test('a live read under one fiscal start is stale for a page whose settings now say another', () => {
+  const now = Date.parse('2026-10-07T21:00:00.000Z')
+  const fresh = (fyStartMonth: number | null | undefined): RoiLiveAccount => ({ fetchedAt: '2026-10-07T20:00:00.000Z', sources: [], ...(fyStartMonth === undefined ? {} : { fyStartMonth }) })
+  assert.equal(liveIsStale(fresh(null), now, null), false)
+  assert.equal(liveIsStale(fresh(2), now, 2), false)
+  assert.equal(liveIsStale(fresh(2), now, null), true, 'the settings moved to January')
+  assert.equal(liveIsStale(fresh(null), now, 7), true, 'the settings moved to July')
+  assert.equal(liveIsStale(fresh(undefined), now, null), false, 'a read from before the start was recorded counts as January')
+  assert.equal(liveIsStale(fresh(undefined), now, 4), true)
+  assert.equal(liveIsStale(fresh(2), now - 7 * 60 * 60_000, 2), false)
+  assert.equal(liveIsStale(fresh(2), now + 7 * 60 * 60_000, 2), true, 'older than the TTL')
 })
 
 const live: RoiLiveAccount = {
@@ -77,4 +110,27 @@ test('the report draws "today" from the live read, escaped, and says where it ca
   assert.match(html, /<span class="eng md">61<\/span>/)
   assert.match(html, /Salesforce: No Salesforce connection/)
   assert.match(html, /<li><b>Pricing and Value Concerns<\/b>: finance is skeptical\.<\/li>/)
+  assert.match(html, /it shows on your page and refreshes/, 'the workspace can see the page, so the block never claims to be private')
+  assert.doesNotMatch(html, /your page only/)
+})
+
+test('the report buckets the live by-fiscal-year table from the run\'s own fiscal start, not the one it was read under', () => {
+  const withSf: RoiLiveAccount = {
+    ...live,
+    fyStartMonth: null,
+    sources: [{ name: 'Backstory', ok: true }, { name: 'Salesforce', ok: true }],
+    salesforce: {
+      closedWon: 2, closedLost: 1, wonAmount: 400, avgDaysToClose: 40, byType: [], openByStage: [],
+      byFy: [{ fy: 'FY2025', won: 1, lost: 0, wonAmount: 300 }, { fy: 'FY2026', won: 1, lost: 1, wonAmount: 100 }],
+      byMonth: [{ month: '2025-01', won: 1, lost: 0, wonAmount: 300 }, { month: '2025-12', won: 0, lost: 1, wonAmount: 0 }, { month: '2026-03', won: 1, lost: 0, wonAmount: 100 }],
+    },
+  }
+  const facts = { U: null, OPP: null, ST: null, META: {}, notes: [] }
+  const narrative = liveNarrative(withSf, 'Hyland Software')
+  const january = renderRoiDashboard(facts, narrative, { account: 'Hyland Software', live: withSf, config: { windowMonths: 6, comparison: 'prior', custom: null, cohort: 'tiers', fiscalYearStartMonth: null } })
+  assert.match(january, /<td>FY2025<\/td><td>1<\/td><td>1<\/td>/)
+  assert.doesNotMatch(january, /FY2027/)
+  const february = renderRoiDashboard(facts, narrative, { account: 'Hyland Software', live: withSf, config: { windowMonths: 6, comparison: 'prior', custom: null, cohort: 'tiers', fiscalYearStartMonth: 2 } })
+  assert.match(february, /<td>FY2027<\/td><td>1<\/td><td>0<\/td>/, 'March 2026 is FY2027 when the year starts in February')
+  assert.match(february, /<td>FY2026<\/td><td>0<\/td><td>1<\/td>/)
 })

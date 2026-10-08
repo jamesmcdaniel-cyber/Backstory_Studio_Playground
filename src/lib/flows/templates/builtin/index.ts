@@ -13,6 +13,8 @@ import { ZENDESK_TICKET_PULSE, SUPPORT_THEME_REPORT, CUSTOMER_CHANNEL_MONITOR, C
 import { HUBSPOT_LEAD_ROUTER, SALESFORCE_HYGIENE_AUDIT, INBOX_TRIAGE_BRIEF, ACCOUNT_HANDOFF_BRIEF } from '@/lib/flows/templates/builtin/revenue-ops'
 import { SHEET_ANOMALY_WATCH, DRIVE_FRESH_DOCS_DIGEST, AIRTABLE_REVIEW_QUEUE, NOTES_TO_NOTION } from '@/lib/flows/templates/builtin/workspace-data'
 import { JIRA_SPRINT_HEALTH, MONDAY_BOARD_SNAPSHOT, ONBOARDING_KICKOFF, WEEKLY_EXEC_BRIEF } from '@/lib/flows/templates/builtin/team-cadence'
+import { ROI_DATA_PULL_DATABRICKS } from '@/lib/roi/data-flow-template'
+import { isCustomerEdition } from '@/lib/edition'
 
 /**
  * The built-in flow catalogue every workspace sees, served after the org's own
@@ -58,6 +60,9 @@ export const BUILTIN_FLOW_TEMPLATES: FlowTemplateDef[] = [
   // Team cadence.
   ONBOARDING_KICKOFF,
   MONDAY_BOARD_SNAPSHOT,
+  // The ROI page's data source — an operator surface, like the ROI plane it
+  // calls: the customer edition never lists it.
+  ...(isCustomerEdition() ? [] : [ROI_DATA_PULL_DATABRICKS]),
   // Engine showcases and zero-setup starters.
   SUMMARIZE_EXTRACT,
   SCORE_EACH_ITEM,

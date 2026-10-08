@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
+import { prisma, tenantTransaction } from '@/lib/prisma'
 import { ApiError } from '@/lib/server/api-handler'
 import { Prisma } from '@prisma/client'
 
@@ -17,11 +17,14 @@ export async function writeAppState(scope: Scope, revision: number, value: unkno
   const encoded = JSON.stringify(value)
   if (encoded === undefined || Buffer.byteLength(encoded) > MAX_STATE_BYTES) throw new ApiError('Application state exceeds 256 KB.', 413, 'STATE_TOO_LARGE')
   const data = value === null ? Prisma.JsonNull : JSON.parse(encoded) as Prisma.InputJsonValue
-  return prisma.$transaction(async (tx) => {
+  return tenantTransaction(scope.organizationId, async (tx) => {
     // Lock the same artifact row as a source-version save. Old/history frames
     // cannot race a newly-published source version and overwrite its state.
-    const valid = await tx.artifact.updateMany({ where: { id: scope.artifactId, organizationId: scope.organizationId, currentVersionId: versionId, archivedAt: null }, data: { currentVersionId: versionId } })
-    if (!valid.count) throw new ApiError('The artifact version changed. Reload before saving application data.', 409, 'STATE_CONFLICT')
+    // A plain row lock, not an update: an update would bump the artifact's
+    // updatedAt, which the conversation writes compare-and-swap on, and
+    // every state save would then read as the artifact having changed.
+    const valid = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "artifacts" WHERE "id" = ${scope.artifactId} AND "organizationId" = ${scope.organizationId}::uuid AND "currentVersionId" = ${versionId} AND "archivedAt" IS NULL FOR UPDATE`
+    if (!valid.length) throw new ApiError('The artifact version changed. Reload before saving application data.', 409, 'STATE_CONFLICT')
     if (revision === 0) {
       const count = await tx.artifactAppState.count({ where: { organizationId: scope.organizationId, artifactId: scope.artifactId, userId: scope.userId } })
       if (count >= 32) throw new ApiError('This artifact already has 32 state keys.', 413, 'STATE_LIMIT')

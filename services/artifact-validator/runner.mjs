@@ -91,7 +91,18 @@ process.once('message', async ({ html }) => {
       else checks.push('synthetic-state-save-and-reload')
     }
     for (const message of await frame.locator('#__artifact_error,[data-backstory-runtime-error]').allTextContents()) record(message)
-    process.send({ ok: !errors.length, errors, checks, limits: 'Tests cover declared workflows and synthetic storage, not arbitrary business rules or real integration side effects.' })
+    // A 1280×800 picture of the page as it passed, for cards and for the
+    // assistant to look at. Taken after the checks so a failed page has none.
+    let screenshot
+    if (!errors.length) {
+      try {
+        await page.setViewportSize({ width: 1280, height: 800 })
+        await page.evaluate(() => { const f = document.querySelector('iframe'); f.style.cssText = 'position:fixed;left:0;top:0;width:1280px;height:800px;border:0;margin:0' })
+        await page.waitForTimeout(300)
+        screenshot = (await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 1280, height: 800 }, timeout: 5000 })).toString('base64')
+      } catch { screenshot = undefined }
+    }
+    process.send({ ok: !errors.length, errors, checks, ...(screenshot ? { screenshot } : {}), limits: 'Tests cover declared workflows and synthetic storage, not arbitrary business rules or real integration side effects.' })
   } catch (error) { record(error.message); process.send({ ok: false, errors }) }
   finally { await browser?.close().catch(() => {}); server.close(); process.disconnect() }
 })

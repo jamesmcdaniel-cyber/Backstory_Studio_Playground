@@ -263,13 +263,24 @@ export async function askGuestCopy(token: string, guestToken: string | null | un
   const organizationId = source.organizationId
   const agent = await prisma.agentTask.findFirst({ where: { id: copy.agentTaskId, organizationId, artifactTemplateCopyId: copy.id, status: 'ACTIVE' }, select: { userId: true } })
   if (!agent?.userId) throw new ApiError('The copilot is no longer available on this template.', 409, 'COPILOT_UNAVAILABLE')
-  const since = { gte: startOfUtcDay() }
-  const [mine, all] = await Promise.all([
-    prisma.agentExecution.count({ where: { organizationId, agentTaskId: copy.agentTaskId, startedAt: since } }),
-    prisma.agentExecution.count({ where: { organizationId, startedAt: since, trigger: { path: ['guestTemplateId'], equals: source.id } } }),
-  ])
-  if (mine >= GUEST_COPILOT_LIMITS.messagesPerVisitor) throw new ApiError(`You have used today’s ${GUEST_COPILOT_LIMITS.messagesPerVisitor} questions for this copilot. Come back tomorrow, or sign in to keep going in your own workspace.`, 429, 'GUEST_LIMIT_REACHED')
-  if (all >= GUEST_COPILOT_LIMITS.messagesPerTemplate) throw new ApiError('This template’s copilot is busy today. Try again tomorrow, or sign in to use your own copy.', 429, 'GUEST_LIMIT_REACHED')
+  const agentTaskId = copy.agentTaskId
+  const withinCaps = async (client: Prisma.TransactionClient | typeof prisma) => {
+    const since = { gte: startOfUtcDay() }
+    const mine = await client.agentExecution.count({ where: { organizationId, agentTaskId, startedAt: since } })
+    if (mine >= GUEST_COPILOT_LIMITS.messagesPerVisitor) throw new ApiError(`You have used today’s ${GUEST_COPILOT_LIMITS.messagesPerVisitor} questions for this copilot. Come back tomorrow, or sign in to keep going in your own workspace.`, 429, 'GUEST_LIMIT_REACHED')
+    const all = await client.agentExecution.count({ where: { organizationId, startedAt: since, trigger: { path: ['guestTemplateId'], equals: source.id } } })
+    if (all >= GUEST_COPILOT_LIMITS.messagesPerTemplate) throw new ApiError('This template’s copilot is busy today. Try again tomorrow, or sign in to use your own copy.', 429, 'GUEST_LIMIT_REACHED')
+  }
+  // A quick refusal first; the count that decides is taken again inside the
+  // transaction that records the run, behind a lock on the template's row,
+  // so two sends racing for the last slot of the day (one visitor in two
+  // tabs, or two visitors on one template) count one after the other and
+  // the cap is exact rather than off by the race.
+  await withinCaps(prisma)
+  const admit = async (tx: Prisma.TransactionClient) => {
+    await tx.$queryRaw`SELECT "id" FROM "artifacts" WHERE "id" = ${source.id} AND "organizationId" = ${organizationId}::uuid FOR UPDATE`
+    await withinCaps(tx)
+  }
   // Untouched, the copy is shown as the original's CURRENT version; if the
   // original has moved on since the copy was made, catch up first, so the
   // change is made to the page the visitor is looking at.
@@ -277,8 +288,10 @@ export async function askGuestCopy(token: string, guestToken: string | null | un
   if (untouched) await takeSharedVersion(token, source, organizationId, copy.id, agent.userId)
   const { askArtifact } = await import('./service')
   try {
-    await askArtifact({ organizationId, userId: agent.userId, id: copy.id, message, mode: 'auto', guestDigest })
+    await askArtifact({ organizationId, userId: agent.userId, id: copy.id, message, mode: 'auto', guestDigest, admit })
   } catch (error) {
+    // A cap refusal is the visitor's own to read, with its status.
+    if (error instanceof ApiError) throw error
     const text = error instanceof Error ? error.message : ''
     // Only the visitor's own mistakes are theirs to read.
     throw new ApiError(/^(Wait for the current answer|Type a message first)/.test(text) ? text : 'The copilot is unavailable right now. Please try again.', 400, 'MESSAGE_REJECTED', error)

@@ -688,7 +688,7 @@ export function AskBackstory() {
                                 }}
                                 className="flex items-center gap-2.5 rounded-lg border border-graphite-200 bg-white p-2.5 transition-colors hover:border-horizon-300 hover:bg-graphite-50"
                               >
-                                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-graphite-100 text-graphite-500">
+                                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-graphite-100 text-fg-muted">
                                   <Icon className="h-3.5 w-3.5" />
                                 </span>
                                 <span className="min-w-0 flex-1">

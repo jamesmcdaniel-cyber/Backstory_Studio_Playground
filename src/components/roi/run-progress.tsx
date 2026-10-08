@@ -150,7 +150,7 @@ export function RunProgress({ analysis, expectedSeconds, asyncAfterSeconds, onCh
                   <span className="flex items-center gap-2 text-sm">
                     <span aria-hidden className={cn(
                       'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
-                      state === 'done' ? 'bg-horizon-600 text-white' : state === 'active' ? 'bg-horizon-50 text-horizon-700 ring-1 ring-horizon-300' : 'bg-graphite-100 text-graphite-500',
+                      state === 'done' ? 'bg-horizon-600 text-white' : state === 'active' ? 'bg-horizon-50 text-horizon-700 ring-1 ring-horizon-300' : 'bg-graphite-100 text-fg-muted',
                     )}>
                       {state === 'done' ? <Check className="h-3 w-3" /> : state === 'active' ? <Loader2 className="h-3 w-3 animate-spin" /> : index + 1}
                     </span>

@@ -5,6 +5,7 @@ import { trackDetached } from '@/lib/flows/keep-alive'
 import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { currentAmbientOrganization } from '@/lib/tenant-database-context'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
+import { EgressVault } from './redact'
 import { withBreaker, CircuitOpenError } from '@/lib/resilience/circuit-breaker'
 import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { UNTRUSTED_DATA_RULE, fenceUntrusted } from '@/lib/security/prompt'
@@ -155,6 +156,30 @@ const LLM_MAX_RETRIES = Math.max(1, Number(process.env.LLM_MAX_RETRIES) || 2)
 const STREAM_DEADLINE_MS = AGENT_MODEL_TURN_TIMEOUT_MS
 
 const CACHE_CONTROL = { type: 'ephemeral' as const }
+
+/**
+ * A workspace on the `redacted` AI egress policy sends pseudonymised
+ * identifiers to the provider and gets the real ones back (see ./redact).
+ * The policy is read once a minute per workspace; the vault is per call
+ * site (one per agent run, one per one-shot completion).
+ */
+const EGRESS_POLICY_TTL_MS = 60_000
+const egressPolicyCache = new Map<string, { policy: string; at: number }>()
+async function egressVault(ledger?: LedgerContext | null): Promise<EgressVault | null> {
+  if (!ledger?.organizationId) return null
+  const cached = egressPolicyCache.get(ledger.organizationId)
+  let policy = cached && Date.now() - cached.at < EGRESS_POLICY_TTL_MS ? cached.policy : null
+  if (!policy) {
+    try {
+      const { loadAiEgressPolicy } = await import('@/lib/usage/ai-guard')
+      policy = await loadAiEgressPolicy(ledger.organizationId)
+    } catch {
+      policy = 'allowed'
+    }
+    egressPolicyCache.set(ledger.organizationId, { policy, at: Date.now() })
+  }
+  return policy === 'redacted' ? new EgressVault() : null
+}
 
 /**
  * Which dialect of the Messages API an endpoint speaks.
@@ -323,6 +348,8 @@ function claudeClient(): Anthropic {
  */
 class AgentRunner implements ModelRunner {
   readonly model: string
+  /** The run's identifier vault once the workspace's policy is known (null = send as is). */
+  private vault: EgressVault | null | undefined
 
   constructor(private readonly chain: Provider[]) {
     if (chain.length === 0) throw new Error('No model provider configured — set ANTHROPIC_API_KEY (or QWEN_API_KEY + QWEN_BASE_URL).')
@@ -345,6 +372,12 @@ class AgentRunner implements ModelRunner {
 
   async next(transcript: unknown[], system: string, tools: ToolDefinition[], ledger?: LedgerContext): Promise<ModelTurn> {
     const ir = transcript as IRMessage[]
+    if (this.vault === undefined) this.vault = await egressVault(ledger)
+    const vault = this.vault
+    // Redacted egress: the provider sees a pseudonymised copy of the
+    // transcript; its reply is restored before it joins the real one.
+    const wire = vault ? vault.pseudonymizeDeep(ir) : ir
+    const wireSystem = vault ? vault.pseudonymize(system) : system
     let lastError: unknown
     for (let i = 0; i < this.chain.length; i += 1) {
       const provider = this.chain[i]
@@ -360,14 +393,21 @@ class AgentRunner implements ModelRunner {
         // while holding a worker slot the whole time. With the breaker open the
         // sick endpoint is skipped in microseconds and the run proceeds on the
         // other one.
-        const turn = await withBreaker(
+        const rawTurn = await withBreaker(
           `llm:${provider.providerId}`,
-          () => provider.next(ir, system, tools),
+          () => provider.next(wire, wireSystem, tools),
           // The same predicate the fallback itself uses, so the breaker counts
           // exactly the failures the chain already considers "this endpoint is
           // unwell" — a schema error is ours and must not open a circuit.
           { isFailure: isProviderAvailabilityError },
         )
+        let turn = rawTurn
+        if (vault) {
+          // The provider appended its reply to the copy; the real transcript takes the restored one.
+          const reply = wire[wire.length - 1]
+          if (wire.length > ir.length && reply) ir.push(vault.restoreDeep(reply))
+          turn = { ...rawTurn, text: vault.restore(rawTurn.text), toolCalls: rawTurn.toolCalls.map((call) => ({ ...call, input: vault.restoreDeep(call.input) })) }
+        }
         // Recorded here rather than inside the provider so a fallback writes
         // exactly one row — for the attempt that actually served the turn.
         // Fire-and-forget: the ledger is best-effort and must not add latency.
@@ -458,6 +498,9 @@ function buildProvider(step: RouteStep): Provider {
  * endpoint chain (primary + cross-endpoint fallback). Keeps the same signature
  * and ModelRunner contract as before; callers are unchanged.
  */
+/** Test seam: the runner class and the egress-policy cache, so a redaction round-trip can be driven with a fake provider. */
+export const __runnerInternals = { AgentRunner, egressPolicyCache }
+
 export function createModelRunner(requested?: string): ModelRunner {
   const chain = routeModel(requested).map(buildProvider)
   if (chain.length === 0) {
@@ -594,6 +637,8 @@ export async function generateLongText(opts: {
   timeoutMs?: number
 }): Promise<{ text: string; stopReason: string | null }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not configured')
+  const vault = await egressVault(opts.ledger)
+  if (vault) opts = { ...opts, system: vault.pseudonymize(opts.system), user: vault.pseudonymize(opts.user) }
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: opts.timeoutMs ?? 15 * 60_000, maxRetries: 1 })
   const model = resolveServedModel({ target: 'claude', model: opts.model })
   const startedAt = Date.now()
@@ -627,7 +672,7 @@ export async function generateLongText(opts: {
     .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
     .join('')
-  return { text, stopReason: message.stop_reason ?? null }
+  return { text: vault ? vault.restore(text) : text, stopReason: message.stop_reason ?? null }
 }
 
 /**
@@ -863,6 +908,12 @@ function recordStructuredEgress(opts: StructuredOpts): void {
 }
 
 export async function generateStructured(opts: StructuredOpts): Promise<string> {
+  const vault = await egressVault(opts.ledger)
+  if (!vault) return generateStructuredRaw(opts)
+  return vault.restore(await generateStructuredRaw({ ...opts, system: vault.pseudonymize(opts.system), user: vault.pseudonymize(opts.user) }))
+}
+
+async function generateStructuredRaw(opts: StructuredOpts): Promise<string> {
   recordStructuredEgress(opts)
   const overrideModel = opts.model?.trim() || undefined
   const effectiveDefaultModel = overrideModel || DEFAULT_AGENT_MODEL
@@ -905,6 +956,15 @@ export async function generateStructured(opts: StructuredOpts): Promise<string> 
  * what generateStructured would have.
  */
 export async function streamStructured(opts: StructuredOpts, onText: (delta: string) => void): Promise<string> {
+  const vault = await egressVault(opts.ledger)
+  if (!vault) return streamStructuredRaw(opts, onText)
+  // A placeholder can straddle two deltas, so a redacted stream is delivered whole, restored.
+  const text = vault.restore(await streamStructuredRaw({ ...opts, system: vault.pseudonymize(opts.system), user: vault.pseudonymize(opts.user) }, () => undefined))
+  onText(text)
+  return text
+}
+
+async function streamStructuredRaw(opts: StructuredOpts, onText: (delta: string) => void): Promise<string> {
   recordStructuredEgress(opts)
   if (!hasAnthropic()) throw new Error('No model provider configured — set ANTHROPIC_API_KEY.')
   const overrideModel = opts.model?.trim() || undefined

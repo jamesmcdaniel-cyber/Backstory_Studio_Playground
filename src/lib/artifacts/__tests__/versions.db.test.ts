@@ -121,4 +121,41 @@ if (TEST_DB) {
       await other.cleanup()
     }
   })
+
+  test('saving application data leaves the artifact\'s updatedAt alone — it is the key the conversation writes compare-and-swap on', async () => {
+    const { writeAppState } = await import('../app-state')
+    const { artifact, version } = await service.createArtifact({ organizationId: seeded.organizationId, userId: seeded.userId, kind: 'page', title: 'State vs chat', content: '<html><body>State</body></html>' })
+    const scope = { organizationId: seeded.organizationId, userId: seeded.userId, artifactId: artifact.id, key: 'board' }
+    const before = (await prisma.artifact.findFirstOrThrow({ where: { id: artifact.id, organizationId: seeded.organizationId }, select: { updatedAt: true } })).updatedAt
+    await writeAppState(scope, 0, { cards: 1 }, version.id)
+    await writeAppState(scope, 1, { cards: 2 }, version.id)
+    const after = (await prisma.artifact.findFirstOrThrow({ where: { id: artifact.id, organizationId: seeded.organizationId }, select: { updatedAt: true } })).updatedAt
+    assert.equal(after.getTime(), before.getTime())
+    // The row lock still refuses a frame holding a version that is not current, and an archived artifact.
+    await assert.rejects(writeAppState(scope, 2, { cards: 3 }, 'not-the-current-version'), /version changed/)
+    await service.archiveArtifact(seeded.organizationId, artifact.id, true)
+    await assert.rejects(writeAppState(scope, 2, { cards: 3 }, version.id), /version changed/)
+  })
+
+  test('restoring a version does not send content that already passed the browser preflight back to the validator', async () => {
+    const keys = ['ARTIFACT_VALIDATOR_URL', 'ARTIFACT_VALIDATOR_TOKEN', 'ARTIFACT_RUNTIME_PREFLIGHT'] as const
+    const saved = keys.map((key) => process.env[key])
+    for (const key of keys) delete process.env[key]
+    const scripted = (n: number) => `<!doctype html><html><body><h1>v${n}</h1><script>document.title = "v${n}"</script></body></html>`
+    try {
+      const { artifact, version: first } = await service.createArtifact({ organizationId: seeded.organizationId, userId: seeded.userId, kind: 'page', title: 'Restore vs validator', content: scripted(1) })
+      await service.addVersion({ organizationId: seeded.organizationId, artifactId: artifact.id, content: scripted(2) })
+      // The validator is now required but not reachable: a new scripted save
+      // is refused as a validator outage, never as a content failure...
+      process.env.ARTIFACT_RUNTIME_PREFLIGHT = 'required'
+      await assert.rejects(service.addVersion({ organizationId: seeded.organizationId, artifactId: artifact.id, content: scripted(3) }), /validator is unavailable/)
+      // ...while going back to a version that passed when it was saved still works.
+      const restored = await service.restoreVersion({ organizationId: seeded.organizationId, userId: seeded.userId, artifactId: artifact.id, versionId: first.id })
+      assert.equal(restored.number, 3)
+      assert.equal(restored.request, 'Restored version 1')
+      assert.equal((await service.loadArtifact(seeded.organizationId, artifact.id))?.currentVersionId, restored.id)
+    } finally {
+      keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index] })
+    }
+  })
 }

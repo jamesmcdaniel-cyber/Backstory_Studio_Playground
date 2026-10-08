@@ -252,6 +252,8 @@ const cases = (): Case[] => [
   { route: 'share/artifacts/[token]/copy', method: 'POST', run: async () => (await import('../share/artifacts/[token]/copy/route')).POST(rq('/api/share/artifacts/missing/copy', 'POST', {})) },
   { route: 'artifacts/[id]', method: 'PATCH', run: async () => (await import('../artifacts/[id]/route')).PATCH(rq('/api/artifacts/missing', 'PATCH', { archived: true })) },
   { route: 'artifacts/[id]/state', method: 'PUT', run: async () => (await import('../artifacts/[id]/state/route')).PUT(rq('/api/artifacts/missing/state', 'PUT', { key: 'records-v1', revision: 0, value: [], versionId: 'missing' })) },
+  { route: 'artifacts/[id]/shared-state', method: 'PUT', run: async () => (await import('../artifacts/[id]/shared-state/route')).PUT(rq('/api/artifacts/missing/shared-state', 'PUT', { key: 'signups-v1', revision: 0, value: [], versionId: 'missing' })) },
+  { route: 'artifacts/[id]/render-errors', method: 'PUT', run: async () => (await import('../artifacts/[id]/render-errors/route')).PUT(rq('/api/artifacts/missing/render-errors', 'PUT', { versionId: 'missing', errors: [{ message: 'boom', count: 1 }] })) },
   { route: 'artifacts/[id]/versions/[versionId]/restore', method: 'POST', run: async () => (await import('../artifacts/[id]/versions/[versionId]/restore/route')).POST(rq('/api/artifacts/missing/versions/missing/restore', 'POST', {})) },
   { route: 'artifacts/[id]/chat', method: 'POST', run: async () => (await import('../artifacts/[id]/chat/route')).POST(rq('/api/artifacts/missing/chat', 'POST', { message: 'Why?', mode: 'ask' })) },
   { route: 'artifacts/[id]/chat', method: 'DELETE', run: async () => (await import('../artifacts/[id]/chat/route')).DELETE(rq('/api/artifacts/missing/chat', 'DELETE', {})) },

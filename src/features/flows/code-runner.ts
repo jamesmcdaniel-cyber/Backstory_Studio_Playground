@@ -42,6 +42,18 @@ const TIMEOUT_MAX_MS = 30_000
 // dashboard needs do not fit in 1 MB. Both ceilings still exist — they are
 // just sized for the work.
 export const DATASET_TIMEOUT_MAX_MS = 300_000
+/**
+ * Ceiling for a WHOLE per-item code step. Each item already has its own
+ * timeout, but `mode: 'each'` over MAX_ITEMS items at the per-item maximum was
+ * 1,000 × 30 s = over eight hours of sandbox time from one step — a single
+ * flow could hold a worker for most of a day. The step as a whole now stops
+ * at the lesser of items × per-item timeout and this budget. Overridable
+ * through FLOW_STEP_MAX_MS for deployments that size their workers for it.
+ */
+export const FLOW_STEP_MAX_MS = (() => {
+  const raw = Number(process.env.FLOW_STEP_MAX_MS)
+  return Number.isFinite(raw) && raw >= 1_000 ? raw : 10 * 60 * 1_000
+})()
 const DATASET_MAX_OUTPUT_BYTES = 5_000_000
 const DATASET_MOUNT = '/datasets'
 const MAX_LOG_ENTRIES = 200
@@ -376,9 +388,14 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
   return result as CodeRunResult
 }
 
-async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<CodeRunResult> {
+/** The per-item timeout a run actually gets: clamped to [1 s, ceiling]. */
+function effectiveTimeoutMs(options: Pick<CodeRunOptions, 'datasets' | 'timeoutMs'>): number {
   const ceiling = options.datasets?.length ? DATASET_TIMEOUT_MAX_MS : TIMEOUT_MAX_MS
-  const timeoutMs = Math.max(1_000, Math.min(ceiling, options.timeoutMs ?? DEFAULT_TIMEOUT_MS))
+  return Math.max(1_000, Math.min(ceiling, options.timeoutMs ?? DEFAULT_TIMEOUT_MS))
+}
+
+async function runOne(options: Omit<CodeRunOptions, 'mode'>): Promise<CodeRunResult> {
+  const timeoutMs = effectiveTimeoutMs(options)
   if (options.datasets?.length && options.language !== 'python') throw new Error('Datasets are available to Python code only.')
   return options.language === 'javascript'
     ? runJavaScript(options, timeoutMs)
@@ -392,9 +409,23 @@ export async function runFlowCode(options: CodeRunOptions): Promise<CodeRunResul
   if (items.length > MAX_ITEMS) throw new Error(`Code step can process at most ${MAX_ITEMS} items at once.`)
   const output: unknown[] = []
   const logs: string[] = []
+  // Outer deadline for the whole loop: the per-item timeout bounds one item,
+  // this bounds the step. The last item that fits gets only what remains of
+  // the budget, so the deadline is honoured rather than overrun by one item.
+  const perItemMs = effectiveTimeoutMs(options)
+  const budgetMs = Math.min(items.length * perItemMs, FLOW_STEP_MAX_MS)
+  const deadline = Date.now() + budgetMs
   for (let index = 0; index < items.length; index += 1) {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) {
+      throw new Error(
+        `Code step exceeded its overall time budget of ${Math.round(budgetMs / 1000)}s after ${index} of ${items.length} items. ` +
+          'Split the input into smaller batches, or reduce the work done per item.',
+      )
+    }
     const result = await runOne({
       ...options,
+      timeoutMs: Math.min(perItemMs, remainingMs),
       input: items[index],
       context: { ...(options.context ?? {}), index },
     })

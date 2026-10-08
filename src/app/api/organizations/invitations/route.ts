@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { hashToken } from '@/lib/crypto/secrets'
+import { rateLimit } from '@/lib/ratelimit'
 import { sendEmail } from '@/lib/integrations/email'
 import { buildInviteLink } from '@/lib/auth/invite-link'
 import { isCustomerEdition } from '@/lib/edition'
@@ -10,6 +11,18 @@ import { isPlatformOwnerEmail, OWNER_RESERVED_CODE, OWNER_RESERVED_MESSAGE } fro
 import { SUPER_ADMIN_PLATFORM_ROLE } from '@/lib/authz/platform-roles'
 
 const INVITE_TTL_DAYS = 14
+
+/**
+ * How many invitations one workspace may send. Each one is an outbound email
+ * carrying our name and a join link, so an admin account (or a stolen session)
+ * could otherwise use the platform as a spam relay — and an email provider
+ * that sees the burst throttles every workspace's mail, not just the sender's.
+ * Sized well above any onboarding a real team does by hand.
+ */
+const INVITE_BUDGETS = [
+  { window: 'hour', limit: 50, windowMs: 60 * 60 * 1000, label: 'an hour' },
+  { window: 'day', limit: 200, windowMs: 24 * 60 * 60 * 1000, label: 'a day' },
+] as const
 
 // Pending (unexpired) invitations for the caller's workspace. Admin-only.
 export const GET = withAuthenticatedApi(async (_request, auth) => {
@@ -71,6 +84,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (isCustomerEdition()) throw new ApiError('Not found', 404, 'NOT_FOUND')
     if (!auth.can('catalogue.review')) {
       throw new ApiError('Only a super admin can invite a super admin.', 403, 'SUPER_ADMIN_REQUIRED')
+    }
+  }
+
+  for (const budget of INVITE_BUDGETS) {
+    const limited = await rateLimit(`invites:${budget.window}:${auth.organizationId}`, { limit: budget.limit, windowMs: budget.windowMs })
+    if (!limited.ok) {
+      throw new ApiError(
+        `This workspace has sent ${budget.limit} invitations in ${budget.label}, which is the most it can send in that time. Try again later, or share the join link you already have.`,
+        429,
+        'INVITE_RATE_LIMITED',
+      )
     }
   }
 

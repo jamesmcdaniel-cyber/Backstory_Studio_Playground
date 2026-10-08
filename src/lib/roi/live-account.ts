@@ -29,9 +29,20 @@ export type RoiLiveSource = { name: 'Backstory' | 'Salesforce'; ok: boolean; not
 
 export type RoiLivePerson = { name: string; title: string; emails: number; meetings: number; last: string | null }
 
+/** Closed deals in one calendar month ('YYYY-MM'): the raw counts fiscal years are bucketed from at render time. */
+export type RoiLiveMonth = { month: string; won: number; lost: number; wonAmount: number }
+
+export type RoiLiveFiscalYear = { fy: string; won: number; lost: number; wonAmount: number }
+
 export type RoiLiveAccount = {
   fetchedAt: string
   sources: RoiLiveSource[]
+  /**
+   * The fiscal year start (1–12, null = January) the read was made under:
+   * a page whose settings now say otherwise reads again rather than relabel
+   * cached data. Absent on reads from before it was recorded (= January).
+   */
+  fyStartMonth?: number | null
   /** 'company' reads the whole business (Backstory's own page); 'account' one customer account. */
   scope?: 'account' | 'company'
   /** The account as Backstory names it. */
@@ -45,7 +56,10 @@ export type RoiLiveAccount = {
     wonAmount: number
     avgDaysToClose: number | null
     byType: Array<{ type: string; won: number; lost: number }>
-    byFy: Array<{ fy: string; won: number; lost: number; wonAmount: number }>
+    /** Bucketed with the fiscal start at fetch time; kept for versions read before `byMonth` existed. */
+    byFy: RoiLiveFiscalYear[]
+    /** Closed deals by close month, so the by-fiscal-year table follows the run's settings when drawn. */
+    byMonth?: RoiLiveMonth[]
     openByStage: Array<{ stage: string; count: number; amount: number }>
   }
 }
@@ -126,17 +140,38 @@ export function parsePeople(text: string): RoiLiveAccount['people'] {
   return { externalCount: external.count, internalCount: internal.count, external: external.people, internal: internal.people }
 }
 
+/** The fiscal year a calendar month ('YYYY-MM') falls in, named by the year it ends. */
+export function fiscalYearOf(month: string, fyStartMonth: number | null | undefined): string {
+  const y = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  const start = fyStartMonth ?? 1
+  return `FY${start === 1 ? y : m >= start ? y + 1 : y}`
+}
+
+/** Closed deals by fiscal year, from the raw per-month counts and the fiscal start in force when drawn. */
+export function bucketByFiscalYear(byMonth: RoiLiveMonth[], fyStartMonth: number | null | undefined): RoiLiveFiscalYear[] {
+  const byFy = new Map<string, RoiLiveFiscalYear>()
+  for (const m of byMonth) {
+    const fy = fiscalYearOf(m.month, fyStartMonth)
+    const f = byFy.get(fy) ?? { fy, won: 0, lost: 0, wonAmount: 0 }
+    byFy.set(fy, { fy, won: f.won + m.won, lost: f.lost + m.lost, wonAmount: f.wonAmount + m.wonAmount })
+  }
+  return [...byFy.values()].sort((a, b) => a.fy.localeCompare(b.fy))
+}
+
+/**
+ * The by-fiscal-year table a live block shows: bucketed now from its raw
+ * months when it has them, else as it was bucketed when read.
+ */
+export function liveFiscalYears(sf: NonNullable<RoiLiveAccount['salesforce']>, fyStartMonth: number | null | undefined): RoiLiveFiscalYear[] {
+  return sf.byMonth ? bucketByFiscalYear(sf.byMonth, fyStartMonth) : sf.byFy
+}
+
 /** Closed and open opportunities from a SOQL answer, summarised. */
 export function summarizeSalesforce(records: Array<Record<string, unknown>>, fyStartMonth: number | null): NonNullable<RoiLiveAccount['salesforce']> {
-  const fyOf = (date: string) => {
-    const y = Number(date.slice(0, 4))
-    const m = Number(date.slice(5, 7))
-    const start = fyStartMonth ?? 1
-    return `FY${start === 1 ? y : m >= start ? y + 1 : y}`
-  }
   let closedWon = 0, closedLost = 0, wonAmount = 0, daySum = 0, dayCount = 0
   const byType = new Map<string, { won: number; lost: number }>()
-  const byFy = new Map<string, { won: number; lost: number; wonAmount: number }>()
+  const byMonth = new Map<string, RoiLiveMonth>()
   const open = new Map<string, { count: number; amount: number }>()
   for (const r of records) {
     const closed = r.IsClosed === true
@@ -153,10 +188,10 @@ export function summarizeSalesforce(records: Array<Record<string, unknown>>, fyS
     const t = byType.get(type) ?? { won: 0, lost: 0 }
     byType.set(type, won ? { ...t, won: t.won + 1 } : { ...t, lost: t.lost + 1 })
     const close = str(r.CloseDate)
-    if (close) {
-      const fy = fyOf(close)
-      const f = byFy.get(fy) ?? { won: 0, lost: 0, wonAmount: 0 }
-      byFy.set(fy, won ? { ...f, won: f.won + 1, wonAmount: f.wonAmount + amount } : { ...f, lost: f.lost + 1 })
+    if (close && /^\d{4}-\d{2}/.test(close)) {
+      const month = close.slice(0, 7)
+      const f = byMonth.get(month) ?? { month, won: 0, lost: 0, wonAmount: 0 }
+      byMonth.set(month, won ? { ...f, won: f.won + 1, wonAmount: f.wonAmount + amount } : { ...f, lost: f.lost + 1 })
       const created = str(r.CreatedDate)
       if (won && created) {
         const days = (Date.parse(close) - Date.parse(created.slice(0, 10))) / 86_400_000
@@ -170,7 +205,8 @@ export function summarizeSalesforce(records: Array<Record<string, unknown>>, fyS
     wonAmount,
     avgDaysToClose: dayCount ? Math.round(daySum / dayCount) : null,
     byType: [...byType.entries()].map(([type, v]) => ({ type, ...v })).sort((a, b) => b.won + b.lost - (a.won + a.lost)),
-    byFy: [...byFy.entries()].map(([fy, v]) => ({ fy, ...v })).sort((a, b) => a.fy.localeCompare(b.fy)),
+    byFy: bucketByFiscalYear([...byMonth.values()], fyStartMonth),
+    byMonth: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)),
     openByStage: [...open.entries()].map(([stage, v]) => ({ stage, ...v })).sort((a, b) => b.amount - a.amount),
   }
 }
@@ -274,7 +310,7 @@ export async function fetchLiveAccount(params: { organizationId: string; userId:
   ])
   const { source: backstorySource, ...fromBackstory } = backstory as Partial<RoiLiveAccount> & { source: RoiLiveSource }
   const { source: salesforceSource, ...fromSalesforce } = salesforce as { salesforce?: RoiLiveAccount['salesforce']; source: RoiLiveSource }
-  return { fetchedAt: new Date().toISOString(), sources: [backstorySource, salesforceSource], scope: company ? 'company' : 'account', ...fromBackstory, ...fromSalesforce }
+  return { fetchedAt: new Date().toISOString(), fyStartMonth: params.fyStartMonth ?? null, sources: [backstorySource, salesforceSource], scope: company ? 'company' : 'account', ...fromBackstory, ...fromSalesforce }
 }
 
 const moneyOf = (value: number) => (Math.abs(value) >= 1e6 ? `$${(value / 1e6).toFixed(1)}M` : Math.abs(value) >= 1e3 ? `$${Math.round(value / 1e3)}K` : `$${Math.round(value)}`)
@@ -310,7 +346,9 @@ export function liveNarrative(live: RoiLiveAccount, account: string): import('./
       ...(risk ? [{ lead: 'Risk.', text: risk }] : []),
       ...(step ? [{ lead: 'Next step.', text: step }] : []),
       { lead: 'Live, not yet analysed.', text: 'These numbers are read as they stand; the analysis of engagement against outcomes needs the warehouse extracts.' },
-      { lead: 'Your own connections.', text: 'Read with your Backstory and Salesforce access, so it shows on your page only.' },
+      // The workspace can look at a person's page (its access is 'view'), so the
+      // live block is theirs to read with, not theirs alone to see.
+      { lead: 'Your own connections.', text: 'Read with your Backstory and Salesforce access, so it shows on your page.' },
     ].slice(0, 6),
     notes: {},
     caveats: live.sources.filter((s) => !s.ok).map((s) => `${s.name} could not be read: ${s.note ?? 'unavailable'}.`),

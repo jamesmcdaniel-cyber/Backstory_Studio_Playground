@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { recordAudit } from '@/lib/audit'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { rateLimit } from '@/lib/ratelimit'
 import { csvToDataTableRows, dataTableRowsToCsv } from '@/lib/data-tables/csv'
 
 const MAX_CSV_BYTES = 4_000_000
@@ -9,6 +10,10 @@ const idFromPath = (request: { nextUrl: { pathname: string } }) => request.nextU
 const inputJson = (value: unknown) => JSON.parse(JSON.stringify(value))
 
 export const GET = withAuthenticatedApi(async (request, auth) => {
+  // Exports are the expensive reads: a full-table scan serialized into one
+  // response. One budget across every export route, per user.
+  const limited = await rateLimit(`export:${auth.userId}`, { limit: 20, windowMs: 60_000 })
+  if (!limited.ok) throw new ApiError('Too many exports — wait a minute and try again.', 429, 'RATE_LIMITED')
   const table = await prisma.dataTable.findFirst({
     where: { id: idFromPath(request), organizationId: auth.organizationId },
   })

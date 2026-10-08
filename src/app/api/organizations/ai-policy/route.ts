@@ -27,7 +27,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
 
 export const PATCH = withAuthenticatedApi(async (request, auth) => {
   const body = z
-    .object({ aiEgressPolicy: z.enum(['allowed', 'blocked']) })
+    .object({ aiEgressPolicy: z.enum(['allowed', 'blocked', 'redacted']) })
     .parse(await request.json())
 
   const organization = await prisma.organization.update({

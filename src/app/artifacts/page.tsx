@@ -137,7 +137,7 @@ export default function ArtifactsPage() {
           {visible.map((item) => (
             <li key={item.id} className={cn('relative', item.archivedAt && 'opacity-80')}>
               <Link href={`/artifacts/${item.id}`} className="group block overflow-hidden rounded-xl border border-border bg-background transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <ArtifactThumbnail artifactId={item.id} kind={item.kind} title={item.title} ready={item.versionCount > 0} className="border-b border-border" />
+                <ArtifactThumbnail artifactId={item.id} kind={item.kind} title={item.title} ready={item.versionCount > 0} thumbnailFileId={item.thumbnailFileId} className="border-b border-border" />
                 <span className="flex items-start justify-between gap-3 px-4 py-3 text-sm">
                   <span className="min-w-0">
                     <span className="block truncate font-medium group-hover:text-horizon-700">{item.title}</span>

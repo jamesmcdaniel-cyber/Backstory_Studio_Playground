@@ -1,4 +1,3 @@
-import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { addVersion } from '@/lib/artifacts/service'
 import { renderRoiDashboard, ROI_RENDER_VERSION } from './dashboard'
@@ -52,29 +51,46 @@ export async function personalPageIds(organizationId: string): Promise<Set<strin
   return new Set(users.map((user) => metadataOf(user.metadata).roiPageId).filter((id): id is string => typeof id === 'string' && Boolean(id)))
 }
 
-/** The user's page, created (empty) and registered on first use. */
+/**
+ * The user's page, created (empty) and registered on first use.
+ *
+ * First use races: the page opens an account and the history loads at the
+ * same time, and each would make a page and register its own — the second
+ * registration winning, the first page orphaned. Creation runs under a
+ * transaction-scoped advisory lock keyed by the user, re-reads the
+ * registration inside the lock, and registers with a JSON-path merge so a
+ * metadata key written meanwhile (by anything else) is kept.
+ */
 export async function ensurePersonalPage(organizationId: string, userId: string): Promise<string> {
   const existing = await findPersonalPageId(organizationId, userId)
   if (existing) return existing
-  const user = await prisma.user.findFirst({ where: { id: userId, organizationId }, select: { name: true, email: true, metadata: true } })
+  // Idempotent on its own, and kept out of the lock so the held connection does the least work.
   const agent = await ensureRoiAgent(organizationId, userId)
-  const name = user?.name?.trim() || user?.email?.split('@')[0] || 'my'
-  const artifact = await prisma.artifact.create({
-    data: {
-      organizationId,
-      userId,
-      kind: 'roi_dashboard',
-      title: `ROI analysis · ${name}`,
-      agentTaskId: agent.id,
-      // Their page: the workspace can look, only they (and admins) change it.
-      workspaceAccess: 'view',
-    },
-  })
-  await prisma.user.update({
-    where: { id: userId, organizationId },
-    data: { metadata: { ...metadataOf(user?.metadata), roiPageId: artifact.id } as Prisma.InputJsonValue },
-  })
-  return artifact.id
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`roi-personal-page:${userId}`}))`
+    const user = await tx.user.findFirst({ where: { id: userId, organizationId }, select: { name: true, email: true, metadata: true } })
+    const registered = metadataOf(user?.metadata).roiPageId
+    if (typeof registered === 'string' && registered) {
+      const found = await tx.artifact.findFirst({ where: { id: registered, organizationId, userId, kind: 'roi_dashboard', archivedAt: null }, select: { id: true } })
+      if (found) return found.id
+    }
+    const name = user?.name?.trim() || user?.email?.split('@')[0] || 'my'
+    const artifact = await tx.artifact.create({
+      data: {
+        organizationId,
+        userId,
+        kind: 'roi_dashboard',
+        title: `ROI analysis · ${name}`,
+        agentTaskId: agent.id,
+        // Their page: the workspace can look, only they (and admins) change it.
+        // (The access model has 'edit' and 'view' only — no private page.)
+        workspaceAccess: 'view',
+      },
+    })
+    // jsonb_set on the stored value, not a rewrite of what was read: other keys survive whatever wrote them meanwhile.
+    await tx.$executeRaw`UPDATE "users" SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{roiPageId}', to_jsonb(${artifact.id}::text), true) WHERE id = ${userId} AND "organizationId" = ${organizationId}::uuid`
+    return artifact.id
+  }, { timeout: 20_000, maxWait: 10_000 })
 }
 
 export type PersonalAccountVersion = {
@@ -127,7 +143,7 @@ export async function loadPersonalPage(organizationId: string, userId: string): 
       factsCurrent: factsAreCurrent(state),
       source: isLiveOnly(state) ? 'live' : state.source === 'readout' ? 'readout' : null,
       basedOnVersionId: state.basedOn?.versionId ?? null,
-      stale: (state.render ?? 0) < ROI_RENDER_VERSION || liveIsStale(state.live),
+      stale: (state.render ?? 0) < ROI_RENDER_VERSION || liveIsStale(state.live, Date.now(), state.config?.fiscalYearStartMonth),
     }
   }
   return { artifactId, currentVersionId: artifact?.currentVersionId ?? null, currentAccount, accounts }
@@ -145,10 +161,17 @@ export async function refreshLive(previous: RoiLiveAccount | undefined, read: ()
   return previous
 }
 
-/** A page's live account data is read again once it is older than ROI_LIVE_TTL_MS (or was never read). */
-export function liveIsStale(live: RoiLiveAccount | undefined, now = Date.now()): boolean {
+/**
+ * A page's live account data is read again once it is older than
+ * ROI_LIVE_TTL_MS (or was never read), or when it was read under another
+ * fiscal year start than the version's settings: its closed deals were
+ * bucketed by that start when read (versions before `byMonth`), and a relabel
+ * would misstate them.
+ */
+export function liveIsStale(live: RoiLiveAccount | undefined, now = Date.now(), fyStartMonth: number | null | undefined = null): boolean {
   const at = live ? Date.parse(live.fetchedAt) : NaN
-  return !Number.isFinite(at) || now - at > ROI_LIVE_TTL_MS
+  if (!Number.isFinite(at) || now - at > ROI_LIVE_TTL_MS) return true
+  return (live?.fyStartMonth ?? null) !== (fyStartMonth ?? null)
 }
 
 /** Show this version (point the page at it) without rewriting history. */
@@ -256,7 +279,7 @@ export async function redrawVersion(params: { organizationId: string; userId: st
   const facts = await readFacts(params.organizationId, state.factsFileId)
   if (!facts) throw new Error('That version\'s data could not be read.')
   const a360 = await readAccount360Facts(params.organizationId, state.a360FactsFileId)
-  const live = liveIsStale(state.live) ? await refreshLive(state.live, () => fetchLiveAccount({ organizationId: params.organizationId, userId: params.userId, account: state.account, fyStartMonth: state.config?.fiscalYearStartMonth ?? null })) : state.live
+  const live = liveIsStale(state.live, Date.now(), state.config?.fiscalYearStartMonth) ? await refreshLive(state.live, () => fetchLiveAccount({ organizationId: params.organizationId, userId: params.userId, account: state.account, fyStartMonth: state.config?.fiscalYearStartMonth ?? null })) : state.live
   const html = renderRoiDashboard(facts, state.narrative, { account: state.account, generatedAt: new Date().toISOString(), view: state.view, config: state.config, reason: state.reason, a360, live })
   const made = await addVersion({
     artifactId: params.artifactId,

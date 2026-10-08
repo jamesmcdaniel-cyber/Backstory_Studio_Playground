@@ -9,9 +9,11 @@ import { readAssistantConfig } from './assistant-settings'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { maxArtifactCharsFor, validateArtifactContent, validateArtifactPython } from './validate-content'
 import { validateArtifactRuntime } from './preflight'
+import { saveStoredFile } from '@/lib/files/storage'
 import { ARTIFACT_CAPABILITIES } from './capabilities'
 import { GUEST_COPILOT_LIMITS, SHARED_UPDATE_REQUEST, TEMPLATE_COPILOT_MODEL, templateCopyRunsAs } from './template-policy'
 import { guestChangesToday } from './guest-limits'
+import { casChatWrite, chatOf, ChatConflictError, CHAT_WRITE_ATTEMPTS, jsonValue, rewriteChat } from './chat-writes'
 import type { ArtifactChatMessage, ArtifactKind, ArtifactListItem, ArtifactView } from './types'
 
 /**
@@ -37,14 +39,12 @@ export const ARTIFACT_CONTENT_MAX_CHARS = 2_000_000
 // first searching for what it was already handed. (Prompt caching makes the
 // repeat turns cheap; the search turns it replaces were each a model round trip.)
 const CONTEXT_MAX_CHARS = 120_000
+const WAIT_FOR_ANSWER = 'Wait for the current answer before sending another.'
+/** How long a conversation claimed for a flow run may wait for the run's id before the poll settles it. */
+const CLAIM_GRACE_MS = 5 * 60_000
 
-function jsonValue(value: unknown): Prisma.InputJsonValue {
-  return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue
-}
-
-function chatOf(row: Artifact): ArtifactChatMessage[] {
-  return Array.isArray(row.chat) ? (row.chat as ArtifactChatMessage[]) : []
-}
+// Every rewrite of the chat column goes through chat-writes.ts: a
+// compare-and-swap on updatedAt, retried from a fresh read (see there).
 
 export function isArtifactKind(value: unknown): value is ArtifactKind {
   return value === 'report' || value === 'roi_dashboard' || value === 'document' || value === 'page'
@@ -112,14 +112,38 @@ type AddVersionParams = {
   createdByUserId?: string | null
   state?: Prisma.InputJsonValue | null
   expectedVersionId?: string | null
+  /**
+   * Content that already passed the browser preflight when it was first
+   * saved (a restore) is not sent to the validator again: a validator outage
+   * must not make history unreachable. The static checks still run.
+   */
+  previouslyValidated?: boolean
+  /** The thumbnail an earlier save of this content produced (a restore carries it over). */
+  thumbnailFileId?: string | null
+}
+
+/**
+ * The validator's screenshot of the page as it passed, kept as a stored file
+ * so cards can show it instead of mounting a live frame. Never fails a save:
+ * a card without a picture is better than a change that was not kept.
+ */
+async function storeThumbnail(organizationId: string, userId: string | null | undefined, screenshot: string | null): Promise<string | null> {
+  if (!screenshot) return null
+  try {
+    const file = await saveStoredFile({ organizationId, userId: userId ?? null, filename: 'artifact-thumbnail.png', mimeType: 'image/png', buffer: Buffer.from(screenshot, 'base64'), trusted: true })
+    return file.id
+  } catch {
+    return null
+  }
 }
 
 export async function addVersion(params: AddVersionParams): Promise<ArtifactVersion> {
   const target = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { kind: true } })
   validateArtifactContent(params.content, maxArtifactCharsFor(target?.kind))
   await validateArtifactPython(params.content)
-  await validateArtifactRuntime(params.content)
-  return tenantTransaction(params.organizationId, tx => insertValidatedVersion(tx, params))
+  const preflight = params.previouslyValidated ? null : await validateArtifactRuntime(params.content)
+  const thumbnailFileId = preflight?.screenshot ? await storeThumbnail(params.organizationId, params.createdByUserId, preflight.screenshot) : params.thumbnailFileId ?? null
+  return tenantTransaction(params.organizationId, tx => insertValidatedVersion(tx, { ...params, thumbnailFileId }))
 }
 
 /** Database-only publication. Callers must finish validation before opening a transaction. */
@@ -148,6 +172,7 @@ async function insertValidatedVersion(tx: Prisma.TransactionClient, params: AddV
         request: params.request ?? null,
         content: params.content,
         createdByUserId: params.createdByUserId ?? null,
+        thumbnailFileId: params.thumbnailFileId ?? null,
         ...(params.state ? { state: params.state } : {}),
       },
     })
@@ -173,7 +198,8 @@ export async function createArtifact(params: {
 }): Promise<{ artifact: Artifact; version: ArtifactVersion }> {
   validateArtifactContent(params.content, maxArtifactCharsFor(params.kind))
   await validateArtifactPython(params.content)
-  await validateArtifactRuntime(params.content)
+  const preflight = await validateArtifactRuntime(params.content)
+  const thumbnailFileId = await storeThumbnail(params.organizationId, params.userId, preflight.screenshot)
   return prisma.$transaction(async tx => {
   const artifact = await tx.artifact.create({
     data: {
@@ -194,6 +220,7 @@ export async function createArtifact(params: {
     flowRunId: params.flowRunId,
     createdByUserId: params.userId ?? null,
     number: 1,
+    thumbnailFileId,
     ...(params.state ? { state: params.state } : {}),
   } })
   await tx.artifact.update({ where: { id: artifact.id, organizationId: params.organizationId }, data: { currentVersionId: version.id } })
@@ -278,15 +305,17 @@ export async function registerVersionFromExecution(params: {
 
 /** Attach the produced version to the pending chat message that asked for it. */
 async function markChatVersion(organizationId: string, artifactId: string, executionId: string, versionId: string): Promise<void> {
-  const row = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId } })
-  if (!row) return
-  const chat = chatOf(row)
-  const message = chat.find((m) => m.role === 'agent' && m.executionId === executionId)
-  if (!message) return
-  message.versionId = versionId
-  message.status = 'completed'
-  message.content = message.content || 'Done — a new version is ready.'
-  await prisma.artifact.update({ where: { id: artifactId, organizationId }, data: { chat: jsonValue(chat) } })
+  await rewriteChat(prisma, organizationId, artifactId, (chat) => {
+    const message = chat.find((m) => m.role === 'agent' && m.executionId === executionId)
+    if (!message || (message.status === 'completed' && message.versionId === versionId)) return null
+    message.versionId = versionId
+    message.status = 'completed'
+    message.content = message.content || 'Done — a new version is ready.'
+    return chat
+  }).catch((error) => {
+    // The version is saved; the next poll's reconcile attaches it from the run.
+    if (!(error instanceof ChatConflictError)) throw error
+  })
 }
 
 export async function listArtifacts(organizationId: string, options: { userId?: string; kind?: ArtifactKind; agentTaskId?: string; includeArchived?: boolean } = {}): Promise<ArtifactListItem[]> {
@@ -302,6 +331,9 @@ export async function listArtifacts(organizationId: string, options: { userId?: 
     take: 200,
   })
   const refs = await references(organizationId, rows)
+  // The current version's screenshot, when the validator took one, so the card shows a picture instead of a live frame.
+  const currentIds = rows.map((row) => row.currentVersionId).filter((id): id is string => Boolean(id))
+  const thumbnails = new Map((currentIds.length ? await prisma.artifactVersion.findMany({ where: { id: { in: currentIds }, organizationId }, select: { id: true, thumbnailFileId: true } }) : []).map((version) => [version.id, version.thumbnailFileId]))
   return rows.map((row) => ({
     id: row.id,
     kind: (isArtifactKind(row.kind) ? row.kind : 'report'),
@@ -312,6 +344,7 @@ export async function listArtifacts(organizationId: string, options: { userId?: 
     updatedAt: row.updatedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     archivedAt: row.archivedAt?.toISOString() ?? null,
+    thumbnailFileId: (row.currentVersionId && thumbnails.get(row.currentVersionId)) || null,
   }))
 }
 
@@ -396,14 +429,30 @@ export async function versionContent(organizationId: string, artifactId: string,
   return version ? { content: version.content, kind: artifact.kind } : null
 }
 
+/**
+ * Bring the pending messages up to date with their runs. The write is a
+ * compare-and-swap: a poll that read the row just before a send landed must
+ * not put the old conversation back over the new message. On a miss the fresh
+ * row is reconciled instead; if it keeps moving, the latest row is returned
+ * as it is and the next poll finishes the job.
+ */
 async function reconcileChat(row: Artifact): Promise<Artifact> {
-  const chat = chatOf(row)
+  try {
+    return (await rewriteChat(prisma, row.organizationId, row.id, (chat, current) => reconciledChat(chat, current.organizationId), row)) ?? row
+  } catch (error) {
+    if (error instanceof ChatConflictError) return (await prisma.artifact.findFirst({ where: { id: row.id, organizationId: row.organizationId } })) ?? row
+    throw error
+  }
+}
+
+/** The conversation with each pending message settled against its run, or null when nothing changed. */
+async function reconciledChat(chat: ArtifactChatMessage[], organizationId: string): Promise<ArtifactChatMessage[] | null> {
   const pending = chat.filter((message) => message.role === 'agent' && message.status === 'pending')
-  if (!pending.length) return row
+  if (!pending.length) return null
   let changed = false
   for (const message of pending) {
     if (message.executionId) {
-      const run = await prisma.agentExecution.findFirst({ where: { id: message.executionId, organizationId: row.organizationId }, select: { status: true, output: true, error: true, metadata: true } })
+      const run = await prisma.agentExecution.findFirst({ where: { id: message.executionId, organizationId }, select: { status: true, output: true, error: true, metadata: true } })
       if (run && !isTerminalRunStatus(run.status)) {
         // A run paused on a question surfaces it on its message, so it is
         // asked — and answered — in the conversation that started the run.
@@ -423,7 +472,7 @@ async function reconcileChat(row: Artifact): Promise<Artifact> {
       changed = true
       const text = typeof (run.output as { summary?: unknown } | null)?.summary === 'string' ? String((run.output as { summary: string }).summary) : ''
       if (run.status === 'completed') {
-        const version = await prisma.artifactVersion.findFirst({ where: { executionId: message.executionId, organizationId: row.organizationId }, select: { id: true } })
+        const version = await prisma.artifactVersion.findFirst({ where: { executionId: message.executionId, organizationId }, select: { id: true } })
         // The agent's own words, unless its answer WAS the document (the
         // pre-tool path), which is the version, not a reply.
         const reply = htmlDocumentOf(text) ? '' : unwrapHtmlFence(text).trim()
@@ -440,11 +489,20 @@ async function reconcileChat(row: Artifact): Promise<Artifact> {
         message.content = (typeof run.error === 'string' && run.error) || `The run ${run.status}.`
         message.status = 'failed'
       }
+    } else if (message.claimId) {
+      // The conversation was claimed for a flow run that never got its id —
+      // the process died between the claim and the start. Past a grace
+      // period it is settled as failed so it no longer blocks sends.
+      if (Date.now() - Date.parse(message.createdAt) < CLAIM_GRACE_MS) continue
+      delete message.claimId
+      message.status = 'failed'
+      message.content = 'The flow run did not start. Try again.'
+      changed = true
     } else if (message.flowRunId) {
-      const run = await prisma.flowRun.findFirst({ where: { id: message.flowRunId, organizationId: row.organizationId }, select: { status: true, error: true } })
+      const run = await prisma.flowRun.findFirst({ where: { id: message.flowRunId, organizationId }, select: { status: true, error: true } })
       if (!run || run.status === 'running' || run.status === 'waiting') continue
       changed = true
-      const version = await prisma.artifactVersion.findFirst({ where: { flowRunId: message.flowRunId, organizationId: row.organizationId }, select: { id: true } })
+      const version = await prisma.artifactVersion.findFirst({ where: { flowRunId: message.flowRunId, organizationId }, select: { id: true } })
       if (run.status === 'succeeded') {
         message.status = 'completed'
         message.versionId = version?.id
@@ -455,8 +513,7 @@ async function reconcileChat(row: Artifact): Promise<Artifact> {
       }
     }
   }
-  if (!changed) return row
-  return prisma.artifact.update({ where: { id: row.id, organizationId: row.organizationId }, data: { chat: jsonValue(chat) } })
+  return changed ? chat : null
 }
 
 export type ArtifactChatMode = 'auto' | 'ask' | 'change'
@@ -528,8 +585,23 @@ export async function clearArtifactChat(params: { organizationId: string; id: st
 }
 
 /** Ask the producing agent a question, or ask it for a change (a new version). */
-export async function askArtifact(params: { organizationId: string; userId: string; id: string; message: string; mode: ArtifactChatMode; model?: string; guestDigest?: string }): Promise<ArtifactView> {
-  const row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
+export async function askArtifact(params: {
+  organizationId: string
+  userId: string
+  id: string
+  message: string
+  mode: ArtifactChatMode
+  model?: string
+  guestDigest?: string
+  /**
+   * Admission checks that must be exact under concurrency (a visitor's daily
+   * caps): run inside the transaction that records the run and claims the
+   * conversation, so two sends cannot both pass a count of one slot left.
+   * Throw to refuse; the error reaches the caller unchanged.
+   */
+  admit?: (tx: Prisma.TransactionClient) => Promise<void>
+}): Promise<ArtifactView> {
+  let row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
   if (!row) throw new Error('Artifact not found.')
   if (!row.agentTaskId) throw new Error('This artifact has no producing agent to ask.')
   // A guest copy answers only to the visitor whose token made it (the public
@@ -544,46 +616,76 @@ export async function askArtifact(params: { organizationId: string; userId: stri
   }
   const message = params.message.trim().slice(0, ARTIFACT_QUESTION_MAX_CHARS)
   if (!message) throw new Error('Type a message first.')
-  const chat = chatOf(row)
-  if (chat.some((m) => m.status === 'pending')) throw new Error('Wait for the current answer before sending another.')
+  const busy = (chat: ArtifactChatMessage[]) => chat.some((m) => m.status === 'pending')
+  if (busy(chatOf(row))) throw new Error(WAIT_FOR_ANSWER)
   const agent = await prisma.agentTask.findFirst({ where: { id: row.agentTaskId, organizationId: params.organizationId, status: 'ACTIVE' } })
   if (!agent) throw new Error('The producing agent is no longer available.')
   const current = row.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: row.currentVersionId, organizationId: params.organizationId }, select: { content: true } }) : null
   const assistant = readAssistantConfig(row.assistantConfig)
   // A visitor's copy takes a fixed number of changes a day; the copilot is told how many are left.
   const changesLeft = row.guestDigest ? Math.max(0, GUEST_COPILOT_LIMITS.changesPerVisitor - await guestChangesToday(params.organizationId, row.id)) : undefined
-  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat, instructions: assistant.instructions, templateCopy: Boolean(row.templateSourceId), ...(changesLeft !== undefined ? { changesLeft } : {}) })
-  const execution = await prisma.agentExecution.create({
-    data: {
-      agentType: agent.agentType,
-      agentTaskId: agent.id,
-      status: 'pending',
-      input: { prompt: input },
-      // A guest run is marked so it is capped per link, never against the
-      // host's own daily allowance; it links to the template the host can open.
-      trigger: jsonValue({ type: 'artifact', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactMode: params.mode, artifactRequest: params.mode === 'ask' ? null : message, artifactToolQuery: message, ...(row.guestDigest ? { guest: true, guestTemplateId: row.templateSourceId, link: `/artifacts/${row.templateSourceId}` } : { link: `/artifacts/${row.id}` }) }),
-      metadata: { title: `${row.guestDigest ? 'Visitor copilot' : params.mode === 'change' ? 'Change to' : params.mode === 'ask' ? 'Question on' : 'Assistant'} · ${row.title}` },
-      userId: params.userId,
-      organizationId: params.organizationId,
-    },
-  })
+  const input = buildArtifactPrompt({ mode: params.mode, kind: row.kind, title: row.title, content: row.kind === 'roi_dashboard' ? '' : current?.content ?? '', message, chat: chatOf(row), instructions: assistant.instructions, templateCopy: Boolean(row.templateSourceId), ...(changesLeft !== undefined ? { changesLeft } : {}) })
+  const { model, mode } = params
+  // The run is recorded and the conversation claimed (its pending message
+  // written) in one transaction, before anything is dispatched: a compare-
+  // and-swap on the row keeps a second send, racing this one, from starting
+  // a run of its own — it re-reads, sees the pending message, and is refused
+  // exactly as a late send is. A miss for any other reason (a poll settled an
+  // older message in between) retries from the fresh conversation.
+  let execution: { id: string } | null = null
+  for (let attempt = 0; attempt < CHAT_WRITE_ATTEMPTS && !execution && row; attempt++) {
+    const snapshot = row
+    try {
+      execution = await tenantTransaction(params.organizationId, async (tx) => {
+        await params.admit?.(tx)
+        const created = await tx.agentExecution.create({
+          data: {
+            agentType: agent.agentType,
+            agentTaskId: agent.id,
+            status: 'pending',
+            input: { prompt: input },
+            // A guest run is marked so it is capped per link, never against the
+            // host's own daily allowance; it links to the template the host can open.
+            trigger: jsonValue({ type: 'artifact', artifactId: snapshot.id, artifactBaseVersionId: snapshot.currentVersionId, artifactMode: mode, artifactRequest: mode === 'ask' ? null : message, artifactToolQuery: message, ...(snapshot.guestDigest ? { guest: true, guestTemplateId: snapshot.templateSourceId, link: `/artifacts/${snapshot.templateSourceId}` } : { link: `/artifacts/${snapshot.id}` }) }),
+            metadata: { title: `${snapshot.guestDigest ? 'Visitor copilot' : mode === 'change' ? 'Change to' : mode === 'ask' ? 'Question on' : 'Assistant'} · ${snapshot.title}` },
+            userId: params.userId,
+            organizationId: params.organizationId,
+          },
+          select: { id: true },
+        })
+        const now = new Date().toISOString()
+        const claimed = await casChatWrite(tx, snapshot, [
+          ...chatOf(snapshot),
+          { role: 'user', mode, content: message, createdAt: now },
+          { role: 'agent', mode, content: '', executionId: created.id, status: 'pending', createdAt: now, ...(model ? { model } : {}) },
+        ])
+        if (!claimed) throw new ChatConflictError()
+        return created
+      })
+    } catch (error) {
+      if (!(error instanceof ChatConflictError)) throw error
+      row = await prisma.artifact.findFirst({ where: { id: params.id, organizationId: params.organizationId } })
+      if (!row) throw new Error('Artifact not found.')
+      if (busy(chatOf(row))) throw new Error(WAIT_FOR_ANSWER)
+    }
+  }
+  if (!execution) throw new ChatConflictError()
+  const executionId = execution.id
   try {
     // The model the person picked, and the connected tools they turned on
     // for this artifact's assistant (granted for the run like a flow step's).
-    const stepOverrides = { ...(params.model ? { model: params.model } : {}), ...(assistant.toolConnectionIds.length ? { toolConnectionIds: assistant.toolConnectionIds } : {}) }
-    await dispatchAgentExecution({ executionId: execution.id, agentId: agent.id, organizationId: params.organizationId, userId: params.userId, input, ...(Object.keys(stepOverrides).length ? { stepOverrides } : {}) })
+    const stepOverrides = { ...(model ? { model } : {}), ...(assistant.toolConnectionIds.length ? { toolConnectionIds: assistant.toolConnectionIds } : {}) }
+    await dispatchAgentExecution({ executionId, agentId: agent.id, organizationId: params.organizationId, userId: params.userId, input, ...(Object.keys(stepOverrides).length ? { stepOverrides } : {}) })
   } catch (error) {
-    await prisma.agentExecution.update({ where: { id: execution.id, organizationId: params.organizationId }, data: { status: 'failed', error: error instanceof Error ? error.message : String(error), completedAt: new Date() } }).catch(() => undefined)
+    await prisma.agentExecution.update({ where: { id: executionId, organizationId: params.organizationId }, data: { status: 'failed', error: error instanceof Error ? error.message : String(error), completedAt: new Date() } }).catch(() => undefined)
+    // The caller is told; the exchange that never started leaves the conversation.
+    await rewriteChat(prisma, params.organizationId, params.id, (chat) => {
+      const index = chat.findIndex((m) => m.role === 'agent' && m.executionId === executionId)
+      return index < 0 ? null : chat.filter((_, i) => i !== index && i !== index - 1)
+    }).catch(() => undefined)
     throw error
   }
-  const now = new Date().toISOString()
-  const next: ArtifactChatMessage[] = [
-    ...chat,
-    { role: 'user', mode: params.mode, content: message, createdAt: now },
-    { role: 'agent', mode: params.mode, content: '', executionId: execution.id, status: 'pending', createdAt: now, ...(params.model ? { model: params.model } : {}) },
-  ]
-  await prisma.artifact.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue(next) } })
-  return (await loadArtifact(params.organizationId, row.id))!
+  return (await loadArtifact(params.organizationId, params.id))!
 }
 
 /**
@@ -639,25 +741,47 @@ export async function rerunArtifactFlow(params: { organizationId: string; userId
   if (!row) throw new Error('Artifact not found.')
   if (!row.flowId) throw new Error('This artifact was not produced by a flow.')
   if (row.templateSourceId) throw new Error('A copy of a shared artifact cannot re-run the original\'s flow.')
-  const chat = chatOf(row)
-  if (chat.some((m) => m.status === 'pending')) throw new Error('Wait for the current answer before sending another.')
+  if (chatOf(row).some((m) => m.status === 'pending')) throw new Error(WAIT_FOR_ANSWER)
   const { startFlowExecution } = await import('@/features/flows/execute-flow')
   const message = params.message.trim().slice(0, ARTIFACT_QUESTION_MAX_CHARS)
-  const started = await startFlowExecution({
-    flowId: row.flowId,
-    organizationId: params.organizationId,
-    userId: params.userId,
-    usePublished: true,
-    input: { artifactId: row.id, artifactTitle: row.title, request: message },
-    trigger: { type: 'manual', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactRequest: message } as never,
-  })
+  // The conversation is claimed first (a pending message with no run yet):
+  // a second re-run racing this one re-reads, sees it, and is refused rather
+  // than starting a flow of its own. The run id is filled in once it exists.
   const now = new Date().toISOString()
-  const next: ArtifactChatMessage[] = [
-    ...chat,
-    { role: 'user', mode: 'change', content: message || 'Re-run the flow.', createdAt: now },
-    { role: 'agent', mode: 'change', content: '', flowRunId: started.flowRunId, status: 'pending', createdAt: now },
-  ]
-  await prisma.artifact.update({ where: { id: row.id, organizationId: params.organizationId }, data: { chat: jsonValue(next) } })
+  const claim = `rerun:${row.id}:${now}:${Math.random().toString(36).slice(2, 10)}`
+  await rewriteChat(prisma, params.organizationId, row.id, (chat) => {
+    if (chat.some((m) => m.status === 'pending')) throw new Error(WAIT_FOR_ANSWER)
+    return [
+      ...chat,
+      { role: 'user', mode: 'change', content: message || 'Re-run the flow.', createdAt: now },
+      { role: 'agent', mode: 'change', content: '', claimId: claim, status: 'pending', createdAt: now },
+    ]
+  }, row)
+  const claimed = (chat: ArtifactChatMessage[]) => chat.findIndex((m) => m.role === 'agent' && m.claimId === claim)
+  let started: { flowRunId: string }
+  try {
+    started = await startFlowExecution({
+      flowId: row.flowId,
+      organizationId: params.organizationId,
+      userId: params.userId,
+      usePublished: true,
+      input: { artifactId: row.id, artifactTitle: row.title, request: message },
+      trigger: { type: 'manual', artifactId: row.id, artifactBaseVersionId: row.currentVersionId, artifactRequest: message } as never,
+    })
+  } catch (error) {
+    await rewriteChat(prisma, params.organizationId, row.id, (chat) => {
+      const index = claimed(chat)
+      return index < 0 ? null : chat.filter((_, i) => i !== index && i !== index - 1)
+    }).catch(() => undefined)
+    throw error
+  }
+  await rewriteChat(prisma, params.organizationId, row.id, (chat) => {
+    const index = claimed(chat)
+    if (index < 0) return null
+    const filled: ArtifactChatMessage = { ...chat[index], flowRunId: started.flowRunId }
+    delete filled.claimId
+    return [...chat.slice(0, index), filled, ...chat.slice(index + 1)]
+  })
   return (await loadArtifact(params.organizationId, row.id))!
 }
 
@@ -715,7 +839,7 @@ export async function restoreVersion(params: { organizationId: string; userId: s
   const artifact = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { id: true, currentVersionId: true } })
   if (!artifact) throw new Error('Artifact not found.')
   if (artifact.currentVersionId === params.versionId) throw new Error('That version is already the current one.')
-  const source = await prisma.artifactVersion.findFirst({ where: { id: params.versionId, artifactId: params.artifactId, organizationId: params.organizationId }, select: { number: true, content: true, state: true } })
+  const source = await prisma.artifactVersion.findFirst({ where: { id: params.versionId, artifactId: params.artifactId, organizationId: params.organizationId }, select: { number: true, content: true, state: true, thumbnailFileId: true } })
   if (!source) throw new Error('Version not found.')
   return addVersion({
     artifactId: artifact.id,
@@ -724,5 +848,7 @@ export async function restoreVersion(params: { organizationId: string; userId: s
     request: `Restored version ${source.number}`,
     createdByUserId: params.userId,
     state: (source.state ?? null) as Prisma.InputJsonValue | null,
+    previouslyValidated: true,
+    thumbnailFileId: source.thumbnailFileId,
   })
 }

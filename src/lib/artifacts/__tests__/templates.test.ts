@@ -19,6 +19,8 @@ test('restricted artifact tools reject variants and ROI/repository actions befor
   for (const [name, args] of [
     ['edit_artifact', { saveAsNew: true }], ['revise_artifact', { saveAsNew: true }],
     ['list_roi_accounts', {}], ['start_roi_analysis', {}], ['update_roi_dashboard', {}],
+    // The picture would be stored in the sharer's workspace and can cost a validator run.
+    ['view_artifact_screenshot', {}],
   ] as const) {
     assert.match((await client.executeTool('', name, args) as { error: string }).error, /only read and revise your template copy/)
   }

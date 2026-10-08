@@ -11,6 +11,9 @@ export type ArtifactChatMessage = {
   content: string
   executionId?: string
   flowRunId?: string
+  /** A pending message whose run is being started: the conversation is
+   *  claimed before the run exists, and the run id replaces this once it does. */
+  claimId?: string
   /** Set on an agent message once its run produced a version. */
   versionId?: string
   status?: 'pending' | 'completed' | 'failed'
@@ -66,7 +69,10 @@ export type ArtifactView = {
   updatedAt: string
 }
 
-export type ArtifactListItem = Pick<ArtifactView, 'id' | 'kind' | 'title' | 'agent' | 'flow' | 'versionCount' | 'updatedAt' | 'createdAt' | 'archivedAt'>
+export type ArtifactListItem = Pick<ArtifactView, 'id' | 'kind' | 'title' | 'agent' | 'flow' | 'versionCount' | 'updatedAt' | 'createdAt' | 'archivedAt'> & {
+  /** The current version's screenshot (a stored file id), when the validator took one. */
+  thumbnailFileId?: string | null
+}
 
 export const ARTIFACT_KIND_LABEL: Record<ArtifactKind, string> = {
   report: 'Report',

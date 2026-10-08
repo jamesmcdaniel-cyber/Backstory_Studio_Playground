@@ -24,7 +24,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const metadata = agent.metadata && typeof agent.metadata === 'object' && !Array.isArray(agent.metadata)
     ? agent.metadata as Record<string, unknown>
     : {}
-  const hasSecret = typeof metadata.triggerSecretHash === 'string' || typeof metadata.triggerSecret === 'string'
+  // Only a HASHED secret counts. A row still holding the pre-hashing plaintext
+  // is refused by the trigger route, so reporting it as "has a secret" would
+  // strand the agent: this call mints a replacement and drops the plaintext.
+  const hasSecret = typeof metadata.triggerSecretHash === 'string'
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || ''
   const base = {

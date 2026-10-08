@@ -104,13 +104,13 @@ export function detectPiiCategories(text: string): PiiCategory[] {
 
 // ── Policy ─────────────────────────────────────────────────────────────────
 
-export type AiEgressPolicy = 'allowed' | 'blocked'
+export type AiEgressPolicy = 'allowed' | 'blocked' | 'redacted'
 
 export function normalizeAiEgressPolicy(value: string | null | undefined): AiEgressPolicy {
   // Only the exact opt-out blocks. Same reasoning as SSO enforcement: an
   // unrecognised value silently disabling every agent in a workspace is a
   // worse failure than the one it guards against.
-  return value === 'blocked' ? 'blocked' : 'allowed'
+  return value === 'blocked' ? 'blocked' : value === 'redacted' ? 'redacted' : 'allowed'
 }
 
 /**

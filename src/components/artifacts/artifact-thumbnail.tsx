@@ -16,7 +16,7 @@ const PAGE_HEIGHT = 800
  * in the same sandbox as the viewer and scaled down. Frames mount only when
  * the card nears the viewport, and never take clicks — the card does.
  */
-export function ArtifactThumbnail({ artifactId, kind, title, ready, className }: { artifactId: string; kind: string; title: string; ready: boolean; className?: string }) {
+export function ArtifactThumbnail({ artifactId, kind, title, ready, className, thumbnailFileId }: { artifactId: string; kind: string; title: string; ready: boolean; className?: string; /** The validator's screenshot of the current version: shown as a picture, no live frame. */ thumbnailFileId?: string | null }) {
   const box = useRef<HTMLDivElement | null>(null)
   const [visible, setVisible] = useState(false)
   const [scale, setScale] = useState(0.25)
@@ -49,6 +49,9 @@ export function ArtifactThumbnail({ artifactId, kind, title, ready, className }:
         <div className="flex h-full items-center justify-center gap-2 bg-muted/40 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Building…</div>
       ) : !visible ? (
         <div className="flex h-full items-center justify-center bg-muted/30 text-muted-foreground"><FileOutput className="h-6 w-6" /></div>
+      ) : thumbnailFileId ? (
+        // eslint-disable-next-line @next/next/no-img-element -- a stored file behind auth, not a static asset
+        <img src={`/api/files/${thumbnailFileId}`} alt="" className="pointer-events-none absolute left-0 top-0 h-full w-full object-cover object-top" loading="lazy" />
       ) : kind === 'document' ? (
         <div className="prose prose-sm pointer-events-none max-w-none origin-top-left p-5 dark:prose-invert" style={{ width: PAGE_WIDTH / 2, transform: `scale(${scale * 2})` }}>
           {markdown === null ? null : <Markdown>{markdown}</Markdown>}

@@ -83,13 +83,27 @@ async function requirePublic(url: string, field: string) {
 
 /** The copy, when it is one: these servers exist only on shared-template copies. */
 async function copyRow(organizationId: string, artifactId: string) {
-  const row = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId, templateSourceId: { not: null }, archivedAt: null }, select: { id: true, copilotMcpServers: true } })
+  const row = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId, templateSourceId: { not: null }, archivedAt: null }, select: { id: true, copilotMcpServers: true, updatedAt: true } })
   if (!row) throw new ApiError('Artifact not found.', 404, 'NOT_FOUND')
   return row
 }
 
-async function saveServers(organizationId: string, artifactId: string, servers: StoredServer[]) {
-  await prisma.artifact.update({ where: { id: artifactId, organizationId }, data: { copilotMcpServers: servers as unknown as Prisma.InputJsonValue } })
+const SAVE_ATTEMPTS = 3
+
+/**
+ * The list is one JSON column rewritten whole, so a write lands only if the
+ * row is still the one `change` was computed from (a compare-and-swap on
+ * updatedAt); otherwise the fresh list is read and the change recomputed.
+ * Two tabs connecting and removing at once each keep the other's result.
+ */
+async function saveServers(organizationId: string, artifactId: string, change: (servers: StoredServer[]) => StoredServer[]): Promise<StoredServer[]> {
+  for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
+    const row = await copyRow(organizationId, artifactId)
+    const servers = change(readCopilotMcpServers(row.copilotMcpServers))
+    const written = await prisma.artifact.updateMany({ where: { id: artifactId, organizationId, updatedAt: row.updatedAt }, data: { copilotMcpServers: servers as unknown as Prisma.InputJsonValue } })
+    if (written.count) return servers
+  }
+  throw new ApiError('The copy changed while saving. Try again.', 409, 'CONFLICT')
 }
 
 /**
@@ -136,23 +150,24 @@ export async function testCopilotMcpServer(organizationId: string, artifactId: s
  * is stored.
  */
 export async function addCopilotMcpServer(organizationId: string, artifactId: string, input: CopilotMcpInput): Promise<CopilotMcpServerView[]> {
-  const row = await copyRow(organizationId, artifactId)
-  const servers = readCopilotMcpServers(row.copilotMcpServers)
-  if (servers.length >= COPILOT_MCP_MAX) throw new ApiError(`A copy can have up to ${COPILOT_MCP_MAX} servers. Remove one first.`, 400, 'MCP_LIMIT_REACHED')
-  if (servers.some((server) => server.serverUrl === input.serverUrl)) throw new ApiError('That server is already connected.', 400, 'MCP_DUPLICATE')
+  const room = (servers: StoredServer[]) => {
+    if (servers.length >= COPILOT_MCP_MAX) throw new ApiError(`A copy can have up to ${COPILOT_MCP_MAX} servers. Remove one first.`, 400, 'MCP_LIMIT_REACHED')
+    if (servers.some((server) => server.serverUrl === input.serverUrl)) throw new ApiError('That server is already connected.', 400, 'MCP_DUPLICATE')
+  }
+  // Checked before the (slow) verification so an obvious refusal is quick,
+  // and again on the list the write is made from.
+  room(readCopilotMcpServers((await copyRow(organizationId, artifactId)).copilotMcpServers))
   const { authConfig, verification } = await verifyInput(input)
   const toolCount = verification.toolCount
   const server: StoredServer = { id: randomUUID(), name: input.name || new URL(input.serverUrl).hostname, ...(input.description ? { description: input.description } : {}), serverUrl: input.serverUrl, authType: input.authType, authConfig, toolCount, addedAt: new Date().toISOString() }
-  await saveServers(organizationId, artifactId, [...servers, server])
-  return copilotMcpViews([...servers, server])
+  const saved = await saveServers(organizationId, artifactId, (servers) => { room(servers); return [...servers, server] })
+  return copilotMcpViews(saved)
 }
 
 /** Disconnect a server from a copy; its stored credential goes with it. */
 export async function removeCopilotMcpServer(organizationId: string, artifactId: string, serverId: string): Promise<CopilotMcpServerView[]> {
-  const row = await copyRow(organizationId, artifactId)
-  const servers = readCopilotMcpServers(row.copilotMcpServers).filter((server) => server.id !== serverId)
-  await saveServers(organizationId, artifactId, servers)
-  return copilotMcpViews(servers)
+  const saved = await saveServers(organizationId, artifactId, (servers) => servers.filter((server) => server.id !== serverId))
+  return copilotMcpViews(saved)
 }
 
 export async function listCopilotMcpServers(organizationId: string, artifactId: string): Promise<CopilotMcpServerView[]> {

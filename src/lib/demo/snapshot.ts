@@ -51,6 +51,8 @@ export const PARENT_SCOPED_COPIES = [
 /** Never copied — each with the reason a reviewer needs. */
 export const EXCLUDED: Record<string, string> = {
   ArtifactAppState: 'Private per-user application data is never copied to a demo workspace.',
+  ArtifactSharedState: 'Application data a page keeps for its viewers is workspace state, not demo content; a demo copy starts empty.',
+  ArtifactRenderError: 'Runtime errors a page reported are operational, per version, and not demo content.',
   Artifact: 'agent-produced content about the real workspace (reports, dashboards) and the conversation about it; a demo sandbox produces its own',
   ArtifactVersion: 'the versions of the above — same reason',
   RoiAnalysis: 'an operator-only ROI request tied to a real run, real datasets and a stored facts file; a demo sandbox starts with none and builds its own',

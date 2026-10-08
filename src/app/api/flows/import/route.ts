@@ -69,8 +69,18 @@ async function fetchImportUrl(raw: string, auth: { organizationId: string; dbUse
   if (!response.ok) throw new ApiError(`That URL answered ${response.status} — it must serve the workflow JSON.`, 400, 'BAD_IMPORT_URL')
   const declared = Number(response.headers.get('content-length') || 0)
   if (declared > URL_IMPORT_MAX_BYTES) throw new ApiError('That file is too large to import (5 MB max).', 413, 'IMPORT_TOO_LARGE')
-  const text = await response.text()
-  if (text.length > URL_IMPORT_MAX_BYTES) throw new ApiError('That file is too large to import (5 MB max).', 413, 'IMPORT_TOO_LARGE')
+  // Read through a byte ceiling, not after the fact: Response.text() buffers to
+  // EOF first, so a URL that streams forever would have the whole body in
+  // memory before the length check ever ran.
+  let text: string
+  try {
+    text = await readResponseTextLimited(response, URL_IMPORT_MAX_BYTES, 'Workflow file')
+  } catch (error) {
+    if (error instanceof Error && /exceeded/.test(error.message)) {
+      throw new ApiError('That file is too large to import (5 MB max).', 413, 'IMPORT_TOO_LARGE')
+    }
+    throw new ApiError('Could not read that URL.', 400, 'BAD_IMPORT_URL')
+  }
   try {
     return JSON.parse(text)
   } catch {

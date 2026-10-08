@@ -94,6 +94,8 @@ model Organization {
   artifacts                      Artifact[]
   artifactVersions               ArtifactVersion[]
   artifactAppStates              ArtifactAppState[]
+  artifactSharedStates           ArtifactSharedState[]
+  artifactRenderErrors           ArtifactRenderError[]
   customSignals                  CustomSignal[]
   pushSubscriptions              PushSubscription[]
   knowledgeDocuments             KnowledgeDocument[]
@@ -1809,6 +1811,8 @@ model Artifact {
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   versions     ArtifactVersion[]
   appStates    ArtifactAppState[]
+  sharedStates ArtifactSharedState[]
+  renderErrors ArtifactRenderError[]
 
   @@index([organizationId, updatedAt])
   @@index([organizationId, agentTaskId])
@@ -1833,6 +1837,45 @@ model ArtifactAppState {
   @@map("artifact_app_states")
 }
 
+/// State one artifact's viewers share (a sign-up sheet, a vote, a shared
+/// checklist): like ArtifactAppState but keyed by artifact + key alone. Anyone
+/// who can read the artifact reads it; anyone who can edit it writes it, with
+/// the same compare-and-set revision as private state.
+model ArtifactSharedState {
+  id             String @id @default(cuid())
+  organizationId String @db.Uuid
+  artifactId     String
+  key            String
+  value          Json
+  revision       Int @default(1)
+  /// Who last wrote it.
+  updatedByUserId String?
+  updatedAt      DateTime @updatedAt
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, artifactId, key])
+  @@map("artifact_shared_states")
+}
+
+/// The runtime errors a version's page reported from the viewer (uncaught
+/// errors, rejected promises, console.error), so the assistant can see what
+/// broke. One row per artifact + version: the latest report replaces the last.
+model ArtifactRenderError {
+  id             String @id @default(cuid())
+  organizationId String @db.Uuid
+  artifactId     String
+  versionId      String
+  /// Who saw them.
+  userId         String?
+  /// [{ message, stack?, count }]
+  errors         Json
+  createdAt      DateTime @default(now())
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  @@unique([organizationId, artifactId, versionId])
+  @@map("artifact_render_errors")
+}
+
 model ArtifactVersion {
   id              String   @id @default(cuid())
   organizationId  String   @db.Uuid
@@ -1848,6 +1891,11 @@ model ArtifactVersion {
   /// The structured state a rendered kind is built from (ROI: facts file,
   /// narrative, view). Null for kinds stored verbatim.
   state           Json?
+  /// The 1280×800 PNG the browser validator took when this version passed
+  /// (a StoredFile), shown on cards instead of a live frame. Null when the
+  /// validator took none (Markdown, no validator, a restore of an older
+  /// version that had none).
+  thumbnailFileId String?
   createdByUserId String?
   createdAt       DateTime @default(now())
 

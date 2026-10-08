@@ -64,3 +64,54 @@ test('an explicit request for offline_access is honoured and not duplicated', ()
 test('scope strings survive odd whitespace', () => {
   assert.equal(withOfflineAccess('  read   write  ', ['offline_access']), 'read write offline_access')
 })
+
+// ── SSRF guard on server-chosen endpoints ────────────────────────────────────
+
+import { after, before } from 'node:test'
+import { __setSsrfResolver } from '@/lib/net/ssrf'
+import { assertPublicOAuthEndpoints, discoverAuthServer } from '../oauth-authcode'
+
+before(() => {
+  // Deterministic DNS: a public IdP, and a host that resolves to a private
+  // address the way an attacker-controlled discovery document would arrange.
+  __setSsrfResolver(async (host) => {
+    if (host === 'idp.example.com') return [{ address: '203.0.113.10', family: 4 }]
+    if (host === 'internal.example.com') return [{ address: '10.0.0.5', family: 4 }]
+    throw new Error(`unexpected host ${host}`)
+  })
+})
+after(() => __setSsrfResolver(null))
+
+const publicMeta = {
+  authorization_endpoint: 'https://idp.example.com/authorize',
+  token_endpoint: 'https://idp.example.com/token',
+  registration_endpoint: 'https://idp.example.com/register',
+}
+
+test('public https endpoints pass, with or without a registration endpoint', async () => {
+  await assertPublicOAuthEndpoints(publicMeta)
+  await assertPublicOAuthEndpoints({ ...publicMeta, registration_endpoint: undefined })
+})
+
+test('an http token endpoint is refused — the exchange would carry the client secret in clear', async () => {
+  await assert.rejects(
+    assertPublicOAuthEndpoints({ ...publicMeta, token_endpoint: 'http://idp.example.com/token' }),
+    /token_endpoint is not a public https URL/,
+  )
+})
+
+test('a registration endpoint pointing at a private address is refused', async () => {
+  await assert.rejects(
+    assertPublicOAuthEndpoints({ ...publicMeta, registration_endpoint: 'https://internal.example.com/register' }),
+    /registration_endpoint is not a public https URL/,
+  )
+  await assert.rejects(
+    assertPublicOAuthEndpoints({ ...publicMeta, authorization_endpoint: 'https://169.254.169.254/latest/' }),
+    /authorization_endpoint is not a public https URL/,
+  )
+})
+
+test('discovery refuses a non-public server URL before any request is made', async () => {
+  await assert.rejects(discoverAuthServer('http://127.0.0.1:9/mcp'), /https/)
+  await assert.rejects(discoverAuthServer('https://internal.example.com/mcp'), /private or reserved/)
+})

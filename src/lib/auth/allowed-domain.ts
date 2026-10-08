@@ -118,6 +118,24 @@ export async function isAllowedEmail(email: string | null | undefined): Promise<
  * the class of bug it removes, and never cached, because a cached revocation is
  * indistinguishable from no revocation at all.
  */
+/**
+ * Admission at SIGN-IN (the OAuth callback). An externally invited person's
+ * invitation is consumed when their account is provisioned, so re-asking the
+ * full `isAllowedEmail` gate at every later sign-in locked them out after
+ * their first session. A person who already has an active account is admitted
+ * by that account, subject only to the revocation dimension; everyone else
+ * faces the full gate, as before.
+ */
+export async function isAdmittedForSignIn(email: string | null | undefined): Promise<boolean> {
+  if (await isAllowedEmail(email)) return true
+  const normalized = email?.trim().toLowerCase()
+  if (!normalized) return false
+  // systemPrisma: sign-in happens before any tenant is known; the lookup is by the verified email alone.
+  const existing = await systemPrisma.user.findFirst({ where: { email: { equals: normalized, mode: 'insensitive' }, isActive: true }, select: { id: true } })
+  if (!existing) return false
+  return !(await isDomainAccessRevoked(email))
+}
+
 export async function isDomainAccessRevoked(email: string | null | undefined): Promise<boolean> {
   // The owner can never be locked out by configuration — the same invariant the
   // users-table trigger enforces against deactivation and deletion.

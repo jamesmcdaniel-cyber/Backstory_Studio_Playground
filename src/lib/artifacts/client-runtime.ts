@@ -2,7 +2,41 @@ import pythonPackage from 'pyodide/package.json'
 /** Runs only in the opaque-origin artifact frame, never in the app window. */
 export const ARTIFACT_CLIENT_RUNTIME = String.raw`
 (function(){
-  window.__artifactError=window.__artifactError||function(e){var node=document.createElement('div');node.setAttribute('role','alert');node.setAttribute('data-backstory-runtime-error','');node.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;background:#fff1f2;color:#9f1239;padding:12px;z-index:2147483647';node.textContent=String(e.message||e);(document.body||document.documentElement).appendChild(node);};
+  // Runtime errors: the first 20 (message + stack, de-duplicated) go to the
+  // parent once the page has loaded, and again as new ones appear, so the
+  // assistant can see what broke instead of being told "it looks wrong".
+  var errors=[], errorIndex=new Map(), errorsPosted=0, errorTimer=null, loaded=document.readyState==='complete';
+  function clip(v){return String(v==null?'':v).slice(0,500);}
+  function record(e){
+    try{
+      if(e&&typeof e==='object'){if(e.__backstorySeen)return;try{Object.defineProperty(e,'__backstorySeen',{value:true});}catch(x){}}
+      var message=clip(e&&typeof e==='object'&&'message' in e?e.message:e)||'Unknown error';
+      var stack=e&&typeof e==='object'&&e.stack?clip(String(e.stack).split('\n').slice(0,6).join('\n')):'';
+      var id=message+' @@ '+stack, known=errorIndex.get(id);
+      if(known){known.count++;}
+      else if(errors.length>=20)return;
+      else{known={message:message,count:1};if(stack)known.stack=stack;errors.push(known);errorIndex.set(id,known);}
+      scheduleErrorReport();
+    }catch(x){}
+  }
+  function postErrors(){
+    errorTimer=null;
+    if(!errors.length||window.parent===window)return;
+    errorsPosted=errors.length;
+    window.parent.postMessage({type:'backstory:render-errors',errors:errors.map(function(e){return {message:e.message,stack:e.stack,count:e.count};})},'*');
+  }
+  function scheduleErrorReport(){
+    if(!loaded||errorTimer)return;
+    errorTimer=setTimeout(postErrors,errorsPosted?2000:50);
+  }
+  if(!loaded)window.addEventListener('load',function(){loaded=true;setTimeout(function(){if(errors.length)scheduleErrorReport();},0);});
+  window.addEventListener('error',function(e){record(e.error||e.message);});
+  window.addEventListener('unhandledrejection',function(e){record(e.reason);});
+  (function(){var original=window.console&&window.console.error;if(!original)return;window.console.error=function(){try{var parts=Array.prototype.map.call(arguments,function(a){if(a&&typeof a==='object'&&a.message)return a;if(typeof a==='string')return a;try{return JSON.stringify(a);}catch(x){return String(a);}});var first=parts[0];record(first&&typeof first==='object'?first:parts.join(' '));}catch(x){}return original.apply(this,arguments);};})();
+  // The page's error panel (the prelude installs its own) stays whatever it
+  // is; every error shown through it is recorded here first.
+  var errorPanel=window.__artifactError||function(e){var node=document.createElement('div');node.setAttribute('role','alert');node.setAttribute('data-backstory-runtime-error','');node.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;background:#fff1f2;color:#9f1239;padding:12px;z-index:2147483647';node.textContent=String(e&&e.message||e);(document.body||document.documentElement).appendChild(node);};
+  Object.defineProperty(window,'__artifactError',{configurable:true,enumerable:true,get:function(){return function(e){record(e);return errorPanel(e);};},set:function(fn){if(typeof fn==='function')errorPanel=fn;}});
   var pending = new Map(), seq = 0;
   window.addEventListener('message', function(e){
     if(e.source !== window.parent || !e.data || e.data.type !== 'backstory:state-result') return;
@@ -46,22 +80,23 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       // recovery compares against what the page actually holds.
       if(s.flushTimer){clearTimeout(s.flushTimer);flush(s,key);}
       await s.chain;
-      var result=await request('get',{key:key});
+      var result=await request('get',{key:key,shared:s.shared});
       if(!s.ready||discard){if(result.revision)s.value=result.value;s.revision=result.revision;s.ready=true;s.dirty=false;}
       else if(canonical(result.value)===canonical(s.value)){s.revision=result.revision;s.dirty=false;}
       else {
         if(result.revision!==s.revision)throw new Error('Another save changed this data. Export your draft, then reload saved data before merging.');
-        var saved=await request('set',{key:key,value:s.value,revision:result.revision});s.revision=saved.revision;s.dirty=false;
+        var saved=await request('set',{key:key,value:s.value,revision:result.revision,shared:s.shared});s.revision=saved.revision;s.dirty=false;
       }
       s.error=null;manualDirty=false;if(s.notice){s.notice.remove();s.notice=null;}
     }catch(e){s.error=e.message;recovery(s,key);}finally{s.recovering=false;s.emit();}
   }
-  function slot(key, initial){
-    if(slots.has(key)) return slots.get(key);
-    var s={value:typeof initial==='function'?initial():initial,revision:0,ready:false,readOnly:false,error:null,saving:false,dirty:false,recovering:false,writes:0,flushTimer:null,listeners:new Set(),chain:Promise.resolve()};
-    slots.set(key,s);
+  function slot(key, initial, shared){
+    var slotId=(shared?'shared:':'private:')+key;
+    if(slots.has(slotId)) return slots.get(slotId);
+    var s={value:typeof initial==='function'?initial():initial,revision:0,ready:false,readOnly:false,error:null,saving:false,dirty:false,recovering:false,writes:0,flushTimer:null,listeners:new Set(),chain:Promise.resolve(),shared:!!shared};
+    slots.set(slotId,s);
     s.emit=function(){s.listeners.forEach(function(fn){fn();});signalDirty();};
-    s.load=request('get',{key:key}).then(function(r){if(r.revision) s.value=r.value;s.revision=r.revision;s.readOnly=!!r.readOnly;s.ready=true;s.emit();}).catch(function(e){
+    s.load=request('get',{key:key,shared:s.shared}).then(function(r){if(r.revision) s.value=r.value;s.revision=r.revision;s.readOnly=!!r.readOnly;s.ready=true;s.emit();}).catch(function(e){
       // No bridge: the page works on its initial data, read-only, with no banner.
       if(e.noBridge){s.readOnly=true;s.ready=true;s.emit();return;}
       s.error=e.message;recovery(s,key);s.emit();});
@@ -74,15 +109,15 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
     s.flushTimer=null;
     var payload=s.value;
     s.writes++;s.saving=true;
-    s.chain=s.chain.then(function(){if(s.error)return;return request('set',{key:key,value:payload,revision:s.revision}).then(function(r){s.revision=r.revision;});}).catch(function(e){s.error=e.message;recovery(s,key);}).finally(function(){
+    s.chain=s.chain.then(function(){if(s.error)return;return request('set',{key:key,value:payload,revision:s.revision,shared:s.shared}).then(function(r){s.revision=r.revision;});}).catch(function(e){s.error=e.message;recovery(s,key);}).finally(function(){
       s.writes--;
       if(s.value!==payload&&!s.flushTimer&&!s.error){s.flushTimer=setTimeout(function(){flush(s,key);},0);}
       s.saving=s.writes>0||!!s.flushTimer;
       if(!s.saving&&!s.error){s.dirty=false;}
       s.emit();});
   }
-  function useArtifactState(key, initial){
-    var R=window.React,s=slot(key,initial), force=R.useState(0)[1];
+  function useStateSlot(key, initial, shared){
+    var R=window.React,s=slot(key,initial,shared), force=R.useState(0)[1];
     R.useEffect(function(){var f=function(){force(function(v){return v+1;});};s.listeners.add(f);f();return function(){s.listeners.delete(f);};},[key]);
     function set(value){
       if(!s.ready || s.recovering){window.__artifactError(new Error('Saved state is loading; please wait or retry.'));return;}
@@ -96,8 +131,13 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       if(!s.flushTimer)s.flushTimer=setTimeout(function(){flush(s,key);},FLUSH_MS);
       s.emit();
     }
-    return [s.value,R.useCallback(set,[s,key]),{ready:s.ready,readOnly:s.readOnly,saving:s.saving,error:s.error,dirty:s.dirty,recovering:s.recovering,retry:function(){return recover(s,key,false);},reload:function(){return recover(s,key,true);}}];
+    return [s.value,R.useCallback(set,[s,key]),{ready:s.ready,readOnly:s.readOnly,shared:s.shared,saving:s.saving,error:s.error,dirty:s.dirty,recovering:s.recovering,retry:function(){return recover(s,key,false);},reload:function(){return recover(s,key,true);}}];
   }
+  function useArtifactState(key, initial){return useStateSlot(key,initial,false);}
+  // Shared state: one value for everyone who opens the artifact, keyed by
+  // artifact + key alone. Readers see it; editors change it; a conflict
+  // means someone else saved first.
+  function useSharedArtifactState(key, initial){return useStateSlot(key,initial,true);}
   var worker=null, active=null, jobs=[], globals={}, pythonSeq=0;
   function pump(){
     if(active || !jobs.length)return;
@@ -132,7 +172,7 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
   // Compatibility facade for generated components that previously checked
   // window.pyodide. Execution initializes lazily, in an isolated worker.
   window.pyodide={runPythonAsync:function(code){return runPython(code,null);},globals:{set:function(k,v){globals[k]=v;},delete:function(k){delete globals[k];}},loadPackagesFromImports:function(){return Promise.resolve();}};
-  window.BackstoryArtifact={useArtifactState:useArtifactState,setDirty:function(value){manualDirty=!!value;signalDirty();},loadState:function(key){return request('get',{key:key});},saveState:async function(key,value,revision){manualDirty=true;signalDirty();var result=await request('set',{key:key,value:value,revision:revision});manualDirty=false;signalDirty();return result;},runPython:runPython,cancelPython:cancelPython};
+  window.BackstoryArtifact={useArtifactState:useArtifactState,useSharedArtifactState:useSharedArtifactState,setDirty:function(value){manualDirty=!!value;signalDirty();},loadState:function(key){return request('get',{key:key});},saveState:async function(key,value,revision){manualDirty=true;signalDirty();var result=await request('set',{key:key,value:value,revision:revision});manualDirty=false;signalDirty();return result;},loadSharedState:function(key){return request('get',{key:key,shared:true});},saveSharedState:async function(key,value,revision){manualDirty=true;signalDirty();var result=await request('set',{key:key,value:value,revision:revision,shared:true});manualDirty=false;signalDirty();return result;},runPython:runPython,cancelPython:cancelPython};
 })();
 `
 

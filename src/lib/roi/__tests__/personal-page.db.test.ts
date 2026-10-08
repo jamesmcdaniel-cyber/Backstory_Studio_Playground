@@ -143,12 +143,25 @@ if (TEST_DB) {
     assert.equal(mine?.basedOnVersionId, umbrella.versionId)
   })
 
+  test('two first uses at once make one page, and neither clobbers the other\'s metadata', async () => {
+    const racer = (await prisma.user.create({ data: { supabaseId: crypto.randomUUID(), organizationId: seeded.organizationId, isActive: true, role: 'USER', name: 'Racer', metadata: { theme: 'dark' } } })).id
+    const ids = await Promise.all(Array.from({ length: 4 }, () => pages.ensurePersonalPage(seeded.organizationId, racer)))
+    assert.equal(new Set(ids).size, 1, 'every concurrent first use returns the same page')
+    const pagesMade = await prisma.artifact.count({ where: { organizationId: seeded.organizationId, userId: racer, kind: 'roi_dashboard' } })
+    assert.equal(pagesMade, 1, 'one artifact, not one per caller')
+    const user = await prisma.user.findFirst({ where: { id: racer, organizationId: seeded.organizationId }, select: { metadata: true } })
+    assert.equal((user?.metadata as { roiPageId?: string }).roiPageId, ids[0])
+    assert.equal((user?.metadata as { theme?: string }).theme, 'dark', 'the registration merges into the metadata it found')
+    assert.equal(await pages.findPersonalPageId(seeded.organizationId, racer), ids[0])
+  })
+
   test('each person has their own page, and sees only their own page runs in history', async () => {
     const mine = await service.openRoiAccount({ organizationId: seeded.organizationId, userId: seeded.userId, account: 'Globex' })
     const theirs = await service.openRoiAccount({ organizationId: seeded.organizationId, userId: colleague, account: 'Globex' })
     assert.ok(mine.status === 'ready' && theirs.status === 'ready')
     assert.notEqual(theirs.artifactId, mine.artifactId)
-    assert.equal((await pages.personalPageIds(seeded.organizationId)).size, 2)
+    const pageIds = await pages.personalPageIds(seeded.organizationId)
+    assert.ok(pageIds.has(mine.artifactId) && pageIds.has(theirs.artifactId), 'both pages are registered (other tests in this workspace register their own)')
 
     const { DEFAULT_RUN_CONFIG } = await import('../config')
     const theirChange = await prisma.roiAnalysis.create({ data: { organizationId: seeded.organizationId, userId: colleague, account: 'Globex', template: 'standard', artifactId: theirs.artifactId, status: 'completed', timeframe: { preset: 'last6_vs_prior6' }, config: DEFAULT_RUN_CONFIG, reason: 'Their QBR', context: '', datasetIds: [], results: { personal: true, versionId: theirs.versionId } } })

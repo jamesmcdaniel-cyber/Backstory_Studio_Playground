@@ -15,6 +15,9 @@ import type { Account360Facts } from '@/lib/roi/account360/prep'
 import { isRoiTimeframePreset } from '@/lib/roi/timeframe'
 import { configFromPreset, describeRunConfig } from '@/lib/roi/config'
 import { addVersion, createArtifact } from './service'
+import { ArtifactValidatorUnavailableError, captureArtifactScreenshot } from './preflight'
+import { saveStoredFile } from '@/lib/files/storage'
+import { latestRenderErrors } from './render-errors'
 
 /**
  * The artifact plane: what the assistant can do to the artifact a
@@ -36,6 +39,12 @@ const GENERIC_TOOLS = [
   {
     name: 'get_artifact',
     description: 'The artifact this conversation is about: title, kind, versions, and the current content (the whole of it when it is small; the start plus its size when large — use find_in_artifact / read_artifact to navigate a large one), or, for an ROI dashboard, its facts summary, narrative and editable view. Call it first whenever the request depends on what the artifact currently holds.',
+    isWrite: false,
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'view_artifact_screenshot',
+    description: 'A 1280×800 picture of the current version as the isolated browser rendered it, saved as a file in the workspace. Tool results carry text only, so the result gives the file id and URL (and the PNG as a data URL when it is small enough) rather than the image itself. Use it to check layout after a change, or when the request is about how the page looks.',
     isWrite: false,
     inputSchema: { type: 'object', properties: {} },
   },
@@ -223,12 +232,19 @@ const ROI_TOOLS = [
 export type ArtifactToolDescriptor = { name: string; description: string; inputSchema: Record<string, unknown> }
 
 const NEW_ARTIFACT_TOOLS = ['create_artifact', 'render_artifact']
+/**
+ * What a template copy's copilot is never offered: the tools that make new
+ * artifacts, and the screenshot — a guest copy has no owner, so its picture
+ * would be stored as a file in the SHARER's workspace (against that
+ * workspace's quota) and each capture can cost a validator browser run.
+ */
+const TEMPLATE_COPY_WITHHELD_TOOLS = [...NEW_ARTIFACT_TOOLS, 'view_artifact_screenshot']
 
-/** The tools for an artifact of this kind. A template copy's copilot only ever reads and revises the copy, so it is not offered the tools that make new artifacts. */
+/** The tools for an artifact of this kind. A template copy's copilot only ever reads and revises the copy, so it is not offered the tools that make new artifacts or picture the page. */
 export function artifactToolsFor(kind: string, options: { templateCopy?: boolean } = {}): ArtifactToolDescriptor[] {
   // An ROI dashboard is never edited as text, but its assistant can still make new artifacts.
   const generic = (kind === 'roi_dashboard' ? GENERIC_TOOLS.filter((tool) => ['get_artifact', ...NEW_ARTIFACT_TOOLS].includes(tool.name)) : [...GENERIC_TOOLS])
-    .filter((tool) => !options.templateCopy || !NEW_ARTIFACT_TOOLS.includes(tool.name))
+    .filter((tool) => !options.templateCopy || !TEMPLATE_COPY_WITHHELD_TOOLS.includes(tool.name))
   // An ROI dashboard is edited through its view; a page (an Account 360
   // dashboard among them) is edited as HTML, and can still be rebuilt for
   // another account from its extracts.
@@ -276,7 +292,7 @@ export class ArtifactToolClient {
 
   async executeTool(_serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
     try {
-      if (this.context.templateCopy && (!GENERIC_TOOLS.some(tool => tool.name === name) || args.saveAsNew || name === 'create_artifact' || name === 'render_artifact')) {
+      if (this.context.templateCopy && (!GENERIC_TOOLS.some(tool => tool.name === name) || args.saveAsNew || TEMPLATE_COPY_WITHHELD_TOOLS.includes(name))) {
         throw new Error('This copilot can only read and revise your template copy.')
       }
       switch (name) {
@@ -287,12 +303,18 @@ export class ArtifactToolClient {
         case 'edit_artifact': return await this.edit(args)
         case 'find_in_artifact': return await this.find(args)
         case 'read_artifact': return await this.read(args)
+        case 'view_artifact_screenshot': return await this.screenshot()
         case 'update_roi_dashboard': return await this.updateRoi(args)
         case 'list_roi_accounts': return await this.listRoiAccounts()
         case 'start_roi_analysis': return await this.startRoi(args)
         default: throw new Error(`Unknown artifact tool "${name}".`)
       }
     } catch (error) {
+      // The validator being down is not a verdict on the page: say so, so the
+      // assistant waits and retries instead of "fixing" content that is fine.
+      if (error instanceof ArtifactValidatorUnavailableError) {
+        return { error: error.message, retryable: true, note: 'This is a platform outage, not a problem with the content. Do not change the content to work around it: tell the user the save could not be checked right now and to retry in a minute.' }
+      }
       // A tool error is the agent's to explain, not a run failure.
       return { error: error instanceof Error ? error.message : String(error) }
     }
@@ -340,13 +362,39 @@ export class ArtifactToolClient {
     const content = version?.content ?? ''
     const large = content.length > MAX_DOC_CHARS
     const analysis = await this.pageAnalysis(version?.state)
+    // What the page itself reported broke in the viewer: the assistant fixes these before anything else.
+    const report = artifact.currentVersionId ? await latestRenderErrors({ organizationId: this.organizationId, artifactId: artifact.id }, artifact.currentVersionId) : null
     return {
       ...base,
       ...(analysis ? { analysis } : {}),
+      ...(report ? { renderErrors: { note: 'Runtime errors the current version raised in the viewer (uncaught errors, rejected promises, console.error). Fix these first.', reportedAt: report.reportedAt, errors: report.errors } } : {}),
       format: looksLikeHtml(content.slice(0, 4_000)) ? 'html' : 'markdown',
       size: content.length,
       content: large ? content.slice(0, LARGE_DOC_PREVIEW_CHARS) : content,
       ...(large ? { note: `This is the first ${LARGE_DOC_PREVIEW_CHARS.toLocaleString()} of ${content.length.toLocaleString()} characters. Use find_in_artifact to locate what a change touches, read_artifact for a window around it, and edit_artifact to change it.` } : {}),
+    }
+  }
+
+  /** The current version's picture, stored as a workspace file; the text result points at it since a tool result cannot carry an image. */
+  private async screenshot() {
+    const artifact = await this.artifact()
+    const version = artifact.currentVersionId ? await prisma.artifactVersion.findFirst({ where: { id: artifact.currentVersionId, organizationId: this.organizationId }, select: { id: true, number: true, content: true } }) : null
+    if (!version) throw new Error('The artifact has no version to picture yet.')
+    if (!looksLikeHtml(version.content.slice(0, 4_000))) throw new Error('A Markdown document has no rendered page to picture.')
+    const png = await captureArtifactScreenshot(version.content)
+    if (!png) throw new Error('No screenshot is available: the browser validator is not configured here.')
+    const buffer = Buffer.from(png, 'base64')
+    const file = await saveStoredFile({ organizationId: this.organizationId, userId: this.userId, filename: `artifact-${artifact.id}-v${version.number}.png`, mimeType: 'image/png', buffer, trusted: true })
+    const dataUrl = `data:image/png;base64,${png}`
+    return {
+      note: 'Tool results carry text only, so this is a reference to the image, not the image. The person can open the URL; the data URL is included when small.',
+      version: version.number,
+      width: 1280,
+      height: 800,
+      fileId: file.id,
+      url: `/api/files/${file.id}`,
+      bytes: buffer.length,
+      ...(dataUrl.length <= 40_000 ? { dataUrl } : {}),
     }
   }
 

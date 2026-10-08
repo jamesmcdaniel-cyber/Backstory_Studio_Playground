@@ -2,7 +2,7 @@ import '@/test-support/jsdom-env'
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import React from 'react'
-import { act, render, cleanup, screen, waitFor } from '@testing-library/react'
+import { act, render, cleanup, screen } from '@testing-library/react'
 import { ModelsPanel } from '@/app/admin/users/models-panel'
 
 /**
@@ -58,20 +58,23 @@ test('benchRunning: null keeps the quiet poll alive', async (t) => {
   let calls = 0
   stubModelsApi(null, () => { calls += 1 })
 
-  render(<ModelsPanel days={30} />)
-  // The first fetch resolving is earlier than React committing the report and
-  // installing the report-dependent interval. Wait for that committed UI, not
-  // merely the fetch counter, before advancing the mocked clock.
-  await screen.findByText(/status unknown/i)
+  // One async act covers the whole mount: the stubbed fetch resolving, the
+  // report committing, and the passive effect that installs the report-
+  // dependent interval. The old version advanced the mocked clock after the
+  // text appeared but before that effect had run — fine on an idle machine,
+  // but under full-suite load the effect was still pending, the tick fired
+  // nothing, and no amount of real-time waiting could produce a second fetch.
+  await act(async () => { render(<ModelsPanel days={30} />) })
+  screen.getByText(/status unknown/i)
   assert.equal(calls, 1)
 
+  // The stub counts synchronously when fetch is called, and the interval
+  // callback calls fetch synchronously, so the count is settled once the
+  // mocked clock has ticked — nothing here depends on wall-clock time.
   await act(async () => { t.mock.timers.tick(15_000) })
-  // Generous real-time bound: this only waits on a promise microtask chain
-  // (fetch stub -> setState -> rerender), but the full suite runs ~110 test
-  // files concurrently across 10 cores, and CPU contention at that scale can
-  // push that chain past a tight timeout even though the logic is correct —
-  // confirmed by 5/5 clean runs of this file in isolation.
-  await waitFor(() => assert.equal(calls, 2), { timeout: 8000 })
+  assert.equal(calls, 2)
+  await act(async () => { t.mock.timers.tick(15_000) })
+  assert.equal(calls, 3, 'the poll keeps going while the status stays unknown')
 })
 
 test('benchRunning: true still renders "bench running" and polls', async () => {

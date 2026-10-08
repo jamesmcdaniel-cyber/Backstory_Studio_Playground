@@ -1,16 +1,23 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { validateArtifactRuntime } from '../preflight'
+import { ArtifactValidatorUnavailableError, validateArtifactRuntime } from '../preflight'
 
 test('runtime preflight fails closed, accepts explicit passes, and preserves validation errors', async () => {
+  const warnings: string[] = []
+  const originalWarn = console.warn
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')) }
   const keys = ['ARTIFACT_VALIDATOR_URL', 'ARTIFACT_VALIDATOR_TOKEN', 'ARTIFACT_RUNTIME_PREFLIGHT'] as const
   const saved = keys.map(key => process.env[key])
   const originalFetch = globalThis.fetch
   const source = '<html><body><h1>QA</h1><script>throw Error("broken startup")</script></body></html>'
   try {
     for (const key of keys) delete process.env[key]
+    // Skipped (not required, not configured): logged once per process, at warn.
+    await validateArtifactRuntime(source)
+    await validateArtifactRuntime(source + '<!-- again -->')
+    assert.equal(warnings.filter((line) => /preflight skipped/.test(line)).length, 1)
     process.env.ARTIFACT_RUNTIME_PREFLIGHT = 'required'
-    await assert.rejects(validateArtifactRuntime(source), /validation is unavailable/)
+    await assert.rejects(validateArtifactRuntime(source), /validator is unavailable/)
     await validateArtifactRuntime('# Plain Markdown needs no browser')
     process.env.ARTIFACT_VALIDATOR_URL = 'https://validator.example'
     process.env.ARTIFACT_VALIDATOR_TOKEN = 'unit-test-token'
@@ -32,11 +39,23 @@ test('runtime preflight fails closed, accepts explicit passes, and preserves val
     assert.equal(validations, 1, 'identical overlapping candidates share validation')
     await validateArtifactRuntime(source)
     assert.equal(validations, 2, 'a past success never skips a new validation')
+    // Not a verdict: a 200 that is not in the protocol, a 5xx, a 4xx without
+    // errors, and a network failure are the service being unavailable — never
+    // reported as the page failing, so nothing "fixes" a healthy page.
+    const unavailable = (error: unknown) => error instanceof ArtifactValidatorUnavailableError && /validator is unavailable.*retry in a minute/i.test(error.message)
     globalThis.fetch = async () => Response.json({ success: true })
-    await assert.rejects(validateArtifactRuntime(source), /failed browser startup validation/)
+    await assert.rejects(validateArtifactRuntime(source), unavailable)
+    globalThis.fetch = async () => Response.json({ error: 'boom' }, { status: 503 })
+    await assert.rejects(validateArtifactRuntime(source), unavailable)
+    globalThis.fetch = async () => new Response('<html>gateway</html>', { status: 502 })
+    await assert.rejects(validateArtifactRuntime(source), unavailable)
     globalThis.fetch = async () => { throw new Error('network unavailable') }
-    await assert.rejects(validateArtifactRuntime(source), /could not finish/)
+    await assert.rejects(validateArtifactRuntime(source), unavailable)
+    // A structured verdict on a non-2xx is still about the content.
+    globalThis.fetch = async () => Response.json({ ok: false, errors: ['ReferenceError: x'] }, { status: 422 })
+    await assert.rejects(validateArtifactRuntime(source), (error: unknown) => !(error instanceof ArtifactValidatorUnavailableError) && /ReferenceError: x.*Fix the artifact/.test(String((error as Error).message)))
   } finally {
+    console.warn = originalWarn
     globalThis.fetch = originalFetch
     keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index] })
   }

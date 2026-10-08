@@ -8,7 +8,8 @@ import { summarizeFacts } from './facts'
 import { runAccount360Prep, type Account360Facts, type Account360Options } from './account360/prep'
 import { summarizeAccount360 } from './account360/facts'
 import { roiRunConfigSchema } from './config'
-import { isRoiSourceKind, type RoiSourceKind } from './sources'
+import { isRoiSourceKind, ROI_SOURCE_KINDS, type RoiSourceKind } from './sources'
+import { pullRoiExtract } from './databricks'
 
 const ACCOUNT360_KINDS: RoiSourceKind[] = ['clickstream', 'accounts', 'opportunities']
 
@@ -57,10 +58,30 @@ export const ROI_TOOLS = [
       required: ['documentIds'],
     },
   },
+  {
+    name: 'roi_databricks_pull',
+    description:
+      'Run one of an account\'s warehouse queries on Databricks (SQL Statement Execution API) and load its result into the workspace Repository as that account\'s ROI extract, tagged for the ROI page. ' +
+      'This is the data flow\'s step ("ROI data pull · Databricks"): the workspace\'s saved HTTP credential for the Databricks host is attached automatically. Pass the workspace host, the SQL warehouse id, the statement, the account and the extract kind. ' +
+      'Returns the loaded dataset\'s id and row count; fails outright when the query or the load fails. Not for ad-hoc queries.',
+    isWrite: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        host: { type: 'string', description: 'The Databricks workspace host, e.g. dbc-a1b2c3d4-e5f6.cloud.databricks.com.' },
+        warehouseId: { type: 'string', description: 'The SQL warehouse id (from its connection details).' },
+        statement: { type: 'string', description: 'The SQL to run, with the account\'s warehouse org id already in it.' },
+        account: { type: 'string', description: 'The account the extract belongs to, as the ROI page names it.' },
+        kind: { type: 'string', enum: [...ROI_SOURCE_KINDS], description: 'Which extract this query produces.' },
+        filename: { type: 'string', description: 'The dataset\'s file name (optional; .csv).' },
+      },
+      required: ['host', 'warehouseId', 'statement', 'account', 'kind'],
+    },
+  },
 ] satisfies ReadonlyArray<{
   name: string
   description: string
-  isWrite: false
+  isWrite: boolean
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
 }>
 
@@ -74,9 +95,24 @@ export class RoiToolClient {
     private readonly agentId: string | null = null,
     private readonly runPrep: RoiPrepRunner = runRoiPrep,
     private readonly runAccount360: Account360PrepRunner = runAccount360Prep,
+    private readonly pull: typeof pullRoiExtract = pullRoiExtract,
   ) {}
 
   async executeTool(_serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+    if (name === 'roi_databricks_pull') {
+      const text = (key: string) => (typeof args[key] === 'string' ? (args[key] as string) : typeof args[key] === 'number' ? String(args[key]) : '')
+      // Throws rather than answering { error }: a flow step must fail when nothing was loaded.
+      return this.pull({
+        organizationId: this.organizationId,
+        userId: this.userId,
+        host: text('host'),
+        warehouseId: text('warehouseId'),
+        statement: text('statement'),
+        account: text('account'),
+        kind: text('kind'),
+        ...(text('filename') ? { filename: text('filename') } : {}),
+      })
+    }
     if (name !== 'prepare_roi_facts' && name !== 'prepare_account360') throw new Error(`Unknown ROI tool "${name}".`)
     const loaded = await this.loadDatasets(args, name === 'prepare_account360' ? 'account360' : 'core')
     if ('error' in loaded) return loaded

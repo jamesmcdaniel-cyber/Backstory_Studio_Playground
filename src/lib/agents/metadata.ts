@@ -18,7 +18,9 @@ export type AgentMetadata = {
   maxTurns?: number
   headline?: string
   triggerSecretHash?: string
-  /** Legacy plaintext trigger secret (superseded by triggerSecretHash). */
+  /** Legacy plaintext trigger secret. NO LONGER ACCEPTED by the trigger route
+   *  (see @/lib/agents/trigger-secret); scripts/encrypt-trigger-secrets.ts
+   *  converts remaining rows to triggerSecretHash. */
   triggerSecret?: string
   pendingQuestion?: unknown
   allowSubagents?: boolean

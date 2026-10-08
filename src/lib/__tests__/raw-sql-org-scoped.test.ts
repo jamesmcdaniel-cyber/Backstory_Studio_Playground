@@ -44,10 +44,10 @@ const CROSS_TENANT_BY_DESIGN: Record<string, string> = {
     'Per-model cost and p95 latency across every workspace. Prisma groupBy has no percentile aggregate, and an org filter would defeat the purpose of the view.',
 }
 
-/** Statements that touch no rows, so org scope is meaningless for them. */
+/** Statements that touch no rows, so org scope is meaningless for them: session settings, a liveness probe, an advisory lock. */
 function touchesNoRows(sql: string): boolean {
   const normalized = sql.trim().replace(/\s+/g, ' ').toUpperCase()
-  return normalized.startsWith('SET ') || normalized === 'SELECT 1'
+  return normalized.startsWith('SET ') || normalized === 'SELECT 1' || normalized.startsWith('SELECT PG_ADVISORY_XACT_LOCK(')
 }
 
 function sourceFiles(dir: string): string[] {

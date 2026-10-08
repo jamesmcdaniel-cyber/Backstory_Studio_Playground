@@ -15,6 +15,7 @@
  */
 
 import crypto from 'crypto'
+import { assertPublicUrl } from '@/lib/net/ssrf'
 
 /**
  * Cookie carrying the in-flight OAuth state between /oauth/start and
@@ -61,12 +62,45 @@ export interface AuthServerMetadata {
 }
 
 /**
+ * The endpoints an OAuth server's metadata hands us. Every one of them is a
+ * URL the SERVER chose: the discovery document comes from a host the person
+ * typed, and this process then POSTs to `registration_endpoint` and
+ * `token_endpoint` and sends the browser to `authorization_endpoint`. An
+ * attacker who controls (or can point us at) a discovery document could
+ * otherwise name an internal address — the cloud metadata service, a sidecar,
+ * localhost — and have us register or exchange a token against it, and the
+ * secrets in that request would go to the wrong host. The same guard that
+ * covers every other outbound fetch applies to each endpoint: https only, a
+ * public address, and the resolved answer pinned for the fetch that follows.
+ */
+export async function assertPublicOAuthEndpoints(meta: AuthServerMetadata): Promise<void> {
+  const endpoints: Array<[string, string | undefined]> = [
+    ['authorization_endpoint', meta.authorization_endpoint],
+    ['token_endpoint', meta.token_endpoint],
+    ['registration_endpoint', meta.registration_endpoint],
+  ]
+  for (const [name, url] of endpoints) {
+    if (url === undefined) continue
+    if (typeof url !== 'string') throw new Error(`OAuth metadata ${name} is not a URL`)
+    try {
+      await assertPublicUrl(url)
+    } catch (error) {
+      throw new Error(`OAuth metadata ${name} is not a public https URL: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
+/**
  * GET ${origin}/.well-known/oauth-authorization-server for the given MCP
  * server URL and return the parsed metadata.
+ *
+ * The server URL itself goes through the SSRF guard first: it is user input,
+ * and the discovery fetch is an outbound request to whatever host it names.
  */
 export async function discoverAuthServer(
   serverUrl: string,
 ): Promise<AuthServerMetadata> {
+  await assertPublicUrl(serverUrl)
   const origin = new URL(serverUrl).origin
   const discoveryUrl = `${origin}/.well-known/oauth-authorization-server`
 

@@ -189,7 +189,7 @@ export function AuthGateway() {
                   <p className="font-mono text-[11px] font-bold uppercase tracking-[0.22em] text-graphite-800">
                     Backstory Studio
                   </p>
-                  <p className="mt-1 text-sm text-graphite-500">Secure workspace access</p>
+                  <p className="mt-1 text-sm text-fg-muted">Secure workspace access</p>
                 </div>
               </div>
 
@@ -199,7 +199,7 @@ export function AuthGateway() {
                 </p>
                 <h1 className="text-4xl font-semibold leading-[1.08] tracking-[-0.035em] text-graphite-900 sm:text-5xl">
                   Pick up where
-                  <span className="block text-graphite-500">you left off.</span>
+                  <span className="block text-fg-muted">you left off.</span>
                 </h1>
                 <p className="mt-5 max-w-md text-base leading-7 text-graphite-600">
                   {embedded
@@ -269,7 +269,7 @@ export function AuthGateway() {
 
               {!embedded && !isInternalEdition() && (
                 <div className="mt-6 flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-graphite-500">Approved accounts:</span>
+                  <span className="text-xs text-fg-muted">Approved accounts:</span>
                   {COMPANY_EMAIL_DOMAINS.map((domain) => (
                     <span key={domain} className="rounded-full border border-graphite-200 bg-white px-3 py-1 font-mono text-[11px] text-graphite-700 shadow-1">
                       @{domain}
@@ -283,19 +283,19 @@ export function AuthGateway() {
                   <ShieldCheck className="mt-0.5 h-4 w-4 text-horizon-600" />
                   <div>
                     <p className="text-sm font-medium text-graphite-800">Company SSO</p>
-                    <p className="mt-0.5 text-xs leading-5 text-graphite-500">Okta and SAML policies are enforced at sign-in.</p>
+                    <p className="mt-0.5 text-xs leading-5 text-fg-muted">Okta and SAML policies are enforced at sign-in.</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
                   <LockKeyhole className="mt-0.5 h-4 w-4 text-horizon-600" />
                   <div>
                     <p className="text-sm font-medium text-graphite-800">Scoped workspace</p>
-                    <p className="mt-0.5 text-xs leading-5 text-graphite-500">Runs and connections remain private.</p>
+                    <p className="mt-0.5 text-xs leading-5 text-fg-muted">Runs and connections remain private.</p>
                   </div>
                 </div>
               </div>
 
-              <footer className="mt-12 flex items-center gap-4 text-xs text-graphite-500">
+              <footer className="mt-12 flex items-center gap-4 text-xs text-fg-muted">
                 <span>By continuing, you agree to our</span>
                 <Link href="/privacy" className="transition-colors hover:text-graphite-900 hover:underline">Privacy</Link>
                 <Link href="/terms" className="transition-colors hover:text-graphite-900 hover:underline">Terms</Link>

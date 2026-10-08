@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { isAllowedEmail } from '@/lib/auth/allowed-domain'
+import { isAdmittedForSignIn } from '@/lib/auth/allowed-domain'
 import { amrMethods, emailDomain, isEnterpriseIdentity } from '@/lib/auth/enterprise-policy'
 import { validatedReturnPath } from '@/lib/auth/return-path'
 import { systemPrisma } from '@/lib/prisma'
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
   // has returned the verified email and before allowing the session into the
   // application.
   const { data: { user }, error: userError } = await supabase.auth.getUser()
-  if (userError || !(await isAllowedEmail(user?.email))) {
+  if (userError || !(await isAdmittedForSignIn(user?.email))) {
     await supabase.auth.signOut().catch(() => undefined)
     const errorUrl = new URL('/auth/auth-code-error', request.url)
     errorUrl.searchParams.set('reason', userError ? 'session' : 'domain')

@@ -239,6 +239,30 @@ export default function RoiPage() {
   useEffect(() => { if (selected?.activeAnalysisId) setTracked(selected.activeAnalysisId) }, [selected?.activeAnalysisId])
   const trackedRun = tracked ? analyses?.find((analysis) => analysis.id === tracked) ?? null : null
 
+  // The account is busy with a run the history does not list (it started
+  // before the history loaded, or the list is capped): read it once and put
+  // it in the history, so its progress card shows and the page refreshes
+  // when it settles. A 404 is a run this person may not see — the page would
+  // otherwise stay busy with no card until a reload.
+  const [unseenRuns, setUnseenRuns] = useState<Set<string>>(() => new Set())
+  const fetchedRuns = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const id = selected?.activeAnalysisId
+    if (!id || !analyses || analyses.some((analysis) => analysis.id === id) || fetchedRuns.current.has(id)) return
+    fetchedRuns.current.add(id)
+    // Not cancelled on re-run: the history changes often while this is in
+    // flight, and a dropped answer would leave the id marked as fetched.
+    fetch(`/api/roi/analyses/${encodeURIComponent(id)}`, { cache: 'no-store' })
+      .then(async (response) => {
+        if (response.status === 404) { setUnseenRuns((current) => new Set(current).add(id)); return }
+        const data = await response.json().catch(() => ({})) as { analysis?: RoiAnalysisView }
+        if (response.ok && data.analysis) setAnalyses((current) => upsertRun(current ?? [], data.analysis!))
+        // Any other failure: the next history load lists it, and the card appears then.
+        else fetchedRuns.current.delete(id)
+      })
+      .catch(() => { fetchedRuns.current.delete(id) })
+  }, [selected?.activeAnalysisId, analyses])
+
   const chooseAccount = useCallback((next: string, version?: string | null) => {
     pendingVersion.current = version ?? null
     attempted.current = null
@@ -302,7 +326,7 @@ export default function RoiPage() {
 
   const toggleAssistant = () => setAssistantOpen((value) => { store(ASSISTANT_KEY, value ? '0' : '1'); return !value })
 
-  const busy = Boolean(trackedRun && !isRunSettled(trackedRun.phase)) || Boolean(selected?.activeAnalysisId)
+  const busy = Boolean(trackedRun && !isRunSettled(trackedRun.phase)) || Boolean(selected?.activeAnalysisId && !unseenRuns.has(selected.activeAnalysisId))
   const shownSettings = selected?.mine ?? selected?.report ?? null
   const configLine = shownSettings ? [...describeRunConfig(shownSettings.config), ...(shownSettings.reason ? [`for ${shownSettings.reason}`] : [])] : []
   const filterCount = filters.fy.length + filters.fq.length + filters.role.length

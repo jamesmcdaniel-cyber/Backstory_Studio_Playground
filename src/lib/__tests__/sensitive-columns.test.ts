@@ -36,6 +36,7 @@ type Classification = 'encrypted' | 'hash' | 'capability' | 'not-secret'
 const CLASSIFIED: Record<string, Classification> = {
   // User-chosen storage namespace (e.g. records-v1), never an API credential.
   'ArtifactAppState.key': 'not-secret',
+  'ArtifactSharedState.key': 'not-secret',
   // ── Encrypted at rest ────────────────────────────────────────────────────
   'HttpCredential.secretConfig': 'encrypted',
   'ExternalSecretProvider.authConfig': 'encrypted',

@@ -43,7 +43,7 @@ import { hasLiveData, type RoiLiveAccount } from './live-account'
  * the layout changes: a person's page re-draws an account from its own state
  * the next time they open it, so saved pages take the new layout.
  */
-export const ROI_RENDER_VERSION = 4
+export const ROI_RENDER_VERSION = 5
 
 export type RoiDashboardOptions = {
   account: string

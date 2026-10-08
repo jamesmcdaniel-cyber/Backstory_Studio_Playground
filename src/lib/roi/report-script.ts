@@ -105,20 +105,163 @@ $('#themeBtn').onclick=function(){themeMode=themeMode==='auto'?'light':themeMode
   $('#themeBtn').textContent='Theme: '+themeMode;renderHero();rerender();};
 try{window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',function(){if(themeMode==='auto'){renderHero();rerender();}});}catch(e){}
 
+/* ---------- chart layer ----------
+   One theme for every chart: thin rounded bars capped near 24px, hairline
+   grid, a crosshair with one tooltip for every series on line charts, the
+   hovered bar lifting, animated transitions between views (not under
+   prefers-reduced-motion), a legend only when there are two or more series.
+   Every chart gets a table view, an image download and an expanded view. */
+var MONO='Chivo Mono, monospace';
+var MOTION=(function(){try{return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){return true;}})();
+function isObj(v){return !!v&&typeof v==='object'&&!Array.isArray(v);}
+function merge(a,b){var out=Object.assign({},a);Object.keys(b||{}).forEach(function(k){out[k]=isObj(out[k])&&isObj(b[k])?merge(out[k],b[k]):b[k];});return out;}
+function rgba(hex,a){var m=/^#?([0-9a-f]{6})$/i.exec(String(hex).trim());if(!m)return hex;var n=parseInt(m[1],16);return 'rgba('+(n>>16&255)+','+(n>>8&255)+','+(n&255)+','+a+')';}
 function base(extra){
-  var t=css('--text'),t2=css('--text2'),r=css('--rule');
+  var t=css('--text'),t2=css('--text2'),t3=css('--text3'),r=css('--rule'),rs=css('--rule-strong');
   var L={paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{family:css('--sans'),size:13,color:t2},
-    margin:{l:56,r:20,t:14,b:48},hoverlabel:{font:{family:'Chivo Mono, monospace',size:12,color:t},bgcolor:css('--raised'),bordercolor:css('--rule-strong')},
-    xaxis:{gridcolor:r,linecolor:css('--rule-strong'),zeroline:false,tickfont:{family:'Chivo Mono, monospace',size:11}},
-    yaxis:{gridcolor:r,zeroline:false,tickfont:{family:'Chivo Mono, monospace',size:11},rangemode:'tozero'},
-    legend:{orientation:'h',y:-0.2,x:0,font:{size:13,color:t2}},bargap:0.28};
-  return Object.assign(L,extra||{});
+    margin:{l:56,r:20,t:14,b:48},
+    hoverlabel:{font:{family:MONO,size:12,color:t},bgcolor:css('--raised'),bordercolor:rs,align:'left',namelength:-1},
+    xaxis:{gridcolor:'rgba(0,0,0,0)',linecolor:rs,zeroline:false,tickfont:{family:MONO,size:11,color:t3},automargin:true,fixedrange:true},
+    yaxis:{gridcolor:r,gridwidth:1,linecolor:'rgba(0,0,0,0)',zeroline:false,tickfont:{family:MONO,size:11,color:t3},rangemode:'tozero',automargin:true,fixedrange:true},
+    legend:{orientation:'h',x:0,y:1.02,yanchor:'bottom',font:{size:12,color:t2},itemclick:'toggle',itemdoubleclick:'toggleothers',itemsizing:'constant',tracegroupgap:4}};
+  return merge(L,extra||{});
 }
 var PCFG={displayModeBar:false,responsive:true};
-function plot(id,data,layout){var el=document.getElementById(id);if(!el||!window.Plotly)return null;Plotly.react(el,data,layout,PCFG);return el;}
-var palette=function(){return [css('--d1'),css('--d2'),css('--d3'),css('--d5'),css('--d6'),css('--neg'),css('--d4'),css('--text3'),css('--pos')];};
-function ypct(extra){return Object.assign({ticksuffix:'%',rangemode:'tozero',gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},extra||{});}
-var xcat=function(extra){return Object.assign({gridcolor:'rgba(0,0,0,0)',linecolor:css('--rule-strong'),tickfont:{size:11}},extra||{});};
+var NO_TOOLS={heroStrip:true};
+function plot(id,data,layout){
+  var el=document.getElementById(id);if(!el||!window.Plotly)return null;
+  layout=layout||base();
+  el.classList.remove('empty');el.removeAttribute('data-empty');
+  styleTraces(data,layout,el);
+  if(!NO_TOOLS[id])chartTools(el);
+  Plotly.react(el,data,layout,PCFG);
+  el._roi={data:data,layout:layout};
+  el.classList.add('drawn');
+  bindLift(el);
+  if(el._roiWrap&&el._roiWrap.classList.contains('table'))refreshTable(el);
+  return el;
+}
+/* A chart with nothing to draw says so in place of the plot. */
+function emptyChart(id,msg){var el=document.getElementById(id);if(!el)return;if(window.Plotly&&el._roi)Plotly.purge(el);el._roi=null;el.classList.remove('drawn');el.classList.add('empty');el.setAttribute('data-empty',msg||'Nothing to draw yet.');}
+function styleTraces(data,layout,el){
+  var surf=css('--raised'),bars=0,hbars=0,lines=0,others=0,maxCats=1;
+  data.forEach(function(tr){
+    if(tr.type==='bar'){bars++;if(tr.orientation==='h')hbars++;var cats=(tr.orientation==='h'?tr.y:tr.x)||[];if(cats.length>maxCats)maxCats=cats.length;
+      tr.marker=tr.marker||{};if(tr.marker.cornerradius==null)tr.marker.cornerradius=4;
+      if(layout.barmode==='stack')tr.marker.line=Object.assign({color:surf,width:2},tr.marker.line||{});
+      if(tr.text&&!tr.textfont)tr.textfont={family:MONO,size:11,color:css('--text')};else if(tr.textfont&&!tr.textfont.family)tr.textfont.family=MONO;}
+    else if(tr.type==='scatter'){var mode=tr.mode||'lines';
+      if(/lines/.test(mode)){lines++;tr.line=Object.assign({width:tr.stackgroup?1.2:2},tr.line||{});}
+      if(/markers/.test(mode)){tr.marker=tr.marker||{};if(tr.marker.size==null)tr.marker.size=8;if(!tr.marker.line)tr.marker.line={color:surf,width:2};}
+      if(tr.fill&&!tr.fillcolor&&tr.line&&tr.line.color)tr.fillcolor=rgba(tr.line.color,.12);
+      if(tr.stackgroup&&!tr.fillcolor&&tr.line&&tr.line.color)tr.fillcolor=rgba(tr.line.color,.3);
+      if(!/lines/.test(mode))others++;}
+    else if(tr.type==='pie'){tr.marker=tr.marker||{};tr.marker.line=Object.assign({color:surf,width:2},tr.marker.line||{});if(tr.hole==null)tr.hole=.62;if(!tr.textfont)tr.textfont={family:MONO,size:12};others++;}
+    else if(tr.type==='heatmap'){if(tr.xgap==null)tr.xgap=3;if(tr.ygap==null)tr.ygap=3;others++;}
+    else others++;
+  });
+  /* Bars stay thin: the gap grows with the slot so a bar is about 24px however many categories there are. */
+  if(bars){var groups=layout.barmode==='group'?data.filter(function(t){return t.type==='bar';}).length:1,m=layout.margin||{};
+    var span=hbars?el.clientHeight-(m.t||14)-(m.b||48):el.clientWidth-(m.l||56)-(m.r||20);
+    if(layout.bargroupgap==null)layout.bargroupgap=0.12;
+    if(layout.bargap==null){var gap=0.4;if(span>0){var slot=span/maxCats,want=(groups>1?22:26)*groups;gap=1-want/slot;}layout.bargap=Math.max(0.28,Math.min(0.82,gap));}}
+  if(layout.hovermode==null)layout.hovermode=(lines&&!bars&&!others)?'x unified':'closest';
+  if(layout.hovermode==='x unified')layout.xaxis=merge(layout.xaxis||{},{showspikes:true,spikemode:'across',spikesnap:'cursor',spikethickness:1,spikecolor:css('--rule-strong'),spikedash:'solid'});
+  var named=data.filter(function(t){return t.showlegend!==false&&t.hoverinfo!=='skip'&&t.type!=='heatmap';}).length;
+  if(layout.showlegend==null)layout.showlegend=named>1;
+  if(layout.showlegend&&layout.legend&&layout.legend.y>1){layout.margin=layout.margin||{};var rows=named>4?2:1;if((layout.margin.t||0)<22+rows*22)layout.margin.t=22+rows*22;}
+  if(MOTION&&!others&&data.length&&layout.transition==null)layout.transition={duration:300,easing:'cubic-in-out'};
+}
+/* The hovered bar lifts: the others in its series step back. */
+function bindLift(el){
+  if(el._roiLift||!el.on)return;el._roiLift=true;var dimmed=[];
+  var restore=function(){dimmed.forEach(function(n){n.style.opacity='';});dimmed=[];};
+  el.on('plotly_hover',function(e){restore();var p=e.points&&e.points[0];if(!p||!p.data||p.data.type!=='bar')return;if(el._roi&&el._roi.layout.barmode==='stack')return;
+    var traces=el.querySelectorAll('.barlayer .trace'),tr=traces[p.curveNumber];if(!tr)return;var pts=tr.querySelectorAll('.point');
+    for(var i=0;i<pts.length;i++){if(i!==p.pointNumber){pts[i].style.opacity='.45';dimmed.push(pts[i]);}}});
+  el.on('plotly_unhover',restore);
+}
+var ICON={table:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>',
+  png:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>',
+  expand:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 15v5h-5M20 4l-6 6M4 20l6-6"/></svg>',
+  close:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>'};
+function chartTitle(el){var box=el.parentNode;while(box&&box!==document.body&&!box.querySelector('h3,h4'))box=box.parentNode;var h=box&&box!==document.body?box.querySelector('h3,h4'):null;return h?h.textContent.trim():'Chart';}
+function chartTools(el){
+  if(el._roiWrap)return;
+  var wrap=document.createElement('div');wrap.className='chart-wrap';el.parentNode.insertBefore(wrap,el);
+  var head=document.createElement('div');head.className='chart-head';
+  var title=document.createElement('span');title.className='chart-title';title.textContent=chartTitle(el);head.appendChild(title);
+  var mk=function(kind,label,toggles){var b=document.createElement('button');b.type='button';b.className='ctool';b.innerHTML=ICON[kind]+'<span>'+label+'</span>';b.setAttribute('aria-label',label);if(toggles)b.setAttribute('aria-pressed','false');head.appendChild(b);return b;};
+  var tb=mk('table','Table',true),pb=mk('png','Image',false),xb=mk('expand','Expand',true);
+  wrap.appendChild(head);wrap.appendChild(el);
+  var table=document.createElement('div');table.className='chart-table';wrap.appendChild(table);
+  el._roiWrap=wrap;el._roiTable=table;wrap._roiExpandBtn=xb;
+  tb.onclick=function(){var on=!wrap.classList.contains('table');wrap.classList.toggle('table',on);tb.setAttribute('aria-pressed',on);if(on)refreshTable(el);else if(window.Plotly&&el._roi)Plotly.Plots.resize(el);};
+  pb.onclick=function(){downloadChart(el);};
+  xb.onclick=function(){expandChart(el,!wrap.classList.contains('expanded'));};
+}
+var SCRIM=null,EXPANDED=null;
+function expandChart(el,on){
+  var wrap=el._roiWrap;if(!wrap)return;
+  if(on&&EXPANDED&&EXPANDED!==el)expandChart(EXPANDED,false);
+  wrap.classList.toggle('expanded',on);var xb=wrap._roiExpandBtn;xb.setAttribute('aria-pressed',on);xb.innerHTML=ICON[on?'close':'expand']+'<span>'+(on?'Close':'Expand')+'</span>';xb.setAttribute('aria-label',on?'Close the expanded chart':'Expand');
+  if(!SCRIM){SCRIM=document.createElement('div');SCRIM.className='chart-scrim';SCRIM.hidden=true;document.body.appendChild(SCRIM);SCRIM.onclick=function(){if(EXPANDED)expandChart(EXPANDED,false);};document.addEventListener('keydown',function(e){if(e.key==='Escape'&&EXPANDED)expandChart(EXPANDED,false);});}
+  SCRIM.hidden=!on;EXPANDED=on?el:null;document.body.style.overflow=on?'hidden':'';
+  if(window.Plotly&&el._roi)requestAnimationFrame(function(){Plotly.Plots.resize(el);});
+  xb.focus();
+}
+function fmtCell(v,axis){if(v==null||v==='')return '–';if(typeof v!=='number')return String(v).replace(/<br>/g,' ');if(!isFinite(v))return '–';axis=axis||{};
+  if(/\$/.test(axis.tickformat||'')||/\$/.test(axis.tickprefix||''))return money(v);
+  var abs=Math.abs(v),str=abs>=100?Math.round(v).toLocaleString():abs>=10?v.toFixed(1):String(Math.round(v*100)/100);return str+(axis.ticksuffix||'');}
+function catLabel(t,key,i){var c=(t[key]||[])[i];if(typeof c==='number'&&t.customdata&&typeof t.customdata[i]==='string')return t.customdata[i];return String(c).replace(/<br>/g,' ');}
+/* The chart's values as a table — the same numbers, reachable without hovering. */
+function refreshTable(el){
+  var box=el._roiTable,R=el._roi;if(!box)return;box.textContent='';if(!R||!R.data.length)return;
+  var data=R.data,L=R.layout,tbl=document.createElement('table'),thead=document.createElement('thead'),tbody=document.createElement('tbody'),tr=document.createElement('tr');
+  var th=function(t){var c=document.createElement('th');c.textContent=t;return c;},td=function(t,cls){var c=document.createElement('td');c.textContent=t;if(cls)c.className=cls;return c;};
+  var first=data[0];
+  if(first.type==='heatmap'){tr.appendChild(th(''));first.x.forEach(function(x){tr.appendChild(th(String(x).replace(/<br>/g,' ')));});thead.appendChild(tr);
+    first.y.forEach(function(y,i){var row=document.createElement('tr');row.appendChild(td(String(y),'txt'));(first.z[i]||[]).forEach(function(v,j){row.appendChild(td(first.text&&first.text[i]&&first.text[i][j]!==''?first.text[i][j]:fmtCell(v)));});tbody.appendChild(row);});}
+  else if(first.type==='pie'){['','Count','Share'].forEach(function(h){tr.appendChild(th(h));});thead.appendChild(tr);var tot=first.values.reduce(function(a,b){return a+(b||0);},0);
+    first.labels.forEach(function(lab,i){var row=document.createElement('tr');row.appendChild(td(String(lab),'txt'));row.appendChild(td(fmtCell(first.values[i])));row.appendChild(td(tot?p1(first.values[i]/tot*100):'–'));tbody.appendChild(row);});}
+  else{var horiz=first.type==='bar'&&first.orientation==='h',catKey=horiz?'y':'x',valKey=horiz?'x':'y',valAxis=horiz?L.xaxis:L.yaxis;
+    var series=data.filter(function(t){return t.hoverinfo!=='skip'&&(t[valKey]||[]).length;}),cats=[];
+    series.forEach(function(t){(t[catKey]||[]).forEach(function(c,i){var lab=catLabel(t,catKey,i);if(cats.indexOf(lab)<0)cats.push(lab);});});
+    tr.appendChild(th(''));series.forEach(function(t,i){tr.appendChild(th(t.name||(series.length===1?chartTitle(el):'Series '+(i+1))));});thead.appendChild(tr);
+    cats.forEach(function(c){var row=document.createElement('tr');row.appendChild(td(c,'txt'));series.forEach(function(t){var ix=-1;for(var i=0;i<(t[catKey]||[]).length;i++){if(catLabel(t,catKey,i)===c){ix=i;break;}}row.appendChild(td(fmtCell(ix>=0?t[valKey][ix]:null,valAxis)));});tbody.appendChild(row);});}
+  tbl.appendChild(thead);tbl.appendChild(tbody);var cap=document.createElement('caption');cap.textContent='The values drawn in the chart.';tbl.appendChild(cap);box.appendChild(tbl);
+}
+function downloadChart(el){
+  if(!window.Plotly||!el._roi)return;var bg=css('--page'),name=chartTitle(el).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'chart';
+  var reset=function(){return Plotly.relayout(el,{paper_bgcolor:'rgba(0,0,0,0)'});};
+  Plotly.relayout(el,{paper_bgcolor:bg}).then(function(){return Plotly.downloadImage(el,{format:'png',width:Math.max(960,el.clientWidth),height:Math.max(540,el.clientHeight),scale:2,filename:name});}).then(reset,reset);
+}
+/* Paired charts share a hover: the decile under the pointer lights up in both. */
+var LINKING=false;
+function linkHover(ids){
+  var els=ids.map(function(id){return document.getElementById(id);}).filter(function(e){return e&&e.on&&e._roi;});if(els.length<2)return;
+  els.forEach(function(a){if(a._roiLinked)return;a._roiLinked=true;
+    a.on('plotly_hover',function(e){if(LINKING)return;var p=e.points&&e.points[0];if(!p)return;LINKING=true;
+      els.forEach(function(b){if(b===a||!b._roi)return;var pts=[];b._roi.data.forEach(function(t,ci){if(t.hoverinfo==='skip'||t.type!=='bar')return;var cats=(t.orientation==='h'?t.y:t.x)||[];var ix=cats.indexOf(p.data.orientation==='h'?p.y:p.x);if(ix>=0)pts.push({curveNumber:ci,pointNumber:ix});});
+        try{if(pts.length)Plotly.Fx.hover(b,pts);}catch(err){}});
+      LINKING=false;});
+    a.on('plotly_unhover',function(){if(LINKING)return;LINKING=true;els.forEach(function(b){if(b!==a){try{Plotly.Fx.unhover(b);}catch(err){}}});LINKING=false;});});
+}
+/* A 12-point trend in a tile: the whole series faintly, the window in the accent, the last point marked. */
+function spark(series,hiIdx){
+  var pts=series.map(function(v,i){return v==null||isNaN(v)?null:[i,v];}).filter(Boolean);if(pts.length<2)return '';
+  var W=120,H=28,pad=3,n=series.length,lo=Infinity,hi=-Infinity;pts.forEach(function(p){if(p[1]<lo)lo=p[1];if(p[1]>hi)hi=p[1];});if(hi===lo)hi=lo+1;
+  var X=function(i){return (pad+(W-2*pad)*(n>1?i/(n-1):0)).toFixed(1);},Y=function(v){return (H-pad-(H-2*pad)*((v-lo)/(hi-lo))).toFixed(1);};
+  var seg=function(ps){return ps.map(function(p,k){return (k?'L':'M')+X(p[0])+' '+Y(p[1]);}).join('');};
+  var hiPts=pts.filter(function(p){return hiIdx&&hiIdx.indexOf(p[0])>=0;}),last=pts[pts.length-1];
+  var area=hiPts.length>1?'<path class="fill" d="'+seg(hiPts)+'L'+X(hiPts[hiPts.length-1][0])+' '+(H-pad)+'L'+X(hiPts[0][0])+' '+(H-pad)+'Z"/>':'';
+  var dot='M'+X(last[0])+' '+Y(last[1])+'h0.01';
+  return '<svg class="spark" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">'+area+'<path class="base" d="'+seg(pts)+'"/>'+(hiPts.length>1?'<path class="hi" d="'+seg(hiPts)+'"/>':'')+'<path class="halo" d="'+dot+'"/><path class="dot" d="'+dot+'"/></svg>';
+}
+function donutCenter(value,word){return {text:'<b>'+esc(String(value))+'</b><br>'+esc(word),showarrow:false,x:.5,y:.5,xref:'paper',yref:'paper',font:{family:MONO,size:15,color:css('--text')},align:'center'};}
+var palette=function(){return [css('--s1'),css('--s2'),css('--s3'),css('--s4'),css('--s5'),css('--s6')];};
+function ypct(extra){return Object.assign({ticksuffix:'%',rangemode:'tozero'},extra||{});}
+var xcat=function(extra){return Object.assign({},extra||{});};
 function segBind(sel,cb){$$(sel+' button').forEach(function(b){b.onclick=function(){$$(sel+' button').forEach(function(x){x.setAttribute('aria-pressed',x===b);});cb(b.getAttribute('data-v'));};});}
 function segSet(sel,v){$$(sel+' button').forEach(function(x){x.setAttribute('aria-pressed',x.getAttribute('data-v')===v);});}
 
@@ -187,16 +330,16 @@ function topCohort(){return CFG.cohort==='users'?'User':'High';}
 function renderHero(){
   var g=defaultDeals();
   if(!g||!g.deciles.length){ if(HAS.U){var s=monthly(U.users.map(function(){return true;}),'dir_vp_exec'),hz=css('--horizon');
-    plot('heroStrip',[{type:'scatter',mode:'lines',x:MON.map(mlab),y:s,line:{color:hz,width:2.5},hovertemplate:'%{x}<br>%{y:.2f}<extra></extra>'}],
-      base({margin:{l:4,r:4,t:12,b:26},font:{family:css('--sans'),color:'#BBBCBC'},xaxis:{showgrid:false,linecolor:'#55555E',nticks:6,tickfont:{family:'Chivo Mono, monospace',size:11,color:'#BBBCBC'}},yaxis:{visible:false}}));
+    plot('heroStrip',[{type:'scatter',mode:'lines',x:MON.map(mlab),y:s,line:{color:hz,width:2.5},fill:'tozeroy',hovertemplate:'%{x}<br>%{y:.2f}<extra></extra>'}],
+      base({margin:{l:4,r:4,t:12,b:26},font:{family:css('--sans'),color:'#BBBCBC'},xaxis:{showgrid:false,linecolor:'#55555E',nticks:6,tickfont:{family:MONO,size:11,color:'#BBBCBC'}},yaxis:{visible:false},hoverlabel:{bgcolor:'#31313C',bordercolor:'#55555E',font:{family:MONO,size:12,color:'#FFFFFF'}}}));
     $('#heroCap').textContent='Director, VP and executive meetings per rep per month, all reps';}
     else $('[data-section="hero"]').classList.add('hidden'); return; }
   if(AG)$('#heroCap').textContent='Win rate by engagement decile, lowest to highest (every closed deal in the readout)';
   var d=g.deciles,hz2=css('--horizon');
-  plot('heroStrip',[{type:'bar',x:d.map(function(r){return 'D'+r.dec;}),y:d.map(function(r){return r.win_rate;}),marker:{color:d.map(function(r,i){return i>=d.length-3?hz2:'#55555E';})},
-    text:d.map(function(r){return r.win_rate==null?'–':r.win_rate.toFixed(0)+'%';}),textposition:'outside',textfont:{family:'Chivo Mono, monospace',size:12,color:'#FFFFFF'},cliponaxis:false,
-    hovertemplate:'Decile %{x}<br>Win rate %{y:.1f}%<extra></extra>'}],
-    base({margin:{l:4,r:4,t:22,b:26},font:{family:css('--sans'),color:'#BBBCBC'},xaxis:{showgrid:false,linecolor:'#55555E',tickfont:{family:'Chivo Mono, monospace',size:11,color:'#BBBCBC'}},yaxis:{visible:false,range:[0,Math.max.apply(null,[10].concat(d.map(function(r){return r.win_rate||0;})))*1.2]},bargap:.18}));
+  plot('heroStrip',[{type:'bar',x:d.map(function(r){return 'D'+r.dec;}),y:d.map(function(r){return r.win_rate;}),marker:{color:d.map(function(r,i){return i>=d.length-3?hz2:'rgba(255,255,255,.26)';}),cornerradius:4},
+    text:d.map(function(r){return r.win_rate==null?'–':r.win_rate.toFixed(0)+'%';}),textposition:'outside',textfont:{family:MONO,size:12,color:'#FFFFFF'},cliponaxis:false,customdata:d.map(function(r){return r.n;}),
+    hovertemplate:'Decile %{x}<br>Win rate %{y:.1f}%<br>%{customdata} deals<extra></extra>'}],
+    base({margin:{l:4,r:4,t:22,b:26},font:{family:css('--sans'),color:'#BBBCBC'},xaxis:{showgrid:false,linecolor:'#55555E',tickfont:{family:MONO,size:11,color:'#BBBCBC'}},yaxis:{visible:false,range:[0,Math.max.apply(null,[10].concat(d.map(function(r){return r.win_rate||0;})))*1.2]},bargap:.3,hoverlabel:{bgcolor:'#31313C',bordercolor:'#55555E',font:{family:MONO,size:12,color:'#FFFFFF'}}}));
 }
 function renderHeroStats(){
   var out=[];
@@ -208,7 +351,7 @@ function renderHeroStats(){
   if(HAS.U&&MK.indexOf('pipeline_created')>=0){var all=U.users.map(function(){return true;}),a=winAvg(all,OBS,['pipeline_created']),b=winAvg(all,BASE,['pipeline_created']);out.push([sp(pct(a.pipeline_created,b.pipeline_created)),'Pipeline created per rep, vs baseline']);}
   if(out.length<4&&HAS.A360){var agg=a360Agg(0,A360.B.months.length-1),pw=agg['Power Users'],nn=agg['No Engagement'];if(pw&&nn&&nn.avg_created)out.push([(pw.avg_created/nn.avg_created).toFixed(1)+'×','Pipeline per account, Account 360 power users vs no engagement']);}
   var el=$('#heroStats');if(!out.length){el.classList.add('hidden');return;}
-  el.style.gridTemplateColumns='repeat('+Math.min(4,out.length)+',minmax(0,1fr))';
+  el.style.setProperty('--cols',String(Math.min(4,out.length)));
   el.innerHTML=out.slice(0,4).map(function(s){return '<div><div class="v">'+esc(s[0])+'</div><div class="l">'+esc(s[1])+'</div></div>';}).join('');
 }
 
@@ -227,20 +370,20 @@ function renderScorecard(){
   MK.forEach(function(k){if(keys.length<6&&keys.indexOf(k)<0)keys.push(k);});keys=keys.slice(0,6);
   var mask=popMask('all'),O=winAvg(mask,OBS,keys),B=winAvg(mask,BASE,keys);
   $('#scoreWin').textContent=wl(OBS)+' vs '+wl(BASE)+(GF.role.length?' · '+GF.role.join(', '):'');
-  $('#scoreKpis').innerHTML=keys.map(function(k){var c=pct(O[k],B[k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' per rep</div><div class="v">'+fmt(O[k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+fmt(B[k],k)+'</div></div>';}).join('');
+  $('#scoreKpis').innerHTML=keys.map(function(k){var c=pct(O[k],B[k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' per rep</div><div class="v">'+fmt(O[k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+fmt(B[k],k)+'</div>'+spark(monthly(mask,k),OBS)+'</div>';}).join('');
 }
 /* The adoption overview: who is in each usage cohort, and the pipeline each creates. */
 function renderOverview(){
   if(!HAS.usage){$('#overviewBlock').classList.add('hidden');return;}
-  var P=palette(),groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return headcount(function(u){return g==='No usage'?!u.t:u.t===g;});}),total=counts.reduce(function(a,b){return a+b;},0),noneLabel=AG?'Non-users':'No usage data';
+  var P=[css('--d1'),css('--d2'),css('--d3')],groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return headcount(function(u){return g==='No usage'?!u.t:u.t===g;});}),total=counts.reduce(function(a,b){return a+b;},0),noneLabel=AG?'Non-users':'No usage data';
   $('#ovDonutSub').textContent=AG?total.toLocaleString()+' people with activity: high, medium and low adopters by Backstory usage, and non-users.':total.toLocaleString()+' reps: thirds of usage, and reps with no usage data.';
-  plot('ovDonut',[{type:'pie',hole:.6,labels:groups.map(function(g){return g==='No usage'?noneLabel:cohortName(g);}),values:counts,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
+  plot('ovDonut',[{type:'pie',hole:.62,labels:groups.map(function(g){return g==='No usage'?noneLabel:cohortName(g);}),values:counts,marker:{colors:[css('--d1'),css('--d2'),css('--d3'),css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false,direction:'clockwise',rotation:-90}],base({showlegend:true,legend:{orientation:'h',y:-0.08,yanchor:'top',x:0.5,xanchor:'center'},margin:{l:8,r:8,t:8,b:8},annotations:[donutCenter(total.toLocaleString(),'reps')]}));
   var card=$('#ovPipeline').closest('.card');
   if(MK.indexOf('pipeline_created')<0){card.classList.add('hidden');return;}
   var C=['High','Medium','Low','Non-user'],v=C.map(function(c){return winAvg(popMask(c),OBS,['pipeline_created']).pipeline_created;});
   $('#ovPipelineSub').textContent='Average per rep per month, '+wl(OBS)+'.';
-  plot('ovPipeline',[{type:'bar',x:C.map(cohortName),y:v,marker:{color:[P[0],P[1],P[2],css('--rule-strong')]},text:v.map(money),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],
-    base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+  plot('ovPipeline',[{type:'bar',x:C.map(cohortName),y:v,marker:{color:[P[0],P[1],P[2],css('--rule-strong')]},text:v.map(money),textposition:'outside',cliponaxis:false,hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],
+    base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',rangemode:'tozero'}}));
 }
 function setupCalc(){
   if(!OPP||META.medWon==null){$('#calc').classList.add('hidden');return;}
@@ -289,14 +432,14 @@ function bands(bw,ow,B,O){var s=[],hz=css('--horizon');
   if(bw.length){s.push({type:'rect',xref:'x',yref:'paper',x0:bw[0]-.5,x1:bw[bw.length-1]+.5,y0:0,y1:1,fillcolor:css('--rule-strong'),opacity:.18,line:{width:0},layer:'below'});if(B!=null&&!isNaN(B))s.push({type:'line',xref:'x',x0:bw[0]-.5,x1:bw[bw.length-1]+.5,y0:B,y1:B,line:{color:css('--text3'),width:2,dash:'dot'}});}
   if(ow.length){s.push({type:'rect',xref:'x',yref:'paper',x0:ow[0]-.5,x1:ow[ow.length-1]+.5,y0:0,y1:1,fillcolor:hz,opacity:.16,line:{width:0},layer:'below'});if(O!=null&&!isNaN(O))s.push({type:'line',xref:'x',x0:ow[0]-.5,x1:ow[ow.length-1]+.5,y0:O,y1:O,line:{color:css('--horizon-deep'),width:2,dash:'dot'}});}
   return s;}
-var monthAxis=function(extra){return Object.assign({tickmode:'array',tickvals:MON.map(function(m,i){return i;}).filter(function(i){return i%3===0;}),ticktext:MON.filter(function(m,i){return i%3===0;}).map(mlab),gridcolor:'rgba(0,0,0,0)',linecolor:css('--rule-strong'),tickfont:{family:'Chivo Mono, monospace',size:11}},extra||{});};
+var monthAxis=function(extra){return Object.assign({tickmode:'array',tickvals:MON.map(function(m,i){return i;}).filter(function(i){return i%3===0;}),ticktext:MON.filter(function(m,i){return i%3===0;}).map(mlab),gridcolor:'rgba(0,0,0,0)',linecolor:css('--rule-strong'),tickfont:{family:MONO,size:11}},extra||{});};
 function renderLead(){
   var pop=$('#leadPop').value,mask=popMask(pop),w=leadWindows(),bw=w[0],ow=w[1],bl=w[2],ol=w[3];
   var B=winAvg(mask,bw),O=winAvg(mask,ow),k=leadMetric,series=monthly(mask,k),hz=css('--horizon');
   $('#leadTitle').textContent=LAB[k]+', monthly average per rep';
-  plot('leadTrend',[{type:'scatter',mode:'lines+markers',x:MON.map(function(m,i){return i;}),y:series,line:{color:hz,width:2.5,shape:'spline',smoothing:.4},marker:{size:6,color:hz},
+  plot('leadTrend',[{type:'scatter',mode:'lines+markers',x:MON.map(function(m,i){return i;}),y:series,line:{color:hz,width:2.2,shape:'spline',smoothing:.4},marker:{color:hz},
     customdata:MON.map(mlab),hovertemplate:'%{customdata}<br>'+(isMoney(k)?'$%{y:,.0f}':'%{y:.2f}')+'<extra></extra>',name:LAB[k]}],
-    base({shapes:bands(bw,ow,B[k],O[k]),showlegend:false,xaxis:monthAxis(),yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+    base({shapes:bands(bw,ow,B[k],O[k]),showlegend:false,xaxis:monthAxis(),yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:MONO,size:11}}}));
   var ch=pct(O[k],B[k]),popName=$('#leadPop').selectedOptions[0].text.toLowerCase()+(GF.role.length?' ('+GF.role.join(', ')+')':'');
   $('#leadDyn').innerHTML='For '+esc(popName)+', <b>'+esc(LAB[k].toLowerCase())+'</b> averaged <b class="num">'+fmt(O[k],k)+'</b> per rep per month in the '+esc(ol.toLowerCase().replace(/ \(.*/,''))+' window vs <b class="num">'+fmt(B[k],k)+'</b> in the baseline, a change of <b class="num">'+sp(ch)+'</b>. '+O.n.toLocaleString()+' reps in the observation window, '+B.n.toLocaleString()+' in the baseline.';
   $('#leadTblSub').textContent=bl+' vs '+ol+'. Population: '+$('#leadPop').selectedOptions[0].text+(GF.role.length?' · '+GF.role.join(', '):'')+'.';
@@ -312,9 +455,9 @@ function renderPeriod(B,O,bl,ol){
   $('#periodBlock').classList.remove('hidden');
   var ch=keys.map(function(k){return pct(O[k],B[k]);}),lo=Math.min.apply(null,ch.concat([0])),hi=Math.max.apply(null,ch.concat([0])),pad=(hi-lo)*0.2||5;
   $('#periodSub').textContent='Change per rep per month: '+ol+' against '+bl+'.';
-  plot('periodChart',[{type:'bar',orientation:'h',y:keys.map(function(k){return LAB[k];}),x:ch,marker:{color:ch.map(function(v){return v>=0?css('--d1'):css('--neg');})},text:ch.map(sp),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},
+  plot('periodChart',[{type:'bar',orientation:'h',y:keys.map(function(k){return LAB[k];}),x:ch,marker:{color:ch.map(function(v){return v>=0?css('--d1'):css('--neg');})},text:ch.map(sp),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:12,color:css('--text')},
     customdata:keys.map(function(k){return [fmt(B[k],k),fmt(O[k],k)];}),hovertemplate:'%{y}<br>%{customdata[0]} → %{customdata[1]} per rep per month<extra></extra>'}],
-    base({margin:{l:200,r:64,t:10,b:36},yaxis:{autorange:'reversed',automargin:true,tickfont:{size:13}},xaxis:{ticksuffix:'%',range:[lo-pad,hi+pad],zeroline:true,zerolinecolor:css('--rule-strong'),gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},showlegend:false}));
+    base({margin:{l:200,r:64,t:10,b:36},yaxis:{autorange:'reversed',automargin:true,tickfont:{size:13}},xaxis:{ticksuffix:'%',range:[lo-pad,hi+pad],zeroline:true,zerolinecolor:css('--rule-strong'),gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},showlegend:false}));
   var moves=keys.map(function(k,i){return [k,ch[i]];}).sort(function(a,b){return Math.abs(b[1])-Math.abs(a[1]);}).slice(0,3);
   $('#periodNote').innerHTML=moves.map(function(m){return '<b>'+esc(LAB[m[0]])+'</b> '+(m[1]>=0?'rose':'fell')+' <b class="num">'+sp(m[1])+'</b>';}).join('; ')+' per rep per month against the baseline.';
 }
@@ -358,18 +501,19 @@ function setupCohorts(){
   $('#rosterQ').addEventListener('input',renderRoster);
   if(!HAS.roster)$('#rosterBlock').classList.add('hidden');
 }
-function cohortKpis(el,C,A){var P=palette(),top=C[0],bot=C[C.length-1],kk=['meeting_count','dir_vp_exec','people_engaged','pipeline_created'].filter(function(k){return MK.indexOf(k)>=0;});
-  $(el).innerHTML=kk.map(function(k){var c=pct(A[top][k],A[bot][k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' · '+esc(cohortName(top).toLowerCase())+'</div><div class="v">'+fmt(A[top][k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+esc(cohortName(bot).toLowerCase())+' ('+fmt(A[bot][k],k)+')</div></div>';}).join('');}
-function cohortBars(senId,pipeId,C,w){var P=palette();
+function cohortKpis(el,C,A,w){var top=C[0],bot=C[C.length-1],kk=['meeting_count','dir_vp_exec','people_engaged','pipeline_created'].filter(function(k){return MK.indexOf(k)>=0;}),mask=popMask(top);
+  $(el).innerHTML=kk.map(function(k){var c=pct(A[top][k],A[bot][k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' · '+esc(cohortName(top).toLowerCase())+'</div><div class="v">'+fmt(A[top][k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+esc(cohortName(bot).toLowerCase())+' ('+fmt(A[bot][k],k)+')</div>'+spark(monthly(mask,k),w||OBS)+'</div>';}).join('');}
+function cohortBars(senId,pipeId,C,w){var P=[css('--d1'),css('--d2'),css('--d3')];
   var sk=[['director_meeting_count','Director'],['vp_meeting_count','VP'],['executive_meeting_count','Executive']].filter(function(p){return mat(p[0]);});
   plot(senId,sk.map(function(p,i){return {type:'bar',name:p[1],x:C.map(cohortName),y:C.map(function(c){return winAvg(popMask(c),w,[p[0]])[p[0]];}),marker:{color:P[i]},hovertemplate:'%{x}<br>'+p[1]+': %{y:.2f}<extra></extra>'};}),base({barmode:'group',margin:{l:40,r:8,t:10,b:60},xaxis:xcat()}));
   if(MK.indexOf('pipeline_created')<0){$('#'+pipeId).closest('.card').classList.add('hidden');return;}
   var v=C.map(function(c){return winAvg(popMask(c),w,['pipeline_created']).pipeline_created;});
-  plot(pipeId,[{type:'bar',x:C.map(cohortName),y:v,marker:{color:C.map(function(c,i){return P[i];})},text:v.map(money),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+  plot(pipeId,[{type:'bar',x:C.map(cohortName),y:v,marker:{color:C.map(function(c,i){return P[i];})},text:v.map(money),textposition:'outside',cliponaxis:false,hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',rangemode:'tozero'}}));
+  linkHover([senId,pipeId]);
 }
 function cohortTrend(id,C,k){var P=palette();
   plot(id,C.map(function(c,i){return {type:'scatter',mode:'lines',name:cohortName(c),x:MON.map(mlab),y:monthly(popMask(c),k),line:{color:i===C.length-1?css('--text3'):P[i],width:2.4,dash:i===C.length-1?'dot':'solid'}};}),
-    base({hovermode:'x unified',xaxis:{gridcolor:'rgba(0,0,0,0)',nticks:8,linecolor:css('--rule-strong'),tickfont:{family:'Chivo Mono, monospace',size:11}},yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+    base({hovermode:'x unified',xaxis:{gridcolor:'rgba(0,0,0,0)',nticks:8,linecolor:css('--rule-strong'),tickfont:{family:MONO,size:11}},yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:MONO,size:11}}}));
 }
 /* Adoption impact: the tiers or users vs non-users view, then the roster. */
 function renderAdoption(){
@@ -378,22 +522,23 @@ function renderAdoption(){
   if(adoptView==='users'){renderUsers();renderRoster();}else renderAdopt();
 }
 function renderAdopt(){
-  var C=['High','Medium','Low'],w=winsFor(adoptWin),A={},Ar={},Bs={},P=palette();
+  var C=['High','Medium','Low'],w=winsFor(adoptWin),A={},Ar={},Bs={};
   /* Change against each tier's own baseline compares like with like: monthly averages on both sides (a readout's totals cover only its last 6 and 12 months). */
   C.forEach(function(c){A[c]=winAvg(popMask(c),w[0]);Ar[c]=winAvg(popMask(c),w[0],undefined,true);Bs[c]=winAvg(popMask(c),w[1]);});
   var nT={High:headcount(function(u){return u.t==='High';}),Medium:headcount(function(u){return u.t==='Medium';}),Low:headcount(function(u){return u.t==='Low';})};
   if(AG)$('#adoptionIntro').innerHTML=(nT.High+nT.Medium+nT.Low)+' people use Backstory: '+nT.High+' high, '+nT.Medium+' medium and '+nT.Low+' low adopters by usage, against '+headcount(function(u){return u.f==='Non-user';})+' non-users. Averages are per rep per month; the readout has no role split within a cohort, so the role filter narrows the team views and the roster.';
   else $('#adoptionIntro').innerHTML=U.nUsage+' reps appear in both the activity extract and the usage file. They\'re split into equal thirds by usage score: high (more than '+U.tierCuts[1]+', '+nT.High+' reps), medium ('+(U.tierCuts[0]+1)+'–'+U.tierCuts[1]+', '+nT.Medium+') and low ('+U.tierCuts[0]+' or fewer, '+nT.Low+').'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
-  cohortKpis('#adoptKpis',C,A);
+  cohortKpis('#adoptKpis',C,A,w[0]);
   var cols={High:css('--d1'),Medium:css('--d2')};
   plot('adoptIndex',['High','Medium'].map(function(t){return {type:'bar',name:t+' adopters',x:MK.map(function(k){return wrapLab(LAB[k]);}),y:MK.map(function(k){return A[t][k]/A.Low[k]*100;}),marker:{color:cols[t]},
     customdata:MK.map(function(k){return [fmt(A[t][k],k),fmt(A.Low[k],k)];}),hovertemplate:'%{x}<br>'+t+': %{customdata[0]} vs Low: %{customdata[1]}<br>Index %{y:.0f}<extra></extra>'};}),
     base({barmode:'group',shapes:[{type:'line',xref:'paper',x0:0,x1:1,y0:100,y1:100,line:{color:css('--text3'),width:1.5,dash:'dash'}}],
-      annotations:[{xref:'paper',x:1,y:100,text:'Low = 100',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:'Chivo Mono, monospace',size:11,color:css('--text3')}}],
+      annotations:[{xref:'paper',x:1,y:100,text:'Low = 100',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:MONO,size:11,color:css('--text3')}}],
       xaxis:{tickangle:0,automargin:true,gridcolor:'rgba(0,0,0,0)',tickfont:{size:11}},margin:{l:48,r:10,t:14,b:80}}));
   cohortBars('adoptSenior','adoptPipeline',C,w[0]);
   var groups=['High','Medium','Low','No usage'],counts=groups.map(function(g){return headcount(function(u){return g==='No usage'?!u.t:u.t===g;});});
-  var donut=plot('adoptDonut',[{type:'pie',hole:.58,labels:groups.map(function(g){return g==='No usage'?(AG?'Non-users':'No usage data'):cohortName(g);}),values:counts,customdata:groups,marker:{colors:[P[0],P[1],P[2],css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',textfont:{family:'Chivo Mono, monospace',size:12},hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false}],base({showlegend:true,legend:{orientation:'h',y:-0.1,font:{size:12,color:css('--text2')}},margin:{l:8,r:8,t:8,b:8}}));
+  var donutTotal=counts.reduce(function(a,b){return a+b;},0);
+  var donut=plot('adoptDonut',[{type:'pie',hole:.62,labels:groups.map(function(g){return g==='No usage'?(AG?'Non-users':'No usage data'):cohortName(g);}),values:counts,customdata:groups,marker:{colors:[css('--d1'),css('--d2'),css('--d3'),css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',hovertemplate:'%{label}: %{value} reps (%{percent})<br>Select to filter the roster<extra></extra>',sort:false,direction:'clockwise',rotation:-90}],base({showlegend:true,legend:{orientation:'h',y:-0.08,yanchor:'top',x:0.5,xanchor:'center'},margin:{l:8,r:8,t:8,b:8},annotations:[donutCenter(donutTotal.toLocaleString(),'reps')]}));
   if(donut&&donut.on&&!donut._roiBound){donut._roiBound=true;donut.on('plotly_click',function(e){var g=e.points&&e.points[0]&&e.points[0].customdata;if(g==null)return;rosterTier=Array.isArray(g)?g[0]:g;renderRoster();var rb=$('#rosterBlock');if(rb)rb.scrollIntoView({behavior:'smooth',block:'start'});});}
   cohortTrend('adoptTrend',C,$('#adoptTrendMetric').value);
   $('#adoptTblSub').textContent='Averages per rep per month in the '+w[2]+'; change against each tier\'s own '+w[3]+'.';
@@ -407,12 +552,12 @@ function renderUsers(){
   var nUser=headcount(function(u){return u.f==='User';}),nAll=headcount(function(){return true;});
   if(AG)$('#adoptionIntro').innerHTML='Users are the '+nUser+' people with Backstory usage; non-users the '+(nAll-nUser)+' without. Averages are per rep per month.';
   else $('#adoptionIntro').innerHTML='Users are the '+nUser+' reps with usage above the bottom 5%. Non-users are the '+(nAll-nUser).toLocaleString()+' reps in the activity extract with no usage, plus the '+U.nBottom+' lowest-usage reps.'+(GF.role.length?' Role: '+esc(GF.role.join(', '))+'.':'');
-  cohortKpis('#usersKpis',C,A);
+  cohortKpis('#usersKpis',C,A,w[0]);
   var lifts=MK.map(function(k){return pct(A.User[k],A['Non-user'][k]);});
   plot('usersLift',[{type:'bar',orientation:'h',y:MK.map(function(k){return LAB[k];}),x:lifts,marker:{color:lifts.map(function(v){return v>=0?css('--d1'):css('--neg');})},
-    text:lifts.map(sp),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},
+    text:lifts.map(sp),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:12,color:css('--text')},
     customdata:MK.map(function(k){return [fmt(A.User[k],k),fmt(A['Non-user'][k],k)];}),hovertemplate:'%{y}<br>Users %{customdata[0]} vs non-users %{customdata[1]}<extra></extra>'}],
-    base({margin:{l:200,r:60,t:10,b:36},yaxis:{autorange:'reversed',automargin:true,tickfont:{size:13}},xaxis:{ticksuffix:'%',zeroline:true,zerolinecolor:css('--rule-strong'),gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},showlegend:false}));
+    base({margin:{l:200,r:60,t:10,b:36},yaxis:{autorange:'reversed',automargin:true,tickfont:{size:13}},xaxis:{ticksuffix:'%',zeroline:true,zerolinecolor:css('--rule-strong'),gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},showlegend:false}));
   cohortBars('usersSenior','usersPipeline',C,w[0]);
   cohortTrend('usersTrend',C,$('#usersTrendMetric').value);
   $('#usersTbl').innerHTML='<thead><tr><th>Metric</th><th>Users</th><th>Non-users</th><th>Difference</th></tr></thead><tbody>'+
@@ -471,7 +616,7 @@ function renderDeal(){renderDealEng();}
 function fyOfDeal(i){return D.m[i]>=0?fp(D.months[D.m[i]]).fy:null;}
 function renderDealEng(){
   var g=currentDeals();var P=palette();
-  if(!g){$('#dealDyn').innerHTML='<span>Fewer than 20 deals match these filters. Clear a filter to see the engagement views.</span>';$('#dealKpis').innerHTML='';['dealWin','dealVel','dealVol'].forEach(function(id){var el=document.getElementById(id);if(el&&window.Plotly)Plotly.purge(el);});$('#dealYoy').innerHTML='';return;}
+  if(!g){$('#dealDyn').innerHTML='<span>Fewer than 20 deals match these filters. Clear a filter to see the engagement views.</span>';$('#dealKpis').innerHTML='';['dealWin','dealVel','dealVol'].forEach(function(id){emptyChart(id,'Fewer than 20 deals match these filters.');});$('#dealYoy').innerHTML='';return;}
   var hi=lvl(g,'High'),lo=lvl(g,'Low'),mid=lvl(g,'Medium');
   var tiles=[];
   if(hi)tiles.push(['High-engagement win rate',p1(hi.win_rate),n0(hi.n)+' deals']);
@@ -494,16 +639,16 @@ function renderDealEng(){
     var colr=dealView==='deciles'?rows.map(function(r,i){return i>=rows.length-3?css('--d1'):css('--rule-strong');}):rows.map(function(r){return r.level.indexOf('High')===0?css('--d1'):r.level.indexOf('Medium')===0?css('--d2'):css('--rule-strong');});
     $('#dealWinTitle').textContent='Win rate';$('#dealWinSub').textContent='Bars show win rate; hover for deal counts and score range.';
     plot('dealWin',[{type:'bar',x:x,y:rows.map(function(r){return r.win_rate;}),marker:{color:colr},text:rows.map(function(r){return r.win_rate==null?'–':r.win_rate.toFixed(1)+'%';}),textposition:'outside',cliponaxis:false,
-      textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},customdata:rows.map(function(r){return [r.n.toLocaleString(),(+r.lo).toFixed(0),(+r.hi).toFixed(0)];}),hovertemplate:'%{x}<br>Win rate %{y:.1f}%<br>%{customdata[0]} deals<br>Score %{customdata[1]}–%{customdata[2]}<extra></extra>'},
-      {type:'scatter',mode:'lines',x:x,y:rows.map(function(){return g.win_rate;}),line:{color:css('--text3'),dash:'dash',width:1.5},hoverinfo:'skip'}],
-      base({showlegend:false,yaxis:ypct(),xaxis:xcat(),annotations:[{xref:'paper',x:1,y:g.win_rate,text:'Overall '+g.win_rate+'%',showarrow:false,xanchor:'right',yanchor:'bottom',font:{family:'Chivo Mono, monospace',size:11,color:css('--text3')}}]}));
+      textfont:{family:MONO,size:12,color:css('--text')},customdata:rows.map(function(r){return [r.n.toLocaleString(),(+r.lo).toFixed(0),(+r.hi).toFixed(0)];}),hovertemplate:'%{x}<br>Win rate %{y:.1f}%<br>%{customdata[0]} deals<br>Score %{customdata[1]}–%{customdata[2]}<extra></extra>'}],
+      base({showlegend:false,yaxis:ypct(),xaxis:xcat(),shapes:[{type:'line',xref:'paper',x0:0,x1:1,y0:g.win_rate,y1:g.win_rate,line:{color:css('--text3'),dash:'dot',width:1.5},layer:'below'}],
+        annotations:[{xref:'paper',x:0,y:g.win_rate,text:'Overall '+g.win_rate+'%',showarrow:false,xanchor:'left',yanchor:'bottom',font:{family:MONO,size:11,color:css('--text2')},bgcolor:rgba(css('--page'),.85),borderpad:2}]}));
     if(AG){$('#dealVelTitle').textContent='Deal velocity';$('#dealVelSub').textContent='Average days from creation to close, every closed deal. Lower is faster.';
-      plot('dealVel',[{type:'bar',name:'Average days to close',x:x,y:rows.map(function(r){return r.avg_days;}),marker:{color:colr},text:rows.map(function(r){return r.avg_days==null?'–':r.avg_days+'d';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{x}<br>%{y} days on average<extra></extra>'}],
-        base({showlegend:false,yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat()}));return;}
+      plot('dealVel',[{type:'bar',name:'Average days to close',x:x,y:rows.map(function(r){return r.avg_days;}),marker:{color:colr},text:rows.map(function(r){return r.avg_days==null?'–':r.avg_days+'d';}),textposition:'outside',cliponaxis:false,hovertemplate:'%{x}<br>%{y} days on average<extra></extra>'}],
+        base({showlegend:false,yaxis:{title:{text:'Average days',font:{size:12}},rangemode:'tozero'},xaxis:xcat()}));linkHover(['dealWin','dealVel']);return;}
     if(HAS.vel){$('#dealVelTitle').textContent='Deal velocity';$('#dealVelSub').textContent='Median days from creation to close, for won and lost deals.';
       plot('dealVel',[{type:'bar',name:'Won deals',x:x,y:rows.map(function(r){return r.med_days_won;}),marker:{color:css('--d1')},hovertemplate:'%{x}<br>Won: %{y} days median<extra></extra>'},
         {type:'bar',name:'Lost deals',x:x,y:rows.map(function(r){return r.med_days_lost;}),marker:{color:css('--d3')},hovertemplate:'%{x}<br>Lost: %{y} days median<extra></extra>'}],
-        base({barmode:'group',yaxis:{title:{text:'Median days',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat()}));}
+        base({barmode:'group',yaxis:{title:{text:'Median days',font:{size:12}}},xaxis:xcat()}));linkHover(['dealWin','dealVel']);}
     return;
   }
   var lvColors=[css('--rule-strong'),css('--d2'),css('--d1')];
@@ -517,7 +662,7 @@ function renderDealEng(){
     $('#dealWinTitle').textContent='Win rate by close month';$('#dealWinSub').textContent='Each line is an engagement level; months with fewer than five deals at a level are left blank.';
     plot('dealWin',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines+markers',name:L,x:xm,y:cell.map(function(c){var b=c[li];if(b.length<5)return null;var w=0;b.forEach(function(i){w+=D.w[i];});return w/b.length*100;}),customdata:cell.map(function(c){return c[li].length;}),line:{color:lvColors[li],width:2.4},hovertemplate:'%{x}<br>'+L+': %{y:.1f}% (%{customdata} deals)<extra></extra>'};}),base({yaxis:ypct(),xaxis:xcat({nticks:12}),hovermode:'x unified'}));
     if(HAS.vel){$('#dealVelTitle').textContent='Days to close by close month';$('#dealVelSub').textContent='Median days from creation to close for won deals, by engagement level.';
-      plot('dealVel',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines',name:L,x:xm,y:cell.map(function(c){var d=c[li].filter(function(i){return D.w[i]&&D.d[i]>=0;}).map(function(i){return D.d[i];});return d.length>=5?median(d):null;}),line:{color:lvColors[li],width:2.2}};}),base({xaxis:xcat({nticks:12}),yaxis:{title:{text:'Median days (won)',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},hovermode:'x unified'}));}
+      plot('dealVel',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines',name:L,x:xm,y:cell.map(function(c){var d=c[li].filter(function(i){return D.w[i]&&D.d[i]>=0;}).map(function(i){return D.d[i];});return d.length>=5?median(d):null;}),line:{color:lvColors[li],width:2.2}};}),base({xaxis:xcat({nticks:12}),yaxis:{title:{text:'Median days (won)',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:MONO,size:11}},hovermode:'x unified'}));}
     $('#dealVolSub').textContent='Closed deals per month, stacked by engagement level.';
     plot('dealVol',LEVELS.map(function(L,li){return {type:'bar',name:L,x:xm,y:cell.map(function(c){return c[li].length;}),marker:{color:lvColors[li]}};}),base({barmode:'stack',xaxis:xcat({nticks:12})}));
     return;
@@ -528,7 +673,7 @@ function renderDealEng(){
   if(dealView==='levels')plot('dealWin',fys.map(function(f,k){var gg=groups[k];return {type:'bar',name:f,x:LEVELS,y:LEVELS.map(function(L){var r=gg&&gg.levels.filter(function(x){return x.level===L;})[0];return r?r.win_rate:null;}),marker:{color:fyColors[k%fyColors.length]},hovertemplate:'%{x}<br>'+f+': %{y:.1f}%<extra></extra>'};}),base({barmode:'group',yaxis:ypct(),xaxis:xcat()}));
   else plot('dealWin',fys.map(function(f,k){var gg=groups[k];return {type:'scatter',mode:'lines+markers',name:f,x:gg?gg.deciles.map(function(r){return 'D'+r.dec;}):[],y:gg?gg.deciles.map(function(r){return r.win_rate;}):[],line:{color:fyColors[k%fyColors.length],width:2.4}};}),base({yaxis:ypct(),xaxis:xcat()}));
   if(HAS.vel){$('#dealVelTitle').textContent='Days to close by fiscal year';$('#dealVelSub').textContent='Median days from creation to close for won deals, by engagement level.';
-    plot('dealVel',fys.map(function(f,k){var gg=groups[k];return {type:'bar',name:f,x:LEVELS,y:LEVELS.map(function(L){var r=gg&&gg.levels.filter(function(x){return x.level===L;})[0];return r?r.med_days_won:null;}),marker:{color:fyColors[k%fyColors.length]}};}),base({barmode:'group',xaxis:xcat(),yaxis:{title:{text:'Median days (won)',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}}}));}
+    plot('dealVel',fys.map(function(f,k){var gg=groups[k];return {type:'bar',name:f,x:LEVELS,y:LEVELS.map(function(L){var r=gg&&gg.levels.filter(function(x){return x.level===L;})[0];return r?r.med_days_won:null;}),marker:{color:fyColors[k%fyColors.length]}};}),base({barmode:'group',xaxis:xcat(),yaxis:{title:{text:'Median days (won)',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}}}));}
   $('#dealVolSub').textContent='Closed deals per fiscal year, stacked by engagement level.';
   plot('dealVol',LEVELS.map(function(L,li){return {type:'bar',name:L,x:fys,y:fys.map(function(f){return byFy[f].filter(function(i){return levelOf(D.s[i])===li;}).length;}),marker:{color:lvColors[li]}};}),base({barmode:'stack',xaxis:xcat()}));
 }
@@ -540,7 +685,7 @@ function renderAggDealModes(mode,lvColors){
     $('#dealWinTitle').textContent='Win rate by close month';$('#dealWinSub').textContent='Each line is an engagement level; months with fewer than five deals at a level are left blank.';
     plot('dealWin',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines+markers',name:L,x:xm,y:cell.map(function(c){return c[li].n>=5?c[li].win_rate:null;}),customdata:cell.map(function(c){return c[li].n;}),line:{color:lvColors[li],width:2.4},hovertemplate:'%{x}<br>'+L+': %{y:.1f}% (%{customdata} deals)<extra></extra>'};}),base({yaxis:ypct(),xaxis:xcat({nticks:12}),hovermode:'x unified'}));
     $('#dealVelTitle').textContent='Days to close by close month';$('#dealVelSub').textContent='Average days from creation to close, by engagement level.';
-    plot('dealVel',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines',name:L,x:xm,y:cell.map(function(c){return c[li].n>=5?c[li].avg_days:null;}),line:{color:lvColors[li],width:2.2}};}),base({xaxis:xcat({nticks:12}),yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},hovermode:'x unified'}));
+    plot('dealVel',LEVELS.map(function(L,li){return {type:'scatter',mode:'lines',name:L,x:xm,y:cell.map(function(c){return c[li].n>=5?c[li].avg_days:null;}),line:{color:lvColors[li],width:2.2}};}),base({xaxis:xcat({nticks:12}),yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:MONO,size:11}},hovermode:'x unified'}));
     $('#dealVolSub').textContent='Closed deals per month, stacked by engagement level.';
     plot('dealVol',LEVELS.map(function(L,li){return {type:'bar',name:L,x:xm,y:cell.map(function(c){return c[li].n;}),marker:{color:lvColors[li]}};}),base({barmode:'stack',xaxis:xcat({nticks:12})}));
     return;
@@ -552,7 +697,7 @@ function renderAggDealModes(mode,lvColors){
   if(dealView==='levels')plot('dealWin',fys.map(function(f,k){return {type:'bar',name:f,x:LEVELS,y:[0,1,2].map(function(l){return lv(f,l).win_rate;}),marker:{color:fyColors[k%fyColors.length]},hovertemplate:'%{x}<br>'+f+': %{y:.1f}%<extra></extra>'};}),base({barmode:'group',yaxis:ypct(),xaxis:xcat()}));
   else plot('dealWin',fys.map(function(f,k){var d=[1,2,3,4,5,6,7,8,9,10].map(function(dec){return aggBucket(AG.deals.decileFy.filter(function(r){return r.fy===f&&r.dec===dec&&aggType(r);}));});return {type:'scatter',mode:'lines+markers',name:f,x:d.map(function(b,i){return 'D'+(i+1);}),y:d.map(function(b){return b.n>=5?b.win_rate:null;}),line:{color:fyColors[k%fyColors.length],width:2.4}};}),base({yaxis:ypct(),xaxis:xcat()}));
   $('#dealVelTitle').textContent='Days to close by fiscal year';$('#dealVelSub').textContent='Average days from creation to close, by engagement level.';
-  plot('dealVel',fys.map(function(f,k){return {type:'bar',name:f,x:LEVELS,y:[0,1,2].map(function(l){return lv(f,l).avg_days;}),marker:{color:fyColors[k%fyColors.length]}};}),base({barmode:'group',xaxis:xcat(),yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+  plot('dealVel',fys.map(function(f,k){return {type:'bar',name:f,x:LEVELS,y:[0,1,2].map(function(l){return lv(f,l).avg_days;}),marker:{color:fyColors[k%fyColors.length]}};}),base({barmode:'group',xaxis:xcat(),yaxis:{title:{text:'Average days',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}}}));
   $('#dealVolSub').textContent='Closed deals per fiscal year, stacked by engagement level.';
   plot('dealVol',LEVELS.map(function(L,li){return {type:'bar',name:L,x:fys,y:fys.map(function(f){return lv(f,li).n;}),marker:{color:lvColors[li]}};}),base({barmode:'stack',xaxis:xcat()}));
 }
@@ -637,27 +782,27 @@ function renderStageYoy(S,names,pre){
 }
 function renderHeat(){
   if(AG){
-    var mode=heatMode==='share'?'won':heatMode,Z=SA.heat[mode],sc=mode==='diff'?[[0,css('--neg')],[.5,css('--page')],[1,css('--pos')]]:[[0,css('--page')],[1,mode==='lost'?css('--d3'):css('--horizon')]];
+    var mode=heatMode==='share'?'won':heatMode,Z=SA.heat[mode],sc=mode==='diff'?[[0,css('--neg')],[.5,css('--div-mid')],[1,css('--pos')]]:[[0,css('--seq-lo')],[1,css('--seq-hi')]];
     var subs={won:'Average activities with each persona per won deal at each stage. Darker means more engagement.',lost:'Average activities with each persona per lost deal at each stage.',diff:'Won-deal average minus lost-deal average. Green: winners had more of this persona at this stage.',wr:'Of the deals with each persona engaged at each stage, the share won.'};
     $('#heatTitle').textContent='Stage × persona';$('#heatSub').textContent=subs[mode]+' The readout\'s heatmap covers every fiscal year, so the filters do not apply here.';
     var tz=Z.map(function(r){return r.map(function(v){return v==null?'':mode==='wr'?v.toFixed(0)+'%':mode==='diff'?(v>=0?'+':'')+v.toFixed(1):v.toFixed(1);});});
-    var ht={type:'heatmap',x:SA.order.map(shortStage),y:SA.personas,z:Z,colorscale:sc,text:tz,texttemplate:'%{text}',textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{y} at %{x}<br>%{text}<extra></extra>',showscale:false,xgap:2,ygap:2,hoverongaps:false};if(mode==='diff')ht.zmid=0;
+    var ht={type:'heatmap',x:SA.order.map(shortStage),y:SA.personas,z:Z,colorscale:sc,text:tz,texttemplate:'%{text}',textfont:{family:MONO,size:11,color:css('--text')},hovertemplate:'%{y} at %{x}<br>%{text}<extra></extra>',showscale:false,xgap:2,ygap:2,hoverongaps:false};if(mode==='diff')ht.zmid=0;
     plot('stageHeat',[ht],base({margin:{l:110,r:10,t:10,b:70},xaxis:{side:'bottom',tickfont:{size:11},gridcolor:'rgba(0,0,0,0)'},yaxis:{autorange:'reversed',tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
     return;
   }
-  var names=stageNames(),z,txt,scale=[[0,css('--page')],[1,css('--horizon')]],zmid=null,hover,sub;
+  var names=stageNames(),z,txt,scale=[[0,css('--seq-lo')],[1,css('--seq-hi')]],zmid=null,hover,sub;
   if(heatMode==='share'||!HAS.cells){
     if(!HAS.cells){segSet('#heatMode','share');$$('#heatMode button').forEach(function(b){if(b.getAttribute('data-v')!=='share')b.classList.add('hidden');});}
     z=PK.map(function(p){return ST.stages.map(function(s){return (s.persona_pct||{})[p]||0;});});txt=z.map(function(r){return r.map(function(v){return v.toFixed(0)+'%';});});hover='%{y} at %{x}<br>%{z:.1f}% of activities<extra></extra>';sub='Share of activities at each stage that include each persona (a single activity can include several). All closed non-renewal deals; the filters do not apply to this view.';$('#heatTitle').textContent='Persona mix by stage';
   } else {
     var S=aggCells(cellsOK());$('#heatTitle').textContent='Stage × persona';
     if(heatMode==='won'||heatMode==='lost'){var won=heatMode==='won';z=PK.map(function(p,k){return S.map(function(a){var n=won?a.won:a.lost;return n?(won?a.wa[k]:a.la[k])/n:null;});});hover='%{y} at %{x}<br>%{z:.2f} activities per '+(won?'won':'lost')+' deal<extra></extra>';sub='Average activities with each persona per '+(won?'won':'lost')+' deal at each stage. Darker means more engagement.';}
-    else if(heatMode==='diff'){z=PK.map(function(p,k){return S.map(function(a){return (a.won&&a.lost)?a.wa[k]/a.won-a.la[k]/a.lost:null;});});scale=[[0,css('--neg')],[.5,css('--page')],[1,css('--pos')]];zmid=0;hover='%{y} at %{x}<br>%{z:+.2f} activities per deal, won minus lost<extra></extra>';sub='Won-deal average minus lost-deal average. Green: winners had more of this persona at this stage.';}
+    else if(heatMode==='diff'){z=PK.map(function(p,k){return S.map(function(a){return (a.won&&a.lost)?a.wa[k]/a.won-a.la[k]/a.lost:null;});});scale=[[0,css('--neg')],[.5,css('--div-mid')],[1,css('--pos')]];zmid=0;hover='%{y} at %{x}<br>%{z:+.2f} activities per deal, won minus lost<extra></extra>';sub='Won-deal average minus lost-deal average. Green: winners had more of this persona at this stage.';}
     else {z=PK.map(function(p,k){return S.map(function(a){return a.aw[k]>=5?a.ww[k]/a.aw[k]*100:null;});});hover='%{y} at %{x}<br>%{z:.1f}% of deals with this persona here were won<extra></extra>';sub='Of the deals with each persona engaged at each stage, the share won (blank under five deals). Post-decision stages are shown for completeness: activity there follows the outcome.';}
     txt=z.map(function(r){return r.map(function(v){return v==null?'':heatMode==='wr'?v.toFixed(0)+'%':heatMode==='diff'?(v>=0?'+':'')+v.toFixed(1):v.toFixed(1);});});
   }
   $('#heatSub').textContent=sub;
-  var tr={type:'heatmap',x:names,y:PK,z:z,colorscale:scale,text:txt,texttemplate:'%{text}',textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:hover,showscale:false,xgap:2,ygap:2,hoverongaps:false};if(zmid!=null)tr.zmid=zmid;
+  var tr={type:'heatmap',x:names,y:PK,z:z,colorscale:scale,text:txt,texttemplate:'%{text}',textfont:{family:MONO,size:11,color:css('--text')},hovertemplate:hover,showscale:false,xgap:2,ygap:2,hoverongaps:false};if(zmid!=null)tr.zmid=zmid;
   plot('stageHeat',[tr],base({margin:{l:190,r:10,t:10,b:70},xaxis:{side:'bottom',tickfont:{size:11},gridcolor:'rgba(0,0,0,0)'},yaxis:{autorange:'reversed',tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
 }
 function renderStageWin(){
@@ -685,29 +830,29 @@ function renderStageProf(){
     var total=function(r){return r.n?r.p.reduce(function(a,b){return a+(b||0);},0):null;};
     if(stageView==='wl'){dt=[{type:'bar',name:'Won deals',x:xa,y:won.map(total),marker:{color:css('--d1')},customdata:won.map(function(r){return r.n;}),hovertemplate:'%{x}<br>Won: %{y:.1f} activities per deal (%{customdata} deals)<extra></extra>'},
         {type:'bar',name:'Lost deals',x:xa,y:lost.map(total),marker:{color:css('--d3')},customdata:lost.map(function(r){return r.n;}),hovertemplate:'%{x}<br>Lost: %{y:.1f} activities per deal (%{customdata} deals)<extra></extra>'}];
-      ly=base({barmode:'group',yaxis:{title:{text:'Avg activities per deal, these personas',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat(),margin:{l:56,r:20,t:14,b:60}});sb='Activities per deal with the six personas the readout tracks, won and lost.';}
+      ly=base({barmode:'group',yaxis:{title:{text:'Avg activities per deal, these personas',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},xaxis:xcat(),margin:{l:56,r:20,t:14,b:60}});sb='Activities per deal with the six personas the readout tracks, won and lost.';}
     else if(stageView==='mixwon'){dt=SA.personas.map(function(p,k){return {type:'scatter',mode:'lines',stackgroup:'one',name:p,x:xa,y:won.map(function(r){return r.p[k]||0;}),line:{color:Pc[k%Pc.length],width:1}};});
-      ly=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per won deal',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},margin:{l:56,r:20,t:14,b:80}});sb='Who is engaged at each stage of the deals that were won, stacked.';}
+      ly=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per won deal',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},margin:{l:56,r:20,t:14,b:80}});sb='Who is engaged at each stage of the deals that were won, stacked.';}
     else {dt=[];SA.personas.forEach(function(p,k){dt.push({type:'scatter',mode:'lines',name:p+', won',x:xa,y:won.map(function(r){return r.p[k];}),line:{color:Pc[k%Pc.length],width:2.4},legendgroup:p});dt.push({type:'scatter',mode:'lines',name:p+', lost',x:xa,y:lost.map(function(r){return r.p[k];}),line:{color:Pc[k%Pc.length],width:1.6,dash:'dash'},legendgroup:p,showlegend:false});});
-      ly=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per deal',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},margin:{l:56,r:20,t:14,b:80}});sb='Solid lines are won deals, dashed lost. Fiscal-year filters apply.';}
+      ly=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per deal',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:MONO,size:11}},margin:{l:56,r:20,t:14,b:80}});sb='Solid lines are won deals, dashed lost. Fiscal-year filters apply.';}
     $('#stageProfSub').textContent=sb;plot('stageProf',dt,ly);return;
   }
   var S=ST.stages,x=S.map(function(s){return s.stage;}),post=S.map(function(s){return (ST.postStages||[]).indexOf(s.stage)>=0;}),data,lay,P=palette(),sub='';
   if(stageView==='share'){
-    data=[{type:'bar',name:'Share of all activity',x:x,y:S.map(function(s){return s.share;}),marker:{color:S.map(function(s,i){return post[i]?css('--rule-strong'):css('--d1');})},text:S.map(function(s){return s.share.toFixed(1)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},
+    data=[{type:'bar',name:'Share of all activity',x:x,y:S.map(function(s){return s.share;}),marker:{color:S.map(function(s,i){return post[i]?css('--rule-strong'):css('--d1');})},text:S.map(function(s){return s.share.toFixed(1)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:11,color:css('--text')},
       customdata:S.map(function(s){return [s.acts.toLocaleString(),s.opps.toLocaleString()];}),hovertemplate:'%{x}<br>%{y:.1f}% of activity<br>%{customdata[0]} activities on %{customdata[1]} deals<extra></extra>'},
-      {type:'scatter',mode:'lines+markers',name:'Activities with Director or above',x:x,y:S.map(function(s){return s.dir_above_pct;}),yaxis:'y2',line:{color:css('--d2'),width:2.5},marker:{size:7},hovertemplate:'%{x}<br>%{y:.1f}% include Director+<extra></extra>'}];
-    lay=base({yaxis:ypct({rangemode:'normal'}),yaxis2:{overlaying:'y',side:'right',ticksuffix:'%',showgrid:false,rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat(),margin:{l:50,r:50,t:14,b:60}});sub='All closed non-renewal deals; post-decision stages in grey.';
+      {type:'scatter',mode:'lines+markers',name:'Activities with Director or above',x:x,y:S.map(function(s){return s.dir_above_pct;}),line:{color:css('--d2'),width:2},hovertemplate:'%{x}<br>%{y:.1f}% include Director+<extra></extra>'}];
+    lay=base({yaxis:ypct(),xaxis:xcat(),margin:{l:50,r:20,t:14,b:60}});sub='All closed non-renewal deals; post-decision stages in grey. Both series are percentages on one scale.';
   } else if(stageView==='wl'){
     data=[{type:'bar',name:'Won deals',x:x,y:S.map(function(s){return s.won_acts;}),marker:{color:css('--d1')},customdata:S.map(function(s){return s.won_n;}),hovertemplate:'%{x}<br>Won: %{y} activities per deal (%{customdata} deals)<extra></extra>'},
       {type:'bar',name:'Lost deals',x:x,y:S.map(function(s){return s.lost_acts;}),marker:{color:css('--d3')},customdata:S.map(function(s){return s.lost_n;}),hovertemplate:'%{x}<br>Lost: %{y} activities per deal (%{customdata} deals)<extra></extra>'}];
-    lay=base({barmode:'group',yaxis:{title:{text:'Avg activities per deal at stage',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},xaxis:xcat(),margin:{l:56,r:20,t:14,b:60}});sub='All closed non-renewal deals.';
+    lay=base({barmode:'group',yaxis:{title:{text:'Avg activities per deal at stage',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},xaxis:xcat(),margin:{l:56,r:20,t:14,b:60}});sub='All closed non-renewal deals.';
   } else if((stageView==='pwl'||stageView==='mixwon')&&HAS.cells){
     var A=aggCells(cellsOK()),show=['Executive','VP','Director','Finance','IT','Engineering'].map(function(p){return PK.indexOf(p);}).filter(function(k){return k>=0;});
     if(stageView==='pwl'){data=[];show.forEach(function(k,j){data.push({type:'scatter',mode:'lines',name:PK[k]+', won',x:x,y:A.map(function(a){return a.won?a.wa[k]/a.won:null;}),line:{color:P[j%P.length],width:2.4},legendgroup:PK[k]});data.push({type:'scatter',mode:'lines',name:PK[k]+', lost',x:x,y:A.map(function(a){return a.lost?a.la[k]/a.lost:null;}),line:{color:P[j%P.length],width:1.6,dash:'dash'},legendgroup:PK[k],showlegend:false});});
-      lay=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per deal',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},margin:{l:56,r:20,t:14,b:80}});sub='Solid lines are won deals, dashed lost. The filters above apply.';}
+      lay=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per deal',font:{size:12}},gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:MONO,size:11}},margin:{l:56,r:20,t:14,b:80}});sub='Solid lines are won deals, dashed lost. The filters above apply.';}
     else {data=show.map(function(k,j){return {type:'scatter',mode:'lines',stackgroup:'one',name:PK[k],x:x,y:A.map(function(a){return a.won?a.wa[k]/a.won:0;}),line:{color:P[j%P.length],width:1}};});
-      lay=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per won deal',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},margin:{l:56,r:20,t:14,b:80}});sub='Who is engaged at each stage of the deals that were won, stacked. The filters above apply.';}
+      lay=base({xaxis:xcat(),yaxis:{title:{text:'Avg activities per won deal',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},margin:{l:56,r:20,t:14,b:80}});sub='Who is engaged at each stage of the deals that were won, stacked. The filters above apply.';}
   } else {
     var types=uniq([].concat.apply([],S.map(function(s){return Object.keys(s.type_pct||{});}))).slice(0,5);
     data=types.map(function(tp,i){return {type:'bar',name:tp.charAt(0).toUpperCase()+tp.slice(1),x:x,y:S.map(function(s){return (s.type_pct||{})[tp]||0;}),marker:{color:P[i]},hovertemplate:'%{x}<br>'+esc(tp)+': %{y:.1f}%<extra></extra>'};});
@@ -721,19 +866,19 @@ function renderSurv(){
   var allv=[].concat.apply([],sv.map(function(s){return [s.wr_early,s.wr_no_early];})),lo=Math.max(0,Math.floor(Math.min.apply(null,allv)/5)*5-5),hi=Math.min(100,Math.ceil(Math.max.apply(null,allv)/5)*5+5);
   plot('stageSurv',[
     {type:'scatter',mode:'markers',name:'Not engaged early',y:sv.map(function(s){return s.persona;}),x:sv.map(function(s){return s.wr_no_early;}),marker:{size:11,color:css('--text3')},customdata:sv.map(function(s){return s.n_no;}),hovertemplate:'%{y}<br>Not engaged early: %{x:.1f}% (%{customdata} deals)<extra></extra>'},
-    {type:'scatter',mode:'markers+text',name:'Engaged in '+ST.earlyStages.join(' / '),y:sv.map(function(s){return s.persona;}),x:sv.map(function(s){return s.wr_early;}),marker:{size:13,color:css('--d1')},text:sv.map(function(s){return (s.lift>=0?'+':'')+s.lift.toFixed(1);}),textposition:'middle right',textfont:{family:'Chivo Mono, monospace',size:12,color:css('--text')},
+    {type:'scatter',mode:'markers+text',name:'Engaged in '+ST.earlyStages.join(' / '),y:sv.map(function(s){return s.persona;}),x:sv.map(function(s){return s.wr_early;}),marker:{size:13,color:css('--d1')},text:sv.map(function(s){return (s.lift>=0?'+':'')+s.lift.toFixed(1);}),textposition:'middle right',textfont:{family:MONO,size:12,color:css('--text')},
       customdata:sv.map(function(s){return s.n_early;}),hovertemplate:'%{y}<br>Engaged early: %{x:.1f}% (%{customdata} deals)<extra></extra>'}],
     base({shapes:sv.map(function(s){return {type:'line',x0:s.wr_no_early,x1:s.wr_early,y0:s.persona,y1:s.persona,line:{color:css('--rule-strong'),width:3},layer:'below'};}),
-      margin:{l:190,r:40,t:10,b:60},xaxis:{ticksuffix:'%',range:[lo,hi],gridcolor:css('--rule'),title:{text:'Win rate of deals that reached late stage',font:{size:12}},tickfont:{family:'Chivo Mono, monospace',size:11}},yaxis:{tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
+      margin:{l:190,r:40,t:10,b:60},xaxis:{ticksuffix:'%',range:[lo,hi],gridcolor:css('--rule'),title:{text:'Win rate of deals that reached late stage',font:{size:12}},tickfont:{family:MONO,size:11}},yaxis:{tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
 }
 function renderPers(){
   var Pp=(ST.personas||[]).filter(function(p){return p.wr_with!=null&&p.wr_without!=null;}).slice(),data,xa={};
   if(persView==='wr'){Pp.sort(function(a,b){return a.lift_pts-b.lift_pts;});
     data=[{type:'bar',orientation:'h',name:'Without persona',y:Pp.map(function(p){return p.persona;}),x:Pp.map(function(p){return p.wr_without;}),marker:{color:css('--rule-strong')},hovertemplate:'%{y}<br>Without: %{x:.1f}%<extra></extra>'},
-      {type:'bar',orientation:'h',name:'With persona',y:Pp.map(function(p){return p.persona;}),x:Pp.map(function(p){return p.wr_with;}),marker:{color:css('--d1')},text:Pp.map(function(p){return (p.lift_pts>=0?'+':'')+p.lift_pts.toFixed(1)+' pts';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},customdata:Pp.map(function(p){return p.prevalence;}),hovertemplate:'%{y}<br>With: %{x:.1f}%<br>Present on %{customdata}% of deals<extra></extra>'}];
+      {type:'bar',orientation:'h',name:'With persona',y:Pp.map(function(p){return p.persona;}),x:Pp.map(function(p){return p.wr_with;}),marker:{color:css('--d1')},text:Pp.map(function(p){return (p.lift_pts>=0?'+':'')+p.lift_pts.toFixed(1)+' pts';}),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:11,color:css('--text')},customdata:Pp.map(function(p){return p.prevalence;}),hovertemplate:'%{y}<br>With: %{x:.1f}%<br>Present on %{customdata}% of deals<extra></extra>'}];
     xa={ticksuffix:'%',rangemode:'tozero'};
   } else if(persView==='share'){Pp.sort(function(a,b){return a.won_share-b.won_share;});
-    data=[{type:'bar',orientation:'h',name:'Share of won deals',y:Pp.map(function(p){return p.persona;}),x:Pp.map(function(p){return p.won_share;}),marker:{color:css('--d1')},text:Pp.map(function(p){return p.won_share==null?'–':p.won_share.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},hovertemplate:'%{y}<br>Engaged on %{x:.1f}% of won deals<extra></extra>'},
+    data=[{type:'bar',orientation:'h',name:'Share of won deals',y:Pp.map(function(p){return p.persona;}),x:Pp.map(function(p){return p.won_share;}),marker:{color:css('--d1')},text:Pp.map(function(p){return p.won_share==null?'–':p.won_share.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:11,color:css('--text')},hovertemplate:'%{y}<br>Engaged on %{x:.1f}% of won deals<extra></extra>'},
       {type:'bar',orientation:'h',name:'Share of all deals',y:Pp.map(function(p){return p.persona;}),x:Pp.map(function(p){return p.prevalence;}),marker:{color:css('--rule-strong')},hovertemplate:'%{y}<br>Engaged on %{x:.1f}% of all deals<extra></extra>'}];
     xa={ticksuffix:'%',rangemode:'tozero'};
   } else {Pp.sort(function(a,b){return (a.days_with||0)-(b.days_with||0);});
@@ -741,16 +886,16 @@ function renderPers(){
       {type:'bar',orientation:'h',name:'With persona',y:Pp.map(function(p){return p.persona;}),x:Pp.map(function(p){return p.days_with;}),marker:{color:css('--d3')},customdata:Pp.map(function(p){return [money(p.amt_with),money(p.amt_without)];}),hovertemplate:'%{y}<br>With: %{x} days median<br>Median deal %{customdata[0]} vs %{customdata[1]}<extra></extra>'}];
     xa={title:{text:'Median days to close, won deals',font:{size:12}}};
   }
-  plot('stagePers',data,base({barmode:'group',margin:{l:190,r:60,t:10,b:70},xaxis:Object.assign({gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},xa),yaxis:{tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
+  plot('stagePers',data,base({barmode:'group',margin:{l:190,r:60,t:10,b:70},xaxis:Object.assign({gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},xa),yaxis:{tickfont:{size:12},gridcolor:'rgba(0,0,0,0)'}}));
   var notes=N.notes.persona||{};$('#persNote').innerHTML=md(notes[persView]||'');
 }
 function renderBreadth(){
   var br=ST.breadth||[];if(br.length){var best=br.reduce(function(a,b){return (b.win_rate||0)>(a.win_rate||0)?b:a;},br[0]);
-  plot('stageBreadth',[{type:'bar',x:br.map(function(b){return b.k===6?'6+':String(b.k);}),y:br.map(function(b){return b.win_rate;}),marker:{color:br.map(function(b){return b.k===best.k?css('--d1'):css('--rule-strong');})},text:br.map(function(b){return b.win_rate==null?'–':b.win_rate.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},
+  plot('stageBreadth',[{type:'bar',x:br.map(function(b){return b.k===6?'6+':String(b.k);}),y:br.map(function(b){return b.win_rate;}),marker:{color:br.map(function(b){return b.k===best.k?css('--d1'):css('--rule-strong');})},text:br.map(function(b){return b.win_rate==null?'–':b.win_rate.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:11,color:css('--text')},
     customdata:br.map(function(b){return [b.n.toLocaleString(),b.med_days_won==null?'–':b.med_days_won];}),hovertemplate:'%{x} personas<br>Win rate %{y:.1f}%<br>%{customdata[0]} deals, %{customdata[1]} days median (won)<extra></extra>'}],
     base({showlegend:false,yaxis:ypct(),xaxis:{type:'category',title:{text:'Personas engaged',font:{size:12}},gridcolor:'rgba(0,0,0,0)'},margin:{l:44,r:10,t:14,b:48}}));}
   var eq=ST.early_q||[];if(eq.length){var bq=eq.reduce(function(a,b){return (b.win_rate||0)>(a.win_rate||0)?b:a;},eq[0]);
-  plot('stageEarlyQ',[{type:'bar',x:eq.map(function(q){return q.q.replace(' lowest','').replace(' highest','');}),y:eq.map(function(q){return q.win_rate;}),marker:{color:eq.map(function(q){return q.q===bq.q?css('--d1'):css('--rule-strong');})},text:eq.map(function(q){return q.win_rate==null?'–':q.win_rate.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},
+  plot('stageEarlyQ',[{type:'bar',x:eq.map(function(q){return q.q.replace(' lowest','').replace(' highest','');}),y:eq.map(function(q){return q.win_rate;}),marker:{color:eq.map(function(q){return q.q===bq.q?css('--d1'):css('--rule-strong');})},text:eq.map(function(q){return q.win_rate==null?'–':q.win_rate.toFixed(0)+'%';}),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:11,color:css('--text')},
     customdata:eq.map(function(q){return [q.lo,q.hi,q.med_days_won==null?'–':q.med_days_won];}),hovertemplate:'%{x}: %{customdata[0]}–%{customdata[1]} early activities<br>Win rate %{y:.1f}%<br>%{customdata[2]} days median (won)<extra></extra>'}],
     base({showlegend:false,yaxis:ypct(),xaxis:{title:{text:'Early activity quintile (low to high)',font:{size:12}},gridcolor:'rgba(0,0,0,0)'},margin:{l:44,r:10,t:14,b:48}}));}
 }
@@ -787,13 +932,13 @@ function renderA360(){
     ['Pipeline closed-won',money(tw),money(pw.total_won)+' of it on power user accounts'],['Power user accounts, avg closed-won',money(pw.avg_won),x(pw.avg_won,nn.avg_won)+' the '+money(nn.avg_won)+' of no-engagement accounts'],
     ['Depth at the same frequency',lift(pw.avg_created,br.avg_created),'power users vs frequent browsers, pipeline created'],['Depth among infrequent visitors',lift(dg.avg_created,lt.avg_created),'focused diggers vs light touch, pipeline created']];
   $('#a360Kpis').innerHTML=T.map(function(t){return '<div class="tile"><div class="k">'+esc(t[0])+'</div><div class="v">'+esc(t[1])+'</div><div class="d">'+esc(t[2])+'</div></div>';}).join('');
-  plot('a360Cohorts',[{type:'bar',name:'Created',x:CO,y:CO.map(function(c){return agg[c].avg_created;}),marker:{color:CO.map(coColor)},text:CO.map(function(c){return money(agg[c].avg_created);}),textposition:'outside',cliponaxis:false,textfont:{family:'Chivo Mono, monospace',size:11,color:css('--text')},customdata:CO.map(function(c){return agg[c].n;}),hovertemplate:'%{x}<br>Created %{y:$,.0f} per account (%{customdata} accounts)<extra></extra>'},
+  plot('a360Cohorts',[{type:'bar',name:'Created',x:CO,y:CO.map(function(c){return agg[c].avg_created;}),marker:{color:CO.map(coColor)},text:CO.map(function(c){return money(agg[c].avg_created);}),textposition:'outside',cliponaxis:false,textfont:{family:MONO,size:11,color:css('--text')},customdata:CO.map(function(c){return agg[c].n;}),hovertemplate:'%{x}<br>Created %{y:$,.0f} per account (%{customdata} accounts)<extra></extra>'},
     {type:'bar',name:'Closed-won',x:CO,y:CO.map(function(c){return agg[c].avg_won;}),marker:{color:CO.map(coColor),opacity:.45},hovertemplate:'%{x}<br>Closed-won %{y:$,.0f} per account<extra></extra>'}],
-    base({barmode:'group',xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}}}));
+    base({barmode:'group',xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:MONO,size:11}}}));
   $('#a360Nuance').innerHTML=(pw.avg_created&&br.avg_created?'At the same visit frequency, accounts worked in depth carry <b class="num">'+lift(pw.avg_created,br.avg_created)+'</b> more created pipeline than those only browsed; among infrequent visitors the gap is <b class="num">'+lift(dg.avg_created,lt.avg_created)+'</b>. ':'')+'Solid bars are created pipeline, faint bars closed-won.';
   var rows=a360Accounts(a360Lo,a360Hi),B=A360.B;
   plot('a360Scatter',CO.map(function(c){var r=rows.filter(function(a){return a.cohort===c;});return {type:'scatter',mode:'markers',name:c,x:r.map(function(a){return Math.max(a.sessions,0.8);}),y:r.map(function(a){return Math.max(a.created+a.won,1000);}),text:r.map(function(a){return a.account;}),marker:{color:coColor(c),size:9,opacity:.8,line:{width:0}},hovertemplate:'%{text}<br>%{x} sessions<br>%{y:$,.0f} pipeline<extra>'+c+'</extra>'};}),
-    base({xaxis:{type:'log',title:{text:'Sessions (log)',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},yaxis:{type:'log',tickformat:'$.2s',title:{text:'Pipeline created + closed-won (log)',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},
+    base({xaxis:{type:'log',title:{text:'Sessions (log)',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},yaxis:{type:'log',tickformat:'$.2s',title:{text:'Pipeline created + closed-won (log)',font:{size:12}},gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},
       shapes:[{type:'line',xref:'x',yref:'paper',x0:Math.max(B.session_median,1),x1:Math.max(B.session_median,1),y0:0,y1:1,line:{color:css('--text3'),dash:'dash',width:1}}]}));
   renderA360Trend();
   var watch=rows.filter(function(a){return (B.whale_names.indexOf(a.account)>=0||B.dark_names.indexOf(a.account)>=0)&&(a.created+a.won>0);}).sort(function(a,b){return (b.created+b.won)-(a.created+a.won);}).slice(0,15);
@@ -806,9 +951,9 @@ function renderA360(){
 function renderA360Trend(){
   var M=A360.B.months,idx=rng(a360Lo,a360Hi),x=idx.map(function(i){return mlab(M[i]);}),acc=A360.B.accounts,data;
   var tot=function(key,filter){return idx.map(function(i){var s=0;acc.forEach(function(a){if(!filter||filter(a))s+=a[key][i]||0;});return s;});};
-  if(a360TrendView==='total')data=[{type:'scatter',mode:'lines+markers',name:'Created',x:x,y:tot('created_by_month'),line:{color:css('--d1'),width:2.6},fill:'tozeroy',fillcolor:'rgba(98,150,173,.12)'},{type:'scatter',mode:'lines+markers',name:'Closed-won',x:x,y:tot('closed_won_by_month'),line:{color:css('--d2'),width:2.6}}];
+  if(a360TrendView==='total')data=[{type:'scatter',mode:'lines+markers',name:'Created',x:x,y:tot('created_by_month'),line:{color:css('--d1'),width:2.4},fill:'tozeroy'},{type:'scatter',mode:'lines+markers',name:'Closed-won',x:x,y:tot('closed_won_by_month'),line:{color:css('--d2'),width:2.6}}];
   else data=CO.map(function(c){return {type:'scatter',mode:'lines',name:c,x:x,y:tot('created_by_month',function(a){return a.cohort===c;}),line:{color:coColor(c),width:2.2}};});
-  plot('a360Trend',data,base({xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:'Chivo Mono, monospace',size:11}},hovermode:'x unified'}));
+  plot('a360Trend',data,base({xaxis:xcat(),yaxis:{tickformat:'$.2s',gridcolor:css('--rule'),rangemode:'tozero',tickfont:{family:MONO,size:11}},hovermode:'x unified'}));
   var c=tot('created_by_month'),peak=c.indexOf(Math.max.apply(null,c)),sum=c.reduce(function(a,b){return a+b;},0),ch=c.length>1&&c[0]?((c[c.length-1]-c[0])/c[0]*100):null;
   $('#a360TrendSub').textContent=money(sum)+' created in these months; the peak was '+(x[peak]||'–')+' ('+money(c[peak])+')'+(ch!=null?'; the last month is '+sp(ch)+' against the first.':'.')+(A360.M.lastMonthPartial?' The last month is partial.':'');
 }
@@ -825,7 +970,7 @@ function renderAccBubble(){
   var rows=ACC.accounts.filter(function(a){return a.eng!=null;}),cols=[css('--rule-strong'),css('--d2'),css('--d1')],mx=Math.max.apply(null,rows.map(function(a){return a.opps;}).concat([1]));
   plot('accBubble',LEVELS.map(function(L,li){var r=rows.filter(function(a){return levelOf(a.eng)===li;});return {type:'scatter',mode:'markers',name:L,x:r.map(function(a){return a.eng;}),y:r.map(function(a){return a.win_rate;}),text:r.map(function(a){return a.account;}),customdata:r.map(function(a){return [a.opps,a.won];}),
     marker:{size:r.map(function(a){return 6+Math.sqrt(a.opps/mx)*34;}),color:cols[li],opacity:.7,line:{width:1,color:css('--page')}},hovertemplate:'%{text}<br>Engagement %{x:.1f}<br>Win rate %{y:.1f}% (%{customdata[1]} of %{customdata[0]} deals)<extra></extra>'};}),
-    base({xaxis:{title:{text:'Average engagement score',font:{size:12}},range:[0,100],gridcolor:css('--rule'),tickfont:{family:'Chivo Mono, monospace',size:11}},yaxis:ypct({range:[0,105]})}));
+    base({xaxis:{title:{text:'Average engagement score',font:{size:12}},range:[0,100],gridcolor:css('--rule'),tickfont:{family:MONO,size:11}},yaxis:ypct({range:[0,105]})}));
 }
 function renderAccTable(){
   var q=($('#accQ').value||'').toLowerCase(),rows=ACC.accounts.filter(function(a){return !q||a.account.toLowerCase().indexOf(q)>=0;}).slice();sortRows(rows,accSort);

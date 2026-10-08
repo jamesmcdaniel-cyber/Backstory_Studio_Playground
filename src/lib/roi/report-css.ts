@@ -9,7 +9,11 @@ export const REPORT_CSS = String.raw`
   --page:#FFFFFF; --surface:#F5F5F5; --raised:#FFFFFF; --text:#171721; --text2:#55555E; --text3:#7F7F85;
   --rule:#E3E3E5; --rule-strong:#BBBCBC; --mast:#171721; --mast-text:#FFFFFF; --mast-sub:#BBBCBC;
   --horizon:#6296AD; --horizon-deep:#447C93; --accent-subtle:#DBEBF2;
-  --d1:#6296AD; --d2:#5BA779; --d3:#B08FA2; --d4:#9FDFFF; --d5:#CEB375; --d6:#275198; --neg:#C05527; --pos:#3F7F58;
+  /* Chart series, validated for colour-vision deficiency and contrast on this surface (dataviz validator, 2026-10-08):
+     blue, mauve, gold, teal, indigo, green — assigned in this order, never cycled. */
+  --s1:#2878C0; --s2:#82406A; --s3:#946D00; --s4:#06999A; --s5:#515294; --s6:#398659;
+  --d1:var(--s1); --d2:var(--s6); --d3:var(--s2); --d4:var(--s4); --d5:var(--s3); --d6:var(--s5); --neg:#C05527; --pos:#3F7F58;
+  --seq-lo:#E8F1F6; --seq-hi:#447C93; --div-mid:#EEEEEF; --spark:#BBBCBC;
   --c-power:#275198; --c-browser:#5BA779; --c-digger:#C05527; --c-light:#B08FA2; --c-none:#BBBCBC;
   --serif:'Cardo',Georgia,'Times New Roman',serif;
   --sans:'Roboto',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;
@@ -21,7 +25,9 @@ export const REPORT_CSS = String.raw`
     --page:#171721; --surface:#22222C; --raised:#31313C; --text:#F5F5F5; --text2:#ABABAD; --text3:#8C8C92;
     --rule:#31313C; --rule-strong:#55555E; --mast:#000000; --mast-text:#FFFFFF; --mast-sub:#ABABAD;
     --horizon:#7DACC0; --horizon-deep:#99C1D1; --accent-subtle:#0A2F3F;
-    --d1:#7DACC0; --d2:#8FCDA8; --d3:#E8DDE3; --d4:#21B5FF; --d5:#CEB375; --d6:#7FA6E8; --neg:#E07B4F; --pos:#8FCDA8;
+    --s1:#4390DA; --s2:#A5608B; --s3:#AA8638; --s4:#19A0A0; --s5:#6D6EC8; --s6:#529F70;
+    --d1:var(--s1); --d2:var(--s6); --d3:var(--s2); --d4:var(--s4); --d5:var(--s3); --d6:var(--s5); --neg:#E07B4F; --pos:#8FCDA8;
+    --seq-lo:#1F3542; --seq-hi:#447C93; --div-mid:#2A2A34; --spark:#55555E;
     --c-power:#7FA6E8; --c-browser:#8FCDA8; --c-digger:#E07B4F; --c-light:#E8DDE3; --c-none:#55555E;
   }
 }
@@ -29,7 +35,9 @@ export const REPORT_CSS = String.raw`
   --page:#171721; --surface:#22222C; --raised:#31313C; --text:#F5F5F5; --text2:#ABABAD; --text3:#8C8C92;
   --rule:#31313C; --rule-strong:#55555E; --mast:#000000; --mast-text:#FFFFFF; --mast-sub:#ABABAD;
   --horizon:#7DACC0; --horizon-deep:#99C1D1; --accent-subtle:#0A2F3F;
-  --d1:#7DACC0; --d2:#8FCDA8; --d3:#E8DDE3; --d4:#21B5FF; --d5:#CEB375; --d6:#7FA6E8; --neg:#E07B4F; --pos:#8FCDA8;
+  --s1:#4390DA; --s2:#A5608B; --s3:#AA8638; --s4:#19A0A0; --s5:#6D6EC8; --s6:#529F70;
+  --d1:var(--s1); --d2:var(--s6); --d3:var(--s2); --d4:var(--s4); --d5:var(--s3); --d6:var(--s5); --neg:#E07B4F; --pos:#8FCDA8;
+  --seq-lo:#1F3542; --seq-hi:#447C93; --div-mid:#2A2A34; --spark:#55555E;
   --c-power:#7FA6E8; --c-browser:#8FCDA8; --c-digger:#E07B4F; --c-light:#E8DDE3; --c-none:#55555E;
 }
 *,*::before,*::after{box-sizing:inherit;margin:0;padding:0}
@@ -57,7 +65,7 @@ a{color:var(--horizon-deep)}
 .mast .lede b{color:var(--mast-text)}
 .strip-wrap figcaption{color:var(--mast-sub);font-size:13px;margin-top:6px}
 #heroStrip{height:230px}
-.hero-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:#31313C;margin:30px 0 32px;border:1px solid #31313C;border-radius:6px;overflow:hidden}
+.hero-stats{display:grid;grid-template-columns:repeat(var(--cols,4),minmax(0,1fr));gap:1px;background:#31313C;margin:30px 0 32px;border:1px solid #31313C;border-radius:6px;overflow:hidden}
 .hero-stats>div{background:var(--mast);padding:16px 18px}
 .hero-stats .v{font-family:var(--mono);font-size:30px;line-height:1.1;color:var(--mast-text)}
 .hero-stats .l{font-size:13px;color:var(--mast-sub);margin-top:6px}
@@ -99,9 +107,50 @@ section.panel.active{display:block}
 .sub.right{text-align:right;max-width:none;margin-top:8px}
 .block{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:36px;margin-top:40px;padding-top:28px;border-top:1px solid var(--rule)}
 .block.full{grid-template-columns:minmax(0,1fr)}
-.chart{height:380px;margin-top:14px}
+.chart{height:380px;margin-top:14px;opacity:0;transition:opacity .35s ease}
+.chart.drawn,.chart:empty{opacity:1}
 .chart.tall{height:460px}
 .chart.short{height:280px}
+.chart-wrap{position:relative}
+.chart-wrap .chart{margin-top:0}
+.chart-head{display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:10px;min-height:28px}
+.ctool{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;font:500 12px var(--sans);color:var(--text2);background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.ctool svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.ctool:hover{color:var(--text);background:var(--surface);border-color:var(--rule)}
+.ctool[aria-pressed="true"]{color:var(--horizon-deep);background:var(--accent-subtle);border-color:transparent}
+.chart-table{display:none;margin-top:4px;max-height:420px;overflow:auto;border:1px solid var(--rule);border-radius:8px}
+.chart-wrap.table .chart-table{display:block}
+.chart-wrap.table .chart{display:none}
+.chart-table table{font-size:13px}
+.chart-table th{background:var(--surface)}
+.chart-table td:first-child,.chart-table th:first-child{position:sticky;left:0;background:var(--raised)}
+.chart-table caption{caption-side:bottom;text-align:left;padding:8px 12px;font-size:12px;color:var(--text3)}
+.chart-wrap.expanded{position:fixed;inset:24px;z-index:70;display:flex;flex-direction:column;background:var(--page);border:1px solid var(--rule);border-radius:12px;padding:16px 20px 20px;box-shadow:0 24px 64px -24px rgba(0,0,0,.45)}
+.chart-wrap.expanded .chart{flex:1;height:auto!important;min-height:0}
+.chart-wrap.expanded .chart-table{max-height:none;flex:1}
+.chart-wrap.expanded .chart-title{display:block}
+.chart-title{display:none;margin-right:auto;font-size:15px;font-weight:500;color:var(--text)}
+.chart-scrim{position:fixed;inset:0;z-index:65;background:rgba(23,23,33,.45);backdrop-filter:blur(2px)}
+.chart-scrim[hidden]{display:none}
+.chart.empty{display:flex;align-items:center;justify-content:center;height:140px;color:var(--text3);font-size:14px;border:1px dashed var(--rule-strong);border-radius:8px}
+.chart.empty::before{content:attr(data-empty)}
+.spark{display:block;width:100%;height:30px;margin-top:10px;overflow:visible}
+.spark path{fill:none;stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
+.spark .base{stroke:var(--spark)}
+.spark .hi{stroke:var(--horizon)}
+.spark .fill{fill:var(--horizon);fill-opacity:.12;stroke:none}
+.spark .halo{stroke:var(--raised);stroke-width:8}
+.spark .dot{stroke:var(--horizon);stroke-width:5}
+.tile .d.up::before{content:'▲ ';font-size:10px}
+.tile .d.down::before{content:'▼ ';font-size:10px}
+.tile{transition:box-shadow .15s,transform .15s}
+.tiles:not(.static) .tile:hover{box-shadow:0 4px 14px -6px rgba(23,23,33,.25);transform:translateY(-1px)}
+.card{transition:box-shadow .2s}
+.card:hover{box-shadow:0 6px 20px -12px rgba(23,23,33,.3)}
+.seg button{transition:background .15s,color .15s}
+.chips button{transition:background .15s,color .15s,border-color .15s}
+.chips button:hover{border-color:var(--horizon);color:var(--text)}
+.js-plotly-plot .plotly .hoverlayer .hovertext path{filter:drop-shadow(0 6px 16px rgba(23,23,33,.16))}
 aside.note{font-size:15px;color:var(--text2);border-left:2px solid var(--horizon);padding:2px 0 2px 18px;align-self:start}
 aside.note h4{font-size:14px;font-weight:500;color:var(--text);margin-bottom:8px}
 aside.note p+p{margin-top:10px}
@@ -219,7 +268,9 @@ footer{border-top:1px solid var(--rule);padding:22px 0 40px;color:var(--text3);f
   .wrap{padding:0 16px}
   aside.note{border-left:0;border-top:2px solid var(--horizon);padding:14px 0 0}
   input[type=search]{min-width:0;width:100%}
+  .chart-wrap.expanded{inset:8px;padding:10px 12px 12px}
+  .ctool span{display:none}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
-@media print{nav.tabs,.controls,.themebtn,.filter-panel,.scrim{display:none}section.panel{display:block}}
+@media print{nav.tabs,.controls,.themebtn,.filter-panel,.scrim,.chart-head,.chart-scrim{display:none}section.panel{display:block}.chart{opacity:1}}
 `

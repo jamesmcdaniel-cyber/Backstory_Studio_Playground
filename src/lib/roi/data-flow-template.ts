@@ -301,10 +301,10 @@ export const ROI_DATA_PULL_FILES: FlowTemplateDef = {
       'Each load retries once after 30 seconds. A link that cannot be fetched fails the run with the HTTP status; a link that needs a token names the host whose HTTP credential to save. Loading replaces nothing: the newest extract per kind is what the ROI page reads, so a failed run leaves the previous extracts in place.',
     setup: [
       { label: 'If the links need a token, save an HTTP credential for that host in Integrations (signed links need none)', kind: 'integration', ref: 'HTTP API' },
-      { label: 'Publish the flow, then choose it as the data source on the ROI analysis page — or run it by hand for each account', kind: 'value', ref: 'trigger' },
+      { label: 'Run it by hand for each account with its file links. Choose it as the ROI page\'s data source only once the Collect step produces the links itself: the page passes the account, not links', kind: 'value', ref: 'trigger' },
     ],
     customize: [
-      'Replace the Collect step with the step that produces your links: a bucket listing, an export job, an HTTP call to your pipeline.',
+      'Replace the Collect step with the step that produces your links: a bucket listing, an export job, an HTTP call to your pipeline. Until then the ROI page cannot start it on its own (it passes the account, not links).',
       'Add a schedule trigger and a fixed account list to refresh every account nightly; the ROI page reads the newest extract per kind.',
       'Lower the load step\'s concurrency to one if the file host throttles.',
     ],

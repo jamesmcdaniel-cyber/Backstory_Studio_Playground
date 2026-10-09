@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { isDatasetFile, uploadDirect } from '@/lib/client/upload'
 import { cn } from '@/lib/utils'
 import { ROI_EXTRACT_KINDS, apiErrorMessage, canonicalAccountName, extractDescription, uniqueAccountNames } from '@/lib/roi/history'
-import type { RoiSourceKind } from '@/lib/roi/source-kinds'
+import { ROI_EXTRACT_CONTRACT, type RoiSourceKind } from '@/lib/roi/source-kinds'
 import type { RoiPageSetup } from '@/lib/roi/types'
 
 type Step = 'idle' | 'uploading' | 'adding' | 'tagging' | 'done' | 'error'
@@ -236,7 +236,7 @@ function ExtractFileRow({ kind, label, row, disabled, onChoose }: {
         <FileSpreadsheet className={cn('h-4 w-4 shrink-0', row.file ? 'text-horizon-600' : 'text-muted-foreground')} aria-hidden />
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium">{label}</p>
+        <p className="text-xs font-medium" title={`${ROI_EXTRACT_CONTRACT[kind].grain} Required columns: ${ROI_EXTRACT_CONTRACT[kind].required.join(', ')}.`}>{label}</p>
         <p
           // An error wraps (it says what to do); a file name stays on one line.
           className={cn('text-[11px]', row.step === 'error' ? 'break-words text-red-700' : row.step === 'done' ? 'truncate text-[var(--status-good-fg)]' : 'truncate text-muted-foreground')}

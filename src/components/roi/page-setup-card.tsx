@@ -76,11 +76,11 @@ export function PageSetupCard({ setup, onDataSourceChange }: { setup: RoiPageSet
               <option value="">None — use the loaded extracts</option>
               {flows.map((flow) => <option key={flow.id} value={flow.id}>{flow.published ? flow.name : `${flow.name} (not published)`}</option>)}
             </select>
-            <p id="roi-data-flow-help" className="mt-1 text-xs text-muted-foreground">The flow fetches the account's data from the warehouse and hands it to the analyst. An n8n workflow works too: <Link href="/flows" className={LINK}>import it in Flows</Link> (Import, from a URL or a JSON file), then choose it here.</p>
+            <p id="roi-data-flow-help" className="mt-1 text-xs text-muted-foreground">The flow fetches the account's data from the warehouse and hands it to the analyst. An n8n workflow works too: <Link href="/flows" className={LINK}>import it in Flows</Link> (Import, from a URL or a JSON file), then choose it here. Any flow can also load extracts on its own schedule with the ROI plane's load-extract step; the page reads the newest extract per account as soon as it lands.</p>
           </div>
         ) : agent.canConfigure ? (
           <p className="text-xs text-muted-foreground">
-            A data flow can fetch each account's data from the warehouse. <Link href="/flows" className={LINK}>Build one in Flows</Link>, or import an n8n workflow there (Import, from a URL or a JSON file), then choose it here.
+            A data flow can fetch each account's data from the warehouse. <Link href="/flows" className={LINK}>Build one in Flows</Link> (start from the ROI data pull templates), or import an n8n workflow there (Import, from a URL or a JSON file), then choose it here.
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">

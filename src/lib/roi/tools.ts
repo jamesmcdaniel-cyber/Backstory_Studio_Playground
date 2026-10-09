@@ -10,6 +10,8 @@ import { summarizeAccount360 } from './account360/facts'
 import { roiRunConfigSchema } from './config'
 import { isRoiSourceKind, ROI_SOURCE_KINDS, type RoiSourceKind } from './sources'
 import { pullRoiExtract } from './databricks'
+import { loadRoiExtract } from './load-extract'
+import { ROI_EXTRACT_CONTRACT } from './source-kinds'
 
 const ACCOUNT360_KINDS: RoiSourceKind[] = ['clickstream', 'accounts', 'opportunities']
 
@@ -78,6 +80,28 @@ export const ROI_TOOLS = [
       required: ['host', 'warehouseId', 'statement', 'account', 'kind'],
     },
   },
+  {
+    name: 'roi_load_extract',
+    description:
+      'Load one of an account\'s ROI extracts into the workspace Repository, tagged for the ROI page, from wherever a flow got it: a link to a CSV/TSV file (fetched here, any size up to the dataset limit; the workspace\'s saved HTTP credential for that host is applied when there is one), a file already in the workspace\'s storage (storedFileId), the file\'s text (csv), or JSON rows. ' +
+      'Pass exactly one of url, storedFileId, csv or rows, plus the account (as the ROI page names it) and the extract kind. The newest extract per kind is what the page reads, so loading replaces nothing. ' +
+      'Returns the dataset id, row count, the header, and the required columns the header lacks (missingColumns — fix the query rather than the report). Fails outright when nothing was loaded. Extract contracts: ' +
+      ROI_SOURCE_KINDS.map((kind) => `${kind} — ${ROI_EXTRACT_CONTRACT[kind].grain} Required: ${ROI_EXTRACT_CONTRACT[kind].required.join(', ')}.`).join(' '),
+    isWrite: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'The account the extract belongs to, as the ROI page names it.' },
+        kind: { type: 'string', enum: [...ROI_SOURCE_KINDS], description: 'Which extract this is.' },
+        url: { type: 'string', description: 'A link to the CSV/TSV file (https). The platform fetches it; nothing passes through the canvas.' },
+        storedFileId: { type: 'string', description: 'A file already in the workspace\'s storage.' },
+        csv: { type: 'string', description: 'The file\'s text, header first. Small extracts only.' },
+        rows: { type: 'array', items: { type: 'object' }, description: 'The rows as objects keyed by column name. Small extracts only.' },
+        filename: { type: 'string', description: 'The dataset\'s file name (optional; .csv or .tsv).' },
+      },
+      required: ['account', 'kind'],
+    },
+  },
 ] satisfies ReadonlyArray<{
   name: string
   description: string
@@ -96,9 +120,25 @@ export class RoiToolClient {
     private readonly runPrep: RoiPrepRunner = runRoiPrep,
     private readonly runAccount360: Account360PrepRunner = runAccount360Prep,
     private readonly pull: typeof pullRoiExtract = pullRoiExtract,
+    private readonly loadExtract: typeof loadRoiExtract = loadRoiExtract,
   ) {}
 
   async executeTool(_serverUrl: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+    if (name === 'roi_load_extract') {
+      const text = (key: string) => (typeof args[key] === 'string' ? (args[key] as string) : typeof args[key] === 'number' ? String(args[key]) : '')
+      // Throws rather than answering { error }: a flow step must fail when nothing was loaded.
+      return this.loadExtract({
+        organizationId: this.organizationId,
+        userId: this.userId,
+        account: text('account'),
+        kind: text('kind'),
+        ...(text('url') ? { url: text('url') } : {}),
+        ...(text('storedFileId') ? { storedFileId: text('storedFileId') } : {}),
+        ...(text('csv') ? { csv: text('csv') } : {}),
+        ...(Array.isArray(args.rows) ? { rows: args.rows } : {}),
+        ...(text('filename') ? { filename: text('filename') } : {}),
+      })
+    }
     if (name === 'roi_databricks_pull') {
       const text = (key: string) => (typeof args[key] === 'string' ? (args[key] as string) : typeof args[key] === 'number' ? String(args[key]) : '')
       // Throws rather than answering { error }: a flow step must fail when nothing was loaded.

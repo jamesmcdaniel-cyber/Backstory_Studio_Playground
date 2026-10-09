@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { flowTemplateNotesIssues, flowTemplateNotesSchema } from '@/lib/flows/templates/types'
-import { ROI_DATA_FLOW_TEMPLATE_ID, ROI_DATA_PULL_DATABRICKS } from '../data-flow-template'
+import { ROI_DATA_FILES_TEMPLATE_ID, ROI_DATA_FLOW_TEMPLATE_ID, ROI_DATA_PULL_DATABRICKS, ROI_DATA_PULL_FILES } from '../data-flow-template'
 import { ORG_ID_PLACEHOLDER, ROI_WAREHOUSE_KINDS, ROI_WAREHOUSE_QUERIES, warehouseSql } from '../warehouse-queries'
 import { ROI_SOURCE_KINDS } from '../sources'
 import { ROI_TOOLS } from '../tools'
@@ -60,4 +60,25 @@ test('installing it runs nothing: a manual trigger whose only required input is 
   assert.deepEqual(config.inputFields.filter((field) => field.required).map((field) => field.name), ['account'])
   assert.deepEqual(ROI_DATA_PULL_DATABRICKS.bindings, [], 'no connection slot: the credential is the host-bound HTTP credential the setup names')
   assert.ok(ROI_DATA_PULL_DATABRICKS.notes.setup.some((step) => step.kind === 'integration' && /credential/i.test(step.label)))
+})
+
+test('the from-files pull is a valid, explained flow whose load step takes a link per extract through the ROI plane', () => {
+  assert.doesNotThrow(() => flowGraphSchema.parse(ROI_DATA_PULL_FILES.graph))
+  assert.doesNotThrow(() => flowTemplateNotesSchema.parse(ROI_DATA_PULL_FILES.notes))
+  assert.deepEqual(flowTemplateNotesIssues(ROI_DATA_PULL_FILES.graph, ROI_DATA_PULL_FILES.notes, ROI_DATA_PULL_FILES.bindings), [])
+  assert.deepEqual(validateFlowGraph(ROI_DATA_PULL_FILES.graph, { requireRunnable: true }).errors, [])
+  assert.equal(ROI_DATA_PULL_FILES.id, ROI_DATA_FILES_TEMPLATE_ID)
+  for (const field of [ROI_DATA_PULL_FILES.name, ROI_DATA_PULL_FILES.description]) assert.ok(!field.includes('{{'))
+  const trigger = ROI_DATA_PULL_FILES.graph.nodes.find((node) => node.type === 'trigger')
+  const config = (trigger!.data as { trigger: { type: string; inputFields: Array<{ name: string; required?: boolean }> } }).trigger
+  assert.equal(config.type, 'manual')
+  assert.deepEqual(config.inputFields.filter((field) => field.required).map((field) => field.name), ['account'])
+  for (const kind of ROI_SOURCE_KINDS) assert.ok(config.inputFields.some((field) => field.name === `${kind}Url`), `${kind} has a link input`)
+  const load = ROI_DATA_PULL_FILES.graph.nodes.find((node) => node.id === 'load')
+  assert.ok(load && load.type === 'tool')
+  assert.equal(load.data.connectionId, 'native:roi')
+  assert.equal(load.data.toolName, 'roi_load_extract')
+  const args = JSON.parse(load.data.args ?? '{}') as Record<string, string>
+  assert.ok(args.account && args.kind && args.url)
+  assert.equal(load.data.perItem?.over, '{{step.collect.output.items}}')
 })

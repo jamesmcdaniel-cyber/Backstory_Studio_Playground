@@ -54,16 +54,25 @@ function scheduleFromTemplate(value: unknown): Omit<AgentSchedule, 'anchor'> {
 }
 
 /** Referenced integrations that the org/user has NOT connected yet (lowercased match). */
+/**
+ * Built-in planes that need no connection or credential to use: a template
+ * naming one has nothing for the installer to connect, so it never shows up as
+ * a "Connect …" setup item. (Slack, Email, Granola and Web Research are built
+ * in too, but each needs a key the workspace has to supply.)
+ */
+export const CONNECTION_FREE_PLANES = new Set(['roi', 'roi analysis', 'repository', 'code', 'artifact', 'adapter checks', 'data tables', 'http api'])
+
 export async function missingIntegrations(
   organizationId: string,
   userId: string,
   referenced: string[],
 ): Promise<string[]> {
-  if (referenced.length === 0) return []
+  const wanted = [...new Set(referenced.map((r) => r.toLowerCase()))].filter((r) => !CONNECTION_FREE_PLANES.has(r))
+  if (wanted.length === 0) return []
   const connected = new Set(
     (await summarizeConnectedIntegrations(organizationId, userId)).providers.map((p) => p.key.toLowerCase()),
   )
-  return [...new Set(referenced.map((r) => r.toLowerCase()))].filter((r) => !connected.has(r))
+  return wanted.filter((r) => !connected.has(r))
 }
 
 /**

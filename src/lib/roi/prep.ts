@@ -119,7 +119,10 @@ else:
     a = a[a["month"].isin(months)]
     for c in ["director_meeting_count", "vp_meeting_count", "executive_meeting_count", "meeting_count", "sent_email_count", "pipeline_created", "pipeline_created_owned"]:
         if has(a, c):
-            a[c] = fnum(a[c])
+            # Float throughout: an all-integer column stays int64 after
+            # to_numeric, and the 95th-percentile cap (or NaN for an excluded
+            # rep) cannot be written into it.
+            a[c] = fnum(a[c]).astype("float64")
         else:
             a[c] = np.nan
             notes.append("Activity extract has no " + c + " column; that metric is empty.")

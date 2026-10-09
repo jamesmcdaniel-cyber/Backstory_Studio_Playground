@@ -1,0 +1,13 @@
+USER_EMAIL,EDB_ACCOUNT_VIEWS,EDB_OPP_VIEWS,GLASS_SESSIONS,ACCOUNTS_VIEWED,OPPORTUNITIES_VIEWED,LAST_USAGE_DATE
+rep01@sample.example,25,12,8,3,10,2026-06-19
+rep02@sample.example,40,20,13,12,18,2026-09-19
+rep03@sample.example,80,40,26,4,3,2026-04-19
+rep04@sample.example,15,7,5,19,37,2026-04-14
+rep05@sample.example,69,34,23,25,18,2026-07-11
+rep06@sample.example,110,55,36,15,38,2026-03-14
+rep07@sample.example,26,13,8,2,22,2026-04-12
+rep08@sample.example,52,26,17,3,2,2026-01-10
+rep09@sample.example,97,48,32,12,30,2026-08-11
+rep10@sample.example,27,13,9,20,26,2026-02-11
+rep11@sample.example,48,24,16,11,37,2026-04-11
+rep12@sample.example,110,55,36,30,33,2026-07-12

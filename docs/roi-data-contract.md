@@ -26,7 +26,7 @@ Every account runs the single **standard** report (`ROI_TEMPLATES.standard`). It
 | `accounts` | parent account | account id, account name | Account engagement scope |
 | `opportunities` | opportunity | created, close_date, stage, amount | Pipeline per account per month |
 
-The full recognised column list per kind is in `ROI_EXTRACT_CONTRACT[kind].columns`. The SQL that produces `activity`, `engagement` and `stages` from the People.ai warehouse is in `src/lib/roi/warehouse-queries.ts` (org id substituted per run, 30-month window).
+The full recognised column list per kind is in `ROI_EXTRACT_CONTRACT[kind].columns`. **Synthetic sample files, one per kind, are in `docs/roi-sample-extracts/`**: match their headers and the report builds every section (a test runs the prep over them on every change). The SQL that produces `activity`, `engagement` and `stages` from the People.ai warehouse is in `src/lib/roi/warehouse-queries.ts` (org id substituted per run, 30-month window).
 
 The one account outside the contract today is **Backstory** itself: its report is the imported value readout (`POST /api/roi/readout`, operators only). Load Backstory's extracts and press **Refresh data** to move it onto the same path.
 

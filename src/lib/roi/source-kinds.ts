@@ -45,7 +45,7 @@ export const ROI_EXTRACT_CONTRACT: Record<RoiSourceKind, RoiExtractContract> = {
       'email', 'months', 'meeting_count', 'sent_email_count', 'received_email_count', 'director_meeting_count', 'vp_meeting_count', 'executive_meeting_count',
       'in_person_meeting_count', 'conference_call_count', 'external_people_touched', 'pipeline_created', 'pipeline_created_owned',
       'director_activity_count', 'vp_activity_count', 'executive_activity_count', 'mgmt_activity_count', 'legal_proc_activity_count',
-      'finance_activity_count', 'it_activity_count', 'eng_activity_count', 'other_activity_count', 'name', 'title', 'role', 'team',
+      'finance_activity_count', 'it_activity_count', 'eng_activity_count', 'other_activity_count', 'full_name', 'title', 'role_name', 'team_name', 'team_full_name',
     ],
     feeds: 'Activity trends, leading indicators, cohort comparisons and the roster.',
     match: 'exact',

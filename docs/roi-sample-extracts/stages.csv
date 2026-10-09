@@ -1,0 +1,1601 @@
+title,account_name,account_crm_id,opportunity_crm_id,opportunity_type,opportunity_is_won,opportunity_amount,activity_match_stage,activity_type,activity_count,dir_above_activity_count,vp_above_activity_count,exec_activity_count
+Manager,Account 00,00100000,006000000,New Business,true,100242,1 - Qualify,meeting,9,3,1,0
+Manager,Account 00,00100000,006000000,New Business,true,100242,1 - Qualify,email,16,6,3,1
+Manager,Account 00,00100000,006000000,New Business,true,100242,2 - Develop,meeting,16,6,3,1
+Manager,Account 00,00100000,006000000,New Business,true,100242,2 - Develop,email,11,4,2,1
+Manager,Account 00,00100000,006000000,New Business,true,100242,3 - Propose,meeting,13,5,2,1
+Manager,Account 00,00100000,006000000,New Business,true,100242,3 - Propose,email,7,2,1,0
+Manager,Account 00,00100000,006000000,New Business,true,100242,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 00,00100000,006000000,New Business,true,100242,4 - Negotiate,email,7,2,1,0
+VP Sales,Account 01,00100001,006000001,Upsell,false,299844,1 - Qualify,meeting,11,2,2,1
+Manager,Account 01,00100001,006000001,Upsell,false,299844,1 - Qualify,email,10,2,2,1
+Manager,Account 01,00100001,006000001,Upsell,false,299844,2 - Develop,meeting,5,1,1,0
+Manager,Account 01,00100001,006000001,Upsell,false,299844,2 - Develop,email,12,2,2,1
+Manager,Account 01,00100001,006000001,Upsell,false,299844,3 - Propose,meeting,4,0,0,0
+VP Sales,Account 01,00100001,006000001,Upsell,false,299844,3 - Propose,email,11,2,2,1
+Manager,Account 01,00100001,006000001,Upsell,false,299844,4 - Negotiate,meeting,10,2,2,1
+VP Sales,Account 01,00100001,006000001,Upsell,false,299844,4 - Negotiate,email,12,2,2,1
+Manager,Account 02,00100002,006000002,Renewal,false,279135,1 - Qualify,meeting,12,2,2,1
+Manager,Account 02,00100002,006000002,Renewal,false,279135,1 - Qualify,email,11,2,2,1
+Manager,Account 02,00100002,006000002,Renewal,false,279135,2 - Develop,meeting,9,1,1,0
+Manager,Account 02,00100002,006000002,Renewal,false,279135,2 - Develop,email,8,1,1,0
+Manager,Account 02,00100002,006000002,Renewal,false,279135,3 - Propose,meeting,1,0,0,0
+Manager,Account 02,00100002,006000002,Renewal,false,279135,3 - Propose,email,11,2,2,1
+Manager,Account 02,00100002,006000002,Renewal,false,279135,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 02,00100002,006000002,Renewal,false,279135,4 - Negotiate,email,9,1,1,0
+Manager,Account 03,00100003,006000003,New Business,false,62982,1 - Qualify,meeting,4,0,0,0
+Manager,Account 03,00100003,006000003,New Business,false,62982,1 - Qualify,email,12,2,2,1
+Manager,Account 03,00100003,006000003,New Business,false,62982,2 - Develop,meeting,6,1,1,0
+Manager,Account 03,00100003,006000003,New Business,false,62982,2 - Develop,email,7,1,1,0
+Manager,Account 03,00100003,006000003,New Business,false,62982,3 - Propose,meeting,5,1,1,0
+Manager,Account 03,00100003,006000003,New Business,false,62982,3 - Propose,email,11,2,2,1
+Manager,Account 03,00100003,006000003,New Business,false,62982,4 - Negotiate,meeting,2,0,0,0
+Manager,Account 03,00100003,006000003,New Business,false,62982,4 - Negotiate,email,9,1,1,0
+Manager,Account 04,00100004,006000004,Upsell,false,319217,1 - Qualify,meeting,10,2,2,1
+Manager,Account 04,00100004,006000004,Upsell,false,319217,1 - Qualify,email,5,1,1,0
+Manager,Account 04,00100004,006000004,Upsell,false,319217,2 - Develop,meeting,8,1,1,0
+Manager,Account 04,00100004,006000004,Upsell,false,319217,2 - Develop,email,6,1,1,0
+Manager,Account 04,00100004,006000004,Upsell,false,319217,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 04,00100004,006000004,Upsell,false,319217,3 - Propose,email,3,0,0,0
+Manager,Account 04,00100004,006000004,Upsell,false,319217,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 04,00100004,006000004,Upsell,false,319217,4 - Negotiate,email,4,0,0,0
+VP Sales,Account 05,00100005,006000005,Renewal,false,179826,1 - Qualify,meeting,6,1,1,0
+VP Sales,Account 05,00100005,006000005,Renewal,false,179826,1 - Qualify,email,3,0,0,0
+Manager,Account 05,00100005,006000005,Renewal,false,179826,2 - Develop,meeting,11,2,2,1
+Manager,Account 05,00100005,006000005,Renewal,false,179826,2 - Develop,email,11,2,2,1
+Manager,Account 05,00100005,006000005,Renewal,false,179826,3 - Propose,meeting,11,2,2,1
+Manager,Account 05,00100005,006000005,Renewal,false,179826,3 - Propose,email,1,0,0,0
+Manager,Account 05,00100005,006000005,Renewal,false,179826,4 - Negotiate,meeting,6,1,1,0
+VP Sales,Account 05,00100005,006000005,Renewal,false,179826,4 - Negotiate,email,7,1,1,0
+Manager,Account 06,00100006,006000006,New Business,true,209043,1 - Qualify,meeting,7,2,1,0
+VP Sales,Account 06,00100006,006000006,New Business,true,209043,1 - Qualify,email,11,4,2,1
+Manager,Account 06,00100006,006000006,New Business,true,209043,2 - Develop,meeting,10,4,2,1
+Manager,Account 06,00100006,006000006,New Business,true,209043,2 - Develop,email,13,5,2,1
+Manager,Account 06,00100006,006000006,New Business,true,209043,3 - Propose,meeting,12,4,2,1
+Manager,Account 06,00100006,006000006,New Business,true,209043,3 - Propose,email,9,3,1,0
+Manager,Account 06,00100006,006000006,New Business,true,209043,4 - Negotiate,meeting,12,4,2,1
+Manager,Account 06,00100006,006000006,New Business,true,209043,4 - Negotiate,email,12,4,2,1
+Manager,Account 07,00100007,006000007,Upsell,true,255313,1 - Qualify,meeting,16,6,3,1
+VP Sales,Account 07,00100007,006000007,Upsell,true,255313,1 - Qualify,email,13,5,2,1
+VP Sales,Account 07,00100007,006000007,Upsell,true,255313,2 - Develop,meeting,15,6,3,1
+Manager,Account 07,00100007,006000007,Upsell,true,255313,2 - Develop,email,12,4,2,1
+Manager,Account 07,00100007,006000007,Upsell,true,255313,3 - Propose,meeting,8,3,1,0
+Manager,Account 07,00100007,006000007,Upsell,true,255313,3 - Propose,email,13,5,2,1
+VP Sales,Account 07,00100007,006000007,Upsell,true,255313,4 - Negotiate,meeting,11,4,2,1
+VP Sales,Account 07,00100007,006000007,Upsell,true,255313,4 - Negotiate,email,13,5,2,1
+VP Sales,Account 08,00100008,006000008,Renewal,true,125632,1 - Qualify,meeting,14,5,2,1
+VP Sales,Account 08,00100008,006000008,Renewal,true,125632,1 - Qualify,email,14,5,2,1
+Manager,Account 08,00100008,006000008,Renewal,true,125632,2 - Develop,meeting,16,6,3,1
+VP Sales,Account 08,00100008,006000008,Renewal,true,125632,2 - Develop,email,10,4,2,1
+Manager,Account 08,00100008,006000008,Renewal,true,125632,3 - Propose,meeting,9,3,1,0
+Manager,Account 08,00100008,006000008,Renewal,true,125632,3 - Propose,email,6,2,1,0
+Manager,Account 08,00100008,006000008,Renewal,true,125632,4 - Negotiate,meeting,12,4,2,1
+VP Sales,Account 08,00100008,006000008,Renewal,true,125632,4 - Negotiate,email,8,3,1,0
+Manager,Account 09,00100009,006000009,New Business,false,244485,1 - Qualify,meeting,5,1,1,0
+Manager,Account 09,00100009,006000009,New Business,false,244485,1 - Qualify,email,6,1,1,0
+Manager,Account 09,00100009,006000009,New Business,false,244485,2 - Develop,meeting,12,2,2,1
+VP Sales,Account 09,00100009,006000009,New Business,false,244485,2 - Develop,email,6,1,1,0
+Manager,Account 09,00100009,006000009,New Business,false,244485,3 - Propose,meeting,5,1,1,0
+Manager,Account 09,00100009,006000009,New Business,false,244485,3 - Propose,email,7,1,1,0
+Manager,Account 09,00100009,006000009,New Business,false,244485,4 - Negotiate,meeting,5,1,1,0
+Manager,Account 09,00100009,006000009,New Business,false,244485,4 - Negotiate,email,7,1,1,0
+Manager,Account 10,00100010,006000010,Upsell,false,339447,1 - Qualify,meeting,3,0,0,0
+Manager,Account 10,00100010,006000010,Upsell,false,339447,1 - Qualify,email,4,0,0,0
+Manager,Account 10,00100010,006000010,Upsell,false,339447,2 - Develop,meeting,12,2,2,1
+Manager,Account 10,00100010,006000010,Upsell,false,339447,2 - Develop,email,2,0,0,0
+Manager,Account 10,00100010,006000010,Upsell,false,339447,3 - Propose,meeting,6,1,1,0
+Manager,Account 10,00100010,006000010,Upsell,false,339447,3 - Propose,email,2,0,0,0
+Manager,Account 10,00100010,006000010,Upsell,false,339447,4 - Negotiate,meeting,7,1,1,0
+Manager,Account 10,00100010,006000010,Upsell,false,339447,4 - Negotiate,email,7,1,1,0
+Manager,Account 11,00100011,006000011,Renewal,false,260367,1 - Qualify,meeting,11,2,2,1
+VP Sales,Account 11,00100011,006000011,Renewal,false,260367,1 - Qualify,email,1,0,0,0
+Manager,Account 11,00100011,006000011,Renewal,false,260367,2 - Develop,meeting,10,2,2,1
+Manager,Account 11,00100011,006000011,Renewal,false,260367,2 - Develop,email,8,1,1,0
+Manager,Account 11,00100011,006000011,Renewal,false,260367,3 - Propose,meeting,7,1,1,0
+VP Sales,Account 11,00100011,006000011,Renewal,false,260367,3 - Propose,email,8,1,1,0
+Manager,Account 11,00100011,006000011,Renewal,false,260367,4 - Negotiate,meeting,2,0,0,0
+VP Sales,Account 11,00100011,006000011,Renewal,false,260367,4 - Negotiate,email,8,1,1,0
+Manager,Account 12,00100012,006000012,New Business,false,395908,1 - Qualify,meeting,1,0,0,0
+VP Sales,Account 12,00100012,006000012,New Business,false,395908,1 - Qualify,email,12,2,2,1
+VP Sales,Account 12,00100012,006000012,New Business,false,395908,2 - Develop,meeting,9,1,1,0
+VP Sales,Account 12,00100012,006000012,New Business,false,395908,2 - Develop,email,11,2,2,1
+Manager,Account 12,00100012,006000012,New Business,false,395908,3 - Propose,meeting,6,1,1,0
+VP Sales,Account 12,00100012,006000012,New Business,false,395908,3 - Propose,email,8,1,1,0
+Manager,Account 12,00100012,006000012,New Business,false,395908,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 12,00100012,006000012,New Business,false,395908,4 - Negotiate,email,10,2,2,1
+Manager,Account 13,00100013,006000013,Upsell,false,240147,1 - Qualify,meeting,2,0,0,0
+Manager,Account 13,00100013,006000013,Upsell,false,240147,1 - Qualify,email,4,0,0,0
+Manager,Account 13,00100013,006000013,Upsell,false,240147,2 - Develop,meeting,1,0,0,0
+Manager,Account 13,00100013,006000013,Upsell,false,240147,2 - Develop,email,4,0,0,0
+Manager,Account 13,00100013,006000013,Upsell,false,240147,3 - Propose,meeting,8,1,1,0
+Manager,Account 13,00100013,006000013,Upsell,false,240147,3 - Propose,email,9,1,1,0
+Manager,Account 13,00100013,006000013,Upsell,false,240147,4 - Negotiate,meeting,7,1,1,0
+Manager,Account 13,00100013,006000013,Upsell,false,240147,4 - Negotiate,email,3,0,0,0
+Manager,Account 14,00100014,006000014,Renewal,true,91624,1 - Qualify,meeting,5,2,1,0
+Manager,Account 14,00100014,006000014,Renewal,true,91624,1 - Qualify,email,7,2,1,0
+Manager,Account 14,00100014,006000014,Renewal,true,91624,2 - Develop,meeting,8,3,1,0
+VP Sales,Account 14,00100014,006000014,Renewal,true,91624,2 - Develop,email,5,2,1,0
+VP Sales,Account 14,00100014,006000014,Renewal,true,91624,3 - Propose,meeting,13,5,2,1
+VP Sales,Account 14,00100014,006000014,Renewal,true,91624,3 - Propose,email,9,3,1,0
+VP Sales,Account 14,00100014,006000014,Renewal,true,91624,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 14,00100014,006000014,Renewal,true,91624,4 - Negotiate,email,9,3,1,0
+Manager,Account 15,00100015,006000015,New Business,false,97974,1 - Qualify,meeting,9,1,1,0
+VP Sales,Account 15,00100015,006000015,New Business,false,97974,1 - Qualify,email,11,2,2,1
+VP Sales,Account 15,00100015,006000015,New Business,false,97974,2 - Develop,meeting,5,1,1,0
+Manager,Account 15,00100015,006000015,New Business,false,97974,2 - Develop,email,7,1,1,0
+VP Sales,Account 15,00100015,006000015,New Business,false,97974,3 - Propose,meeting,9,1,1,0
+VP Sales,Account 15,00100015,006000015,New Business,false,97974,3 - Propose,email,4,0,0,0
+Manager,Account 15,00100015,006000015,New Business,false,97974,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 15,00100015,006000015,New Business,false,97974,4 - Negotiate,email,6,1,1,0
+Manager,Account 16,00100016,006000016,Upsell,true,69857,1 - Qualify,meeting,15,6,3,1
+VP Sales,Account 16,00100016,006000016,Upsell,true,69857,1 - Qualify,email,14,5,2,1
+VP Sales,Account 16,00100016,006000016,Upsell,true,69857,2 - Develop,meeting,10,4,2,1
+Manager,Account 16,00100016,006000016,Upsell,true,69857,2 - Develop,email,16,6,3,1
+Manager,Account 16,00100016,006000016,Upsell,true,69857,3 - Propose,meeting,5,2,1,0
+Manager,Account 16,00100016,006000016,Upsell,true,69857,3 - Propose,email,5,2,1,0
+Manager,Account 16,00100016,006000016,Upsell,true,69857,4 - Negotiate,meeting,11,4,2,1
+VP Sales,Account 16,00100016,006000016,Upsell,true,69857,4 - Negotiate,email,10,4,2,1
+Manager,Account 17,00100017,006000017,Renewal,false,303571,1 - Qualify,meeting,4,0,0,0
+VP Sales,Account 17,00100017,006000017,Renewal,false,303571,1 - Qualify,email,5,1,1,0
+Manager,Account 17,00100017,006000017,Renewal,false,303571,2 - Develop,meeting,4,0,0,0
+Manager,Account 17,00100017,006000017,Renewal,false,303571,2 - Develop,email,10,2,2,1
+Manager,Account 17,00100017,006000017,Renewal,false,303571,3 - Propose,meeting,7,1,1,0
+VP Sales,Account 17,00100017,006000017,Renewal,false,303571,3 - Propose,email,8,1,1,0
+VP Sales,Account 17,00100017,006000017,Renewal,false,303571,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 17,00100017,006000017,Renewal,false,303571,4 - Negotiate,email,7,1,1,0
+VP Sales,Account 18,00100018,006000018,New Business,true,200987,1 - Qualify,meeting,6,2,1,0
+Manager,Account 18,00100018,006000018,New Business,true,200987,1 - Qualify,email,6,2,1,0
+VP Sales,Account 18,00100018,006000018,New Business,true,200987,2 - Develop,meeting,12,4,2,1
+Manager,Account 18,00100018,006000018,New Business,true,200987,2 - Develop,email,16,6,3,1
+Manager,Account 18,00100018,006000018,New Business,true,200987,3 - Propose,meeting,7,2,1,0
+Manager,Account 18,00100018,006000018,New Business,true,200987,3 - Propose,email,15,6,3,1
+VP Sales,Account 18,00100018,006000018,New Business,true,200987,4 - Negotiate,meeting,16,6,3,1
+Manager,Account 18,00100018,006000018,New Business,true,200987,4 - Negotiate,email,8,3,1,0
+VP Sales,Account 19,00100019,006000019,Upsell,true,61152,1 - Qualify,meeting,7,2,1,0
+VP Sales,Account 19,00100019,006000019,Upsell,true,61152,1 - Qualify,email,16,6,3,1
+Manager,Account 19,00100019,006000019,Upsell,true,61152,2 - Develop,meeting,6,2,1,0
+Manager,Account 19,00100019,006000019,Upsell,true,61152,2 - Develop,email,8,3,1,0
+Manager,Account 19,00100019,006000019,Upsell,true,61152,3 - Propose,meeting,5,2,1,0
+Manager,Account 19,00100019,006000019,Upsell,true,61152,3 - Propose,email,15,6,3,1
+Manager,Account 19,00100019,006000019,Upsell,true,61152,4 - Negotiate,meeting,16,6,3,1
+Manager,Account 19,00100019,006000019,Upsell,true,61152,4 - Negotiate,email,15,6,3,1
+Manager,Account 20,00100020,006000020,Renewal,true,390881,1 - Qualify,meeting,5,2,1,0
+VP Sales,Account 20,00100020,006000020,Renewal,true,390881,1 - Qualify,email,7,2,1,0
+VP Sales,Account 20,00100020,006000020,Renewal,true,390881,2 - Develop,meeting,12,4,2,1
+Manager,Account 20,00100020,006000020,Renewal,true,390881,2 - Develop,email,8,3,1,0
+Manager,Account 20,00100020,006000020,Renewal,true,390881,3 - Propose,meeting,10,4,2,1
+VP Sales,Account 20,00100020,006000020,Renewal,true,390881,3 - Propose,email,16,6,3,1
+Manager,Account 20,00100020,006000020,Renewal,true,390881,4 - Negotiate,meeting,9,3,1,0
+VP Sales,Account 20,00100020,006000020,Renewal,true,390881,4 - Negotiate,email,8,3,1,0
+Manager,Account 21,00100021,006000021,New Business,true,241792,1 - Qualify,meeting,15,6,3,1
+Manager,Account 21,00100021,006000021,New Business,true,241792,1 - Qualify,email,11,4,2,1
+Manager,Account 21,00100021,006000021,New Business,true,241792,2 - Develop,meeting,10,4,2,1
+VP Sales,Account 21,00100021,006000021,New Business,true,241792,2 - Develop,email,15,6,3,1
+Manager,Account 21,00100021,006000021,New Business,true,241792,3 - Propose,meeting,15,6,3,1
+VP Sales,Account 21,00100021,006000021,New Business,true,241792,3 - Propose,email,6,2,1,0
+Manager,Account 21,00100021,006000021,New Business,true,241792,4 - Negotiate,meeting,7,2,1,0
+Manager,Account 21,00100021,006000021,New Business,true,241792,4 - Negotiate,email,11,4,2,1
+VP Sales,Account 22,00100022,006000022,Upsell,true,11008,1 - Qualify,meeting,11,4,2,1
+VP Sales,Account 22,00100022,006000022,Upsell,true,11008,1 - Qualify,email,10,4,2,1
+Manager,Account 22,00100022,006000022,Upsell,true,11008,2 - Develop,meeting,8,3,1,0
+Manager,Account 22,00100022,006000022,Upsell,true,11008,2 - Develop,email,13,5,2,1
+Manager,Account 22,00100022,006000022,Upsell,true,11008,3 - Propose,meeting,9,3,1,0
+Manager,Account 22,00100022,006000022,Upsell,true,11008,3 - Propose,email,5,2,1,0
+Manager,Account 22,00100022,006000022,Upsell,true,11008,4 - Negotiate,meeting,12,4,2,1
+VP Sales,Account 22,00100022,006000022,Upsell,true,11008,4 - Negotiate,email,6,2,1,0
+Manager,Account 23,00100023,006000023,Renewal,false,198795,1 - Qualify,meeting,5,1,1,0
+Manager,Account 23,00100023,006000023,Renewal,false,198795,1 - Qualify,email,10,2,2,1
+VP Sales,Account 23,00100023,006000023,Renewal,false,198795,2 - Develop,meeting,2,0,0,0
+VP Sales,Account 23,00100023,006000023,Renewal,false,198795,2 - Develop,email,8,1,1,0
+Manager,Account 23,00100023,006000023,Renewal,false,198795,3 - Propose,meeting,4,0,0,0
+VP Sales,Account 23,00100023,006000023,Renewal,false,198795,3 - Propose,email,5,1,1,0
+VP Sales,Account 23,00100023,006000023,Renewal,false,198795,4 - Negotiate,meeting,10,2,2,1
+Manager,Account 23,00100023,006000023,Renewal,false,198795,4 - Negotiate,email,1,0,0,0
+Manager,Account 24,00100024,006000024,New Business,false,309546,1 - Qualify,meeting,3,0,0,0
+VP Sales,Account 24,00100024,006000024,New Business,false,309546,1 - Qualify,email,1,0,0,0
+Manager,Account 24,00100024,006000024,New Business,false,309546,2 - Develop,meeting,6,1,1,0
+Manager,Account 24,00100024,006000024,New Business,false,309546,2 - Develop,email,4,0,0,0
+VP Sales,Account 24,00100024,006000024,New Business,false,309546,3 - Propose,meeting,6,1,1,0
+Manager,Account 24,00100024,006000024,New Business,false,309546,3 - Propose,email,5,1,1,0
+Manager,Account 24,00100024,006000024,New Business,false,309546,4 - Negotiate,meeting,12,2,2,1
+Manager,Account 24,00100024,006000024,New Business,false,309546,4 - Negotiate,email,2,0,0,0
+Manager,Account 25,00100025,006000025,Upsell,false,383092,1 - Qualify,meeting,2,0,0,0
+Manager,Account 25,00100025,006000025,Upsell,false,383092,1 - Qualify,email,10,2,2,1
+VP Sales,Account 25,00100025,006000025,Upsell,false,383092,2 - Develop,meeting,1,0,0,0
+Manager,Account 25,00100025,006000025,Upsell,false,383092,2 - Develop,email,9,1,1,0
+Manager,Account 25,00100025,006000025,Upsell,false,383092,3 - Propose,meeting,7,1,1,0
+Manager,Account 25,00100025,006000025,Upsell,false,383092,3 - Propose,email,3,0,0,0
+VP Sales,Account 25,00100025,006000025,Upsell,false,383092,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 25,00100025,006000025,Upsell,false,383092,4 - Negotiate,email,12,2,2,1
+Manager,Account 26,00100026,006000026,Renewal,false,329058,1 - Qualify,meeting,3,0,0,0
+Manager,Account 26,00100026,006000026,Renewal,false,329058,1 - Qualify,email,11,2,2,1
+VP Sales,Account 26,00100026,006000026,Renewal,false,329058,2 - Develop,meeting,6,1,1,0
+Manager,Account 26,00100026,006000026,Renewal,false,329058,2 - Develop,email,11,2,2,1
+Manager,Account 26,00100026,006000026,Renewal,false,329058,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 26,00100026,006000026,Renewal,false,329058,3 - Propose,email,5,1,1,0
+VP Sales,Account 26,00100026,006000026,Renewal,false,329058,4 - Negotiate,meeting,4,0,0,0
+VP Sales,Account 26,00100026,006000026,Renewal,false,329058,4 - Negotiate,email,8,1,1,0
+VP Sales,Account 27,00100027,006000027,New Business,false,81848,1 - Qualify,meeting,9,1,1,0
+VP Sales,Account 27,00100027,006000027,New Business,false,81848,1 - Qualify,email,8,1,1,0
+Manager,Account 27,00100027,006000027,New Business,false,81848,2 - Develop,meeting,10,2,2,1
+VP Sales,Account 27,00100027,006000027,New Business,false,81848,2 - Develop,email,9,1,1,0
+VP Sales,Account 27,00100027,006000027,New Business,false,81848,3 - Propose,meeting,4,0,0,0
+VP Sales,Account 27,00100027,006000027,New Business,false,81848,3 - Propose,email,9,1,1,0
+Manager,Account 27,00100027,006000027,New Business,false,81848,4 - Negotiate,meeting,3,0,0,0
+Manager,Account 27,00100027,006000027,New Business,false,81848,4 - Negotiate,email,12,2,2,1
+VP Sales,Account 28,00100028,006000028,Upsell,false,315624,1 - Qualify,meeting,9,1,1,0
+VP Sales,Account 28,00100028,006000028,Upsell,false,315624,1 - Qualify,email,2,0,0,0
+Manager,Account 28,00100028,006000028,Upsell,false,315624,2 - Develop,meeting,1,0,0,0
+Manager,Account 28,00100028,006000028,Upsell,false,315624,2 - Develop,email,12,2,2,1
+Manager,Account 28,00100028,006000028,Upsell,false,315624,3 - Propose,meeting,12,2,2,1
+Manager,Account 28,00100028,006000028,Upsell,false,315624,3 - Propose,email,2,0,0,0
+Manager,Account 28,00100028,006000028,Upsell,false,315624,4 - Negotiate,meeting,3,0,0,0
+Manager,Account 28,00100028,006000028,Upsell,false,315624,4 - Negotiate,email,1,0,0,0
+Manager,Account 29,00100029,006000029,Renewal,true,223973,1 - Qualify,meeting,14,5,2,1
+Manager,Account 29,00100029,006000029,Renewal,true,223973,1 - Qualify,email,9,3,1,0
+VP Sales,Account 29,00100029,006000029,Renewal,true,223973,2 - Develop,meeting,6,2,1,0
+VP Sales,Account 29,00100029,006000029,Renewal,true,223973,2 - Develop,email,14,5,2,1
+Manager,Account 29,00100029,006000029,Renewal,true,223973,3 - Propose,meeting,8,3,1,0
+Manager,Account 29,00100029,006000029,Renewal,true,223973,3 - Propose,email,13,5,2,1
+Manager,Account 29,00100029,006000029,Renewal,true,223973,4 - Negotiate,meeting,5,2,1,0
+Manager,Account 29,00100029,006000029,Renewal,true,223973,4 - Negotiate,email,6,2,1,0
+VP Sales,Account 30,00100030,006000030,New Business,false,185751,1 - Qualify,meeting,2,0,0,0
+Manager,Account 30,00100030,006000030,New Business,false,185751,1 - Qualify,email,10,2,2,1
+Manager,Account 30,00100030,006000030,New Business,false,185751,2 - Develop,meeting,3,0,0,0
+VP Sales,Account 30,00100030,006000030,New Business,false,185751,2 - Develop,email,6,1,1,0
+Manager,Account 30,00100030,006000030,New Business,false,185751,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 30,00100030,006000030,New Business,false,185751,3 - Propose,email,3,0,0,0
+Manager,Account 30,00100030,006000030,New Business,false,185751,4 - Negotiate,meeting,7,1,1,0
+VP Sales,Account 30,00100030,006000030,New Business,false,185751,4 - Negotiate,email,1,0,0,0
+VP Sales,Account 31,00100031,006000031,Upsell,false,18097,1 - Qualify,meeting,4,0,0,0
+Manager,Account 31,00100031,006000031,Upsell,false,18097,1 - Qualify,email,9,1,1,0
+Manager,Account 31,00100031,006000031,Upsell,false,18097,2 - Develop,meeting,3,0,0,0
+VP Sales,Account 31,00100031,006000031,Upsell,false,18097,2 - Develop,email,3,0,0,0
+Manager,Account 31,00100031,006000031,Upsell,false,18097,3 - Propose,meeting,4,0,0,0
+Manager,Account 31,00100031,006000031,Upsell,false,18097,3 - Propose,email,12,2,2,1
+Manager,Account 31,00100031,006000031,Upsell,false,18097,4 - Negotiate,meeting,1,0,0,0
+VP Sales,Account 31,00100031,006000031,Upsell,false,18097,4 - Negotiate,email,8,1,1,0
+Manager,Account 32,00100032,006000032,Renewal,false,140201,1 - Qualify,meeting,9,1,1,0
+Manager,Account 32,00100032,006000032,Renewal,false,140201,1 - Qualify,email,2,0,0,0
+VP Sales,Account 32,00100032,006000032,Renewal,false,140201,2 - Develop,meeting,11,2,2,1
+VP Sales,Account 32,00100032,006000032,Renewal,false,140201,2 - Develop,email,11,2,2,1
+Manager,Account 32,00100032,006000032,Renewal,false,140201,3 - Propose,meeting,6,1,1,0
+Manager,Account 32,00100032,006000032,Renewal,false,140201,3 - Propose,email,2,0,0,0
+Manager,Account 32,00100032,006000032,Renewal,false,140201,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 32,00100032,006000032,Renewal,false,140201,4 - Negotiate,email,8,1,1,0
+Manager,Account 33,00100033,006000033,New Business,false,95714,1 - Qualify,meeting,12,2,2,1
+Manager,Account 33,00100033,006000033,New Business,false,95714,1 - Qualify,email,5,1,1,0
+Manager,Account 33,00100033,006000033,New Business,false,95714,2 - Develop,meeting,5,1,1,0
+Manager,Account 33,00100033,006000033,New Business,false,95714,2 - Develop,email,12,2,2,1
+Manager,Account 33,00100033,006000033,New Business,false,95714,3 - Propose,meeting,11,2,2,1
+Manager,Account 33,00100033,006000033,New Business,false,95714,3 - Propose,email,7,1,1,0
+Manager,Account 33,00100033,006000033,New Business,false,95714,4 - Negotiate,meeting,11,2,2,1
+VP Sales,Account 33,00100033,006000033,New Business,false,95714,4 - Negotiate,email,9,1,1,0
+Manager,Account 34,00100034,006000034,Upsell,true,282536,1 - Qualify,meeting,14,5,2,1
+VP Sales,Account 34,00100034,006000034,Upsell,true,282536,1 - Qualify,email,15,6,3,1
+Manager,Account 34,00100034,006000034,Upsell,true,282536,2 - Develop,meeting,9,3,1,0
+VP Sales,Account 34,00100034,006000034,Upsell,true,282536,2 - Develop,email,8,3,1,0
+Manager,Account 34,00100034,006000034,Upsell,true,282536,3 - Propose,meeting,14,5,2,1
+Manager,Account 34,00100034,006000034,Upsell,true,282536,3 - Propose,email,8,3,1,0
+Manager,Account 34,00100034,006000034,Upsell,true,282536,4 - Negotiate,meeting,14,5,2,1
+Manager,Account 34,00100034,006000034,Upsell,true,282536,4 - Negotiate,email,15,6,3,1
+Manager,Account 35,00100035,006000035,Renewal,false,197023,1 - Qualify,meeting,1,0,0,0
+Manager,Account 35,00100035,006000035,Renewal,false,197023,1 - Qualify,email,7,1,1,0
+Manager,Account 35,00100035,006000035,Renewal,false,197023,2 - Develop,meeting,11,2,2,1
+Manager,Account 35,00100035,006000035,Renewal,false,197023,2 - Develop,email,6,1,1,0
+Manager,Account 35,00100035,006000035,Renewal,false,197023,3 - Propose,meeting,7,1,1,0
+Manager,Account 35,00100035,006000035,Renewal,false,197023,3 - Propose,email,4,0,0,0
+Manager,Account 35,00100035,006000035,Renewal,false,197023,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 35,00100035,006000035,Renewal,false,197023,4 - Negotiate,email,7,1,1,0
+Manager,Account 36,00100036,006000036,New Business,false,312153,1 - Qualify,meeting,1,0,0,0
+VP Sales,Account 36,00100036,006000036,New Business,false,312153,1 - Qualify,email,10,2,2,1
+Manager,Account 36,00100036,006000036,New Business,false,312153,2 - Develop,meeting,2,0,0,0
+Manager,Account 36,00100036,006000036,New Business,false,312153,2 - Develop,email,8,1,1,0
+VP Sales,Account 36,00100036,006000036,New Business,false,312153,3 - Propose,meeting,10,2,2,1
+Manager,Account 36,00100036,006000036,New Business,false,312153,3 - Propose,email,3,0,0,0
+VP Sales,Account 36,00100036,006000036,New Business,false,312153,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 36,00100036,006000036,New Business,false,312153,4 - Negotiate,email,7,1,1,0
+VP Sales,Account 37,00100037,006000037,Upsell,true,244062,1 - Qualify,meeting,14,5,2,1
+VP Sales,Account 37,00100037,006000037,Upsell,true,244062,1 - Qualify,email,10,4,2,1
+VP Sales,Account 37,00100037,006000037,Upsell,true,244062,2 - Develop,meeting,9,3,1,0
+Manager,Account 37,00100037,006000037,Upsell,true,244062,2 - Develop,email,12,4,2,1
+Manager,Account 37,00100037,006000037,Upsell,true,244062,3 - Propose,meeting,13,5,2,1
+VP Sales,Account 37,00100037,006000037,Upsell,true,244062,3 - Propose,email,6,2,1,0
+VP Sales,Account 37,00100037,006000037,Upsell,true,244062,4 - Negotiate,meeting,15,6,3,1
+Manager,Account 37,00100037,006000037,Upsell,true,244062,4 - Negotiate,email,7,2,1,0
+Manager,Account 38,00100038,006000038,Renewal,false,20846,1 - Qualify,meeting,6,1,1,0
+VP Sales,Account 38,00100038,006000038,Renewal,false,20846,1 - Qualify,email,6,1,1,0
+Manager,Account 38,00100038,006000038,Renewal,false,20846,2 - Develop,meeting,6,1,1,0
+Manager,Account 38,00100038,006000038,Renewal,false,20846,2 - Develop,email,10,2,2,1
+Manager,Account 38,00100038,006000038,Renewal,false,20846,3 - Propose,meeting,7,1,1,0
+Manager,Account 38,00100038,006000038,Renewal,false,20846,3 - Propose,email,6,1,1,0
+Manager,Account 38,00100038,006000038,Renewal,false,20846,4 - Negotiate,meeting,9,1,1,0
+VP Sales,Account 38,00100038,006000038,Renewal,false,20846,4 - Negotiate,email,10,2,2,1
+Manager,Account 39,00100039,006000039,New Business,true,98017,1 - Qualify,meeting,7,2,1,0
+VP Sales,Account 39,00100039,006000039,New Business,true,98017,1 - Qualify,email,5,2,1,0
+VP Sales,Account 39,00100039,006000039,New Business,true,98017,2 - Develop,meeting,7,2,1,0
+Manager,Account 39,00100039,006000039,New Business,true,98017,2 - Develop,email,8,3,1,0
+VP Sales,Account 39,00100039,006000039,New Business,true,98017,3 - Propose,meeting,15,6,3,1
+Manager,Account 39,00100039,006000039,New Business,true,98017,3 - Propose,email,10,4,2,1
+Manager,Account 39,00100039,006000039,New Business,true,98017,4 - Negotiate,meeting,13,5,2,1
+Manager,Account 39,00100039,006000039,New Business,true,98017,4 - Negotiate,email,13,5,2,1
+Manager,Account 40,00100040,006000040,Upsell,true,20198,1 - Qualify,meeting,7,2,1,0
+Manager,Account 40,00100040,006000040,Upsell,true,20198,1 - Qualify,email,9,3,1,0
+Manager,Account 40,00100040,006000040,Upsell,true,20198,2 - Develop,meeting,6,2,1,0
+Manager,Account 40,00100040,006000040,Upsell,true,20198,2 - Develop,email,10,4,2,1
+Manager,Account 40,00100040,006000040,Upsell,true,20198,3 - Propose,meeting,9,3,1,0
+Manager,Account 40,00100040,006000040,Upsell,true,20198,3 - Propose,email,15,6,3,1
+Manager,Account 40,00100040,006000040,Upsell,true,20198,4 - Negotiate,meeting,15,6,3,1
+Manager,Account 40,00100040,006000040,Upsell,true,20198,4 - Negotiate,email,13,5,2,1
+Manager,Account 41,00100041,006000041,Renewal,false,19273,1 - Qualify,meeting,1,0,0,0
+Manager,Account 41,00100041,006000041,Renewal,false,19273,1 - Qualify,email,8,1,1,0
+Manager,Account 41,00100041,006000041,Renewal,false,19273,2 - Develop,meeting,12,2,2,1
+Manager,Account 41,00100041,006000041,Renewal,false,19273,2 - Develop,email,1,0,0,0
+VP Sales,Account 41,00100041,006000041,Renewal,false,19273,3 - Propose,meeting,11,2,2,1
+Manager,Account 41,00100041,006000041,Renewal,false,19273,3 - Propose,email,7,1,1,0
+Manager,Account 41,00100041,006000041,Renewal,false,19273,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 41,00100041,006000041,Renewal,false,19273,4 - Negotiate,email,12,2,2,1
+VP Sales,Account 42,00100042,006000042,New Business,true,134973,1 - Qualify,meeting,12,4,2,1
+Manager,Account 42,00100042,006000042,New Business,true,134973,1 - Qualify,email,10,4,2,1
+Manager,Account 42,00100042,006000042,New Business,true,134973,2 - Develop,meeting,5,2,1,0
+VP Sales,Account 42,00100042,006000042,New Business,true,134973,2 - Develop,email,9,3,1,0
+Manager,Account 42,00100042,006000042,New Business,true,134973,3 - Propose,meeting,14,5,2,1
+VP Sales,Account 42,00100042,006000042,New Business,true,134973,3 - Propose,email,13,5,2,1
+VP Sales,Account 42,00100042,006000042,New Business,true,134973,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 42,00100042,006000042,New Business,true,134973,4 - Negotiate,email,14,5,2,1
+Manager,Account 43,00100043,006000043,Upsell,true,33682,1 - Qualify,meeting,9,3,1,0
+VP Sales,Account 43,00100043,006000043,Upsell,true,33682,1 - Qualify,email,8,3,1,0
+VP Sales,Account 43,00100043,006000043,Upsell,true,33682,2 - Develop,meeting,13,5,2,1
+Manager,Account 43,00100043,006000043,Upsell,true,33682,2 - Develop,email,13,5,2,1
+VP Sales,Account 43,00100043,006000043,Upsell,true,33682,3 - Propose,meeting,15,6,3,1
+Manager,Account 43,00100043,006000043,Upsell,true,33682,3 - Propose,email,15,6,3,1
+Manager,Account 43,00100043,006000043,Upsell,true,33682,4 - Negotiate,meeting,12,4,2,1
+Manager,Account 43,00100043,006000043,Upsell,true,33682,4 - Negotiate,email,16,6,3,1
+Manager,Account 44,00100044,006000044,Renewal,false,156602,1 - Qualify,meeting,5,1,1,0
+Manager,Account 44,00100044,006000044,Renewal,false,156602,1 - Qualify,email,10,2,2,1
+Manager,Account 44,00100044,006000044,Renewal,false,156602,2 - Develop,meeting,1,0,0,0
+Manager,Account 44,00100044,006000044,Renewal,false,156602,2 - Develop,email,6,1,1,0
+Manager,Account 44,00100044,006000044,Renewal,false,156602,3 - Propose,meeting,4,0,0,0
+VP Sales,Account 44,00100044,006000044,Renewal,false,156602,3 - Propose,email,1,0,0,0
+Manager,Account 44,00100044,006000044,Renewal,false,156602,4 - Negotiate,meeting,12,2,2,1
+Manager,Account 44,00100044,006000044,Renewal,false,156602,4 - Negotiate,email,11,2,2,1
+Manager,Account 45,00100045,006000045,New Business,true,320279,1 - Qualify,meeting,5,2,1,0
+Manager,Account 45,00100045,006000045,New Business,true,320279,1 - Qualify,email,11,4,2,1
+Manager,Account 45,00100045,006000045,New Business,true,320279,2 - Develop,meeting,10,4,2,1
+VP Sales,Account 45,00100045,006000045,New Business,true,320279,2 - Develop,email,7,2,1,0
+VP Sales,Account 45,00100045,006000045,New Business,true,320279,3 - Propose,meeting,12,4,2,1
+Manager,Account 45,00100045,006000045,New Business,true,320279,3 - Propose,email,10,4,2,1
+VP Sales,Account 45,00100045,006000045,New Business,true,320279,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 45,00100045,006000045,New Business,true,320279,4 - Negotiate,email,9,3,1,0
+Manager,Account 46,00100046,006000046,Upsell,true,252249,1 - Qualify,meeting,10,4,2,1
+VP Sales,Account 46,00100046,006000046,Upsell,true,252249,1 - Qualify,email,12,4,2,1
+Manager,Account 46,00100046,006000046,Upsell,true,252249,2 - Develop,meeting,8,3,1,0
+Manager,Account 46,00100046,006000046,Upsell,true,252249,2 - Develop,email,14,5,2,1
+Manager,Account 46,00100046,006000046,Upsell,true,252249,3 - Propose,meeting,11,4,2,1
+VP Sales,Account 46,00100046,006000046,Upsell,true,252249,3 - Propose,email,10,4,2,1
+Manager,Account 46,00100046,006000046,Upsell,true,252249,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 46,00100046,006000046,Upsell,true,252249,4 - Negotiate,email,12,4,2,1
+Manager,Account 47,00100047,006000047,Renewal,true,342918,1 - Qualify,meeting,15,6,3,1
+VP Sales,Account 47,00100047,006000047,Renewal,true,342918,1 - Qualify,email,6,2,1,0
+Manager,Account 47,00100047,006000047,Renewal,true,342918,2 - Develop,meeting,10,4,2,1
+Manager,Account 47,00100047,006000047,Renewal,true,342918,2 - Develop,email,11,4,2,1
+Manager,Account 47,00100047,006000047,Renewal,true,342918,3 - Propose,meeting,9,3,1,0
+VP Sales,Account 47,00100047,006000047,Renewal,true,342918,3 - Propose,email,6,2,1,0
+VP Sales,Account 47,00100047,006000047,Renewal,true,342918,4 - Negotiate,meeting,5,2,1,0
+Manager,Account 47,00100047,006000047,Renewal,true,342918,4 - Negotiate,email,16,6,3,1
+Manager,Account 48,00100048,006000048,New Business,true,28983,1 - Qualify,meeting,10,4,2,1
+VP Sales,Account 48,00100048,006000048,New Business,true,28983,1 - Qualify,email,10,4,2,1
+Manager,Account 48,00100048,006000048,New Business,true,28983,2 - Develop,meeting,8,3,1,0
+VP Sales,Account 48,00100048,006000048,New Business,true,28983,2 - Develop,email,13,5,2,1
+Manager,Account 48,00100048,006000048,New Business,true,28983,3 - Propose,meeting,14,5,2,1
+Manager,Account 48,00100048,006000048,New Business,true,28983,3 - Propose,email,11,4,2,1
+VP Sales,Account 48,00100048,006000048,New Business,true,28983,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 48,00100048,006000048,New Business,true,28983,4 - Negotiate,email,9,3,1,0
+Manager,Account 49,00100049,006000049,Upsell,false,187496,1 - Qualify,meeting,3,0,0,0
+Manager,Account 49,00100049,006000049,Upsell,false,187496,1 - Qualify,email,11,2,2,1
+Manager,Account 49,00100049,006000049,Upsell,false,187496,2 - Develop,meeting,2,0,0,0
+Manager,Account 49,00100049,006000049,Upsell,false,187496,2 - Develop,email,7,1,1,0
+Manager,Account 49,00100049,006000049,Upsell,false,187496,3 - Propose,meeting,12,2,2,1
+Manager,Account 49,00100049,006000049,Upsell,false,187496,3 - Propose,email,7,1,1,0
+Manager,Account 49,00100049,006000049,Upsell,false,187496,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 49,00100049,006000049,Upsell,false,187496,4 - Negotiate,email,3,0,0,0
+Manager,Account 50,00100050,006000050,Renewal,false,305921,1 - Qualify,meeting,3,0,0,0
+Manager,Account 50,00100050,006000050,Renewal,false,305921,1 - Qualify,email,9,1,1,0
+VP Sales,Account 50,00100050,006000050,Renewal,false,305921,2 - Develop,meeting,5,1,1,0
+Manager,Account 50,00100050,006000050,Renewal,false,305921,2 - Develop,email,6,1,1,0
+VP Sales,Account 50,00100050,006000050,Renewal,false,305921,3 - Propose,meeting,7,1,1,0
+Manager,Account 50,00100050,006000050,Renewal,false,305921,3 - Propose,email,1,0,0,0
+VP Sales,Account 50,00100050,006000050,Renewal,false,305921,4 - Negotiate,meeting,11,2,2,1
+Manager,Account 50,00100050,006000050,Renewal,false,305921,4 - Negotiate,email,7,1,1,0
+Manager,Account 51,00100051,006000051,New Business,false,304167,1 - Qualify,meeting,10,2,2,1
+Manager,Account 51,00100051,006000051,New Business,false,304167,1 - Qualify,email,11,2,2,1
+VP Sales,Account 51,00100051,006000051,New Business,false,304167,2 - Develop,meeting,3,0,0,0
+Manager,Account 51,00100051,006000051,New Business,false,304167,2 - Develop,email,11,2,2,1
+Manager,Account 51,00100051,006000051,New Business,false,304167,3 - Propose,meeting,4,0,0,0
+Manager,Account 51,00100051,006000051,New Business,false,304167,3 - Propose,email,5,1,1,0
+Manager,Account 51,00100051,006000051,New Business,false,304167,4 - Negotiate,meeting,12,2,2,1
+Manager,Account 51,00100051,006000051,New Business,false,304167,4 - Negotiate,email,11,2,2,1
+VP Sales,Account 52,00100052,006000052,Upsell,false,140696,1 - Qualify,meeting,5,1,1,0
+Manager,Account 52,00100052,006000052,Upsell,false,140696,1 - Qualify,email,12,2,2,1
+Manager,Account 52,00100052,006000052,Upsell,false,140696,2 - Develop,meeting,7,1,1,0
+Manager,Account 52,00100052,006000052,Upsell,false,140696,2 - Develop,email,5,1,1,0
+Manager,Account 52,00100052,006000052,Upsell,false,140696,3 - Propose,meeting,10,2,2,1
+VP Sales,Account 52,00100052,006000052,Upsell,false,140696,3 - Propose,email,9,1,1,0
+Manager,Account 52,00100052,006000052,Upsell,false,140696,4 - Negotiate,meeting,4,0,0,0
+VP Sales,Account 52,00100052,006000052,Upsell,false,140696,4 - Negotiate,email,5,1,1,0
+Manager,Account 53,00100053,006000053,Renewal,true,67160,1 - Qualify,meeting,15,6,3,1
+Manager,Account 53,00100053,006000053,Renewal,true,67160,1 - Qualify,email,6,2,1,0
+Manager,Account 53,00100053,006000053,Renewal,true,67160,2 - Develop,meeting,16,6,3,1
+Manager,Account 53,00100053,006000053,Renewal,true,67160,2 - Develop,email,6,2,1,0
+VP Sales,Account 53,00100053,006000053,Renewal,true,67160,3 - Propose,meeting,10,4,2,1
+Manager,Account 53,00100053,006000053,Renewal,true,67160,3 - Propose,email,12,4,2,1
+Manager,Account 53,00100053,006000053,Renewal,true,67160,4 - Negotiate,meeting,7,2,1,0
+VP Sales,Account 53,00100053,006000053,Renewal,true,67160,4 - Negotiate,email,13,5,2,1
+Manager,Account 54,00100054,006000054,New Business,true,274647,1 - Qualify,meeting,12,4,2,1
+Manager,Account 54,00100054,006000054,New Business,true,274647,1 - Qualify,email,14,5,2,1
+Manager,Account 54,00100054,006000054,New Business,true,274647,2 - Develop,meeting,5,2,1,0
+VP Sales,Account 54,00100054,006000054,New Business,true,274647,2 - Develop,email,12,4,2,1
+VP Sales,Account 54,00100054,006000054,New Business,true,274647,3 - Propose,meeting,8,3,1,0
+Manager,Account 54,00100054,006000054,New Business,true,274647,3 - Propose,email,10,4,2,1
+Manager,Account 54,00100054,006000054,New Business,true,274647,4 - Negotiate,meeting,13,5,2,1
+Manager,Account 54,00100054,006000054,New Business,true,274647,4 - Negotiate,email,8,3,1,0
+VP Sales,Account 55,00100055,006000055,Upsell,true,247885,1 - Qualify,meeting,8,3,1,0
+Manager,Account 55,00100055,006000055,Upsell,true,247885,1 - Qualify,email,14,5,2,1
+VP Sales,Account 55,00100055,006000055,Upsell,true,247885,2 - Develop,meeting,5,2,1,0
+VP Sales,Account 55,00100055,006000055,Upsell,true,247885,2 - Develop,email,7,2,1,0
+VP Sales,Account 55,00100055,006000055,Upsell,true,247885,3 - Propose,meeting,13,5,2,1
+VP Sales,Account 55,00100055,006000055,Upsell,true,247885,3 - Propose,email,10,4,2,1
+VP Sales,Account 55,00100055,006000055,Upsell,true,247885,4 - Negotiate,meeting,15,6,3,1
+Manager,Account 55,00100055,006000055,Upsell,true,247885,4 - Negotiate,email,6,2,1,0
+Manager,Account 56,00100056,006000056,Renewal,false,346369,1 - Qualify,meeting,7,1,1,0
+Manager,Account 56,00100056,006000056,Renewal,false,346369,1 - Qualify,email,10,2,2,1
+Manager,Account 56,00100056,006000056,Renewal,false,346369,2 - Develop,meeting,11,2,2,1
+Manager,Account 56,00100056,006000056,Renewal,false,346369,2 - Develop,email,1,0,0,0
+Manager,Account 56,00100056,006000056,Renewal,false,346369,3 - Propose,meeting,9,1,1,0
+VP Sales,Account 56,00100056,006000056,Renewal,false,346369,3 - Propose,email,5,1,1,0
+Manager,Account 56,00100056,006000056,Renewal,false,346369,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 56,00100056,006000056,Renewal,false,346369,4 - Negotiate,email,7,1,1,0
+Manager,Account 57,00100057,006000057,New Business,false,339383,1 - Qualify,meeting,11,2,2,1
+Manager,Account 57,00100057,006000057,New Business,false,339383,1 - Qualify,email,10,2,2,1
+Manager,Account 57,00100057,006000057,New Business,false,339383,2 - Develop,meeting,6,1,1,0
+Manager,Account 57,00100057,006000057,New Business,false,339383,2 - Develop,email,2,0,0,0
+Manager,Account 57,00100057,006000057,New Business,false,339383,3 - Propose,meeting,5,1,1,0
+Manager,Account 57,00100057,006000057,New Business,false,339383,3 - Propose,email,2,0,0,0
+VP Sales,Account 57,00100057,006000057,New Business,false,339383,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 57,00100057,006000057,New Business,false,339383,4 - Negotiate,email,4,0,0,0
+VP Sales,Account 58,00100058,006000058,Upsell,false,141376,1 - Qualify,meeting,12,2,2,1
+VP Sales,Account 58,00100058,006000058,Upsell,false,141376,1 - Qualify,email,5,1,1,0
+Manager,Account 58,00100058,006000058,Upsell,false,141376,2 - Develop,meeting,12,2,2,1
+Manager,Account 58,00100058,006000058,Upsell,false,141376,2 - Develop,email,5,1,1,0
+Manager,Account 58,00100058,006000058,Upsell,false,141376,3 - Propose,meeting,1,0,0,0
+Manager,Account 58,00100058,006000058,Upsell,false,141376,3 - Propose,email,12,2,2,1
+VP Sales,Account 58,00100058,006000058,Upsell,false,141376,4 - Negotiate,meeting,1,0,0,0
+Manager,Account 58,00100058,006000058,Upsell,false,141376,4 - Negotiate,email,4,0,0,0
+Manager,Account 59,00100059,006000059,Renewal,true,160744,1 - Qualify,meeting,15,6,3,1
+Manager,Account 59,00100059,006000059,Renewal,true,160744,1 - Qualify,email,15,6,3,1
+Manager,Account 59,00100059,006000059,Renewal,true,160744,2 - Develop,meeting,13,5,2,1
+Manager,Account 59,00100059,006000059,Renewal,true,160744,2 - Develop,email,7,2,1,0
+Manager,Account 59,00100059,006000059,Renewal,true,160744,3 - Propose,meeting,10,4,2,1
+VP Sales,Account 59,00100059,006000059,Renewal,true,160744,3 - Propose,email,9,3,1,0
+VP Sales,Account 59,00100059,006000059,Renewal,true,160744,4 - Negotiate,meeting,16,6,3,1
+Manager,Account 59,00100059,006000059,Renewal,true,160744,4 - Negotiate,email,10,4,2,1
+Manager,Account 60,00100060,006000060,New Business,false,41635,1 - Qualify,meeting,1,0,0,0
+Manager,Account 60,00100060,006000060,New Business,false,41635,1 - Qualify,email,8,1,1,0
+VP Sales,Account 60,00100060,006000060,New Business,false,41635,2 - Develop,meeting,6,1,1,0
+Manager,Account 60,00100060,006000060,New Business,false,41635,2 - Develop,email,3,0,0,0
+Manager,Account 60,00100060,006000060,New Business,false,41635,3 - Propose,meeting,8,1,1,0
+Manager,Account 60,00100060,006000060,New Business,false,41635,3 - Propose,email,2,0,0,0
+Manager,Account 60,00100060,006000060,New Business,false,41635,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 60,00100060,006000060,New Business,false,41635,4 - Negotiate,email,3,0,0,0
+Manager,Account 61,00100061,006000061,Upsell,false,54288,1 - Qualify,meeting,9,1,1,0
+Manager,Account 61,00100061,006000061,Upsell,false,54288,1 - Qualify,email,9,1,1,0
+VP Sales,Account 61,00100061,006000061,Upsell,false,54288,2 - Develop,meeting,6,1,1,0
+Manager,Account 61,00100061,006000061,Upsell,false,54288,2 - Develop,email,1,0,0,0
+Manager,Account 61,00100061,006000061,Upsell,false,54288,3 - Propose,meeting,4,0,0,0
+Manager,Account 61,00100061,006000061,Upsell,false,54288,3 - Propose,email,9,1,1,0
+Manager,Account 61,00100061,006000061,Upsell,false,54288,4 - Negotiate,meeting,12,2,2,1
+Manager,Account 61,00100061,006000061,Upsell,false,54288,4 - Negotiate,email,3,0,0,0
+VP Sales,Account 62,00100062,006000062,Renewal,false,74969,1 - Qualify,meeting,7,1,1,0
+VP Sales,Account 62,00100062,006000062,Renewal,false,74969,1 - Qualify,email,1,0,0,0
+Manager,Account 62,00100062,006000062,Renewal,false,74969,2 - Develop,meeting,12,2,2,1
+VP Sales,Account 62,00100062,006000062,Renewal,false,74969,2 - Develop,email,7,1,1,0
+Manager,Account 62,00100062,006000062,Renewal,false,74969,3 - Propose,meeting,2,0,0,0
+VP Sales,Account 62,00100062,006000062,Renewal,false,74969,3 - Propose,email,1,0,0,0
+Manager,Account 62,00100062,006000062,Renewal,false,74969,4 - Negotiate,meeting,10,2,2,1
+Manager,Account 62,00100062,006000062,Renewal,false,74969,4 - Negotiate,email,2,0,0,0
+Manager,Account 63,00100063,006000063,New Business,false,161155,1 - Qualify,meeting,6,1,1,0
+Manager,Account 63,00100063,006000063,New Business,false,161155,1 - Qualify,email,8,1,1,0
+Manager,Account 63,00100063,006000063,New Business,false,161155,2 - Develop,meeting,11,2,2,1
+VP Sales,Account 63,00100063,006000063,New Business,false,161155,2 - Develop,email,1,0,0,0
+Manager,Account 63,00100063,006000063,New Business,false,161155,3 - Propose,meeting,6,1,1,0
+VP Sales,Account 63,00100063,006000063,New Business,false,161155,3 - Propose,email,2,0,0,0
+Manager,Account 63,00100063,006000063,New Business,false,161155,4 - Negotiate,meeting,3,0,0,0
+Manager,Account 63,00100063,006000063,New Business,false,161155,4 - Negotiate,email,8,1,1,0
+Manager,Account 64,00100064,006000064,Upsell,false,160558,1 - Qualify,meeting,10,2,2,1
+Manager,Account 64,00100064,006000064,Upsell,false,160558,1 - Qualify,email,11,2,2,1
+Manager,Account 64,00100064,006000064,Upsell,false,160558,2 - Develop,meeting,8,1,1,0
+Manager,Account 64,00100064,006000064,Upsell,false,160558,2 - Develop,email,10,2,2,1
+Manager,Account 64,00100064,006000064,Upsell,false,160558,3 - Propose,meeting,1,0,0,0
+Manager,Account 64,00100064,006000064,Upsell,false,160558,3 - Propose,email,3,0,0,0
+Manager,Account 64,00100064,006000064,Upsell,false,160558,4 - Negotiate,meeting,11,2,2,1
+Manager,Account 64,00100064,006000064,Upsell,false,160558,4 - Negotiate,email,4,0,0,0
+Manager,Account 65,00100065,006000065,Renewal,true,350974,1 - Qualify,meeting,12,4,2,1
+Manager,Account 65,00100065,006000065,Renewal,true,350974,1 - Qualify,email,12,4,2,1
+Manager,Account 65,00100065,006000065,Renewal,true,350974,2 - Develop,meeting,6,2,1,0
+Manager,Account 65,00100065,006000065,Renewal,true,350974,2 - Develop,email,14,5,2,1
+VP Sales,Account 65,00100065,006000065,Renewal,true,350974,3 - Propose,meeting,16,6,3,1
+VP Sales,Account 65,00100065,006000065,Renewal,true,350974,3 - Propose,email,8,3,1,0
+Manager,Account 65,00100065,006000065,Renewal,true,350974,4 - Negotiate,meeting,14,5,2,1
+Manager,Account 65,00100065,006000065,Renewal,true,350974,4 - Negotiate,email,8,3,1,0
+Manager,Account 66,00100066,006000066,New Business,false,297325,1 - Qualify,meeting,12,2,2,1
+VP Sales,Account 66,00100066,006000066,New Business,false,297325,1 - Qualify,email,4,0,0,0
+Manager,Account 66,00100066,006000066,New Business,false,297325,2 - Develop,meeting,4,0,0,0
+Manager,Account 66,00100066,006000066,New Business,false,297325,2 - Develop,email,1,0,0,0
+VP Sales,Account 66,00100066,006000066,New Business,false,297325,3 - Propose,meeting,7,1,1,0
+Manager,Account 66,00100066,006000066,New Business,false,297325,3 - Propose,email,4,0,0,0
+Manager,Account 66,00100066,006000066,New Business,false,297325,4 - Negotiate,meeting,1,0,0,0
+Manager,Account 66,00100066,006000066,New Business,false,297325,4 - Negotiate,email,11,2,2,1
+VP Sales,Account 67,00100067,006000067,Upsell,false,26233,1 - Qualify,meeting,7,1,1,0
+Manager,Account 67,00100067,006000067,Upsell,false,26233,1 - Qualify,email,3,0,0,0
+Manager,Account 67,00100067,006000067,Upsell,false,26233,2 - Develop,meeting,8,1,1,0
+Manager,Account 67,00100067,006000067,Upsell,false,26233,2 - Develop,email,2,0,0,0
+VP Sales,Account 67,00100067,006000067,Upsell,false,26233,3 - Propose,meeting,12,2,2,1
+Manager,Account 67,00100067,006000067,Upsell,false,26233,3 - Propose,email,3,0,0,0
+Manager,Account 67,00100067,006000067,Upsell,false,26233,4 - Negotiate,meeting,3,0,0,0
+VP Sales,Account 67,00100067,006000067,Upsell,false,26233,4 - Negotiate,email,6,1,1,0
+Manager,Account 68,00100068,006000068,Renewal,true,210892,1 - Qualify,meeting,11,4,2,1
+VP Sales,Account 68,00100068,006000068,Renewal,true,210892,1 - Qualify,email,5,2,1,0
+Manager,Account 68,00100068,006000068,Renewal,true,210892,2 - Develop,meeting,5,2,1,0
+Manager,Account 68,00100068,006000068,Renewal,true,210892,2 - Develop,email,6,2,1,0
+Manager,Account 68,00100068,006000068,Renewal,true,210892,3 - Propose,meeting,14,5,2,1
+VP Sales,Account 68,00100068,006000068,Renewal,true,210892,3 - Propose,email,13,5,2,1
+Manager,Account 68,00100068,006000068,Renewal,true,210892,4 - Negotiate,meeting,5,2,1,0
+VP Sales,Account 68,00100068,006000068,Renewal,true,210892,4 - Negotiate,email,14,5,2,1
+Manager,Account 69,00100069,006000069,New Business,true,135064,1 - Qualify,meeting,11,4,2,1
+Manager,Account 69,00100069,006000069,New Business,true,135064,1 - Qualify,email,13,5,2,1
+VP Sales,Account 69,00100069,006000069,New Business,true,135064,2 - Develop,meeting,5,2,1,0
+Manager,Account 69,00100069,006000069,New Business,true,135064,2 - Develop,email,13,5,2,1
+VP Sales,Account 69,00100069,006000069,New Business,true,135064,3 - Propose,meeting,12,4,2,1
+Manager,Account 69,00100069,006000069,New Business,true,135064,3 - Propose,email,16,6,3,1
+Manager,Account 69,00100069,006000069,New Business,true,135064,4 - Negotiate,meeting,8,3,1,0
+Manager,Account 69,00100069,006000069,New Business,true,135064,4 - Negotiate,email,6,2,1,0
+Manager,Account 70,00100070,006000070,Upsell,true,123320,1 - Qualify,meeting,6,2,1,0
+Manager,Account 70,00100070,006000070,Upsell,true,123320,1 - Qualify,email,10,4,2,1
+Manager,Account 70,00100070,006000070,Upsell,true,123320,2 - Develop,meeting,6,2,1,0
+VP Sales,Account 70,00100070,006000070,Upsell,true,123320,2 - Develop,email,6,2,1,0
+Manager,Account 70,00100070,006000070,Upsell,true,123320,3 - Propose,meeting,9,3,1,0
+VP Sales,Account 70,00100070,006000070,Upsell,true,123320,3 - Propose,email,9,3,1,0
+Manager,Account 70,00100070,006000070,Upsell,true,123320,4 - Negotiate,meeting,14,5,2,1
+Manager,Account 70,00100070,006000070,Upsell,true,123320,4 - Negotiate,email,10,4,2,1
+VP Sales,Account 71,00100071,006000071,Renewal,false,45021,1 - Qualify,meeting,1,0,0,0
+VP Sales,Account 71,00100071,006000071,Renewal,false,45021,1 - Qualify,email,1,0,0,0
+Manager,Account 71,00100071,006000071,Renewal,false,45021,2 - Develop,meeting,12,2,2,1
+Manager,Account 71,00100071,006000071,Renewal,false,45021,2 - Develop,email,4,0,0,0
+Manager,Account 71,00100071,006000071,Renewal,false,45021,3 - Propose,meeting,8,1,1,0
+Manager,Account 71,00100071,006000071,Renewal,false,45021,3 - Propose,email,10,2,2,1
+Manager,Account 71,00100071,006000071,Renewal,false,45021,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 71,00100071,006000071,Renewal,false,45021,4 - Negotiate,email,12,2,2,1
+Manager,Account 72,00100072,006000072,New Business,true,281054,1 - Qualify,meeting,6,2,1,0
+Manager,Account 72,00100072,006000072,New Business,true,281054,1 - Qualify,email,5,2,1,0
+Manager,Account 72,00100072,006000072,New Business,true,281054,2 - Develop,meeting,5,2,1,0
+Manager,Account 72,00100072,006000072,New Business,true,281054,2 - Develop,email,7,2,1,0
+Manager,Account 72,00100072,006000072,New Business,true,281054,3 - Propose,meeting,11,4,2,1
+VP Sales,Account 72,00100072,006000072,New Business,true,281054,3 - Propose,email,5,2,1,0
+Manager,Account 72,00100072,006000072,New Business,true,281054,4 - Negotiate,meeting,9,3,1,0
+VP Sales,Account 72,00100072,006000072,New Business,true,281054,4 - Negotiate,email,16,6,3,1
+Manager,Account 73,00100073,006000073,Upsell,false,283116,1 - Qualify,meeting,5,1,1,0
+Manager,Account 73,00100073,006000073,Upsell,false,283116,1 - Qualify,email,1,0,0,0
+VP Sales,Account 73,00100073,006000073,Upsell,false,283116,2 - Develop,meeting,2,0,0,0
+Manager,Account 73,00100073,006000073,Upsell,false,283116,2 - Develop,email,3,0,0,0
+Manager,Account 73,00100073,006000073,Upsell,false,283116,3 - Propose,meeting,11,2,2,1
+Manager,Account 73,00100073,006000073,Upsell,false,283116,3 - Propose,email,8,1,1,0
+VP Sales,Account 73,00100073,006000073,Upsell,false,283116,4 - Negotiate,meeting,6,1,1,0
+VP Sales,Account 73,00100073,006000073,Upsell,false,283116,4 - Negotiate,email,4,0,0,0
+VP Sales,Account 74,00100074,006000074,Renewal,false,228497,1 - Qualify,meeting,9,1,1,0
+Manager,Account 74,00100074,006000074,Renewal,false,228497,1 - Qualify,email,4,0,0,0
+Manager,Account 74,00100074,006000074,Renewal,false,228497,2 - Develop,meeting,6,1,1,0
+VP Sales,Account 74,00100074,006000074,Renewal,false,228497,2 - Develop,email,6,1,1,0
+Manager,Account 74,00100074,006000074,Renewal,false,228497,3 - Propose,meeting,4,0,0,0
+Manager,Account 74,00100074,006000074,Renewal,false,228497,3 - Propose,email,2,0,0,0
+VP Sales,Account 74,00100074,006000074,Renewal,false,228497,4 - Negotiate,meeting,2,0,0,0
+Manager,Account 74,00100074,006000074,Renewal,false,228497,4 - Negotiate,email,6,1,1,0
+Manager,Account 75,00100075,006000075,New Business,true,333116,1 - Qualify,meeting,10,4,2,1
+VP Sales,Account 75,00100075,006000075,New Business,true,333116,1 - Qualify,email,13,5,2,1
+VP Sales,Account 75,00100075,006000075,New Business,true,333116,2 - Develop,meeting,12,4,2,1
+VP Sales,Account 75,00100075,006000075,New Business,true,333116,2 - Develop,email,13,5,2,1
+Manager,Account 75,00100075,006000075,New Business,true,333116,3 - Propose,meeting,15,6,3,1
+Manager,Account 75,00100075,006000075,New Business,true,333116,3 - Propose,email,11,4,2,1
+Manager,Account 75,00100075,006000075,New Business,true,333116,4 - Negotiate,meeting,13,5,2,1
+VP Sales,Account 75,00100075,006000075,New Business,true,333116,4 - Negotiate,email,15,6,3,1
+VP Sales,Account 76,00100076,006000076,Upsell,true,59834,1 - Qualify,meeting,8,3,1,0
+Manager,Account 76,00100076,006000076,Upsell,true,59834,1 - Qualify,email,5,2,1,0
+Manager,Account 76,00100076,006000076,Upsell,true,59834,2 - Develop,meeting,11,4,2,1
+Manager,Account 76,00100076,006000076,Upsell,true,59834,2 - Develop,email,7,2,1,0
+Manager,Account 76,00100076,006000076,Upsell,true,59834,3 - Propose,meeting,14,5,2,1
+Manager,Account 76,00100076,006000076,Upsell,true,59834,3 - Propose,email,16,6,3,1
+Manager,Account 76,00100076,006000076,Upsell,true,59834,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 76,00100076,006000076,Upsell,true,59834,4 - Negotiate,email,8,3,1,0
+VP Sales,Account 77,00100077,006000077,Renewal,false,150867,1 - Qualify,meeting,1,0,0,0
+Manager,Account 77,00100077,006000077,Renewal,false,150867,1 - Qualify,email,4,0,0,0
+Manager,Account 77,00100077,006000077,Renewal,false,150867,2 - Develop,meeting,10,2,2,1
+Manager,Account 77,00100077,006000077,Renewal,false,150867,2 - Develop,email,11,2,2,1
+Manager,Account 77,00100077,006000077,Renewal,false,150867,3 - Propose,meeting,3,0,0,0
+VP Sales,Account 77,00100077,006000077,Renewal,false,150867,3 - Propose,email,10,2,2,1
+Manager,Account 77,00100077,006000077,Renewal,false,150867,4 - Negotiate,meeting,7,1,1,0
+Manager,Account 77,00100077,006000077,Renewal,false,150867,4 - Negotiate,email,2,0,0,0
+VP Sales,Account 78,00100078,006000078,New Business,false,226548,1 - Qualify,meeting,9,1,1,0
+VP Sales,Account 78,00100078,006000078,New Business,false,226548,1 - Qualify,email,6,1,1,0
+VP Sales,Account 78,00100078,006000078,New Business,false,226548,2 - Develop,meeting,9,1,1,0
+Manager,Account 78,00100078,006000078,New Business,false,226548,2 - Develop,email,8,1,1,0
+Manager,Account 78,00100078,006000078,New Business,false,226548,3 - Propose,meeting,9,1,1,0
+Manager,Account 78,00100078,006000078,New Business,false,226548,3 - Propose,email,5,1,1,0
+VP Sales,Account 78,00100078,006000078,New Business,false,226548,4 - Negotiate,meeting,8,1,1,0
+VP Sales,Account 78,00100078,006000078,New Business,false,226548,4 - Negotiate,email,2,0,0,0
+Manager,Account 79,00100079,006000079,Upsell,true,317146,1 - Qualify,meeting,11,4,2,1
+VP Sales,Account 79,00100079,006000079,Upsell,true,317146,1 - Qualify,email,16,6,3,1
+Manager,Account 79,00100079,006000079,Upsell,true,317146,2 - Develop,meeting,16,6,3,1
+Manager,Account 79,00100079,006000079,Upsell,true,317146,2 - Develop,email,12,4,2,1
+VP Sales,Account 79,00100079,006000079,Upsell,true,317146,3 - Propose,meeting,8,3,1,0
+VP Sales,Account 79,00100079,006000079,Upsell,true,317146,3 - Propose,email,8,3,1,0
+Manager,Account 79,00100079,006000079,Upsell,true,317146,4 - Negotiate,meeting,8,3,1,0
+Manager,Account 79,00100079,006000079,Upsell,true,317146,4 - Negotiate,email,15,6,3,1
+VP Sales,Account 80,00100080,006000080,Renewal,false,229105,1 - Qualify,meeting,10,2,2,1
+VP Sales,Account 80,00100080,006000080,Renewal,false,229105,1 - Qualify,email,4,0,0,0
+VP Sales,Account 80,00100080,006000080,Renewal,false,229105,2 - Develop,meeting,2,0,0,0
+Manager,Account 80,00100080,006000080,Renewal,false,229105,2 - Develop,email,11,2,2,1
+Manager,Account 80,00100080,006000080,Renewal,false,229105,3 - Propose,meeting,5,1,1,0
+VP Sales,Account 80,00100080,006000080,Renewal,false,229105,3 - Propose,email,3,0,0,0
+VP Sales,Account 80,00100080,006000080,Renewal,false,229105,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 80,00100080,006000080,Renewal,false,229105,4 - Negotiate,email,1,0,0,0
+VP Sales,Account 81,00100081,006000081,New Business,true,208999,1 - Qualify,meeting,15,6,3,1
+VP Sales,Account 81,00100081,006000081,New Business,true,208999,1 - Qualify,email,14,5,2,1
+VP Sales,Account 81,00100081,006000081,New Business,true,208999,2 - Develop,meeting,6,2,1,0
+Manager,Account 81,00100081,006000081,New Business,true,208999,2 - Develop,email,9,3,1,0
+Manager,Account 81,00100081,006000081,New Business,true,208999,3 - Propose,meeting,7,2,1,0
+Manager,Account 81,00100081,006000081,New Business,true,208999,3 - Propose,email,10,4,2,1
+VP Sales,Account 81,00100081,006000081,New Business,true,208999,4 - Negotiate,meeting,16,6,3,1
+Manager,Account 81,00100081,006000081,New Business,true,208999,4 - Negotiate,email,10,4,2,1
+Manager,Account 82,00100082,006000082,Upsell,true,163573,1 - Qualify,meeting,9,3,1,0
+Manager,Account 82,00100082,006000082,Upsell,true,163573,1 - Qualify,email,7,2,1,0
+Manager,Account 82,00100082,006000082,Upsell,true,163573,2 - Develop,meeting,6,2,1,0
+VP Sales,Account 82,00100082,006000082,Upsell,true,163573,2 - Develop,email,7,2,1,0
+Manager,Account 82,00100082,006000082,Upsell,true,163573,3 - Propose,meeting,11,4,2,1
+VP Sales,Account 82,00100082,006000082,Upsell,true,163573,3 - Propose,email,5,2,1,0
+Manager,Account 82,00100082,006000082,Upsell,true,163573,4 - Negotiate,meeting,8,3,1,0
+Manager,Account 82,00100082,006000082,Upsell,true,163573,4 - Negotiate,email,11,4,2,1
+Manager,Account 83,00100083,006000083,Renewal,false,349844,1 - Qualify,meeting,4,0,0,0
+VP Sales,Account 83,00100083,006000083,Renewal,false,349844,1 - Qualify,email,8,1,1,0
+VP Sales,Account 83,00100083,006000083,Renewal,false,349844,2 - Develop,meeting,1,0,0,0
+Manager,Account 83,00100083,006000083,Renewal,false,349844,2 - Develop,email,11,2,2,1
+VP Sales,Account 83,00100083,006000083,Renewal,false,349844,3 - Propose,meeting,6,1,1,0
+Manager,Account 83,00100083,006000083,Renewal,false,349844,3 - Propose,email,1,0,0,0
+VP Sales,Account 83,00100083,006000083,Renewal,false,349844,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 83,00100083,006000083,Renewal,false,349844,4 - Negotiate,email,8,1,1,0
+VP Sales,Account 84,00100084,006000084,New Business,false,242800,1 - Qualify,meeting,8,1,1,0
+Manager,Account 84,00100084,006000084,New Business,false,242800,1 - Qualify,email,2,0,0,0
+Manager,Account 84,00100084,006000084,New Business,false,242800,2 - Develop,meeting,3,0,0,0
+Manager,Account 84,00100084,006000084,New Business,false,242800,2 - Develop,email,7,1,1,0
+VP Sales,Account 84,00100084,006000084,New Business,false,242800,3 - Propose,meeting,2,0,0,0
+Manager,Account 84,00100084,006000084,New Business,false,242800,3 - Propose,email,5,1,1,0
+VP Sales,Account 84,00100084,006000084,New Business,false,242800,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 84,00100084,006000084,New Business,false,242800,4 - Negotiate,email,6,1,1,0
+Manager,Account 85,00100085,006000085,Upsell,false,238403,1 - Qualify,meeting,2,0,0,0
+Manager,Account 85,00100085,006000085,Upsell,false,238403,1 - Qualify,email,8,1,1,0
+Manager,Account 85,00100085,006000085,Upsell,false,238403,2 - Develop,meeting,10,2,2,1
+VP Sales,Account 85,00100085,006000085,Upsell,false,238403,2 - Develop,email,7,1,1,0
+Manager,Account 85,00100085,006000085,Upsell,false,238403,3 - Propose,meeting,7,1,1,0
+Manager,Account 85,00100085,006000085,Upsell,false,238403,3 - Propose,email,4,0,0,0
+Manager,Account 85,00100085,006000085,Upsell,false,238403,4 - Negotiate,meeting,9,1,1,0
+VP Sales,Account 85,00100085,006000085,Upsell,false,238403,4 - Negotiate,email,4,0,0,0
+VP Sales,Account 86,00100086,006000086,Renewal,false,179799,1 - Qualify,meeting,8,1,1,0
+Manager,Account 86,00100086,006000086,Renewal,false,179799,1 - Qualify,email,8,1,1,0
+VP Sales,Account 86,00100086,006000086,Renewal,false,179799,2 - Develop,meeting,3,0,0,0
+Manager,Account 86,00100086,006000086,Renewal,false,179799,2 - Develop,email,8,1,1,0
+VP Sales,Account 86,00100086,006000086,Renewal,false,179799,3 - Propose,meeting,2,0,0,0
+Manager,Account 86,00100086,006000086,Renewal,false,179799,3 - Propose,email,11,2,2,1
+VP Sales,Account 86,00100086,006000086,Renewal,false,179799,4 - Negotiate,meeting,2,0,0,0
+Manager,Account 86,00100086,006000086,Renewal,false,179799,4 - Negotiate,email,8,1,1,0
+Manager,Account 87,00100087,006000087,New Business,true,117117,1 - Qualify,meeting,7,2,1,0
+Manager,Account 87,00100087,006000087,New Business,true,117117,1 - Qualify,email,15,6,3,1
+Manager,Account 87,00100087,006000087,New Business,true,117117,2 - Develop,meeting,13,5,2,1
+Manager,Account 87,00100087,006000087,New Business,true,117117,2 - Develop,email,15,6,3,1
+VP Sales,Account 87,00100087,006000087,New Business,true,117117,3 - Propose,meeting,16,6,3,1
+VP Sales,Account 87,00100087,006000087,New Business,true,117117,3 - Propose,email,15,6,3,1
+Manager,Account 87,00100087,006000087,New Business,true,117117,4 - Negotiate,meeting,12,4,2,1
+Manager,Account 87,00100087,006000087,New Business,true,117117,4 - Negotiate,email,7,2,1,0
+Manager,Account 88,00100088,006000088,Upsell,false,34873,1 - Qualify,meeting,3,0,0,0
+Manager,Account 88,00100088,006000088,Upsell,false,34873,1 - Qualify,email,6,1,1,0
+Manager,Account 88,00100088,006000088,Upsell,false,34873,2 - Develop,meeting,6,1,1,0
+VP Sales,Account 88,00100088,006000088,Upsell,false,34873,2 - Develop,email,11,2,2,1
+VP Sales,Account 88,00100088,006000088,Upsell,false,34873,3 - Propose,meeting,4,0,0,0
+Manager,Account 88,00100088,006000088,Upsell,false,34873,3 - Propose,email,8,1,1,0
+Manager,Account 88,00100088,006000088,Upsell,false,34873,4 - Negotiate,meeting,2,0,0,0
+VP Sales,Account 88,00100088,006000088,Upsell,false,34873,4 - Negotiate,email,1,0,0,0
+Manager,Account 89,00100089,006000089,Renewal,false,173797,1 - Qualify,meeting,3,0,0,0
+Manager,Account 89,00100089,006000089,Renewal,false,173797,1 - Qualify,email,5,1,1,0
+VP Sales,Account 89,00100089,006000089,Renewal,false,173797,2 - Develop,meeting,10,2,2,1
+Manager,Account 89,00100089,006000089,Renewal,false,173797,2 - Develop,email,2,0,0,0
+VP Sales,Account 89,00100089,006000089,Renewal,false,173797,3 - Propose,meeting,11,2,2,1
+Manager,Account 89,00100089,006000089,Renewal,false,173797,3 - Propose,email,6,1,1,0
+VP Sales,Account 89,00100089,006000089,Renewal,false,173797,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 89,00100089,006000089,Renewal,false,173797,4 - Negotiate,email,6,1,1,0
+Manager,Account 90,00100090,006000090,New Business,false,391217,1 - Qualify,meeting,12,2,2,1
+Manager,Account 90,00100090,006000090,New Business,false,391217,1 - Qualify,email,4,0,0,0
+VP Sales,Account 90,00100090,006000090,New Business,false,391217,2 - Develop,meeting,4,0,0,0
+VP Sales,Account 90,00100090,006000090,New Business,false,391217,2 - Develop,email,8,1,1,0
+VP Sales,Account 90,00100090,006000090,New Business,false,391217,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 90,00100090,006000090,New Business,false,391217,3 - Propose,email,6,1,1,0
+Manager,Account 90,00100090,006000090,New Business,false,391217,4 - Negotiate,meeting,3,0,0,0
+Manager,Account 90,00100090,006000090,New Business,false,391217,4 - Negotiate,email,11,2,2,1
+Manager,Account 91,00100091,006000091,Upsell,true,321804,1 - Qualify,meeting,14,5,2,1
+VP Sales,Account 91,00100091,006000091,Upsell,true,321804,1 - Qualify,email,7,2,1,0
+VP Sales,Account 91,00100091,006000091,Upsell,true,321804,2 - Develop,meeting,5,2,1,0
+Manager,Account 91,00100091,006000091,Upsell,true,321804,2 - Develop,email,9,3,1,0
+Manager,Account 91,00100091,006000091,Upsell,true,321804,3 - Propose,meeting,12,4,2,1
+Manager,Account 91,00100091,006000091,Upsell,true,321804,3 - Propose,email,16,6,3,1
+VP Sales,Account 91,00100091,006000091,Upsell,true,321804,4 - Negotiate,meeting,9,3,1,0
+VP Sales,Account 91,00100091,006000091,Upsell,true,321804,4 - Negotiate,email,6,2,1,0
+VP Sales,Account 92,00100092,006000092,Renewal,true,285381,1 - Qualify,meeting,11,4,2,1
+Manager,Account 92,00100092,006000092,Renewal,true,285381,1 - Qualify,email,7,2,1,0
+Manager,Account 92,00100092,006000092,Renewal,true,285381,2 - Develop,meeting,7,2,1,0
+VP Sales,Account 92,00100092,006000092,Renewal,true,285381,2 - Develop,email,5,2,1,0
+VP Sales,Account 92,00100092,006000092,Renewal,true,285381,3 - Propose,meeting,11,4,2,1
+Manager,Account 92,00100092,006000092,Renewal,true,285381,3 - Propose,email,14,5,2,1
+VP Sales,Account 92,00100092,006000092,Renewal,true,285381,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 92,00100092,006000092,Renewal,true,285381,4 - Negotiate,email,14,5,2,1
+Manager,Account 93,00100093,006000093,New Business,false,350019,1 - Qualify,meeting,3,0,0,0
+Manager,Account 93,00100093,006000093,New Business,false,350019,1 - Qualify,email,5,1,1,0
+Manager,Account 93,00100093,006000093,New Business,false,350019,2 - Develop,meeting,12,2,2,1
+Manager,Account 93,00100093,006000093,New Business,false,350019,2 - Develop,email,1,0,0,0
+Manager,Account 93,00100093,006000093,New Business,false,350019,3 - Propose,meeting,2,0,0,0
+VP Sales,Account 93,00100093,006000093,New Business,false,350019,3 - Propose,email,5,1,1,0
+Manager,Account 93,00100093,006000093,New Business,false,350019,4 - Negotiate,meeting,3,0,0,0
+VP Sales,Account 93,00100093,006000093,New Business,false,350019,4 - Negotiate,email,7,1,1,0
+Manager,Account 94,00100094,006000094,Upsell,false,265177,1 - Qualify,meeting,7,1,1,0
+Manager,Account 94,00100094,006000094,Upsell,false,265177,1 - Qualify,email,11,2,2,1
+Manager,Account 94,00100094,006000094,Upsell,false,265177,2 - Develop,meeting,9,1,1,0
+VP Sales,Account 94,00100094,006000094,Upsell,false,265177,2 - Develop,email,8,1,1,0
+Manager,Account 94,00100094,006000094,Upsell,false,265177,3 - Propose,meeting,11,2,2,1
+Manager,Account 94,00100094,006000094,Upsell,false,265177,3 - Propose,email,11,2,2,1
+Manager,Account 94,00100094,006000094,Upsell,false,265177,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 94,00100094,006000094,Upsell,false,265177,4 - Negotiate,email,4,0,0,0
+Manager,Account 95,00100095,006000095,Renewal,false,372586,1 - Qualify,meeting,10,2,2,1
+Manager,Account 95,00100095,006000095,Renewal,false,372586,1 - Qualify,email,10,2,2,1
+Manager,Account 95,00100095,006000095,Renewal,false,372586,2 - Develop,meeting,12,2,2,1
+VP Sales,Account 95,00100095,006000095,Renewal,false,372586,2 - Develop,email,11,2,2,1
+Manager,Account 95,00100095,006000095,Renewal,false,372586,3 - Propose,meeting,6,1,1,0
+Manager,Account 95,00100095,006000095,Renewal,false,372586,3 - Propose,email,5,1,1,0
+Manager,Account 95,00100095,006000095,Renewal,false,372586,4 - Negotiate,meeting,2,0,0,0
+Manager,Account 95,00100095,006000095,Renewal,false,372586,4 - Negotiate,email,1,0,0,0
+VP Sales,Account 96,00100096,006000096,New Business,false,176764,1 - Qualify,meeting,8,1,1,0
+Manager,Account 96,00100096,006000096,New Business,false,176764,1 - Qualify,email,6,1,1,0
+Manager,Account 96,00100096,006000096,New Business,false,176764,2 - Develop,meeting,1,0,0,0
+Manager,Account 96,00100096,006000096,New Business,false,176764,2 - Develop,email,6,1,1,0
+Manager,Account 96,00100096,006000096,New Business,false,176764,3 - Propose,meeting,12,2,2,1
+Manager,Account 96,00100096,006000096,New Business,false,176764,3 - Propose,email,3,0,0,0
+Manager,Account 96,00100096,006000096,New Business,false,176764,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 96,00100096,006000096,New Business,false,176764,4 - Negotiate,email,4,0,0,0
+Manager,Account 97,00100097,006000097,Upsell,true,102057,1 - Qualify,meeting,6,2,1,0
+Manager,Account 97,00100097,006000097,Upsell,true,102057,1 - Qualify,email,8,3,1,0
+Manager,Account 97,00100097,006000097,Upsell,true,102057,2 - Develop,meeting,11,4,2,1
+VP Sales,Account 97,00100097,006000097,Upsell,true,102057,2 - Develop,email,16,6,3,1
+Manager,Account 97,00100097,006000097,Upsell,true,102057,3 - Propose,meeting,16,6,3,1
+Manager,Account 97,00100097,006000097,Upsell,true,102057,3 - Propose,email,11,4,2,1
+VP Sales,Account 97,00100097,006000097,Upsell,true,102057,4 - Negotiate,meeting,10,4,2,1
+Manager,Account 97,00100097,006000097,Upsell,true,102057,4 - Negotiate,email,8,3,1,0
+VP Sales,Account 98,00100098,006000098,Renewal,false,276799,1 - Qualify,meeting,5,1,1,0
+VP Sales,Account 98,00100098,006000098,Renewal,false,276799,1 - Qualify,email,9,1,1,0
+Manager,Account 98,00100098,006000098,Renewal,false,276799,2 - Develop,meeting,7,1,1,0
+VP Sales,Account 98,00100098,006000098,Renewal,false,276799,2 - Develop,email,11,2,2,1
+Manager,Account 98,00100098,006000098,Renewal,false,276799,3 - Propose,meeting,10,2,2,1
+Manager,Account 98,00100098,006000098,Renewal,false,276799,3 - Propose,email,6,1,1,0
+Manager,Account 98,00100098,006000098,Renewal,false,276799,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 98,00100098,006000098,Renewal,false,276799,4 - Negotiate,email,7,1,1,0
+Manager,Account 99,00100099,006000099,New Business,true,162004,1 - Qualify,meeting,12,4,2,1
+Manager,Account 99,00100099,006000099,New Business,true,162004,1 - Qualify,email,15,6,3,1
+Manager,Account 99,00100099,006000099,New Business,true,162004,2 - Develop,meeting,7,2,1,0
+Manager,Account 99,00100099,006000099,New Business,true,162004,2 - Develop,email,6,2,1,0
+Manager,Account 99,00100099,006000099,New Business,true,162004,3 - Propose,meeting,9,3,1,0
+VP Sales,Account 99,00100099,006000099,New Business,true,162004,3 - Propose,email,15,6,3,1
+Manager,Account 99,00100099,006000099,New Business,true,162004,4 - Negotiate,meeting,8,3,1,0
+Manager,Account 99,00100099,006000099,New Business,true,162004,4 - Negotiate,email,8,3,1,0
+Manager,Account 00,00100100,006000100,Upsell,true,105635,1 - Qualify,meeting,9,3,1,0
+Manager,Account 00,00100100,006000100,Upsell,true,105635,1 - Qualify,email,7,2,1,0
+Manager,Account 00,00100100,006000100,Upsell,true,105635,2 - Develop,meeting,14,5,2,1
+Manager,Account 00,00100100,006000100,Upsell,true,105635,2 - Develop,email,15,6,3,1
+VP Sales,Account 00,00100100,006000100,Upsell,true,105635,3 - Propose,meeting,14,5,2,1
+Manager,Account 00,00100100,006000100,Upsell,true,105635,3 - Propose,email,5,2,1,0
+Manager,Account 00,00100100,006000100,Upsell,true,105635,4 - Negotiate,meeting,11,4,2,1
+VP Sales,Account 00,00100100,006000100,Upsell,true,105635,4 - Negotiate,email,9,3,1,0
+Manager,Account 01,00100101,006000101,Renewal,false,308774,1 - Qualify,meeting,1,0,0,0
+Manager,Account 01,00100101,006000101,Renewal,false,308774,1 - Qualify,email,2,0,0,0
+VP Sales,Account 01,00100101,006000101,Renewal,false,308774,2 - Develop,meeting,1,0,0,0
+VP Sales,Account 01,00100101,006000101,Renewal,false,308774,2 - Develop,email,3,0,0,0
+Manager,Account 01,00100101,006000101,Renewal,false,308774,3 - Propose,meeting,12,2,2,1
+VP Sales,Account 01,00100101,006000101,Renewal,false,308774,3 - Propose,email,4,0,0,0
+VP Sales,Account 01,00100101,006000101,Renewal,false,308774,4 - Negotiate,meeting,2,0,0,0
+Manager,Account 01,00100101,006000101,Renewal,false,308774,4 - Negotiate,email,2,0,0,0
+Manager,Account 02,00100102,006000102,New Business,true,15627,1 - Qualify,meeting,7,2,1,0
+Manager,Account 02,00100102,006000102,New Business,true,15627,1 - Qualify,email,6,2,1,0
+VP Sales,Account 02,00100102,006000102,New Business,true,15627,2 - Develop,meeting,10,4,2,1
+Manager,Account 02,00100102,006000102,New Business,true,15627,2 - Develop,email,16,6,3,1
+Manager,Account 02,00100102,006000102,New Business,true,15627,3 - Propose,meeting,9,3,1,0
+VP Sales,Account 02,00100102,006000102,New Business,true,15627,3 - Propose,email,6,2,1,0
+VP Sales,Account 02,00100102,006000102,New Business,true,15627,4 - Negotiate,meeting,9,3,1,0
+VP Sales,Account 02,00100102,006000102,New Business,true,15627,4 - Negotiate,email,14,5,2,1
+VP Sales,Account 03,00100103,006000103,Upsell,true,12051,1 - Qualify,meeting,9,3,1,0
+Manager,Account 03,00100103,006000103,Upsell,true,12051,1 - Qualify,email,16,6,3,1
+Manager,Account 03,00100103,006000103,Upsell,true,12051,2 - Develop,meeting,13,5,2,1
+Manager,Account 03,00100103,006000103,Upsell,true,12051,2 - Develop,email,8,3,1,0
+Manager,Account 03,00100103,006000103,Upsell,true,12051,3 - Propose,meeting,13,5,2,1
+Manager,Account 03,00100103,006000103,Upsell,true,12051,3 - Propose,email,7,2,1,0
+Manager,Account 03,00100103,006000103,Upsell,true,12051,4 - Negotiate,meeting,11,4,2,1
+VP Sales,Account 03,00100103,006000103,Upsell,true,12051,4 - Negotiate,email,16,6,3,1
+Manager,Account 04,00100104,006000104,Renewal,true,18095,1 - Qualify,meeting,9,3,1,0
+VP Sales,Account 04,00100104,006000104,Renewal,true,18095,1 - Qualify,email,12,4,2,1
+VP Sales,Account 04,00100104,006000104,Renewal,true,18095,2 - Develop,meeting,14,5,2,1
+Manager,Account 04,00100104,006000104,Renewal,true,18095,2 - Develop,email,16,6,3,1
+Manager,Account 04,00100104,006000104,Renewal,true,18095,3 - Propose,meeting,12,4,2,1
+Manager,Account 04,00100104,006000104,Renewal,true,18095,3 - Propose,email,8,3,1,0
+Manager,Account 04,00100104,006000104,Renewal,true,18095,4 - Negotiate,meeting,15,6,3,1
+VP Sales,Account 04,00100104,006000104,Renewal,true,18095,4 - Negotiate,email,11,4,2,1
+Manager,Account 05,00100105,006000105,New Business,true,307285,1 - Qualify,meeting,8,3,1,0
+VP Sales,Account 05,00100105,006000105,New Business,true,307285,1 - Qualify,email,8,3,1,0
+Manager,Account 05,00100105,006000105,New Business,true,307285,2 - Develop,meeting,15,6,3,1
+Manager,Account 05,00100105,006000105,New Business,true,307285,2 - Develop,email,9,3,1,0
+Manager,Account 05,00100105,006000105,New Business,true,307285,3 - Propose,meeting,13,5,2,1
+VP Sales,Account 05,00100105,006000105,New Business,true,307285,3 - Propose,email,16,6,3,1
+Manager,Account 05,00100105,006000105,New Business,true,307285,4 - Negotiate,meeting,8,3,1,0
+Manager,Account 05,00100105,006000105,New Business,true,307285,4 - Negotiate,email,8,3,1,0
+Manager,Account 06,00100106,006000106,Upsell,false,85349,1 - Qualify,meeting,4,0,0,0
+Manager,Account 06,00100106,006000106,Upsell,false,85349,1 - Qualify,email,12,2,2,1
+Manager,Account 06,00100106,006000106,Upsell,false,85349,2 - Develop,meeting,4,0,0,0
+Manager,Account 06,00100106,006000106,Upsell,false,85349,2 - Develop,email,4,0,0,0
+Manager,Account 06,00100106,006000106,Upsell,false,85349,3 - Propose,meeting,11,2,2,1
+VP Sales,Account 06,00100106,006000106,Upsell,false,85349,3 - Propose,email,3,0,0,0
+Manager,Account 06,00100106,006000106,Upsell,false,85349,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 06,00100106,006000106,Upsell,false,85349,4 - Negotiate,email,6,1,1,0
+Manager,Account 07,00100107,006000107,Renewal,true,92193,1 - Qualify,meeting,16,6,3,1
+Manager,Account 07,00100107,006000107,Renewal,true,92193,1 - Qualify,email,16,6,3,1
+Manager,Account 07,00100107,006000107,Renewal,true,92193,2 - Develop,meeting,9,3,1,0
+Manager,Account 07,00100107,006000107,Renewal,true,92193,2 - Develop,email,13,5,2,1
+Manager,Account 07,00100107,006000107,Renewal,true,92193,3 - Propose,meeting,5,2,1,0
+VP Sales,Account 07,00100107,006000107,Renewal,true,92193,3 - Propose,email,10,4,2,1
+Manager,Account 07,00100107,006000107,Renewal,true,92193,4 - Negotiate,meeting,5,2,1,0
+VP Sales,Account 07,00100107,006000107,Renewal,true,92193,4 - Negotiate,email,8,3,1,0
+Manager,Account 08,00100108,006000108,New Business,true,49914,1 - Qualify,meeting,15,6,3,1
+VP Sales,Account 08,00100108,006000108,New Business,true,49914,1 - Qualify,email,12,4,2,1
+VP Sales,Account 08,00100108,006000108,New Business,true,49914,2 - Develop,meeting,10,4,2,1
+Manager,Account 08,00100108,006000108,New Business,true,49914,2 - Develop,email,13,5,2,1
+Manager,Account 08,00100108,006000108,New Business,true,49914,3 - Propose,meeting,10,4,2,1
+Manager,Account 08,00100108,006000108,New Business,true,49914,3 - Propose,email,12,4,2,1
+VP Sales,Account 08,00100108,006000108,New Business,true,49914,4 - Negotiate,meeting,6,2,1,0
+Manager,Account 08,00100108,006000108,New Business,true,49914,4 - Negotiate,email,6,2,1,0
+Manager,Account 09,00100109,006000109,Upsell,false,331390,1 - Qualify,meeting,7,1,1,0
+Manager,Account 09,00100109,006000109,Upsell,false,331390,1 - Qualify,email,5,1,1,0
+VP Sales,Account 09,00100109,006000109,Upsell,false,331390,2 - Develop,meeting,9,1,1,0
+Manager,Account 09,00100109,006000109,Upsell,false,331390,2 - Develop,email,6,1,1,0
+Manager,Account 09,00100109,006000109,Upsell,false,331390,3 - Propose,meeting,12,2,2,1
+Manager,Account 09,00100109,006000109,Upsell,false,331390,3 - Propose,email,12,2,2,1
+Manager,Account 09,00100109,006000109,Upsell,false,331390,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 09,00100109,006000109,Upsell,false,331390,4 - Negotiate,email,12,2,2,1
+VP Sales,Account 10,00100110,006000110,Renewal,false,368909,1 - Qualify,meeting,10,2,2,1
+VP Sales,Account 10,00100110,006000110,Renewal,false,368909,1 - Qualify,email,8,1,1,0
+VP Sales,Account 10,00100110,006000110,Renewal,false,368909,2 - Develop,meeting,5,1,1,0
+VP Sales,Account 10,00100110,006000110,Renewal,false,368909,2 - Develop,email,9,1,1,0
+Manager,Account 10,00100110,006000110,Renewal,false,368909,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 10,00100110,006000110,Renewal,false,368909,3 - Propose,email,1,0,0,0
+Manager,Account 10,00100110,006000110,Renewal,false,368909,4 - Negotiate,meeting,2,0,0,0
+Manager,Account 10,00100110,006000110,Renewal,false,368909,4 - Negotiate,email,11,2,2,1
+Manager,Account 11,00100111,006000111,New Business,true,195516,1 - Qualify,meeting,11,4,2,1
+Manager,Account 11,00100111,006000111,New Business,true,195516,1 - Qualify,email,7,2,1,0
+Manager,Account 11,00100111,006000111,New Business,true,195516,2 - Develop,meeting,6,2,1,0
+VP Sales,Account 11,00100111,006000111,New Business,true,195516,2 - Develop,email,16,6,3,1
+Manager,Account 11,00100111,006000111,New Business,true,195516,3 - Propose,meeting,9,3,1,0
+VP Sales,Account 11,00100111,006000111,New Business,true,195516,3 - Propose,email,15,6,3,1
+Manager,Account 11,00100111,006000111,New Business,true,195516,4 - Negotiate,meeting,6,2,1,0
+VP Sales,Account 11,00100111,006000111,New Business,true,195516,4 - Negotiate,email,10,4,2,1
+Manager,Account 12,00100112,006000112,Upsell,true,315271,1 - Qualify,meeting,13,5,2,1
+VP Sales,Account 12,00100112,006000112,Upsell,true,315271,1 - Qualify,email,11,4,2,1
+Manager,Account 12,00100112,006000112,Upsell,true,315271,2 - Develop,meeting,7,2,1,0
+Manager,Account 12,00100112,006000112,Upsell,true,315271,2 - Develop,email,11,4,2,1
+VP Sales,Account 12,00100112,006000112,Upsell,true,315271,3 - Propose,meeting,10,4,2,1
+Manager,Account 12,00100112,006000112,Upsell,true,315271,3 - Propose,email,8,3,1,0
+VP Sales,Account 12,00100112,006000112,Upsell,true,315271,4 - Negotiate,meeting,13,5,2,1
+Manager,Account 12,00100112,006000112,Upsell,true,315271,4 - Negotiate,email,9,3,1,0
+Manager,Account 13,00100113,006000113,Renewal,true,20248,1 - Qualify,meeting,16,6,3,1
+VP Sales,Account 13,00100113,006000113,Renewal,true,20248,1 - Qualify,email,12,4,2,1
+Manager,Account 13,00100113,006000113,Renewal,true,20248,2 - Develop,meeting,7,2,1,0
+Manager,Account 13,00100113,006000113,Renewal,true,20248,2 - Develop,email,9,3,1,0
+Manager,Account 13,00100113,006000113,Renewal,true,20248,3 - Propose,meeting,11,4,2,1
+Manager,Account 13,00100113,006000113,Renewal,true,20248,3 - Propose,email,16,6,3,1
+VP Sales,Account 13,00100113,006000113,Renewal,true,20248,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 13,00100113,006000113,Renewal,true,20248,4 - Negotiate,email,12,4,2,1
+Manager,Account 14,00100114,006000114,New Business,false,240498,1 - Qualify,meeting,9,1,1,0
+VP Sales,Account 14,00100114,006000114,New Business,false,240498,1 - Qualify,email,4,0,0,0
+Manager,Account 14,00100114,006000114,New Business,false,240498,2 - Develop,meeting,9,1,1,0
+VP Sales,Account 14,00100114,006000114,New Business,false,240498,2 - Develop,email,12,2,2,1
+Manager,Account 14,00100114,006000114,New Business,false,240498,3 - Propose,meeting,10,2,2,1
+Manager,Account 14,00100114,006000114,New Business,false,240498,3 - Propose,email,3,0,0,0
+Manager,Account 14,00100114,006000114,New Business,false,240498,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 14,00100114,006000114,New Business,false,240498,4 - Negotiate,email,11,2,2,1
+Manager,Account 15,00100115,006000115,Upsell,false,93572,1 - Qualify,meeting,1,0,0,0
+Manager,Account 15,00100115,006000115,Upsell,false,93572,1 - Qualify,email,10,2,2,1
+Manager,Account 15,00100115,006000115,Upsell,false,93572,2 - Develop,meeting,5,1,1,0
+Manager,Account 15,00100115,006000115,Upsell,false,93572,2 - Develop,email,1,0,0,0
+VP Sales,Account 15,00100115,006000115,Upsell,false,93572,3 - Propose,meeting,6,1,1,0
+Manager,Account 15,00100115,006000115,Upsell,false,93572,3 - Propose,email,6,1,1,0
+Manager,Account 15,00100115,006000115,Upsell,false,93572,4 - Negotiate,meeting,5,1,1,0
+Manager,Account 15,00100115,006000115,Upsell,false,93572,4 - Negotiate,email,5,1,1,0
+Manager,Account 16,00100116,006000116,Renewal,false,248783,1 - Qualify,meeting,6,1,1,0
+VP Sales,Account 16,00100116,006000116,Renewal,false,248783,1 - Qualify,email,5,1,1,0
+VP Sales,Account 16,00100116,006000116,Renewal,false,248783,2 - Develop,meeting,4,0,0,0
+Manager,Account 16,00100116,006000116,Renewal,false,248783,2 - Develop,email,11,2,2,1
+Manager,Account 16,00100116,006000116,Renewal,false,248783,3 - Propose,meeting,11,2,2,1
+Manager,Account 16,00100116,006000116,Renewal,false,248783,3 - Propose,email,10,2,2,1
+Manager,Account 16,00100116,006000116,Renewal,false,248783,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 16,00100116,006000116,Renewal,false,248783,4 - Negotiate,email,11,2,2,1
+VP Sales,Account 17,00100117,006000117,New Business,false,137364,1 - Qualify,meeting,12,2,2,1
+Manager,Account 17,00100117,006000117,New Business,false,137364,1 - Qualify,email,3,0,0,0
+Manager,Account 17,00100117,006000117,New Business,false,137364,2 - Develop,meeting,5,1,1,0
+Manager,Account 17,00100117,006000117,New Business,false,137364,2 - Develop,email,6,1,1,0
+VP Sales,Account 17,00100117,006000117,New Business,false,137364,3 - Propose,meeting,5,1,1,0
+Manager,Account 17,00100117,006000117,New Business,false,137364,3 - Propose,email,9,1,1,0
+Manager,Account 17,00100117,006000117,New Business,false,137364,4 - Negotiate,meeting,11,2,2,1
+Manager,Account 17,00100117,006000117,New Business,false,137364,4 - Negotiate,email,6,1,1,0
+Manager,Account 18,00100118,006000118,Upsell,false,226790,1 - Qualify,meeting,3,0,0,0
+Manager,Account 18,00100118,006000118,Upsell,false,226790,1 - Qualify,email,3,0,0,0
+Manager,Account 18,00100118,006000118,Upsell,false,226790,2 - Develop,meeting,12,2,2,1
+Manager,Account 18,00100118,006000118,Upsell,false,226790,2 - Develop,email,9,1,1,0
+Manager,Account 18,00100118,006000118,Upsell,false,226790,3 - Propose,meeting,1,0,0,0
+Manager,Account 18,00100118,006000118,Upsell,false,226790,3 - Propose,email,9,1,1,0
+Manager,Account 18,00100118,006000118,Upsell,false,226790,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 18,00100118,006000118,Upsell,false,226790,4 - Negotiate,email,8,1,1,0
+Manager,Account 19,00100119,006000119,Renewal,false,137606,1 - Qualify,meeting,4,0,0,0
+VP Sales,Account 19,00100119,006000119,Renewal,false,137606,1 - Qualify,email,6,1,1,0
+VP Sales,Account 19,00100119,006000119,Renewal,false,137606,2 - Develop,meeting,2,0,0,0
+Manager,Account 19,00100119,006000119,Renewal,false,137606,2 - Develop,email,1,0,0,0
+VP Sales,Account 19,00100119,006000119,Renewal,false,137606,3 - Propose,meeting,1,0,0,0
+Manager,Account 19,00100119,006000119,Renewal,false,137606,3 - Propose,email,2,0,0,0
+Manager,Account 19,00100119,006000119,Renewal,false,137606,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 19,00100119,006000119,Renewal,false,137606,4 - Negotiate,email,4,0,0,0
+Manager,Account 20,00100120,006000120,New Business,true,14001,1 - Qualify,meeting,15,6,3,1
+Manager,Account 20,00100120,006000120,New Business,true,14001,1 - Qualify,email,12,4,2,1
+Manager,Account 20,00100120,006000120,New Business,true,14001,2 - Develop,meeting,9,3,1,0
+Manager,Account 20,00100120,006000120,New Business,true,14001,2 - Develop,email,14,5,2,1
+Manager,Account 20,00100120,006000120,New Business,true,14001,3 - Propose,meeting,10,4,2,1
+Manager,Account 20,00100120,006000120,New Business,true,14001,3 - Propose,email,9,3,1,0
+Manager,Account 20,00100120,006000120,New Business,true,14001,4 - Negotiate,meeting,10,4,2,1
+Manager,Account 20,00100120,006000120,New Business,true,14001,4 - Negotiate,email,6,2,1,0
+VP Sales,Account 21,00100121,006000121,Upsell,true,70233,1 - Qualify,meeting,13,5,2,1
+Manager,Account 21,00100121,006000121,Upsell,true,70233,1 - Qualify,email,12,4,2,1
+VP Sales,Account 21,00100121,006000121,Upsell,true,70233,2 - Develop,meeting,15,6,3,1
+Manager,Account 21,00100121,006000121,Upsell,true,70233,2 - Develop,email,8,3,1,0
+Manager,Account 21,00100121,006000121,Upsell,true,70233,3 - Propose,meeting,10,4,2,1
+Manager,Account 21,00100121,006000121,Upsell,true,70233,3 - Propose,email,15,6,3,1
+Manager,Account 21,00100121,006000121,Upsell,true,70233,4 - Negotiate,meeting,6,2,1,0
+VP Sales,Account 21,00100121,006000121,Upsell,true,70233,4 - Negotiate,email,14,5,2,1
+Manager,Account 22,00100122,006000122,Renewal,false,351459,1 - Qualify,meeting,10,2,2,1
+Manager,Account 22,00100122,006000122,Renewal,false,351459,1 - Qualify,email,1,0,0,0
+Manager,Account 22,00100122,006000122,Renewal,false,351459,2 - Develop,meeting,7,1,1,0
+Manager,Account 22,00100122,006000122,Renewal,false,351459,2 - Develop,email,3,0,0,0
+Manager,Account 22,00100122,006000122,Renewal,false,351459,3 - Propose,meeting,9,1,1,0
+VP Sales,Account 22,00100122,006000122,Renewal,false,351459,3 - Propose,email,6,1,1,0
+Manager,Account 22,00100122,006000122,Renewal,false,351459,4 - Negotiate,meeting,12,2,2,1
+VP Sales,Account 22,00100122,006000122,Renewal,false,351459,4 - Negotiate,email,1,0,0,0
+Manager,Account 23,00100123,006000123,New Business,true,300372,1 - Qualify,meeting,16,6,3,1
+Manager,Account 23,00100123,006000123,New Business,true,300372,1 - Qualify,email,11,4,2,1
+Manager,Account 23,00100123,006000123,New Business,true,300372,2 - Develop,meeting,6,2,1,0
+Manager,Account 23,00100123,006000123,New Business,true,300372,2 - Develop,email,8,3,1,0
+Manager,Account 23,00100123,006000123,New Business,true,300372,3 - Propose,meeting,10,4,2,1
+Manager,Account 23,00100123,006000123,New Business,true,300372,3 - Propose,email,7,2,1,0
+VP Sales,Account 23,00100123,006000123,New Business,true,300372,4 - Negotiate,meeting,13,5,2,1
+Manager,Account 23,00100123,006000123,New Business,true,300372,4 - Negotiate,email,7,2,1,0
+Manager,Account 24,00100124,006000124,Upsell,true,134347,1 - Qualify,meeting,11,4,2,1
+Manager,Account 24,00100124,006000124,Upsell,true,134347,1 - Qualify,email,13,5,2,1
+VP Sales,Account 24,00100124,006000124,Upsell,true,134347,2 - Develop,meeting,7,2,1,0
+Manager,Account 24,00100124,006000124,Upsell,true,134347,2 - Develop,email,15,6,3,1
+Manager,Account 24,00100124,006000124,Upsell,true,134347,3 - Propose,meeting,6,2,1,0
+VP Sales,Account 24,00100124,006000124,Upsell,true,134347,3 - Propose,email,10,4,2,1
+VP Sales,Account 24,00100124,006000124,Upsell,true,134347,4 - Negotiate,meeting,5,2,1,0
+Manager,Account 24,00100124,006000124,Upsell,true,134347,4 - Negotiate,email,5,2,1,0
+Manager,Account 25,00100125,006000125,Renewal,true,91733,1 - Qualify,meeting,16,6,3,1
+Manager,Account 25,00100125,006000125,Renewal,true,91733,1 - Qualify,email,8,3,1,0
+Manager,Account 25,00100125,006000125,Renewal,true,91733,2 - Develop,meeting,7,2,1,0
+VP Sales,Account 25,00100125,006000125,Renewal,true,91733,2 - Develop,email,7,2,1,0
+Manager,Account 25,00100125,006000125,Renewal,true,91733,3 - Propose,meeting,12,4,2,1
+VP Sales,Account 25,00100125,006000125,Renewal,true,91733,3 - Propose,email,11,4,2,1
+VP Sales,Account 25,00100125,006000125,Renewal,true,91733,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 25,00100125,006000125,Renewal,true,91733,4 - Negotiate,email,9,3,1,0
+Manager,Account 26,00100126,006000126,New Business,true,295666,1 - Qualify,meeting,8,3,1,0
+VP Sales,Account 26,00100126,006000126,New Business,true,295666,1 - Qualify,email,12,4,2,1
+Manager,Account 26,00100126,006000126,New Business,true,295666,2 - Develop,meeting,5,2,1,0
+VP Sales,Account 26,00100126,006000126,New Business,true,295666,2 - Develop,email,16,6,3,1
+Manager,Account 26,00100126,006000126,New Business,true,295666,3 - Propose,meeting,8,3,1,0
+Manager,Account 26,00100126,006000126,New Business,true,295666,3 - Propose,email,8,3,1,0
+VP Sales,Account 26,00100126,006000126,New Business,true,295666,4 - Negotiate,meeting,7,2,1,0
+Manager,Account 26,00100126,006000126,New Business,true,295666,4 - Negotiate,email,7,2,1,0
+Manager,Account 27,00100127,006000127,Upsell,true,135925,1 - Qualify,meeting,8,3,1,0
+Manager,Account 27,00100127,006000127,Upsell,true,135925,1 - Qualify,email,16,6,3,1
+Manager,Account 27,00100127,006000127,Upsell,true,135925,2 - Develop,meeting,16,6,3,1
+Manager,Account 27,00100127,006000127,Upsell,true,135925,2 - Develop,email,14,5,2,1
+Manager,Account 27,00100127,006000127,Upsell,true,135925,3 - Propose,meeting,9,3,1,0
+Manager,Account 27,00100127,006000127,Upsell,true,135925,3 - Propose,email,11,4,2,1
+Manager,Account 27,00100127,006000127,Upsell,true,135925,4 - Negotiate,meeting,5,2,1,0
+Manager,Account 27,00100127,006000127,Upsell,true,135925,4 - Negotiate,email,5,2,1,0
+Manager,Account 28,00100128,006000128,Renewal,false,207600,1 - Qualify,meeting,2,0,0,0
+Manager,Account 28,00100128,006000128,Renewal,false,207600,1 - Qualify,email,9,1,1,0
+Manager,Account 28,00100128,006000128,Renewal,false,207600,2 - Develop,meeting,3,0,0,0
+Manager,Account 28,00100128,006000128,Renewal,false,207600,2 - Develop,email,3,0,0,0
+Manager,Account 28,00100128,006000128,Renewal,false,207600,3 - Propose,meeting,9,1,1,0
+VP Sales,Account 28,00100128,006000128,Renewal,false,207600,3 - Propose,email,12,2,2,1
+VP Sales,Account 28,00100128,006000128,Renewal,false,207600,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 28,00100128,006000128,Renewal,false,207600,4 - Negotiate,email,7,1,1,0
+Manager,Account 29,00100129,006000129,New Business,false,274676,1 - Qualify,meeting,7,1,1,0
+Manager,Account 29,00100129,006000129,New Business,false,274676,1 - Qualify,email,3,0,0,0
+VP Sales,Account 29,00100129,006000129,New Business,false,274676,2 - Develop,meeting,8,1,1,0
+Manager,Account 29,00100129,006000129,New Business,false,274676,2 - Develop,email,4,0,0,0
+Manager,Account 29,00100129,006000129,New Business,false,274676,3 - Propose,meeting,2,0,0,0
+Manager,Account 29,00100129,006000129,New Business,false,274676,3 - Propose,email,3,0,0,0
+Manager,Account 29,00100129,006000129,New Business,false,274676,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 29,00100129,006000129,New Business,false,274676,4 - Negotiate,email,10,2,2,1
+Manager,Account 30,00100130,006000130,Upsell,false,380395,1 - Qualify,meeting,5,1,1,0
+Manager,Account 30,00100130,006000130,Upsell,false,380395,1 - Qualify,email,4,0,0,0
+VP Sales,Account 30,00100130,006000130,Upsell,false,380395,2 - Develop,meeting,9,1,1,0
+VP Sales,Account 30,00100130,006000130,Upsell,false,380395,2 - Develop,email,3,0,0,0
+Manager,Account 30,00100130,006000130,Upsell,false,380395,3 - Propose,meeting,6,1,1,0
+Manager,Account 30,00100130,006000130,Upsell,false,380395,3 - Propose,email,2,0,0,0
+Manager,Account 30,00100130,006000130,Upsell,false,380395,4 - Negotiate,meeting,6,1,1,0
+Manager,Account 30,00100130,006000130,Upsell,false,380395,4 - Negotiate,email,6,1,1,0
+Manager,Account 31,00100131,006000131,Renewal,true,290316,1 - Qualify,meeting,16,6,3,1
+VP Sales,Account 31,00100131,006000131,Renewal,true,290316,1 - Qualify,email,15,6,3,1
+Manager,Account 31,00100131,006000131,Renewal,true,290316,2 - Develop,meeting,14,5,2,1
+Manager,Account 31,00100131,006000131,Renewal,true,290316,2 - Develop,email,5,2,1,0
+Manager,Account 31,00100131,006000131,Renewal,true,290316,3 - Propose,meeting,16,6,3,1
+Manager,Account 31,00100131,006000131,Renewal,true,290316,3 - Propose,email,13,5,2,1
+Manager,Account 31,00100131,006000131,Renewal,true,290316,4 - Negotiate,meeting,15,6,3,1
+Manager,Account 31,00100131,006000131,Renewal,true,290316,4 - Negotiate,email,11,4,2,1
+Manager,Account 32,00100132,006000132,New Business,false,74376,1 - Qualify,meeting,3,0,0,0
+Manager,Account 32,00100132,006000132,New Business,false,74376,1 - Qualify,email,11,2,2,1
+Manager,Account 32,00100132,006000132,New Business,false,74376,2 - Develop,meeting,1,0,0,0
+Manager,Account 32,00100132,006000132,New Business,false,74376,2 - Develop,email,3,0,0,0
+Manager,Account 32,00100132,006000132,New Business,false,74376,3 - Propose,meeting,11,2,2,1
+Manager,Account 32,00100132,006000132,New Business,false,74376,3 - Propose,email,6,1,1,0
+VP Sales,Account 32,00100132,006000132,New Business,false,74376,4 - Negotiate,meeting,11,2,2,1
+Manager,Account 32,00100132,006000132,New Business,false,74376,4 - Negotiate,email,3,0,0,0
+Manager,Account 33,00100133,006000133,Upsell,true,25055,1 - Qualify,meeting,11,4,2,1
+VP Sales,Account 33,00100133,006000133,Upsell,true,25055,1 - Qualify,email,9,3,1,0
+Manager,Account 33,00100133,006000133,Upsell,true,25055,2 - Develop,meeting,5,2,1,0
+Manager,Account 33,00100133,006000133,Upsell,true,25055,2 - Develop,email,12,4,2,1
+Manager,Account 33,00100133,006000133,Upsell,true,25055,3 - Propose,meeting,9,3,1,0
+Manager,Account 33,00100133,006000133,Upsell,true,25055,3 - Propose,email,5,2,1,0
+Manager,Account 33,00100133,006000133,Upsell,true,25055,4 - Negotiate,meeting,13,5,2,1
+Manager,Account 33,00100133,006000133,Upsell,true,25055,4 - Negotiate,email,10,4,2,1
+VP Sales,Account 34,00100134,006000134,Renewal,true,214438,1 - Qualify,meeting,12,4,2,1
+Manager,Account 34,00100134,006000134,Renewal,true,214438,1 - Qualify,email,9,3,1,0
+Manager,Account 34,00100134,006000134,Renewal,true,214438,2 - Develop,meeting,14,5,2,1
+VP Sales,Account 34,00100134,006000134,Renewal,true,214438,2 - Develop,email,9,3,1,0
+VP Sales,Account 34,00100134,006000134,Renewal,true,214438,3 - Propose,meeting,11,4,2,1
+Manager,Account 34,00100134,006000134,Renewal,true,214438,3 - Propose,email,15,6,3,1
+Manager,Account 34,00100134,006000134,Renewal,true,214438,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 34,00100134,006000134,Renewal,true,214438,4 - Negotiate,email,9,3,1,0
+Manager,Account 35,00100135,006000135,New Business,false,178315,1 - Qualify,meeting,3,0,0,0
+VP Sales,Account 35,00100135,006000135,New Business,false,178315,1 - Qualify,email,7,1,1,0
+VP Sales,Account 35,00100135,006000135,New Business,false,178315,2 - Develop,meeting,4,0,0,0
+Manager,Account 35,00100135,006000135,New Business,false,178315,2 - Develop,email,12,2,2,1
+Manager,Account 35,00100135,006000135,New Business,false,178315,3 - Propose,meeting,3,0,0,0
+VP Sales,Account 35,00100135,006000135,New Business,false,178315,3 - Propose,email,4,0,0,0
+VP Sales,Account 35,00100135,006000135,New Business,false,178315,4 - Negotiate,meeting,5,1,1,0
+Manager,Account 35,00100135,006000135,New Business,false,178315,4 - Negotiate,email,12,2,2,1
+Manager,Account 36,00100136,006000136,Upsell,false,199520,1 - Qualify,meeting,2,0,0,0
+Manager,Account 36,00100136,006000136,Upsell,false,199520,1 - Qualify,email,9,1,1,0
+Manager,Account 36,00100136,006000136,Upsell,false,199520,2 - Develop,meeting,2,0,0,0
+Manager,Account 36,00100136,006000136,Upsell,false,199520,2 - Develop,email,3,0,0,0
+VP Sales,Account 36,00100136,006000136,Upsell,false,199520,3 - Propose,meeting,4,0,0,0
+Manager,Account 36,00100136,006000136,Upsell,false,199520,3 - Propose,email,8,1,1,0
+Manager,Account 36,00100136,006000136,Upsell,false,199520,4 - Negotiate,meeting,7,1,1,0
+Manager,Account 36,00100136,006000136,Upsell,false,199520,4 - Negotiate,email,11,2,2,1
+Manager,Account 37,00100137,006000137,Renewal,false,386815,1 - Qualify,meeting,3,0,0,0
+VP Sales,Account 37,00100137,006000137,Renewal,false,386815,1 - Qualify,email,5,1,1,0
+VP Sales,Account 37,00100137,006000137,Renewal,false,386815,2 - Develop,meeting,1,0,0,0
+VP Sales,Account 37,00100137,006000137,Renewal,false,386815,2 - Develop,email,1,0,0,0
+Manager,Account 37,00100137,006000137,Renewal,false,386815,3 - Propose,meeting,12,2,2,1
+VP Sales,Account 37,00100137,006000137,Renewal,false,386815,3 - Propose,email,3,0,0,0
+VP Sales,Account 37,00100137,006000137,Renewal,false,386815,4 - Negotiate,meeting,3,0,0,0
+Manager,Account 37,00100137,006000137,Renewal,false,386815,4 - Negotiate,email,4,0,0,0
+Manager,Account 38,00100138,006000138,New Business,true,158040,1 - Qualify,meeting,15,6,3,1
+Manager,Account 38,00100138,006000138,New Business,true,158040,1 - Qualify,email,8,3,1,0
+Manager,Account 38,00100138,006000138,New Business,true,158040,2 - Develop,meeting,11,4,2,1
+VP Sales,Account 38,00100138,006000138,New Business,true,158040,2 - Develop,email,11,4,2,1
+Manager,Account 38,00100138,006000138,New Business,true,158040,3 - Propose,meeting,8,3,1,0
+Manager,Account 38,00100138,006000138,New Business,true,158040,3 - Propose,email,5,2,1,0
+Manager,Account 38,00100138,006000138,New Business,true,158040,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 38,00100138,006000138,New Business,true,158040,4 - Negotiate,email,7,2,1,0
+Manager,Account 39,00100139,006000139,Upsell,false,154976,1 - Qualify,meeting,3,0,0,0
+Manager,Account 39,00100139,006000139,Upsell,false,154976,1 - Qualify,email,11,2,2,1
+Manager,Account 39,00100139,006000139,Upsell,false,154976,2 - Develop,meeting,1,0,0,0
+Manager,Account 39,00100139,006000139,Upsell,false,154976,2 - Develop,email,10,2,2,1
+Manager,Account 39,00100139,006000139,Upsell,false,154976,3 - Propose,meeting,1,0,0,0
+Manager,Account 39,00100139,006000139,Upsell,false,154976,3 - Propose,email,9,1,1,0
+VP Sales,Account 39,00100139,006000139,Upsell,false,154976,4 - Negotiate,meeting,10,2,2,1
+Manager,Account 39,00100139,006000139,Upsell,false,154976,4 - Negotiate,email,8,1,1,0
+Manager,Account 40,00100140,006000140,Renewal,false,226305,1 - Qualify,meeting,10,2,2,1
+Manager,Account 40,00100140,006000140,Renewal,false,226305,1 - Qualify,email,11,2,2,1
+Manager,Account 40,00100140,006000140,Renewal,false,226305,2 - Develop,meeting,3,0,0,0
+Manager,Account 40,00100140,006000140,Renewal,false,226305,2 - Develop,email,9,1,1,0
+VP Sales,Account 40,00100140,006000140,Renewal,false,226305,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 40,00100140,006000140,Renewal,false,226305,3 - Propose,email,7,1,1,0
+VP Sales,Account 40,00100140,006000140,Renewal,false,226305,4 - Negotiate,meeting,11,2,2,1
+Manager,Account 40,00100140,006000140,Renewal,false,226305,4 - Negotiate,email,12,2,2,1
+Manager,Account 41,00100141,006000141,New Business,false,219991,1 - Qualify,meeting,1,0,0,0
+Manager,Account 41,00100141,006000141,New Business,false,219991,1 - Qualify,email,6,1,1,0
+VP Sales,Account 41,00100141,006000141,New Business,false,219991,2 - Develop,meeting,11,2,2,1
+Manager,Account 41,00100141,006000141,New Business,false,219991,2 - Develop,email,7,1,1,0
+Manager,Account 41,00100141,006000141,New Business,false,219991,3 - Propose,meeting,7,1,1,0
+Manager,Account 41,00100141,006000141,New Business,false,219991,3 - Propose,email,8,1,1,0
+VP Sales,Account 41,00100141,006000141,New Business,false,219991,4 - Negotiate,meeting,10,2,2,1
+VP Sales,Account 41,00100141,006000141,New Business,false,219991,4 - Negotiate,email,7,1,1,0
+Manager,Account 42,00100142,006000142,Upsell,false,70414,1 - Qualify,meeting,4,0,0,0
+Manager,Account 42,00100142,006000142,Upsell,false,70414,1 - Qualify,email,10,2,2,1
+Manager,Account 42,00100142,006000142,Upsell,false,70414,2 - Develop,meeting,10,2,2,1
+Manager,Account 42,00100142,006000142,Upsell,false,70414,2 - Develop,email,6,1,1,0
+VP Sales,Account 42,00100142,006000142,Upsell,false,70414,3 - Propose,meeting,9,1,1,0
+Manager,Account 42,00100142,006000142,Upsell,false,70414,3 - Propose,email,10,2,2,1
+Manager,Account 42,00100142,006000142,Upsell,false,70414,4 - Negotiate,meeting,10,2,2,1
+Manager,Account 42,00100142,006000142,Upsell,false,70414,4 - Negotiate,email,8,1,1,0
+Manager,Account 43,00100143,006000143,Renewal,false,222159,1 - Qualify,meeting,2,0,0,0
+VP Sales,Account 43,00100143,006000143,Renewal,false,222159,1 - Qualify,email,1,0,0,0
+Manager,Account 43,00100143,006000143,Renewal,false,222159,2 - Develop,meeting,2,0,0,0
+Manager,Account 43,00100143,006000143,Renewal,false,222159,2 - Develop,email,5,1,1,0
+Manager,Account 43,00100143,006000143,Renewal,false,222159,3 - Propose,meeting,7,1,1,0
+VP Sales,Account 43,00100143,006000143,Renewal,false,222159,3 - Propose,email,1,0,0,0
+VP Sales,Account 43,00100143,006000143,Renewal,false,222159,4 - Negotiate,meeting,3,0,0,0
+Manager,Account 43,00100143,006000143,Renewal,false,222159,4 - Negotiate,email,5,1,1,0
+Manager,Account 44,00100144,006000144,New Business,true,91888,1 - Qualify,meeting,14,5,2,1
+Manager,Account 44,00100144,006000144,New Business,true,91888,1 - Qualify,email,12,4,2,1
+VP Sales,Account 44,00100144,006000144,New Business,true,91888,2 - Develop,meeting,9,3,1,0
+Manager,Account 44,00100144,006000144,New Business,true,91888,2 - Develop,email,12,4,2,1
+VP Sales,Account 44,00100144,006000144,New Business,true,91888,3 - Propose,meeting,6,2,1,0
+VP Sales,Account 44,00100144,006000144,New Business,true,91888,3 - Propose,email,16,6,3,1
+Manager,Account 44,00100144,006000144,New Business,true,91888,4 - Negotiate,meeting,6,2,1,0
+Manager,Account 44,00100144,006000144,New Business,true,91888,4 - Negotiate,email,9,3,1,0
+Manager,Account 45,00100145,006000145,Upsell,true,305986,1 - Qualify,meeting,8,3,1,0
+Manager,Account 45,00100145,006000145,Upsell,true,305986,1 - Qualify,email,13,5,2,1
+Manager,Account 45,00100145,006000145,Upsell,true,305986,2 - Develop,meeting,11,4,2,1
+Manager,Account 45,00100145,006000145,Upsell,true,305986,2 - Develop,email,16,6,3,1
+Manager,Account 45,00100145,006000145,Upsell,true,305986,3 - Propose,meeting,9,3,1,0
+Manager,Account 45,00100145,006000145,Upsell,true,305986,3 - Propose,email,10,4,2,1
+Manager,Account 45,00100145,006000145,Upsell,true,305986,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 45,00100145,006000145,Upsell,true,305986,4 - Negotiate,email,6,2,1,0
+Manager,Account 46,00100146,006000146,Renewal,true,143540,1 - Qualify,meeting,7,2,1,0
+VP Sales,Account 46,00100146,006000146,Renewal,true,143540,1 - Qualify,email,9,3,1,0
+Manager,Account 46,00100146,006000146,Renewal,true,143540,2 - Develop,meeting,13,5,2,1
+Manager,Account 46,00100146,006000146,Renewal,true,143540,2 - Develop,email,7,2,1,0
+Manager,Account 46,00100146,006000146,Renewal,true,143540,3 - Propose,meeting,11,4,2,1
+Manager,Account 46,00100146,006000146,Renewal,true,143540,3 - Propose,email,9,3,1,0
+Manager,Account 46,00100146,006000146,Renewal,true,143540,4 - Negotiate,meeting,5,2,1,0
+VP Sales,Account 46,00100146,006000146,Renewal,true,143540,4 - Negotiate,email,5,2,1,0
+VP Sales,Account 47,00100147,006000147,New Business,true,10509,1 - Qualify,meeting,5,2,1,0
+Manager,Account 47,00100147,006000147,New Business,true,10509,1 - Qualify,email,14,5,2,1
+VP Sales,Account 47,00100147,006000147,New Business,true,10509,2 - Develop,meeting,16,6,3,1
+Manager,Account 47,00100147,006000147,New Business,true,10509,2 - Develop,email,9,3,1,0
+VP Sales,Account 47,00100147,006000147,New Business,true,10509,3 - Propose,meeting,14,5,2,1
+Manager,Account 47,00100147,006000147,New Business,true,10509,3 - Propose,email,7,2,1,0
+Manager,Account 47,00100147,006000147,New Business,true,10509,4 - Negotiate,meeting,6,2,1,0
+VP Sales,Account 47,00100147,006000147,New Business,true,10509,4 - Negotiate,email,13,5,2,1
+VP Sales,Account 48,00100148,006000148,Upsell,false,32523,1 - Qualify,meeting,3,0,0,0
+Manager,Account 48,00100148,006000148,Upsell,false,32523,1 - Qualify,email,4,0,0,0
+VP Sales,Account 48,00100148,006000148,Upsell,false,32523,2 - Develop,meeting,4,0,0,0
+VP Sales,Account 48,00100148,006000148,Upsell,false,32523,2 - Develop,email,1,0,0,0
+Manager,Account 48,00100148,006000148,Upsell,false,32523,3 - Propose,meeting,10,2,2,1
+Manager,Account 48,00100148,006000148,Upsell,false,32523,3 - Propose,email,2,0,0,0
+Manager,Account 48,00100148,006000148,Upsell,false,32523,4 - Negotiate,meeting,9,1,1,0
+VP Sales,Account 48,00100148,006000148,Upsell,false,32523,4 - Negotiate,email,8,1,1,0
+Manager,Account 49,00100149,006000149,Renewal,true,138165,1 - Qualify,meeting,11,4,2,1
+Manager,Account 49,00100149,006000149,Renewal,true,138165,1 - Qualify,email,10,4,2,1
+Manager,Account 49,00100149,006000149,Renewal,true,138165,2 - Develop,meeting,16,6,3,1
+Manager,Account 49,00100149,006000149,Renewal,true,138165,2 - Develop,email,15,6,3,1
+Manager,Account 49,00100149,006000149,Renewal,true,138165,3 - Propose,meeting,13,5,2,1
+VP Sales,Account 49,00100149,006000149,Renewal,true,138165,3 - Propose,email,9,3,1,0
+VP Sales,Account 49,00100149,006000149,Renewal,true,138165,4 - Negotiate,meeting,15,6,3,1
+Manager,Account 49,00100149,006000149,Renewal,true,138165,4 - Negotiate,email,10,4,2,1
+Manager,Account 50,00100150,006000150,New Business,true,191227,1 - Qualify,meeting,7,2,1,0
+Manager,Account 50,00100150,006000150,New Business,true,191227,1 - Qualify,email,12,4,2,1
+Manager,Account 50,00100150,006000150,New Business,true,191227,2 - Develop,meeting,9,3,1,0
+Manager,Account 50,00100150,006000150,New Business,true,191227,2 - Develop,email,6,2,1,0
+Manager,Account 50,00100150,006000150,New Business,true,191227,3 - Propose,meeting,14,5,2,1
+Manager,Account 50,00100150,006000150,New Business,true,191227,3 - Propose,email,10,4,2,1
+Manager,Account 50,00100150,006000150,New Business,true,191227,4 - Negotiate,meeting,10,4,2,1
+Manager,Account 50,00100150,006000150,New Business,true,191227,4 - Negotiate,email,6,2,1,0
+Manager,Account 51,00100151,006000151,Upsell,true,332611,1 - Qualify,meeting,7,2,1,0
+Manager,Account 51,00100151,006000151,Upsell,true,332611,1 - Qualify,email,9,3,1,0
+Manager,Account 51,00100151,006000151,Upsell,true,332611,2 - Develop,meeting,11,4,2,1
+Manager,Account 51,00100151,006000151,Upsell,true,332611,2 - Develop,email,7,2,1,0
+Manager,Account 51,00100151,006000151,Upsell,true,332611,3 - Propose,meeting,5,2,1,0
+VP Sales,Account 51,00100151,006000151,Upsell,true,332611,3 - Propose,email,12,4,2,1
+Manager,Account 51,00100151,006000151,Upsell,true,332611,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 51,00100151,006000151,Upsell,true,332611,4 - Negotiate,email,10,4,2,1
+Manager,Account 52,00100152,006000152,Renewal,true,232285,1 - Qualify,meeting,15,6,3,1
+Manager,Account 52,00100152,006000152,Renewal,true,232285,1 - Qualify,email,12,4,2,1
+VP Sales,Account 52,00100152,006000152,Renewal,true,232285,2 - Develop,meeting,15,6,3,1
+Manager,Account 52,00100152,006000152,Renewal,true,232285,2 - Develop,email,15,6,3,1
+VP Sales,Account 52,00100152,006000152,Renewal,true,232285,3 - Propose,meeting,10,4,2,1
+Manager,Account 52,00100152,006000152,Renewal,true,232285,3 - Propose,email,8,3,1,0
+VP Sales,Account 52,00100152,006000152,Renewal,true,232285,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 52,00100152,006000152,Renewal,true,232285,4 - Negotiate,email,14,5,2,1
+VP Sales,Account 53,00100153,006000153,New Business,true,276683,1 - Qualify,meeting,5,2,1,0
+VP Sales,Account 53,00100153,006000153,New Business,true,276683,1 - Qualify,email,6,2,1,0
+Manager,Account 53,00100153,006000153,New Business,true,276683,2 - Develop,meeting,13,5,2,1
+Manager,Account 53,00100153,006000153,New Business,true,276683,2 - Develop,email,8,3,1,0
+VP Sales,Account 53,00100153,006000153,New Business,true,276683,3 - Propose,meeting,15,6,3,1
+Manager,Account 53,00100153,006000153,New Business,true,276683,3 - Propose,email,6,2,1,0
+Manager,Account 53,00100153,006000153,New Business,true,276683,4 - Negotiate,meeting,15,6,3,1
+VP Sales,Account 53,00100153,006000153,New Business,true,276683,4 - Negotiate,email,15,6,3,1
+Manager,Account 54,00100154,006000154,Upsell,false,76922,1 - Qualify,meeting,1,0,0,0
+Manager,Account 54,00100154,006000154,Upsell,false,76922,1 - Qualify,email,2,0,0,0
+Manager,Account 54,00100154,006000154,Upsell,false,76922,2 - Develop,meeting,6,1,1,0
+VP Sales,Account 54,00100154,006000154,Upsell,false,76922,2 - Develop,email,12,2,2,1
+Manager,Account 54,00100154,006000154,Upsell,false,76922,3 - Propose,meeting,7,1,1,0
+Manager,Account 54,00100154,006000154,Upsell,false,76922,3 - Propose,email,12,2,2,1
+VP Sales,Account 54,00100154,006000154,Upsell,false,76922,4 - Negotiate,meeting,3,0,0,0
+Manager,Account 54,00100154,006000154,Upsell,false,76922,4 - Negotiate,email,4,0,0,0
+VP Sales,Account 55,00100155,006000155,Renewal,true,146942,1 - Qualify,meeting,8,3,1,0
+VP Sales,Account 55,00100155,006000155,Renewal,true,146942,1 - Qualify,email,6,2,1,0
+Manager,Account 55,00100155,006000155,Renewal,true,146942,2 - Develop,meeting,16,6,3,1
+Manager,Account 55,00100155,006000155,Renewal,true,146942,2 - Develop,email,10,4,2,1
+Manager,Account 55,00100155,006000155,Renewal,true,146942,3 - Propose,meeting,11,4,2,1
+VP Sales,Account 55,00100155,006000155,Renewal,true,146942,3 - Propose,email,16,6,3,1
+Manager,Account 55,00100155,006000155,Renewal,true,146942,4 - Negotiate,meeting,14,5,2,1
+VP Sales,Account 55,00100155,006000155,Renewal,true,146942,4 - Negotiate,email,11,4,2,1
+Manager,Account 56,00100156,006000156,New Business,true,295176,1 - Qualify,meeting,16,6,3,1
+VP Sales,Account 56,00100156,006000156,New Business,true,295176,1 - Qualify,email,13,5,2,1
+Manager,Account 56,00100156,006000156,New Business,true,295176,2 - Develop,meeting,10,4,2,1
+Manager,Account 56,00100156,006000156,New Business,true,295176,2 - Develop,email,5,2,1,0
+Manager,Account 56,00100156,006000156,New Business,true,295176,3 - Propose,meeting,5,2,1,0
+Manager,Account 56,00100156,006000156,New Business,true,295176,3 - Propose,email,14,5,2,1
+VP Sales,Account 56,00100156,006000156,New Business,true,295176,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 56,00100156,006000156,New Business,true,295176,4 - Negotiate,email,16,6,3,1
+Manager,Account 57,00100157,006000157,Upsell,false,192048,1 - Qualify,meeting,3,0,0,0
+VP Sales,Account 57,00100157,006000157,Upsell,false,192048,1 - Qualify,email,6,1,1,0
+VP Sales,Account 57,00100157,006000157,Upsell,false,192048,2 - Develop,meeting,3,0,0,0
+VP Sales,Account 57,00100157,006000157,Upsell,false,192048,2 - Develop,email,3,0,0,0
+Manager,Account 57,00100157,006000157,Upsell,false,192048,3 - Propose,meeting,10,2,2,1
+VP Sales,Account 57,00100157,006000157,Upsell,false,192048,3 - Propose,email,2,0,0,0
+Manager,Account 57,00100157,006000157,Upsell,false,192048,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 57,00100157,006000157,Upsell,false,192048,4 - Negotiate,email,2,0,0,0
+Manager,Account 58,00100158,006000158,Renewal,true,81593,1 - Qualify,meeting,11,4,2,1
+Manager,Account 58,00100158,006000158,Renewal,true,81593,1 - Qualify,email,5,2,1,0
+Manager,Account 58,00100158,006000158,Renewal,true,81593,2 - Develop,meeting,8,3,1,0
+Manager,Account 58,00100158,006000158,Renewal,true,81593,2 - Develop,email,8,3,1,0
+VP Sales,Account 58,00100158,006000158,Renewal,true,81593,3 - Propose,meeting,5,2,1,0
+VP Sales,Account 58,00100158,006000158,Renewal,true,81593,3 - Propose,email,10,4,2,1
+Manager,Account 58,00100158,006000158,Renewal,true,81593,4 - Negotiate,meeting,6,2,1,0
+Manager,Account 58,00100158,006000158,Renewal,true,81593,4 - Negotiate,email,14,5,2,1
+Manager,Account 59,00100159,006000159,New Business,true,379948,1 - Qualify,meeting,10,4,2,1
+VP Sales,Account 59,00100159,006000159,New Business,true,379948,1 - Qualify,email,5,2,1,0
+Manager,Account 59,00100159,006000159,New Business,true,379948,2 - Develop,meeting,15,6,3,1
+Manager,Account 59,00100159,006000159,New Business,true,379948,2 - Develop,email,5,2,1,0
+VP Sales,Account 59,00100159,006000159,New Business,true,379948,3 - Propose,meeting,13,5,2,1
+Manager,Account 59,00100159,006000159,New Business,true,379948,3 - Propose,email,5,2,1,0
+VP Sales,Account 59,00100159,006000159,New Business,true,379948,4 - Negotiate,meeting,7,2,1,0
+VP Sales,Account 59,00100159,006000159,New Business,true,379948,4 - Negotiate,email,9,3,1,0
+Manager,Account 60,00100160,006000160,Upsell,false,346021,1 - Qualify,meeting,6,1,1,0
+Manager,Account 60,00100160,006000160,Upsell,false,346021,1 - Qualify,email,6,1,1,0
+Manager,Account 60,00100160,006000160,Upsell,false,346021,2 - Develop,meeting,7,1,1,0
+Manager,Account 60,00100160,006000160,Upsell,false,346021,2 - Develop,email,2,0,0,0
+VP Sales,Account 60,00100160,006000160,Upsell,false,346021,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 60,00100160,006000160,Upsell,false,346021,3 - Propose,email,3,0,0,0
+Manager,Account 60,00100160,006000160,Upsell,false,346021,4 - Negotiate,meeting,7,1,1,0
+Manager,Account 60,00100160,006000160,Upsell,false,346021,4 - Negotiate,email,2,0,0,0
+Manager,Account 61,00100161,006000161,Renewal,true,318047,1 - Qualify,meeting,11,4,2,1
+VP Sales,Account 61,00100161,006000161,Renewal,true,318047,1 - Qualify,email,14,5,2,1
+Manager,Account 61,00100161,006000161,Renewal,true,318047,2 - Develop,meeting,6,2,1,0
+Manager,Account 61,00100161,006000161,Renewal,true,318047,2 - Develop,email,16,6,3,1
+Manager,Account 61,00100161,006000161,Renewal,true,318047,3 - Propose,meeting,7,2,1,0
+VP Sales,Account 61,00100161,006000161,Renewal,true,318047,3 - Propose,email,5,2,1,0
+Manager,Account 61,00100161,006000161,Renewal,true,318047,4 - Negotiate,meeting,5,2,1,0
+Manager,Account 61,00100161,006000161,Renewal,true,318047,4 - Negotiate,email,6,2,1,0
+Manager,Account 62,00100162,006000162,New Business,true,297446,1 - Qualify,meeting,16,6,3,1
+Manager,Account 62,00100162,006000162,New Business,true,297446,1 - Qualify,email,13,5,2,1
+Manager,Account 62,00100162,006000162,New Business,true,297446,2 - Develop,meeting,8,3,1,0
+VP Sales,Account 62,00100162,006000162,New Business,true,297446,2 - Develop,email,11,4,2,1
+VP Sales,Account 62,00100162,006000162,New Business,true,297446,3 - Propose,meeting,12,4,2,1
+VP Sales,Account 62,00100162,006000162,New Business,true,297446,3 - Propose,email,12,4,2,1
+Manager,Account 62,00100162,006000162,New Business,true,297446,4 - Negotiate,meeting,8,3,1,0
+VP Sales,Account 62,00100162,006000162,New Business,true,297446,4 - Negotiate,email,6,2,1,0
+Manager,Account 63,00100163,006000163,Upsell,false,323882,1 - Qualify,meeting,2,0,0,0
+Manager,Account 63,00100163,006000163,Upsell,false,323882,1 - Qualify,email,5,1,1,0
+VP Sales,Account 63,00100163,006000163,Upsell,false,323882,2 - Develop,meeting,6,1,1,0
+Manager,Account 63,00100163,006000163,Upsell,false,323882,2 - Develop,email,11,2,2,1
+VP Sales,Account 63,00100163,006000163,Upsell,false,323882,3 - Propose,meeting,4,0,0,0
+Manager,Account 63,00100163,006000163,Upsell,false,323882,3 - Propose,email,7,1,1,0
+VP Sales,Account 63,00100163,006000163,Upsell,false,323882,4 - Negotiate,meeting,7,1,1,0
+VP Sales,Account 63,00100163,006000163,Upsell,false,323882,4 - Negotiate,email,2,0,0,0
+VP Sales,Account 64,00100164,006000164,Renewal,false,70019,1 - Qualify,meeting,9,1,1,0
+Manager,Account 64,00100164,006000164,Renewal,false,70019,1 - Qualify,email,5,1,1,0
+Manager,Account 64,00100164,006000164,Renewal,false,70019,2 - Develop,meeting,2,0,0,0
+Manager,Account 64,00100164,006000164,Renewal,false,70019,2 - Develop,email,11,2,2,1
+VP Sales,Account 64,00100164,006000164,Renewal,false,70019,3 - Propose,meeting,4,0,0,0
+Manager,Account 64,00100164,006000164,Renewal,false,70019,3 - Propose,email,8,1,1,0
+VP Sales,Account 64,00100164,006000164,Renewal,false,70019,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 64,00100164,006000164,Renewal,false,70019,4 - Negotiate,email,10,2,2,1
+VP Sales,Account 65,00100165,006000165,New Business,true,32752,1 - Qualify,meeting,12,4,2,1
+Manager,Account 65,00100165,006000165,New Business,true,32752,1 - Qualify,email,6,2,1,0
+Manager,Account 65,00100165,006000165,New Business,true,32752,2 - Develop,meeting,7,2,1,0
+Manager,Account 65,00100165,006000165,New Business,true,32752,2 - Develop,email,5,2,1,0
+Manager,Account 65,00100165,006000165,New Business,true,32752,3 - Propose,meeting,14,5,2,1
+VP Sales,Account 65,00100165,006000165,New Business,true,32752,3 - Propose,email,16,6,3,1
+Manager,Account 65,00100165,006000165,New Business,true,32752,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 65,00100165,006000165,New Business,true,32752,4 - Negotiate,email,6,2,1,0
+VP Sales,Account 66,00100166,006000166,Upsell,false,377852,1 - Qualify,meeting,6,1,1,0
+Manager,Account 66,00100166,006000166,Upsell,false,377852,1 - Qualify,email,4,0,0,0
+VP Sales,Account 66,00100166,006000166,Upsell,false,377852,2 - Develop,meeting,12,2,2,1
+Manager,Account 66,00100166,006000166,Upsell,false,377852,2 - Develop,email,3,0,0,0
+Manager,Account 66,00100166,006000166,Upsell,false,377852,3 - Propose,meeting,6,1,1,0
+VP Sales,Account 66,00100166,006000166,Upsell,false,377852,3 - Propose,email,5,1,1,0
+Manager,Account 66,00100166,006000166,Upsell,false,377852,4 - Negotiate,meeting,8,1,1,0
+VP Sales,Account 66,00100166,006000166,Upsell,false,377852,4 - Negotiate,email,1,0,0,0
+Manager,Account 67,00100167,006000167,Renewal,false,243346,1 - Qualify,meeting,9,1,1,0
+Manager,Account 67,00100167,006000167,Renewal,false,243346,1 - Qualify,email,4,0,0,0
+Manager,Account 67,00100167,006000167,Renewal,false,243346,2 - Develop,meeting,3,0,0,0
+Manager,Account 67,00100167,006000167,Renewal,false,243346,2 - Develop,email,5,1,1,0
+Manager,Account 67,00100167,006000167,Renewal,false,243346,3 - Propose,meeting,2,0,0,0
+Manager,Account 67,00100167,006000167,Renewal,false,243346,3 - Propose,email,2,0,0,0
+VP Sales,Account 67,00100167,006000167,Renewal,false,243346,4 - Negotiate,meeting,1,0,0,0
+VP Sales,Account 67,00100167,006000167,Renewal,false,243346,4 - Negotiate,email,6,1,1,0
+Manager,Account 68,00100168,006000168,New Business,true,47653,1 - Qualify,meeting,9,3,1,0
+Manager,Account 68,00100168,006000168,New Business,true,47653,1 - Qualify,email,10,4,2,1
+Manager,Account 68,00100168,006000168,New Business,true,47653,2 - Develop,meeting,16,6,3,1
+Manager,Account 68,00100168,006000168,New Business,true,47653,2 - Develop,email,14,5,2,1
+Manager,Account 68,00100168,006000168,New Business,true,47653,3 - Propose,meeting,15,6,3,1
+Manager,Account 68,00100168,006000168,New Business,true,47653,3 - Propose,email,14,5,2,1
+Manager,Account 68,00100168,006000168,New Business,true,47653,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 68,00100168,006000168,New Business,true,47653,4 - Negotiate,email,12,4,2,1
+Manager,Account 69,00100169,006000169,Upsell,false,54025,1 - Qualify,meeting,3,0,0,0
+Manager,Account 69,00100169,006000169,Upsell,false,54025,1 - Qualify,email,9,1,1,0
+Manager,Account 69,00100169,006000169,Upsell,false,54025,2 - Develop,meeting,4,0,0,0
+Manager,Account 69,00100169,006000169,Upsell,false,54025,2 - Develop,email,11,2,2,1
+VP Sales,Account 69,00100169,006000169,Upsell,false,54025,3 - Propose,meeting,9,1,1,0
+Manager,Account 69,00100169,006000169,Upsell,false,54025,3 - Propose,email,7,1,1,0
+VP Sales,Account 69,00100169,006000169,Upsell,false,54025,4 - Negotiate,meeting,3,0,0,0
+VP Sales,Account 69,00100169,006000169,Upsell,false,54025,4 - Negotiate,email,5,1,1,0
+Manager,Account 70,00100170,006000170,Renewal,true,148637,1 - Qualify,meeting,15,6,3,1
+Manager,Account 70,00100170,006000170,Renewal,true,148637,1 - Qualify,email,10,4,2,1
+Manager,Account 70,00100170,006000170,Renewal,true,148637,2 - Develop,meeting,8,3,1,0
+Manager,Account 70,00100170,006000170,Renewal,true,148637,2 - Develop,email,13,5,2,1
+VP Sales,Account 70,00100170,006000170,Renewal,true,148637,3 - Propose,meeting,13,5,2,1
+Manager,Account 70,00100170,006000170,Renewal,true,148637,3 - Propose,email,11,4,2,1
+Manager,Account 70,00100170,006000170,Renewal,true,148637,4 - Negotiate,meeting,5,2,1,0
+Manager,Account 70,00100170,006000170,Renewal,true,148637,4 - Negotiate,email,12,4,2,1
+VP Sales,Account 71,00100171,006000171,New Business,false,109514,1 - Qualify,meeting,11,2,2,1
+Manager,Account 71,00100171,006000171,New Business,false,109514,1 - Qualify,email,8,1,1,0
+Manager,Account 71,00100171,006000171,New Business,false,109514,2 - Develop,meeting,12,2,2,1
+VP Sales,Account 71,00100171,006000171,New Business,false,109514,2 - Develop,email,6,1,1,0
+Manager,Account 71,00100171,006000171,New Business,false,109514,3 - Propose,meeting,6,1,1,0
+Manager,Account 71,00100171,006000171,New Business,false,109514,3 - Propose,email,4,0,0,0
+Manager,Account 71,00100171,006000171,New Business,false,109514,4 - Negotiate,meeting,7,1,1,0
+VP Sales,Account 71,00100171,006000171,New Business,false,109514,4 - Negotiate,email,11,2,2,1
+Manager,Account 72,00100172,006000172,Upsell,true,347907,1 - Qualify,meeting,10,4,2,1
+Manager,Account 72,00100172,006000172,Upsell,true,347907,1 - Qualify,email,9,3,1,0
+Manager,Account 72,00100172,006000172,Upsell,true,347907,2 - Develop,meeting,10,4,2,1
+Manager,Account 72,00100172,006000172,Upsell,true,347907,2 - Develop,email,5,2,1,0
+Manager,Account 72,00100172,006000172,Upsell,true,347907,3 - Propose,meeting,14,5,2,1
+Manager,Account 72,00100172,006000172,Upsell,true,347907,3 - Propose,email,15,6,3,1
+Manager,Account 72,00100172,006000172,Upsell,true,347907,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 72,00100172,006000172,Upsell,true,347907,4 - Negotiate,email,8,3,1,0
+VP Sales,Account 73,00100173,006000173,Renewal,false,352398,1 - Qualify,meeting,8,1,1,0
+Manager,Account 73,00100173,006000173,Renewal,false,352398,1 - Qualify,email,12,2,2,1
+VP Sales,Account 73,00100173,006000173,Renewal,false,352398,2 - Develop,meeting,8,1,1,0
+VP Sales,Account 73,00100173,006000173,Renewal,false,352398,2 - Develop,email,4,0,0,0
+VP Sales,Account 73,00100173,006000173,Renewal,false,352398,3 - Propose,meeting,8,1,1,0
+Manager,Account 73,00100173,006000173,Renewal,false,352398,3 - Propose,email,3,0,0,0
+Manager,Account 73,00100173,006000173,Renewal,false,352398,4 - Negotiate,meeting,7,1,1,0
+VP Sales,Account 73,00100173,006000173,Renewal,false,352398,4 - Negotiate,email,8,1,1,0
+Manager,Account 74,00100174,006000174,New Business,true,217236,1 - Qualify,meeting,7,2,1,0
+VP Sales,Account 74,00100174,006000174,New Business,true,217236,1 - Qualify,email,15,6,3,1
+Manager,Account 74,00100174,006000174,New Business,true,217236,2 - Develop,meeting,7,2,1,0
+Manager,Account 74,00100174,006000174,New Business,true,217236,2 - Develop,email,5,2,1,0
+Manager,Account 74,00100174,006000174,New Business,true,217236,3 - Propose,meeting,8,3,1,0
+Manager,Account 74,00100174,006000174,New Business,true,217236,3 - Propose,email,7,2,1,0
+Manager,Account 74,00100174,006000174,New Business,true,217236,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 74,00100174,006000174,New Business,true,217236,4 - Negotiate,email,7,2,1,0
+Manager,Account 75,00100175,006000175,Upsell,true,367606,1 - Qualify,meeting,10,4,2,1
+Manager,Account 75,00100175,006000175,Upsell,true,367606,1 - Qualify,email,6,2,1,0
+Manager,Account 75,00100175,006000175,Upsell,true,367606,2 - Develop,meeting,12,4,2,1
+Manager,Account 75,00100175,006000175,Upsell,true,367606,2 - Develop,email,14,5,2,1
+Manager,Account 75,00100175,006000175,Upsell,true,367606,3 - Propose,meeting,5,2,1,0
+Manager,Account 75,00100175,006000175,Upsell,true,367606,3 - Propose,email,7,2,1,0
+Manager,Account 75,00100175,006000175,Upsell,true,367606,4 - Negotiate,meeting,5,2,1,0
+Manager,Account 75,00100175,006000175,Upsell,true,367606,4 - Negotiate,email,6,2,1,0
+VP Sales,Account 76,00100176,006000176,Renewal,false,399191,1 - Qualify,meeting,6,1,1,0
+Manager,Account 76,00100176,006000176,Renewal,false,399191,1 - Qualify,email,1,0,0,0
+VP Sales,Account 76,00100176,006000176,Renewal,false,399191,2 - Develop,meeting,4,0,0,0
+Manager,Account 76,00100176,006000176,Renewal,false,399191,2 - Develop,email,10,2,2,1
+VP Sales,Account 76,00100176,006000176,Renewal,false,399191,3 - Propose,meeting,10,2,2,1
+VP Sales,Account 76,00100176,006000176,Renewal,false,399191,3 - Propose,email,2,0,0,0
+VP Sales,Account 76,00100176,006000176,Renewal,false,399191,4 - Negotiate,meeting,4,0,0,0
+Manager,Account 76,00100176,006000176,Renewal,false,399191,4 - Negotiate,email,10,2,2,1
+VP Sales,Account 77,00100177,006000177,New Business,true,177853,1 - Qualify,meeting,10,4,2,1
+Manager,Account 77,00100177,006000177,New Business,true,177853,1 - Qualify,email,14,5,2,1
+Manager,Account 77,00100177,006000177,New Business,true,177853,2 - Develop,meeting,15,6,3,1
+Manager,Account 77,00100177,006000177,New Business,true,177853,2 - Develop,email,6,2,1,0
+VP Sales,Account 77,00100177,006000177,New Business,true,177853,3 - Propose,meeting,6,2,1,0
+Manager,Account 77,00100177,006000177,New Business,true,177853,3 - Propose,email,12,4,2,1
+Manager,Account 77,00100177,006000177,New Business,true,177853,4 - Negotiate,meeting,11,4,2,1
+Manager,Account 77,00100177,006000177,New Business,true,177853,4 - Negotiate,email,5,2,1,0
+Manager,Account 78,00100178,006000178,Upsell,true,135503,1 - Qualify,meeting,6,2,1,0
+VP Sales,Account 78,00100178,006000178,Upsell,true,135503,1 - Qualify,email,11,4,2,1
+VP Sales,Account 78,00100178,006000178,Upsell,true,135503,2 - Develop,meeting,11,4,2,1
+VP Sales,Account 78,00100178,006000178,Upsell,true,135503,2 - Develop,email,14,5,2,1
+VP Sales,Account 78,00100178,006000178,Upsell,true,135503,3 - Propose,meeting,15,6,3,1
+Manager,Account 78,00100178,006000178,Upsell,true,135503,3 - Propose,email,13,5,2,1
+Manager,Account 78,00100178,006000178,Upsell,true,135503,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 78,00100178,006000178,Upsell,true,135503,4 - Negotiate,email,16,6,3,1
+VP Sales,Account 79,00100179,006000179,Renewal,true,36501,1 - Qualify,meeting,5,2,1,0
+Manager,Account 79,00100179,006000179,Renewal,true,36501,1 - Qualify,email,11,4,2,1
+Manager,Account 79,00100179,006000179,Renewal,true,36501,2 - Develop,meeting,14,5,2,1
+Manager,Account 79,00100179,006000179,Renewal,true,36501,2 - Develop,email,14,5,2,1
+Manager,Account 79,00100179,006000179,Renewal,true,36501,3 - Propose,meeting,13,5,2,1
+Manager,Account 79,00100179,006000179,Renewal,true,36501,3 - Propose,email,7,2,1,0
+Manager,Account 79,00100179,006000179,Renewal,true,36501,4 - Negotiate,meeting,6,2,1,0
+Manager,Account 79,00100179,006000179,Renewal,true,36501,4 - Negotiate,email,16,6,3,1
+Manager,Account 80,00100180,006000180,New Business,true,167062,1 - Qualify,meeting,6,2,1,0
+Manager,Account 80,00100180,006000180,New Business,true,167062,1 - Qualify,email,8,3,1,0
+VP Sales,Account 80,00100180,006000180,New Business,true,167062,2 - Develop,meeting,6,2,1,0
+VP Sales,Account 80,00100180,006000180,New Business,true,167062,2 - Develop,email,6,2,1,0
+Manager,Account 80,00100180,006000180,New Business,true,167062,3 - Propose,meeting,5,2,1,0
+Manager,Account 80,00100180,006000180,New Business,true,167062,3 - Propose,email,13,5,2,1
+Manager,Account 80,00100180,006000180,New Business,true,167062,4 - Negotiate,meeting,16,6,3,1
+Manager,Account 80,00100180,006000180,New Business,true,167062,4 - Negotiate,email,10,4,2,1
+VP Sales,Account 81,00100181,006000181,Upsell,false,95793,1 - Qualify,meeting,3,0,0,0
+Manager,Account 81,00100181,006000181,Upsell,false,95793,1 - Qualify,email,9,1,1,0
+VP Sales,Account 81,00100181,006000181,Upsell,false,95793,2 - Develop,meeting,6,1,1,0
+VP Sales,Account 81,00100181,006000181,Upsell,false,95793,2 - Develop,email,9,1,1,0
+Manager,Account 81,00100181,006000181,Upsell,false,95793,3 - Propose,meeting,7,1,1,0
+Manager,Account 81,00100181,006000181,Upsell,false,95793,3 - Propose,email,6,1,1,0
+Manager,Account 81,00100181,006000181,Upsell,false,95793,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 81,00100181,006000181,Upsell,false,95793,4 - Negotiate,email,5,1,1,0
+Manager,Account 82,00100182,006000182,Renewal,false,30941,1 - Qualify,meeting,10,2,2,1
+Manager,Account 82,00100182,006000182,Renewal,false,30941,1 - Qualify,email,6,1,1,0
+Manager,Account 82,00100182,006000182,Renewal,false,30941,2 - Develop,meeting,6,1,1,0
+Manager,Account 82,00100182,006000182,Renewal,false,30941,2 - Develop,email,9,1,1,0
+Manager,Account 82,00100182,006000182,Renewal,false,30941,3 - Propose,meeting,3,0,0,0
+Manager,Account 82,00100182,006000182,Renewal,false,30941,3 - Propose,email,2,0,0,0
+VP Sales,Account 82,00100182,006000182,Renewal,false,30941,4 - Negotiate,meeting,7,1,1,0
+VP Sales,Account 82,00100182,006000182,Renewal,false,30941,4 - Negotiate,email,6,1,1,0
+VP Sales,Account 83,00100183,006000183,New Business,true,11469,1 - Qualify,meeting,5,2,1,0
+VP Sales,Account 83,00100183,006000183,New Business,true,11469,1 - Qualify,email,15,6,3,1
+Manager,Account 83,00100183,006000183,New Business,true,11469,2 - Develop,meeting,13,5,2,1
+VP Sales,Account 83,00100183,006000183,New Business,true,11469,2 - Develop,email,11,4,2,1
+Manager,Account 83,00100183,006000183,New Business,true,11469,3 - Propose,meeting,7,2,1,0
+VP Sales,Account 83,00100183,006000183,New Business,true,11469,3 - Propose,email,12,4,2,1
+Manager,Account 83,00100183,006000183,New Business,true,11469,4 - Negotiate,meeting,10,4,2,1
+VP Sales,Account 83,00100183,006000183,New Business,true,11469,4 - Negotiate,email,5,2,1,0
+Manager,Account 84,00100184,006000184,Upsell,false,233055,1 - Qualify,meeting,4,0,0,0
+Manager,Account 84,00100184,006000184,Upsell,false,233055,1 - Qualify,email,6,1,1,0
+VP Sales,Account 84,00100184,006000184,Upsell,false,233055,2 - Develop,meeting,11,2,2,1
+Manager,Account 84,00100184,006000184,Upsell,false,233055,2 - Develop,email,9,1,1,0
+Manager,Account 84,00100184,006000184,Upsell,false,233055,3 - Propose,meeting,4,0,0,0
+Manager,Account 84,00100184,006000184,Upsell,false,233055,3 - Propose,email,2,0,0,0
+VP Sales,Account 84,00100184,006000184,Upsell,false,233055,4 - Negotiate,meeting,12,2,2,1
+Manager,Account 84,00100184,006000184,Upsell,false,233055,4 - Negotiate,email,11,2,2,1
+Manager,Account 85,00100185,006000185,Renewal,true,382652,1 - Qualify,meeting,16,6,3,1
+Manager,Account 85,00100185,006000185,Renewal,true,382652,1 - Qualify,email,7,2,1,0
+VP Sales,Account 85,00100185,006000185,Renewal,true,382652,2 - Develop,meeting,10,4,2,1
+VP Sales,Account 85,00100185,006000185,Renewal,true,382652,2 - Develop,email,13,5,2,1
+Manager,Account 85,00100185,006000185,Renewal,true,382652,3 - Propose,meeting,12,4,2,1
+VP Sales,Account 85,00100185,006000185,Renewal,true,382652,3 - Propose,email,6,2,1,0
+Manager,Account 85,00100185,006000185,Renewal,true,382652,4 - Negotiate,meeting,9,3,1,0
+Manager,Account 85,00100185,006000185,Renewal,true,382652,4 - Negotiate,email,8,3,1,0
+Manager,Account 86,00100186,006000186,New Business,true,359230,1 - Qualify,meeting,14,5,2,1
+Manager,Account 86,00100186,006000186,New Business,true,359230,1 - Qualify,email,14,5,2,1
+Manager,Account 86,00100186,006000186,New Business,true,359230,2 - Develop,meeting,15,6,3,1
+Manager,Account 86,00100186,006000186,New Business,true,359230,2 - Develop,email,10,4,2,1
+Manager,Account 86,00100186,006000186,New Business,true,359230,3 - Propose,meeting,10,4,2,1
+Manager,Account 86,00100186,006000186,New Business,true,359230,3 - Propose,email,13,5,2,1
+Manager,Account 86,00100186,006000186,New Business,true,359230,4 - Negotiate,meeting,5,2,1,0
+VP Sales,Account 86,00100186,006000186,New Business,true,359230,4 - Negotiate,email,6,2,1,0
+VP Sales,Account 87,00100187,006000187,Upsell,true,208612,1 - Qualify,meeting,14,5,2,1
+Manager,Account 87,00100187,006000187,Upsell,true,208612,1 - Qualify,email,16,6,3,1
+VP Sales,Account 87,00100187,006000187,Upsell,true,208612,2 - Develop,meeting,16,6,3,1
+VP Sales,Account 87,00100187,006000187,Upsell,true,208612,2 - Develop,email,6,2,1,0
+VP Sales,Account 87,00100187,006000187,Upsell,true,208612,3 - Propose,meeting,13,5,2,1
+Manager,Account 87,00100187,006000187,Upsell,true,208612,3 - Propose,email,14,5,2,1
+VP Sales,Account 87,00100187,006000187,Upsell,true,208612,4 - Negotiate,meeting,12,4,2,1
+Manager,Account 87,00100187,006000187,Upsell,true,208612,4 - Negotiate,email,16,6,3,1
+Manager,Account 88,00100188,006000188,Renewal,false,307541,1 - Qualify,meeting,4,0,0,0
+Manager,Account 88,00100188,006000188,Renewal,false,307541,1 - Qualify,email,4,0,0,0
+Manager,Account 88,00100188,006000188,Renewal,false,307541,2 - Develop,meeting,11,2,2,1
+VP Sales,Account 88,00100188,006000188,Renewal,false,307541,2 - Develop,email,1,0,0,0
+VP Sales,Account 88,00100188,006000188,Renewal,false,307541,3 - Propose,meeting,6,1,1,0
+VP Sales,Account 88,00100188,006000188,Renewal,false,307541,3 - Propose,email,2,0,0,0
+VP Sales,Account 88,00100188,006000188,Renewal,false,307541,4 - Negotiate,meeting,12,2,2,1
+Manager,Account 88,00100188,006000188,Renewal,false,307541,4 - Negotiate,email,3,0,0,0
+VP Sales,Account 89,00100189,006000189,New Business,true,251421,1 - Qualify,meeting,15,6,3,1
+Manager,Account 89,00100189,006000189,New Business,true,251421,1 - Qualify,email,16,6,3,1
+Manager,Account 89,00100189,006000189,New Business,true,251421,2 - Develop,meeting,8,3,1,0
+Manager,Account 89,00100189,006000189,New Business,true,251421,2 - Develop,email,12,4,2,1
+Manager,Account 89,00100189,006000189,New Business,true,251421,3 - Propose,meeting,9,3,1,0
+Manager,Account 89,00100189,006000189,New Business,true,251421,3 - Propose,email,5,2,1,0
+VP Sales,Account 89,00100189,006000189,New Business,true,251421,4 - Negotiate,meeting,16,6,3,1
+VP Sales,Account 89,00100189,006000189,New Business,true,251421,4 - Negotiate,email,9,3,1,0
+Manager,Account 90,00100190,006000190,Upsell,false,220431,1 - Qualify,meeting,11,2,2,1
+Manager,Account 90,00100190,006000190,Upsell,false,220431,1 - Qualify,email,10,2,2,1
+Manager,Account 90,00100190,006000190,Upsell,false,220431,2 - Develop,meeting,3,0,0,0
+Manager,Account 90,00100190,006000190,Upsell,false,220431,2 - Develop,email,9,1,1,0
+Manager,Account 90,00100190,006000190,Upsell,false,220431,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 90,00100190,006000190,Upsell,false,220431,3 - Propose,email,4,0,0,0
+Manager,Account 90,00100190,006000190,Upsell,false,220431,4 - Negotiate,meeting,12,2,2,1
+VP Sales,Account 90,00100190,006000190,Upsell,false,220431,4 - Negotiate,email,9,1,1,0
+Manager,Account 91,00100191,006000191,Renewal,true,388938,1 - Qualify,meeting,16,6,3,1
+VP Sales,Account 91,00100191,006000191,Renewal,true,388938,1 - Qualify,email,5,2,1,0
+Manager,Account 91,00100191,006000191,Renewal,true,388938,2 - Develop,meeting,8,3,1,0
+Manager,Account 91,00100191,006000191,Renewal,true,388938,2 - Develop,email,10,4,2,1
+Manager,Account 91,00100191,006000191,Renewal,true,388938,3 - Propose,meeting,10,4,2,1
+Manager,Account 91,00100191,006000191,Renewal,true,388938,3 - Propose,email,5,2,1,0
+Manager,Account 91,00100191,006000191,Renewal,true,388938,4 - Negotiate,meeting,16,6,3,1
+Manager,Account 91,00100191,006000191,Renewal,true,388938,4 - Negotiate,email,16,6,3,1
+VP Sales,Account 92,00100192,006000192,New Business,false,309434,1 - Qualify,meeting,4,0,0,0
+Manager,Account 92,00100192,006000192,New Business,false,309434,1 - Qualify,email,8,1,1,0
+Manager,Account 92,00100192,006000192,New Business,false,309434,2 - Develop,meeting,11,2,2,1
+Manager,Account 92,00100192,006000192,New Business,false,309434,2 - Develop,email,3,0,0,0
+Manager,Account 92,00100192,006000192,New Business,false,309434,3 - Propose,meeting,3,0,0,0
+Manager,Account 92,00100192,006000192,New Business,false,309434,3 - Propose,email,3,0,0,0
+VP Sales,Account 92,00100192,006000192,New Business,false,309434,4 - Negotiate,meeting,9,1,1,0
+Manager,Account 92,00100192,006000192,New Business,false,309434,4 - Negotiate,email,4,0,0,0
+Manager,Account 93,00100193,006000193,Upsell,true,166925,1 - Qualify,meeting,8,3,1,0
+VP Sales,Account 93,00100193,006000193,Upsell,true,166925,1 - Qualify,email,6,2,1,0
+Manager,Account 93,00100193,006000193,Upsell,true,166925,2 - Develop,meeting,10,4,2,1
+VP Sales,Account 93,00100193,006000193,Upsell,true,166925,2 - Develop,email,12,4,2,1
+Manager,Account 93,00100193,006000193,Upsell,true,166925,3 - Propose,meeting,14,5,2,1
+Manager,Account 93,00100193,006000193,Upsell,true,166925,3 - Propose,email,8,3,1,0
+Manager,Account 93,00100193,006000193,Upsell,true,166925,4 - Negotiate,meeting,5,2,1,0
+VP Sales,Account 93,00100193,006000193,Upsell,true,166925,4 - Negotiate,email,9,3,1,0
+Manager,Account 94,00100194,006000194,Renewal,true,109008,1 - Qualify,meeting,7,2,1,0
+Manager,Account 94,00100194,006000194,Renewal,true,109008,1 - Qualify,email,14,5,2,1
+Manager,Account 94,00100194,006000194,Renewal,true,109008,2 - Develop,meeting,7,2,1,0
+VP Sales,Account 94,00100194,006000194,Renewal,true,109008,2 - Develop,email,7,2,1,0
+Manager,Account 94,00100194,006000194,Renewal,true,109008,3 - Propose,meeting,6,2,1,0
+Manager,Account 94,00100194,006000194,Renewal,true,109008,3 - Propose,email,15,6,3,1
+Manager,Account 94,00100194,006000194,Renewal,true,109008,4 - Negotiate,meeting,12,4,2,1
+Manager,Account 94,00100194,006000194,Renewal,true,109008,4 - Negotiate,email,15,6,3,1
+VP Sales,Account 95,00100195,006000195,New Business,false,87027,1 - Qualify,meeting,7,1,1,0
+VP Sales,Account 95,00100195,006000195,New Business,false,87027,1 - Qualify,email,2,0,0,0
+Manager,Account 95,00100195,006000195,New Business,false,87027,2 - Develop,meeting,3,0,0,0
+Manager,Account 95,00100195,006000195,New Business,false,87027,2 - Develop,email,3,0,0,0
+Manager,Account 95,00100195,006000195,New Business,false,87027,3 - Propose,meeting,11,2,2,1
+VP Sales,Account 95,00100195,006000195,New Business,false,87027,3 - Propose,email,7,1,1,0
+VP Sales,Account 95,00100195,006000195,New Business,false,87027,4 - Negotiate,meeting,2,0,0,0
+Manager,Account 95,00100195,006000195,New Business,false,87027,4 - Negotiate,email,10,2,2,1
+Manager,Account 96,00100196,006000196,Upsell,true,198744,1 - Qualify,meeting,7,2,1,0
+VP Sales,Account 96,00100196,006000196,Upsell,true,198744,1 - Qualify,email,13,5,2,1
+Manager,Account 96,00100196,006000196,Upsell,true,198744,2 - Develop,meeting,15,6,3,1
+VP Sales,Account 96,00100196,006000196,Upsell,true,198744,2 - Develop,email,6,2,1,0
+Manager,Account 96,00100196,006000196,Upsell,true,198744,3 - Propose,meeting,8,3,1,0
+Manager,Account 96,00100196,006000196,Upsell,true,198744,3 - Propose,email,15,6,3,1
+Manager,Account 96,00100196,006000196,Upsell,true,198744,4 - Negotiate,meeting,13,5,2,1
+Manager,Account 96,00100196,006000196,Upsell,true,198744,4 - Negotiate,email,9,3,1,0
+VP Sales,Account 97,00100197,006000197,Renewal,false,69901,1 - Qualify,meeting,10,2,2,1
+VP Sales,Account 97,00100197,006000197,Renewal,false,69901,1 - Qualify,email,10,2,2,1
+Manager,Account 97,00100197,006000197,Renewal,false,69901,2 - Develop,meeting,6,1,1,0
+Manager,Account 97,00100197,006000197,Renewal,false,69901,2 - Develop,email,8,1,1,0
+VP Sales,Account 97,00100197,006000197,Renewal,false,69901,3 - Propose,meeting,11,2,2,1
+VP Sales,Account 97,00100197,006000197,Renewal,false,69901,3 - Propose,email,5,1,1,0
+Manager,Account 97,00100197,006000197,Renewal,false,69901,4 - Negotiate,meeting,9,1,1,0
+VP Sales,Account 97,00100197,006000197,Renewal,false,69901,4 - Negotiate,email,2,0,0,0
+Manager,Account 98,00100198,006000198,New Business,false,68862,1 - Qualify,meeting,10,2,2,1
+VP Sales,Account 98,00100198,006000198,New Business,false,68862,1 - Qualify,email,1,0,0,0
+VP Sales,Account 98,00100198,006000198,New Business,false,68862,2 - Develop,meeting,4,0,0,0
+Manager,Account 98,00100198,006000198,New Business,false,68862,2 - Develop,email,5,1,1,0
+Manager,Account 98,00100198,006000198,New Business,false,68862,3 - Propose,meeting,5,1,1,0
+VP Sales,Account 98,00100198,006000198,New Business,false,68862,3 - Propose,email,5,1,1,0
+VP Sales,Account 98,00100198,006000198,New Business,false,68862,4 - Negotiate,meeting,8,1,1,0
+Manager,Account 98,00100198,006000198,New Business,false,68862,4 - Negotiate,email,4,0,0,0
+Manager,Account 99,00100199,006000199,Upsell,false,108325,1 - Qualify,meeting,12,2,2,1
+Manager,Account 99,00100199,006000199,Upsell,false,108325,1 - Qualify,email,4,0,0,0
+Manager,Account 99,00100199,006000199,Upsell,false,108325,2 - Develop,meeting,2,0,0,0
+Manager,Account 99,00100199,006000199,Upsell,false,108325,2 - Develop,email,2,0,0,0
+Manager,Account 99,00100199,006000199,Upsell,false,108325,3 - Propose,meeting,8,1,1,0
+VP Sales,Account 99,00100199,006000199,Upsell,false,108325,3 - Propose,email,4,0,0,0
+Manager,Account 99,00100199,006000199,Upsell,false,108325,4 - Negotiate,meeting,1,0,0,0
+Manager,Account 99,00100199,006000199,Upsell,false,108325,4 - Negotiate,email,7,1,1,0

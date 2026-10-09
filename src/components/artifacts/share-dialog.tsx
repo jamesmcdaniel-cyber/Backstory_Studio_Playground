@@ -17,6 +17,8 @@ type Sharing = {
   owner: Person | null
   editors: Person[]
   link: { enabled: boolean; url: string | null; views: number; expiresAt?: string | null; expired?: boolean }
+  /** A personal template copy: only the public link applies. */
+  personalCopy?: boolean
   permissions: { canEdit: boolean; canShare: boolean; reason: string }
 }
 
@@ -83,6 +85,9 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
 
   const workspaceUrl = typeof window !== 'undefined' ? `${window.location.origin}/artifacts/${artifactId}` : ''
   const canShare = sharing?.permissions.canShare ?? false
+  // A personal copy opens for its owner alone, so the only way to show it to
+  // anyone else is its public link: the workspace and editor sections do not apply.
+  const personalCopy = sharing?.personalCopy === true
   const editorIds = useMemo(() => new Set(sharing?.editors.map((editor) => editor.id) ?? []), [sharing])
   const candidates = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -98,13 +103,13 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Share “{title}”</DialogTitle>
-          <DialogDescription>Everyone in your workspace can open it with the link. Choose who can change it, and whether anyone outside can view it.</DialogDescription>
+          <DialogDescription>{personalCopy ? 'This is your personal copy: only you can open it in the app. Turn on the public link to let anyone view it.' : 'Everyone in your workspace can open it with the link. Choose who can change it, and whether anyone outside can view it.'}</DialogDescription>
         </DialogHeader>
         {!sharing ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading…</div>
         ) : (
           <div className="space-y-6">
-            <section className="space-y-2">
+            {!personalCopy && <section className="space-y-2">
               <p className="flex items-center gap-1.5 text-sm font-medium"><Link2 className="h-4 w-4" aria-hidden /> Workspace link</p>
               <div className="flex items-center gap-2">
                 <Input readOnly value={workspaceUrl} aria-label="Workspace link" className="font-mono text-xs" onFocus={(event) => event.currentTarget.select()} />
@@ -123,9 +128,9 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
                   <option value="view">view</option>
                 </select>
               </label>
-            </section>
+            </section>}
 
-            <section className="space-y-2">
+            {!personalCopy && <section className="space-y-2">
               <p className="flex items-center gap-1.5 text-sm font-medium"><Users className="h-4 w-4" aria-hidden /> People who can edit</p>
               {canShare && (
                 <div className="relative">
@@ -167,7 +172,7 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
                 ))}
                 {sharing.workspaceAccess === 'edit' && <li className="px-3 py-2 text-xs text-muted-foreground">Plus every workspace member whose role can edit.</li>}
               </ul>
-            </section>
+            </section>}
 
             <section className="space-y-2">
               <div className="flex items-center justify-between gap-3">
@@ -185,7 +190,7 @@ export function ShareDialog({ artifactId, title, open, onOpenChange }: { artifac
                 </button>
               </div>
               <p className="text-xs text-muted-foreground">No sign-in needed. They see the current version only — no assistant, history or anything else in the workspace. The data on it leaves the workspace, so share with care.</p>
-              {sharing.link.enabled && <div className="space-y-2 rounded-lg border border-border p-3">
+              {sharing.link.enabled && !personalCopy && <div className="space-y-2 rounded-lg border border-border p-3">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <input type="checkbox" checked={sharing.shareTemplate} disabled={!canShare || busy} onChange={event => void update({ shareTemplate: event.target.checked })} />
                   Offer as a template with AI Copilot

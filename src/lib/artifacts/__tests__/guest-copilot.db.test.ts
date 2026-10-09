@@ -99,6 +99,8 @@ if (!database) {
     assert.equal((await listArtifacts(host.organizationId, { userId: host.userId })).some(a => a.id === copyId), false)
     await assert.rejects(requireReadable(host.auth, copyId), /not found/)
     await assert.rejects(requireArtifactEdit(host.organizationId, copyId, { userId: host.userId, can: () => true }), /not change/)
+    // A guest copy never gets a public link of its own: the database refuses it even to a direct writer.
+    await assert.rejects(db.artifact.update({ where: { id: copyId, organizationId: host.organizationId }, data: { shareAnonymous: true, shareTokenDigest: 'x' } }), /configuration is locked/)
     await assert.rejects(askArtifact({ organizationId: host.organizationId, userId: host.userId, id: copyId, message: 'hi', mode: 'auto' }), /not found/, 'even the host cannot talk to a visitor’s copy from the app')
     await assert.rejects(askArtifact({ organizationId: host.organizationId, userId: host.userId, id: copyId, message: 'hi', mode: 'auto', guestDigest: 'wrong' }), /not found/)
   })

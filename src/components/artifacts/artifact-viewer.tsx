@@ -341,7 +341,7 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
               </a>
             </>
           )}
-          {!configurationLocked && <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+          {(!configurationLocked || artifact.permissions?.canShare) && <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
             <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />Share
           </Button>}
           {canEdit && (
@@ -353,7 +353,7 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
         </div>
       </div>}
 
-      {!configurationLocked && <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />}
+      {(!configurationLocked || artifact.permissions?.canShare) && <ShareDialog artifactId={artifact.id} title={artifact.title} open={shareOpen} onOpenChange={setShareOpen} />}
       {error && <p role="status" className="text-sm text-amber-700">{error} <button onClick={() => void refresh()} className="underline">Retry now</button></p>}
 
       {artifact.archivedAt && (

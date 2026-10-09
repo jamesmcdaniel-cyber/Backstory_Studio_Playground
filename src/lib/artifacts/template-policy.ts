@@ -14,8 +14,16 @@ export const SHARED_UPDATE_REQUEST = 'Updated to the latest shared version'
 /** The agent type of a guest copy's copilot: never listed among anyone's agents. */
 export const GUEST_COPILOT_AGENT_TYPE = 'guest_copilot'
 
+/**
+ * A personal copy is its owner's alone: they edit it and may give it a
+ * view-only public link (the one way to show it to anyone else — the app URL
+ * opens for nobody but them). Nobody can name editors, open it to the
+ * workspace, offer it as a template or change its copilot. A guest copy has
+ * no owner and grants nothing.
+ */
 export function templateCopyPermissions(ownerId: string | null, viewerId: string) {
-  return { canEdit: ownerId === viewerId, canShare: false, canConfigure: false, reason: ownerId === viewerId ? 'owner' as const : 'view_only' as const }
+  const owner = ownerId !== null && ownerId === viewerId
+  return { canEdit: owner, canShare: owner, canConfigure: false, reason: owner ? 'owner' as const : 'view_only' as const }
 }
 
 /**

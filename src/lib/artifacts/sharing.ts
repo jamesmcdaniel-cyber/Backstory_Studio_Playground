@@ -80,6 +80,8 @@ export type ArtifactSharing = {
   link: { enabled: boolean; url: string | null; views: number; /** When the link stops working (ISO); null = never. */ expiresAt: string | null; /** On, but past its expiry: visitors are told it has expired. */ expired: boolean }
   /** The MCP servers a copilot on this link can query: those the workspace marked shareable, and nothing else. */
   copilotSources: string[]
+  /** A personal template copy: only its public link can be changed, and only by its owner. */
+  personalCopy: boolean
   permissions: ArtifactPermissions
 }
 
@@ -136,6 +138,7 @@ export async function loadSharing(organizationId: string, artifactId: string, vi
     editors: await people(organizationId, editorIdsOf(artifact.editorIds)),
     // Only people who can share see the public link itself.
     link: permissions.canShare ? linkOf(artifact, origin) : { enabled: artifact.shareAnonymous, url: null, views: artifact.anonymousViews, ...expiryOf(artifact) },
+    personalCopy: Boolean(artifact.templateSourceId),
     permissions,
   }
 }
@@ -145,7 +148,10 @@ export type SharingPatch = { workspaceAccess?: WorkspaceAccess; editorIds?: stri
 /** Change who can edit, or the public link. Newly added editors are notified; every change is audited. */
 export async function updateSharing(organizationId: string, artifactId: string, viewer: ArtifactViewer, origin: string, patch: SharingPatch): Promise<ArtifactSharing> {
   const artifact = await requireArtifactEdit(organizationId, artifactId, viewer)
-  if (artifact.templateSourceId) throw new ArtifactAccessError('Template copy configuration is locked.', 403)
+  // A personal copy: only its public link can change (see templateCopyPermissions).
+  if (artifact.templateSourceId && (patch.workspaceAccess !== undefined || patch.editorIds !== undefined || patch.shareTemplate !== undefined)) {
+    throw new ArtifactAccessError('Template copy configuration is locked.', 403)
+  }
   const data: Prisma.ArtifactUpdateInput = {}
   if (patch.shareTemplate !== undefined) data.shareTemplate = patch.shareTemplate
   let freshToken: string | undefined

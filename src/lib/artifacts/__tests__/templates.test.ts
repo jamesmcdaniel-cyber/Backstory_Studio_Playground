@@ -4,10 +4,12 @@ import { artifactPermissions } from '../sharing'
 import { ArtifactToolClient } from '../tools'
 import { configurableAgentScope, listableAgentScope } from '@/lib/server/visibility'
 
-test('a personal template copy grants content editing only to its owner, even against admin/editor grants', () => {
+test('a personal template copy grants editing and its public link only to its owner, even against admin/editor grants', () => {
   const copy = { userId: 'owner', workspaceAccess: 'edit', editorIds: ['other'], templateSourceId: 'source' }
-  assert.deepEqual(artifactPermissions({ userId: 'owner', can: () => true }, copy), { canEdit: true, canShare: false, canConfigure: false, reason: 'owner' })
+  assert.deepEqual(artifactPermissions({ userId: 'owner', can: () => true }, copy), { canEdit: true, canShare: true, canConfigure: false, reason: 'owner' })
   assert.deepEqual(artifactPermissions({ userId: 'other', can: () => true }, copy), { canEdit: false, canShare: false, canConfigure: false, reason: 'view_only' })
+  // A guest copy has no owner: nobody signed in can edit or share it.
+  assert.deepEqual(artifactPermissions({ userId: 'other', can: () => true }, { ...copy, userId: null }), { canEdit: false, canShare: false, canConfigure: false, reason: 'view_only' })
   assert.equal(configurableAgentScope('owner').artifactTemplateCopyId, null)
   // Its copilot is listed for its owner (it is that artifact's agent), a guest's never is.
   assert.deepEqual(listableAgentScope('owner').type, { not: 'guest_copilot' })

@@ -75,13 +75,41 @@ if (!database) {
     const { attachArtifactAgent } = await import('../artifact-agent')
     await assert.rejects(saveAssistantConfig(recipient.organizationId, recipient.userId, copyId, { instructions: 'unlock', toolConnectionIds: [] }), /locked/)
     await assert.rejects(updateSharing(recipient.organizationId, copyId, { userId: recipient.userId, can: () => true }, 'https://qa.invalid', { workspaceAccess: 'edit' }), /locked/)
+    await assert.rejects(updateSharing(recipient.organizationId, copyId, { userId: recipient.userId, can: () => true }, 'https://qa.invalid', { editorIds: ['anyone'] }), /locked/)
+    await assert.rejects(updateSharing(recipient.organizationId, copyId, { userId: recipient.userId, can: () => true }, 'https://qa.invalid', { shareTemplate: true }), /locked/)
     await assert.rejects(attachArtifactAgent({ organizationId: recipient.organizationId, userId: recipient.userId, artifactId: copyId, create: true }), /locked/)
-    for (const data of [{ templateSourceId: null }, { shareAnonymous: true }, { flowId: 'another' }, { agentTaskId: 'another' }, { assistantConfig: { instructions: 'unlock' } }]) {
+    for (const data of [{ templateSourceId: null }, { shareTemplate: true }, { workspaceAccess: 'edit' }, { flowId: 'another' }, { agentTaskId: 'another' }, { assistantConfig: { instructions: 'unlock' } }]) {
       await assert.rejects(db.artifact.update({ where: { id: copyId, organizationId: recipient.organizationId }, data }), /configuration is locked/)
     }
     for (const data of [{ artifactTemplateCopyId: null }, { metadata: { model: 'other' } }, { objective: 'change settings' }, { schedule: { type: 'daily' } }]) {
       await assert.rejects(db.agentTask.update({ where: { id: copilotId, organizationId: recipient.organizationId }, data }), /configuration is locked/)
     }
+  })
+
+  test('the owner turns on a public link for their copy; anyone with it views the copy, nobody else can change the link', async () => {
+    const { updateSharing, loadSharing } = await import('../sharing')
+    const { NextRequest } = await import('next/server')
+    const publicContent = await import('@/app/api/share/artifacts/[token]/content/route')
+    const owner = { userId: recipient.userId, can: () => true }
+    const minted = await updateSharing(recipient.organizationId, copyId, owner, 'https://qa.invalid', { link: 'enable' })
+    assert.equal(minted.personalCopy, true)
+    assert.equal(minted.permissions.canShare, true)
+    assert.match(minted.link.url ?? '', /\/share\/artifact\/[A-Za-z0-9_-]{32}$/)
+    const copyToken = minted.link.url!.split('/').at(-1)!
+    const served = await publicContent.GET(new NextRequest(`https://qa.invalid/api/share/artifacts/${copyToken}/content`))
+    assert.equal(served.status, 200)
+    assert.match(await served.text(), /Template original/)
+    // The copy's link is a view-only link: it is never a template of its own.
+    const copy = await db.artifact.findFirstOrThrow({ where: { id: copyId, organizationId: recipient.organizationId } })
+    assert.equal(copy.shareTemplate, false)
+    await assert.rejects(useTemplate(copyToken, sourceOrg.organizationId, sourceOrg.userId), /Template not available/)
+    // An admin in the same workspace sees no link and cannot change it.
+    const admin = { userId: 'someone-else', can: () => true }
+    assert.equal((await loadSharing(recipient.organizationId, copyId, admin, 'https://qa.invalid'))?.link.url, null)
+    await assert.rejects(updateSharing(recipient.organizationId, copyId, admin, 'https://qa.invalid', { link: 'disable' }), /not change/)
+    const off = await updateSharing(recipient.organizationId, copyId, owner, 'https://qa.invalid', { link: 'disable' })
+    assert.equal(off.link.enabled, false)
+    assert.equal((await publicContent.GET(new NextRequest(`https://qa.invalid/api/share/artifacts/${copyToken}/content`))).status, 404)
   })
 
   test('editing the copy cannot change the original; other people and flows cannot change this copy', async () => {

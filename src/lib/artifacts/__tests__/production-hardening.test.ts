@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Script, runInNewContext } from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { loadPyodide } from 'pyodide'
-import { requestsArtifact, ARTIFACT_DIRECTIVE } from '../directive'
+import { requestsArtifact, artifactModeApplies, ARTIFACT_DIRECTIVE } from '../directive'
 import { validateArtifactContent, validateArtifactPython } from '../validate-content'
 import { artifactClientRuntime } from '../client-runtime'
 import { needsArtifactRender } from '@/features/agents/artifact-renderer'
@@ -22,6 +22,13 @@ test('@artifact recognizes explicit instruction directives, not email or partial
   assert.equal(requestsArtifact(null, undefined, '@artifact'), true)
   assert.match(ARTIFACT_DIRECTIVE, /complete executable interactive application/)
   assert.match(ARTIFACT_DIRECTIVE, /linked to this agent/)
+})
+
+test('@artifact never applies to an ROI build, whose deliverable is its JSON contract', () => {
+  assert.equal(artifactModeApplies('roi_analysis', '@artifact Build the ROI explorer'), false)
+  assert.equal(artifactModeApplies('roi_analysis', 'Analyst instructions', 'context: @artifact'), false)
+  assert.equal(artifactModeApplies('manual', '@artifact Build the ROI explorer'), true)
+  assert.equal(artifactModeApplies('manual', 'ordinary report'), false)
 })
 
 test('source validation rejects broken code and unsupported imports without executing it', () => {

@@ -3,4 +3,10 @@ export function requestsArtifact(...instructions: Array<string | null | undefine
   return instructions.some(text => /(?:^|\s)@\s?artifact\b/i.test(text ?? ''))
 }
 
+/** An ROI build's deliverable is its JSON contract, never an app: @artifact in
+ * the analyst's instructions or a run's context neither steers nor fails it. */
+export function artifactModeApplies(triggerType: string, ...instructions: Array<string | null | undefined>): boolean {
+  return triggerType !== 'roi_analysis' && requestsArtifact(...instructions)
+}
+
 export const ARTIFACT_DIRECTIVE = `@artifact mode is enabled by the user. Deliver a complete executable interactive application and save it through the normal artifact result path, linked to this agent. Output the complete HTML document or React/TSX module, not just prose, a plan, a screenshot, or a download link. Implement the requested interactions and validation; use HTML/CSS and JavaScript/TypeScript for UI, the supported worker Python API for requested Python computations, and useArtifactState for durable editable data. Do not include Python as decoration or claim a calculation ran when it did not. Use the runtime contract below. When the task lacks details, choose sensible reversible defaults and label synthetic fixtures. If genuinely blocked, state the blocker rather than claim the app was built.`

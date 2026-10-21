@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildAgentSystemPrompt } from '../system-prompt.js'
+import { ARTIFACT_DIRECTIVE } from '../../../lib/artifacts/directive.js'
 import { getSkill, listSkills } from '../../../lib/skills/compose.js'
 
 describe('buildAgentSystemPrompt', () => {
@@ -82,5 +83,10 @@ describe('buildAgentSystemPrompt', () => {
     assert.ok(!prompt.includes('Never claim you lack access to information that is present in your context'), 'the absolute anti-hedging line should be reworded')
     // The reworded line acknowledges genuinely-absent information.
     assert.ok(/genuinely absent|is genuinely absent|when it is genuinely absent/i.test(prompt), 'expected the softened present-vs-absent wording')
+  })
+
+  it('carries the @artifact directive only when artifact mode applies to the run', () => {
+    assert.ok(buildAgentSystemPrompt('@artifact Build a tracker.', []).includes(ARTIFACT_DIRECTIVE))
+    assert.ok(!buildAgentSystemPrompt('@artifact Build a tracker.', [], [], '', false).includes(ARTIFACT_DIRECTIVE), 'an ROI build must not be told to output an app instead of its JSON contract')
   })
 })

@@ -8,7 +8,7 @@ import { registerVersionFromExecution } from '@/lib/artifacts/service'
 import { ArtifactToolClient, artifactToolsFor } from '@/lib/artifacts/tools'
 import { CODE_TOOLS, CodeAnalysisToolClient } from '@/lib/code-analysis/tools'
 import { ARTIFACT_RENDER_MODEL, evidenceFromTranscript, isDeliverable, needsArtifactRender, renderArtifact } from './artifact-renderer'
-import { requestsArtifact } from '@/lib/artifacts/directive'
+import { artifactModeApplies } from '@/lib/artifacts/directive'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { apiLogger } from '@/lib/logger'
@@ -1083,7 +1083,8 @@ async function runAgentExecutionInner(
           .findMany({ where: { id: { in: skillIds }, isActive: true }, select: { id: true, name: true, instructions: true } })
           .catch(() => [])
       : []
-    let system = buildAgentSystemPrompt(agent.objective, skillIds, communitySkills, data.input ?? '')
+    const runTrigger = String((execution.trigger as { type?: unknown } | null)?.type ?? '')
+    let system = buildAgentSystemPrompt(agent.objective, skillIds, communitySkills, data.input ?? '', artifactModeApplies(runTrigger, agent.objective, data.input))
 
     // What personal data is about to cross to the model provider, recorded per
     // category before the first turn. The task input is the user/tenant-data
@@ -1884,7 +1885,7 @@ async function runAgentExecutionInner(
     // or a run whose tool output looked like an injection. Any failure keeps
     // the draft.
     const renderTrigger = String((execution.trigger as { type?: unknown } | null)?.type ?? '')
-    if (renderTrigger !== 'artifact' && requestsArtifact(agent.objective, data.input) && !isDeliverable(summary)) {
+    if (renderTrigger !== 'artifact' && artifactModeApplies(renderTrigger, agent.objective, data.input) && !isDeliverable(summary)) {
       throw new Error('@artifact was requested, but the agent did not produce an executable artifact. Review the run and retry; no completed app is claimed.')
     }
     if (renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && !injectionTainted && needsArtifactRender(summary)) {

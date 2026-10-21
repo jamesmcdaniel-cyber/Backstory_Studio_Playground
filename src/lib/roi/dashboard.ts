@@ -43,7 +43,7 @@ import { hasLiveData, liveFiscalYears, type RoiLiveAccount } from './live-accoun
  * the layout changes: a person's page re-draws an account from its own state
  * the next time they open it, so saved pages take the new layout.
  */
-export const ROI_RENDER_VERSION = 5
+export const ROI_RENDER_VERSION = 6
 
 export type RoiDashboardOptions = {
   account: string
@@ -106,7 +106,7 @@ function liveSection(live: RoiLiveAccount | null | undefined, account: string, f
     </div>
     ${status ? `<div class="live-status"><div><h4>Risks</h4>${list(status.risks)}</div><div><h4>Next steps</h4>${list(status.nextSteps)}</div><div><h4>What is being discussed</h4>${list(status.topics)}</div></div>` : ''}
     ${sf && (sf.byType.length || byFy.length) ? `<div class="live-grid">
-      ${byFy.length ? `<div class="card"><h3>Closed deals by fiscal year · Salesforce</h3><div class="tbl-wrap"><table><thead><tr><th>Fiscal year</th><th>Won</th><th>Lost</th><th>Win rate</th><th>Won amount</th></tr></thead><tbody>${byFy.map((f) => `<tr><td>${escapeHtml(f.fy)}</td><td>${f.won}</td><td>${f.lost}</td><td>${f.won + f.lost ? ((f.won / (f.won + f.lost)) * 100).toFixed(1) + '%' : '–'}</td><td>${moneyText(f.wonAmount)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+      ${byFy.length ? `<div class="card"><h3>Closed deals by fiscal year · Salesforce</h3><div class="tbl-wrap"><table><thead><tr><th>Fiscal year</th><th>Won</th><th>Lost</th><th>Win rate</th><th>Won amount</th></tr></thead><tbody>${byFy.map((f) => `<tr data-fy="${escapeHtml(f.fy)}"><td>${escapeHtml(f.fy)}</td><td>${f.won}</td><td>${f.lost}</td><td>${f.won + f.lost ? ((f.won / (f.won + f.lost)) * 100).toFixed(1) + '%' : '–'}</td><td>${moneyText(f.wonAmount)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
       ${sf.byType.length ? `<div class="card"><h3>Closed deals by type · Salesforce</h3><div class="tbl-wrap"><table><thead><tr><th>Type</th><th>Won</th><th>Lost</th><th>Win rate</th></tr></thead><tbody>${sf.byType.map((t) => `<tr><td>${escapeHtml(t.type)}</td><td>${t.won}</td><td>${t.lost}</td><td>${t.won + t.lost ? ((t.won / (t.won + t.lost)) * 100).toFixed(1) + '%' : '–'}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
     </div>` : ''}
     <p class="sub live-src">${live.sources.map((s) => `${escapeHtml(s.name)}: ${s.ok ? (s.note ? escapeHtml(s.note) : 'read live') : escapeHtml(s.note ?? 'unavailable')}`).join(' · ')}. Read with your own connections; it shows on your page and refreshes every few hours.</p>
@@ -292,7 +292,7 @@ ${customStyle(view)}
 <div class="scrim" id="filterScrim" hidden></div>
 <aside class="filter-panel" id="filterPanel" aria-label="Filters" hidden>
   <div class="fp-head"><h2>Filters</h2><button type="button" class="fp-close" id="filtersClose" aria-label="Close filters">×</button></div>
-  <p class="fp-hint">Fiscal year and quarter slice the deal and stage views; role narrows the reps behind the activity and adoption views.</p>
+  <p class="fp-hint">Fiscal year and quarter set the period every view reads: deals closed in it, and activity in it against the same months a year earlier. Role narrows the reps behind the activity and adoption views.</p>
   <div class="fp-group" id="gfFyWrap"><h3>Fiscal year</h3><div class="chips" id="gfFy"></div></div>
   <div class="fp-group" id="gfFqWrap"><h3>Quarter</h3><div class="chips" id="gfFq"></div></div>
   <div class="fp-group" id="gfRoleWrap"><h3>Role</h3><div class="chips" id="gfRole"></div></div>

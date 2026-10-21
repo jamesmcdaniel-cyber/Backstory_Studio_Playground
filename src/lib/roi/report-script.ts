@@ -51,8 +51,13 @@ var MK=U?Object.keys(U.labels):[], LAB=U?U.labels:{}, MON=U?U.months:[], NM=MON.
 var isMoney=function(k){return k.indexOf('pipeline')===0||((U&&U.moneyKeys)||[]).indexOf(k)>=0;};
 var fmt=function(v,k){if(v==null||isNaN(v))return '–';if(isMoney(k))return money(v);return v.toFixed(v<10?2:1);};
 
-/* ---------- fiscal periods ---------- */
-function fp(m){var y=+m.slice(0,4),mo=+m.slice(5,7),st=CFG.fyStart||1,off=(mo-st+12)%12,fy=st===1?y:(mo>=st?y+1:y);return {fy:'FY'+fy,fq:'Q'+(Math.floor(off/3)+1)};}
+/* ---------- fiscal periods ----------
+   A readout names each month's fiscal year and quarter itself (its activity
+   months, or before those were kept, its deal months); otherwise they follow
+   the configured fiscal start. */
+var FPM={};
+if(AG)(AG.periods||AG.deals.monthly).forEach(function(r){if(r.m&&r.fy&&!FPM[r.m])FPM[r.m]={fy:r.fy,fq:r.fq||''};});
+function fp(m){if(FPM[m])return FPM[m];var y=+m.slice(0,4),mo=+m.slice(5,7),st=CFG.fyStart||1,off=(mo-st+12)%12,fy=st===1?y:(mo>=st?y+1:y);return {fy:'FY'+fy,fq:'Q'+(Math.floor(off/3)+1)};}
 
 /* ---------- filters (side panel, or the ROI page's panel when hosted) ---------- */
 var GF={fy:[],fq:[],role:[]};
@@ -64,7 +69,7 @@ function chipGroup(id,values,key){var el=$(id);if(!el)return 0;el.innerHTML=valu
   $$(id+' button').forEach(function(b){b.onclick=function(){var v=b.getAttribute('data-v'),a=GF[key],ix=a.indexOf(v);if(ix>=0)a.splice(ix,1);else a.push(v);b.setAttribute('aria-pressed',ix<0);gfChanged(true);};});return values.length;}
 function aggOK(r){return (!GF.fy.length||GF.fy.indexOf(r.fy)>=0)&&(!GF.fq.length||!r.fq||GF.fq.indexOf(r.fq)>=0);}
 function setupGF(){
-  var months=D?D.months.slice():(HAS.cells?(ST.cellMonths||[]).slice():[]);
+  var months=MON.concat(D?D.months:(HAS.cells?(ST.cellMonths||[]):[]));
   OPTIONS.fy=AG?AG.fys.slice():uniq(months.map(function(m){return fp(m).fy;})).sort();
   OPTIONS.fq=OPTIONS.fy.length?['Q1','Q2','Q3','Q4']:[];
   OPTIONS.role=AG?ROLE_ORDER.filter(function(r){return AG.roster.some(function(u){return u.r===r;});}):U?ROLE_ORDER.filter(function(r){return U.users.some(function(u){return u.r&&(u.r||'Other')===r;});}):[];
@@ -85,6 +90,9 @@ function drawChips(){
 function gfChanged(fromPanel){var parts=[].concat(GF.fy,GF.fq,GF.role);
   var b=$('#gfBadge');b.textContent=parts.length?'Filtered: '+parts.join(' · '):'';b.style.display=parts.length?'inline-block':'none';
   if(fromPanel&&HOSTED)post({type:'backstory:roi-filters-changed',filters:GF});
+  $$('tr[data-fy]').forEach(function(r){r.hidden=GF.fy.length>0&&GF.fy.indexOf(r.getAttribute('data-fy'))<0;});
+  if(!AG)rosterRows=null;
+  if(window.Plotly){renderHero();renderHeroStats();}
   rerender();}
 /* The ROI page hosts this report: its own side panel holds the filters, and
    sends them here; this page's menu steps aside. Messages from anything but
@@ -321,6 +329,18 @@ var OBS=(CFG.obs&&CFG.obs.length)?CFG.obs:rng(NM-WN,NM-1), BASE=(CFG.base&&CFG.b
 var wl=function(w){return w&&w.length?mlab(MON[w[0]])+' – '+mlab(MON[w[w.length-1]]):'–';};
 var shift12=function(w){return w.map(function(i){return i-12;}).filter(function(i){return i>=0;});};
 var L12=rng(NM-12,NM-1), P12=rng(NM-24,NM-13);
+/* The fiscal-year and quarter filters as an activity window: the chosen
+   months (quarters alone mean the latest fiscal year that has them) against
+   the same months a year earlier. Null when neither filter is set. */
+function periodWin(){
+  if(!GF.fy.length&&!GF.fq.length)return null;
+  var fys=GF.fy;if(!fys.length){var seen=MON.filter(monthOK).map(function(m){return fp(m).fy;}).sort();fys=seen.length?[seen[seen.length-1]]:[];}
+  var obs=[];MON.forEach(function(m,i){var p=fp(m);if(fys.indexOf(p.fy)>=0&&(!GF.fq.length||GF.fq.indexOf(p.fq)>=0))obs.push(i);});
+  var base=shift12(obs).filter(function(i){return obs.indexOf(i)<0;}),name=(fys.length?fys.join(', '):GF.fy.join(', '))+(GF.fq.length?' '+GF.fq.join(', '):'');
+  return {obs:obs,base:base,name:name,label:name+' ('+(obs.length?wl(obs):'no activity in these months')+')',baseLabel:'Same months a year earlier ('+(base.length?wl(base):'none in the data')+')'};}
+function obsWin(){var p=periodWin();return p?p.obs:OBS;}
+function baseWin(){var p=periodWin();return p?p.base:BASE;}
+function winText(){var p=periodWin();return p?p.label+' vs '+(p.base.length?wl(p.base):'no earlier year in the data'):wl(OBS)+' vs '+wl(BASE);}
 
 /* ---------- deal math (mirrors facts.ts dealGroup) ---------- */
 var LEVELS=['Low (0–30)','Medium (31–70)','High (71+)'];
@@ -343,29 +363,33 @@ function dealIdx(opts){opts=opts||{};var incl=opts.incl!=null?opts.incl:$('#deal
 function legacyTable(incl){if(!OPP)return null;var t=OPP[dealType()]?dealType():(OPP[ALL_TYPES]?ALL_TYPES:Object.keys(OPP)[0]);return OPP[t][incl?'incl':'excl'];}
 /* Readouts: the type's table, or (with fiscal-year or quarter filters) levels from the monthly aggregates and deciles from the fiscal-year ones. */
 function aggBucket(list){var n=0,won=0,vs=0,vn=0,es=0,en=0;list.forEach(function(r){n+=r.n;won+=r.won;if(r.vel!=null){vs+=r.vel*r.n;vn+=r.n;}if(r.eng!=null){es+=r.eng*r.n;en+=r.n;}});return {n:n,won:won,win_rate:n?r1(won/n*100):null,avg_days:vn?Math.round(vs/vn):null,med_days_won:null,med_days_lost:null,eng:en?es/en:null};}
-function aggType(r){var t=dealType();return t===AG_ALL||r.t===t;}
-function aggDeals(){
-  var t=dealType();if(!GF.fy.length&&!GF.fq.length)return OPP[t]?OPP[t].excl:null;
-  var mrows=AG.deals.monthly.filter(function(r){return aggType(r)&&aggOK(r);});
+function aggType(r,t){t=t||dealType();return t===AG_ALL||r.t===t;}
+function aggDeals(t){
+  t=t||dealType();if(!GF.fy.length&&!GF.fq.length)return OPP[t]?OPP[t].excl:null;
+  var mrows=AG.deals.monthly.filter(function(r){return aggType(r,t)&&aggOK(r);});
   var levels=[0,1,2].map(function(l){var b=aggBucket(mrows.filter(function(r){return r.l===l;}));b.level=LEVELS[l];b.lo=[0,31,71][l];b.hi=[30,70,100][l];return b;}).filter(function(b){return b.n>0;});
-  var drows=AG.deals.decileFy.filter(function(r){return aggType(r)&&(!GF.fy.length||GF.fy.indexOf(r.fy)>=0);});
+  var drows=AG.deals.decileFy.filter(function(r){return aggType(r,t)&&(!GF.fy.length||GF.fy.indexOf(r.fy)>=0);});
   var deciles=[1,2,3,4,5,6,7,8,9,10].map(function(d){var b=aggBucket(drows.filter(function(r){return r.dec===d;}));b.dec=d;b.lo=b.hi=b.eng==null?0:Math.round(b.eng);return b;}).filter(function(b){return b.n>0;});
   var tot=aggBucket(mrows);if(tot.n<20)return null;
   return {deciles:deciles,levels:levels,n:tot.n,win_rate:tot.win_rate,r_win:deciles.length>2?Math.round(corr(deciles.map(function(r){return r.dec;}),deciles.map(function(r){return r.win_rate||0;}))*100)/100:null};}
 function currentDeals(){if(D)return dealGroup(dealIdx());if(AG)return aggDeals();return legacyTable($('#dealIncl')&&$('#dealIncl').checked);}
-function defaultDeals(){if(AG)return OPP[AG_ALL]?OPP[AG_ALL].excl:null;if(D){var renew=D.types.map(function(t){return /renewal/i.test(t);}),ix=[];for(var i=0;i<D.w.length;i++)if(!renew[D.t[i]]&&!D.x[i])ix.push(i);return dealGroup(ix);}return OPP?(OPP['All (excl. renewals)']||OPP[Object.keys(OPP)[0]]).excl:null;}
+/* The hero's deals: every type but renewals, sliced by the fiscal-year and quarter filters (a legacy table has no months to slice). */
+function defaultDeals(){if(AG)return aggDeals(AG_ALL);if(D){var renew=D.types.map(function(t){return /renewal/i.test(t);}),ix=[];for(var i=0;i<D.w.length;i++)if(!renew[D.t[i]]&&!D.x[i]&&monthOK(D.m[i]>=0?D.months[D.m[i]]:null))ix.push(i);return dealGroup(ix);}return OPP?(OPP['All (excl. renewals)']||OPP[Object.keys(OPP)[0]]).excl:null;}
 var lvl=function(g,prefix){return g?g.levels.filter(function(r){return r.level.indexOf(prefix)===0;})[0]:null;};
 
 /* ---------- hero ---------- */
 function topCohort(){return CFG.cohort==='users'?'User':'High';}
+var HERO_CAP=null;
 function renderHero(){
-  var g=defaultDeals();
+  var g=defaultDeals(),sliced=GF.fy.length||GF.fq.length,period=[].concat(GF.fy,GF.fq).join(', ');
+  if(HERO_CAP==null)HERO_CAP=AG?'Win rate by engagement decile, lowest to highest (every closed deal in the readout)':$('#heroCap').textContent;
+  if(sliced&&(AG||D)&&(!g||!g.deciles.length)){emptyChart('heroStrip','Fewer than 20 deals close in '+period+'.');$('#heroCap').textContent='Win rate by engagement decile · '+period;return;}
   if(!g||!g.deciles.length){ if(HAS.U){var s=monthly(U.users.map(function(){return true;}),'dir_vp_exec'),hz=css('--horizon');
     plot('heroStrip',[{type:'scatter',mode:'lines',x:MON.map(mlab),y:s,line:{color:hz,width:2.5},fill:'tozeroy',hovertemplate:'%{x}<br>%{y:.2f}<extra></extra>'}],
       base({margin:{l:4,r:4,t:12,b:26},font:{family:css('--sans'),color:'#BBBCBC'},xaxis:{showgrid:false,linecolor:'#55555E',nticks:6,tickfont:{family:MONO,size:11,color:'#BBBCBC'}},yaxis:{visible:false},hoverlabel:{bgcolor:'#31313C',bordercolor:'#55555E',font:{family:MONO,size:12,color:'#FFFFFF'}}}));
     $('#heroCap').textContent='Director, VP and executive meetings per rep per month, all reps';}
     else $('[data-section="hero"]').classList.add('hidden'); return; }
-  if(AG)$('#heroCap').textContent='Win rate by engagement decile, lowest to highest (every closed deal in the readout)';
+  $('#heroCap').textContent=sliced&&(AG||D)?'Win rate by engagement decile, lowest to highest (closed deals in '+period+(AG&&GF.fq.length?'; deciles follow the fiscal year':'')+')':HERO_CAP;
   var d=g.deciles,hz2=css('--horizon');
   plot('heroStrip',[{type:'bar',x:d.map(function(r){return 'D'+r.dec;}),y:d.map(function(r){return r.win_rate;}),marker:{color:d.map(function(r,i){return i>=d.length-3?hz2:'rgba(255,255,255,.26)';}),cornerradius:4},
     text:d.map(function(r){return r.win_rate==null?'–':r.win_rate.toFixed(0)+'%';}),textposition:'outside',textfont:{family:MONO,size:12,color:'#FFFFFF'},cliponaxis:false,customdata:d.map(function(r){return r.n;}),
@@ -375,11 +399,11 @@ function renderHero(){
 function renderHeroStats(){
   var out=[];
   if(HAS.U&&MK.indexOf('pipeline_created')>=0){var who=HAS.usage?topCohort():'all',m=HAS.usage?U.users.map(function(u){return (who==='User'?u.f===who:u.t===who);}):U.users.map(function(){return true;});
-    var o=winAvg(m,OBS,['pipeline_created']);out.push([money(o.pipeline_created),'Pipeline created per rep per month'+(HAS.usage?(who==='User'?', Backstory users':', high adopters'):'')]);}
+    var o=winAvg(m,obsWin(),['pipeline_created']);out.push([money(o.pipeline_created),'Pipeline created per rep per month'+(HAS.usage?(who==='User'?', Backstory users':', high adopters'):'')]);}
   var g=defaultDeals(),hi=lvl(g,'High'),lo=lvl(g,'Low');
   if(hi&&hi.win_rate!=null)out.push([hi.win_rate.toFixed(1)+'%','Win rate, high-engagement deals']);
   if(hi&&lo&&lo.win_rate)out.push([(hi.win_rate/lo.win_rate).toFixed(1)+'×','Win rate lift, high vs low engagement']);
-  if(HAS.U&&MK.indexOf('pipeline_created')>=0){var all=U.users.map(function(){return true;}),a=winAvg(all,OBS,['pipeline_created']),b=winAvg(all,BASE,['pipeline_created']);out.push([sp(pct(a.pipeline_created,b.pipeline_created)),'Pipeline created per rep, vs baseline']);}
+  if(HAS.U&&MK.indexOf('pipeline_created')>=0){var all=U.users.map(function(){return true;}),a=winAvg(all,obsWin(),['pipeline_created']),b=winAvg(all,baseWin(),['pipeline_created']);out.push([sp(pct(a.pipeline_created,b.pipeline_created)),'Pipeline created per rep, '+(periodWin()?periodWin().name+' vs a year earlier':'vs baseline')]);}
   if(out.length<4&&HAS.A360){var agg=a360Agg(0,A360.B.months.length-1),pw=agg['Power Users'],nn=agg['No Engagement'];if(pw&&nn&&nn.avg_created)out.push([(pw.avg_created/nn.avg_created).toFixed(1)+'×','Pipeline per account, Account 360 power users vs no engagement']);}
   var el=$('#heroStats');if(!out.length){el.classList.add('hidden');return;}
   el.style.setProperty('--cols',String(Math.min(4,out.length)));
@@ -394,14 +418,14 @@ function renderSummary(){
   $$('.go').forEach(function(b){b.onclick=function(){showTab(b.getAttribute('data-go'));window.scrollTo({top:$('nav.tabs').offsetTop,behavior:'smooth'});};});
   $('#watch').innerHTML=N.watch.map(function(w){return '<li><b>'+esc(w.lead)+'</b> '+md(w.text)+'</li>';}).join('');
 }
-/* The scorecard: the configured observation window against its baseline, all reps (the role filter applies). */
+/* The scorecard: the configured observation window against its baseline (or the filtered fiscal period against a year earlier), all reps (the role filter applies). */
 function renderScorecard(){
   if(!HAS.U){$('#scoreBlock').classList.add('hidden');return;}
   var keys=['meeting_count','sent_email_count','dir_vp_exec','vp_meeting_count','people_engaged','pipeline_created','executive_meeting_count'].filter(function(k){return MK.indexOf(k)>=0;});
   MK.forEach(function(k){if(keys.length<6&&keys.indexOf(k)<0)keys.push(k);});keys=keys.slice(0,6);
-  var mask=popMask('all'),O=winAvg(mask,OBS,keys),B=winAvg(mask,BASE,keys);
-  $('#scoreWin').textContent=wl(OBS)+' vs '+wl(BASE)+(GF.role.length?' · '+GF.role.join(', '):'');
-  $('#scoreKpis').innerHTML=keys.map(function(k){var c=pct(O[k],B[k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' per rep</div><div class="v">'+fmt(O[k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+fmt(B[k],k)+'</div>'+spark(monthly(mask,k),OBS)+'</div>';}).join('');
+  var ow=obsWin(),mask=popMask('all'),O=winAvg(mask,ow,keys),B=winAvg(mask,baseWin(),keys);
+  $('#scoreWin').textContent=winText()+(GF.role.length?' · '+GF.role.join(', '):'');
+  $('#scoreKpis').innerHTML=keys.map(function(k){var c=pct(O[k],B[k]);return '<div class="tile"><div class="k">'+esc(LAB[k])+' per rep</div><div class="v">'+fmt(O[k],k)+'</div><div class="d '+(isNaN(c)?'':c>=0?'up':'down')+'">'+sp(c)+' vs '+fmt(B[k],k)+'</div>'+spark(monthly(mask,k),ow)+'</div>';}).join('');
 }
 /* The adoption overview: who is in each usage cohort, and the pipeline each creates. */
 function renderOverview(){
@@ -411,8 +435,8 @@ function renderOverview(){
   plot('ovDonut',[{type:'pie',hole:.62,labels:groups.map(function(g){return g==='No usage'?noneLabel:cohortName(g);}),values:counts,marker:{colors:[css('--d1'),css('--d2'),css('--d3'),css('--rule-strong')]},textinfo:'value',textposition:'inside',insidetextorientation:'horizontal',hovertemplate:'%{label}: %{value} reps (%{percent})<extra></extra>',sort:false,direction:'clockwise',rotation:-90}],base({showlegend:true,legend:{orientation:'h',y:-0.08,yanchor:'top',x:0.5,xanchor:'center'},margin:{l:8,r:8,t:8,b:8},annotations:[donutCenter(total.toLocaleString(),'reps')]}));
   var card=$('#ovPipeline').closest('.card');
   if(MK.indexOf('pipeline_created')<0){card.classList.add('hidden');return;}
-  var C=['High','Medium','Low','Non-user'],v=C.map(function(c){return winAvg(popMask(c),OBS,['pipeline_created']).pipeline_created;});
-  $('#ovPipelineSub').textContent='Average per rep per month, '+wl(OBS)+'.';
+  var ow=obsWin(),C=['High','Medium','Low','Non-user'],v=C.map(function(c){return winAvg(popMask(c),ow,['pipeline_created']).pipeline_created;});
+  $('#ovPipelineSub').textContent='Average per rep per month, '+(periodWin()?periodWin().label:wl(ow))+'.';
   plot('ovPipeline',[{type:'bar',x:C.map(cohortName),y:v,marker:{color:[P[0],P[1],P[2],css('--rule-strong')]},text:v.map(money),textposition:'outside',cliponaxis:false,hovertemplate:'%{x}<br>%{y:$,.0f}<extra></extra>'}],
     base({showlegend:false,margin:{l:48,r:8,t:18,b:60},xaxis:xcat(),yaxis:{tickformat:'$.2s',rangemode:'tozero'}}));
 }
@@ -452,6 +476,7 @@ function setupLead(){
   if(!mat('director_meeting_count')&&!mat('vp_meeting_count'))$('#seniorBlock').classList.add('hidden');
 }
 function leadWindows(){
+  var per=periodWin();if(per)return [per.base,per.obs,per.baseLabel,per.label];
   if(leadMode==='pp')return [W.P6,W.L6,'Prior 6 months ('+wl(W.P6)+')','Last 6 months ('+wl(W.L6)+')'];
   if(leadMode==='yoy')return [W.PY,W.L6,'Same period last year ('+wl(W.PY)+')','Last 6 months ('+wl(W.L6)+')'];
   if(leadMode==='y12')return [W.P12,W.L12,'Prior 12 months ('+wl(W.P12)+')','Last 12 months ('+wl(W.L12)+')'];
@@ -459,20 +484,23 @@ function leadWindows(){
   var a=+$('#bS').value,b=+$('#bE').value,c=+$('#oS').value,d=+$('#oE').value;if(b<a){var t=a;a=b;b=t;}if(d<c){var t2=c;c=d;d=t2;}
   return [rng(a,b),rng(c,d),'Baseline ('+mlab(MON[a])+' – '+mlab(MON[b])+')','Observation ('+mlab(MON[c])+' – '+mlab(MON[d])+')'];
 }
+/* A window's contiguous runs of months: a filtered period can skip quarters. */
+function runs(w){var out=[];w.forEach(function(i){var r=out[out.length-1];if(r&&i===r[1]+1)r[1]=i;else out.push([i,i]);});return out;}
 function bands(bw,ow,B,O){var s=[],hz=css('--horizon');
-  if(bw.length){s.push({type:'rect',xref:'x',yref:'paper',x0:bw[0]-.5,x1:bw[bw.length-1]+.5,y0:0,y1:1,fillcolor:css('--rule-strong'),opacity:.18,line:{width:0},layer:'below'});if(B!=null&&!isNaN(B))s.push({type:'line',xref:'x',x0:bw[0]-.5,x1:bw[bw.length-1]+.5,y0:B,y1:B,line:{color:css('--text3'),width:2,dash:'dot'}});}
-  if(ow.length){s.push({type:'rect',xref:'x',yref:'paper',x0:ow[0]-.5,x1:ow[ow.length-1]+.5,y0:0,y1:1,fillcolor:hz,opacity:.16,line:{width:0},layer:'below'});if(O!=null&&!isNaN(O))s.push({type:'line',xref:'x',x0:ow[0]-.5,x1:ow[ow.length-1]+.5,y0:O,y1:O,line:{color:css('--horizon-deep'),width:2,dash:'dot'}});}
+  if(bw.length){runs(bw).forEach(function(r){s.push({type:'rect',xref:'x',yref:'paper',x0:r[0]-.5,x1:r[1]+.5,y0:0,y1:1,fillcolor:css('--rule-strong'),opacity:.18,line:{width:0},layer:'below'});});if(B!=null&&!isNaN(B))s.push({type:'line',xref:'x',x0:bw[0]-.5,x1:bw[bw.length-1]+.5,y0:B,y1:B,line:{color:css('--text3'),width:2,dash:'dot'}});}
+  if(ow.length){runs(ow).forEach(function(r){s.push({type:'rect',xref:'x',yref:'paper',x0:r[0]-.5,x1:r[1]+.5,y0:0,y1:1,fillcolor:hz,opacity:.16,line:{width:0},layer:'below'});});if(O!=null&&!isNaN(O))s.push({type:'line',xref:'x',x0:ow[0]-.5,x1:ow[ow.length-1]+.5,y0:O,y1:O,line:{color:css('--horizon-deep'),width:2,dash:'dot'}});}
   return s;}
 var monthAxis=function(extra){return Object.assign({tickmode:'array',tickvals:MON.map(function(m,i){return i;}).filter(function(i){return i%3===0;}),ticktext:MON.filter(function(m,i){return i%3===0;}).map(mlab),gridcolor:'rgba(0,0,0,0)',linecolor:css('--rule-strong'),tickfont:{family:MONO,size:11}},extra||{});};
 function renderLead(){
-  var pop=$('#leadPop').value,mask=popMask(pop),w=leadWindows(),bw=w[0],ow=w[1],bl=w[2],ol=w[3];
+  var pop=$('#leadPop').value,mask=popMask(pop),w=leadWindows(),bw=w[0],ow=w[1],bl=w[2],ol=w[3],per=periodWin();
+  $$('#leadMode button').forEach(function(b){b.disabled=!!per;});$('#leadCustom').classList.toggle('on',!per&&leadMode==='custom');
   var B=winAvg(mask,bw),O=winAvg(mask,ow),k=leadMetric,series=monthly(mask,k),hz=css('--horizon');
   $('#leadTitle').textContent=LAB[k]+', monthly average per rep';
   plot('leadTrend',[{type:'scatter',mode:'lines+markers',x:MON.map(function(m,i){return i;}),y:series,line:{color:hz,width:2.2,shape:'spline',smoothing:.4},marker:{color:hz},
     customdata:MON.map(mlab),hovertemplate:'%{customdata}<br>'+(isMoney(k)?'$%{y:,.0f}':'%{y:.2f}')+'<extra></extra>',name:LAB[k]}],
     base({shapes:bands(bw,ow,B[k],O[k]),showlegend:false,xaxis:monthAxis(),yaxis:{gridcolor:css('--rule'),rangemode:'tozero',tickformat:isMoney(k)?'$.2s':'',tickfont:{family:MONO,size:11}}}));
   var ch=pct(O[k],B[k]),popName=$('#leadPop').selectedOptions[0].text.toLowerCase()+(GF.role.length?' ('+GF.role.join(', ')+')':'');
-  $('#leadDyn').innerHTML='For '+esc(popName)+', <b>'+esc(LAB[k].toLowerCase())+'</b> averaged <b class="num">'+fmt(O[k],k)+'</b> per rep per month in the '+esc(ol.toLowerCase().replace(/ \(.*/,''))+' window vs <b class="num">'+fmt(B[k],k)+'</b> in the baseline, a change of <b class="num">'+sp(ch)+'</b>. '+O.n.toLocaleString()+' reps in the observation window, '+B.n.toLocaleString()+' in the baseline.';
+  $('#leadDyn').innerHTML='For '+esc(popName)+', <b>'+esc(LAB[k].toLowerCase())+'</b> averaged <b class="num">'+fmt(O[k],k)+'</b> per rep per month in '+(per?esc(per.name):'the '+esc(ol.toLowerCase().replace(/ \(.*/,''))+' window')+' vs <b class="num">'+fmt(B[k],k)+'</b> '+(per?'a year earlier':'in the baseline')+', a change of <b class="num">'+sp(ch)+'</b>. '+O.n.toLocaleString()+' reps in the observation window, '+B.n.toLocaleString()+' in the baseline.'+(per?' The fiscal-year and quarter filters set these windows; clear them to compare other periods.':'');
   $('#leadTblSub').textContent=bl+' vs '+ol+'. Population: '+$('#leadPop').selectedOptions[0].text+(GF.role.length?' · '+GF.role.join(', '):'')+'.';
   $('#leadTbl').innerHTML='<thead><tr><th>Metric</th><th>Baseline</th><th>Observation</th><th>Change</th></tr></thead><tbody>'+
     MK.map(function(m){var c=pct(O[m],B[m]);return '<tr><td>'+esc(LAB[m])+'</td><td>'+fmt(B[m],m)+'</td><td>'+fmt(O[m],m)+'</td><td class="'+(c>=0?'up':'down')+'">'+sp(c)+'</td></tr>';}).join('')+
@@ -519,7 +547,7 @@ function renderSenior(){
 var adoptView=CFG.cohort==='users'?'users':'tiers', adoptWin='obs', rosterTier='All', rosterSort={k:'ev',dir:-1};
 var WN_LABEL='Last '+(OBS.length||WN)+' months';
 var cohortName=function(c){return c==='User'?'Backstory users':c==='Non-user'?'Non-users':c+' adopters';};
-function winsFor(w){return w==='l12'?[L12,P12,'last 12 months','prior 12 months ('+wl(P12)+')']:[OBS,BASE,'observation window ('+wl(OBS)+')','baseline ('+wl(BASE)+')'];}
+function winsFor(w){var per=periodWin();if(per)return [per.obs,per.base,per.label,'same months a year earlier'];return w==='l12'?[L12,P12,'last 12 months','prior 12 months ('+wl(P12)+')']:[OBS,BASE,'observation window ('+wl(OBS)+')','baseline ('+wl(BASE)+')'];}
 function setupCohorts(){
   $('#adoptWin button[data-v="obs"]').textContent=WN_LABEL;if((OBS.length||WN)===12)$('#adoptWin button[data-v="l12"]').classList.add('hidden');
   segSet('#adoptView',adoptView);
@@ -548,6 +576,7 @@ function cohortTrend(id,C,k){var P=palette();
 }
 /* Adoption impact: the tiers or users vs non-users view, then the roster. */
 function renderAdoption(){
+  $$('#adoptWin button').forEach(function(b){b.disabled=!!periodWin();});
   $('#tiersView').classList.toggle('hidden',adoptView!=='tiers');
   $('#usersView').classList.toggle('hidden',adoptView!=='users');
   if(adoptView==='users'){renderUsers();renderRoster();}else renderAdopt();
@@ -599,8 +628,8 @@ var ROSTER_COLS=[['n','Name'],['tier','Cohort'],['r','Role'],['ti','Team or titl
 var rosterRows=null;
 function buildRoster(){
   if(AG){rosterRows=AG.roster.map(function(u,i){return {i:i,n:u.n,r:u.r||'Other',ti:u.ti,t:u.t,f:u.f,ev:u.ev,a:u.a,o:u.o,last:u.last,meeting_count:u.meetings,vp_meeting_count:u.vp,executive_meeting_count:u.exec,pipeline_created:u.pipeline};});return;}
-  rosterRows=U.users.map(function(u,i){var row={i:i,n:u.n||'',r:u.r||'Other',ti:u.ti||u.g||'',t:u.t,f:u.f,ev:u.u?u.u.ev:null,a:u.u?u.u.a:null,o:u.u?u.u.o:null,last:u.u?u.u.last:null};
-  ['meeting_count','vp_meeting_count','executive_meeting_count','pipeline_created'].forEach(function(k){row[k]=userAvg(i,k,OBS);});return row;});}
+  var ow=obsWin();rosterRows=U.users.map(function(u,i){var row={i:i,n:u.n||'',r:u.r||'Other',ti:u.ti||u.g||'',t:u.t,f:u.f,ev:u.u?u.u.ev:null,a:u.u?u.u.a:null,o:u.u?u.u.o:null,last:u.u?u.u.last:null};
+  ['meeting_count','vp_meeting_count','executive_meeting_count','pipeline_created'].forEach(function(k){row[k]=userAvg(i,k,ow);});return row;});}
 function renderRoster(){
   if(!HAS.roster)return;if(!rosterRows)buildRoster();
   var tiers=AG?['All','High','Medium','Low','Non-user']:['All','High','Medium','Low','No usage','User','Non-user'];if(tiers.indexOf(rosterTier)<0)rosterTier='All';
@@ -611,7 +640,7 @@ function renderRoster(){
     if(rosterTier!=='All'){if(rosterTier==='No usage'){if(r.t)return false;}else if(rosterTier==='User'||rosterTier==='Non-user'){if(r.f!==rosterTier)return false;}else if(r.t!==rosterTier)return false;}
     return !q||(r.n+' '+r.ti+' '+r.r).toLowerCase().indexOf(q)>=0;});
   var k=rosterSort.k,dir=rosterSort.dir;rows.sort(function(a,b){var va=k==='tier'?(a.t||a.f||''):a[k],vb=k==='tier'?(b.t||b.f||''):b[k];if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return -1;return (typeof va==='string'?va.localeCompare(vb):va-vb)*dir;});
-  $('#rosterSub').textContent=AG?rosterRows.length.toLocaleString()+' people · activity columns are totals for the last six months, as the readout reports them':rosterRows.length.toLocaleString()+' reps · activity columns are per-month averages in the observation window ('+wl(OBS)+')';
+  $('#rosterSub').textContent=AG?rosterRows.length.toLocaleString()+' people · activity columns are totals for the last six months, as the readout reports them'+(periodWin()?' (the fiscal-year and quarter filters do not apply to them)':''):rosterRows.length.toLocaleString()+' reps · activity columns are per-month averages in '+(periodWin()?periodWin().label:'the observation window ('+wl(OBS)+')');
   $('#rosterTbl').innerHTML='<thead><tr>'+ROSTER_COLS.map(function(c){return '<th><button type="button" data-k="'+c[0]+'">'+esc(c[1])+(rosterSort.k===c[0]?(rosterSort.dir<0?' ↓':' ↑'):'')+'</button></th>';}).join('')+'</tr></thead><tbody>'+
     rows.slice(0,250).map(function(r){return '<tr><td>'+esc(r.n||'—')+'</td><td class="txt"><span class="badge">'+esc(r.t||(r.f==='User'?'User':r.f?'Non-user':'—'))+'</span></td><td class="txt">'+esc(r.r)+'</td><td class="txt">'+esc(r.ti)+'</td><td>'+n0(r.ev)+'</td><td>'+n0(r.a)+'</td><td>'+n0(r.o)+'</td><td>'+(AG?n0(r.meeting_count):fmt(r.meeting_count,'x'))+'</td><td>'+(AG?n0(r.vp_meeting_count):fmt(r.vp_meeting_count,'x'))+'</td><td>'+(AG?n0(r.executive_meeting_count):fmt(r.executive_meeting_count,'x'))+'</td><td>'+money(r.pipeline_created)+'</td><td>'+esc(r.last||'—')+'</td></tr>';}).join('')+'</tbody>';
   $$('#rosterTbl th button').forEach(function(b){b.onclick=function(){var kk=b.getAttribute('data-k');rosterSort={k:kk,dir:rosterSort.k===kk?-rosterSort.dir:-1};renderRoster();};});
@@ -734,7 +763,7 @@ function renderAggDealModes(mode,lvColors){
 }
 function monthsInFy(f){if(AG)return uniq(AG.deals.monthly.filter(function(r){return r.fy===f;}).map(function(r){return r.m;})).length;if(!D)return 0;return D.months.filter(function(m){return fp(m).fy===f;}).length;}
 function trendWord(vals){var a=vals.filter(function(v){return v!=null;});if(a.length<2)return 'steady';var d=a[a.length-1]-a[0];return Math.abs(d)<3?'steady':d>0?'rising':'falling';}
-function aggFyGroups(){var rowsF=AG.deals.fy.filter(aggType),fys=uniq(rowsF.map(function(r){return r.fy;})).sort().filter(function(f){return aggBucket(rowsF.filter(function(r){return r.fy===f;})).n>=20;});
+function aggFyGroups(){var rowsF=AG.deals.fy.filter(function(r){return aggType(r);}),fys=uniq(rowsF.map(function(r){return r.fy;})).sort().filter(function(f){return aggBucket(rowsF.filter(function(r){return r.fy===f;})).n>=20;});
   return {fys:fys,G:fys.map(function(f){return {levels:[0,1,2].map(function(l){var bk=aggBucket(rowsF.filter(function(r){return r.fy===f&&r.l===l;}));bk.level=LEVELS[l];bk.med_days_won=bk.avg_days;return bk;}).filter(function(bk){return bk.n>0;})};})};}
 function renderDealYoy(){
   var el=$('#dealYoy');if(!D&&!AG){el.innerHTML='';return;}

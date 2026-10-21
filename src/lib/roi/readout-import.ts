@@ -252,6 +252,7 @@ export function readoutFacts(data: Row): RoiFacts {
     eng: num(row.avg_engagement), days: num(row.avg_velocity) === null ? null : Math.round(num(row.avg_velocity) as number), acts: num(row.total_activity) ?? 0,
     exec: num(row.exec_activity) ?? 0, vp: num(row.vp_activity) ?? 0, dir: num(row.dir_activity) ?? 0, depth: num(row.depth), breadth: num(row.breadth) ?? 0,
   }))
+  const periods = monthly.filter((row) => str(row.month) && str(row.fy)).map((row) => ({ m: str(row.month), fy: str(row.fy), fq: quarter(row.fq) }))
   const fys = [...new Set([...(Array.isArray(data.available_fys) ? data.available_fys.map(String) : []), ...fyDeals.map((row) => row.fy)])].filter(Boolean).sort()
   const windowTotals = (cohorts: unknown, users: unknown) => {
     const out: Record<string, Record<string, number | null>> = {}
@@ -291,7 +292,7 @@ export function readoutFacts(data: Row): RoiFacts {
       `Built from the value readout's aggregates: monthly averages per rep for the team, each adoption cohort and each role; ${roster.length} people on the roster; ${allTable.n.toLocaleString()} closed deals by month, fiscal year, decile and type; stage and persona tables; ${accounts.length} accounts.`,
       'The readout carries no rep- or deal-level rows, so the transactional-deal toggle, survivorship, persona involvement, committee breadth and the upside model are left out. Velocity is the average days to close across won and lost deals.',
     ],
-    AGG: { source: 'readout', reps, roster, org, cohortWindows: { l6: windowTotals(data.cohort_l6, data.user_l6), l12: windowTotals(data.cohort_l12, data.user_l12) }, fys, types, deals: { monthly: monthlyDeals, fy: fyDeals, decileFy }, stages },
+    AGG: { source: 'readout', reps, roster, org, cohortWindows: { l6: windowTotals(data.cohort_l6, data.user_l6), l12: windowTotals(data.cohort_l12, data.user_l12) }, fys, periods, types, deals: { monthly: monthlyDeals, fy: fyDeals, decileFy }, stages },
   }
 }
 

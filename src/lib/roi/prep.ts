@@ -705,6 +705,8 @@ export type RoiReadoutAgg = {
    */
   cohortWindows?: Record<'l6' | 'l12', Record<string, Record<string, number | null>>>
   fys: string[]
+  /** Each activity month's fiscal year and quarter, as the readout names them. Absent from facts imported before the report's filters read it. */
+  periods?: Array<{ m: string; fy: string; fq: string }>
   types: string[]
   deals: {
     monthly: Array<{ m: string; fy: string; fq: string; l: number; t: string; n: number; won: number; vel: number | null }>

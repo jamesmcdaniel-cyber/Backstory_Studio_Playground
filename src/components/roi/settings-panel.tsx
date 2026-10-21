@@ -569,7 +569,7 @@ function ReportFiltersBody({ groups, filters, filterOptions, onFiltersChange }: 
         </div>
       ))}
       <p className="pt-0.5 text-xs text-muted-foreground">
-        Applied as you choose them. Fiscal year and quarter slice the deal and stage views; role narrows the reps behind the activity and adoption views.
+        Applied as you choose them. Fiscal year and quarter set the period every view reads: deals closed in it, and activity in it against the same months a year earlier. Role narrows the reps behind the activity and adoption views.
       </p>
     </div>
   )

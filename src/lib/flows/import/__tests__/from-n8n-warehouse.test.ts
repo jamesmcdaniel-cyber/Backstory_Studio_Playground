@@ -140,7 +140,7 @@ test('HTTP calls to either statements API rebind to the warehouse tool; a manual
         jsonBody: "={ \"warehouse_id\": \"w9\", \"statement\": \"SELECT * FROM t WHERE email = '{{ $json.email }}'\", \"wait_timeout\": \"30s\" }",
       }, { credentials: { databricksApi: { id: 'd', name: 'D' } } }),
       n8nNode('Poll', 'n8n-nodes-base.httpRequest', { method: 'GET', url: "=https://dbc-9.cloud.databricks.com/api/2.0/sql/statements/{{ $json.statement_id }}" }),
-      n8nNode('SF', 'n8n-nodes-base.httpRequest', { method: 'POST', url: 'https://acme-prod.snowflakecomputing.com/api/v2/statements', sendBody: true, specifyBody: 'json', jsonBody: '{"statement": "select 1", "warehouse": "WH", "role": "R"}' }),
+      n8nNode('SF', 'n8n-nodes-base.httpRequest', { method: 'POST', url: 'https://acme-prod.snowflakecomputing.com/api/v2/statements', sendBody: true, specifyBody: 'json', jsonBody: '{"statement": "select ?", "warehouse": "WH", "role": "R", "bindings": {"1": {"type": "TEXT", "value": "x"}}}' }),
     ],
     connections: chain('Start', 'Submit', 'Poll', 'SF'),
   })
@@ -153,7 +153,7 @@ test('HTTP calls to either statements API rebind to the warehouse tool; a manual
     parameters: [{ name: 'p1', value: '{{trigger.input.email}}' }],
   })
   const sf = toolNode(result.graph.nodes, 'id-SF')
-  assert.deepEqual(sf.parsed, { statement: 'select 1', warehouse: 'WH', role: 'R', host: 'acme-prod.snowflakecomputing.com' })
+  assert.deepEqual(sf.parsed, { statement: 'select ?', warehouse: 'WH', role: 'R', bindings: [{ type: 'TEXT', value: 'x' }], host: 'acme-prod.snowflakecomputing.com' })
   assert.equal(result.graph.nodes.find((node) => node.id === 'id-Poll')?.type, 'http')
   const rows = result.graph.nodes.find((node) => node.id === 'id-Poll-rows')
   assert.equal((rows?.data as { op?: string }).op, 'columnarToRecords')

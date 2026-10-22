@@ -368,7 +368,17 @@ export function warehouseHttpBinding(method: string, url: string, body: string |
       producesRows: true,
       args: {
         statement: parsed.statement,
-        ...(parsed.bindings && typeof parsed.bindings === 'object' ? { bindings: parsed.bindings } : {}),
+        // The SQL API's { "1": { type, value } } becomes the tool's ordered list
+        // (typed entries are kept as-is by snowflake_sql_query).
+        ...(parsed.bindings && typeof parsed.bindings === 'object'
+          ? {
+              bindings: Array.isArray(parsed.bindings)
+                ? parsed.bindings
+                : Object.entries(parsed.bindings as Record<string, unknown>)
+                  .sort(([a], [b]) => Number(a) - Number(b))
+                  .map(([, value]) => value),
+            }
+          : {}),
         ...Object.fromEntries((['warehouse', 'database', 'schema', 'role'] as const)
           .filter((key) => typeof parsed[key] === 'string' && parsed[key])
           .map((key) => [key, parsed[key]])),

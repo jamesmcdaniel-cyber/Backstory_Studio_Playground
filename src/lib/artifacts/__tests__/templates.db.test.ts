@@ -157,7 +157,7 @@ if (!database) {
     await assert.rejects(runAgentExecution({ organizationId: recipient.organizationId, userId: recipient.userId, agentId: copilotId, executionId: execution.id, input: 'Modify original' }), /only run from its own template copy/)
   })
 
-  test('restoring through the API keeps owner editing available and settings locked for a Viewer', async () => {
+  test('restoring through the API keeps owner editing and link sharing available and settings locked for a Viewer', async () => {
     const { installTestAuth } = await import('@/lib/server/__tests__/test-auth')
     const { NextRequest } = await import('next/server')
     const { POST } = await import('@/app/api/artifacts/[id]/versions/[versionId]/restore/route')
@@ -169,6 +169,7 @@ if (!database) {
     assert.equal(payload.artifact.configurationLocked, true)
     assert.equal(payload.artifact.permissions.canEdit, true)
     assert.equal(payload.artifact.permissions.canConfigure, false)
-    assert.equal(payload.artifact.permissions.canShare, false)
+    // A copy's owner controls its view-only public link (templateCopyPermissions).
+    assert.equal(payload.artifact.permissions.canShare, true)
   })
 }

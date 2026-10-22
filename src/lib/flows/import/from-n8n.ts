@@ -1,5 +1,16 @@
 import type { FlowGraph, FlowNode, ConditionOp, OutputField, FieldType } from '@/lib/flows/graph'
 import { FIELD_TYPES } from '@/lib/flows/graph'
+import type { AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
+import {
+  agentEndpointFromN8nTool,
+  databricksNodeBinding,
+  parameterizeN8nSql,
+  snowflakeNodeBinding,
+  warehouseCredentialNote,
+  warehouseHttpBinding,
+  type WarehouseKind,
+  type WarehouseStepBinding,
+} from './n8n-warehouse'
 
 /**
  * Import an n8n workflow JSON (Workflows → Download) as a Backstory flow —
@@ -47,7 +58,7 @@ const ACTION_SETTING_KINDS = new Set(['agent', 'ai', 'code', 'http', 'tool', 'su
  * credential schemas (packages/nodes-base/credentials); lets an app node we
  * have no parameter mapping for still arrive bound to the right integration.
  */
-const CREDENTIAL_TYPE_PROVIDERS: Record<string, { key: string; label: string }> = {
+const CREDENTIAL_TYPE_PROVIDERS: Record<string, { key: string; label: string; connectionId?: string }> = {
   slackApi: { key: 'slack', label: 'Slack' },
   slackOAuth2Api: { key: 'slack', label: 'Slack' },
   gmailOAuth2: { key: 'gmail', label: 'Gmail' },
@@ -82,6 +93,13 @@ const CREDENTIAL_TYPE_PROVIDERS: Record<string, { key: string; label: string }> 
   mondayComOAuth2Api: { key: 'monday', label: 'Monday' },
   figmaApi: { key: 'figma', label: 'Figma' },
   confluenceCloudApi: { key: 'confluence', label: 'Confluence' },
+  // The warehouses are native planes (host-bound HTTP credentials), not Nango
+  // providers. The note for each says which credential to save instead —
+  // see N8N_WAREHOUSE_CREDENTIALS in ./n8n-warehouse.
+  databricksApi: { key: 'databricks', label: 'Databricks', connectionId: 'native:databricks' },
+  databricksOAuth2Api: { key: 'databricks', label: 'Databricks', connectionId: 'native:databricks' },
+  snowflake: { key: 'snowflake', label: 'Snowflake', connectionId: 'native:snowflake' },
+  snowflakeOAuth2Api: { key: 'snowflake', label: 'Snowflake', connectionId: 'native:snowflake' },
 }
 
 /**
@@ -131,6 +149,9 @@ export type N8nAgentSpec = {
   integrations: string[]
   /** MCP server URLs from mcpClientTool sub-nodes — matched to org connections by the route. */
   mcpEndpoints: string[]
+  /** HTTP Request tool sub-nodes, as configured API endpoints on the created
+   * agent (each its own named tool); the route binds their auth by host. */
+  httpEndpoints: AgentHttpEndpoint[]
   tools: Array<{ name: string; kind: 'mcp' | 'integration' | 'http' | 'code' | 'subworkflow' | 'utility'; description: string }>
   hasMemory: boolean
 }
@@ -627,8 +648,6 @@ function integrationBindingFor(type: string, parameters: Record<string, unknown>
       }
       return { missing: `Salesforce ${operation}` }
     }
-    case 'n8n-nodes-base.snowflake':
-      return { missing: 'Snowflake (no Snowflake integration exists yet)' }
     default:
       return null
   }
@@ -864,6 +883,66 @@ function llmInstructions(parameters: Record<string, unknown>, tr: (v: string) =>
   return ''
 }
 
+const WAREHOUSE_NODE_KIND: Record<string, WarehouseKind> = {
+  'n8n-nodes-base.snowflake': 'snowflake',
+  'n8n-nodes-base.databricks': 'databricks',
+}
+
+/** Does this n8n node import as a warehouse QUERY (a step whose output is rows)? */
+function isWarehouseQueryNode(node: N8nNodeIn): boolean {
+  const type = node.type ?? ''
+  const parameters = node.parameters ?? {}
+  if (type === 'n8n-nodes-base.snowflake') {
+    return String(parameters.operation ?? (parameters.query !== undefined && parameters.table === undefined ? 'executeQuery' : 'insert')) === 'executeQuery'
+  }
+  if (type === 'n8n-nodes-base.databricks') {
+    return String(parameters.resource ?? 'databricksSql') === 'databricksSql' && String(parameters.operation ?? 'executeQuery') === 'executeQuery'
+  }
+  if (type === 'n8n-nodes-base.httpRequest') {
+    const url = String(parameters.url ?? '').replace(/^=/, '')
+    const body = typeof parameters.jsonBody === 'string' ? parameters.jsonBody.replace(/^=/, '') : undefined
+    return Boolean(warehouseHttpBinding(String(parameters.method ?? 'GET'), url, body))
+  }
+  return false
+}
+
+/** A warehouse tool step (snowflake_sql_query, databricks_sql_query, …). */
+function warehouseToolNode(id: string, label: string | undefined, binding: WarehouseStepBinding, origin: string): FlowNode {
+  return {
+    id,
+    type: 'tool',
+    data: {
+      label,
+      connectionId: binding.connectionId,
+      toolName: binding.toolName,
+      args: JSON.stringify(binding.args),
+      note: [origin, `Runs on your ${binding.label} credential (found by host).`, ...binding.notes].join(' '),
+    },
+  } as FlowNode
+}
+
+/**
+ * A rebound HTTP statement whose SQL text still carries flow tokens (the n8n
+ * body spliced values in) — turn the value-shaped ones into bindings, when the
+ * call did not already bind its own.
+ */
+function inlineSqlTokens(binding: WarehouseStepBinding): WarehouseStepBinding {
+  const statement = String(binding.args.statement ?? '')
+  if (!statement.includes('{{') || binding.args.bindings || binding.args.parameters) return binding
+  const sql = parameterizeN8nSql(statement, (expression) => `{{${expression}}}`, { style: binding.kind === 'databricks' ? 'named' : 'positional' })
+  if (!sql.bindings.length) return binding
+  return {
+    ...binding,
+    args: {
+      ...binding.args,
+      statement: sql.statement,
+      ...(binding.kind === 'databricks'
+        ? { parameters: sql.bindings.map((value, index) => ({ name: `p${index + 1}`, value })) }
+        : { bindings: sql.bindings }),
+    },
+  }
+}
+
 /** Map one non-trigger n8n node to a flow node (or null to skip entirely). */
 function mapNode(
   node: N8nNodeIn,
@@ -910,6 +989,20 @@ function mapNode(
       // A raw call to a known provider API binds to the platform's OWN
       // integration tool instead — connection-managed auth beats a hand-pasted
       // header, and the step gets the provider's identity on the canvas.
+      // A raw call to either warehouse's statements API runs on the warehouse
+      // tool instead: it also polls async statements and reads every result
+      // chunk/partition, which a single HTTP request does not.
+      const warehouse = warehouseHttpBinding(method, url, body)
+      if (warehouse) {
+        if (parameters.authentication || node.credentials) {
+          warn(`“${name}”: ${warehouseCredentialNote(warehouse.kind, Object.keys(node.credentials ?? {}))}`, { code: 'WAREHOUSE_CREDENTIAL', nodeId: id })
+        }
+        warn(
+          `“${name}”: its HTTP call to the ${warehouse.label} statements API now runs as ${warehouse.toolName}, which waits for the result and returns every row as records under “rows” (not the raw API response).`,
+          { code: 'INTEGRATION_BOUND', nodeId: id, severity: 'info' },
+        )
+        return warehouseToolNode(id, label, inlineSqlTokens(warehouse), `Imported from an n8n HTTP call to ${url.split('?')[0]}.`)
+      }
       const bound = httpIntegrationBindingFor(method, url, body, warn, name)
       if (bound) {
         warn(`“${name}”: bound to the platform's ${bound.label} integration (${bound.toolName}) — its n8n credential is replaced by your connected ${bound.label} account.`)
@@ -1410,6 +1503,39 @@ ${body}`,
         warn(`“${name}”: imported as a native AI step running on Backstory models — review its instructions.`)
         return { id, type: 'ai', data: { label, aiOp: 'ask', instructions: llmInstructions(parameters, tr) } } as FlowNode
       }
+      // Snowflake / Databricks → the warehouse planes, bound by host to the
+      // credential the workspace saves (the n8n one never transfers).
+      const warehouseKind = WAREHOUSE_NODE_KIND[type]
+      if (warehouseKind) {
+        const trs = (value: unknown) => {
+          const text = String(value ?? '')
+          return tr(text.startsWith('=') || !text.includes('{{') ? text : `=${text}`)
+        }
+        const helpers = { expr: (expression: string) => tr(`={{ ${expression} }}`), trs, jsonBase }
+        const mapped = warehouseKind === 'snowflake' ? snowflakeNodeBinding(parameters, helpers) : databricksNodeBinding(parameters, helpers)
+        const credentialTypes = Object.keys(node.credentials ?? {})
+        if ('unmapped' in mapped) {
+          warn(
+            `“${name}”: n8n's ${mapped.unmapped} has no Backstory equivalent yet — kept on the ${mapped.kind === 'snowflake' ? 'Snowflake' : 'Databricks'} connection with its parameters in Args but no action picked, so it will not run; ${mapped.hint}.`,
+            { code: 'UNMAPPED_OPERATION', nodeId: id, severity: 'error' },
+          )
+          return {
+            id,
+            type: 'tool',
+            data: {
+              label,
+              connectionId: `native:${mapped.kind}`,
+              toolName: '',
+              args: JSON.stringify(Object.fromEntries(Object.entries(mapped.args).map(([key, value]) => [key, typeof value === 'string' ? trs(value) : value]))),
+              note: `Imported from n8n (${type}): ${mapped.unmapped} is not mapped — ${mapped.hint}.`,
+            },
+          } as FlowNode
+        }
+        warn(`“${name}”: runs as ${mapped.toolName} on the platform's ${mapped.label} connection.`, { code: 'INTEGRATION_BOUND', nodeId: id, severity: 'info' })
+        warn(`“${name}”: ${warehouseCredentialNote(mapped.kind, credentialTypes)}`, { code: 'WAREHOUSE_CREDENTIAL', nodeId: id })
+        for (const warning of mapped.warnings) warn(`“${name}”: ${warning}`, { code: 'WAREHOUSE_REVIEW', nodeId: id })
+        return warehouseToolNode(id, label, mapped, `Imported from n8n (${type}).`)
+      }
       // Known app node → prefer the platform's OWN integration capability over
       // an unbound stub: the step arrives bound and runnable.
       const binding = integrationBindingFor(type, parameters, tr)
@@ -1443,14 +1569,6 @@ ${body}`,
           return tr(text.startsWith('=') || !text.includes('{{') ? text : `=${text}`)
         }
         const skeleton = ((): { method: 'GET' | 'POST'; url: string; body?: string; bodyMode?: 'json' | 'text'; hint: string } => {
-          if (type === 'n8n-nodes-base.snowflake') {
-            return {
-              method: 'POST',
-              url: 'https://YOUR_ACCOUNT.snowflakecomputing.com/api/v2/statements',
-              body: JSON.stringify({ statement: trAny(parameters.query), timeout: 60 }),
-              hint: 'set your account host and add a key-pair JWT or OAuth token under Auth',
-            }
-          }
           if (type === 'n8n-nodes-base.googleDrive') {
             return {
               method: 'POST',
@@ -1523,6 +1641,9 @@ ${body}`,
             `“${name}” (${app}) imported bound to your ${provider.label} integration via its n8n credential — open it and pick the matching ${provider.label} tool; its n8n parameters are preserved in Args.`,
             { code: 'UNMAPPED_NODE', nodeId: id },
           )
+          if (provider.key === 'snowflake' || provider.key === 'databricks') {
+            warn(`“${name}”: ${warehouseCredentialNote(provider.key, Object.keys(node.credentials))}`, { code: 'WAREHOUSE_CREDENTIAL', nodeId: id })
+          }
         } else {
           warn(`“${name}” (${app}) imported as a Tool step without a connection — open it and pick the matching integration; its n8n parameters are preserved in Args.`, { code: 'UNMAPPED_NODE', nodeId: id })
         }
@@ -1531,7 +1652,7 @@ ${body}`,
           type: 'tool',
           data: {
             label,
-            connectionId: provider ? `nango:${provider.key}` : '',
+            connectionId: provider ? provider.connectionId ?? `nango:${provider.key}` : '',
             toolName: `${app}${operation}`,
             args: JSON.stringify(translatedParams),
             note: provider
@@ -1725,12 +1846,18 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     'n8n-nodes-base.convertToFile',
     'n8n-nodes-base.extractFromFile',
   ])
+  // A warehouse query is one n8n item per ROW; here its step answers the rows
+  // as records under `.rows` — the list a per-item consumer fans out over.
+  const isWarehouseQuery = (name: string | undefined): boolean => {
+    const source = name ? nodeByName.get(name) : undefined
+    return Boolean(source && isWarehouseQueryNode(source))
+  }
   const isItemProducing = (name: string | undefined, depth = 0): boolean => {
     if (!name || depth > 50) return false
     const type = nodeByName.get(name)?.type ?? ''
     // A No-Op passes its parent's items through unchanged.
     if (type === 'n8n-nodes-base.noOp') return isItemProducing(dataParentOf(name), depth + 1)
-    return ITEM_PRODUCING_TYPES.has(type)
+    return ITEM_PRODUCING_TYPES.has(type) || isWarehouseQuery(name)
   }
   const perItemOverByName = new Map<string, string>()
   for (const node of sourceNodes) {
@@ -1746,7 +1873,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     const parent = dataParentOf(node.name)
     if (!parent || !isItemProducing(parent)) continue
     const parentId = idByName.get(parent)
-    if (parentId) perItemOverByName.set(node.name, `{{step.${parentId}.output}}`)
+    if (parentId) perItemOverByName.set(node.name, `{{step.${parentId}.output${isWarehouseQuery(parent) ? '.rows' : ''}}}`)
   }
 
   const jsonBaseFor = (nodeName: string | undefined): string => {
@@ -1757,6 +1884,9 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     const parent = nodeName ? dataParentOf(nodeName) : undefined
     if (!parent || triggerNames.has(parent)) return 'trigger.input'
     const parentId = idByName.get(parent)
+    // A step that runs ONCE after a warehouse query reads its first row — the
+    // single-row lookup ($json.COUNT after SELECT COUNT(*)) n8n workflows do.
+    if (parentId && isWarehouseQuery(parent)) return `step.${parentId}.output.rows.0`
     return parentId ? `step.${parentId}.output` : 'trigger.input'
   }
   const warnedExprNodes = new Map<string, Set<string>>()
@@ -1798,6 +1928,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     const name = node.name
     const integrations: string[] = []
     const mcpEndpoints: string[] = []
+    const httpEndpoints: AgentHttpEndpoint[] = []
     const tools: N8nAgentSpec['tools'] = []
     for (const { node: sub } of toolSubs) {
       const subType = sub.type ?? ''
@@ -1812,8 +1943,33 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       } else if (subType.endsWith('.toolWorkflow')) {
         tools.push({ name: subName, kind: 'subworkflow', description: described || 'calls another n8n workflow' })
         warn(`Agent “${name}”: its tool “${subName}” calls another n8n workflow — import that workflow as a flow, then grant it to the agent (Agent → Flows).`)
-      } else if (subType.endsWith('.toolHttpRequest')) {
+      } else if (subType.endsWith('.toolHttpRequest') || subType === 'n8n-nodes-base.httpRequestTool') {
+        // A real HTTP tool on the created agent: the HTTP API plane, plus this
+        // call as a configured endpoint (its own named tool, placeholders as
+        // arguments). Auth binds by host at import, from a saved credential.
         tools.push({ name: subName, kind: 'http', description: described || `HTTP ${String(p.method ?? 'GET')} ${String(p.url ?? '')}`.trim() })
+        integrations.push('HTTP API')
+        const endpoint = agentEndpointFromN8nTool(sub, httpEndpoints.length)
+        if (endpoint) {
+          httpEndpoints.push(endpoint)
+          if (/\{\{\s*\$/.test(JSON.stringify(endpoint))) {
+            warn(`Agent “${name}”: its HTTP tool “${subName}” uses n8n expressions over workflow data, which an agent's endpoint cannot evaluate — edit the endpoint under Agent → HTTP API.`)
+          }
+        } else {
+          warn(`Agent “${name}”: its HTTP tool “${subName}” has a computed URL — the agent gets the generic HTTP request tool; configure the endpoint under Agent → HTTP API.`)
+        }
+        if (sub.credentials && Object.keys(sub.credentials).length) {
+          warn(`Agent “${name}”: “${subName}” used an n8n credential, which does not transfer — save an HTTP credential for its host in Integrations and it is attached automatically.`)
+        }
+      } else if (/^n8n-nodes-base\.(snowflake|databricks)Tool$/.test(subType)) {
+        // The warehouse planes: the agent gets snowflake_sql_query or the
+        // databricks_* tools, running on the host's saved credential.
+        const kind: WarehouseKind = subType.includes('snowflake') ? 'snowflake' : 'databricks'
+        const label = kind === 'snowflake' ? 'Snowflake' : 'Databricks'
+        integrations.push(label)
+        const operation = typeof p.operation === 'string' && p.operation ? ` — ${p.operation}` : ''
+        tools.push({ name: subName, kind: 'integration', description: described || `${label}${operation} (${kind === 'snowflake' ? 'snowflake_sql_query' : 'databricks_sql_query / databricks_run_job'})` })
+        warn(`Agent “${name}”: its ${label} tool “${subName}” maps to the ${label} connection — ${warehouseCredentialNote(kind, Object.keys(sub.credentials ?? {}))}`, { code: 'WAREHOUSE_CREDENTIAL' })
       } else if (subType.endsWith('.toolCode')) {
         tools.push({ name: subName, kind: 'code', description: described || 'custom code tool' })
       } else if (subType.endsWith('.toolVectorStore')) {
@@ -1872,6 +2028,7 @@ export function n8nToFlow(input: unknown): N8nImportResult {
       ...(model ? { model } : {}),
       integrations: Array.from(new Set(integrations)),
       mcpEndpoints: Array.from(new Set(mcpEndpoints)),
+      httpEndpoints,
       tools,
       hasMemory: Boolean(memorySub),
     })
@@ -2227,14 +2384,17 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     }
   }
 
-  // Snowflake's SQL API answers in columns-and-rows (resultSetMetaData +
-  // arrays of values) — field access on the raw body silently yields nothing
-  // even once auth works. Wire a Columns-to-records step after every imported
-  // Snowflake statement call so downstream field mapping sees real records.
+  // Snowflake's SQL API (resultSetMetaData + arrays of values) and Databricks'
+  // Statement Execution API (manifest + result.data_array) answer in columns
+  // and rows — field access on the raw body silently yields nothing even once
+  // auth works. A statement call that could not be rebound to a warehouse tool
+  // (a computed body, a manual poll) gets a Columns-to-records step after it
+  // so downstream field mapping sees real records.
   for (const node of [...nodes]) {
     if (node.type !== 'http' || bodyMemberIds.has(node.id)) continue
     const url = (node.data as { url?: string }).url ?? ''
-    if (!/snowflakecomputing\.com\/api\/v2\/statements/.test(url)) continue
+    const snowflakeCall = /snowflakecomputing\.com\/api\/v2\/statements/.test(url)
+    if (!snowflakeCall && !/\/api\/2\.0\/sql\/statements(\/[^/?#]+)?\/?(\?|$)/.test(url)) continue
     const rowsId = `${node.id}-rows`
     if (nodeIds.has(rowsId)) continue
     nodes.push({
@@ -2248,8 +2408,8 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     }
     edges.push({ id: `e-${edgeIndex++}`, source: node.id, target: rowsId })
     warn(
-      'Added a “Columns to records” step after the Snowflake call — its API answers in columns and rows, and this converts them so later steps can map fields.',
-      { code: 'SNOWFLAKE_SHAPE', nodeId: rowsId, severity: 'info' },
+      `Added a “Columns to records” step after the ${snowflakeCall ? 'Snowflake' : 'Databricks'} call — its API answers in columns and rows, and this converts them so later steps can map fields.`,
+      { code: snowflakeCall ? 'SNOWFLAKE_SHAPE' : 'DATABRICKS_SHAPE', nodeId: rowsId, severity: 'info' },
     )
   }
 
@@ -2286,6 +2446,14 @@ export function n8nToFlow(input: unknown): N8nImportResult {
     const list = (Array.isArray(items) ? items : [items]).map((item) =>
       item && typeof item === 'object' && 'json' in (item as Record<string, unknown>) ? (item as { json: unknown }).json : item,
     )
+    // A warehouse query's pinned items are its rows; its step answers them
+    // wrapped, so pin the same shape downstream references read.
+    const pinnedNode = nodeByName.get(pinName)
+    if (pinnedNode && isWarehouseQueryNode(pinnedNode)) {
+      const rows = list.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object' && !Array.isArray(row)))
+      pinData[pinId] = { rows, columns: Object.keys(rows[0] ?? {}), rowCount: rows.length, truncated: false }
+      continue
+    }
     pinData[pinId] = list.length === 1 ? list[0] : list
   }
 

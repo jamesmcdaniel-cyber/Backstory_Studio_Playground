@@ -107,6 +107,63 @@ export function bindImportedHttpAuth(
   return { graph: { ...graph, nodes }, notes, boundLabels }
 }
 
+/**
+ * Agent HTTP endpoints materialized from n8n HTTP Request tools: bind each to
+ * the verified credential for EXACTLY its host (an agent endpoint's URL is
+ * the real API, never an importer placeholder, so no sibling rewrite).
+ */
+export function bindAgentEndpointAuth<T extends { name: string; url: string; credentialId?: string; connectionId?: string }>(
+  endpoints: T[],
+  httpCredentials: ImportHttpCredential[],
+): { endpoints: T[]; notes: string[] } {
+  const notes: string[] = []
+  const bound = endpoints.map((endpoint) => {
+    if (endpoint.credentialId || endpoint.connectionId) return endpoint
+    const host = hostnameOf(endpoint.url)
+    const credential = host ? httpCredentials.find((row) => row.allowedHost.toLowerCase() === host) : undefined
+    if (!credential) return endpoint
+    notes.push(`HTTP tool “${endpoint.name}”: authenticated with your “${credential.name}” credential (${credential.allowedHost}).`)
+    return { ...endpoint, credentialId: credential.id }
+  })
+  return { endpoints: bound, notes }
+}
+
+const WAREHOUSE_SUFFIXES = {
+  Snowflake: ['.snowflakecomputing.com'],
+  Databricks: ['.cloud.databricks.com', '.azuredatabricks.net', '.gcp.databricks.com', '.databricks.us'],
+} as const
+
+/**
+ * Warehouse steps find their credential by host at run time, so the
+ * importer's "save a credential" note is stale once the workspace has one.
+ * Drop those notes for each warehouse that already has a verified credential,
+ * and say once which host its steps will use.
+ */
+export function resolveWarehouseCredentialNotes<N extends { code: string; message: string }>(
+  notes: N[],
+  httpCredentials: ImportHttpCredential[],
+): { notes: N[]; satisfied: string[] } {
+  const covered = new Map<string, string[]>()
+  for (const label of Object.keys(WAREHOUSE_SUFFIXES) as Array<keyof typeof WAREHOUSE_SUFFIXES>) {
+    const hosts = [...new Set(httpCredentials
+      .map((row) => row.allowedHost.toLowerCase())
+      .filter((host) => WAREHOUSE_SUFFIXES[label].some((suffix) => host.endsWith(suffix))))]
+    if (hosts.length) covered.set(label, hosts)
+  }
+  const mentions = (label: string) => notes.some((note) => note.code === 'WAREHOUSE_CREDENTIAL' && note.message.includes(`its n8n ${label} credential`))
+  const satisfied = [...covered]
+    .filter(([label]) => mentions(label))
+    .map(([label, hosts]) => hosts.length === 1
+      ? `${label} steps run on your saved credential for ${hosts[0]}.`
+      : `${label} steps need a "host" argument — this workspace has credentials for several ${label} hosts (${hosts.join(', ')}).`)
+  const kept = notes.filter((note) => {
+    if (note.code !== 'WAREHOUSE_CREDENTIAL') return true
+    const label = /its n8n (Snowflake|Databricks) credential/.exec(note.message)?.[1]
+    return !(label && covered.get(label)?.length === 1)
+  })
+  return { notes: kept, satisfied }
+}
+
 /** Converter warnings that told the user to wire up auth by hand — stale once bound. */
 export function dropStaleAuthWarnings(warnings: string[], boundLabels: string[]): string[] {
   if (boundLabels.length === 0) return warnings

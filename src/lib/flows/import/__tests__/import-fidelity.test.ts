@@ -582,10 +582,11 @@ test('import produces structured notes with codes and node ids; warnings stays t
     ],
     connections: chain('Manual', 'Snowflake query'),
   })
-  const skeleton = result.notes.find((n) => n.code === 'CREDENTIAL_SKELETON')
-  assert.ok(skeleton, `expected a CREDENTIAL_SKELETON note, got ${JSON.stringify(result.notes)}`)
-  const httpNode = result.graph.nodes.find((n) => n.type === 'http')
-  assert.equal(skeleton!.nodeId, httpNode!.id)
+  // Snowflake runs on the native plane now: the note names the credential to save.
+  const credential = result.notes.find((n) => n.code === 'WAREHOUSE_CREDENTIAL')
+  assert.ok(credential, `expected a WAREHOUSE_CREDENTIAL note, got ${JSON.stringify(result.notes)}`)
+  const toolNode = result.graph.nodes.find((n) => n.type === 'tool')
+  assert.equal(credential!.nodeId, toolNode!.id)
   assert.deepEqual(result.warnings, result.notes.map((n) => n.message))
 })
 

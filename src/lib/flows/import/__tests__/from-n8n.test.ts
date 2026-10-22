@@ -952,12 +952,12 @@ test('google drive uploads bind to the first-class upload tool instead of a raw 
   assert.ok(!result.warnings.some((w) => /read-only/.test(w)), 'no read-only fallback warning')
 })
 
-test('imported Snowflake calls get a Columns-to-records step wired after them', () => {
+test('a Snowflake HTTP call with a computed body gets a Columns-to-records step', () => {
   const workflow = {
     name: 'Snowflake',
     nodes: [
       n8nNode('Start', 'n8n-nodes-base.manualTrigger'),
-      n8nNode('Query', 'n8n-nodes-base.snowflake', { query: 'SELECT 1' }),
+      n8nNode('Query', 'n8n-nodes-base.httpRequest', { method: 'POST', url: 'https://acme.snowflakecomputing.com/api/v2/statements', sendBody: true, jsonBody: '={{ JSON.stringify({ statement: $json.sql }) }}' }),
       n8nNode('Use', 'n8n-nodes-base.set', { assignments: { assignments: [{ name: 'x', value: '={{ $json.DF_ENTITLED }}' }] } }),
     ],
     connections: chain('Start', 'Query', 'Use'),

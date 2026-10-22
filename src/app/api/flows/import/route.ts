@@ -7,7 +7,13 @@ import { extractFlowCapabilities, requiresCapabilityReview, summarizeCapabilitie
 import { flowGraphSchema, type FlowGraph } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { looksLikeN8nWorkflow, n8nToFlow, resolveN8nImportUrl, unwrapN8nPayload, type FlowImportNote, type N8nAgentSpec } from '@/lib/flows/import/from-n8n'
-import { bindImportedHttpAuth, dropStaleAuthWarnings } from '@/lib/flows/import/bind-imported-auth'
+import {
+  bindAgentEndpointAuth,
+  bindImportedHttpAuth,
+  dropStaleAuthWarnings,
+  resolveWarehouseCredentialNotes,
+  type ImportHttpCredential,
+} from '@/lib/flows/import/bind-imported-auth'
 import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { parseN8nInstanceUrl, type N8nInstanceRef } from '@/lib/flows/import/n8n-instance'
 import { fetchWithHttpCredential, resolveHttpCredential } from '@/features/flows/http-auth'
@@ -192,6 +198,8 @@ async function materializeImportedAgents(
   graph: FlowGraph,
   auth: AuthContext,
   warnings: string[],
+  httpCredentials: ImportHttpCredential[],
+  boundNotes: string[],
 ): Promise<FlowGraph> {
   if (specs.length === 0) return graph
   const connections = await prisma.mcpConnection.findMany({
@@ -212,6 +220,10 @@ async function materializeImportedAgents(
         )
       }
     }
+    // n8n HTTP Request tools arrive as configured endpoints; bind each to the
+    // workspace's verified credential for its host, as HTTP steps are.
+    const endpoints = bindAgentEndpointAuth(spec.httpEndpoints, httpCredentials)
+    boundNotes.push(...endpoints.notes.map((note) => `Agent “${spec.name}”: ${note}`))
     const agent = await prisma.agentTask.create({
       data: {
         type: 'agent',
@@ -230,6 +242,7 @@ async function materializeImportedAgents(
           description: `Imported from n8n${spec.model ? ` (originally ran on ${spec.model})` : ''}.`,
           model: DEFAULT_AGENT_MODEL,
           integrations,
+          ...(endpoints.endpoints.length ? { httpEndpoints: endpoints.endpoints } : {}),
           skills: [],
           icon: '',
         },
@@ -262,11 +275,10 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   if (looksLikeN8nWorkflow(payload)) {
     const converted = n8nToFlow(payload)
-    const agentWarnings: string[] = []
-    let graph = await materializeImportedAgents(converted.agents, flowGraphSchema.parse(converted.graph), auth, agentWarnings)
     // An n8n export never carries secrets (only {id, name} references into the
     // source instance), so instead of importing every external call red, bind
-    // each unauthenticated http step to auth this org already has.
+    // each unauthenticated http step (and agent HTTP tool) to auth this org
+    // already has.
     const [mcpConnections, httpCredentials] = await Promise.all([
       prisma.mcpConnection.findMany({
         where: { organizationId: auth.organizationId, isActive: true },
@@ -277,19 +289,25 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
         select: { id: true, name: true, allowedHost: true },
       }),
     ])
+    const agentWarnings: string[] = []
+    const agentAuthNotes: string[] = []
+    let graph = await materializeImportedAgents(converted.agents, flowGraphSchema.parse(converted.graph), auth, agentWarnings, httpCredentials, agentAuthNotes)
     const bound = bindImportedHttpAuth(graph, { mcpConnections, httpCredentials })
     graph = bound.graph
+    // Warehouse steps find their credential by host at run time: once the
+    // workspace has one, the "save a credential" notes are stale.
+    const warehouse = resolveWarehouseCredentialNotes(converted.notes, httpCredentials)
     // The import report, persisted so it outlives the toast. Structured notes
     // (code/severity/nodeId anchoring) come straight from the importer; stale
     // credential-transfer notes drop once the binder authenticated their step;
     // agent-materialization and binder outcomes append as their own notes.
     // `blocking` counts the converted graph's validation errors (structure-only
     // — connection-aware checks are the builder's live job).
-    const keptMessages = new Set(dropStaleAuthWarnings(converted.notes.map((note) => note.message), bound.boundLabels))
+    const keptMessages = new Set(dropStaleAuthWarnings(warehouse.notes.map((note) => note.message), bound.boundLabels))
     const notes: FlowImportNote[] = [
-      ...converted.notes.filter((note) => keptMessages.has(note.message)),
+      ...warehouse.notes.filter((note) => keptMessages.has(note.message)),
       ...agentWarnings.map((message) => ({ code: 'AGENT_MCP_UNMATCHED', severity: 'warning' as const, message })),
-      ...bound.notes.map((message) => ({ code: 'AUTH_BOUND', severity: 'info' as const, message })),
+      ...[...bound.notes, ...agentAuthNotes, ...warehouse.satisfied].map((message) => ({ code: 'AUTH_BOUND', severity: 'info' as const, message })),
     ]
     const warnings = notes.map((note) => note.message)
     const validation = validateFlowGraph(graph, { requireRunnable: false })

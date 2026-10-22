@@ -76,6 +76,8 @@ const REFERENCE_FIELDS: Record<HttpAuthType, ReadonlySet<string>> = {
   // refreshToken is intentionally absent: providers rotate it, and this app
   // cannot safely write a replacement back into a read-only secret manager.
   oauth2: new Set(['accessToken', 'tokenUrl', 'clientId', 'clientSecret', 'scope', 'audience']),
+  snowflake_keypair: new Set(['privateKey', 'passphrase']),
+  snowflake_pat: new Set(['token']),
 }
 
 function validatedReferences(

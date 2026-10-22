@@ -34,6 +34,8 @@ export const HTTP_AUTH_OPTIONS = [
   { value: 'oauth1', label: 'OAuth1 API', description: 'OAuth 1.0 HMAC-SHA1 credentials' },
   { value: 'oauth2', label: 'OAuth2 API', description: 'Access token or client credentials' },
   { value: 'query', label: 'Query Auth', description: 'A secret value in a query parameter' },
+  { value: 'snowflake_keypair', label: 'Snowflake Key Pair', description: 'Service user and RSA private key (signed JWT)' },
+  { value: 'snowflake_pat', label: 'Snowflake Access Token', description: 'Programmatic access token (PAT)' },
 ] as const
 
 export type HttpAuthOption = (typeof HTTP_AUTH_OPTIONS)[number]['value']
@@ -379,6 +381,36 @@ export function HttpCredentialDialog({
                 <SecretOrReferenceField id="oauth1-consumer-secret" label="Consumer secret" value={config.consumerSecret || ''} onChange={set('consumerSecret')} providers={secretProviders} reference={secretRefs.consumerSecret} onReferenceChange={setReference('consumerSecret')} />
                 <SecretField id="oauth1-token" label="Access token" value={config.token || ''} onChange={set('token')} />
                 <SecretOrReferenceField id="oauth1-token-secret" label="Token secret" value={config.tokenSecret || ''} onChange={set('tokenSecret')} providers={secretProviders} reference={secretRefs.tokenSecret} onReferenceChange={setReference('tokenSecret')} />
+              </>
+            )}
+            {authType === 'snowflake_pat' && (
+              <div className="sm:col-span-2">
+                <SecretOrReferenceField id="snowflake-pat" label="Programmatic access token" value={config.token || ''} onChange={set('token')} providers={secretProviders} reference={secretRefs.token} onReferenceChange={setReference('token')} />
+              </div>
+            )}
+            {authType === 'snowflake_keypair' && (
+              <>
+                <SecretField id="snowflake-account" label="Account identifier" value={config.account || ''} onChange={set('account')} placeholder={host ? host.split('.')[0] : 'myorg-myaccount'} />
+                <SecretField id="snowflake-user" label="User" value={config.user || ''} onChange={set('user')} placeholder="BACKSTORY_SVC" />
+                <div className="sm:col-span-2">
+                  <SecretOrReferenceField
+                    id="snowflake-private-key"
+                    label="Private key (PEM)"
+                    value={config.privateKey || ''}
+                    onChange={set('privateKey')}
+                    placeholder="-----BEGIN PRIVATE KEY----- …"
+                    providers={secretProviders}
+                    reference={secretRefs.privateKey}
+                    onReferenceChange={setReference('privateKey')}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <SecretOrReferenceField id="snowflake-passphrase" label="Key passphrase (encrypted keys only)" value={config.passphrase || ''} onChange={set('passphrase')} providers={secretProviders} reference={secretRefs.passphrase} onReferenceChange={setReference('passphrase')} />
+                </div>
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  The key stays encrypted here and signs a one-hour token for each request — it is never sent to Snowflake.
+                  Verify against https://&lt;account&gt;.snowflakecomputing.com/api/v2/statements.
+                </p>
               </>
             )}
             {authType === 'oauth2' && (

@@ -10,6 +10,7 @@ import { recordCredentialUse, recordCredentialUseFailure } from '@/lib/credentia
 import { assessStaleness } from '@/lib/credentials/lifetime'
 import { cannedFetchResponse, demoAmbientActive } from '@/lib/demo/transport'
 import { resolveHttpCredentialSecretReferences } from '@/lib/external-secrets/service'
+import { snowflakeKeyPairJwt } from '@/lib/warehouse/snowflake-jwt'
 
 export const HTTP_AUTH_TYPES = [
   'basic',
@@ -20,6 +21,8 @@ export const HTTP_AUTH_TYPES = [
   'oauth1',
   'oauth2',
   'query',
+  'snowflake_keypair',
+  'snowflake_pat',
 ] as const
 
 export type HttpAuthType = (typeof HTTP_AUTH_TYPES)[number]
@@ -222,6 +225,17 @@ export async function applyHttpCredential(
       break
     case 'oauth2':
       headers.authorization = `Bearer ${await oauth2Token(credential)}`
+      break
+    case 'snowflake_keypair':
+      // A fresh (or cached, unexpired) RS256 JWT signed with the stored private
+      // key — the key itself never leaves this process.
+      headers.authorization = `Bearer ${snowflakeKeyPairJwt(cfg, { allowedHost: credential.allowedHost })}`
+      headers['x-snowflake-authorization-token-type'] = 'KEYPAIR_JWT'
+      break
+    case 'snowflake_pat':
+      if (!cfg.token) throw new Error('A Snowflake programmatic access token is required.')
+      headers.authorization = `Bearer ${cfg.token}`
+      headers['x-snowflake-authorization-token-type'] = 'PROGRAMMATIC_ACCESS_TOKEN'
       break
     case 'digest':
       // Digest needs the server's nonce from a 401 challenge and is applied by

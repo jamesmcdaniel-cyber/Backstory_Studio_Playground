@@ -161,3 +161,13 @@ test('the real-world shape: webhook + credentialed MCP tools + code', () => {
   // the high-risk items rather than whatever came first in the graph.
   assert.match(summarizeCapabilities(capabilities), /public web address|connected accounts/)
 })
+
+test('a warehouse query is reviewed by its SQL: a SELECT reads, a DELETE or a job run writes', () => {
+  const tool = (id: string, toolName: string, statement?: string) =>
+    ({ id, type: 'tool', data: { connectionId: 'native:snowflake', toolName, args: JSON.stringify(statement ? { statement } : { jobId: '1' }) } })
+  const read = extractFlowCapabilities(graph([tool('r', 'snowflake_sql_query', 'SELECT * FROM accounts')]))
+  assert.ok(read.some((entry) => entry.kind === 'tool.read'))
+  assert.ok(!read.some((entry) => entry.kind === 'tool.write'))
+  const writes = extractFlowCapabilities(graph([tool('w', 'databricks_sql_query', 'DELETE FROM accounts'), tool('j', 'databricks_run_job')]))
+  assert.deepEqual(writes.find((entry) => entry.kind === 'tool.write')?.nodeIds.sort(), ['j', 'w'])
+})

@@ -21,6 +21,7 @@
  */
 
 import type { FlowGraph } from '@/lib/flows/graph'
+import { sqlIsReadOnly } from '@/lib/warehouse/sql-classify'
 
 export type CapabilityRisk = 'high' | 'medium' | 'low'
 
@@ -76,6 +77,21 @@ const WRITE_TOOL_FRAGMENTS = [
 function isWriteToolName(name: string): boolean {
   const normalized = name.toLowerCase()
   return WRITE_TOOL_FRAGMENTS.some((fragment) => normalized.includes(fragment))
+}
+
+/**
+ * A warehouse query's effect is in its SQL, not its name: "snowflake_sql_query"
+ * reads for a SELECT and deletes for a DELETE. Undefined for other tools.
+ */
+function warehouseStepWrites(toolName: string, args: unknown): boolean | undefined {
+  if (toolName === 'databricks_run_job') return true
+  if (toolName !== 'snowflake_sql_query' && toolName !== 'databricks_sql_query') return undefined
+  try {
+    const parsed = typeof args === 'string' ? JSON.parse(args) as { statement?: unknown } : args as { statement?: unknown } | undefined
+    return !sqlIsReadOnly(parsed?.statement)
+  } catch {
+    return true
+  }
 }
 
 function hostOf(url: string): string | null {
@@ -216,7 +232,7 @@ export function extractFlowCapabilities(graph: FlowGraph): FlowCapability[] {
 
       case 'tool': {
         const toolName = String(data.toolName ?? '')
-        const write = isWriteToolName(toolName)
+        const write = warehouseStepWrites(toolName, data.args) ?? isWriteToolName(toolName)
         add(
           write ? 'tool.write' : 'tool.read',
           write ? 'high' : 'medium',

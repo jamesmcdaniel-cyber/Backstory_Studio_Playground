@@ -6,6 +6,8 @@ import { listArtifacts, isArtifactKind, createArtifact, ARTIFACT_UPLOAD_MAX_BYTE
 import { htmlTitleOf, looksLikeHtml } from '@/lib/html-detect'
 import { artifactDocumentForUpload } from '@/lib/artifacts/runtime'
 import { createArtifactAgent } from '@/lib/artifacts/artifact-agent'
+import { ArtifactContentError } from '@/lib/artifacts/validate-content'
+import { ARTIFACT_VALIDATOR_UNAVAILABLE, ArtifactValidatorUnavailableError } from '@/lib/artifacts/preflight'
 import { unsupportedScripts } from '@/lib/artifacts/vendor-scripts'
 
 export const runtime = 'nodejs'
@@ -48,21 +50,31 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const title = parsed.data.title || htmlTitleOf(document.content) || filename?.replace(/\.[a-z0-9]+$/i, '') || 'Uploaded page'
   // Every artifact has an agent to make its changes: the one picked, or one
   // made for this page.
-  const agent = agentId && agentId !== 'new'
-    ? await prisma.agentTask.findFirst({
-        where: { id: agentId, organizationId: auth.organizationId, status: { not: 'DELETED' }, ...agentVisibilityScope(auth.dbUser.id) },
-        select: { id: true },
-      })
-    : await createArtifactAgent(auth.organizationId, auth.dbUser.id, title)
-  if (!agent) throw new ApiError('Pick an agent you can use.', 404, 'AGENT_NOT_FOUND')
-  const { artifact } = await createArtifact({
-    organizationId: auth.organizationId,
-    userId: auth.dbUser.id,
-    // A page with scripts runs them (sandboxed, no network); a static one is a report.
-    kind: document.kind,
-    title,
-    content: document.content,
-    agentTaskId: agent.id,
+  const created = agentId && agentId !== 'new' ? null : await createArtifactAgent(auth.organizationId, auth.dbUser.id, title)
+  const agent = created ?? await prisma.agentTask.findFirst({
+    where: { id: agentId, organizationId: auth.organizationId, status: { not: 'DELETED' }, ...agentVisibilityScope(auth.dbUser.id) },
+    select: { id: true },
   })
+  if (!agent) throw new ApiError('Pick an agent you can use.', 404, 'AGENT_NOT_FOUND')
+  let artifact: Awaited<ReturnType<typeof createArtifact>>['artifact']
+  try {
+    ;({ artifact } = await createArtifact({
+      organizationId: auth.organizationId,
+      userId: auth.dbUser.id,
+      // A page with scripts runs them (sandboxed, no network); a static one is a report.
+      kind: document.kind,
+      title,
+      content: document.content,
+      agentTaskId: agent.id,
+    }))
+  } catch (error) {
+    // The agent made for this page has nothing to work on: remove it, so a
+    // refused upload leaves no stray "editor" agent behind.
+    if (created) await prisma.agentTask.deleteMany({ where: { id: created.id, organizationId: auth.organizationId } }).catch(() => undefined)
+    // Why the page was refused is the uploader's to act on; an outage is a retry.
+    if (error instanceof ArtifactContentError) throw new ApiError(error.message, 422, 'ARTIFACT_INVALID')
+    if (error instanceof ArtifactValidatorUnavailableError) throw new ApiError(ARTIFACT_VALIDATOR_UNAVAILABLE, 503, 'VALIDATOR_UNAVAILABLE')
+    throw error
+  }
   return { success: true, artifactId: artifact.id, unsupportedScripts: unsupportedScripts(document.content) }
 }, { permission: 'agent.write', maxBodyBytes: ARTIFACT_UPLOAD_MAX_BYTES + 200_000 })

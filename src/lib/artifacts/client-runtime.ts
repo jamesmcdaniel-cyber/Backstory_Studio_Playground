@@ -2,6 +2,17 @@ import pythonPackage from 'pyodide/package.json'
 /** Runs only in the opaque-origin artifact frame, never in the app window. */
 export const ARTIFACT_CLIENT_RUNTIME = String.raw`
 (function(){
+  // The sandbox's opaque origin has no Web Storage: touching localStorage or
+  // sessionStorage throws a SecurityError, which broke pages (and their
+  // validation) that only meant to remember a filter. They get an in-memory
+  // store for the page's lifetime; durable data belongs in saved state.
+  ['localStorage','sessionStorage'].forEach(function(name){
+    try{if(window[name])return;}catch(x){}
+    var data=new Map();
+    var store={getItem:function(k){k=String(k);return data.has(k)?data.get(k):null;},setItem:function(k,v){data.set(String(k),String(v));},removeItem:function(k){data.delete(String(k));},clear:function(){data.clear();},key:function(i){var keys=Array.from(data.keys());return i>=0&&i<keys.length?keys[i]:null;}};
+    Object.defineProperty(store,'length',{get:function(){return data.size;}});
+    try{Object.defineProperty(window,name,{configurable:true,enumerable:true,get:function(){return store;}});}catch(x){}
+  });
   // Runtime errors: the first 20 (message + stack, de-duplicated) go to the
   // parent once the page has loaded, and again as new ones appear, so the
   // assistant can see what broke instead of being told "it looks wrong".

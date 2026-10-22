@@ -498,7 +498,7 @@ export class ArtifactToolClient {
     if (!parsed.success) throw new Error('Pass a title and the complete content (and optionally kind: report, page or document).')
     if (this.context.guestCopy) throw new Error('A visitor\'s copy cannot make new artifacts.')
     const artifact = await this.artifact()
-    const { artifact: created } = await createArtifact({ organizationId: this.organizationId, userId: this.userId, kind: parsed.data.kind, title: parsed.data.title, content: parsed.data.content, agentTaskId: artifact.agentTaskId })
+    const { artifact: created } = await createArtifact({ organizationId: this.organizationId, userId: this.userId, kind: parsed.data.kind, title: parsed.data.title, content: parsed.data.content, agentTaskId: artifact.agentTaskId, declaredTests: true })
     return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
   }
 
@@ -516,7 +516,7 @@ export class ArtifactToolClient {
       evidence: parsed.data.evidence ?? '',
       ledger: { organizationId: this.organizationId, userId: this.userId, agentExecutionId: this.context.executionId },
     })
-    const { artifact: created } = await createArtifact({ organizationId: this.organizationId, userId: this.userId, kind: 'page', title: parsed.data.title, content: component, agentTaskId: artifact.agentTaskId })
+    const { artifact: created } = await createArtifact({ organizationId: this.organizationId, userId: this.userId, kind: 'page', title: parsed.data.title, content: component, agentTaskId: artifact.agentTaskId, declaredTests: true })
     return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Rendered and saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
   }
 
@@ -532,6 +532,8 @@ export class ArtifactToolClient {
         content,
         agentTaskId: artifact.agentTaskId,
         flowId: artifact.flowId,
+        // A copy of an uploaded page is still that page; one of an agent's is still the agent's.
+        declaredTests: content.includes('__artifactTests'),
       })
       return { saved: true, newArtifact: true, title: created.title, link: `/artifacts/${created.id}`, note: `Saved as a new artifact; "${artifact.title}" is unchanged. Share the link.` }
     }
@@ -540,7 +542,7 @@ export class ArtifactToolClient {
     if (this.context.guestCopy && await guestChangesToday(this.organizationId, artifact.id, this.context.executionId) >= GUEST_COPILOT_LIMITS.changesPerVisitor) {
       throw new Error(`This copy has had its ${GUEST_COPILOT_LIMITS.changesPerVisitor} changes for today, so nothing was saved. Tell the user changes are available again tomorrow (or straight away in their own workspace if they sign in); questions can still be answered.`)
     }
-    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId })
+    const version = await addVersion({ artifactId: artifact.id, organizationId: this.organizationId, expectedVersionId: artifact.currentVersionId, content, executionId: this.context.executionId, request: this.context.request ?? summary, createdByUserId: this.userId, declaredTests: 'inherit' })
     this.context.expectedVersionId = version.id
     return { saved: true, version: version.number, link: `/artifacts/${artifact.id}`, note: 'Saved: the new version is live now.' }
   }

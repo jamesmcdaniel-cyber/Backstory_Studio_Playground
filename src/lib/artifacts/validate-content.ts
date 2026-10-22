@@ -5,6 +5,18 @@ import { ARTIFACT_MODULES, ARTIFACT_UI_COMPONENTS, reactComponentOf } from './ru
 export const MAX_ARTIFACT_CHARS = 2_000_000
 
 /**
+ * The content itself was refused — too large, a script or Python that does
+ * not parse, a page that failed its browser check. The reason is the
+ * author's to act on (a 422), unlike an outage or a database error.
+ */
+export class ArtifactContentError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ArtifactContentError'
+  }
+}
+
+/**
  * ROI dashboards are rendered by the platform from computed data, not
  * written by a model, and carry that data (every rep × month, every closed
  * deal) so the page can slice it: a large account's report is a few MB.
@@ -17,8 +29,8 @@ export function maxArtifactCharsFor(kind: string | null | undefined): number {
 
 /** Parse only, never execute generated JavaScript in the application process. */
 export function validateArtifactContent(content: string, maxChars: number = MAX_ARTIFACT_CHARS): void {
-  if (!content.trim()) throw new Error('Artifact content is empty.')
-  if (content.length > maxChars) throw new Error(`Artifact exceeds ${maxChars} characters; split it into smaller artifacts. Nothing was saved.`)
+  if (!content.trim()) throw new ArtifactContentError('Artifact content is empty.')
+  if (content.length > maxChars) throw new ArtifactContentError(`Artifact exceeds ${maxChars} characters; split it into smaller artifacts. Nothing was saved.`)
   const component = reactComponentOf(content)
   const blocks = component ? [{ source: component, typed: true }] : [...content.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].flatMap((m) => {
     if (/\bsrc\s*=/.test(m[1])) return []
@@ -39,7 +51,7 @@ export function validateArtifactContent(content: string, maxChars: number = MAX_
         new Script(`(async function(){${code}\n})`)
       } else new Script(block.source)
     } catch (error) {
-      throw new Error(`Artifact script ${index + 1} failed validation: ${error instanceof Error ? error.message : String(error)}. The current version was not changed.`)
+      throw new ArtifactContentError(`Artifact script ${index + 1} failed validation: ${error instanceof Error ? error.message : String(error)}. The current version was not changed.`)
     }
   }
 }
@@ -55,6 +67,6 @@ export async function validateArtifactPython(content: string): Promise<void> {
   const { validatePythonSyntax } = await import('@/features/flows/code-runner')
   for (const source of blocks) {
     try { await validatePythonSyntax(source) }
-    catch (e) { throw new Error(`Artifact Python failed validation: ${e instanceof Error ? e.message : String(e)}. The current version was not changed.`) }
+    catch (e) { throw new ArtifactContentError(`Artifact Python failed validation: ${e instanceof Error ? e.message : String(e)}. The current version was not changed.`) }
   }
 }

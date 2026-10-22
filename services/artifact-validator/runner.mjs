@@ -5,7 +5,7 @@ import { chromium } from 'playwright'
 
 // Runs in a fresh UID/process/browser with no credentials. Only this trusted
 // harness uses Playwright; artifact source is never evaluated in Node.
-process.once('message', async ({ html }) => {
+process.once('message', async ({ html, requireDeclaredTests = true }) => {
   const errors = []
   const record = message => { if (errors.length < 8) errors.push(String(message).slice(0, 500)) }
   const mime = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.css': 'text/css', '.zip': 'application/zip', '.whl': 'application/octet-stream' }
@@ -65,7 +65,10 @@ process.once('message', async ({ html }) => {
     const steps = await frame.evaluate(() => window.__artifactTests ?? [])
     if (!Array.isArray(steps) || steps.length > 20) throw new Error('__artifactTests must contain at most 20 declarative interaction steps')
     const controls = await frame.locator('button,input,select,textarea,[role="button"]').count()
-    if (controls && !steps.length) record('Interactive artifacts must declare window.__artifactTests with an action and observable assertion for their primary workflow.')
+    // Asked of agent-authored artifacts only: an uploaded page, a code page
+    // (whose CSS specimen's controls sit in an open shadow root and count
+    // here) or a platform page is checked for startup alone.
+    if (requireDeclaredTests && controls && !steps.length) record('Interactive artifacts must declare window.__artifactTests with an action and observable assertion for their primary workflow.')
     await page.evaluate(() => { window.validationInteractions = true })
     let actions = 0, assertions = 0
     for (const [index, step] of steps.entries()) {

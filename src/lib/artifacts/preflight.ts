@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { singleFlight } from '@/lib/single-flight'
 import { apiLogger } from '@/lib/logger'
+import { ArtifactContentError } from './validate-content'
 
 export type ArtifactPreflightResult = {
   /** A 1280×800 PNG of the page as it passed (base64), when the validator took one. */
@@ -68,14 +69,24 @@ export const VALIDATOR_MAX_BODY_BYTES = 64 * 1024 * 1024
  */
 const LEGACY_INFRA_ERROR = /exceeded the 45 second deadline|exited before reporting a result|must restart before UID reuse|^Payload too large|^browserType\.launch|^Artifact frame failed to load/i
 
+export type ArtifactRuntimeCheck = {
+  /**
+   * The page must declare window.__artifactTests for its controls: asked of
+   * agent-authored artifacts only. An upload, a code page or a platform page
+   * is checked for startup alone.
+   */
+  declaredTests?: boolean
+}
+
 /** Only overlapping identical validations share work. Never cache a past pass. */
-export function validateArtifactRuntime(content: string): Promise<ArtifactPreflightResult> {
-  const key = createHash('sha256').update(JSON.stringify([content, process.env.ARTIFACT_VALIDATOR_URL, process.env.ARTIFACT_VALIDATOR_TOKEN, process.env.ARTIFACT_RUNTIME_PREFLIGHT])).digest('hex')
-  return validateOnce(key, async () => { const result = await validateRuntime(content); rememberScreenshot(content, result.screenshot); return result })
+export function validateArtifactRuntime(content: string, check: ArtifactRuntimeCheck = {}): Promise<ArtifactPreflightResult> {
+  const declaredTests = Boolean(check.declaredTests)
+  const key = createHash('sha256').update(JSON.stringify([content, declaredTests, process.env.ARTIFACT_VALIDATOR_URL, process.env.ARTIFACT_VALIDATOR_TOKEN, process.env.ARTIFACT_RUNTIME_PREFLIGHT])).digest('hex')
+  return validateOnce(key, async () => { const result = await validateRuntime(content, declaredTests); rememberScreenshot(content, result.screenshot); return result })
 }
 
 /** Browser startup gate. No generated code executes in the API or agent worker. */
-async function validateRuntime(content: string): Promise<ArtifactPreflightResult> {
+async function validateRuntime(content: string, declaredTests: boolean): Promise<ArtifactPreflightResult> {
   const none: ArtifactPreflightResult = { screenshot: null }
   if (!/<script\b|<py-script\b|\bexport\s+default\b|\bon\w+\s*=/i.test(content)) return none
   const endpoint = process.env.ARTIFACT_VALIDATOR_URL
@@ -92,12 +103,12 @@ async function validateRuntime(content: string): Promise<ArtifactPreflightResult
   if (url.protocol !== 'https:') throw new Error('Artifact validator requires HTTPS.')
   const { artifactPageResponse } = await import('./serve')
   const html = await artifactPageResponse({ content, kind: 'page' }, 'http://artifact-runtime.invalid').text()
-  const body = JSON.stringify({ html })
+  const body = JSON.stringify({ html, requireDeclaredTests: declaredTests })
   // Measured, not estimated: the page as it will be sent. Over the cap is
   // about the page (its size), said before anything is sent.
   const bytes = Buffer.byteLength(body)
   if (bytes > VALIDATOR_MAX_BODY_BYTES) {
-    throw new Error(`Artifact is too large for the browser check (${(bytes / 1_048_576).toFixed(1)} MB encoded; the limit is ${VALIDATOR_MAX_BODY_BYTES / 1_048_576} MB), so nothing was saved. Split it into smaller artifacts or move bulky data out of the page.`)
+    throw new ArtifactContentError(`Artifact is too large for the browser check (${(bytes / 1_048_576).toFixed(1)} MB encoded; the limit is ${VALIDATOR_MAX_BODY_BYTES / 1_048_576} MB), so nothing was saved. Split it into smaller artifacts or move bulky data out of the page.`)
   }
   const deadline = Date.now() + 150_000
   let retries = 0
@@ -121,6 +132,6 @@ async function validateRuntime(content: string): Promise<ArtifactPreflightResult
     const infra = result?.infra === true || (Array.isArray(result?.errors) && result.errors.some(error => LEGACY_INFRA_ERROR.test(String(error))))
     if (!verdict || infra) throw new ArtifactValidatorUnavailableError()
     const detail = result.errors!.slice(0, 3).map(value => String(value).slice(0, 500)).join('; ') || 'The page did not start.'
-    throw new Error(`Artifact failed browser startup validation: ${detail} The current version was not changed. Fix the artifact and retry.`)
+    throw new ArtifactContentError(`Artifact failed browser startup validation: ${detail} The current version was not changed. Fix the artifact and retry.`)
   }
 }

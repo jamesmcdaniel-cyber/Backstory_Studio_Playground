@@ -120,6 +120,20 @@ type AddVersionParams = {
   previouslyValidated?: boolean
   /** The thumbnail an earlier save of this content produced (a restore carries it over). */
   thumbnailFileId?: string | null
+  /**
+   * Whether the page must declare its interaction tests (see
+   * validateArtifactRuntime). 'inherit': an agent's change to an existing
+   * artifact keeps what that artifact asked — an agent-authored page had to
+   * declare them, an upload or a platform page never did.
+   */
+  declaredTests?: boolean | 'inherit'
+}
+
+/** Whether the artifact's current version declares interaction tests (and so was agent-authored). */
+async function currentDeclaresTests(organizationId: string, versionId: string | null | undefined): Promise<boolean> {
+  if (!versionId) return false
+  const current = await prisma.artifactVersion.findFirst({ where: { id: versionId, organizationId }, select: { content: true } })
+  return Boolean(current && current.content.includes('__artifactTests'))
 }
 
 /**
@@ -138,10 +152,11 @@ async function storeThumbnail(organizationId: string, userId: string | null | un
 }
 
 export async function addVersion(params: AddVersionParams): Promise<ArtifactVersion> {
-  const target = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { kind: true } })
+  const target = await prisma.artifact.findFirst({ where: { id: params.artifactId, organizationId: params.organizationId }, select: { kind: true, currentVersionId: true } })
   validateArtifactContent(params.content, maxArtifactCharsFor(target?.kind))
   await validateArtifactPython(params.content)
-  const preflight = params.previouslyValidated ? null : await validateArtifactRuntime(params.content)
+  const declaredTests = params.declaredTests === 'inherit' ? await currentDeclaresTests(params.organizationId, target?.currentVersionId) : Boolean(params.declaredTests)
+  const preflight = params.previouslyValidated ? null : await validateArtifactRuntime(params.content, { declaredTests })
   const thumbnailFileId = preflight?.screenshot ? await storeThumbnail(params.organizationId, params.createdByUserId, preflight.screenshot) : params.thumbnailFileId ?? null
   return tenantTransaction(params.organizationId, tx => insertValidatedVersion(tx, { ...params, thumbnailFileId }))
 }
@@ -195,10 +210,12 @@ export async function createArtifact(params: {
   executionId?: string | null
   flowRunId?: string | null
   state?: Prisma.InputJsonValue | null
+  /** An agent wrote it: the page must declare its interaction tests. Uploads, code pages and platform pages need not. */
+  declaredTests?: boolean
 }): Promise<{ artifact: Artifact; version: ArtifactVersion }> {
   validateArtifactContent(params.content, maxArtifactCharsFor(params.kind))
   await validateArtifactPython(params.content)
-  const preflight = await validateArtifactRuntime(params.content)
+  const preflight = await validateArtifactRuntime(params.content, { declaredTests: params.declaredTests })
   const thumbnailFileId = await storeThumbnail(params.organizationId, params.userId, preflight.screenshot)
   return prisma.$transaction(async tx => {
   const artifact = await tx.artifact.create({
@@ -273,6 +290,7 @@ export async function registerVersionFromExecution(params: {
         executionId: params.executionId,
         request: str(t.artifactRequest),
         createdByUserId: params.userId,
+        declaredTests: 'inherit',
         ...(typeof t.artifactBaseVersionId === 'string' ? { expectedVersionId: t.artifactBaseVersionId } : {}),
       })
       await markChatVersion(params.organizationId, target.id, params.executionId, version.id)
@@ -299,6 +317,7 @@ export async function registerVersionFromExecution(params: {
     agentTaskId: params.agentTaskId,
     flowId: flowIdFromTrigger(params.trigger),
     executionId: params.executionId,
+    declaredTests: true,
   })
   return { artifactId: artifact.id, versionId: version.id, created: true }
 }

@@ -56,6 +56,44 @@ test('a run that ended on a real reason keeps it; the @artifact gate never repla
   assert.ok(source.indexOf('artifactModeApplies(renderTrigger') > source.indexOf('const blockedReason ='), 'nothing throws on @artifact before the blocker is known')
 })
 
+test('declared interaction tests are required of agent-authored artifacts only, and the app says which', () => {
+  const runner = readFileSync('services/artifact-validator/runner.mjs', 'utf8')
+  assert.match(runner, /if \(requireDeclaredTests && controls && !steps\.length\) record\(/)
+  assert.match(runner, /requireDeclaredTests = true/, 'an app that sends no flag keeps the old requirement')
+  const server = readFileSync('services/artifact-validator/server.mjs', 'utf8')
+  assert.match(server, /requireDeclaredTests: input\.requireDeclaredTests !== false/)
+})
+
+test('a page that touches Web Storage keeps working in the opaque-origin sandbox, on memory', () => {
+  const denied = () => { const error = new Error('Failed to read the \'localStorage\' property from \'Window\': The document is sandboxed and lacks the \'allow-same-origin\' flag.'); error.name = 'SecurityError'; throw error }
+  const window: any = { addEventListener() {}, parent: {} }
+  Object.defineProperty(window, 'localStorage', { configurable: true, get: denied })
+  Object.defineProperty(window, 'sessionStorage', { configurable: true, get: denied })
+  runInNewContext(artifactClientRuntime('https://example.com'), { window, document: { addEventListener() {} }, Map, Set, Promise, setTimeout, clearTimeout, Blob, URL })
+  window.localStorage.setItem('filter', 'EMEA')
+  assert.equal(window.localStorage.getItem('filter'), 'EMEA')
+  assert.equal(window.localStorage.length, 1)
+  assert.equal(window.localStorage.key(0), 'filter')
+  assert.equal(window.sessionStorage.getItem('missing'), null)
+  window.localStorage.removeItem('filter')
+  assert.equal(window.localStorage.length, 0)
+  // A frame that has real storage keeps it.
+  const real = { getItem: () => 'kept' }
+  const allowed: any = { addEventListener() {}, parent: {}, localStorage: real, sessionStorage: real }
+  runInNewContext(artifactClientRuntime('https://example.com'), { window: allowed, document: { addEventListener() {} }, Map, Set, Promise, setTimeout, clearTimeout, Blob, URL })
+  assert.equal(allowed.localStorage, real)
+})
+
+test('a save that fails validation is a content error the upload route can answer with 422', async () => {
+  const { ArtifactContentError } = await import('../validate-content')
+  assert.throws(() => validateArtifactContent('<script>const = ;</script>'), ArtifactContentError)
+  await assert.rejects(validateArtifactPython('<script type="text/python">def broken(</script>'), ArtifactContentError)
+  const route = readFileSync('src/app/api/artifacts/route.ts', 'utf8')
+  assert.match(route, /error instanceof ArtifactContentError/)
+  assert.match(route, /422/)
+  assert.match(route, /agentTask\.deleteMany\(\{ where: \{ id: created\.id, organizationId: auth\.organizationId \} \}\)/, 'the agent made for a failed upload is removed')
+})
+
 test('source validation rejects broken code and unsupported imports without executing it', () => {
   assert.throws(() => validateArtifactContent('<script>const = ;</script>'), /failed validation/)
   assert.throws(() => validateArtifactContent('export default function App( {return <div/>}'), /failed validation/)

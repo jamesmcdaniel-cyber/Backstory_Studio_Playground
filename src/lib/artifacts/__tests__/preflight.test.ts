@@ -33,6 +33,13 @@ test('runtime preflight fails closed, accepts explicit passes, and preserves val
     assert.equal(posted, true)
     globalThis.fetch = async () => Response.json({ ok: true, checks: ['startup'] })
     await validateArtifactRuntime(source)
+    // Whether the page must declare interaction tests is the caller's to say
+    // (agent-authored artifacts only); a separate question, so never shared.
+    const flags: unknown[] = []
+    globalThis.fetch = async (_url, init) => { flags.push(JSON.parse(String(init?.body)).requireDeclaredTests); return Response.json({ ok: true }) }
+    await validateArtifactRuntime(source + '<!-- upload -->')
+    await validateArtifactRuntime(source + '<!-- upload -->', { declaredTests: true })
+    assert.deepEqual(flags, [false, true])
     let validations = 0
     globalThis.fetch = async () => { validations++; await new Promise(resolve => setTimeout(resolve, 10)); return Response.json({ ok: true }) }
     await Promise.all(Array.from({ length: 8 }, () => validateArtifactRuntime(source)))

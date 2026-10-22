@@ -1,5 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { subscribeTicks } from '@/lib/client/realtime'
+import { artifactSharedChannel, createSharedStateRelay, isSharedStateKey } from '@/lib/artifacts/shared-state-live'
 export const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-downloads'
 export type RenderErrorMessage = { message: string; stack?: string; count?: number }
 
@@ -40,10 +42,30 @@ export function StatefulArtifactFrame({ artifactId, versionId, title, className,
     let disposed = false
     let inFlight = 0
     let lastReport = ''
+    // Live shared state: another viewer's save arrives as a tick (key +
+    // revision only); the value is refetched here, over the authenticated
+    // route, and handed to the frame — which never gets network access. The
+    // subscription opens on the frame's first shared key, not on every view.
+    const relay = createSharedStateRelay({
+      fetchLatest: async (key) => {
+        const response = await fetch(`/api/artifacts/${artifactId}/shared-state?key=${encodeURIComponent(key)}`, { cache: 'no-store', signal: AbortSignal.timeout(12_000) })
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.error || 'Shared state could not be read.')
+        return { value: result.value, revision: result.revision }
+      },
+      deliver: (change) => { if (!disposed) frame.current?.contentWindow?.postMessage({ type: 'backstory:shared-state-changed', key: change.key, value: change.value, revision: change.revision }, '*') },
+    })
+    let stopLive: (() => void) | null = null
+    const follow = (key: string) => {
+      if (disposed || !relay.watch(key) || stopLive) return
+      stopLive = subscribeTicks(artifactSharedChannel(artifactId), (payload) => relay.tick(payload))
+    }
     const receive = async (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.origin !== 'null') return
       const msg = event.data
       if (msg?.type === 'backstory:dirty') { setDirty(Boolean(msg.dirty)); return }
+      // An HTML page's onSharedStateChange(key): follow a key it has not read yet.
+      if (msg?.type === 'backstory:shared-watch') { if (isSharedStateKey(msg.key)) follow(msg.key); return }
       if (msg?.type === 'backstory:render-errors') {
         // What the page says broke, recorded against the version it is showing
         // — by an editor only, since the report changes what the assistant is told.
@@ -65,6 +87,7 @@ export function StatefulArtifactFrame({ artifactId, versionId, title, className,
       // public link, a thumbnail), which it gives up on after 4 s.
       if (!disposed) target?.postMessage({ type: 'backstory:state-ack', id: msg.id }, '*')
       let counted = false
+      let writing: string | null = null
       try {
         if (!['get', 'set'].includes(msg.op) || !/^[a-zA-Z0-9_-]{1,64}$/.test(msg.payload?.key ?? '')) throw new Error('Invalid state request.')
         // Shared state is the artifact's, not the person's: readable by anyone
@@ -85,16 +108,19 @@ export function StatefulArtifactFrame({ artifactId, versionId, title, className,
         if (body && new TextEncoder().encode(body).length > 257024) throw new Error('Application state exceeds 256 KB.')
         inFlight++
         counted = true
+        if (shared) { follow(msg.payload.key); if (msg.op === 'set') { relay.beginWrite(msg.payload.key); writing = msg.payload.key } }
         const response = await fetch(`/api/artifacts/${artifactId}/${shared ? 'shared-state' : 'state'}${msg.op === 'get' ? `?key=${encodeURIComponent(msg.payload.key)}` : ''}`, { method: msg.op === 'get' ? 'GET' : 'PUT', cache: 'no-store', signal: AbortSignal.timeout(12_000), headers: body ? { 'Content-Type': 'application/json' } : undefined, body })
         const result = await response.json()
         if (!response.ok) throw new Error(result.error || 'Application state could not be saved.')
+        // The revision the frame now holds: the echo of its own save is dropped.
+        if (shared) { if (writing) { relay.endWrite(writing, result.revision); writing = null } else relay.observe(msg.payload.key, result.revision) }
         if (!disposed) target?.postMessage({ type: 'backstory:state-result', id: msg.id, result: shared && !writable ? { ...result, readOnly: true } : result }, '*')
       } catch (error) {
         if (!disposed) target?.postMessage({ type: 'backstory:state-result', id: msg.id, error: error instanceof Error ? error.message : 'State request failed.' }, '*')
-      } finally { if (counted) inFlight-- }
+      } finally { if (counted) inFlight--; if (writing) relay.endWrite(writing) }
     }
     window.addEventListener('message', receive)
-    return () => { disposed = true; window.removeEventListener('message', receive) }
+    return () => { disposed = true; relay.dispose(); stopLive?.(); window.removeEventListener('message', receive) }
   }, [artifactId, displayed, writable])
   return <div className={className} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
     {displayed !== versionId && <div role="status" className="bg-amber-50 p-2 text-xs text-amber-900">A new version is available. Your unsaved work is still open. Save or export it before switching. <button className="underline" onClick={() => { if (window.confirm('Discard unsaved changes and open the selected version?')) { setDirty(false); setDisplayed(versionId) } }}>Discard and switch</button></div>}

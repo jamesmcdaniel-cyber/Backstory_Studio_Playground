@@ -44,3 +44,22 @@ test('external versions wait for unsaved edits, then switch after successful sav
     assert.match((ui.getByTitle('Live fixture') as HTMLIFrameElement).src, /v2\/content$/)
   } finally { cleanup() }
 })
+
+test('shared state: a frame\'s shared write goes to the shared route and its result comes back; watch requests need no network', async () => {
+  const original = globalThis.fetch
+  const calls: string[] = []
+  globalThis.fetch = async (url) => { calls.push(String(url)); return Response.json({ success: true, revision: 4 }) }
+  try {
+    const ui = render(<StatefulArtifactFrame artifactId="live-artifact" versionId="v1" title="Shared fixture" writable />)
+    const frame = ui.getByTitle('Shared fixture') as HTMLIFrameElement
+    const results: any[] = []
+    frame.contentWindow!.postMessage = ((message: any) => { if (message?.type === 'backstory:state-result') results.push(message) }) as Window['postMessage']
+    const send = async (data: unknown) => { await act(async () => { window.dispatchEvent(new window.MessageEvent('message', { source: frame.contentWindow, origin: 'null', data })) }) }
+    await send({ type: 'backstory:shared-watch', key: 'votes-v1' })
+    await send({ type: 'backstory:shared-watch', key: 'bad key!' })
+    assert.equal(calls.length, 0, 'following a key opens a subscription, not a request')
+    await send({ type: 'backstory:state', id: '9', op: 'set', payload: { key: 'votes-v1', value: { yes: 1 }, revision: 3, shared: true } })
+    assert.deepEqual(calls, ['/api/artifacts/live-artifact/shared-state'])
+    assert.equal(results[0]?.result?.revision, 4)
+  } finally { cleanup(); globalThis.fetch = original }
+})

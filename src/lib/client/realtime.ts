@@ -21,15 +21,18 @@ type RealtimeClient = Pick<ReturnType<typeof createClient>, 'channel' | 'removeC
 type Entry = {
   client: RealtimeClient
   channel: RealtimeChannel
-  listeners: Set<() => void>
+  listeners: Set<TickListener>
   teardown: ReturnType<typeof setTimeout> | null
 }
+
+/** A tick's payload is the broadcaster's small identifier object (never data); most listeners ignore it. */
+type TickListener = (payload?: unknown) => void
 
 const shared = new Map<string, Entry>()
 const TEARDOWN_DELAY_MS = 1_000
 
-/** Call `onTick` on every broadcast "tick" on `topic`. Returns the unsubscribe. No-op without Supabase. */
-export function subscribeTicks(topic: string, onTick: () => void, clientFactory: () => RealtimeClient = createClient): () => void {
+/** Call `onTick` on every broadcast "tick" on `topic`, with the tick's payload. Returns the unsubscribe. No-op without Supabase. */
+export function subscribeTicks(topic: string, onTick: TickListener, clientFactory: () => RealtimeClient = createClient): () => void {
   let entry = shared.get(topic)
   if (!entry) {
     let client: RealtimeClient
@@ -38,12 +41,12 @@ export function subscribeTicks(topic: string, onTick: () => void, clientFactory:
     } catch {
       return () => {} // no Supabase configured — the poll fallback drives updates
     }
-    const listeners = new Set<() => void>()
+    const listeners = new Set<TickListener>()
     const channel = client.channel(topic)
-    channel.on('broadcast', { event: 'tick' }, () => {
+    channel.on('broadcast', { event: 'tick' }, (message: { payload?: unknown } | undefined) => {
       for (const listener of [...listeners]) {
         try {
-          listener()
+          listener(message?.payload)
         } catch {
           // one listener's failure must not starve the others
         }

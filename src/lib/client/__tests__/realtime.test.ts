@@ -10,17 +10,17 @@ function fakeClient() {
   const client = {
     channel(topic: string) {
       if (!channels.has(topic)) {
-        const handlers: Array<() => void> = []
+        const handlers: Array<(message?: unknown) => void> = []
         const channel: any = {
           state: 'closed',
-          on(_type: string, _filter: unknown, handler: () => void) { handlers.push(handler); return channel },
+          on(_type: string, _filter: unknown, handler: (message?: unknown) => void) { handlers.push(handler); return channel },
           subscribe() {
             if (channel.state !== 'closed') throw new Error("tried to subscribe multiple times. 'subscribe' can only be called a single time per channel instance")
             channel.state = 'joined'
             subscribes += 1
             return channel
           },
-          fire() { for (const handler of handlers) handler() },
+          fire(message?: unknown) { for (const handler of handlers) handler(message) },
         }
         channels.set(topic, channel)
       }
@@ -55,4 +55,15 @@ test('two components following the same run share one subscription — no "subsc
 test('without Supabase configured, subscribing is a no-op', () => {
   const off = subscribeTicks('agent-exec:run-2', () => {}, () => { throw new Error('Supabase is not configured') })
   assert.doesNotThrow(off)
+})
+
+test('listeners receive the tick\'s payload (identifiers only — the artifact shared-state plane reads key + revision)', async () => {
+  const fake = fakeClient()
+  const heard: unknown[] = []
+  const off = subscribeTicks('artifact-shared:a1', (payload) => { heard.push(payload) }, () => fake.client)
+  fake.channels.get('artifact-shared:a1').fire({ type: 'broadcast', event: 'tick', payload: { key: 'sheet-v1', revision: 2 } })
+  fake.channels.get('artifact-shared:a1').fire()
+  assert.deepEqual(heard, [{ key: 'sheet-v1', revision: 2 }, undefined])
+  off()
+  await new Promise((resolve) => setTimeout(resolve, 1_100))
 })

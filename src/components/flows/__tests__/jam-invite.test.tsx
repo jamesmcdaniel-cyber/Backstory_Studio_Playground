@@ -149,19 +149,37 @@ test('a teammate on my view gets no follow chip', async () => {
 
 // The panel must never put two URLs on screen: the audience chosen decides the
 // single link, and the no-sign-in audience swaps in the public address rather
-// than adding a second box beside the builder one.
+// than adding a second box beside the builder one. The public link has its OWN
+// token (loaded from /public-link), never the jam token.
+const PUBLIC_STATE = { success: true, enabled: true, url: 'https://app.test/share/flow/pubtok', views: 2, expiresAt: null, expired: false, allowCopy: false }
+
+function stubWithPublicLink(posts: { url: string; body: Record<string, unknown> }[] = []) {
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      posts.push({ url: String(url), body: JSON.parse(String(init.body)) })
+      if (String(url).includes('/public-link')) return { ok: true, json: async () => PUBLIC_STATE }
+      return { ok: true, json: async () => ({ success: true, shareEnabled: false, shareRole: 'view', shareAnonymous: true, anonymousViews: 0 }) }
+    }
+    if (String(url).includes('/public-link')) return { ok: true, json: async () => PUBLIC_STATE }
+    return { ok: true, json: async () => ({ success: true, selfId: 'me', members: [] }) }
+  }) as unknown as typeof fetch
+}
+
 test('one link at a time — the no-sign-in audience swaps the URL, it does not add one', async () => {
-  stubMembers('ADMIN')
+  stubWithPublicLink()
   // The dialog portals to the body, so read the whole document.
   render(<JamDialog {...baseProps} shareToken="tok" shareEnabled shareRole="view" shareAnonymous />)
   await flush()
+  await flush()
   const shown = document.body.textContent ?? ''
-  assert.ok(shown.includes('/share/flow/tok'), 'shows the public link')
+  assert.ok(shown.includes('/share/flow/pubtok'), 'shows the public link')
+  assert.ok(!shown.includes('/share/flow/tok'), 'the jam token is never a public URL')
   assert.ok(!shown.includes('?share=tok'), 'and not the builder link as well')
   assert.equal(
     screen.getByRole('button', { name: /^anyone, no sign-in$/i }).getAttribute('aria-pressed'),
     'true',
   )
+  assert.ok(screen.getByLabelText(/let signed-in visitors copy it/i), 'the copy opt-in sits with the public link')
   cleanup()
 })
 
@@ -171,30 +189,28 @@ test('the sign-in audiences show the builder link, never the public one', async 
   await flush()
   const shown = document.body.textContent ?? ''
   assert.ok(shown.includes('?share=tok'))
-  assert.ok(!shown.includes('/share/flow/tok'))
+  assert.ok(!shown.includes('/share/flow/'))
   cleanup()
 })
 
-test('choosing the no-sign-in audience is one click that turns anonymity on', async () => {
+test('choosing the no-sign-in audience turns the public link on and the jam link off', async () => {
   const posts: { url: string; body: Record<string, unknown> }[] = []
-  globalThis.fetch = (async (url: string, init?: RequestInit) => {
-    if (init?.method === 'POST') {
-      posts.push({ url: String(url), body: JSON.parse(String(init.body)) })
-      return { ok: true, json: async () => ({ success: true, shareEnabled: true, shareRole: 'view', shareAnonymous: true }) }
-    }
-    return { ok: true, json: async () => ({ success: true, selfId: 'me', members: [] }) }
-  }) as unknown as typeof fetch
-
-  render(<JamDialog {...baseProps} shareToken={null} shareEnabled={false} />)
+  stubWithPublicLink(posts)
+  const changes: unknown[][] = []
+  render(<JamDialog {...baseProps} shareToken="tok" shareEnabled shareRole="edit" onShareChanged={(...args) => changes.push(args)} />)
   await flush()
   await act(async () => {
     screen.getByRole('button', { name: /^anyone, no sign-in$/i }).click()
     await Promise.resolve()
   })
-  const share = posts.find((post) => post.url.includes('/share'))
-  assert.ok(share, 'posted to the share endpoint')
-  assert.equal(share!.body.enabled, true)
-  assert.equal(share!.body.anonymous, true)
-  assert.equal(share!.body.role, 'view', 'a link anyone can open without signing in is read-only')
+  await flush()
+  const publicPost = posts.find((post) => post.url.includes('/public-link'))
+  assert.ok(publicPost, 'posted to the public-link endpoint')
+  assert.equal(publicPost!.body.action, 'enable')
+  const jamPost = posts.find((post) => post.url.endsWith('/share'))
+  assert.ok(jamPost, 'and turned the jam link off, so one audience is live')
+  assert.equal(jamPost!.body.enabled, false)
+  assert.equal('anonymous' in jamPost!.body, false, 'the jam link is never asked to be public')
+  assert.ok(changes.some((args) => args[3] === true), 'the parent learns the public link is on')
   cleanup()
 })

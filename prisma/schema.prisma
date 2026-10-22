@@ -1539,13 +1539,26 @@ model Flow {
   /// resolved by hashing what the caller sent and matching this digest.
   shareTokenDigest String?   @unique
   shareRole        String    @default("view") // role a share-link grants: 'view' | 'edit'
-  /// May the share token be opened WITHOUT signing in? Anonymous opens land on
-  /// a separate read-only page with a sanitized graph — never the builder, and
-  /// never 'edit' regardless of shareRole.
+  /// Is the flow's PUBLIC link on? Anonymous opens land on a separate read-only
+  /// page with a sanitized graph — never the builder, and never 'edit'. The
+  /// link has its OWN token (publicTokenDigest), deliberately not the share
+  /// token above: that one admits signed-in people to the builder as
+  /// collaborators, and a link meant to be posted anywhere must not.
   shareAnonymous   Boolean   @default(false)
   /// Count of anonymous opens, surfaced to the owner so a public link is never
   /// silently accumulating traffic.
   anonymousViews   Int       @default(0)
+  /// The public link's 192-bit token: SHA-256 digest for lookup, and encrypted
+  /// (src/lib/crypto/secrets.ts) so an editor can copy the link again. Rotated
+  /// with the key by scripts/rotate-encryption-key.ts.
+  publicTokenDigest     String?   @unique
+  publicTokenCiphertext String?
+  /// When the public link stops working; null = never.
+  publicExpiresAt       DateTime? @db.Timestamptz(6)
+  /// Second opt-in on the public link: a signed-in visitor may copy the flow
+  /// (credentials, workspace ids and pinned data stripped) into their own
+  /// workspace. Copies never flow back.
+  publicAllowCopy       Boolean   @default(false)
   folder           String    @default("") // workbook-style grouping ('' = ungrouped)
   // Polling-trigger dedupe state ({ seen: string[] }) — the keys of items already
   // emitted, so a poll only starts the flow for genuinely new records.

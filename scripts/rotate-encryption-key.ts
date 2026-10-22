@@ -239,6 +239,19 @@ async function main() {
     ),
   ])
 
+  results.push([
+    'flows.publicTokenCiphertext',
+    await rotateStringColumns(
+      'flows',
+      await systemPrisma.flow.findMany({
+        where: { publicTokenCiphertext: { not: null } },
+        select: { id: true, publicTokenCiphertext: true },
+      }),
+      ['publicTokenCiphertext'],
+      (id, data) => systemPrisma.flow.update({ where: { id }, data }),
+    ),
+  ])
+
   const total = results.reduce<Tally>(
     (sum, [, t]) => ({
       scanned: sum.scanned + t.scanned,

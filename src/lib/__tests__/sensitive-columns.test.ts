@@ -62,6 +62,9 @@ const CLASSIFIED: Record<string, Classification> = {
   // digest is stored; the raw token is returned once, from the mint response.
   'Flow.shareTokenDigest': 'hash',
   'Artifact.shareTokenDigest': 'hash',
+  // A flow's public link has its own token, for the same reason as the artifact's.
+  'Flow.publicTokenDigest': 'hash',
+  'Flow.publicTokenCiphertext': 'encrypted',
   // Encrypted so an editor can copy an artifact's public link again; rotated
   // with the key (scripts/rotate-encryption-key.ts).
   'Artifact.shareTokenCiphertext': 'encrypted',

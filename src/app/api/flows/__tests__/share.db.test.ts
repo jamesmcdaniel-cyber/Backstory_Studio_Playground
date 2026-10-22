@@ -150,41 +150,41 @@ if (TEST_DB) {
       }
     }
   })
-  test('anonymous opt-in is view-only and dies with the link; the token alone never grants it', async () => {
+  test('the jam token and the public token are separate: neither opens the other door', async () => {
     const s = await seedTestOrg(prisma)
-    const { resolveAnonymousFlowShare } = await import('@/lib/flows/public-share')
+    const guest = await seedTestOrg(prisma)
+    const { resolveAnonymousFlowShare, updatePublicLink } = await import('@/lib/flows/public-share')
     try {
       installTestAuth(s.auth)
       const flow = await mkFlow(s.organizationId, s.userId)
 
-      // Sharing without the anonymous flag: the token does NOT open publicly.
-      const minted = await (await share(flow.id, { enabled: true, role: 'edit' })).json()
+      // A jam link never opens the public page, even with a stale client
+      // still sending the old `anonymous` flag.
+      const minted = await (await share(flow.id, { enabled: true, role: 'edit', anonymous: true })).json()
       assert.equal(minted.shareAnonymous, false)
       assert.equal((await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-1', countView: false })).status, 'not_found')
 
-      // Opting in works even when the ROLE is edit — anonymous is always
-      // read-only, and never becomes an editable grant.
-      const opened = await (await share(flow.id, { enabled: true, role: 'edit', anonymous: true })).json()
-      assert.equal(opened.shareAnonymous, true)
-      assert.equal(opened.shareToken, null, 'opting in does not rotate — and never re-issues the plaintext')
-      // The token the owner was handed at mint still resolves, via its digest.
-      const anon = await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-2', countView: false })
-      assert.equal(anon.status, 'ok')
+      // The public link has its own token, which opens the public page...
+      const pub = await updatePublicLink(s.organizationId, flow.id, s.userId, 'http://test', { action: 'enable' })
+      const publicToken = (pub.url ?? '').split('/share/flow/')[1]
+      assert.ok(publicToken && publicToken !== minted.shareToken)
+      assert.equal((await resolveAnonymousFlowShare(publicToken, { clientKey: 'anon-2', countView: false })).status, 'ok')
 
-      // Rotating kills the old public URL and resets the counter.
-      await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-3' })
-      const rotated = await (await share(flow.id, { enabled: true, role: 'view', rotate: true, anonymous: true })).json()
-      assert.ok(rotated.shareToken && rotated.shareToken !== minted.shareToken)
-      assert.equal(rotated.anonymousViews, 0, 'the view count resets with the link')
-      assert.equal((await resolveAnonymousFlowShare(minted.shareToken, { clientKey: 'anon-4', countView: false })).status, 'not_found')
+      // ...but never admits a signed-in stranger to the builder.
+      installTestAuth(guest.auth)
+      assert.equal((await open(flow.id, publicToken)).status, 404, 'a public token is not a collaborator grant')
+      assert.equal(await prisma.flowCollaborator.count({ where: { flow: { id: flow.id, organizationId: s.organizationId } } }), 0)
 
-      // Turning sharing off ends anonymous access entirely.
-      const disabled = await (await share(flow.id, { enabled: false, role: 'view' })).json()
-      assert.equal(disabled.shareAnonymous, false)
-      assert.equal((await resolveAnonymousFlowShare(rotated.shareToken, { clientKey: 'anon-5', countView: false })).status, 'not_found')
+      // Turning the jam link off leaves the public link alone, and vice versa.
+      installTestAuth(s.auth)
+      const jamOff = await (await share(flow.id, { enabled: false, role: 'view' })).json()
+      assert.equal(jamOff.shareAnonymous, true, 'the public link is unaffected by the jam link')
+      assert.equal((await resolveAnonymousFlowShare(publicToken, { clientKey: 'anon-3', countView: false })).status, 'ok')
     } finally {
-      await s.cleanup()
-      await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
+      for (const w of [s, guest]) {
+        await w.cleanup()
+        await prisma.organization.delete({ where: { id: w.organizationId } }).catch(() => {})
+      }
     }
   })
 }

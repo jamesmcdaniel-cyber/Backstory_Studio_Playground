@@ -14,12 +14,13 @@ const bodySchema = z.object({
   // Also delete the ACCEPTED collaborator rows (durable grants a rotate alone
   // deliberately keeps) — "rotate and remove everyone who joined by link".
   revokeCollaborators: z.boolean().optional(),
-  // Let the link be opened WITHOUT signing in. Always view-only: an anonymous
-  // visitor lands on the public read-only page, never the builder.
-  anonymous: z.boolean().optional(),
+  // The no-sign-in public link is NOT this token any more — it lives at
+  // /api/flows/[id]/public-link with its own token. A stray `anonymous` field
+  // from an old client is ignored rather than re-coupling the two.
 })
 
-// POST /api/flows/[id]/share — manage the cross-workspace share link. Only a
+// POST /api/flows/[id]/share — manage the cross-workspace JAM link (signed-in
+// collaborators; the public no-sign-in link is ./public-link). Only a
 // same-org EDITOR may manage sharing (the org-scoped lookup below is that
 // wall — guests can never reach this). Enabling mints a token when none
 // exists and otherwise keeps it (so changing the role doesn't break sent
@@ -39,25 +40,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   })
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   assertFlowEditable(flow, auth.dbUser.id)
-  const { enabled, role, rotate, revokeCollaborators, anonymous } = bodySchema.parse(await request.json())
+  const { enabled, role, rotate, revokeCollaborators } = bodySchema.parse(await request.json())
   // Only a MINT produces a raw token, and this response is the one and only
   // place it is ever readable: the database keeps the digest, so a role change
   // on an existing link (which deliberately keeps the link working) simply has
   // no plaintext to return.
   const minted = !enabled ? null : rotate || !flow.shareTokenDigest ? randomBytes(16).toString('hex') : null
   const shareTokenDigest = !enabled ? null : minted ? hashToken(minted) : flow.shareTokenDigest
-  // Turning the link off (or rotating it) also ends anonymous access — the old
-  // public URL must not keep working, and a link nobody can present shouldn't
-  // stay flagged public. Rotating resets the view counter with the link.
-  const shareAnonymous = enabled ? anonymous === true : false
   const updated = await prisma.flow.update({
     where: { id: flow.id, organizationId: auth.organizationId },
-    data: {
-      shareTokenDigest,
-      shareRole: role,
-      shareAnonymous,
-      ...(rotate || !enabled ? { anonymousViews: 0 } : {}),
-    },
+    data: { shareTokenDigest, shareRole: role },
   })
   let revoked = 0
   if (revokeCollaborators) {
@@ -74,15 +66,17 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     action: enabled ? 'flow.share_link_enabled' : 'flow.share_link_disabled',
     resourceType: 'flow',
     resourceId: flow.id,
-    detail: { role, rotated: Boolean(rotate), revokedCollaborators: revoked, anonymous: shareAnonymous },
+    detail: { role, rotated: Boolean(rotate), revokedCollaborators: revoked },
   }).catch(() => undefined)
   return {
     success: true,
-    // Shown once. Null when the link was left alone (role/anonymous change) or
+    // Shown once. Null when the link was left alone (a role change) or
     // turned off — the caller keeps the copy it was given at mint.
     shareToken: minted,
     shareEnabled: Boolean(updated.shareTokenDigest),
     shareRole: updated.shareRole === 'edit' ? 'edit' : 'view',
+    // The public link's state, unchanged by this route, so the jam panel's
+    // audience stays accurate after any change it makes here.
     shareAnonymous: updated.shareAnonymous,
     anonymousViews: updated.anonymousViews,
     revokedCollaborators: revoked,

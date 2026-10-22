@@ -314,6 +314,12 @@ export async function ensureDemoWorkspace(
         ...anonRow({ ...flow, id, organizationId: demoOrgId }, book),
         userId: owner(flow.userId),
         shareTokenDigest: null,
+        // A demo clone never inherits a live public link (and the digest is unique).
+        shareAnonymous: false,
+        publicTokenDigest: null,
+        publicTokenCiphertext: null,
+        publicExpiresAt: null,
+        publicAllowCopy: false,
         anonymousViews: 0,
       }),
     })

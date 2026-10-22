@@ -2,15 +2,18 @@ import Link from 'next/link'
 import { headers } from 'next/headers'
 import { Layers, Lock } from 'lucide-react'
 import { FlowGraphPreview } from '@/components/flows/flow-graph-preview'
+import { UsePublicFlowButton } from '@/components/flows/use-public-flow-button'
 import { resolveAnonymousFlowShare } from '@/lib/flows/public-share'
+import { requireAuthContext } from '@/lib/server/auth'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * The anonymous share surface: a read-only look at a flow's shape for someone
  * who has no account. Rendered server-side from a sanitized projection (see
- * public-graph.ts) — there is no client fetching, no API the page can be
- * pivoted into, and no session involved at all.
+ * public-graph.ts) — there is no client fetching and no API the page can be
+ * pivoted into. A session is consulted only to offer "Use this flow" (when the
+ * owner allows copies); it never widens what the page shows.
  */
 export const metadata = { robots: { index: false, follow: false } }
 
@@ -27,7 +30,7 @@ export default async function PublicFlowSharePage({ params }: { params: Promise<
   const headerList = await headers()
   // Best-available client key for the rate limiter. Spoofable, like any
   // header-derived identity — this bounds accidental load and casual scraping,
-  // not a determined attacker (whom the 128-bit token already stops).
+  // not a determined attacker (whom the 192-bit token already stops).
   const clientKey =
     headerList.get('x-forwarded-for')?.split(',')[0]?.trim() || headerList.get('x-real-ip') || 'unknown'
   const result = await resolveAnonymousFlowShare(token, { clientKey })
@@ -38,6 +41,17 @@ export default async function PublicFlowSharePage({ params }: { params: Promise<
         <div className="rounded-2xl border border-border/60 bg-card p-8 text-center shadow-1">
           <h1 className="text-lg font-semibold">Too many requests</h1>
           <p className="mt-2 text-sm text-muted-foreground">Give it a minute and try the link again.</p>
+        </div>
+      </Shell>
+    )
+  }
+
+  if (result.status === 'expired') {
+    return (
+      <Shell>
+        <div className="rounded-2xl border border-border/60 bg-card p-8 text-center shadow-1">
+          <h1 className="text-lg font-semibold">This link has expired</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Ask whoever sent it for a new one.</p>
         </div>
       </Shell>
     )
@@ -57,6 +71,10 @@ export default async function PublicFlowSharePage({ params }: { params: Promise<
   }
 
   const { flow } = result
+  // "Use this flow" needs a workspace to copy into. Looking never copies; a
+  // visitor with no session (or no right to create flows) is offered sign-in.
+  const auth = flow.allowCopy ? await requireAuthContext().catch(() => null) : null
+  const canCopy = Boolean(auth?.can('flow.write'))
   return (
     <Shell>
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
@@ -71,12 +89,16 @@ export default async function PublicFlowSharePage({ params }: { params: Promise<
             <span>Updated {new Date(flow.updatedAt).toLocaleDateString()}</span>
           </div>
         </div>
-        <Link
-          href="/auth/login"
-          className="shrink-0 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
-        >
-          Sign in to Backstory
-        </Link>
+        {canCopy ? (
+          <UsePublicFlowButton token={token} />
+        ) : (
+          <Link
+            href={`/auth/login?return_to=${encodeURIComponent(`/share/flow/${token}`)}`}
+            className="shrink-0 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+          >
+            {flow.allowCopy ? 'Sign in to use this flow' : 'Sign in to Backstory'}
+          </Link>
+        )}
       </div>
 
       <section className="rounded-2xl border border-border/60 bg-card p-5 shadow-1">
@@ -87,7 +109,7 @@ export default async function PublicFlowSharePage({ params }: { params: Promise<
       <p className="flex items-start gap-2 rounded-2xl border border-border/60 bg-card p-4 text-xs text-muted-foreground shadow-1">
         <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         This is a read-only view of how the flow is put together. Its settings, connected accounts, prompts and run
-        history stay in the workspace that owns it.
+        history stay in the workspace that owns it.{flow.allowCopy ? ' A copy starts without any of the owner’s accounts or data, and changes to it never reach the original.' : ''}
       </p>
     </Shell>
   )

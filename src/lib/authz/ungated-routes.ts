@@ -26,6 +26,11 @@ export const UNGATED_ROUTES: readonly string[] = [
   // lookup, opt-in per artifact, rate limited per client). Serves one page,
   // sandboxed with no network — never the assistant, history or other artifacts.
   'share/artifacts/[token]/content',
+  // A flow's public link, the same contract: the token is the credential
+  // (192-bit, digest lookup, opt-in per flow, expiring, rotatable, rate limited
+  // per client). Serves the sanitized read-only graph — never run data, step
+  // outputs, credentials or connection ids, and never the builder.
+  'share/flows/[token]',
   // A public template's copilot for a visitor with no account. The sender
   // opted in twice (anyone-with-the-link, offer as a template). The link token
   // names the template; the visitor's own httpOnly token (digest stored) names

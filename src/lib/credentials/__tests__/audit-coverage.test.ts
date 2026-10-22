@@ -31,6 +31,11 @@ const READ_EXEMPT: Record<string, string> = {
     'can already share that artifact. It is not a credential to any system: it opens one ' +
     'view-only page. Turning the link on, rotating it and turning it off are audited ' +
     '(artifact.public_link_enabled / _disabled).',
+  'lib/flows/public-share.ts':
+    'Decrypts a flow\'s own public-link token only to show the link again to a same-org ' +
+    'editor who can already manage it. It is not a credential to any system: it opens one ' +
+    'sanitized, view-only page. Turning the link on, rotating it and turning it off are ' +
+    'audited (flow.public_link_enabled / _rotated / _disabled).',
   'lib/audit/stream-delivery.ts':
     'Decrypts the signing secret for ONE outbound audit delivery. Recording that read ' +
     'would recurse: recordCredentialUse writes an audit event, which enqueues a delivery, ' +

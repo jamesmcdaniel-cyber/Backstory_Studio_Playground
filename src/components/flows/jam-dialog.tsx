@@ -10,6 +10,7 @@ import type { HuddleNoteRecord } from '@/lib/flows/use-huddle-capture'
 import { NotebookPen } from 'lucide-react'
 import type { FlowHuddle } from '@/lib/flows/use-flow-huddle'
 import { cn } from '@/lib/utils'
+import { PublicLinkControls, usePublicLink } from '@/components/flows/public-link-controls'
 
 type Visibility = 'shared' | 'view' | 'private'
 type Member = { id: string; name: string | null; email: string | null; role?: string }
@@ -22,7 +23,10 @@ const OPTIONS: { value: Visibility; label: string; hint: string }[] = [
 
 /** Who the ONE share link works for. Anonymous is a fourth state of the same
  *  choice rather than a separate toggle+link, so the panel never shows two
- *  URLs: pick an audience, copy the link that audience needs. */
+ *  URLs: pick an audience, copy the link that audience needs. Under the hood
+ *  the no-sign-in audience is a DIFFERENT link (its own token, /public-link):
+ *  the jam token admits signed-in collaborators to the builder, which a link
+ *  meant to be posted anywhere must never do. */
 type Audience = 'workspace' | 'anyone-view' | 'anyone-edit' | 'anyone-public'
 const AUDIENCES: { key: Audience; label: string }[] = [
   { key: 'workspace', label: 'Workspace only' },
@@ -106,7 +110,7 @@ export function JamDialog({
    *  must stay correct after a reload has dropped the raw token. */
   shareEnabled?: boolean
   shareRole?: 'view' | 'edit'
-  /** Link opens without signing in (always read-only). */
+  /** The flow's public link (no sign-in, read-only) is on. */
   shareAnonymous?: boolean
   /** Owner-visible count of anonymous opens. */
   anonymousViews?: number
@@ -235,14 +239,14 @@ export function JamDialog({
     role: 'view' | 'edit',
     rotate = false,
     revokeCollaborators = false,
-    anonymous = shareAnonymous ?? false,
+    quiet = false,
   ) => {
     setShareBusy(true)
     try {
       const res = await fetch(`/api/flows/${flowId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, role, rotate, revokeCollaborators, anonymous }),
+        body: JSON.stringify({ enabled, role, rotate, revokeCollaborators }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -257,7 +261,7 @@ export function JamDialog({
         Number(data.anonymousViews ?? 0),
       )
       if (revokeCollaborators) setGuests([])
-      toast.success(!enabled
+      if (!quiet) toast.success(!enabled
         ? 'Share link now works for your workspace only.'
         : revokeCollaborators
           ? 'Link rotated — old links stopped working and everyone who joined by link was removed.'
@@ -309,18 +313,38 @@ export function JamDialog({
   }
 
   // The link's current audience, as one value the chip row can render.
-  const audience: Audience = !shareEnabled
-    ? 'workspace'
-    : shareAnonymous
-      ? 'anyone-public'
+  const audience: Audience = shareAnonymous
+    ? 'anyone-public'
+    : !shareEnabled
+      ? 'workspace'
       : (shareRole ?? 'view') === 'edit'
         ? 'anyone-edit'
         : 'anyone-view'
-  const setAudience = (next: Audience) => {
+  const publicLink = usePublicLink(flowId, open && canEdit && Boolean(shareAnonymous))
+  /** Turn the public link on or off, keeping the jam-link state the parent holds. */
+  const setPublic = async (on: boolean): Promise<boolean> => {
+    const next = await publicLink.update({ action: on ? 'enable' : 'disable' })
+    if (!next) return false
+    onShareChanged?.(shareToken ?? null, Boolean(shareEnabled), shareRole ?? 'view', next.enabled, next.views)
+    return true
+  }
+  const setAudience = async (next: Audience) => {
     if (next === audience) return
-    if (next === 'workspace') void updateShare(false, shareRole ?? 'view', false, false, false)
-    else if (next === 'anyone-public') void updateShare(true, 'view', false, false, true)
-    else void updateShare(true, next === 'anyone-edit' ? 'edit' : 'view', false, false, false)
+    // One audience at a time: leaving the public link turns it off, and
+    // choosing it turns the jam link off, so the panel's single URL is honest.
+    if (next === 'anyone-public') {
+      if (!(await setPublic(true))) return
+      if (shareEnabled) await updateShare(false, shareRole ?? 'view', false, false, true)
+      toast.success('Public link ready — anyone with it can see the steps, no sign-in needed.')
+      return
+    }
+    if (shareAnonymous && !(await setPublic(false))) return
+    if (next === 'workspace') {
+      if (shareEnabled) await updateShare(false, shareRole ?? 'view')
+      else toast.success('Share link now works for your workspace only.')
+    } else {
+      await updateShare(true, next === 'anyone-edit' ? 'edit' : 'view')
+    }
   }
 
   // ONE link, whichever audience is chosen. An empty string means the link is
@@ -331,10 +355,10 @@ export function JamDialog({
   // panel swaps the URL rather than showing a second one.
   const shareLink = audience === 'workspace'
     ? `${origin}/flows/${flowId}`
-    : !shareToken
-      ? ''
-      : audience === 'anyone-public'
-        ? `${origin}/share/flow/${shareToken}`
+    : audience === 'anyone-public'
+      ? publicLink.state?.url ?? ''
+      : !shareToken
+        ? ''
         : `${origin}/flows/${flowId}?share=${shareToken}`
 
   const copy = async () => {
@@ -584,6 +608,8 @@ export function JamDialog({
                     {copied ? 'Copied' : 'Copy'}
                   </Button>
                 </div>
+              ) : audience === 'anyone-public' && canEdit && !publicLink.state ? (
+                <p className="rounded-lg border border-border/60 bg-muted/40 p-2.5 text-xs text-fg-muted">Loading the public link…</p>
               ) : (
                 <p className="rounded-lg border border-border/60 bg-muted/40 p-2.5 text-xs text-muted-foreground">
                   The link is live, but it’s only shown once when it’s created — we don’t keep a copy. Rotate to
@@ -596,15 +622,29 @@ export function JamDialog({
                     <button
                       key={option.key}
                       type="button"
-                      disabled={shareBusy}
+                      disabled={shareBusy || publicLink.busy}
                       aria-pressed={audience === option.key}
-                      onClick={() => setAudience(option.key)}
+                      onClick={() => void setAudience(option.key)}
                       className={chipClass(audience === option.key)}
                     >
                       {option.label}
                     </button>
                   ))}
-                  {shareEnabled && (
+                  {audience === 'anyone-public' ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto h-7 px-2 text-xs"
+                      disabled={publicLink.busy}
+                      onClick={() => void publicLink.update({ action: 'rotate' }).then((next) => {
+                        if (!next) return
+                        onShareChanged?.(shareToken ?? null, Boolean(shareEnabled), shareRole ?? 'view', next.enabled, next.views)
+                        toast.success('Link rotated — the old public link no longer works.')
+                      })}
+                    >
+                      <RefreshCw className="mr-1 h-3 w-3" /> Rotate
+                    </Button>
+                  ) : shareEnabled && (
                     <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs" disabled={shareBusy} onClick={() => void updateShare(true, shareRole ?? 'view', true)}>
                       <RefreshCw className="mr-1 h-3 w-3" /> Rotate
                     </Button>
@@ -616,12 +656,15 @@ export function JamDialog({
                   ? 'Only people in your workspace can open this link.'
                   : audience === 'anyone-public'
                     ? `Anyone with this link sees a read-only picture of the steps — no settings, connected accounts, prompts or run history, and they can never edit or run it. ${
-                        anonymousViews
-                          ? `Opened ${anonymousViews} time${anonymousViews === 1 ? '' : 's'}.`
+                        (publicLink.state?.views ?? anonymousViews)
+                          ? `Opened ${publicLink.state?.views ?? anonymousViews} time${(publicLink.state?.views ?? anonymousViews) === 1 ? '' : 's'}.`
                           : 'Not opened yet.'
                       }`
                     : `Anyone with this link can sign in and ${audience === 'anyone-edit' ? 'edit' : 'view and run'} this flow. Rotating makes old links stop working; people who already accepted keep access until you remove them above.`}
               </p>
+              {audience === 'anyone-public' && publicLink.state?.enabled && (
+                <PublicLinkControls state={publicLink.state} busy={publicLink.busy} canEdit={canEdit} onUpdate={publicLink.update} />
+              )}
               {/* Only while a link is live: rotating re-mints one, so offering it
                   on a workspace-only flow would silently re-open the flow.
                   Guests can always be removed one at a time in the list above. */}

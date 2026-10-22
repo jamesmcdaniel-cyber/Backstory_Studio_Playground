@@ -75,6 +75,7 @@ const readExempt = new Set([
   'health',                         // public readiness probe: no tenant data
   'invitations/lookup',             // public invite preview: token length clamped + fail-closed per-client budget
   'share/artifacts/[token]/content', // an artifact's public link: 192-bit token (digest lookup, opt-in, revocable), per-client rate limit, one sandboxed page
+  'share/flows/[token]',             // a flow's public link: 192-bit token (digest lookup, opt-in, expiring, rotatable), per-client rate limit, sanitized read-only graph only
   'share/artifacts/[token]/copilot', // the visitor's own guest copy and conversation: link token + httpOnly visitor token, run ids and errors stripped
   'share/artifacts/[token]/copilot/content', // one version of a guest copy: link token + the copy's random id, same sandboxed page response
   'cron/dispatch',                  // CRON_SECRET, fail-closed
@@ -277,6 +278,7 @@ if (TEST_DB) {
     { name: 'GET /api/flows/[id]', run: async () => (await import('../flows/[id]/route')).GET(req(`/api/flows/${flowId}`)) },
     { name: 'GET /api/flows/[id]/runs', run: async () => (await import('../flows/[id]/runs/route')).GET(req(`/api/flows/${flowId}/runs`)) },
     { name: 'GET /api/flows/[id]/versions', run: async () => (await import('../flows/[id]/versions/route')).GET(req(`/api/flows/${flowId}/versions`)) },
+    { name: 'GET /api/flows/[id]/public-link', run: async () => (await import('../flows/[id]/public-link/route')).GET(req(`/api/flows/${flowId}/public-link`)) },
     { name: 'GET /api/flows/[id]/trigger-secret', run: async () => (await import('../flows/[id]/trigger-secret/route')).GET(req(`/api/flows/${flowId}/trigger-secret`)) },
     { name: 'GET /api/files/[id]', run: async () => (await import('../files/[id]/route')).GET(req('/api/files/nonexistent')) },
     // Incident regressions: these 500'd under the tenant guard before the sweep.

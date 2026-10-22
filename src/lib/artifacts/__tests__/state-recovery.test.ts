@@ -70,6 +70,25 @@ test('writes within the coalescing window become one save, and typing alone is n
   assert.equal(f.state()[2].dirty, false, 'an input event does not mark the page dirty')
 })
 
+test('a bridge that is present but slow to load is waited for, not mistaken for no bridge', async () => {
+  let listener: (event: any) => void = () => {}
+  // The viewer acknowledges at once, then its first fetch takes longer than
+  // the no-bridge window (a cold load); the saved data still arrives.
+  const parent = { postMessage(message: any) {
+    if (message.type !== 'backstory:state') return
+    queueMicrotask(() => listener({ source: parent, data: { type: 'backstory:state-ack', id: message.id } }))
+    setTimeout(() => listener({ source: parent, data: { type: 'backstory:state-result', id: message.id, result: { value: { count: 7 }, revision: 3 } } }), 5_000)
+  } }
+  const runtime: any = { parent, addEventListener(type: string, fn: any) { if (type === 'message') listener = fn }, React: { useState: () => [0, () => {}], useEffect: () => {}, useCallback: (fn: any) => fn } }
+  runInNewContext(artifactClientRuntime('https://example.com'), { window: runtime, document, Map, Set, Promise, setTimeout, clearTimeout })
+  const state = () => runtime.BackstoryArtifact.useArtifactState('slow', { count: 0 })
+  state()
+  await new Promise(resolve => setTimeout(resolve, 4_300))
+  assert.equal(state()[2].ready, false, 'still loading past the no-bridge window')
+  await new Promise(resolve => setTimeout(resolve, 1_000))
+  assert.equal(state()[2].ready, true); assert.equal(state()[2].readOnly, false); assert.equal(state()[0].count, 7); assert.equal(state()[2].error, null)
+})
+
 test('with no state bridge the slot becomes ready and read-only instead of failing', async () => {
   const runtime: any = { parent: { postMessage() {} }, addEventListener() {}, React: { useState: () => [0, () => {}], useEffect: () => {}, useCallback: (fn: any) => fn } }
   runInNewContext(artifactClientRuntime('https://example.com'), { window: runtime, document, Map, Set, Promise, setTimeout, clearTimeout })

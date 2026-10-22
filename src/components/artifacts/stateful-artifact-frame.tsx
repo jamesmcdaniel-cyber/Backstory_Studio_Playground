@@ -60,6 +60,10 @@ export function StatefulArtifactFrame({ artifactId, versionId, title, className,
       }
       if (!msg || msg.type !== 'backstory:state' || typeof msg.id !== 'string' || msg.id.length > 80) return
       const target = frame.current?.contentWindow
+      // "The bridge is here": sent before any fetch, so the page waits for a
+      // slow first load instead of taking it for a frame with no bridge (a
+      // public link, a thumbnail), which it gives up on after 4 s.
+      if (!disposed) target?.postMessage({ type: 'backstory:state-ack', id: msg.id }, '*')
       let counted = false
       try {
         if (!['get', 'set'].includes(msg.op) || !/^[a-zA-Z0-9_-]{1,64}$/.test(msg.payload?.key ?? '')) throw new Error('Invalid state request.')

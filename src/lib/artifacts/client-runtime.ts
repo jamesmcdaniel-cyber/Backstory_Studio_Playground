@@ -49,9 +49,15 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
   var errorPanel=window.__artifactError||function(e){var node=document.createElement('div');node.setAttribute('role','alert');node.setAttribute('data-backstory-runtime-error','');node.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;background:#fff1f2;color:#9f1239;padding:12px;z-index:2147483647';node.textContent=String(e&&e.message||e);(document.body||document.documentElement).appendChild(node);};
   Object.defineProperty(window,'__artifactError',{configurable:true,enumerable:true,get:function(){return function(e){record(e);return errorPanel(e);};},set:function(fn){if(typeof fn==='function')errorPanel=fn;}});
   var pending = new Map(), seq = 0;
+  var STATE_TIMEOUT_MS=15000;
+  function stateTimedOut(id,reject){return setTimeout(function(){pending.delete(id);reject(new Error('State service did not respond. Changes are not saved.'));},STATE_TIMEOUT_MS);}
   window.addEventListener('message', function(e){
-    if(e.source !== window.parent || !e.data || e.data.type !== 'backstory:state-result') return;
+    if(e.source !== window.parent || !e.data) return;
     var p = pending.get(e.data.id); if(!p) return;
+    // The viewer acknowledges a request before its fetch: a bridge is here,
+    // however slow its first load, so wait for its answer (it gives up at 12s).
+    if(e.data.type === 'backstory:state-ack'){ if(!p.acked){p.acked=true;clearTimeout(p.timer);p.timer=stateTimedOut(e.data.id,p.reject);} return; }
+    if(e.data.type !== 'backstory:state-result') return;
     pending.delete(e.data.id); clearTimeout(p.timer);
     if(e.data.error) p.reject(new Error(e.data.error)); else p.resolve(e.data.result);
   });
@@ -60,10 +66,11 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
     return new Promise(function(resolve,reject){
       if(window.parent === window) return reject(noBridge('Open this artifact inside Backstory to use private saved state.'));
       var id = String(++seq);
-      // A first read that nobody answers (a public link, a thumbnail, a page
-      // outside the viewer) means there is no bridge here, not an outage.
-      var timer = setTimeout(function(){pending.delete(id);reject(op==='get'?noBridge('No saved-state service here.'):new Error('State service did not respond. Changes are not saved.'));},op==='get'?4000:15000);
-      pending.set(id,{resolve:resolve,reject:reject,timer:timer});
+      // A first read that nobody acknowledges or answers (a public link, a
+      // thumbnail, a page outside the viewer) means there is no bridge here,
+      // not an outage — said fast. One acknowledged waits for its answer.
+      var timer = op==='get' ? setTimeout(function(){pending.delete(id);reject(noBridge('No saved-state service here.'));},4000) : stateTimedOut(id,reject);
+      pending.set(id,{resolve:resolve,reject:reject,timer:timer,acked:false});
       window.parent.postMessage({type:'backstory:state',id:id,op:op,payload:payload},'*');
     });
   }

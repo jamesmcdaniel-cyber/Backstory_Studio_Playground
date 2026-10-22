@@ -134,6 +134,16 @@ describe('registerAgentSchedules', () => {
     assert.deepEqual(recorded.upserted, [])
   })
 
+  test('a quarantined agent has its scheduler removed — it never fires as another member', async () => {
+    // Quarantine holds a deprovisioned owner's work until someone claims it;
+    // falling back to the oldest member would silently re-own it.
+    const { deps, recorded } = harness([agent({ userId: 'gone', quarantinedAt: new Date() })], [user()])
+
+    assert.deepEqual(await registerAgentSchedules(deps), { registered: 0, failed: 0 })
+    assert.deepEqual(recorded.removed, ['agent:a1'])
+    assert.deepEqual(recorded.upserted, [])
+  })
+
   test('an ACTIVE agent whose schedule is switched off is also removed', async () => {
     const { deps, recorded } = harness([agent({ schedule: { type: 'daily', isActive: false } })], [user()])
 

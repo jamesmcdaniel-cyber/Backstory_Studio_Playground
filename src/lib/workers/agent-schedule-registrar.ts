@@ -63,7 +63,9 @@ export async function registerAgentSchedules(deps: ScheduleRegistrarDeps = defau
     for (const agent of agents) {
       const schedulerId = `agent:${agent.id}`
       const schedule = agent.schedule as Schedule
-      const repeat = agent.status === 'ACTIVE' && schedule.isActive ? repeatFor(schedule) : null
+      // Quarantined work (owner deprovisioned) waits to be claimed: the owner
+      // fallback below would otherwise run it as another member.
+      const repeat = agent.status === 'ACTIVE' && !agent.quarantinedAt && schedule.isActive ? repeatFor(schedule) : null
 
       try {
         if (!repeat) {

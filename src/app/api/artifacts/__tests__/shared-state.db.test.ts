@@ -81,4 +81,42 @@ if (TEST_DB) {
       await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
     }
   })
+
+  test('live: a successful write broadcasts key + revision on the artifact topic; a refused one broadcasts nothing', async () => {
+    const s = await seedTestOrg(prisma, { role: 'USER' })
+    const original = globalThis.fetch
+    const env = { url: process.env.NEXT_PUBLIC_SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY }
+    const broadcasts: any[] = []
+    globalThis.fetch = (async (url: any, init?: RequestInit) => {
+      if (String(url).endsWith('/realtime/v1/api/broadcast')) { broadcasts.push(JSON.parse(String(init?.body))); return new Response('{}') }
+      return original(url, init)
+    }) as typeof fetch
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'ci-service-role'
+    try {
+      const artifact = await prisma.artifact.create({ data: { organizationId: s.organizationId, userId: s.userId, title: 'Votes', kind: 'page' } })
+      const version = await prisma.artifactVersion.create({ data: { organizationId: s.organizationId, artifactId: artifact.id, number: 1, content: '<!doctype html><html><body><script>1</script></body></html>' } })
+      await prisma.artifact.update({ where: { id: artifact.id, organizationId: s.organizationId }, data: { currentVersionId: version.id, versionCount: 1 } })
+      const path = `/api/artifacts/${artifact.id}/shared-state`
+      installTestAuth(s.auth)
+
+      assert.equal((await route.PUT(req(path, 'PUT', { key: 'votes-v1', revision: 0, value: { secret: 'tenant data' }, versionId: version.id }))).status, 200)
+      assert.equal(broadcasts.length, 1, 'one tick for one committed write')
+      assert.deepEqual(broadcasts[0], { messages: [{ topic: `artifact-shared:${artifact.id}`, event: 'tick', payload: { key: 'votes-v1', revision: 1 } }] })
+      assert.doesNotMatch(JSON.stringify(broadcasts), /tenant data|secret/, 'the value never rides the channel')
+
+      assert.equal((await route.PUT(req(path, 'PUT', { key: 'votes-v1', revision: 0, value: { secret: 'stale' }, versionId: version.id }))).status, 409)
+      assert.equal((await route.PUT(req(path, 'PUT', { key: 'votes-v1', revision: 1, value: {}, versionId: 'stale-version' }))).status, 409)
+      assert.equal(broadcasts.length, 1, 'a failed compare-and-set changed nothing and says nothing')
+
+      assert.equal((await route.PUT(req(path, 'PUT', { key: 'votes-v1', revision: 1, value: { yes: 2 }, versionId: version.id }))).status, 200)
+      assert.deepEqual(broadcasts.map((b) => b.messages[0].payload), [{ key: 'votes-v1', revision: 1 }, { key: 'votes-v1', revision: 2 }])
+    } finally {
+      globalThis.fetch = original
+      if (env.url === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL; else process.env.NEXT_PUBLIC_SUPABASE_URL = env.url
+      if (env.key === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = env.key
+      await s.cleanup()
+      await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
+    }
+  })
 }

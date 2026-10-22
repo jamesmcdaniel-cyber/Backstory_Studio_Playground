@@ -2,6 +2,9 @@ import { prisma, tenantTransaction } from '@/lib/prisma'
 import { ApiError } from '@/lib/server/api-handler'
 import { Prisma } from '@prisma/client'
 import { MAX_STATE_BYTES } from './app-state'
+import { broadcastChannelTick } from '@/lib/flows/run-stream'
+import { trackDetached } from '@/lib/flows/keep-alive'
+import { artifactSharedChannel } from './shared-state-live'
 
 /**
  * State an artifact's viewers share — the mirror of app-state.ts without the
@@ -9,6 +12,12 @@ import { MAX_STATE_BYTES } from './app-state'
  * the same key and size limits. Anyone who can read the artifact reads it;
  * anyone who can edit it writes it (the routes decide; this file trusts its
  * scope).
+ *
+ * Live: a successful write fires a tick on `artifact-shared:<artifactId>`
+ * carrying only `{ key, revision }` (see shared-state-live.ts for why that is
+ * safe on a public channel); open viewers refetch the key through the
+ * authenticated route. A refused write (conflict, limit, stale version)
+ * changed nothing and broadcasts nothing.
  */
 export const MAX_SHARED_STATE_KEYS = 32
 type Scope = { organizationId: string; artifactId: string; key: string }
@@ -18,7 +27,20 @@ export async function readSharedState(scope: Scope) {
   return row ?? { value: null, revision: 0 }
 }
 
+/** Tell open viewers a key moved to `revision`. Never the value. No-op without Supabase. */
+export function broadcastSharedStateTick(artifactId: string, tick: { key: string; revision: number }): Promise<void> | undefined {
+  return broadcastChannelTick(artifactSharedChannel(artifactId), { key: tick.key, revision: tick.revision })
+}
+
 export async function writeSharedState(scope: Scope, revision: number, value: unknown, versionId: string, userId: string) {
+  const saved = await commitSharedState(scope, revision, value, versionId, userId)
+  // After the commit, outside the row lock: a viewer that refetches on this
+  // tick must see the new row. Held open past the response, never awaited.
+  trackDetached(broadcastSharedStateTick(scope.artifactId, { key: scope.key, revision: saved.revision }))
+  return saved
+}
+
+async function commitSharedState(scope: Scope, revision: number, value: unknown, versionId: string, userId: string) {
   const encoded = JSON.stringify(value)
   if (encoded === undefined || Buffer.byteLength(encoded) > MAX_STATE_BYTES) throw new ApiError('Shared state exceeds 256 KB.', 413, 'STATE_TOO_LARGE')
   const data = value === null ? Prisma.JsonNull : JSON.parse(encoded) as Prisma.InputJsonValue

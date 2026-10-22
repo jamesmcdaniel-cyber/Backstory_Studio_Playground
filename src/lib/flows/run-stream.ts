@@ -29,8 +29,13 @@ export function broadcastAgentEventTick(executionId: string): void {
   void broadcastChannelTick(agentExecChannel(executionId), { status: 'event' })
 }
 
-/** Low-level: fire a `tick` on a broadcast topic. No-op without Supabase. */
-function broadcastChannelTick(topic: string, payload: { nodeId?: string; status: string }): Promise<void> | undefined {
+/** Low-level: fire a `tick` on a broadcast topic. No-op without Supabase.
+ *  Payloads are small identifiers only (ids, statuses, revisions) — never the
+ *  data itself: tick topics are public channels whose only protection is the
+ *  unguessable id in the topic name, so subscribers refetch over an
+ *  authenticated API. Exported for the other tick planes (artifact shared
+ *  state). */
+export function broadcastChannelTick(topic: string, payload: Record<string, string | number | undefined>): Promise<void> | undefined {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) return undefined

@@ -85,6 +85,29 @@ test('a stored file loads under its own name; a link is fetched on the platform 
   await assert.rejects(loadRoiExtract({ ...base, url: 'https://files.example.com/x.csv', load, fetchImpl: html }), /not a CSV or TSV/)
 })
 
+test('a link fetched with a saved credential never follows a redirect, so the secret reaches only its own host', async (t) => {
+  __setSsrfResolver(async () => [{ address: '93.184.216.34', family: 4 }])
+  clearPins()
+  t.after(() => { __setSsrfResolver(null); clearPins() })
+  const { load } = fakeLoad()
+  const seen: Array<{ url: string; authorization: string | null }> = []
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    seen.push({ url: String(input), authorization: new Headers(init?.headers).get('authorization') })
+    return String(input).startsWith('https://files.example.com/')
+      ? new Response(null, { status: 302, headers: { location: 'https://elsewhere.example.net/x.csv' } })
+      : new Response('email,months,meeting_count\na,b,1\n', { status: 200 })
+  }) as typeof fetch
+  const credentialFor = async () => ({ authType: 'bearer' as const, allowedHost: 'files.example.com', config: { token: 'secret-token' } })
+  await assert.rejects(loadRoiExtract({ ...base, url: 'https://files.example.com/x.csv', load, fetchImpl, credentialFor }), /Redirects are not allowed/)
+  assert.deepEqual(seen, [{ url: 'https://files.example.com/x.csv', authorization: 'Bearer secret-token' }])
+
+  // Without a credential a redirect (a signed storage link) is still followed.
+  seen.length = 0
+  const followed = await loadRoiExtract({ ...base, url: 'https://files.example.com/x.csv', load, fetchImpl })
+  assert.equal(followed.source, 'url')
+  assert.deepEqual(seen.map(s => s.authorization), [null, null])
+})
+
 test('it refuses a blank account, an unknown kind, two sources at once, an empty file and a one-column file', async () => {
   const { load } = fakeLoad()
   await assert.rejects(loadRoiExtract({ ...base, account: ' ', csv: 'a,b\n1,2\n', load }), /Pass the account/)

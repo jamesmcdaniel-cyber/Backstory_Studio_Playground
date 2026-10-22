@@ -135,7 +135,9 @@ async function fetchExtract(url: string, organizationId: string, userId: string,
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
-    const response = await fetchPublicUrl(request.url, { ...request.init, signal: controller.signal }, { ...(seams.fetchImpl ? { fetchImpl: seams.fetchImpl } : {}) })
+    // fetchPublicUrl replays the request's headers on every hop, so a
+    // credentialed fetch follows no redirect: the secret reaches only its host.
+    const response = await fetchPublicUrl(request.url, { ...request.init, signal: controller.signal }, { ...(seams.fetchImpl ? { fetchImpl: seams.fetchImpl } : {}), ...(credential ? { maxRedirects: 0 } : {}) })
     if (!response.ok) throw new RoiExtractLoadError(`Fetching the extract failed (HTTP ${response.status})${credential ? '' : parsed.pathname.length > 1 && (response.status === 401 || response.status === 403) ? ` — save an HTTP credential for ${parsed.hostname} in Integrations if the link needs one` : ''}.`)
     const bytes = await readResponseBytesLimited(response, DATASET_MAX_BYTES, 'The extract')
     const disposition = response.headers.get('content-disposition') ?? ''

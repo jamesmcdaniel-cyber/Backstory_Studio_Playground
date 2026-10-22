@@ -52,6 +52,11 @@ export type SerializedConnection = {
   shareableWithCopilots?: boolean
   provider?: string | null
   lastVerifiedAt?: string | null
+  /** What the health sweep last saw: unknown | healthy | unhealthy | schema_changed. */
+  healthStatus?: string
+  lastError?: string | null
+  /** How many tools are set to Blocked / Needs approval in Integrations. */
+  toolPermissions?: { off: number; approve: number }
   auth: {
     authType: AuthType
     hasApiKey?: boolean

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertCircle, CheckCircle2, Loader2, Plug, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, Loader2, Plug, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react'
 import { McpConnectionDialog, draftAuthPayload, type McpConnectionDraft, type SerializedConnection } from '@/app/connections/mcp-connection-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { useAuth } from '@/hooks/use-auth'
 import { needsSignIn, reconnectHref } from '@/lib/mcp/reconnect'
+import { DisconnectMcpDialog, McpConnectionDetailDialog, mcpConnectionBroken } from '@/components/integrations/mcp-connection-detail-dialog'
 
 const authLabels: Record<string, string> = {
   none: 'None',
@@ -51,6 +52,10 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
   const [editingConnection, setEditingConnection] = useState<SerializedConnection | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
+  // The server whose detail view (tools + permissions) is open, and the one
+  // whose trash button is asking for confirmation.
+  const [detailId, setDetailId] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<SerializedConnection | null>(null)
 
   const load = useCallback(async () => {
     const response = await fetch('/api/mcp-connections', { cache: 'no-store' })
@@ -136,6 +141,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
     }
   }
 
+  /** Throws when the server refuses, so a confirmation dialog stays open on failure. */
   const deleteConnection = async (conn: SerializedConnection) => {
     setDeletingId(conn.id)
     try {
@@ -144,12 +150,14 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: conn.id }),
       })
-      if (response.ok) {
-        toast.success(`"${conn.name}" removed.`)
-        await load()
-      } else {
-        toast.error('Failed to delete.')
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        const message = data.error || `Couldn't disconnect "${conn.name}" (HTTP ${response.status}).`
+        toast.error(message)
+        throw new Error(message)
       }
+      toast.success(`"${conn.name}" disconnected.`)
+      await load()
     } finally {
       setDeletingId(null)
     }
@@ -251,10 +259,38 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
         {/* Connection cards */}
         {!loading && connections.length > 0 && (
           <div className="stagger-children grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {connections.map((conn) => (
+            {connections.map((conn) => {
+              // Connected = on and answering. Only then is there a tool list to
+              // open; a broken or switched-off server keeps its Reconnect /
+              // Verify affordance on the card instead.
+              const connected = !mcpConnectionBroken(conn)
+              const unhealthy = conn.isActive && conn.healthStatus === 'unhealthy'
+              const permissions = conn.toolPermissions
+              const openDetail = () => setDetailId(conn.id)
+              const stop = (event: { stopPropagation: () => void }) => event.stopPropagation()
+              return (
+              // A card holding its own buttons cannot itself be a <button>; it
+              // takes the role and keyboard handling instead (the same pattern
+              // as the Integrations grid), and each inner control stops the
+              // click from also opening the detail view.
               <div
                 key={conn.id}
-                className="flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-2 transition-[transform,box-shadow,border-color] duration-base ease-out-quart hover:-translate-y-1 hover:border-horizon-200 hover:shadow-4"
+                {...(connected
+                  ? {
+                      role: 'button',
+                      tabIndex: 0,
+                      'aria-label': `${conn.name}: tools and permissions`,
+                      onClick: openDetail,
+                      onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+                        if (event.target !== event.currentTarget) return
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          openDetail()
+                        }
+                      },
+                    }
+                  : {})}
+                className={`flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-2 transition-[transform,box-shadow,border-color] duration-base ease-out-quart focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${connected ? 'cursor-pointer hover:-translate-y-1 hover:border-horizon-200 hover:shadow-4' : ''}`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -277,7 +313,12 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                   {conn.serverUrl}
                 </p>
                 <div className="flex items-center gap-1.5 text-xs">
-                  {conn.lastVerifiedAt ? (
+                  {unhealthy ? (
+                    <>
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />
+                      <span className="truncate text-amber-700" title={conn.lastError ?? undefined}>Stopped answering — reconnect it</span>
+                    </>
+                  ) : conn.lastVerifiedAt ? (
                     <>
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                       <span className="text-emerald-700">
@@ -291,6 +332,19 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                     </>
                   )}
                 </div>
+                {connected && (
+                  <p className="flex items-center justify-between gap-2 text-xs text-fg-muted">
+                    <span>
+                      {permissions && (permissions.off || permissions.approve)
+                        ? [permissions.off ? `${permissions.off} tool${permissions.off === 1 ? '' : 's'} blocked` : '', permissions.approve ? `${permissions.approve} need${permissions.approve === 1 ? 's' : ''} approval` : ''].filter(Boolean).join(', ')
+                        : 'All tools allowed'}
+                    </span>
+                    <span className="flex items-center gap-0.5 font-medium text-foreground">
+                      Tools
+                      <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                  </p>
+                )}
 
                 {/* Offered only where it can be used: to a platform operator, on
                     the one server a workspace shares (the demo one). Anyone who
@@ -298,6 +352,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                 {(conn.shareableWithCopilots || (can('platform.administer') && !sharedElsewhere(conn))) && (
                   <div className="flex items-start gap-2 border-t pt-3 text-xs">
                     <Switch
+                      onClick={stop}
                       checked={Boolean(conn.shareableWithCopilots)}
                       onCheckedChange={() => toggleShareable(conn)}
                       aria-label={`Shared-artifact copilots can query ${conn.name}`}
@@ -312,13 +367,15 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                   <p className="border-t pt-3 text-xs text-muted-foreground">Shared-artifact copilots already query “{sharedElsewhere(conn)}”. Only one server can be shared with them; turn that one off to share this instead.</p>
                 )}
 
-                <div className="flex items-center justify-between gap-2 border-t pt-3">
+                {/* Controls only: clicks here never open the detail view. */}
+                {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- a click/key fence around real buttons, not a control itself */}
+                <div className="flex items-center justify-between gap-2 border-t pt-3" onClick={stop} onKeyDown={stop}>
                   {conn.provider ? (
                     <>
-                      {conn.isActive ? (
+                      {conn.isActive && !unhealthy ? (
                         <Badge variant="good" className="text-xs">Enabled</Badge>
                       ) : (
-                        <Badge variant="warn" className="text-xs">Needs authorization</Badge>
+                        <Badge variant="warn" className="text-xs">{conn.isActive ? 'Needs reconnecting' : 'Needs authorization'}</Badge>
                       )}
                       <div className="flex items-center gap-1">
                         <Button
@@ -344,10 +401,12 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                           onCheckedChange={() => toggleActive(conn)}
                           aria-label={conn.isActive ? 'Disable server' : 'Enable server'}
                         />
-                        {conn.isActive ? (
-                          <Badge variant="good" className="text-xs">Enabled</Badge>
-                        ) : (
+                        {!conn.isActive ? (
                           <Badge variant="secondary" className="text-xs">Inactive</Badge>
+                        ) : unhealthy ? (
+                          <Badge variant="warn" className="text-xs">Needs reconnecting</Badge>
+                        ) : (
+                          <Badge variant="good" className="text-xs">Enabled</Badge>
                         )}
                       </div>
                       <div className="flex items-center gap-1">
@@ -389,8 +448,8 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                           variant="ghost"
                           className="h-7 w-7 p-0 text-destructive hover:text-destructive"
                           disabled={deletingId === conn.id}
-                          onClick={() => deleteConnection(conn)}
-                          aria-label="Delete server"
+                          onClick={() => setConfirmDelete(conn)}
+                          aria-label={`Disconnect ${conn.name}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -399,10 +458,37 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                   )}
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
+
+      {detailId && (() => {
+        const conn = connections.find((candidate) => candidate.id === detailId)
+        if (!conn) return null
+        return (
+          <McpConnectionDetailDialog
+            connection={conn}
+            returnTo={returnTo}
+            verifying={verifyingId === conn.id}
+            onVerify={() => verifyConnection(conn)}
+            onEdit={() => { setDetailId(null); openEdit(conn) }}
+            onDisconnect={() => deleteConnection(conn)}
+            onPermissionsChanged={() => { void load() }}
+            onClose={() => setDetailId(null)}
+          />
+        )
+      })()}
+
+      {confirmDelete && (
+        <DisconnectMcpDialog
+          connection={confirmDelete}
+          open
+          onOpenChange={(open) => { if (!open) setConfirmDelete(null) }}
+          onConfirm={() => deleteConnection(confirmDelete)}
+        />
+      )}
 
       <McpConnectionDialog
         open={dialogOpen}

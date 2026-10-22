@@ -58,6 +58,18 @@ export function openEmbeddedPopup(url: string, name: string): Window | null {
   return window.open(url, name, 'popup,width=560,height=760')
 }
 
+/**
+ * The top-level half of an OAuth hand-off: follow the redirect chain in this
+ * window, as every connect control did before the embedded app existed. An
+ * object rather than a bare function so component tests can observe the
+ * navigation jsdom cannot perform.
+ */
+export const topLevelNavigation = {
+  assign(href: string): void {
+    window.location.assign(href)
+  },
+}
+
 export function openEmbeddedSignIn(): Window | null {
   return openEmbeddedPopup(embeddedSignInUrl(), 'backstory-signin')
 }
@@ -71,7 +83,7 @@ export type EmbedCompletion = {
  * What the popup's landing page just witnessed, read off its own query string.
  *
  * Sign-in lands here bare; every connect callback appends its outcome
- * (`connected=1` / `peopleai=<status>` / `error=<code>`), so the presence of an
+ * (`connected=1` / `peopleai=<status>` / `slack=installed` / `error=<code>`), so the presence of an
  * outcome parameter is what separates the two flows. A failure still posts the
  * connect-done message — the frame must stop waiting and show what happened,
  * not sit on a spinner until the user gives up.
@@ -82,7 +94,7 @@ export function resolveEmbedCompletion(search: string): EmbedCompletion {
   if (params.get('error') || (peopleai && peopleai !== 'connected')) {
     return { outcome: 'failed', message: EMBED_CONNECT_DONE_MESSAGE }
   }
-  if (params.get('connected') === '1' || peopleai === 'connected') {
+  if (params.get('connected') === '1' || peopleai === 'connected' || params.get('slack') === 'installed') {
     return { outcome: 'connected', message: EMBED_CONNECT_DONE_MESSAGE }
   }
   return { outcome: 'signed-in', message: EMBED_SIGNIN_MESSAGE }

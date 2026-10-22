@@ -32,6 +32,10 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import type { CredentialDependent } from '@/lib/credentials/dependents'
+import { EmbeddedOAuthStatus } from '@/components/auth/embedded-oauth-status'
+import { useEmbeddedOAuth } from '@/hooks/use-embedded-oauth'
+import { mcpReconnectCheck } from '@/lib/client/mcp-oauth-confirm'
+import { EMBED_COMPLETE_PATH, topLevelNavigation } from '@/lib/embed'
 import { reconnectHref } from '@/lib/mcp/reconnect'
 import type { McpToolPolicy } from '@/lib/mcp/tool-policy'
 import { cn } from '@/lib/utils'
@@ -281,12 +285,16 @@ export interface McpConnectionDetailDialogProps {
   onDisconnect: () => Promise<void>
   /** Tool permissions changed — the caller may refresh its summary. */
   onPermissionsChanged?: () => void
+  /** A sign-in run in the embedded popup re-established the connection; the
+   *  page never reloaded, so the caller refreshes its list. */
+  onReconnected?: () => void
   onClose: () => void
 }
 
 export function McpConnectionDetailDialog({
-  connection, returnTo, verifying, onVerify, onEdit, onDisconnect, onPermissionsChanged, onClose,
+  connection, returnTo, verifying, onVerify, onEdit, onDisconnect, onPermissionsChanged, onReconnected, onClose,
 }: McpConnectionDetailDialogProps) {
+  const oauth = useEmbeddedOAuth()
   const [info, setInfo] = useState<ConnectionInfo | null>(null)
   const [tools, setTools] = useState<McpToolItem[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -351,8 +359,22 @@ export function McpConnectionDetailDialog({
   const signIn = info?.needsSignIn ?? false
   const broken = mcpConnectionBroken(connection) || info?.healthStatus === 'unhealthy'
   const reconnect = () => {
-    if (signIn) window.location.assign(reconnectHref({ id: connection.id, provider: connection.provider, auth: connection.auth }, returnTo))
-    else onVerify()
+    if (!signIn) return onVerify()
+    const target = { id: connection.id, provider: connection.provider, auth: connection.auth }
+    // Embedded, the sign-in runs in a popup (the frame can follow neither the
+    // IdP nor its Lax state cookie) and the dialog refreshes in place once the
+    // server shows the connection re-verified. Top-level, the redirect as ever.
+    const popped = oauth.launch({
+      popupHref: reconnectHref(target, EMBED_COMPLETE_PATH),
+      popupName: 'backstory-mcp-signin',
+      check: mcpReconnectCheck({ id: connection.id, lastVerifiedAt: info?.lastVerifiedAt ?? connection.lastVerifiedAt ?? null }),
+      onDone: () => {
+        toast.success(`${name} reconnected.`)
+        void load()
+        onReconnected?.()
+      },
+    })
+    if (!popped) topLevelNavigation.assign(reconnectHref(target, returnTo))
   }
 
   const filtered = useMemo(() => {
@@ -438,6 +460,7 @@ export function McpConnectionDetailDialog({
               {description || `Tools from ${name}, available to your agents and flows.`}
               {managed && ' Managed by Backstory — reconnect it here; it can’t be removed.'}
             </DialogDescription>
+            <EmbeddedOAuthStatus state={oauth} />
           </DialogHeader>
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">

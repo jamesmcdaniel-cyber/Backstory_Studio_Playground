@@ -50,7 +50,7 @@ async function state(organizationId: string, provider: CredentialProvider) {
     provider === 'slack'
       ? prisma.integrationSecret.findUnique({
           where: { organizationId_provider: { organizationId, provider } },
-          select: { authConfig: true },
+          select: { authConfig: true, updatedAt: true },
         })
       : null,
   ])
@@ -75,7 +75,12 @@ async function state(organizationId: string, provider: CredentialProvider) {
     // route.ts) has a signing secret to verify this workspace's deliveries
     // with — a saved Slack credential missing this can post outbound but
     // can never receive verified inbound events.
-    ...(provider === 'slack' ? { hasSigningSecret: Boolean(slackConfig?.signingSecret) } : {}),
+    // Slack-only: when the stored install last changed. An "Add to Slack" run
+    // in the embedded app's popup is confirmed by this moving — a re-install
+    // over an existing one leaves hasOwnKey true throughout.
+    ...(provider === 'slack'
+      ? { hasSigningSecret: Boolean(slackConfig?.signingSecret), installedAt: secretRow?.updatedAt?.toISOString() ?? null }
+      : {}),
   }
 }
 

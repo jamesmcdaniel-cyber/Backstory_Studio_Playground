@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { needsSignIn, reconnectHref, type ReconnectableConnection } from '@/lib/mcp/reconnect'
+import { needsSignIn, newConnectionLanded, reconnectHref, reconnectLanded, type ListedConnection, type ReconnectableConnection } from '@/lib/mcp/reconnect'
 
 const connection = (over: Partial<ReconnectableConnection> = {}): ReconnectableConnection => ({
   id: 'mcp-1',
@@ -44,4 +44,28 @@ test('re-connecting carries the connection id and nothing else', () => {
 test('a returnTo with its own query survives being embedded', () => {
   const href = reconnectHref(connection(), '/integrations?tab=servers')
   assert.match(href, /returnTo=%2Fintegrations%3Ftab%3Dservers/)
+})
+
+// ── the embedded sign-in wait ──────────────────────────────────────────────
+
+const listed = (over: Partial<ListedConnection> = {}): ListedConnection => ({
+  id: 'mcp-1', name: 'Linear', serverUrl: 'https://mcp.linear.app/mcp', isActive: true,
+  lastVerifiedAt: '2026-10-20T10:00:00.000Z', healthStatus: 'healthy', ...over,
+})
+
+test('a re-connect has landed only once the server re-verified the row', () => {
+  const before = { lastVerifiedAt: '2026-10-20T10:00:00.000Z' }
+  assert.equal(reconnectLanded(before, listed()), false, 'an unchanged stamp is the old connection')
+  assert.equal(reconnectLanded(before, listed({ lastVerifiedAt: '2026-10-22T12:00:00.000Z' })), true)
+  assert.equal(reconnectLanded({ lastVerifiedAt: null }, listed()), true, 'a first verification counts')
+  assert.equal(reconnectLanded(before, listed({ lastVerifiedAt: '2026-10-22T12:00:00.000Z', healthStatus: 'unhealthy' })), false)
+  assert.equal(reconnectLanded(before, listed({ lastVerifiedAt: '2026-10-22T12:00:00.000Z', isActive: false })), false)
+  assert.equal(reconnectLanded(before, undefined), false)
+})
+
+test('a new SSO server has landed once a row with its name and URL appears that was not there before', () => {
+  const wanted = { name: 'Linear', serverUrl: 'https://mcp.linear.app/mcp' }
+  assert.equal(newConnectionLanded(wanted, new Set(['mcp-1']), [listed()]), false, 'the same server added earlier is not this sign-in')
+  assert.equal(newConnectionLanded(wanted, new Set(['mcp-1']), [listed(), listed({ id: 'mcp-2' })]), true)
+  assert.equal(newConnectionLanded(wanted, new Set(), [listed({ name: 'Other' })]), false)
 })

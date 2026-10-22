@@ -7,6 +7,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { EmbeddedOAuthStatus } from '@/components/auth/embedded-oauth-status'
+import { useEmbeddedOAuth } from '@/hooks/use-embedded-oauth'
+import { EMBED_COMPLETE_PATH } from '@/lib/embed'
 
 /**
  * Workspace-owned credentials for the built-in integrations.
@@ -43,7 +46,11 @@ type CredentialState = {
   source: 'org' | 'env' | null
   /** Slack only — see hasSigningSecret in the route's `state()`. */
   hasSigningSecret?: boolean
+  /** Slack only — when the stored install last changed. */
+  installedAt?: string | null
 }
+
+const SLACK_INSTALL_PATH = '/api/slack/install'
 
 const url = (provider: Provider) => `/api/integrations/credentials/${provider}`
 
@@ -69,6 +76,28 @@ function CredentialRow({ provider }: { provider: Provider }) {
   }, [load])
 
   const needsSigningSecret = provider === 'slack' && !state?.hasSigningSecret
+
+  // "Add to Slack" is a link top-level. Embedded in Salesforce the frame can
+  // follow neither Slack's consent page (it refuses to be framed) nor the
+  // install's Lax state cookie, so the install runs in a popup and the row
+  // re-reads its state once the server shows a new install.
+  const slackOauth = useEmbeddedOAuth()
+  const installSlackInPopup = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    const before = state?.installedAt ?? null
+    slackOauth.launchFromLink(event, {
+      popupHref: `${SLACK_INSTALL_PATH}?returnTo=${encodeURIComponent(EMBED_COMPLETE_PATH)}`,
+      popupName: 'backstory-slack-install',
+      check: async () => {
+        const response = await fetch(url(provider), { cache: 'no-store' })
+        if (!response.ok) return false
+        const next = (await response.json()) as CredentialState
+        if (!next.hasOwnKey || !next.installedAt || next.installedAt === before) return false
+        setState(next)
+        return true
+      },
+      onDone: () => toast.success('Slack installed for this workspace.'),
+    })
+  }
 
   const save = async () => {
     if (!value.trim() || busy) return
@@ -159,11 +188,14 @@ function CredentialRow({ provider }: { provider: Provider }) {
       {provider === 'slack' && (
         <div className="mt-3 rounded-md border p-3">
           <a
-            href="/api/slack/install?returnTo=/settings"
+            href={`${SLACK_INSTALL_PATH}?returnTo=/settings`}
+            onClick={installSlackInPopup}
+            aria-busy={slackOauth.waitingFor !== null}
             className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
           >
             Add to Slack
           </a>
+          <EmbeddedOAuthStatus state={slackOauth} className="mt-2" />
           <p className="mt-2 text-sm text-muted-foreground">
             Installs Backstory&rsquo;s Slack app in your workspace. Nobody needs to create a Slack app,
             and no token is handled by hand — so nothing breaks when the person who set it up leaves.

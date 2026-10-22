@@ -49,3 +49,39 @@ export function reconnectHref(connection: ReconnectableConnection, returnTo: str
   const params = new URLSearchParams({ connectionId: connection.id, returnTo })
   return `/api/mcp-connections/oauth/start?${params.toString()}`
 }
+
+/** What the connections list says about a row — the fields the embedded
+ *  sign-in wait reads to decide a flow really landed. */
+export type ListedConnection = {
+  id: string
+  name: string
+  serverUrl: string
+  isActive: boolean
+  lastVerifiedAt: string | null
+  healthStatus?: string
+}
+
+/**
+ * Did signing in again re-establish this connection?
+ *
+ * The callback stamps lastVerifiedAt with a fresh verification as it stores
+ * the new tokens, so a changed stamp on a row that is on and not unhealthy is
+ * the server saying the round trip finished. The embedded frame cannot learn
+ * this from the popup — the popup's message is a nudge, never a verdict.
+ */
+export function reconnectLanded(before: { lastVerifiedAt: string | null }, after: ListedConnection | undefined): boolean {
+  if (!after || !after.isActive || after.healthStatus === 'unhealthy') return false
+  return Boolean(after.lastVerifiedAt) && after.lastVerifiedAt !== before.lastVerifiedAt
+}
+
+/**
+ * Did signing in create the server that was asked for? A row with this name
+ * and URL that was not in the list when the flow started.
+ */
+export function newConnectionLanded(
+  wanted: { name: string; serverUrl: string },
+  existingIds: ReadonlySet<string>,
+  rows: ListedConnection[],
+): boolean {
+  return rows.some((row) => !existingIds.has(row.id) && row.name === wanted.name && row.serverUrl === wanted.serverUrl)
+}

@@ -7,6 +7,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { EmbeddedOAuthStatus } from '@/components/auth/embedded-oauth-status'
+import { useEmbeddedOAuth } from '@/hooks/use-embedded-oauth'
+import { mcpNewConnectionCheck, mcpReconnectCheck } from '@/lib/client/mcp-oauth-confirm'
+import { EMBED_COMPLETE_PATH, isEmbedded, topLevelNavigation } from '@/lib/embed'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -161,6 +165,7 @@ export function McpConnectionDialog({
   authModes = ALL_AUTH_MODES,
   onTest,
   showSaveErrors = false,
+  onConnected,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -180,6 +185,12 @@ export function McpConnectionDialog({
   onTest?: (draft: McpConnectionDraft) => Promise<{ ok: true; toolCount: number; toolNames: string[] } | { ok: false; error: string }>
   /** Show a failed save inside the dialog — for a host page with no toasts of its own. */
   showSaveErrors?: boolean
+  /**
+   * An SSO sign-in finished without leaving the page — the embedded app runs it
+   * in a popup — so the host must reload its list itself. Top-level the
+   * redirect chain reloads the page and this never fires.
+   */
+  onConnected?: () => void
 }) {
   const [draft, setDraft] = useState<McpConnectionDraft>(emptyDraft)
   const [saving, setSaving] = useState(false)
@@ -188,6 +199,7 @@ export function McpConnectionDialog({
   // endpoint, so we can explain why the auth mode was auto-switched to SSO.
   const [oauthDetected, setOauthDetected] = useState(false)
   const [discovering, setDiscovering] = useState(false)
+  const oauth = useEmbeddedOAuth()
 
   // Populate draft when editing
   useEffect(() => {
@@ -278,17 +290,38 @@ export function McpConnectionDialog({
     Boolean(draft.name.trim() && draft.serverUrl.trim()) && !ssoNeedsRedirect && credentialsReady
   const canTest = Boolean(draft.serverUrl.trim()) && credentialsReady
 
-  // Full-page navigation so the browser follows the OAuth redirect chain
-  // (our /start route → Okta → /callback → back to the MCP servers tab).
-  const connectWithSso = () => {
-    if (!canConnectSso) return
+  // Top-level: full-page navigation so the browser follows the OAuth redirect
+  // chain (our /start route → Okta → /callback → back to the MCP servers tab).
+  // Embedded in Salesforce that chain cannot run in the frame — the IdP will
+  // not render framed and the Lax state cookie is dropped — so it runs in a
+  // popup that lands on the embedded completion page, and the dialog closes
+  // once the server shows the connection.
+  const ssoStartHref = (landing: string) => {
     const params = new URLSearchParams({
       serverUrl: draft.serverUrl.trim(),
       name: draft.name.trim(),
-      returnTo,
+      returnTo: landing,
     })
     if (editingConnection) params.set('connectionId', editingConnection.id)
-    window.location.href = `/api/mcp-connections/oauth/start?${params.toString()}`
+    return `/api/mcp-connections/oauth/start?${params.toString()}`
+  }
+  const connectWithSso = () => {
+    if (!canConnectSso) return
+    if (!isEmbedded()) {
+      topLevelNavigation.assign(ssoStartHref(returnTo))
+      return
+    }
+    oauth.open({
+      popupHref: ssoStartHref(EMBED_COMPLETE_PATH),
+      popupName: 'backstory-mcp-signin',
+      check: editingConnection
+        ? mcpReconnectCheck({ id: editingConnection.id, lastVerifiedAt: editingConnection.lastVerifiedAt ?? null })
+        : mcpNewConnectionCheck({ name: draft.name.trim(), serverUrl: draft.serverUrl.trim() }),
+      onDone: () => {
+        onOpenChange(false)
+        onConnected?.()
+      },
+    })
   }
 
   const testConnection = async () => {
@@ -514,11 +547,12 @@ export function McpConnectionDialog({
               <Button
                 type="button"
                 className="w-full"
-                disabled={!canConnectSso}
+                disabled={!canConnectSso || oauth.waitingFor !== null}
                 onClick={connectWithSso}
               >
                 {editingConnection ? 'Re-connect' : 'Connect'}
               </Button>
+              <EmbeddedOAuthStatus state={oauth} />
               <p className="text-xs text-muted-foreground">
                 {editingConnection
                   ? 'Signs you in again and replaces this server’s expired access. The server URL and name above are kept.'

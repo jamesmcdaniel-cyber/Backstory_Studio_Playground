@@ -38,6 +38,11 @@ import {
   type HttpCredentialSummary,
 } from '@/components/flows/http-credential-dialog'
 import { useAuth } from '@/hooks/use-auth'
+import { useEmbeddedOAuth } from '@/hooks/use-embedded-oauth'
+import { EmbeddedOAuthStatus } from '@/components/auth/embedded-oauth-status'
+import { mcpReconnectCheck } from '@/lib/client/mcp-oauth-confirm'
+import { EMBED_COMPLETE_PATH } from '@/lib/embed'
+import { reconnectHref } from '@/lib/mcp/reconnect'
 import { useNangoConnect } from '@/lib/client/use-nango-connect'
 import { ExternalSecretProviders } from '@/components/credentials/external-secret-providers'
 
@@ -185,6 +190,24 @@ export default function CredentialsPage() {
   // Reconnect reuses the shared Nango round-trip: opening the Connect UI over
   // an existing connection re-runs consent and stores fresh tokens.
   const { busy: nangoBusy, connect } = useNangoConnect(load)
+
+  // An MCP server's Reconnect is a link top-level. Embedded in Salesforce the
+  // frame can follow neither the IdP (it refuses to be framed) nor its Lax
+  // state cookie, so the sign-in runs in a popup and the page reloads its
+  // lists in place once the server shows the connection re-verified.
+  const mcpOauth = useEmbeddedOAuth()
+  const reconnectMcpInPopup = (event: React.MouseEvent<HTMLAnchorElement>, row: McpRow) => {
+    mcpOauth.launchFromLink(event, {
+      popupHref: reconnectHref(row, EMBED_COMPLETE_PATH),
+      popupName: 'backstory-mcp-signin',
+      key: row.id,
+      check: mcpReconnectCheck({ id: row.id, lastVerifiedAt: row.lastVerifiedAt ?? null }),
+      onDone: () => {
+        toast.success(`${row.name} reconnected.`)
+        void load()
+      },
+    })
+  }
 
   const deleteOauthConnection = useCallback(async (row: OauthRow) => {
     const response = await fetch(`/api/nango/connections/${encodeURIComponent(row.key)}`, { method: 'DELETE' })
@@ -551,6 +574,7 @@ export default function CredentialsPage() {
               )
             }
           >
+            <EmbeddedOAuthStatus state={mcpOauth} className="px-3 py-2" />
             {mcp.length === 0 ? (
               <SectionEmpty>No MCP servers connected.</SectionEmpty>
             ) : (
@@ -583,7 +607,7 @@ export default function CredentialsPage() {
                         <>
                           {reconnectsViaOauth ? (
                             <Button asChild variant="ghost" size="sm" title="Re-run authorization to renew the server's tokens">
-                              <a href={`/api/mcp-connections/oauth/start?connectionId=${encodeURIComponent(row.id)}&returnTo=%2Fcredentials`}>
+                              <a href={reconnectHref(row, '/credentials')} onClick={(event) => reconnectMcpInPopup(event, row)} aria-busy={mcpOauth.waitingFor === row.id}>
                                 <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Reconnect
                               </a>
                             </Button>
@@ -642,6 +666,11 @@ export default function CredentialsPage() {
         onSave={saveMcpConnection}
         editingConnection={mcpEditing}
         returnTo="/credentials"
+        onConnected={() => {
+          setMcpEditing(null)
+          toast.success('Server connected.')
+          void load()
+        }}
       />
 
       <Dialog open={Boolean(mcpDeleteTarget)} onOpenChange={(next) => !next && setMcpDeleteTarget(null)}>

@@ -11,6 +11,10 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { useAuth } from '@/hooks/use-auth'
+import { useEmbeddedOAuth } from '@/hooks/use-embedded-oauth'
+import { EmbeddedOAuthStatus } from '@/components/auth/embedded-oauth-status'
+import { mcpReconnectCheck } from '@/lib/client/mcp-oauth-confirm'
+import { EMBED_COMPLETE_PATH } from '@/lib/embed'
 import { needsSignIn, reconnectHref } from '@/lib/mcp/reconnect'
 import { DisconnectMcpDialog, McpConnectionDetailDialog, mcpConnectionBroken } from '@/components/integrations/mcp-connection-detail-dialog'
 
@@ -184,6 +188,25 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
     }
   }
 
+  // Re-connect is a plain link top-level — the redirect chain comes back here.
+  // Embedded in Salesforce, following it would navigate the frame to an IdP
+  // that refuses to be framed, with a Lax state cookie the frame never stores;
+  // so the click is taken over, the sign-in runs in a popup, and the list
+  // reloads in place once the server shows the connection re-verified.
+  const oauth = useEmbeddedOAuth()
+  const reconnectInPopup = (event: React.MouseEvent<HTMLAnchorElement>, conn: SerializedConnection) => {
+    oauth.launchFromLink(event, {
+      popupHref: reconnectHref(conn, EMBED_COMPLETE_PATH),
+      popupName: 'backstory-mcp-signin',
+      key: conn.id,
+      check: mcpReconnectCheck({ id: conn.id, lastVerifiedAt: conn.lastVerifiedAt ?? null }),
+      onDone: () => {
+        toast.success(`${conn.name} reconnected.`)
+        void load()
+      },
+    })
+  }
+
   const openAdd = () => {
     setEditingConnection(null)
     setDialogOpen(true)
@@ -206,6 +229,8 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
             Add MCP server
           </Button>
         </div>
+
+        <EmbeddedOAuthStatus state={oauth} />
 
         {/* Auth error */}
         {authError && (
@@ -388,7 +413,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                           {verifyingId === conn.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                           Verify
                         </Button>
-                        <a href={reconnectHref(conn, returnTo)} className={linkButtonClass}>
+                        <a href={reconnectHref(conn, returnTo)} onClick={(event) => reconnectInPopup(event, conn)} aria-busy={oauth.waitingFor === conn.id} className={linkButtonClass}>
                           Re-connect
                         </a>
                       </div>
@@ -420,7 +445,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                           has nothing to sign in to and needs Verify.
                         */}
                         {needsSignIn(conn) ? (
-                          <a href={reconnectHref(conn, returnTo)} className={linkButtonClass}>
+                          <a href={reconnectHref(conn, returnTo)} onClick={(event) => reconnectInPopup(event, conn)} aria-busy={oauth.waitingFor === conn.id} className={linkButtonClass}>
                             Re-connect
                           </a>
                         ) : (
@@ -476,6 +501,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
             onEdit={() => { setDetailId(null); openEdit(conn) }}
             onDisconnect={() => deleteConnection(conn)}
             onPermissionsChanged={() => { void load() }}
+            onReconnected={() => { void load() }}
             onClose={() => setDetailId(null)}
           />
         )
@@ -495,6 +521,11 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
         onOpenChange={setDialogOpen}
         onSave={saveConnection}
         editingConnection={editingConnection}
+        onConnected={() => {
+          setEditingConnection(null)
+          toast.success('Server connected.')
+          void load()
+        }}
       />
     </>
   )

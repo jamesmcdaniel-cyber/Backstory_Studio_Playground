@@ -1,13 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, Loader2 } from 'lucide-react'
-import { EMBED_CONNECT_DONE_MESSAGE, openEmbeddedPopup } from '@/lib/embed'
-
-const POLL_MS = 1_500
-/** Long enough for an SSO round trip with an MFA prompt in it, short enough
- *  that an abandoned popup stops the spinner rather than spinning forever. */
-const GIVE_UP_MS = 5 * 60 * 1_000
+import { useEmbeddedOAuth } from '@/hooks/use-embedded-oauth'
 
 type Props = {
   href: string
@@ -36,42 +30,10 @@ const BUTTON_CLASS =
  * the one that always works (an IdP's COOP can sever the opener mid-flow).
  */
 export function ConnectAction({ href, label, popupName, embedded, disabled, check }: Props) {
-  const [waiting, setWaiting] = useState(false)
-  const [blocked, setBlocked] = useState(false)
-  const [timedOut, setTimedOut] = useState(false)
-  // Held in a ref so a re-rendered parent cannot restart the poll.
-  const checkRef = useRef(check)
-  checkRef.current = check
-
-  useEffect(() => {
-    if (!waiting) return
-    let cancelled = false
-    const settle = async () => {
-      if (cancelled) return
-      if (await checkRef.current()) {
-        if (!cancelled) setWaiting(false)
-      }
-    }
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return
-      if (event.data !== EMBED_CONNECT_DONE_MESSAGE) return
-      // The message says "look again", never "it worked" — the server decides.
-      void settle()
-    }
-    window.addEventListener('message', onMessage)
-    const poll = setInterval(() => void settle(), POLL_MS)
-    const deadline = setTimeout(() => {
-      if (cancelled) return
-      setWaiting(false)
-      setTimedOut(true)
-    }, GIVE_UP_MS)
-    return () => {
-      cancelled = true
-      window.removeEventListener('message', onMessage)
-      clearInterval(poll)
-      clearTimeout(deadline)
-    }
-  }, [waiting])
+  // The popup + server-confirmed wait is shared with every other OAuth
+  // surface; see useEmbeddedOAuth.
+  const oauth = useEmbeddedOAuth()
+  const waiting = oauth.waitingFor !== null
 
   if (!embedded) {
     return (
@@ -81,16 +43,8 @@ export function ConnectAction({ href, label, popupName, embedded, disabled, chec
     )
   }
 
-  const start = () => {
-    const popup = openEmbeddedPopup(href, popupName)
-    if (!popup) {
-      setBlocked(true)
-      return
-    }
-    setBlocked(false)
-    setTimedOut(false)
-    setWaiting(true)
-  }
+  // `href` already returns to the embedded landing page (connectReturnPath).
+  const start = () => oauth.open({ popupHref: href, popupName, check })
 
   return (
     <div>
@@ -108,18 +62,18 @@ export function ConnectAction({ href, label, popupName, embedded, disabled, chec
       {waiting && (
         <button
           type="button"
-          onClick={() => void checkRef.current()}
+          onClick={oauth.checkNow}
           className="mt-2 text-xs text-fg-muted underline underline-offset-2"
         >
           I finished in the other window — check now
         </button>
       )}
-      {timedOut && (
+      {oauth.timedOut && !waiting && (
         <p className="mt-2 text-xs text-fg-muted">
           We stopped waiting. If you finished in the other window, try again — it will pick up where it left off.
         </p>
       )}
-      {blocked && (
+      {oauth.blocked && (
         <p role="alert" className="mt-2 text-xs text-red-600">
           The connection window was blocked. Allow pop-ups for this page and try again.
         </p>

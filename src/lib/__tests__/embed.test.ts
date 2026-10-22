@@ -43,6 +43,12 @@ test('a connect flow that succeeded is reported as connected, whichever step ran
     outcome: 'connected',
     message: EMBED_CONNECT_DONE_MESSAGE,
   })
+  // The Slack install callback appends slack=installed — read as a sign-in it
+  // would post the wrong message and the settings frame would never look again.
+  assert.deepEqual(resolveEmbedCompletion('?slack=installed'), {
+    outcome: 'connected',
+    message: EMBED_CONNECT_DONE_MESSAGE,
+  })
 })
 
 test('a connect flow that failed is reported as failed, not as a silent success', () => {

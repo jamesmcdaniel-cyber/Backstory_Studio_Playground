@@ -35,9 +35,10 @@ export async function captureArtifactScreenshot(content: string): Promise<string
 }
 
 /**
- * The validator could not be asked, or did not answer in its protocol: a
- * network failure, a timeout, a non-2xx without a structured verdict, or a
- * body that is neither a pass nor a fail. Says nothing about the content —
+ * The validator could not be asked, did not answer in its protocol, or
+ * failed itself: a network failure, a timeout, a 5xx, a body that is neither
+ * a pass nor a fail, or the validator's own deadline, crash or capacity
+ * (reported with `infra: true`). Says nothing about the content —
  * callers must not present it as a content failure, or an assistant will
  * "fix" a healthy page.
  */
@@ -51,6 +52,21 @@ export class ArtifactValidatorUnavailableError extends Error {
 export const ARTIFACT_VALIDATOR_UNAVAILABLE = 'The artifact validator is unavailable right now, so the save could not be checked. Retry in a minute; the current version was not changed.'
 
 let warnedSkipped = false
+
+/**
+ * The validator's request-body cap, shared with services/artifact-validator
+ * (MAX_BODY_BYTES there). The body is the served page JSON-encoded: one
+ * character can become six bytes (a control character's \\uXXXX), so the
+ * largest page the size limits allow (an ROI dashboard), fully escaped, plus
+ * the runtime the page is served with, fits.
+ */
+export const VALIDATOR_MAX_BODY_BYTES = 64 * 1024 * 1024
+
+/**
+ * The validator's own failures, as a validator deployed before the `infra`
+ * marker reported them: a 422 like a verdict. They say nothing about the page.
+ */
+const LEGACY_INFRA_ERROR = /exceeded the 45 second deadline|exited before reporting a result|must restart before UID reuse|^Payload too large|^browserType\.launch|^Artifact frame failed to load/i
 
 /** Only overlapping identical validations share work. Never cache a past pass. */
 export function validateArtifactRuntime(content: string): Promise<ArtifactPreflightResult> {
@@ -76,25 +92,34 @@ async function validateRuntime(content: string): Promise<ArtifactPreflightResult
   if (url.protocol !== 'https:') throw new Error('Artifact validator requires HTTPS.')
   const { artifactPageResponse } = await import('./serve')
   const html = await artifactPageResponse({ content, kind: 'page' }, 'http://artifact-runtime.invalid').text()
+  const body = JSON.stringify({ html })
+  // Measured, not estimated: the page as it will be sent. Over the cap is
+  // about the page (its size), said before anything is sent.
+  const bytes = Buffer.byteLength(body)
+  if (bytes > VALIDATOR_MAX_BODY_BYTES) {
+    throw new Error(`Artifact is too large for the browser check (${(bytes / 1_048_576).toFixed(1)} MB encoded; the limit is ${VALIDATOR_MAX_BODY_BYTES / 1_048_576} MB), so nothing was saved. Split it into smaller artifacts or move bulky data out of the page.`)
+  }
   const deadline = Date.now() + 150_000
   let retries = 0
   for (;;) {
     let response: Response
     try {
-      response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ html }), signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), redirect: 'error' })
+      response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())), redirect: 'error' })
     } catch { throw new ArtifactValidatorUnavailableError() }
     if (response.status === 429 && Date.now() + 5000 < deadline) { await new Promise(resolve => setTimeout(resolve, Math.min(5000, 1000 * 2 ** retries++) + Math.random() * 250)); continue }
-    const result = await response.json().catch(() => null) as { ok?: boolean; errors?: string[]; screenshot?: unknown } | null
+    const result = await response.json().catch(() => null) as { ok?: boolean; infra?: boolean; errors?: string[]; screenshot?: unknown } | null
     if (result?.ok === true && response.ok) {
       // Bounded: a PNG of a 1280×800 page is well under this; anything else is not a screenshot.
       const screenshot = typeof result.screenshot === 'string' && result.screenshot.length > 0 && result.screenshot.length <= 6_000_000 && /^[A-Za-z0-9+/=]+$/.test(result.screenshot) ? result.screenshot : null
       return { screenshot }
     }
-    // A structured verdict is about the content, whatever the status code;
-    // anything else (5xx, 429 past the deadline, a 200 that is not a verdict)
-    // is the service, not the page.
-    const verdict = result?.ok === false && Array.isArray(result.errors)
-    if (!verdict) throw new ArtifactValidatorUnavailableError()
+    // A verdict is about the content: { ok: false, errors } on a 200 or a 422.
+    // Anything else is the service, not the page — a 5xx or 413, 429 past
+    // the deadline, a body that is not a verdict, the validator's own failure
+    // (marked infra, or named in a legacy 422) — so nothing "fixes" a healthy page.
+    const verdict = result?.ok === false && Array.isArray(result.errors) && (response.status === 200 || response.status === 422)
+    const infra = result?.infra === true || (Array.isArray(result?.errors) && result.errors.some(error => LEGACY_INFRA_ERROR.test(String(error))))
+    if (!verdict || infra) throw new ArtifactValidatorUnavailableError()
     const detail = result.errors!.slice(0, 3).map(value => String(value).slice(0, 500)).join('; ') || 'The page did not start.'
     throw new Error(`Artifact failed browser startup validation: ${detail} The current version was not changed. Fix the artifact and retry.`)
   }

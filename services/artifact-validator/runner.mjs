@@ -10,6 +10,10 @@ process.once('message', async ({ html }) => {
   const record = message => { if (errors.length < 8) errors.push(String(message).slice(0, 500)) }
   const mime = { '.js': 'application/javascript', '.mjs': 'application/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.css': 'text/css', '.zip': 'application/zip', '.whl': 'application/octet-stream' }
   let origin, browser
+  // Until the candidate's frame is up, a failure is this service's (the
+  // browser did not launch, the harness page or frame did not load), not the
+  // page's: reported as infra so the app retries rather than "fixing" content.
+  let startup = true
   const server = http.createServer(async (req, res) => {
     const path = new URL(req.url, 'http://localhost').pathname
     res.setHeader('Access-Control-Allow-Origin', '*')
@@ -52,6 +56,7 @@ process.once('message', async ({ html }) => {
     await page.waitForTimeout(1500)
     const frame = page.frames().find(f => f.url() === origin + '/artifact')
     if (!frame) throw new Error('Artifact frame failed to load')
+    startup = false
     await frame.waitForFunction(() => window.__artifactPythonStartupState !== 'running', null, { timeout: 20000 })
     const text = await frame.locator('body').innerText({ timeout: 2000 })
     if (!text.trim() && !await frame.locator('canvas,svg,img').count()) record('Artifact rendered no visible content')
@@ -103,6 +108,9 @@ process.once('message', async ({ html }) => {
       } catch { screenshot = undefined }
     }
     process.send({ ok: !errors.length, errors, checks, ...(screenshot ? { screenshot } : {}), limits: 'Tests cover declared workflows and synthetic storage, not arbitrary business rules or real integration side effects.' })
-  } catch (error) { record(error.message); process.send({ ok: false, errors }) }
+  } catch (error) {
+    if (startup) process.send({ ok: false, infra: true, errors: [String(error.message).slice(0, 500)] })
+    else { record(error.message); process.send({ ok: false, errors }) }
+  }
   finally { await browser?.close().catch(() => {}); server.close(); process.disconnect() }
 })

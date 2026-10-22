@@ -484,7 +484,10 @@ export async function loadTools(
     })
     for (const group of shareable) {
       if (!group.client) continue
-      for (const tool of group.tools.slice(0, 20)) discovered.push({
+      // Blocked tools never arrive from the loader. A tool that needs approval
+      // is left out too: the person on a shared link is not the one who can
+      // approve it, so there is nobody to ask.
+      for (const tool of group.tools.filter((candidate) => !candidate.policy).slice(0, 20)) discovered.push({
         name: toolName(group.provider, tool.name), description: tool.description, inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
         isWrite: false, binding: { provider: group.provider, serverUrl: group.serverUrl, toolName: tool.name, isWrite: false, client: group.client },
       })
@@ -508,11 +511,17 @@ export async function loadTools(
     // in discovery order are not less capable than the first twenty.
     const tools = group.tools
     for (const tool of tools) {
+      // Belt and braces: the MCP loader already withholds blocked tools.
+      if (tool.policy === 'off') continue
       discovered.push({
         name: toolName(prefix, tool.name),
         description: tool.description,
         inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
-        binding: { provider: group.provider, serverUrl: group.serverUrl, toolName: tool.name, isWrite: group.isWrite, client: group.client },
+        binding: {
+          provider: group.provider, serverUrl: group.serverUrl, toolName: tool.name, isWrite: group.isWrite, client: group.client,
+          ...(group.plane === 'mcp' ? { mcpConnectionId: group.id } : {}),
+          ...(tool.policy === 'approve' ? { needsApproval: true } : {}),
+        },
         isWrite: group.isWrite,
       })
     }
@@ -1591,7 +1600,22 @@ async function runAgentExecutionInner(
           // decideApproval executes the write and resumes this run with its
           // result injected, so the agent acts on the real outcome (rather than
           // continuing blind on a "queued" placeholder).
-          if (!data.skipApprovalGate && requiresApproval(agentMetadata, binding.provider, binding.isWrite, { injectionTainted })) {
+          // A tool its owner set to "Needs approval" in Integrations is gated
+          // whatever this agent's own setting says. Where the run cannot pause
+          // for a person (an agent step inside a flow runs end to end), the
+          // call is refused rather than run unattended — the setting said a
+          // person decides, and no person can here.
+          if (binding.needsApproval && data.skipApprovalGate) {
+            const refusal = `${binding.toolName} needs approval before it runs, and an agent step inside a flow cannot pause to ask. Set it to Always allow in Integrations to use it here.`
+            await prisma.workflowStep.update({
+              where: { id: step.id },
+              data: { status: 'failed', error: jsonValue({ message: refusal }), completedAt: new Date() },
+            })
+            await recordEvent(execution.id, step.id, 'tool.blocked', { name: step.node, reason: refusal })
+            results.push({ toolCallId: call.id, content: JSON.stringify({ error: refusal }), isError: true })
+            continue
+          }
+          if (binding.needsApproval || (!data.skipApprovalGate && requiresApproval(agentMetadata, binding.provider, binding.isWrite, { injectionTainted }))) {
             // Only ONE suspension per turn: if a question or another approval is
             // already pending, defer this one with a covering result (and do NOT
             // create an approval row, so nothing is orphaned) — the model
@@ -1619,6 +1643,7 @@ async function runAgentExecutionInner(
               // meant approved sends silently never executed.
               tool: binding.toolName,
               args: (call.input ?? {}) as Record<string, unknown>,
+              ...(binding.mcpConnectionId ? { mcpConnectionId: binding.mcpConnectionId } : {}),
             })
             await prisma.workflowStep.update({
               where: { id: step.id },

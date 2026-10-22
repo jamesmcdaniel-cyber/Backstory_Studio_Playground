@@ -47,6 +47,13 @@ import { recordCredentialUse } from '@/lib/credentials/audit'
 import { DATA_TABLE_TOOLS, DataTableToolClient, dataTableToolIsWrite } from '@/lib/data-tables/tools'
 import { BRAVE_SEARCH_ENDPOINT, ResearchToolClient, getResearchApiKey, researchTools } from '@/lib/integrations/research'
 import { AdapterToolClient, adapterTools } from '@/lib/adapters/tools'
+import {
+  McpToolBlockedError,
+  approvalUnavailableMessage,
+  readToolPolicies,
+  toolPolicyFor,
+  type McpToolAnnotations,
+} from '@/lib/mcp/tool-policy'
 
 // Minimal interface every plane's execution client satisfies (McpClient,
 // BackstoryMcpClient, the built-in ToolClients, and adapters).
@@ -63,6 +70,12 @@ export type ToolBinding = {
    *  accurate rather than collapsing to a per-plane flag. */
   isWrite: boolean
   client: McpToolClient
+  /** Set when the tool's owner chose "Needs approval" for it in Integrations
+   *  (MCP per-tool permissions). Gated whatever the agent's own setting. */
+  needsApproval?: boolean
+  /** The McpConnection row this tool came from — what an approval records so
+   *  decideApproval can execute it later. */
+  mcpConnectionId?: string
 }
 
 /** A tool as a plane reports it (description already defaulted per plane). */
@@ -71,6 +84,11 @@ export type PlaneToolDescriptor = {
   description: string
   inputSchema?: unknown
   outputSchema?: unknown
+  /** MCP only: the server's display title and annotations, when it sends them. */
+  title?: string
+  annotations?: McpToolAnnotations
+  /** MCP only: the per-tool permission set in Integrations; absent = allowed. */
+  policy?: 'approve' | 'off'
 }
 
 /**
@@ -96,6 +114,10 @@ export type ToolPlaneGroup = {
    * instead of a silent empty list.
    */
   toolsError?: string
+  /** MCP only: tools that exist on the server but are turned off in
+   *  Integrations — withheld from `tools`, named here so a flow that still
+   *  references one can say why instead of "not available". */
+  blockedTools?: string[]
 }
 
 export function toolName(provider: string, name: string) {
@@ -283,7 +305,18 @@ export const mcpConnectionSlug = (name: string) => name.toLowerCase().replace(/[
 export async function loadMcpConnectionPlaneGroups(
   organizationId: string,
   ownerUserId?: string | null,
-  options: { connectionIds?: string[]; take?: number; shareableOnly?: boolean } = {},
+  options: {
+    connectionIds?: string[]
+    take?: number
+    shareableOnly?: boolean
+    /**
+     * Keep tools turned off in Integrations in `tools` (marked policy 'off').
+     * ONLY for the settings view that lets a person turn them back on — every
+     * runtime caller must leave this unset, which is what keeps a blocked tool
+     * away from agents, chats, copilots and the flow catalogue alike.
+     */
+    includeBlocked?: boolean
+  } = {},
 ): Promise<ToolPlaneGroup[]> {
   const connections = (await prisma.mcpConnection.findMany({
     where: {
@@ -333,12 +366,26 @@ export async function loadMcpConnectionPlaneGroups(
       group.name = fresh.name
       group.serverUrl = fresh.serverUrl
       group.client = client
-      group.tools = available.map((tool) => ({
-        name: tool.name,
-        description: tool.description || `${tool.name} via ${fresh.name}`,
-        inputSchema: tool.inputSchema || EMPTY_SCHEMA,
-        outputSchema: (tool as { outputSchema?: unknown }).outputSchema,
-      }))
+      // Per-tool permissions apply HERE, the one loader every runtime surface
+      // draws MCP tools through. Discovery (and its cache) keep the server's
+      // full list; only what is handed out is narrowed.
+      const policies = readToolPolicies(conn.toolPolicies)
+      const described = available.map((tool): PlaneToolDescriptor => {
+        const policy = toolPolicyFor(policies, tool.name)
+        const { title, annotations } = tool as { title?: string; annotations?: McpToolAnnotations }
+        return {
+          name: tool.name,
+          description: tool.description || `${tool.name} via ${fresh.name}`,
+          inputSchema: tool.inputSchema || EMPTY_SCHEMA,
+          outputSchema: (tool as { outputSchema?: unknown }).outputSchema,
+          ...(title ? { title } : {}),
+          ...(annotations ? { annotations } : {}),
+          ...(policy !== 'allow' ? { policy } : {}),
+        }
+      })
+      const blocked = described.filter((tool) => tool.policy === 'off').map((tool) => tool.name)
+      group.tools = options.includeBlocked ? described : described.filter((tool) => tool.policy !== 'off')
+      if (blocked.length) group.blockedTools = blocked
     } catch (error) {
       apiLogger.warn('loadTools: org MCP connection tool discovery failed, skipping', {
         connectionId: conn.id, connectionName: conn.name, serverUrl: conn.serverUrl,
@@ -717,6 +764,9 @@ export type FlowToolExecutor = {
   provider: string
   isWrite: boolean
   execute: (toolName: string, args: Record<string, unknown>) => Promise<unknown>
+  /** Only ever set for a caller that passed `approval: 'gate'`: the tool is
+   *  "Needs approval" in Integrations and the caller must queue it, not run it. */
+  needsApproval?: boolean
 }
 
 /**
@@ -730,6 +780,16 @@ export async function resolveFlowToolExecutor(params: {
   plane: FlowToolPlane
   ref: string
   toolName: string
+  /**
+   * How the caller handles an MCP tool set to "Needs approval" in Integrations:
+   *  - omitted:    it cannot pause for a person (polling, option lookups,
+   *                repository pulls), so such a tool is REFUSED.
+   *  - 'gate':     it can (a flow tool step) — the executor comes back with
+   *                needsApproval and the caller queues an approval.
+   *  - 'approved': a person already approved this call (decideApproval).
+   * A tool set to "Blocked" is refused whatever is passed.
+   */
+  approval?: 'gate' | 'approved'
 }): Promise<FlowToolExecutor> {
   const { organizationId, userId, plane, ref } = params
 
@@ -741,11 +801,30 @@ export async function resolveFlowToolExecutor(params: {
       where: { id: ref, ...mcpConnectionScope(organizationId, userId) },
     })
     if (!conn) throw new Error('The selected connection no longer exists — pick another in the step config.')
+    // This branch executes by ref + tool name WITHOUT the catalogue, so the
+    // per-tool permission is enforced here as well as in the loader above —
+    // a stored graph, a poll or an option lookup naming a blocked tool must
+    // not reach the server. Checked before any credential is touched.
+    const policies = readToolPolicies(conn.toolPolicies)
+    const refusal = (name: string): Error | null => {
+      const policy = toolPolicyFor(policies, name)
+      if (policy === 'off') return new McpToolBlockedError(name, conn.name)
+      if (policy === 'approve' && !params.approval) return new Error(approvalUnavailableMessage(name, conn.name))
+      return null
+    }
+    const refused = refusal(params.toolName)
+    if (refused) throw refused
     const { client, connection: fresh } = await mcpClientForStoredConnection(conn)
     return {
       provider: mcpConnectionSlug(fresh.name),
       isWrite: false,
-      execute: (name, args) => client.executeTool(fresh.serverUrl, name, args),
+      // The executor is resolved for ONE tool; a caller reusing it for another
+      // name must not slip past that tool's own permission.
+      execute: (name, args) => {
+        const other = name === params.toolName ? null : refusal(name)
+        return other ? Promise.reject(other) : client.executeTool(fresh.serverUrl, name, args)
+      },
+      ...(toolPolicyFor(policies, params.toolName) === 'approve' && params.approval === 'gate' ? { needsApproval: true } : {}),
     }
   }
 

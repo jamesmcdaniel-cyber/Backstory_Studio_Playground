@@ -7,6 +7,11 @@
  * queued; an approver later approves (the write runs) or rejects (it's
  * dropped). Every decision is audited. This avoids pausing/resuming the whole
  * multi-turn run while still gating side effects.
+ *
+ * MCP tools join the same gate per tool rather than per agent: a tool its
+ * owner set to "Needs approval" in Integrations (McpConnection.toolPolicies)
+ * is queued from an agent run or a flow tool step alike, and decideApproval
+ * executes it through its recorded mcpConnectionId.
  */
 
 import { prisma } from '@/lib/prisma'
@@ -14,6 +19,7 @@ import { recordAudit } from '@/lib/audit'
 import { resolveNangoConnection, type DeliveryCapability } from '@/lib/nango/delivery'
 import { findNangoWriteTool, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { detectPiiCategories } from '@/lib/security/pii-egress'
+import { McpToolBlockedError } from '@/lib/mcp/tool-policy'
 
 /** Delivery planes, used only to label an approval with a friendly capability. */
 const DELIVERY_PLANE = /^nango:(slack|gmail|salesforce)$/
@@ -67,6 +73,11 @@ export async function createApproval(input: {
   args: Record<string, unknown>
   /** The run read injection-shaped content before proposing this write. */
   injectionTainted?: boolean
+  /**
+   * Set for an MCP tool its owner marked "Needs approval" in Integrations: the
+   * McpConnection row decideApproval executes the approved call through.
+   */
+  mcpConnectionId?: string
 }): Promise<{ id: string }> {
   const capability = capabilityFromProvider(input.provider)
 
@@ -97,6 +108,7 @@ export async function createApproval(input: {
         capability,
         args: input.args,
         userId: input.userId,
+        ...(input.mcpConnectionId ? { mcpConnectionId: input.mcpConnectionId } : {}),
         risk: { injectionTainted: input.injectionTainted === true, piiCategories },
       } as never,
       status: 'pending',
@@ -241,24 +253,48 @@ export async function decideApproval(input: {
     capability: DeliveryCapability | null
     args: Record<string, unknown>
     userId: string
+    mcpConnectionId?: string
   }
   let executed = false
   let writeResult: unknown = null
   try {
-    // Dispatch on the RECORDED (bare) TOOL NAME across the full Nango write
-    // registry — never on the capability/provider alone (that would run a
-    // plane's send tool for any approval on it: approving salesforce_update
-    // would CREATE, approving a read-shaped call would post its text). Require
-    // the resolved spec's provider to match the recorded provider before using
-    // that provider's connection. No spec / mismatch / no connection → fail
-    // closed (`executed` stays false → audited approval.approved_noexec).
-    const spec = findNangoWriteTool(approval.tool)
-    if (spec && `nango:${spec.provider}` === payload.provider) {
-      const configKeys = PROVIDER_CONFIG_KEYS[spec.provider] ?? [spec.provider]
-      const connection = await resolveNangoConnection(input.organizationId, configKeys, payload.userId)
-      if (connection) {
-        writeResult = await spec.run(connection, payload.args)
+    if (typeof payload.mcpConnectionId === 'string' && payload.mcpConnectionId) {
+      // An MCP tool its owner set to "Needs approval" in Integrations. Run it
+      // through the same resolver a flow tool step uses, as the person whose
+      // run proposed it — so the connection must still be visible to them,
+      // and a tool turned OFF since the request was queued is refused (fail
+      // closed: `executed` stays false → approval.approved_noexec).
+      const { resolveFlowToolExecutor } = await import('@/features/agents/tool-planes')
+      try {
+        const executor = await resolveFlowToolExecutor({
+          organizationId: input.organizationId,
+          userId: payload.userId,
+          plane: 'mcp',
+          ref: payload.mcpConnectionId,
+          toolName: approval.tool,
+          approval: 'approved',
+        })
+        writeResult = await executor.execute(approval.tool, payload.args ?? {})
         executed = true
+      } catch (error) {
+        if (!(error instanceof McpToolBlockedError)) throw error
+      }
+    } else {
+      // Dispatch on the RECORDED (bare) TOOL NAME across the full Nango write
+      // registry — never on the capability/provider alone (that would run a
+      // plane's send tool for any approval on it: approving salesforce_update
+      // would CREATE, approving a read-shaped call would post its text). Require
+      // the resolved spec's provider to match the recorded provider before using
+      // that provider's connection. No spec / mismatch / no connection → fail
+      // closed (`executed` stays false → audited approval.approved_noexec).
+      const spec = findNangoWriteTool(approval.tool)
+      if (spec && `nango:${spec.provider}` === payload.provider) {
+        const configKeys = PROVIDER_CONFIG_KEYS[spec.provider] ?? [spec.provider]
+        const connection = await resolveNangoConnection(input.organizationId, configKeys, payload.userId)
+        if (connection) {
+          writeResult = await spec.run(connection, payload.args)
+          executed = true
+        }
       }
     }
   } catch (error) {

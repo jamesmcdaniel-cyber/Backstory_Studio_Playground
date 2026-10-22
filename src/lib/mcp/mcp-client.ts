@@ -16,6 +16,7 @@ import { TokenRefreshError, refreshAccessToken } from '@/lib/mcp/oauth-authcode'
 import { assertPublicUrl } from '@/lib/net/ssrf'
 import { cannedResponse, demoAmbientActive } from '@/lib/demo/transport'
 import { fetchMcpControlRequest } from './control-request'
+import { readToolAnnotations, type McpToolAnnotations } from './tool-policy'
 
 // ---------------------------------------------------------------------------
 // Runtime config (constructor argument — secrets already decrypted)
@@ -398,7 +399,7 @@ export class McpClient {
 
   async getServerTools(
     serverUrl: string,
-  ): Promise<{ name: string; description?: string; inputSchema?: any; outputSchema?: any }[]> {
+  ): Promise<{ name: string; title?: string; description?: string; inputSchema?: any; outputSchema?: any; annotations?: McpToolAnnotations }[]> {
     await this.initialize(serverUrl)
     const response = await this.rpc(serverUrl, 'tools/list')
     if (response.error) {
@@ -407,6 +408,10 @@ export class McpClient {
     const tools = response.result?.tools || response.result?.items || []
     return tools.map((tool: any) => ({
       name: tool.name,
+      // Display hints for the Integrations tool list. Neither feeds the
+      // verification schema hash (verify-connection hashes name + schemas).
+      ...(typeof tool.title === 'string' && tool.title.trim() ? { title: tool.title.trim().slice(0, 120) } : {}),
+      ...(readToolAnnotations(tool.annotations) ? { annotations: readToolAnnotations(tool.annotations) } : {}),
       description: tool.description,
       inputSchema: tool.inputSchema ||
         tool.input_schema ||

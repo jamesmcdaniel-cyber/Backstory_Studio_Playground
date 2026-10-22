@@ -16,7 +16,7 @@ export type FlowValidationIssue = {
 
 export type FlowValidationContext = {
   agents?: { id: string; title?: string }[]
-  toolCatalog?: { id: string; name?: string; tools?: { name: string; inputSchema?: unknown }[]; toolsError?: string }[]
+  toolCatalog?: { id: string; name?: string; tools?: { name: string; inputSchema?: unknown }[]; toolsError?: string; blockedTools?: string[] }[]
   /** Reusable HTTP credentials visible to the executing workspace. */
   httpCredentials?: { id: string }[]
   /** Per-user runtime credential placeholders visible to the workspace. */
@@ -398,6 +398,10 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     new Set((connection.tools ?? []).map((tool) => tool.name)),
   ]))
   const toolErrorsByConnection = new Map((context.toolCatalog ?? []).map((connection) => [connection.id, connection.toolsError]))
+  // Tools that exist on an MCP server but were turned off in Integrations:
+  // the catalogue withholds them, and a step still using one is told why.
+  const blockedToolsByConnection = new Map((context.toolCatalog ?? []).map((connection) => [connection.id, new Set(connection.blockedTools ?? [])]))
+  const connectionNames = new Map((context.toolCatalog ?? []).map((connection) => [connection.id, connection.name]))
   const httpCredentialIds = new Set((context.httpCredentials ?? []).map((credential) => credential.id))
   const credentialResolverIds = new Set((context.credentialResolvers ?? []).map((resolver) => resolver.id))
   const toolsByConnection = new Map((context.toolCatalog ?? []).map((connection) => [
@@ -467,6 +471,9 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       }
       if (!node.data.toolName) {
         add(issues, 'error', 'MISSING_TOOL', `${nodeLabel(node)} needs a tool.`, node.id)
+      } else if (context.toolCatalog && blockedToolsByConnection.get(node.data.connectionId)?.has(node.data.toolName)) {
+        const server = connectionNames.get(node.data.connectionId) ?? 'its server'
+        add(issues, 'error', 'UNKNOWN_TOOL', `${nodeLabel(node)} uses ${node.data.toolName}, which is turned off for ${server} in Integrations — turn it back on there or pick another tool.`, node.id)
       } else if (context.toolCatalog && toolNamesByConnection.get(node.data.connectionId)?.size) {
         const knownTools = toolNamesByConnection.get(node.data.connectionId)
         if (knownTools && !knownTools.has(node.data.toolName)) {

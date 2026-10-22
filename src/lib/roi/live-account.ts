@@ -278,7 +278,9 @@ async function readSalesforce(organizationId: string, userId: string, account: s
   } else {
     const groups = await loadMcpConnectionPlaneGroups(organizationId, userId).catch(() => [])
     const group = groups.find((g) => g.client && /salesforce|sfdc/i.test(`${g.name} ${g.serverUrl}`))
-    const tool = group?.tools.find((t) => /soql|query/i.test(t.name))
+    // Blocked tools never arrive from the loader; one that needs approval is
+    // skipped too, since this read runs unattended with nobody to ask.
+    const tool = group?.tools.find((t) => !t.policy && /soql|query/i.test(t.name))
     if (group?.client && tool) {
       const props = Object.keys(((tool.inputSchema as { properties?: Record<string, unknown> })?.properties) ?? {})
       const param = props.find((p) => /soql/i.test(p)) ?? props.find((p) => /^(q|query)$/i.test(p)) ?? 'query'

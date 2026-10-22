@@ -30,7 +30,7 @@ import { planesForConnectionIds, parseFlowToolConnectionId } from '@/lib/flows/t
 export { mcpConnectionScope } from '@/features/agents/tool-planes'
 
 export type FlowToolSummary = { name: string; description: string; inputSchema?: unknown; outputSchema?: unknown }
-export type FlowToolCatalogConnection = { id: string; name: string; tools: FlowToolSummary[]; toolsError?: string; provider?: string }
+export type FlowToolCatalogConnection = { id: string; name: string; tools: FlowToolSummary[]; toolsError?: string; provider?: string; blockedTools?: string[] }
 
 export async function loadFlowToolCatalog(
   organizationId: string,
@@ -71,6 +71,9 @@ export async function loadFlowToolCatalog(
       // sensitive: it is the endpoint the user typed to connect it.
       ...(group.serverUrl ? { serverUrl: group.serverUrl } : {}),
       ...(group.toolsError ? { toolsError: group.toolsError } : {}),
+      // Names only, never schemas: lets validation say a step's tool was
+      // turned off in Integrations rather than that it does not exist.
+      ...(group.blockedTools?.length ? { blockedTools: group.blockedTools } : {}),
       tools: group.tools.slice(0, options.takeTools ?? 100).map((tool) => ({
         name: tool.name,
         description: tool.description ?? '',

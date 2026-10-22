@@ -19,15 +19,25 @@ export function safeMcpVerificationError(error: unknown): string {
     .slice(0, 300)
 }
 
+/**
+ * The schema fingerprint the health sweep compares (schema_changed). Taken over
+ * the server's FULL tool list — name and schemas only. Per-tool permissions
+ * (toolPolicies) and display hints (title, annotations) are deliberately
+ * outside it, so turning a tool off in Integrations never reads as drift.
+ */
+export function computeToolSchemaHash(tools: Array<{ name: string; inputSchema?: unknown; outputSchema?: unknown }>): string {
+  return createHash('sha256').update(JSON.stringify(
+    tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  )).digest('hex')
+}
+
 /** Shared by both entry points below: list the tools, then describe them. */
 async function verifyTools(
   list: () => Promise<Array<{ name: string; inputSchema?: unknown; outputSchema?: unknown }>>,
 ): Promise<McpVerification> {
   const tools = await list()
-  const schemaHash = createHash('sha256').update(JSON.stringify(
-    tools.map((tool) => ({ name: tool.name, inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-  )).digest('hex')
+  const schemaHash = computeToolSchemaHash(tools)
   return {
     verifiedAt: new Date(),
     toolCount: tools.length,

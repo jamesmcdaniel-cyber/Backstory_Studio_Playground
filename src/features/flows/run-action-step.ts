@@ -22,7 +22,9 @@ import {
 import { applySlackChainDepthMetadata, applySlackThreadDefault, prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
 import { resolveFlowToolExecutor } from '@/features/agents/tool-planes'
+import { createApproval } from '@/lib/agents/approval'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
+import { notify } from '@/lib/notifications/service'
 import { recordAudit, toolAuditAction } from '@/lib/audit'
 import { resolveCredentialResolver } from '@/lib/credentials/resolver'
 import { maybeShadowFlowAiStep } from '@/lib/eval/shadow'
@@ -228,14 +230,18 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
           plane,
           ref,
           toolName,
+          // A flow step CAN pause for a person, so an MCP tool set to "Needs
+          // approval" in Integrations comes back flagged rather than refused.
+          approval: 'gate',
         })
 
-        // Flow steps never pause on approvals: a flow is expected to run end to
-        // end, so delivery-plane writes execute inline like every other tool
-        // call (every write is still audited below). Agents keep their own
-        // opt-in `requireApproval` gate — that's an agent-runtime concern. The
-        // decision-consume block above stays so runs paused on an approval
-        // BEFORE this change still resume cleanly.
+        // Flow steps do not pause on the agent-level `requireApproval` gate: a
+        // flow is expected to run end to end, so delivery-plane writes execute
+        // inline like every other tool call (every write is still audited
+        // below). The one exception is a person's explicit per-tool choice:
+        // an MCP tool its owner set to "Needs approval" in Integrations pauses
+        // here (after the replay and argument guards below), and the
+        // decision-consume block above resumes it.
         const retries = flowActionRetries(node.config.retries)
         const retryDelayMs = typeof node.config.retryDelayMs === 'number' ? node.config.retryDelayMs : undefined
         const timeoutMs = flowActionTimeoutMs(node.config.timeoutMs)
@@ -272,6 +278,34 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
             reasons: verdict.reasons,
           })
           throw new Error(blockedMessage)
+        }
+
+        if (executor.needsApproval) {
+          // Queued exactly as an agent's gated call is: decideApproval runs it
+          // through the recorded connection and resumes this run with the
+          // result, which the consume block at the top of this branch reads.
+          const approval = await createApproval({
+            organizationId: job.organizationId,
+            executionId: run.id,
+            userId: job.userId,
+            provider: executor.provider,
+            tool: toolName,
+            args,
+            mcpConnectionId: ref,
+          })
+          const question = `Approve ${toolName}?`
+          await finish({ status: 'waiting', output: { waiting: { kind: 'approval', approvalId: approval.id, question } } })
+          await notify({
+            organizationId: job.organizationId,
+            userId: job.userId,
+            type: 'flow.needs_approval',
+            level: 'action',
+            title: `Flow "${flow.name}" needs approval`,
+            body: `Approve or reject: ${toolName} (run ${run.id})`,
+            executionId: flow.id,
+            link: `/flows/${flow.id}/activity`,
+          })
+          return { waiting: { status: 'waiting_for_approval', question } }
         }
 
         const { result: output, attempts: toolAttempts, attemptErrors: toolAttemptErrors } = await runWithRetries(

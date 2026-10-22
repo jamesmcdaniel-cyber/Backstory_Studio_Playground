@@ -6,6 +6,7 @@ import { recordPiiEgress } from '@/lib/usage/ai-guard'
 import { currentAmbientOrganization } from '@/lib/tenant-database-context'
 import { AGENT_MODEL_TURN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { EgressVault } from './redact'
+import { streamDeadline } from './stream-deadline'
 import { withBreaker, CircuitOpenError } from '@/lib/resilience/circuit-breaker'
 import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { UNTRUSTED_DATA_RULE, fenceUntrusted } from '@/lib/security/prompt'
@@ -143,17 +144,28 @@ export interface ModelRunner {
 
 const ADAPTIVE_THINKING_MODELS = /^claude-(opus-4-[678]|sonnet-(4-6|5)|fable-5|mythos-5)/
 
-// Bound a single model call below the BullMQ job lock (20m, see
-// queue/config.ts) so a hung/slow call can't outlive the lock and make a run
-// both dead-letter (stalled) and complete. The SDK `timeout` only wraps the
-// fetch (which resolves at response HEADERS for a stream), so it bounds
-// non-streaming calls; STREAM_DEADLINE_MS is an explicit end-to-end cap passed
-// as an AbortSignal to the streaming turn to bound the body read too.
+// Bound a single model call below the agent run window (AGENT_MODEL_TURN_TIMEOUT_MS,
+// 28 min, see agents/timeouts.ts) so persistence and cleanup still have room.
+// The BullMQ job lock is not the bound — it is renewed while the job lives
+// (queue/config.ts). The SDK `timeout` only wraps the fetch (which resolves at
+// response HEADERS for a stream), so it bounds non-streaming calls;
+// STREAM_DEADLINE_MS is an explicit end-to-end cap passed as an AbortSignal to
+// the streaming turn to bound the body read too.
 const LLM_TIMEOUT_MS = AGENT_MODEL_TURN_TIMEOUT_MS
-// The SDK default is 2 (covers 429/overload/5xx with backoff); the 19-min turn
+// The SDK default is 2 (covers 429/overload/5xx with backoff); the 28-min turn
 // timeout leaves ample room. Overridable, but never below 1.
 const LLM_MAX_RETRIES = Math.max(1, Number(process.env.LLM_MAX_RETRIES) || 2)
 const STREAM_DEADLINE_MS = AGENT_MODEL_TURN_TIMEOUT_MS
+// No stream event (any delta, thinking included) for this long means the
+// stream is stuck, not slow: a healthy stream emits deltas every few seconds
+// once the first token is out. Generous enough for a long time-to-first-token
+// on a large prompt.
+const STREAM_IDLE_TIMEOUT_MS = 3 * 60_000
+// generateStructured/streamStructured serve interactive requests (the agent
+// chat and flow copilot routes). Five minutes is Vercel's default function
+// duration and far past any reply their maxTokens allow, so a stuck stream
+// fails the request with a message rather than hanging until it is killed.
+const STRUCTURED_STREAM_DEADLINE_MS = 5 * 60_000
 
 const CACHE_CONTROL = { type: 'ephemeral' as const }
 
@@ -634,7 +646,14 @@ export async function generateLongText(opts: {
   maxTokens: number
   surface: LlmSurface
   ledger?: LedgerContext
+  /** Time allowed for the response to START (the SDK fetch timeout). */
   timeoutMs?: number
+  /**
+   * End-to-end bound for the whole call, body included. Defaults to the
+   * per-turn model budget (AGENT_MODEL_TURN_TIMEOUT_MS): the renderer is one
+   * model call inside an agent run, held to the same ceiling as any turn.
+   */
+  deadlineMs?: number
 }): Promise<{ text: string; stopReason: string | null }> {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not configured')
   const vault = await egressVault(opts.ledger)
@@ -642,12 +661,20 @@ export async function generateLongText(opts: {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: opts.timeoutMs ?? 15 * 60_000, maxRetries: 1 })
   const model = resolveServedModel({ target: 'claude', model: opts.model })
   const startedAt = Date.now()
-  const message = await client.messages.stream({
-    model,
-    max_tokens: opts.maxTokens,
-    system: [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }],
-    messages: [{ role: 'user', content: opts.user }],
-  }).finalMessage()
+  const deadline = streamDeadline({ totalMs: opts.deadlineMs ?? AGENT_MODEL_TURN_TIMEOUT_MS, idleMs: STREAM_IDLE_TIMEOUT_MS, label: 'The model call' })
+  let message: Anthropic.Message
+  try {
+    const stream = client.messages.stream({
+      model,
+      max_tokens: opts.maxTokens,
+      system: [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: opts.user }],
+    }, { signal: deadline.signal })
+    stream.on('streamEvent', () => deadline.touch())
+    message = await deadline.guard(stream.finalMessage())
+  } finally {
+    deadline.clear()
+  }
   if (opts.ledger) {
     trackDetached(
       recordLlmCall({
@@ -979,9 +1006,16 @@ async function streamStructuredRaw(opts: StructuredOpts, onText: (delta: string)
     maxTokens: opts.maxTokens,
     dialect: 'anthropic',
   })
-  const stream = claudeClient().messages.stream(request)
-  stream.on('text', (delta) => onText(delta))
-  const response = await stream.finalMessage()
+  const deadline = streamDeadline({ totalMs: STRUCTURED_STREAM_DEADLINE_MS, idleMs: STREAM_IDLE_TIMEOUT_MS, label: 'The model reply' })
+  let response: Anthropic.Message
+  try {
+    const stream = claudeClient().messages.stream(request, { signal: deadline.signal })
+    stream.on('streamEvent', () => deadline.touch())
+    stream.on('text', (delta) => onText(delta))
+    response = await deadline.guard(stream.finalMessage())
+  } finally {
+    deadline.clear()
+  }
   if (opts.ledger) {
     trackDetached(
       recordLlmCall({

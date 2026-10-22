@@ -31,8 +31,8 @@
 #   GRANOLA_API_KEY, SLACK_BOT_TOKEN, RESEND_API_KEY, PEOPLE_AI_*,
 #   BACKSTORY_MCP_*, UPSTASH_REDIS_REST_*).
 #
-# The worker writes `worker:heartbeat` to Redis every 30s (heartbeat.ts);
-# the web app refuses to enqueue flow runs when it is >2 min stale, and
+# The worker writes `worker:heartbeat` to Redis every 60s (heartbeat.ts);
+# the web app refuses to enqueue flow runs when it is >3 min stale, and
 # /api/health reports its age. A healthy fleet with a stale heartbeat means
 # split-brain Redis — the exact render.yaml trap above.
 #

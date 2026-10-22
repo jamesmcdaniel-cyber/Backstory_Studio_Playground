@@ -1904,9 +1904,6 @@ async function runAgentExecutionInner(
     // or a run whose tool output looked like an injection. Any failure keeps
     // the draft.
     const renderTrigger = String((execution.trigger as { type?: unknown } | null)?.type ?? '')
-    if (renderTrigger !== 'artifact' && artifactModeApplies(renderTrigger, agent.objective, data.input) && !isDeliverable(summary)) {
-      throw new Error('@artifact was requested, but the agent did not produce an executable artifact. Review the run and retry; no completed app is claimed.')
-    }
     // What the agent itself produced: saved instead when the rendered app will not save.
     const draft = summary
     if (renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && !injectionTainted && needsArtifactRender(summary)) {
@@ -1978,7 +1975,8 @@ async function runAgentExecutionInner(
     // deliberately cheap prose-matching on the model's own flag; a run that
     // refuses without the marker is a quality bug, not a bypass, since the
     // boundary held either way.
-    if (isGuardrailRefusal(summary)) {
+    const refused = isGuardrailRefusal(summary)
+    if (refused) {
       await recordAudit({
         organizationId,
         action: 'guardrail.refusal',
@@ -1990,10 +1988,16 @@ async function runAgentExecutionInner(
       })
     }
 
+    // @artifact asked for an app and the answer is none. Decided only once
+    // the run's real outcome is known: a run that reported a blocker ("Not
+    // delivered — Gmail not connected") or refused on a guardrail ends with
+    // that reason (and its audit row), never this generic one. The agent's
+    // answer is still kept on the run before it fails.
+    const artifactGateFailed = !blockedReason && !refused && renderTrigger !== 'artifact' && artifactModeApplies(renderTrigger, agent.objective, data.input) && !isDeliverable(summary)
     // A chat turn on an artifact, or an ROI build, never shows a headline (the
     // artifact has its own title), so it does not wait for one.
     const triggerType = (execution.trigger as { type?: unknown } | null)?.type
-    const headline = triggerType === 'artifact' || triggerType === 'roi_analysis'
+    const headline = triggerType === 'artifact' || triggerType === 'roi_analysis' || artifactGateFailed
       ? null
       : await generateHeadline(summary, { organizationId, agentExecutionId: execution.id })
 
@@ -2009,7 +2013,7 @@ async function runAgentExecutionInner(
       agentTaskId: agent.id, agentTitle: agentMetadata.title || agent.description,
       trigger: execution.trigger, summary: answer, headline,
     })
-    const publication = blockedReason
+    const publication = blockedReason || artifactGateFailed
       ? null
       : await publishAgentDeliverable({
           required: renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && isDeliverable(summary),
@@ -2031,6 +2035,9 @@ async function runAgentExecutionInner(
     await prisma.executionMessage.create({
       data: { executionId: execution.id, role: 'agent', content: summary },
     })
+    if (artifactGateFailed) {
+      throw new Error('@artifact was requested, but the agent did not produce an executable artifact. Review the run and retry; no completed app is claimed.')
+    }
     // Degraded evidence rides on the output so a finished run stops reading as
     // a clean success when the search behind it timed out, or its deliverable
     // was not saved as produced.

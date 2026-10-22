@@ -14,7 +14,7 @@ import { ARTIFACT_DIRECTIVE, requestsArtifact } from '@/lib/artifacts/directive'
  * Kept in its own dependency-light module (only `composeInstructions`) so it can
  * be unit-tested without pulling in Prisma, the model SDKs, or the worker.
  */
-export function buildAgentSystemPrompt(objective: string, skillIds: string[], extraSkills: ExtraSkill[] = [], request = '', artifactMode = requestsArtifact(objective, request)): string {
+export function buildAgentSystemPrompt(objective: string, skillIds: string[], extraSkills: ExtraSkill[] = [], _request = '', artifactMode = requestsArtifact(objective)): string {
   return [
     'You are an autonomous agent working on behalf of a user. Follow these instructions:',
     composeInstructions(objective, skillIds, extraSkills),

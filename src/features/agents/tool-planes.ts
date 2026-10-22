@@ -82,6 +82,31 @@ export type ToolBinding = {
   /** The McpConnection row this tool came from — what an approval records so
    *  decideApproval can execute it later. */
   mcpConnectionId?: string
+  /** Whose account the call goes out on (see PlaneCredential). */
+  credential?: PlaneCredential
+  /** MCP only: the server itself reports this tool as changing things
+   *  (annotations). Not a gate — the runtime still treats MCP tools as reads —
+   *  but the action ledger records such calls. */
+  reportsWrite?: boolean
+}
+
+/**
+ * Whose account a plane's calls go out on. Agents act as the person who runs
+ * them, so this is resolved for that person: their own connection when they
+ * have one, otherwise the workspace's shared one.
+ *
+ * Read by the scope card ("acts as") and the action ledger (which connection
+ * a write used, so Undo can go back through exactly that one). Never carries
+ * credential material — ids only.
+ */
+export type PlaneCredential = {
+  /** 'user' = the runner's own connection; 'workspace' = a shared connection,
+   *  key or bot; 'service' = the workspace service identity; 'none' = an
+   *  internal plane with no outside account. */
+  actsAs: 'user' | 'workspace' | 'service' | 'none'
+  /** Nango planes: the connection calls go out on. Updated in place when a
+   *  stale reference is recovered mid-run, so the ledger records the one used. */
+  nango?: DeliveryConnection
 }
 
 /** A tool as a plane reports it (description already defaulted per plane). */
@@ -126,6 +151,8 @@ export type ToolPlaneGroup = {
    *  Integrations — withheld from `tools`, named here so a flow that still
    *  references one can say why instead of "not available". */
   blockedTools?: string[]
+  /** Whose account this group's calls go out on. */
+  credential?: PlaneCredential
 }
 
 export function toolName(provider: string, name: string) {
@@ -242,6 +269,7 @@ export async function loadPeopleAiPlaneGroup(
         ...base,
         serverUrl: paiClient.serverUrl,
         client: adapter,
+        credential: { actsAs: identity === 'user' ? 'user' : 'service' },
         tools: available.map((tool) => ({
           name: tool.name,
           description: tool.description || `${tool.name} via Backstory`,
@@ -281,6 +309,7 @@ export async function loadPeopleAiPlaneGroup(
         ...base,
         serverUrl: backstoryUrl,
         client: backstoryClient,
+        credential: { actsAs: 'service' },
         tools: available.map((tool) => ({
           name: tool.name,
           description: tool.description || `${tool.name} via backstory`,
@@ -347,6 +376,10 @@ export async function loadMcpConnectionPlaneGroups(
       serverUrl: conn.serverUrl,
       isWrite: false,
       tools: [],
+      // A personal connection is its owner's own account; a shared row is the
+      // workspace's. The scope already admits only shared rows and the
+      // acting user's own.
+      credential: { actsAs: conn.userId ? 'user' : 'workspace' },
     }
     try {
       const fresh = await ensureFreshConnectionToken(conn)
@@ -407,6 +440,9 @@ export async function loadMcpConnectionPlaneGroups(
 
 // ── Native built-ins (Granola / Slack / HTTP / Email) ─────────────────────────
 
+/** Native planes that run inside Backstory and reach no outside account. */
+const NATIVE_INTERNAL = new Set(['data_tables', 'repository', 'code', 'artifact', 'roi', 'adapters'])
+
 /**
  * Built-in integration planes. When `providers` is given (the agent path),
  * each plane additionally requires a matching selection; the flow catalog
@@ -455,6 +491,7 @@ export async function loadNativePlaneGroups(
     isWrite: descriptor.isWrite,
     client,
     tools: defs.map((def) => ({ name: def.name, description: def.description, inputSchema: def.inputSchema })),
+    credential: { actsAs: NATIVE_INTERNAL.has(descriptor.providerId) ? 'none' : 'workspace' },
   })
 
   // Granola REST API — gated on a per-org key (saved key, then env fallback).
@@ -675,6 +712,7 @@ export async function loadWarehousePlaneGroups(
         isWriteFor: warehouseToolIsWrite,
         client: new WarehouseToolClient(organizationId, options.userId ?? '', kind),
         tools,
+        credential: { actsAs: 'workspace' },
       })
       continue
     }
@@ -725,6 +763,7 @@ export async function loadNangoPlaneGroups(
         }
         continue
       }
+      const credential = nangoCredential(connection)
       const deliveryClient: McpToolClient = {
         // The connection is resolved once here and held for the whole run, so a
         // reference Nango has since replaced would fail every call until the
@@ -735,7 +774,7 @@ export async function loadNangoPlaneGroups(
             providerConfigKeys: DELIVERY_PROVIDERS[spec.capability],
             userId: ownerUserId,
             connection,
-            call: (resolved) => spec.run(resolved, args),
+            call: (resolved) => spec.run(trackConnection(credential, resolved), args),
           }),
       }
       groups.push({
@@ -747,6 +786,7 @@ export async function loadNangoPlaneGroups(
         isWrite: connector.isWrite,
         client: deliveryClient,
         tools: [{ name: spec.name, description: spec.description, inputSchema: spec.inputSchema }],
+        credential,
       })
     } catch (error) {
       apiLogger.warn('loadTools: Nango delivery setup failed, skipping capability', {
@@ -787,6 +827,7 @@ export async function loadNangoPlaneGroups(
         }
         continue
       }
+      const credential = nangoCredential(connection)
       groups.push({
         id: formatFlowToolConnectionId('nango', tool.name),
         plane: 'nango',
@@ -801,10 +842,11 @@ export async function loadNangoPlaneGroups(
               providerConfigKeys: PROVIDER_CONFIG_KEYS[tool.provider] ?? [tool.provider],
               userId: ownerUserId,
               connection,
-              call: (resolved) => tool.run(resolved, args),
+              call: (resolved) => tool.run(trackConnection(credential, resolved), args),
             }),
         },
         tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }],
+        credential,
       })
     } catch (error) {
       apiLogger.warn('loadTools: Nango provider tool setup failed, skipping', {
@@ -818,8 +860,19 @@ export async function loadNangoPlaneGroups(
   return groups
 }
 
+/** The credential record for a resolved Nango connection (a copy — see trackConnection). */
+export function nangoCredential(connection: DeliveryConnection): PlaneCredential {
+  return { actsAs: connection.scope === 'user' ? 'user' : 'workspace', nango: { ...connection } }
+}
+
+/** Keep the credential pointing at the connection a call actually used. */
+function trackConnection(credential: PlaneCredential, resolved: DeliveryConnection): DeliveryConnection {
+  if (credential.nango && credential.nango.connectionId !== resolved.connectionId) Object.assign(credential.nango, resolved)
+  return resolved
+}
+
 /** Plain-English label for a Nango provider key (e.g. 'google_sheets' → 'Google Sheets'). */
-function providerLabel(provider: string): string {
+export function providerLabel(provider: string): string {
   return provider.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
@@ -833,6 +886,8 @@ export type FlowToolExecutor = {
   /** Only ever set for a caller that passed `approval: 'gate'`: the tool is
    *  "Needs approval" in Integrations and the caller must queue it, not run it. */
   needsApproval?: boolean
+  /** Whose account the call goes out on — recorded by the action ledger. */
+  credential?: PlaneCredential
 }
 
 /**
@@ -887,6 +942,7 @@ export async function resolveFlowToolExecutor(params: {
     return {
       provider: mcpConnectionSlug(fresh.name),
       isWrite: false,
+      credential: { actsAs: conn.userId ? 'user' : 'workspace' },
       // The executor is resolved for ONE tool; a caller reusing it for another
       // name must not slip past that tool's own permission.
       execute: (name, args) => {
@@ -955,6 +1011,7 @@ export async function resolveFlowToolExecutor(params: {
         provider: ref,
         isWrite: warehouseToolIsWrite(params.toolName, params.args),
         execute: (name, args) => client.executeTool('', name, args),
+        credential: { actsAs: 'workspace' },
       }
     }
     if (ref === 'slack' || ref === 'email' || ref === 'http') {
@@ -973,7 +1030,7 @@ export async function resolveFlowToolExecutor(params: {
       } else {
         client = new HttpToolClient(organizationId)
       }
-      return { provider: ref, isWrite: descriptor.isWrite, execute: (name, args) => client.executeTool('', name, args) }
+      return { provider: ref, isWrite: descriptor.isWrite, execute: (name, args) => client.executeTool('', name, args), credential: { actsAs: 'workspace' } }
     }
     throw new Error(`Unknown built-in integration "${ref}" — pick another in the step config.`)
   }
@@ -988,9 +1045,11 @@ export async function resolveFlowToolExecutor(params: {
       userId,
     )
     if (!connection) throw new Error(`No connected ${providerLabel(providerTool.provider)} account is available — connect one in Integrations.`)
+    const credential = nangoCredential(connection)
     return {
       provider: `nango:${providerTool.provider}`,
       isWrite: providerTool.isWrite,
+      credential,
       execute: (name, args) => {
         if (name !== providerTool.name) throw new Error(`Tool "${name}" is not available on this connection.`)
         return withStaleConnectionRecovery({
@@ -998,7 +1057,7 @@ export async function resolveFlowToolExecutor(params: {
           providerConfigKeys: PROVIDER_CONFIG_KEYS[providerTool.provider] ?? [providerTool.provider],
           userId,
           connection,
-          call: (resolved) => providerTool.run(resolved, args),
+          call: (resolved) => providerTool.run(trackConnection(credential, resolved), args),
         })
       },
     }
@@ -1008,9 +1067,11 @@ export async function resolveFlowToolExecutor(params: {
   if (!spec) throw new Error(`Unknown Nango tool "${ref}" — pick another in the step config.`)
   const connection = await resolveDeliveryConnection(organizationId, spec.capability, userId)
   if (!connection) throw new Error(`No connected ${spec.capability} account is available — connect one in Integrations.`)
+  const credential = nangoCredential(connection)
   return {
     provider: `nango:${spec.capability}`,
     isWrite: true,
+    credential,
     execute: (name, args) => {
       if (name !== spec.name) throw new Error(`Tool "${name}" is not available on this connection.`)
       return withStaleConnectionRecovery({
@@ -1018,7 +1079,7 @@ export async function resolveFlowToolExecutor(params: {
         providerConfigKeys: DELIVERY_PROVIDERS[spec.capability],
         userId,
         connection,
-        call: (resolved) => spec.run(resolved, args),
+        call: (resolved) => spec.run(trackConnection(credential, resolved), args),
       })
     },
   }

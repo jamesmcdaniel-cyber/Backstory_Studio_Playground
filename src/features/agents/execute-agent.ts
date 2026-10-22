@@ -22,22 +22,18 @@ import { getGraphRagStore } from '@/lib/rag/get-store'
 import { MEMORY_RELEVANCE_FLOOR, CONTEXT_RELEVANCE_FLOOR } from '@/lib/rag/relevance'
 import { indexExecution } from '@/lib/rag/indexer'
 import {
-  loadPeopleAiPlaneGroup,
   loadMcpConnectionPlaneGroups,
   mcpConnectionSlug,
-  loadNativePlaneGroups,
-  loadNangoPlaneGroups,
   toolName,
   type McpToolClient,
   type ToolBinding,
-  type ToolPlaneGroup,
 } from './tool-planes'
-import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
-import { applyPublishedDefinition, pinnedConnectorKeys } from '@/lib/agents/publish'
+import { agentToolConfig, discoveredToolsFromGroups, loadAgentToolGroups, type ArtifactRunContext, type DiscoveredTool, type UnavailableTool } from './agent-tool-resolution'
+import { applyPublishedDefinition } from '@/lib/agents/publish'
 import { AgentRunRefusedError } from '@/lib/agents/run-errors'
 import { startExecutionHeartbeat } from '@/lib/agents/liveness'
-import { mcpAllowedToolNames, parseAgentToolSettings, scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
-import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
+import { scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
+import type { AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { checkMonthlyTokenBudget, recordTokenUsage } from '@/lib/usage/budget'
@@ -287,16 +283,7 @@ async function loadCompletedToolSteps(executionId: string): Promise<Map<string, 
   return map
 }
 
-// A tool discovered from some plane, before the global cap is applied. `isWrite`
-// marks consequential outbound-delivery tools so they can be reserved a slice of
-// the cap instead of being crowded out by many read tools.
-export type DiscoveredTool = {
-  name: string
-  description: string
-  inputSchema: Record<string, unknown>
-  binding: ToolBinding
-  isWrite: boolean
-}
+export type { DiscoveredTool, UnavailableTool } from './agent-tool-resolution'
 
 const TOOL_CAP = 64
 const WRITE_RESERVE = 16
@@ -431,7 +418,7 @@ export async function loadTools(
   httpEndpoints: AgentHttpEndpoint[] = [],
   toolSettings: AgentToolSettings = {},
   agentId?: string,
-  artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean; guestCopy?: boolean },
+  artifact?: ArtifactRunContext,
   policy?: ToolPolicy,
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
@@ -494,91 +481,22 @@ export async function loadTools(
     }
     return { ...materializeTools(discovered), unavailable: [], policyRemoved: [] }
   }
+  // Every plane — People.ai (connect once, available everywhere), the
+  // workspace's MCP connections (per-agent tool toggles filter there, before
+  // any cap, so a disabled tool never exists for the run), native built-ins
+  // gated on availability AND a matching providers entry ('repository' and
+  // 'code' ride along unconditionally), and Nango planes acting as the run's
+  // user — is loaded and decided in ./agent-tool-resolution. The scope card
+  // reads the very same functions, which is what keeps "what this agent can
+  // do" honest. A conversation about an artifact runs with the producing
+  // agent's whole toolset plus the artifact's own tools.
+  const groups = await loadAgentToolGroups({ organizationId, providers, ownerUserId, httpEndpoints, agentId, artifact })
+  const fromGroups = discoveredToolsFromGroups(groups, toolSettings)
+  discovered.push(...fromGroups.discovered)
   // Planes that produced no usable client. Kept so the run can report WHICH
   // attached tool is unavailable and why, instead of behaving as though the
   // agent had nothing attached at all.
-  const unavailable: UnavailableTool[] = []
-  const pushGroup = (group: ToolPlaneGroup, options: { cap?: number; namePrefix?: string } = {}) => {
-    if (!group.client) {
-      // isWrite matters downstream: a missing DELIVERY integration is a
-      // blocker (the run cannot do the thing it was asked to do), while a
-      // missing read source only narrows what it had to work with.
-      if (group.toolsError) unavailable.push({ name: group.name, reason: group.toolsError, isWrite: group.isWrite })
-      return
-    }
-    const prefix = options.namePrefix ?? group.provider
-    // Budget once, globally, after policy/relevance selection. MCP tools late
-    // in discovery order are not less capable than the first twenty.
-    const tools = group.tools
-    for (const tool of tools) {
-      // Belt and braces: the MCP loader already withholds blocked tools.
-      if (tool.policy === 'off') continue
-      discovered.push({
-        name: toolName(prefix, tool.name),
-        description: tool.description,
-        inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
-        binding: {
-          provider: group.provider,
-          serverUrl: group.serverUrl,
-          toolName: tool.name,
-          isWrite: group.isWrite,
-          ...(group.isWriteFor ? { isWriteFor: (args: Record<string, unknown>) => group.isWriteFor!(tool.name, args) } : {}),
-          client: group.client,
-          ...(group.plane === 'mcp' ? { mcpConnectionId: group.id } : {}),
-          ...(tool.policy === 'approve' ? { needsApproval: true } : {}),
-        },
-        isWrite: group.isWrite,
-      })
-    }
-  }
-
-  // ---- People.ai Sales AI MCP (a.k.a. Backstory MCP) -----------------------
-  // Sales AI read tools are this product's core data spine, so they load for
-  // EVERY agent whenever a People.ai client resolves — the same "connect once,
-  // available everywhere" model as the org MCP connections below. Identity
-  // order (owner connection → org service key → legacy env) lives in the loader.
-  // A conversation about an artifact runs with the producing agent's whole
-  // toolset — the People.ai / Backstory MCP, the workspace's MCP connections
-  // and the agent's integrations — plus the artifact's own tools, so a
-  // question the artifact cannot answer is answered from the live sources
-  // that powered it. An ROI dashboard also gets the ROI plane (its prep).
-  const nativeProviders = artifact?.kind === 'roi_dashboard' ? [...providers, 'repository', 'code', 'roi'] : [...providers, 'repository', 'code']
-  const [peopleAiGroup, mcpGroups, nativeGroups, nangoGroups] = await Promise.all([
-    loadPeopleAiPlaneGroup(organizationId, ownerUserId),
-    loadMcpConnectionPlaneGroups(organizationId, ownerUserId),
-    loadNativePlaneGroups(organizationId, { providers: nativeProviders, httpEndpoints, httpUserId: ownerUserId ?? undefined, agentId, artifact }),
-    loadNangoPlaneGroups(organizationId, ownerUserId, { providers }),
-  ])
-  if (peopleAiGroup) pushGroup(peopleAiGroup, { cap: 20 })
-
-  // ---- Per-org MCP connections (all active connections, any authType) ------
-  // Custom MCP connections load for every agent regardless of the providers
-  // list. A failing/unreachable server must not abort the run or block others.
-  // Per-agent tool toggles (agent setup → MCP chip gear) filter HERE, before
-  // the per-group cap and the global 64-tool cap, so a disabled tool never
-  // exists for the run — no description, no cap slot, nothing to call.
-  for (const group of mcpGroups) {
-    const allowed = mcpAllowedToolNames(toolSettings, group.id)
-    pushGroup(allowed ? { ...group, tools: group.tools.filter((tool) => allowed.has(tool.name)) } : group, { cap: 20 })
-  }
-
-  // ---- Native built-ins (Granola / Slack / HTTP / Email) --------------------
-  // Each gated on its availability AND a matching providers entry.
-  // 'repository' rides along unconditionally: the retrieval it replaces
-  // (pre-run passage injection) reached every agent with documents, so the
-  // tools that replace it must too. 'code' rides along for the same reason:
-  // an agent that can read a CSV but not compute over it can only refuse or
-  // guess. Both read-only, so no approval-gate impact.
-  for (const group of nativeGroups) pushGroup(group)
-
-  // ---- Nango delivery (outbound writes as the acting user) -----------------
-  // Slack/Gmail/Salesforce writes through the org's Nango connections,
-  // preferring the agent owner's own connection so messages arrive as the rep.
-  // Gated per capability on both a matching providers entry and a resolvable
-  // connection. Failures never abort the run.
-  for (const group of nangoGroups) {
-    pushGroup(group, { namePrefix: 'nango' })
-  }
+  const unavailable: UnavailableTool[] = fromGroups.unavailable
 
   // Select which tools to expose: over the cap, rank by relevance to the
   // objective (best-effort, embeddings-gated) with a reserved write budget;
@@ -593,8 +511,6 @@ export async function loadTools(
   return { ...selected, unavailable, policyRemoved }
 }
 
-/** An integration attached to the agent that produced no usable client. */
-export type UnavailableTool = { name: string; reason: string; isWrite: boolean }
 
 /**
  * The unavailable integrations that must STOP a run from reporting success.
@@ -1054,7 +970,8 @@ async function runAgentExecutionInner(
     // Publishing pins the tools too: adding a write-capable integration to a
     // published agent must not change what it can do to the world with nothing
     // republished.
-    const providers = pinnedConnectorKeys(agentRow) ?? (await resolveAgentConnectorKeys(agent.id, agentMetadata))
+    // Resolved by agentToolConfig — the same call the scope card makes.
+    const { providers, toolSettings, httpEndpoints } = await agentToolConfig(agent, agentMetadata)
     for (const connectionId of data.stepOverrides?.toolConnectionIds ?? []) {
       const sep = connectionId.indexOf(':')
       if (sep <= 0) continue
@@ -1064,11 +981,9 @@ async function runAgentExecutionInner(
     }
     const skillIds = Array.isArray(agentMetadata.skills) ? agentMetadata.skills.map(String) : []
     // Configured API endpoints (agent setup → HTTP API) become named tools.
-    const httpEndpoints = parseAgentHttpEndpoints(agentMetadata.httpEndpoints)
-    // Per-tool scopes (agent setup → chip gear). Resource scopes (channels,
+    // Per-tool scopes (agent setup → chip gear): resource scopes (channels,
     // repos) are enforced below on descriptions + call args; MCP tool toggles
     // are enforced inside loadTools by never loading a disabled tool.
-    const toolSettings = parseAgentToolSettings(agentMetadata.toolSettings)
     // A run started from an artifact's chat gets that artifact's tools.
     const artifactContext = await (async () => {
       const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown; artifactToolQuery?: unknown; artifactBaseVersionId?: unknown }

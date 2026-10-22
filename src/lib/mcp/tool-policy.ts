@@ -96,3 +96,15 @@ export function readToolAnnotations(raw: unknown): McpToolAnnotations | undefine
   }
   return Object.keys(out).length ? out : undefined
 }
+
+/**
+ * Does the server say this tool changes things? Only an explicit annotation
+ * counts: readOnlyHint false, or destructiveHint true. A tool that sends no
+ * annotations is unclassified — the spec's defaults are a guess, not a claim.
+ */
+export function mcpReportsWrite(annotations: McpToolAnnotations | undefined): boolean | null {
+  if (!annotations) return null
+  if (annotations.readOnlyHint === true) return false
+  if (annotations.readOnlyHint === false || annotations.destructiveHint === true) return true
+  return null
+}

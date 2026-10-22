@@ -194,6 +194,8 @@ if (TEST_DB) {
     { name: 'GET /api/agents/[id]/publish', run: async () => (await import('../agents/[id]/publish/route')).GET(req(`/api/agents/${agentId}/publish`)) },
     { name: 'GET /api/agents/activity', run: async () => (await import('../agents/activity/route')).GET(req('/api/agents/activity')) },
     { name: 'GET /api/agents/kpis', run: async () => (await import('../agents/kpis/route')).GET(req('/api/agents/kpis')) },
+    { name: 'GET /api/agents/scope', run: async () => (await import('../agents/scope/route')).GET(req('/api/agents/scope')) },
+    { name: 'GET /api/agents/[id]/scope', run: async () => (await import('../agents/[id]/scope/route')).GET(req(`/api/agents/${agentId}/scope`)) },
     { name: 'GET /api/teammates', run: async () => (await import('../teammates/route')).GET(req('/api/teammates')) },
     { name: 'GET /api/workspace-folders', run: async () => (await import('../workspace-folders/route')).GET(req('/api/workspace-folders')) },
     { name: 'GET /api/approvals', run: async () => (await import('../approvals/route')).GET(req('/api/approvals')) },

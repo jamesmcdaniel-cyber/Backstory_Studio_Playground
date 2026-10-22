@@ -5,6 +5,7 @@ import {
   BUILTIN_CONNECTORS,
   fromNangoProviderKey,
 } from '@/lib/connectors/registry'
+import { listWarehouseCredentialHosts } from '@/lib/warehouse/credentials'
 
 /**
  * Single source of "connected" across the org's integration planes.
@@ -55,15 +56,22 @@ async function readPlanes(organizationId: string): Promise<PlaneReads> {
  * `success: true`.
  */
 export async function getAvailableIntegrations(organizationId: string): Promise<AvailableIntegrations> {
-  const [{ connectionsRaw, nango }, hasGranola, hasSlack] = await Promise.all([
+  const [{ connectionsRaw, nango }, hasGranola, hasSlack, warehouseHosts] = await Promise.all([
     readPlanes(organizationId),
     granolaConfigured(organizationId),
     slackConfigured(organizationId),
+    listWarehouseCredentialHosts(organizationId).catch(() => ({ databricks: [], snowflake: [] })),
   ])
 
   // Builtins whose availability is per-WORKSPACE (their own credential, or the
   // env fallback where the org kind allows it) rather than a global env check.
-  const perOrgConnected: Record<string, boolean> = { Granola: hasGranola, Slack: hasSlack }
+  // A warehouse is connected once a credential for its host is saved.
+  const perOrgConnected: Record<string, boolean> = {
+    Granola: hasGranola,
+    Slack: hasSlack,
+    Databricks: warehouseHosts.databricks.length > 0,
+    Snowflake: warehouseHosts.snowflake.length > 0,
+  }
 
   // Merge planes, deduping by lowercased key and OR-ing connected state. Builtins
   // are added first so their canonical labels/keys (Slack/Email/Granola) win.

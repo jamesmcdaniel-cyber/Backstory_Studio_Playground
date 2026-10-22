@@ -233,6 +233,7 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
           // A flow step CAN pause for a person, so an MCP tool set to "Needs
           // approval" in Integrations comes back flagged rather than refused.
           approval: 'gate',
+          args,
         })
 
         // Flow steps do not pause on the agent-level `requireApproval` gate: a

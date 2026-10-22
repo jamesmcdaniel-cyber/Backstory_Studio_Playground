@@ -55,6 +55,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       plane: parsed.plane,
       ref: parsed.ref,
       toolName: input.toolName,
+      args: input.args,
     })
     if (executor.isWrite) throw new ApiError('Repository pulls can only run read actions.', 400, 'PULL_WRITE_REFUSED')
     const result = await executor.execute(input.toolName, input.args)

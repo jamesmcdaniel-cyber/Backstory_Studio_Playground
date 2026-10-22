@@ -20,6 +20,7 @@ import { resolveNangoConnection, type DeliveryCapability } from '@/lib/nango/del
 import { findNangoWriteTool, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { detectPiiCategories } from '@/lib/security/pii-egress'
 import { McpToolBlockedError } from '@/lib/mcp/tool-policy'
+import { WarehouseToolClient, isWarehouseProvider, warehouseKindForTool } from '@/lib/warehouse/tools'
 
 /** Delivery planes, used only to label an approval with a friendly capability. */
 const DELIVERY_PLANE = /^nango:(slack|gmail|salesforce)$/
@@ -39,7 +40,9 @@ export function requiresApproval(
   isWrite: boolean,
   options: { injectionTainted?: boolean } = {},
 ): boolean {
-  if (isWrite !== true || !provider.startsWith('nango:')) return false
+  // Warehouse writes (DML/DDL through a query tool, every job run) are gated
+  // on the same terms: decideApproval can execute them too.
+  if (isWrite !== true || !(provider.startsWith('nango:') || isWarehouseProvider(provider))) return false
   // A TAINTED run — one that has already read content flagged as
   // injection-shaped this run — loses the right to write unattended, whatever
   // the agent's own setting says. This is the deterministic answer to the one
@@ -279,6 +282,11 @@ export async function decideApproval(input: {
       } catch (error) {
         if (!(error instanceof McpToolBlockedError)) throw error
       }
+    } else if (isWarehouseProvider(payload.provider) && warehouseKindForTool(approval.tool) === payload.provider) {
+      // A warehouse write runs as the person who proposed it, through the
+      // same host-bound credential lookup as the original call.
+      writeResult = await new WarehouseToolClient(input.organizationId, payload.userId, payload.provider).executeTool('', approval.tool, payload.args)
+      executed = true
     } else {
       // Dispatch on the RECORDED (bare) TOOL NAME across the full Nango write
       // registry — never on the capability/provider alone (that would run a

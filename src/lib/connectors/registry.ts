@@ -193,6 +193,31 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     matches: has('data table'),
     available: () => true,
   },
+  // Data warehouses. Each is reached with the workspace's saved HTTP credential
+  // for the warehouse host (no Nango provider exists for either). Customer-
+  // facing: a customer workspace connects its OWN warehouse, so neither plane
+  // is gated by edition. Write planes at attachment time because a query can
+  // be DML; execution classifies each call by its SQL (warehouseToolIsWrite).
+  {
+    key: 'Databricks',
+    label: 'Databricks',
+    slug: 'databricks',
+    kind: 'builtin',
+    isWrite: true,
+    providerId: 'databricks',
+    matches: has('databricks'),
+    available: () => true, // gated per-org by a saved credential at the call site
+  },
+  {
+    key: 'Snowflake',
+    label: 'Snowflake',
+    slug: 'snowflake',
+    kind: 'builtin',
+    isWrite: true,
+    providerId: 'snowflake',
+    matches: has('snowflake'),
+    available: () => true, // gated per-org by a saved credential at the call site
+  },
   // Nango delivery planes (outbound as the acting user). One per capability.
   {
     key: 'slack',

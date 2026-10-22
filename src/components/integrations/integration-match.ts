@@ -20,6 +20,7 @@ export function integrationSlug(name: string): string | null {
   if (n.includes('slack')) return 'slack'
   if (n.includes('salesforce')) return 'salesforce'
   if (n.includes('snowflake')) return 'snowflake'
+  if (n.includes('databricks')) return 'databricks'
   if (n.includes('intercom')) return 'intercom'
   if (n.includes('hubspot')) return 'hubspot'
   if (n.includes('apollo')) return 'apollo'

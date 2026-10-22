@@ -40,15 +40,6 @@ export async function runFlowPoll(flow: PollFlow, userId: string, now: Date): Pr
   const toolName = String(trigger.toolName || '')
   if (!connectionId || !toolName) return { dispatched: 0 }
 
-  const { plane, ref } = parseFlowToolConnectionId(connectionId)
-  const executor = await resolveFlowToolExecutor({ organizationId: flow.organizationId, userId, plane, ref, toolName })
-  // Never poll a WRITE tool — polling calls the tool every tick with no approval
-  // gate, so it must be read-only.
-  if (executor.isWrite) {
-    apiLogger.warn('runFlowPoll: refusing to poll a write tool', { flowId: flow.id, toolName })
-    return { dispatched: 0 }
-  }
-
   let args: Record<string, unknown> = {}
   if (typeof trigger.args === 'string') {
     try {
@@ -58,6 +49,17 @@ export async function runFlowPoll(flow: PollFlow, userId: string, now: Date): Pr
     }
   } else if (trigger.args && typeof trigger.args === 'object') {
     args = prepareToolArgs(trigger.args)
+  }
+
+  const { plane, ref } = parseFlowToolConnectionId(connectionId)
+  // The args go in so a tool classified per call (a warehouse SELECT) can be
+  // polled while the same tool running a DELETE cannot.
+  const executor = await resolveFlowToolExecutor({ organizationId: flow.organizationId, userId, plane, ref, toolName, args })
+  // Never poll a WRITE tool — polling calls the tool every tick with no approval
+  // gate, so it must be read-only.
+  if (executor.isWrite) {
+    apiLogger.warn('runFlowPoll: refusing to poll a write tool', { flowId: flow.id, toolName })
+    return { dispatched: 0 }
   }
 
   const result = flowToolOutput(await executor.execute(toolName, args))

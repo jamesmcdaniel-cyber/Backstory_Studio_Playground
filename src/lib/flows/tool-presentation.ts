@@ -37,6 +37,7 @@ const KNOWN_BRANDS: { match: RegExp; key: string; label: string; slug: string }[
   { match: /backstory|people[\s_.-]*ai/, key: 'backstory', label: 'Backstory', slug: 'backstory' },
   { match: /slack/, key: 'slack', label: 'Slack', slug: 'slack' },
   { match: /snowflake/, key: 'snowflake', label: 'Snowflake', slug: 'snowflake' },
+  { match: /databricks/, key: 'databricks', label: 'Databricks', slug: 'databricks' },
   { match: /granola/, key: 'granola', label: 'Granola', slug: 'granola' },
   { match: /monday/, key: 'monday', label: 'Monday', slug: 'mondaydotcom' },
   { match: /github/, key: 'github', label: 'GitHub', slug: 'github' },

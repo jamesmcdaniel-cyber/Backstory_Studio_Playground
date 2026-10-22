@@ -54,6 +54,8 @@ import {
   toolPolicyFor,
   type McpToolAnnotations,
 } from '@/lib/mcp/tool-policy'
+import { WAREHOUSE_TOOLS, WarehouseToolClient, isWarehouseProvider, warehouseToolIsWrite } from '@/lib/warehouse/tools'
+import { listWarehouseCredentialHosts, missingWarehouseCredentialMessage, type WarehouseKind } from '@/lib/warehouse/credentials'
 
 // Minimal interface every plane's execution client satisfies (McpClient,
 // BackstoryMcpClient, the built-in ToolClients, and adapters).
@@ -69,6 +71,10 @@ export type ToolBinding = {
    *  Nango provider tools get one group per tool, so this stays per-tool
    *  accurate rather than collapsing to a per-plane flag. */
   isWrite: boolean
+  /** Per-CALL classification for tools whose effect depends on their args (a
+   *  warehouse query is a read for SELECT, a write for DELETE). Overrides
+   *  `isWrite` at the approval gate, the read-only policy and the audit. */
+  isWriteFor?: (args: Record<string, unknown>) => boolean
   client: McpToolClient
   /** Set when the tool's owner chose "Needs approval" for it in Integrations
    *  (MCP per-tool permissions). Gated whatever the agent's own setting. */
@@ -106,6 +112,8 @@ export type ToolPlaneGroup = {
   serverUrl: string
   isWrite: boolean
   client?: McpToolClient
+  /** Per-call write classification for this group's tools (see ToolBinding.isWriteFor). */
+  isWriteFor?: (toolName: string, args: Record<string, unknown>) => boolean
   tools: PlaneToolDescriptor[]
   /**
    * Set when tool discovery FAILED for this connection (token expired, server
@@ -596,6 +604,9 @@ export async function loadNativePlaneGroups(
     }
   }
 
+  // Data warehouses (Databricks, Snowflake) \u2014 see loadWarehousePlaneGroups.
+  groups.push(...await loadWarehousePlaneGroups(organizationId, { providers: options.providers, userId: options.httpUserId }))
+
   // Email via Resend REST API — gated on a per-org key, so an agent can only
   // send as its own workspace, never as the shared platform identity.
   const emailConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'email')!
@@ -617,6 +628,61 @@ export async function loadNativePlaneGroups(
     }
   }
 
+  return groups
+}
+
+// ── Data warehouses (Databricks / Snowflake) ──────────────────────────────────
+
+/**
+ * The warehouse planes, gated on a saved HTTP credential restricted to the
+ * warehouse host; one query covers both. With `providers` (the agent path and
+ * run validation) an attached plane without a credential is reported
+ * unavailable with the exact fix. Without it (the builder's catalog) the plane
+ * is still listed, flagged with that fix, so the builder can offer Databricks
+ * and Snowflake before anyone has connected them.
+ */
+export async function loadWarehousePlaneGroups(
+  organizationId: string,
+  options: { providers?: string[]; userId?: string } = {},
+): Promise<ToolPlaneGroup[]> {
+  const descriptors = (['databricks', 'snowflake'] as WarehouseKind[])
+    .map((kind) => BUILTIN_CONNECTORS.find((c) => c.providerId === kind)!)
+    .filter((descriptor) => (options.providers ? isSelected(descriptor, options.providers) : true) && descriptor.available())
+  if (!descriptors.length) return []
+  let hosts: Record<WarehouseKind, string[]> | null = null
+  try {
+    hosts = await listWarehouseCredentialHosts(organizationId)
+  } catch (error) {
+    apiLogger.warn('loadTools: warehouse credential lookup failed', {
+      organizationId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+  const groups: ToolPlaneGroup[] = []
+  for (const descriptor of descriptors) {
+    const kind = descriptor.providerId as WarehouseKind
+    const id = formatFlowToolConnectionId('native', descriptor.providerId)
+    const tools = WAREHOUSE_TOOLS[kind].map((def) => ({ name: def.name, description: def.description, inputSchema: def.inputSchema }))
+    const kindHosts = hosts?.[kind] ?? []
+    if (kindHosts.length) {
+      groups.push({
+        id,
+        plane: 'native',
+        name: descriptor.label,
+        provider: descriptor.providerId,
+        serverUrl: `https://${kindHosts[0]}`,
+        isWrite: descriptor.isWrite,
+        isWriteFor: warehouseToolIsWrite,
+        client: new WarehouseToolClient(organizationId, options.userId ?? '', kind),
+        tools,
+      })
+      continue
+    }
+    const reason = hosts ? missingWarehouseCredentialMessage(kind) : `${descriptor.label} could not be set up for this run — try again.`
+    groups.push(options.providers
+      ? unavailableGroup({ id, plane: 'native', name: descriptor.label, provider: descriptor.providerId, isWrite: descriptor.isWrite, reason })
+      : { id, plane: 'native', name: descriptor.label, provider: descriptor.providerId, serverUrl: '', isWrite: descriptor.isWrite, tools, toolsError: reason })
+  }
   return groups
 }
 
@@ -790,6 +856,9 @@ export async function resolveFlowToolExecutor(params: {
    * A tool set to "Blocked" is refused whatever is passed.
    */
   approval?: 'gate' | 'approved'
+  /** The call's args, when known: tools classified per call (warehouse
+   *  queries) decide read vs write from them. Without them such a tool is a write. */
+  args?: Record<string, unknown>
 }): Promise<FlowToolExecutor> {
   const { organizationId, userId, plane, ref } = params
 
@@ -877,6 +946,16 @@ export async function resolveFlowToolExecutor(params: {
     if (ref === 'code') {
       const client = new CodeAnalysisToolClient(organizationId, userId)
       return { provider: ref, isWrite: false, execute: (name, args) => client.executeTool('', name, args) }
+    }
+    if (isWarehouseProvider(ref)) {
+      // No credential check here: the client resolves the host's saved
+      // credential per call and fails with "save a credential for <host>".
+      const client = new WarehouseToolClient(organizationId, userId, ref)
+      return {
+        provider: ref,
+        isWrite: warehouseToolIsWrite(params.toolName, params.args),
+        execute: (name, args) => client.executeTool('', name, args),
+      }
     }
     if (ref === 'slack' || ref === 'email' || ref === 'http') {
       const descriptor = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === ref)!

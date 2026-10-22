@@ -31,17 +31,19 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (plane === 'mcp' || plane === 'people_ai') {
     return { success: false as const, error: 'Pick from a list is not available for MCP connections.' }
   }
+  const args = prepareToolArgs(body.args ?? {})
   const executor = await resolveFlowToolExecutor({
     organizationId: auth.organizationId,
     userId: auth.dbUser.id,
     plane,
     ref,
     toolName: body.toolName,
+    args,
   })
   if (executor.isWrite) {
     return { success: false as const, error: 'Only read actions can populate a picker.' }
   }
-  const result = flowToolOutput(await executor.execute(body.toolName, prepareToolArgs(body.args ?? {})))
+  const result = flowToolOutput(await executor.execute(body.toolName, args))
   const items = pageItems(result, body.itemsPath)
   // Cap what we return to the picker so a large list can't bloat the response.
   return { success: true as const, items: items.slice(0, 200) }

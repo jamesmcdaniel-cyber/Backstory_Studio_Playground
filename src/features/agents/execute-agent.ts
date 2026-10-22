@@ -518,7 +518,12 @@ export async function loadTools(
         description: tool.description,
         inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
         binding: {
-          provider: group.provider, serverUrl: group.serverUrl, toolName: tool.name, isWrite: group.isWrite, client: group.client,
+          provider: group.provider,
+          serverUrl: group.serverUrl,
+          toolName: tool.name,
+          isWrite: group.isWrite,
+          ...(group.isWriteFor ? { isWriteFor: (args: Record<string, unknown>) => group.isWriteFor!(tool.name, args) } : {}),
+          client: group.client,
           ...(group.plane === 'mcp' ? { mcpConnectionId: group.id } : {}),
           ...(tool.policy === 'approve' ? { needsApproval: true } : {}),
         },
@@ -1594,6 +1599,21 @@ async function runAgentExecutionInner(
             continue
           }
 
+          // A tool whose effect depends on its args (a warehouse query: SELECT
+          // reads, DELETE writes) is classified per call. A read-only step
+          // policy kept it by name, so this is where its writes are refused.
+          const callIsWrite = binding.isWriteFor ? binding.isWriteFor((call.input ?? {}) as Record<string, unknown>) : binding.isWrite
+          if (callIsWrite && binding.isWriteFor && policy?.mode === 'readonly') {
+            const readOnlyRefusal = `${binding.toolName} was asked to change data, but this step only allows read-only tools. Run a SELECT / SHOW / DESCRIBE instead.`
+            await prisma.workflowStep.update({
+              where: { id: step.id },
+              data: { status: 'failed', error: jsonValue({ message: readOnlyRefusal }), completedAt: new Date() },
+            })
+            await recordEvent(execution.id, step.id, 'tool.blocked', { name: step.node, reason: readOnlyRefusal })
+            results.push({ toolCallId: call.id, content: JSON.stringify({ error: readOnlyRefusal }), isError: true })
+            continue
+          }
+
           // Approval gate: if this agent requires approval and the tool is an
           // outbound write, queue it instead of executing — an approver runs
           // it out-of-band, and the RUN SUSPENDS until the decision. On approve,
@@ -1615,7 +1635,7 @@ async function runAgentExecutionInner(
             results.push({ toolCallId: call.id, content: JSON.stringify({ error: refusal }), isError: true })
             continue
           }
-          if (binding.needsApproval || (!data.skipApprovalGate && requiresApproval(agentMetadata, binding.provider, binding.isWrite, { injectionTainted }))) {
+          if (binding.needsApproval || (!data.skipApprovalGate && requiresApproval(agentMetadata, binding.provider, callIsWrite, { injectionTainted }))) {
             // Only ONE suspension per turn: if a question or another approval is
             // already pending, defer this one with a covering result (and do NOT
             // create an approval row, so nothing is orphaned) — the model
@@ -1727,7 +1747,7 @@ async function runAgentExecutionInner(
             executionId: execution.id,
             actorUserId: userId,
             actorKind: 'agent',
-            action: toolAuditAction(binding.isWrite),
+            action: toolAuditAction(callIsWrite),
             tool: call.name,
             resourceType: binding.provider,
             payload: call.input,
@@ -1740,7 +1760,10 @@ async function runAgentExecutionInner(
           const message = describeUpstreamFailure(error)
           // A binding that never resolved is already reported through the
           // unavailable-integration path; there is no call to classify here.
-          if (binding) toolFailures.push({ name: binding.toolName, isWrite: binding.isWrite, message })
+          if (binding) {
+            const failedWrite = binding.isWriteFor ? binding.isWriteFor((call.input ?? {}) as Record<string, unknown>) : binding.isWrite
+            toolFailures.push({ name: binding.toolName, isWrite: failedWrite, message })
+          }
           await prisma.workflowStep.update({
             where: { id: step.id },
             data: { status: 'failed', error: jsonValue({ message }), completedAt: new Date() },

@@ -190,7 +190,13 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     // while execution classifies each selected tool precisely.
     isWrite: true,
     providerId: 'data_tables',
-    matches: has('data table'),
+    // The agent picker stores the label ('Data Tables'); a flow tool step's
+    // connection id carries the provider id ('native:data_tables'), which the
+    // run validator passes back here as the selection. Both name this plane.
+    matches: (selected) => {
+      const value = selected.toLowerCase()
+      return value.includes('data table') || value === 'data_tables'
+    },
     available: () => true,
   },
   // Data warehouses. Each is reached with the workspace's saved HTTP credential

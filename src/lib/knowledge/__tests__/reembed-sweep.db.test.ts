@@ -75,10 +75,15 @@ if (TEST_DB) {
     assert.equal(row.indexError, null, 'a healed document must stop reporting an error')
   })
 
-  test('a drained sweep finds nothing left to do, and is safe to re-run', async (t) => {
+  test('a drained sweep leaves a healed document alone, and is safe to re-run', async (t) => {
     if (!vectorReady) return t.skip('pgvector not installed')
+    const before = await prisma.knowledgeDocument.findFirst({ where: { id: ids.document, organizationId: ids.org } })
     const result = await runReembedSweep({ fetchImpl })
-    assert.equal(result.scanned, 0)
     assert.equal(result.skippedNoProvider, false)
+    // The sweep is platform-wide, so its counts include documents other test
+    // files create concurrently; judge it by this document alone.
+    const after = await prisma.knowledgeDocument.findFirst({ where: { id: ids.document, organizationId: ids.org } })
+    assert.equal(after.indexState, 'indexed')
+    assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime(), 'an indexed document is not picked up again')
   })
 }

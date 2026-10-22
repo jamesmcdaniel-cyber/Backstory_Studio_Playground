@@ -1,43 +1,74 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { createContext, createElement, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSupabase } from '@/components/providers/supabase-provider'
+import { nextAuthContextStep, type AuthContextValue, type AuthSeed } from './auth-context-state'
 
-type AuthContext = {
-  userId: string
-  organizationId: string
-  role: string
-  permissions?: string[]
+const AuthSeedContext = createContext<AuthSeed | null>(null)
+
+/** Hands the server-resolved context (root layout) to every useAuth below it. */
+export function AuthSeedProvider({ seed, children }: { seed: AuthSeed | null; children: ReactNode }) {
+  return createElement(AuthSeedContext.Provider, { value: seed }, children)
+}
+
+// Browser-only: shared by every useAuth caller, so the sidebar, settings and
+// the rest make ONE /api/auth/context request per user instead of one each.
+// (Effects never run on the server, so this is never written during SSR.)
+let cached: AuthSeed | null = null
+let inflight: { authUserId: string; promise: Promise<AuthSeed | null> } | null = null
+// Page load counts as fresh: the seed or the first fetch just resolved it.
+let lastRevalidated = Date.now()
+
+function fetchContext(authUserId: string): Promise<AuthSeed | null> {
+  if (inflight?.authUserId === authUserId) return inflight.promise
+  const promise = fetch('/api/auth/context', { cache: 'no-store' })
+    .then((response) => response.json())
+    .then((data) => {
+      cached = data.success ? { authUserId, context: data.context as AuthContextValue } : null
+      return cached
+    })
+    .catch(() => null)
+    .finally(() => { if (inflight?.promise === promise) inflight = null })
+  inflight = { authUserId, promise }
+  return promise
 }
 
 export function useAuth() {
   const { user, loading, signOut } = useSupabase()
-  const [context, setContext] = useState<AuthContext | null>(null)
+  const seed = useContext(AuthSeedContext)
+  const sessionUserId = user?.id ?? null
+  const [context, setContext] = useState<AuthContextValue | null>(
+    () => nextAuthContextStep({ seed, cached, sessionLoading: true, sessionUserId: null }).context,
+  )
   const [contextLoading, setContextLoading] = useState(false)
 
   useEffect(() => {
-    if (!user) {
-      setContext(null)
-      return
-    }
-    // Optimistic paint from JWT metadata so the shell doesn't flash, but it
-    // carries no permissions — those are resolved server-side per request, so
-    // the fetch below always runs and overwrites this.
-    const metadataOrganization = user.user_metadata?.organization_id
-    if (metadataOrganization) {
-      setContext({
-        userId: user.id,
-        organizationId: metadataOrganization,
-        role: user.user_metadata?.role || 'USER',
-      })
-    }
-
+    const step = nextAuthContextStep({ seed, cached, sessionLoading: loading, sessionUserId })
+    setContext(step.context)
+    if (!step.fetch || !sessionUserId) return
+    let current = true
     setContextLoading(true)
-    fetch('/api/auth/context', { cache: 'no-store' })
-      .then((response) => response.json())
-      .then((data) => setContext(data.success ? data.context : null))
-      .finally(() => setContextLoading(false))
-  }, [user])
+    void fetchContext(sessionUserId).then((resolved) => {
+      if (!current) return
+      setContext(resolved?.context ?? null)
+      setContextLoading(false)
+    })
+    return () => { current = false }
+  }, [seed, loading, sessionUserId])
+
+  // A role or permission change made elsewhere shows up when the tab is next
+  // focused, quietly (no loading state, so nothing flashes) and at most once
+  // a minute across every caller.
+  useEffect(() => {
+    if (!sessionUserId) return
+    const revalidate = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastRevalidated < 60_000) return
+      lastRevalidated = Date.now()
+      void fetchContext(sessionUserId).then((resolved) => { if (resolved?.authUserId === sessionUserId) setContext(resolved.context) })
+    }
+    window.addEventListener('focus', revalidate)
+    return () => window.removeEventListener('focus', revalidate)
+  }, [sessionUserId])
 
   return useMemo(() => ({
     isLoaded: !loading && !contextLoading,
@@ -53,6 +84,7 @@ export function useAuth() {
     signIn: () => { window.location.href = '/auth/login' },
     signUp: () => { window.location.href = '/auth/signup' },
     signOut: async () => {
+      cached = null
       await signOut()
       // replace() drops the (now signed-out) page from history so Back can't
       // return to it; the bfcache guard covers any earlier protected pages.

@@ -4,14 +4,18 @@ import { Toaster } from 'sonner'
 import { MotionConfig } from 'motion/react'
 import { SupabaseProvider } from './supabase-provider'
 import { ProposalsProvider } from './proposals-provider'
+import { AuthSeedProvider } from '@/hooks/use-auth'
+import type { AuthSeed } from '@/hooks/auth-context-state'
 
-export function ClientProviders({ children }: { children: React.ReactNode }) {
+export function ClientProviders({ children, authSeed = null }: { children: React.ReactNode; authSeed?: AuthSeed | null }) {
   return (
     <MotionConfig reducedMotion="user">
       <SupabaseProvider>
-        <ProposalsProvider>
-          {children}
-        </ProposalsProvider>
+        <AuthSeedProvider seed={authSeed}>
+          <ProposalsProvider>
+            {children}
+          </ProposalsProvider>
+        </AuthSeedProvider>
         <Toaster
           richColors
           position="bottom-right"

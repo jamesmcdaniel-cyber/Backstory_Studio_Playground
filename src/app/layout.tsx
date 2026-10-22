@@ -4,6 +4,7 @@ import { Anonymous_Pro } from 'next/font/google'
 import { ClientProviders } from '@/components/providers/client-providers'
 import { AppShell } from '@/components/layout/app-shell'
 import { SkipLink } from '@/components/layout/skip-link'
+import { loadAuthSeed } from '@/lib/server/auth-seed'
 import './globals.css'
 
 // PRIMARY DISPLAY/BODY — KMR Waldenburg (proprietary, self-hosted). Arimo is the
@@ -55,12 +56,16 @@ export const metadata: Metadata = {
  */
 export const dynamic = 'force-dynamic'
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  // The caller's permissions, resolved with this render so permission-gated
+  // nav (Admin, Reviews) is in the first paint instead of arriving a round
+  // trip later. Null on public pages; the client then asks for it as before.
+  const authSeed = await loadAuthSeed()
   return (
     <html lang="en" className={`${waldenburg.variable} ${anonymousPro.variable}`}>
       <body>
         <SkipLink />
-        <ClientProviders>
+        <ClientProviders authSeed={authSeed}>
           <AppShell>{children}</AppShell>
         </ClientProviders>
       </body>

@@ -1,16 +1,10 @@
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { clientAuthContext } from '@/lib/server/auth-seed'
 
 // permission: null — the client learns what it may do FROM this route, so
-// gating it on a permission would be circular.
+// gating it on a permission would be circular. The root layout seeds the same
+// shape (loadAuthSeed), so this only runs when that seed is missing.
 export const GET = withAuthenticatedApi(async (_request, auth) => ({
   success: true,
-  context: {
-    userId: auth.dbUser.id,
-    organizationId: auth.organizationId,
-    role: auth.dbUser.role,
-    // Drives which affordances render. Cosmetic only: the server re-checks
-    // every gated call, so a tampered client gains nothing.
-    permissions: [...auth.permissions],
-    mfaPolicy: auth.dbUser.organization?.mfaPolicy ?? 'optional',
-  },
+  context: clientAuthContext(auth),
 }), { permission: null, skipMfaGate: true, skipSsoGate: true })

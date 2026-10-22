@@ -150,7 +150,8 @@ test('the catalog lists a plane with a credential as callable, and one without a
     const snowflake = catalog.find((group) => group.id === 'native:snowflake')!
     assert.ok(databricks.client)
     assert.equal(databricks.toolsError, undefined)
-    assert.deepEqual(databricks.tools.map((tool) => tool.name), ['databricks_sql_query', 'databricks_run_job'])
+    assert.deepEqual(databricks.tools.slice(0, 2).map((tool) => tool.name), ['databricks_sql_query', 'databricks_run_job'])
+    assert.ok(databricks.tools.some((tool) => tool.name === 'databricks_genie_ask'), 'the workspace-API tools are listed too')
     assert.equal(databricks.isWriteFor?.('databricks_sql_query', { statement: 'select 1' }), false)
     assert.equal(snowflake.client, undefined)
     assert.match(snowflake.toolsError!, /No saved Snowflake credential/)

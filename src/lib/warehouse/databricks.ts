@@ -51,7 +51,7 @@ export function assertDatabricksHost(host: string): string {
   return trimmed
 }
 
-function parseJson<T = StatementResponse>(text: string, what: string): T {
+export function parseJson<T = StatementResponse>(text: string, what: string): T {
   try {
     return JSON.parse(text) as T
   } catch {
@@ -59,7 +59,7 @@ function parseJson<T = StatementResponse>(text: string, what: string): T {
   }
 }
 
-function describeFailure(response: { status: number; text: string }, what: string): DatabricksStatementError {
+export function describeFailure(response: { status: number; text: string }, what: string): DatabricksStatementError {
   let detail = response.text.slice(0, 300)
   try {
     const parsed = JSON.parse(response.text) as { message?: string; error_code?: string }
@@ -196,9 +196,15 @@ export type DatabricksJobRunResult = {
  * Start a job run and (by default) wait for it to finish. A run that ends in
  * anything but SUCCESS throws with Databricks' own message, so a flow step
  * fails instead of reporting a failed job as done.
+ *
+ * With `jobId` it triggers that saved job (POST /jobs/run-now); with
+ * `runSpec` it submits a one-time run (POST /jobs/runs/submit — tasks,
+ * run_name, … as Databricks defines them). Both are polled the same way.
  */
 export async function runDatabricksJob(params: {
-  jobId: number
+  jobId?: number
+  /** A one-time run's specification, sent as-is to /jobs/runs/submit. */
+  runSpec?: Record<string, unknown>
   request: DatabricksRequest
   /** Job-level parameters (jobs with parameters defined at the job level). */
   jobParameters?: Record<string, string>
@@ -213,15 +219,18 @@ export async function runDatabricksJob(params: {
   const now = params.now ?? Date.now
   const deadlineMs = params.deadlineMs ?? DEFAULT_JOB_DEADLINE_MS
   const deadline = now() + deadlineMs
-  const started = await params.request('/api/2.1/jobs/run-now', {
-    method: 'POST',
-    body: JSON.stringify({
-      job_id: params.jobId,
-      ...(params.jobParameters && Object.keys(params.jobParameters).length ? { job_parameters: params.jobParameters } : {}),
-      ...(params.notebookParams && Object.keys(params.notebookParams).length ? { notebook_params: params.notebookParams } : {}),
-    }),
-  })
-  if (!started.ok) throw describeFailure(started, 'Starting the job')
+  if (params.runSpec === undefined && typeof params.jobId !== 'number') throw new DatabricksStatementError('Pass a job id to run, or a run specification to submit.')
+  const started = params.runSpec !== undefined
+    ? await params.request('/api/2.1/jobs/runs/submit', { method: 'POST', body: JSON.stringify(params.runSpec) })
+    : await params.request('/api/2.1/jobs/run-now', {
+      method: 'POST',
+      body: JSON.stringify({
+        job_id: params.jobId,
+        ...(params.jobParameters && Object.keys(params.jobParameters).length ? { job_parameters: params.jobParameters } : {}),
+        ...(params.notebookParams && Object.keys(params.notebookParams).length ? { notebook_params: params.notebookParams } : {}),
+      }),
+    })
+  if (!started.ok) throw describeFailure(started, params.runSpec !== undefined ? 'Submitting the run' : 'Starting the job')
   const runId = parseJson<{ run_id?: number }>(started.text, 'Starting the job').run_id
   if (typeof runId !== 'number') throw new DatabricksStatementError('Databricks started the job but returned no run id.')
   if (params.waitForCompletion === false) return { runId, lifeCycleState: 'PENDING', completed: false }

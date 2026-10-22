@@ -12,19 +12,25 @@ import {
 } from './databricks'
 import { DEFAULT_SNOWFLAKE_DEADLINE_MS, runSnowflakeStatement, snowflakeRequest, type SnowflakeRequest } from './snowflake'
 import { resolveWarehouseHost, warehouseCredentialForHost, type WarehouseKind } from './credentials'
-import { sqlIsReadOnly } from './sql-classify'
+import { DATABRICKS_API_TOOLS, DATABRICKS_API_TOOL_NAMES, databricksFileStore, runDatabricksApiTool, type DatabricksFileStore } from './databricks-tools'
+
+export { warehouseToolIsWrite } from './tool-classify'
 
 /**
  * The warehouse planes — Databricks and Snowflake as tools for flow `tool`
  * steps and agents alike.
  *
  *   databricks_sql_query   one SQL statement on a SQL warehouse → records
- *   databricks_run_job     start a Databricks job and wait for it to finish
+ *   databricks_run_job     run a saved job (or submit a one-time run) and wait for it
+ *   databricks_files_* / _genie_* / _serving_* / _unity_catalog_* / _vector_search_*
+ *                          the rest of the workspace API (see ./databricks-tools)
  *   snowflake_sql_query    one SQL statement through the SQL API v2 → records
  *
- * Write classification is per CALL, not per tool: a query whose SQL is a read
- * (SELECT / SHOW / DESCRIBE / WITH…SELECT — see sql-classify) is a read;
- * anything else, and every job run, is a write.
+ * Write classification (./tool-classify) is per CALL for SQL: a query whose
+ * SQL is a read (SELECT / SHOW / DESCRIBE / WITH…SELECT — see sql-classify) is
+ * a read; anything else is a write. Other tools are classified by name: list,
+ * get, download, query and ask are reads; upload, delete, create, update,
+ * upsert and every job run are writes.
  *
  * The plane needs a saved HTTP credential restricted to the warehouse host.
  * `host` is optional on every tool — with one saved host for the kind, that
@@ -81,20 +87,21 @@ export const DATABRICKS_TOOLS: ToolSpec[] = [
   {
     name: 'databricks_run_job',
     description:
-      'Start a Databricks job (Workflows) run and wait for it to finish; fails with Databricks\' message when the run does not succeed. Always a write.',
+      'Start a Databricks job (Workflows) run — a saved job by jobId, or a one-time run from runSpec — and wait for it to finish; fails with Databricks\' message when the run does not succeed. Always a write.',
     inputSchema: {
       type: 'object',
       properties: {
         jobId: { type: 'string', description: 'The job id (Workflows → the job → Job details).' },
         jobParameters: { type: 'object', description: 'Job-level parameters, as name → value.' },
         notebookParams: { type: 'object', description: 'Notebook task parameters (legacy jobs without job-level parameters), as name → value.' },
+        runSpec: { type: 'object', description: 'In place of jobId: a one-time run as Databricks\' runs/submit takes it ({ run_name, tasks: [{ task_key, notebook_task | spark_python_task | …, existing_cluster_id | new_cluster }] }).' },
         waitForCompletion: { type: 'boolean', description: 'Wait for the run to finish (default true). False returns the run id right after it starts.' },
         host: hostProperty('dbc-a1b2c3d4-e5f6.cloud.databricks.com'),
         timeoutMinutes: { type: 'number', description: 'Give up waiting after this many minutes (default 30, at most 60); the run itself continues in Databricks.' },
       },
-      required: ['jobId'],
     },
   },
+  ...DATABRICKS_API_TOOLS,
 ]
 
 export const SNOWFLAKE_TOOLS: ToolSpec[] = [
@@ -139,17 +146,6 @@ export function warehouseKindForTool(toolName: string): WarehouseKind | null {
   if (DATABRICKS_TOOLS.some((tool) => tool.name === toolName)) return 'databricks'
   if (SNOWFLAKE_TOOLS.some((tool) => tool.name === toolName)) return 'snowflake'
   return null
-}
-
-/**
- * Per-call write classification. Without the call's args (a catalog or a
- * plane-level decision) a query tool counts as a write: it CAN write.
- */
-export function warehouseToolIsWrite(toolName: string, args?: Record<string, unknown>): boolean {
-  if (toolName === 'databricks_sql_query' || toolName === 'snowflake_sql_query') {
-    return !args || !sqlIsReadOnly(args.statement)
-  }
-  return true
 }
 
 const text = (args: Record<string, unknown>, key: string): string => {
@@ -227,6 +223,7 @@ export class WarehouseToolClient {
     private readonly kind: WarehouseKind,
     private readonly requests: WarehouseRequestFactory = warehouseRequests,
     private readonly sleep?: (ms: number) => Promise<void>,
+    private readonly files: DatabricksFileStore = databricksFileStore,
   ) {}
 
   private async connect<T>(args: Record<string, unknown>, factory: (host: string, credential: ResolvedHttpCredential) => T): Promise<{ host: string; request: T }> {
@@ -294,14 +291,30 @@ export class WarehouseToolClient {
       }
     }
 
-    // databricks_run_job
+    if (DATABRICKS_API_TOOL_NAMES.has(name)) {
+      const { host, request } = await this.connect(args, this.requests.databricks)
+      const output = await runDatabricksApiTool(name, args, {
+        request,
+        organizationId: this.organizationId,
+        userId: this.userId,
+        files: this.files,
+        ...(this.sleep ? { sleep: this.sleep } : {}),
+      })
+      apiLogger.info('warehouse: databricks api call finished', { organizationId: this.organizationId, host, tool: name, ms: Date.now() - started })
+      return output
+    }
+
+    // databricks_run_job — a saved job (jobId) or a one-time run (runSpec)
+    const runSpecRaw = objectArg(args, 'runSpec')
+    const runSpec = runSpecRaw === undefined || runSpecRaw === null ? undefined : runSpecRaw
+    if (runSpec !== undefined && (typeof runSpec !== 'object' || Array.isArray(runSpec))) throw new Error('"runSpec" must be an object (Databricks\' runs/submit body).')
     const jobIdText = text(args, 'jobId') || text(args, 'job_id')
     const jobId = Number(jobIdText)
-    if (!jobIdText || !Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('Pass the numeric Databricks job id (Workflows → the job → Job details).')
+    if (!runSpec && (!jobIdText || !Number.isSafeInteger(jobId) || jobId <= 0)) throw new Error('Pass the numeric Databricks job id (Workflows → the job → Job details), or a runSpec for a one-time run.')
     const deadlineMs = bounded(args.timeoutMinutes, DEFAULT_JOB_DEADLINE_MS / 60_000, 60) * 60_000
     const { host, request } = await this.connect(args, this.requests.databricks)
     const run = await runDatabricksJob({
-      jobId,
+      ...(runSpec ? { runSpec: runSpec as Record<string, unknown> } : { jobId }),
       request,
       jobParameters: stringMap(objectArg(args, 'jobParameters'), 'jobParameters'),
       notebookParams: stringMap(objectArg(args, 'notebookParams'), 'notebookParams'),
@@ -309,7 +322,8 @@ export class WarehouseToolClient {
       deadlineMs,
       ...(this.sleep ? { sleep: this.sleep } : {}),
     })
-    apiLogger.info('warehouse: databricks job run finished', { organizationId: this.organizationId, host, jobId, runId: run.runId, completed: run.completed, ms: Date.now() - started })
-    return run
+    apiLogger.info('warehouse: databricks job run finished', { organizationId: this.organizationId, host, jobId: runSpec ? null : jobId, runId: run.runId, completed: run.completed, ms: Date.now() - started })
+    // run_id too: n8n flows that called run-now read the API's own field name.
+    return { ...run, run_id: run.runId }
   }
 }

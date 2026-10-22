@@ -6,7 +6,7 @@ import { assertDatabricksHost, DatabricksStatementError, rowsToCsv, runWarehouse
 function fakeDatabricks(script: Array<{ match: RegExp; method?: 'GET' | 'POST'; status?: number; body: unknown }>) {
   const calls: Array<{ path: string; method: string; body?: string }> = []
   const request: DatabricksRequest = async (path, init) => {
-    calls.push({ path, method: init.method, ...(init.body ? { body: init.body } : {}) })
+    calls.push({ path, method: init.method, ...(typeof init.body === 'string' && init.body ? { body: init.body } : {}) })
     const step = script.shift()
     if (!step) throw new Error(`unexpected request ${init.method} ${path}`)
     assert.match(path, step.match)

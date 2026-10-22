@@ -99,7 +99,8 @@ export async function saveStoredFile(params: {
         mimeType,
         size: params.buffer.length,
         backend,
-        ...(backend === 'supabase' ? { storagePath: '' } : { data: params.buffer }),
+        // Prisma 6.19 types Bytes as Uint8Array<ArrayBuffer>; a Buffer may sit on a shared pool.
+        ...(backend === 'supabase' ? { storagePath: '' } : { data: new Uint8Array(params.buffer) }),
       },
     })
   })

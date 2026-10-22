@@ -1,6 +1,26 @@
 import IORedis from 'ioredis'
 import { Queue, type QueueOptions, type WorkerOptions } from 'bullmq'
-import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
+
+/**
+ * The BullMQ job lock. It only matters for a worker that DIED: while the
+ * job's process lives, BullMQ's LockManager re-extends every active job's lock
+ * on a timer (every lockRenewTime/2, lockRenewTime defaulting to
+ * lockDuration/2), however long the job runs. So the lock is not a run budget
+ * — it was 30 minutes (AGENT_RUN_TIMEOUT_MS) and a crashed worker's run then
+ * sat unrecovered for up to 35 minutes, after the stuck-run reaper had
+ * already failed it.
+ *
+ * Eight minutes, because the renewal timer needs the event loop: a Pyodide
+ * code step may hold the main thread for up to 5 minutes
+ * (DATASET_TIMEOUT_MAX_MS in features/flows/code-runner.ts), and a lock is
+ * lost when a block outlasts 3/4 of it — a live job declared stalled and run
+ * twice. 8 min tolerates a 6-minute block. Stall recovery then lands within
+ * lockDuration + stalledInterval = 13 minutes, inside the agent reaper's
+ * 15-minute staleness window (AGENT_STALE_AFTER_MS, lib/agents/reap.ts), so
+ * a crashed run resumes from its checkpoint instead of being failed first.
+ * Changing it requires a worker redeploy.
+ */
+export const JOB_LOCK_DURATION_MS = 8 * 60_000
 
 export const QUEUE_NAMES = {
   AGENT_EXECUTION: 'agent-execution',
@@ -50,13 +70,11 @@ export function getRedisConnection() {
 
 export const workerConfig = {
   concurrency: Number(process.env.AGENT_WORKER_CONCURRENCY) || 3,
-  // Agent runs are long (multi-turn) with external side effects. The lock is
-  // held long enough that a live run isn't declared stalled. A retry/stall
-  // recovery is now SAFE because runAgentExecution checkpoints the transcript
-  // per turn and resumes from the last completed turn (not from the top), and
-  // already-completed tool calls are replayed from the step ledger instead of
-  // re-fired — so we allow one stall recovery.
-  lockDuration: AGENT_RUN_TIMEOUT_MS,
+  // A retry/stall recovery is SAFE because runAgentExecution checkpoints the
+  // transcript per turn and resumes from the last completed turn (not from the
+  // top), and already-completed tool calls are replayed from the step ledger
+  // instead of re-fired — so we allow one stall recovery.
+  lockDuration: JOB_LOCK_DURATION_MS,
   maxStalledCount: 1,
   // Upstash bills per COMMAND, and an idle BullMQ worker is mostly polling:
   // the blocking dequeue re-issues every `drainDelay` seconds when the queue

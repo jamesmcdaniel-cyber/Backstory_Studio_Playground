@@ -905,7 +905,7 @@ async function runAgentExecutionInner(
           status: 'running',
           model: runner.model,
           // Refresh startedAt on resume too (not only on a fresh run) — the
-          // agent reaper (src/lib/agents/reap.ts) spares a run until 10 min
+          // agent reaper (src/lib/agents/reap.ts) spares a run until 15 min
           // past startedAt while its first new heartbeat lands, and its
           // 2-hour ceiling counts from here, so a long-after-question resume
           // would otherwise be false-failed mid-run.

@@ -33,6 +33,8 @@
 
 app = "backstory-worker-batch"
 primary_region = "iad"
+# Fly's maximum grace before SIGKILL (default 5s) — see fly.worker.toml.
+kill_timeout = "300s"
 
 [build]
   dockerfile = "Dockerfile.worker"

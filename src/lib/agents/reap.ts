@@ -31,11 +31,16 @@ import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { AGENT_HEARTBEAT_INTERVAL_MS } from '@/lib/agents/liveness'
 
 /**
- * No beat for this long means the run's process is gone. Ten beats: room for
- * the longest deliberate event-loop block (a 5-minute Pyodide step) plus a
- * slow DB write, with margin.
+ * No beat for this long means the run's process is gone. Fifteen beats: room
+ * for the longest deliberate event-loop block (a 5-minute Pyodide step) plus a
+ * slow DB write — and, deliberately, longer than BullMQ's worst-case stall
+ * recovery (JOB_LOCK_DURATION_MS + stalledInterval = 13 min, queue/config.ts).
+ * A queued run whose worker died is then picked up again and resumed from its
+ * checkpoint before this reaper would fail it; what is left for the reaper is
+ * a run nothing will resume (an inline run whose request was killed, or one
+ * already past its single stall recovery).
  */
-export const AGENT_STALE_AFTER_MS = 10 * AGENT_HEARTBEAT_INTERVAL_MS
+export const AGENT_STALE_AFTER_MS = 15 * AGENT_HEARTBEAT_INTERVAL_MS
 
 /** Wall-clock backstop for a run that is alive but never finishes. */
 export const AGENT_RUN_HARD_CEILING_MS = 2 * 60 * 60 * 1000

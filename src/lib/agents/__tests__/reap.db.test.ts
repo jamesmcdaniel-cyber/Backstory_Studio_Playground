@@ -46,7 +46,7 @@ if (TEST_DB) {
   })
 
   test('a run that stopped beating is failed, without claiming a time limit', async () => {
-    const run = await execution({ status: 'running', startedAt: minutes(20), lastActiveAt: minutes(15) })
+    const run = await execution({ status: 'running', startedAt: minutes(30), lastActiveAt: minutes(20) })
     await reap.reapStuckAgentExecutions()
     const after = await read(run.id)
     assert.equal(after.status, 'failed')
@@ -80,7 +80,7 @@ if (TEST_DB) {
 
   test('a stranded cancel resolves to cancelled once it stops beating — not before', async () => {
     const live = await execution({ status: 'cancelling', startedAt: minutes(40), lastActiveAt: minutes(1) })
-    const dead = await execution({ status: 'cancelling', startedAt: minutes(40), lastActiveAt: minutes(15) })
+    const dead = await execution({ status: 'cancelling', startedAt: minutes(40), lastActiveAt: minutes(20) })
     await reap.reapStuckAgentExecutions()
     assert.equal((await read(live.id)).status, 'cancelling')
     assert.equal((await read(dead.id)).status, 'cancelled')

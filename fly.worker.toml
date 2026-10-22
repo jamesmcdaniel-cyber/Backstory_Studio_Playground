@@ -46,6 +46,13 @@
 
 app = "backstory-worker"
 primary_region = "iad"
+# How long Fly waits after the stop signal before SIGKILL. Default is 5s,
+# which killed every deploy's in-flight runs: shutdown() (runtime.ts) awaits
+# worker.close(), which lets active jobs finish. 300s is Fly's maximum. A run
+# that outlasts it is still killed, but its lock is short (8 min,
+# JOB_LOCK_DURATION_MS in src/lib/queue/config.ts), so the new machine's
+# stalled scan picks it up and it resumes from its last checkpointed turn.
+kill_timeout = "300s"
 
 [build]
   dockerfile = "Dockerfile.worker"
